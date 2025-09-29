@@ -1,0 +1,68 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ round.team_red.name }} vs {{ round.team_blue.name }} - Single Round{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1>{{ round.team_red.name }} vs {{ round.team_blue.name }}</h1>
+        <p class="text-muted">Single Round - {{ round.date_played|date:"M d, Y H:i" }}</p>
+    </div>
+    {% if round.winner %}
+    <div class="text-center">
+        <p class="mb-0">{{ round.red_points }} - {{ round.blue_points }}</p>
+    </div>
+    {% else %}
+    <div class="text-center">
+        <h3 class="text-secondary">Tie Game</h3>
+        <p class="mb-0">{{ round.red_points }} - {{ round.blue_points }}</p>
+    </div>
+    {% endif %}
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-danger text-white">
+                <h4 class="mb-0">{{ round.team_red.name }} (Red)</h4>
+            </div>
+            <div class="card-body text-center">
+                <h2 class="display-4">{{ round.red_points }}</h2>
+                <p class="text-muted">Points Scored</p>
+                {% if round.blue_eliminated %}
+                <span class="badge bg-success">Eliminated Opponent!</span>
+                {% endif %}
+                {% if round.red_eliminated %}
+                <span class="badge bg-danger">Team Eliminated</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h4 class="mb-0">{{ round.team_blue.name }} (Blue)</h4>
+            </div>
+            <div class="card-body text-center">
+                <h2 class="display-4">{{ round.blue_points }}</h2>
+                <p class="text-muted">Points Scored</p>
+                {% if round.red_eliminated %}
+                <span class="badge bg-success">Eliminated Opponent!</span>
+                {% endif %}
+                {% if round.blue_eliminated %}
+                <span class="badge bg-danger">Team Eliminated</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mt-4">
+    <a href="{% url 'match_list' %}" class="btn btn-secondary">← Back to Matches</a>
+    <a href="{% url 'team_match_history' round.team_red.id %}" class="btn btn-outline-primary">{{ round.team_red.name }}
+        History</a>
+    <a href="{% url 'team_match_history' round.team_blue.id %}" class="btn btn-outline-primary">{{ round.team_blue.name
+        }} History</a>
+</div>
+{% endblock %}

@@ -1,0 +1,232 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ round.team_red.name }} vs {{ round.team_blue.name }} - Round Detail{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1>{{ round.team_red.name }} vs {{ round.team_blue.name }}</h1>
+        <p class="text-muted">
+            {% if round.match %}
+            Match Round {{ round.round_number }} - {{ round.date_played|date:"M d, Y H:i" }}
+            {% else %}
+            Single Round - {{ round.date_played|date:"M d, Y H:i" }}
+            {% endif %}
+        </p>
+    </div>
+    {% if round.winner %}
+    <div class="text-center">
+        <h3 class="text-success">🏆 {{ round.winner.name }} Wins!</h3>
+        <p class="mb-0">{{ round.red_points }} - {{ round.blue_points }}</p>
+    </div>
+    {% else %}
+    <div class="text-center">
+        <h3 class="text-secondary">Tie Game</h3>
+        <p class="mb-0">{{ round.red_points }} - {{ round.blue_points }}</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Team Performance Overview -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-danger text-white">
+                <h4 class="mb-0">{{ round.team_red.name }} (Red)</h4>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-3">
+                        <h5>{{ round.red_points }}</h5>
+                        <small>Points</small>
+                    </div>
+                    <div class="col-3">
+                        <h5>{{ red_performances|length }}</h5>
+                        <small>Players</small>
+                    </div>
+                    <div class="col-3">
+                        <h5>{% for p in red_performances %}{% if not p.was_eliminated %}1{% endif %}{% endfor %}{{
+                            red_performances|length|add:"-6"|add:"6" }}</h5>
+                        <small>Survivors</small>
+                    </div>
+                    <div class="col-3">
+                        {% if round.blue_eliminated %}
+                        <span class="badge bg-success">Elimination!</span>
+                        {% else %}
+                        <span class="badge bg-secondary">-</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h4 class="mb-0">{{ round.team_blue.name }} (Blue)</h4>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-3">
+                        <h5>{{ round.blue_points }}</h5>
+                        <small>Points</small>
+                    </div>
+                    <div class="col-3">
+                        <h5>{{ blue_performances|length }}</h5>
+                        <small>Players</small>
+                    </div>
+                    <div class="col-3">
+                        <h5>{% for p in blue_performances %}{% if not p.was_eliminated %}1{% endif %}{% endfor %}{{
+                            blue_performances|length|add:"-6"|add:"6" }}</h5>
+                        <small>Survivors</small>
+                    </div>
+                    <div class="col-3">
+                        {% if round.red_eliminated %}
+                        <span class="badge bg-success">Elimination!</span>
+                        {% else %}
+                        <span class="badge bg-secondary">-</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Player Performance Tables -->
+<div class="row">
+    <div class="col-md-6">
+        <h4>{{ round.team_red.name }} Player Performance</h4>
+        <div class="table-responsive">
+            <table class="table table-sm table-striped">
+                <thead>
+                    <tr>
+                        <th>Player</th>
+                        <th>Role</th>
+                        <th>Points</th>
+                        <th>Tags</th>
+                        <th>Deaths</th>
+                        <th>Lives</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for perf in red_performances %}
+                    <tr {% if perf.was_eliminated %}class="table-danger" {% endif %}>
+                        <td>{{ perf.player.name }}</td>
+                        <td><span class="badge bg-secondary">{{ perf.player.get_role_display }}</span></td>
+                        <td>{{ perf.points_scored }}</td>
+                        <td>{{ perf.tags_made }}</td>
+                        <td>{{ perf.times_tagged }}</td>
+                        <td>{{ perf.final_lives }}/{{ perf.starting_lives }}</td>
+                        <td>
+                            {% if perf.was_eliminated %}
+                            <span class="badge bg-danger">Eliminated</span>
+                            {% else %}
+                            <span class="badge bg-success">Survived</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <h4>{{ round.team_blue.name }} Player Performance</h4>
+        <div class="table-responsive">
+            <table class="table table-sm table-striped">
+                <thead>
+                    <tr>
+                        <th>Player</th>
+                        <th>Role</th>
+                        <th>Points</th>
+                        <th>Tags</th>
+                        <th>Deaths</th>
+                        <th>Lives</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for perf in blue_performances %}
+                    <tr {% if perf.was_eliminated %}class="table-danger" {% endif %}>
+                        <td>{{ perf.player.name }}</td>
+                        <td><span class="badge bg-secondary">{{ perf.player.get_role_display }}</span></td>
+                        <td>{{ perf.points_scored }}</td>
+                        <td>{{ perf.tags_made }}</td>
+                        <td>{{ perf.times_tagged }}</td>
+                        <td>{{ perf.final_lives }}/{{ perf.starting_lives }}</td>
+                        <td>
+                            {% if perf.was_eliminated %}
+                            <span class="badge bg-danger">Eliminated</span>
+                            {% else %}
+                            <span class="badge bg-success">Survived</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Resource Usage Summary -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Resource Usage Summary</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>{{ round.team_red.name }} Resources</h6>
+                        <ul class="list-unstyled">
+                            {% for perf in red_performances %}
+                            <li>
+                                <strong>{{ perf.player.name }}:</strong>
+                                {{ perf.shots_used }}/{{ perf.starting_shots }} shots,
+                                {{ perf.specials_used }}/{{ perf.starting_special }} specials
+                                {% if perf.starting_missiles > 0 %}
+                                , {{ perf.missiles_used }}/{{ perf.starting_missiles }} missiles
+                                {% endif %}
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>{{ round.team_blue.name }} Resources</h6>
+                        <ul class="list-unstyled">
+                            {% for perf in blue_performances %}
+                            <li>
+                                <strong>{{ perf.player.name }}:</strong>
+                                {{ perf.shots_used }}/{{ perf.starting_shots }} shots,
+                                {{ perf.specials_used }}/{{ perf.starting_special }} specials
+                                {% if perf.starting_missiles > 0 %}
+                                , {{ perf.missiles_used }}/{{ perf.starting_missiles }} missiles
+                                {% endif %}
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mt-4">
+    {% if round.match %}
+    <a href="{% url 'match_detail' round.match.id %}" class="btn btn-secondary">← Back to Match</a>
+    {% else %}
+    <a href="{% url 'match_list' %}" class="btn btn-secondary">← Back to Matches</a>
+    {% endif %}
+    <a href="{% url 'team_match_history' round.team_red.id %}" class="btn btn-outline-primary">{{ round.team_red.name }}
+        History</a>
+    <a href="{% url 'team_match_history' round.team_blue.id %}" class="btn btn-outline-primary">{{ round.team_blue.name
+        }} History</a>
+</div>
+{% endblock %}

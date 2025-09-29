@@ -1,0 +1,17 @@
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path("", views.match_list, name="match_list"),
+    path("create/", views.create_match, name="create_match"),
+    path("single-round/create/", views.create_single_round, name="create_single_round"),
+    path("<int:match_id>/", views.match_detail, name="match_detail"),
+    path(
+        "round/<int:round_id>/", views.single_round_detail, name="single_round_detail"
+    ),
+    path(
+        "team/<int:team_id>/history/",
+        views.team_match_history,
+        name="team_match_history",
+    ),
+]

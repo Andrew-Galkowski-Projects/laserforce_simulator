@@ -1,0 +1,175 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ match.team_red.name }} vs {{ match.team_blue.name }} - Laserforce Manager{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1>{{ match.team_red.name }} vs {{ match.team_blue.name }}</h1>
+        <p class="text-muted">{{ match.get_match_type_display }} - {{ match.date_played|date:"M d, Y H:i" }}</p>
+    </div>
+    {% if match.winner %}
+        <div class="text-center">
+            <h3 class="text-success">🏆 {{ match.winner.name }} Wins!</h3>
+            <p class="mb-0">{{ match.red_total_points }} - {{ match.blue_total_points }}</p>
+        </div>
+    {% else %}
+        <div class="text-center">
+            <h3 class="text-secondary">Tie Game</h3>
+            <p class="mb-0">{{ match.red_total_points }} - {{ match.blue_total_points }}</p>
+        </div>
+    {% endif %}
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-danger text-white">
+                <h4 class="mb-0">{{ match.team_red.name }} (Red)</h4>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-4">
+                        <h5>{{ match.red_rounds_won }}</h5>
+                        <small>Rounds Won</small>
+                    </div>
+                    <div class="col-4">
+                        <h5>{{ match.red_total_points }}</h5>
+                        <small>Total Points</small>
+                    </div>
+                    <div class="col-4">
+                        <h5>{{ match.red_bonus_points }}</h5>
+                        <small>Bonus Points</small>
+                    </div>
+                </div>
+                
+                <hr>
+                <h6>Round Breakdown</h6>
+                <div class="mb-2">
+                    <strong>Round 1:</strong> {{ match.red_round1_points }} points
+                    {% if match.blue_round1_eliminated %}
+                        <span class="badge bg-success ms-1">Elimination!</span>
+                    {% endif %}
+                </div>
+                <div class="mb-2">
+                    <strong>Round 2:</strong> {{ match.red_round2_points }} points
+                    {% if match.blue_round2_eliminated %}
+                        <span class="badge bg-success ms-1">Elimination!</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h4 class="mb-0">{{ match.team_blue.name }} (Blue)</h4>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-4">
+                        <h5>{{ match.blue_rounds_won }}</h5>
+                        <small>Rounds Won</small>
+                    </div>
+                    <div class="col-4">
+                        <h5>{{ match.blue_total_points }}</h5>
+                        <small>Total Points</small>
+                    </div>
+                    <div class="col-4">
+                        <h5>{{ match.blue_bonus_points }}</h5>
+                        <small>Bonus Points</small>
+                    </div>
+                </div>
+                
+                <hr>
+                <h6>Round Breakdown</h6>
+                <div class="mb-2">
+                    <strong>Round 1:</strong> {{ match.blue_round1_points }} points
+                    {% if match.red_round1_eliminated %}
+                        <span class="badge bg-success ms-1">Elimination!</span>
+                    {% endif %}
+                </div>
+                <div class="mb-2">
+                    <strong>Round 2:</strong> {{ match.blue_round2_points }} points
+                    {% if match.red_round2_eliminated %}
+                        <span class="badge bg-success ms-1">Elimination!</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Match Summary</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered text-center">
+                        <thead>
+                            <tr>
+                                <th>Round</th>
+                                <th>{{ match.team_red.name }} (Red)</th>
+                                <th>{{ match.team_blue.name }} (Blue)</th>
+                                <th>Winner</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>Round 1</strong></td>
+                                <td>{{ match.red_round1_points }}{% if match.blue_round1_eliminated %} + Elimination{% endif %}</td>
+                                <td>{{ match.blue_round1_points }}{% if match.red_round1_eliminated %} + Elimination{% endif %}</td>
+                                <td>
+                                    {% if match.red_round1_points > match.blue_round1_points %}
+                                        <span class="text-danger">{{ match.team_red.name }}</span>
+                                    {% elif match.blue_round1_points > match.red_round1_points %}
+                                        <span class="text-primary">{{ match.team_blue.name }}</span>
+                                    {% else %}
+                                        <span class="text-muted">Tie</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>Round 2</strong></td>
+                                <td>{{ match.red_round2_points }}{% if match.blue_round2_eliminated %} + Elimination{% endif %}</td>
+                                <td>{{ match.blue_round2_points }}{% if match.red_round2_eliminated %} + Elimination{% endif %}</td>
+                                <td>
+                                    {% if match.red_round2_points > match.blue_round2_points %}
+                                        <span class="text-danger">{{ match.team_red.name }}</span>
+                                    {% elif match.blue_round2_points > match.red_round2_points %}
+                                        <span class="text-primary">{{ match.team_blue.name }}</span>
+                                    {% else %}
+                                        <span class="text-muted">Tie</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            <tr class="table-light">
+                                <td><strong>Total</strong></td>
+                                <td><strong>{{ match.red_total_points }}</strong></td>
+                                <td><strong>{{ match.blue_total_points }}</strong></td>
+                                <td>
+                                    {% if match.winner %}
+                                        <strong class="text-success">{{ match.winner.name }}</strong>
+                                    {% else %}
+                                        <strong class="text-muted">Tie</strong>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mt-4">
+    <a href="{% url 'match_list' %}" class="btn btn-secondary">← Back to Matches</a>
+    <a href="{% url 'team_match_history' match.team_red.id %}" class="btn btn-outline-primary">{{ match.team_red.name }} History</a>
+    <a href="{% url 'team_match_history' match.team_blue.id %}" class="btn btn-outline-primary">{{ match.team_blue.name }} History</a>
+</div>
+{% endblock %}

@@ -1,0 +1,212 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ team.name }} Match History - Laserforce Manager{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>{{ team.name }} - Match History</h1>
+    <a href="{% url 'team_detail' team.id %}" class="btn btn-secondary">Back to Team</a>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body text-center">
+                <h3>{{ stats.match_wins }}</h3>
+                <p class="mb-0">Match Wins</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-danger text-white">
+            <div class="card-body text-center">
+                <h3>{{ stats.match_losses }}</h3>
+                <p class="mb-0">Match Losses</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
+            <div class="card-body text-center">
+                <h3>{{ stats.round_wins }}</h3>
+                <p class="mb-0">Round Wins</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-info text-white">
+            <div class="card-body text-center">
+                <h3>{{ stats.total_matches|add:stats.total_rounds }}</h3>
+                <p class="mb-0">Total Games</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Player Statistics -->
+{% if player_stats %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Player Performance Statistics</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Player</th>
+                                <th>Role</th>
+                                <th>Games</th>
+                                <th>Total Points</th>
+                                <th>Avg Points</th>
+                                <th>Total Tags</th>
+                                <th>Avg Tags</th>
+                                <th>Deaths</th>
+                                <th>K/D Ratio</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for stat in player_stats %}
+                            <tr>
+                                <td><strong>{{ stat.player.name }}</strong></td>
+                                <td><span class="badge bg-secondary">{{ stat.player.get_role_display }}</span></td>
+                                <td>{{ stat.games_played }}</td>
+                                <td>{{ stat.total_points }}</td>
+                                <td>{{ stat.avg_points|floatformat:1 }}</td>
+                                <td>{{ stat.total_tags }}</td>
+                                <td>{{ stat.avg_tags|floatformat:1 }}</td>
+                                <td>{{ stat.total_deaths }}</td>
+                                <td>
+                                    {% if stat.total_deaths > 0 %}
+                                    {{ stat.total_tags|div:stat.total_deaths|floatformat:2 }}
+                                    {% else %}
+                                    {{ stat.total_tags }}.00
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if matches or single_rounds or detailed_rounds %}
+<div class="row">
+    <div class="col-md-6">
+        <h3>Tournament Matches</h3>
+        {% if matches %}
+        {% for match in matches %}
+        <div class="card mb-3">
+            <div class="card-body">
+                <h5 class="card-title">
+                    vs {% if match.team_red == team %}{{ match.team_blue.name }}{% else %}{{ match.team_red.name }}{%
+                    endif %}
+                    {% if match.winner == team %}
+                    <span class="badge bg-success ms-2">Won</span>
+                    {% elif match.winner %}
+                    <span class="badge bg-danger ms-2">Lost</span>
+                    {% else %}
+                    <span class="badge bg-secondary ms-2">Tie</span>
+                    {% endif %}
+                </h5>
+                <p class="card-text">
+                    {% if match.team_red == team %}
+                    <strong>Score:</strong> {{ match.red_total_points }} - {{ match.blue_total_points }}
+                    <br>
+                    <strong>Rounds:</strong> {{ match.red_rounds_won }} - {{ match.blue_rounds_won }}
+                    {% else %}
+                    <strong>Score:</strong> {{ match.blue_total_points }} - {{ match.red_total_points }}
+                    <br>
+                    <strong>Rounds:</strong> {{ match.blue_rounds_won }} - {{ match.red_rounds_won }}
+                    {% endif %}
+                    <br>
+                    <small class="text-muted">{{ match.date_played|date:"M d, Y H:i" }}</small>
+                </p>
+                <a href="{% url 'match_detail' match.id %}" class="btn btn-sm btn-primary">View Details</a>
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <p class="text-muted">No tournament matches played yet.</p>
+        {% endif %}
+    </div>
+
+    <div class="col-md-6">
+        <h3>Single Rounds</h3>
+        {% if single_rounds or detailed_rounds %}
+        {% for round in single_rounds %}
+        <div class="card mb-3">
+            <div class="card-body">
+                <h5 class="card-title">
+                    vs {% if round.team_red == team %}{{ round.team_blue.name }}{% else %}{{ round.team_red.name }}{%
+                    endif %}
+                    {% if round.winner == team %}
+                    <span class="badge bg-success ms-2">Won</span>
+                    {% elif round.winner %}
+                    <span class="badge bg-danger ms-2">Lost</span>
+                    {% else %}
+                    <span class="badge bg-secondary ms-2">Tie</span>
+                    {% endif %}
+                    <span class="badge bg-info ms-1">Basic</span>
+                </h5>
+                <p class="card-text">
+                    {% if round.team_red == team %}
+                    <strong>Score:</strong> {{ round.red_points }} - {{ round.blue_points }}
+                    {% else %}
+                    <strong>Score:</strong> {{ round.blue_points }} - {{ round.red_points }}
+                    {% endif %}
+                    <br>
+                    <small class="text-muted">{{ round.date_played|date:"M d, Y H:i" }}</small>
+                </p>
+                <a href="{% url 'single_round_detail' round.id %}" class="btn btn-sm btn-primary">View Details</a>
+            </div>
+        </div>
+        {% endfor %}
+        {% for round in detailed_rounds %}
+        <div class="card mb-3">
+            <div class="card-body">
+                <h5 class="card-title">
+                    vs {% if round.team_red == team %}{{ round.team_blue.name }}{% else %}{{ round.team_red.name }}{%
+                    endif %}
+                    {% if round.winner == team %}
+                    <span class="badge bg-success ms-2">Won</span>
+                    {% elif round.winner %}
+                    <span class="badge bg-danger ms-2">Lost</span>
+                    {% else %}
+                    <span class="badge bg-secondary ms-2">Tie</span>
+                    {% endif %}
+                    <span class="badge bg-warning ms-1">Detailed</span>
+                </h5>
+                <p class="card-text">
+                    {% if round.team_red == team %}
+                    <strong>Score:</strong> {{ round.red_points }} - {{ round.blue_points }}
+                    {% else %}
+                    <strong>Score:</strong> {{ round.blue_points }} - {{ round.red_points }}
+                    {% endif %}
+                    <br>
+                    <small class="text-muted">{{ round.date_played|date:"M d, Y H:i" }}</small>
+                </p>
+                <a href="{% url 'game_round_detail' round.id %}" class="btn btn-sm btn-primary">View Details</a>
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <p class="text-muted">No single rounds played yet.</p>
+        {% endif %}
+    </div>
+</div>
+{% else %}
+<div class="text-center py-5">
+    <h3 class="text-muted">No matches played yet</h3>
+    <p>This team hasn't participated in any matches or rounds.</p>
+    <a href="{% url 'create_match' %}" class="btn btn-primary me-2">Create Tournament Match</a>
+    <a href="{% url 'create_single_round' %}" class="btn btn-success">Create Single Round</a>
+</div>
+{% endif %}
+{% endblock %}

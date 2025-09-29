@@ -1,0 +1,19 @@
+<!-- templates/teams/player_confirm_delete.html -->
+{% extends 'base.html' %}
+
+{% block title %}Remove Player - Laserforce Manager{% endblock %}
+
+{% block content %}
+<h1>Remove Player</h1>
+
+<div class="alert alert-warning">
+    <strong>Are you sure you want to remove {{ player.name }} from {{ team.name }}?</strong>
+    <p class="mb-0 mt-2">This action cannot be undone.</p>
+</div>
+
+<form method="post">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-danger">Yes, Remove Player</button>
+    <a href="{% url 'team_detail' team.id %}" class="btn btn-secondary">Cancel</a>
+</form>
+{% endblock %}

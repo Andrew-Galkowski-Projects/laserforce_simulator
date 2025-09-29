@@ -1,0 +1,53 @@
+from django import forms
+from teams.models import Team
+from .models import Match
+
+
+class MatchSetupForm(forms.Form):
+    team_red = forms.ModelChoiceField(
+        queryset=Team.objects.all(),
+        widget=forms.Select(attrs={"class": "form-control"}),
+        label="Red Team",
+    )
+    team_blue = forms.ModelChoiceField(
+        queryset=Team.objects.all(),
+        widget=forms.Select(attrs={"class": "form-control"}),
+        label="Blue Team",
+    )
+    match_type = forms.ChoiceField(
+        choices=Match.MATCH_TYPES,
+        widget=forms.Select(attrs={"class": "form-control"}),
+        label="Match Type",
+        initial="friendly",
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Only show teams with valid rosters
+        valid_teams = Team.objects.filter(
+            id__in=[team.id for team in Team.objects.all() if team.is_valid_roster]
+        )
+        self.fields["team_red"].queryset = valid_teams
+        self.fields["team_blue"].queryset = valid_teams
+
+
+class SingleRoundSetupForm(forms.Form):
+    team_red = forms.ModelChoiceField(
+        queryset=Team.objects.all(),
+        widget=forms.Select(attrs={"class": "form-control"}),
+        label="Red Team",
+    )
+    team_blue = forms.ModelChoiceField(
+        queryset=Team.objects.all(),
+        widget=forms.Select(attrs={"class": "form-control"}),
+        label="Blue Team",
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Only show teams with valid rosters
+        valid_teams = Team.objects.filter(
+            id__in=[team.id for team in Team.objects.all() if team.is_valid_roster]
+        )
+        self.fields["team_red"].queryset = valid_teams
+        self.fields["team_blue"].queryset = valid_teams
