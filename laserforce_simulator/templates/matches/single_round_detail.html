@@ -10,6 +10,7 @@
     </div>
     {% if round.winner %}
     <div class="text-center">
+        <h3 class="text-success">🏆 {{ round.winner.name }} Wins!</h3>
         <p class="mb-0">{{ round.red_points }} - {{ round.blue_points }}</p>
     </div>
     {% else %}

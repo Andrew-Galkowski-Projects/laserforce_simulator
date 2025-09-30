@@ -20,6 +20,13 @@ class MatchSetupForm(forms.Form):
         label="Match Type",
         initial="friendly",
     )
+    use_detailed_simulation = forms.BooleanField(
+        required=False,
+        initial=True,
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+        label="Use Detailed Simulation",
+        help_text="Track individual player resources and performance",
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -41,6 +48,13 @@ class SingleRoundSetupForm(forms.Form):
         queryset=Team.objects.all(),
         widget=forms.Select(attrs={"class": "form-control"}),
         label="Blue Team",
+    )
+    use_detailed_simulation = forms.BooleanField(
+        required=False,
+        initial=True,
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+        label="Use Detailed Simulation",
+        help_text="Track individual player resources and performance",
     )
 
     def __init__(self, *args, **kwargs):

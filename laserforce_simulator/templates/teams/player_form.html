@@ -1,5 +1,3 @@
-
-<!-- templates/teams/player_form.html -->
 {% extends 'base.html' %}
 
 {% block title %}{{ title }} - Laserforce Manager{% endblock %}
@@ -13,19 +11,19 @@
         <label for="{{ form.name.id_for_label }}" class="form-label">Player Name</label>
         {{ form.name }}
         {% if form.name.errors %}
-            <div class="text-danger">{{ form.name.errors }}</div>
+        <div class="text-danger">{{ form.name.errors }}</div>
         {% endif %}
     </div>
-    
+
     <div class="mb-3">
         <label for="{{ form.role.id_for_label }}" class="form-label">Role</label>
         {{ form.role }}
         {% if form.role.errors %}
-            <div class="text-danger">{{ form.role.errors }}</div>
+        <div class="text-danger">{{ form.role.errors }}</div>
         {% endif %}
         <div class="form-text">Choose the player's role in Space Marines 5</div>
     </div>
-    
+
     <button type="submit" class="btn btn-primary">Save Player</button>
     <a href="{% url 'team_detail' team.id %}" class="btn btn-secondary">Cancel</a>
 </form>

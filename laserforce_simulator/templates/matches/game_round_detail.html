@@ -45,8 +45,7 @@
                         <small>Players</small>
                     </div>
                     <div class="col-3">
-                        <h5>{% for p in red_performances %}{% if not p.was_eliminated %}1{% endif %}{% endfor %}{{
-                            red_performances|length|add:"-6"|add:"6" }}</h5>
+                        <h5>{% for p in red_performances %}{% if not p.was_eliminated %}{% endif %}{% endfor %}{{ red_performances|length|add:"-6"|add:"6" }}</h5>
                         <small>Survivors</small>
                     </div>
                     <div class="col-3">
@@ -77,8 +76,7 @@
                         <small>Players</small>
                     </div>
                     <div class="col-3">
-                        <h5>{% for p in blue_performances %}{% if not p.was_eliminated %}1{% endif %}{% endfor %}{{
-                            blue_performances|length|add:"-6"|add:"6" }}</h5>
+                        <h5>{% for p in blue_performances %}{% if not p.was_eliminated %}{% endif %}{% endfor %}{{ blue_performances|length|add:"-6"|add:"6" }}</h5>
                         <small>Survivors</small>
                     </div>
                     <div class="col-3">
@@ -224,9 +222,7 @@
     {% else %}
     <a href="{% url 'match_list' %}" class="btn btn-secondary">← Back to Matches</a>
     {% endif %}
-    <a href="{% url 'team_match_history' round.team_red.id %}" class="btn btn-outline-primary">{{ round.team_red.name }}
-        History</a>
-    <a href="{% url 'team_match_history' round.team_blue.id %}" class="btn btn-outline-primary">{{ round.team_blue.name
-        }} History</a>
+    <a href="{% url 'team_match_history' round.team_red.id %}" class="btn btn-outline-primary">{{ round.team_red.name }} History</a>
+    <a href="{% url 'team_match_history' round.team_blue.id %}" class="btn btn-outline-primary">{{ round.team_blue.name }} History</a>
 </div>
 {% endblock %}

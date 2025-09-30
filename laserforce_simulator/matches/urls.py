@@ -10,6 +10,9 @@ urlpatterns = [
         "round/<int:round_id>/", views.single_round_detail, name="single_round_detail"
     ),
     path(
+        "game-round/<int:round_id>/", views.game_round_detail, name="game_round_detail"
+    ),
+    path(
         "team/<int:team_id>/history/",
         views.team_match_history,
         name="team_match_history",

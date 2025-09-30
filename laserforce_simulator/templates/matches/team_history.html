@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load team_extras %}
 
 {% block title %}{{ team.name }} Match History - Laserforce Manager{% endblock %}
 
@@ -105,8 +106,7 @@
         <div class="card mb-3">
             <div class="card-body">
                 <h5 class="card-title">
-                    vs {% if match.team_red == team %}{{ match.team_blue.name }}{% else %}{{ match.team_red.name }}{%
-                    endif %}
+                    vs {% if match.team_red == team %}{{ match.team_blue.name }}{% else %}{{ match.team_red.name }}{% endif %}
                     {% if match.winner == team %}
                     <span class="badge bg-success ms-2">Won</span>
                     {% elif match.winner %}
@@ -144,8 +144,7 @@
         <div class="card mb-3">
             <div class="card-body">
                 <h5 class="card-title">
-                    vs {% if round.team_red == team %}{{ round.team_blue.name }}{% else %}{{ round.team_red.name }}{%
-                    endif %}
+                    vs {% if round.team_red == team %}{{ round.team_blue.name }}{% else %}{{ round.team_red.name }}{% endif %}
                     {% if round.winner == team %}
                     <span class="badge bg-success ms-2">Won</span>
                     {% elif round.winner %}
@@ -172,8 +171,7 @@
         <div class="card mb-3">
             <div class="card-body">
                 <h5 class="card-title">
-                    vs {% if round.team_red == team %}{{ round.team_blue.name }}{% else %}{{ round.team_red.name }}{%
-                    endif %}
+                    vs {% if round.team_red == team %}{{ round.team_blue.name }}{% else %}{{ round.team_red.name }}{% endif %}
                     {% if round.winner == team %}
                     <span class="badge bg-success ms-2">Won</span>
                     {% elif round.winner %}

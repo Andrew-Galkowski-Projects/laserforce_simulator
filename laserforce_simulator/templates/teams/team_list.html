@@ -9,35 +9,35 @@
 </div>
 
 {% if teams %}
-    <div class="row">
-        {% for team in teams %}
-            <div class="col-md-6 col-lg-4 mb-4">
-                <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title">{{ team.name }}</h5>
-                        <p class="card-text">
-                            <strong>Players:</strong> {{ team.player_count }}/6
-                            {% if team.is_valid_roster %}
-                                <span class="badge bg-success ms-2">Valid Roster</span>
-                            {% else %}
-                                <span class="badge bg-warning ms-2">Incomplete</span>
-                            {% endif %}
-                        </p>
-                        <p class="card-text">
-                            <small class="text-muted">Created: {{ team.created_date|date:"M d, Y" }}</small>
-                        </p>
-                        <a href="{% url 'team_detail' team.id %}" class="btn btn-primary btn-sm">View Details</a>
-                        <a href="{% url 'team_edit' team.id %}" class="btn btn-outline-secondary btn-sm">Edit</a>
-                    </div>
-                </div>
+<div class="row">
+    {% for team in teams %}
+    <div class="col-md-6 col-lg-4 mb-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">{{ team.name }}</h5>
+                <p class="card-text">
+                    <strong>Players:</strong> {{ team.player_count }}/6
+                    {% if team.is_valid_roster %}
+                    <span class="badge bg-success ms-2">Valid Roster</span>
+                    {% else %}
+                    <span class="badge bg-warning ms-2">Incomplete</span>
+                    {% endif %}
+                </p>
+                <p class="card-text">
+                    <small class="text-muted">Created: {{ team.created_date|date:"M d, Y" }}</small>
+                </p>
+                <a href="{% url 'team_detail' team.id %}" class="btn btn-primary btn-sm">View Details</a>
+                <a href="{% url 'team_edit' team.id %}" class="btn btn-outline-secondary btn-sm">Edit</a>
             </div>
-        {% endfor %}
+        </div>
     </div>
+    {% endfor %}
+</div>
 {% else %}
-    <div class="text-center py-5">
-        <h3 class="text-muted">No teams yet</h3>
-        <p>Create your first team to get started!</p>
-        <a href="{% url 'team_create' %}" class="btn btn-primary">Create Team</a>
-    </div>
+<div class="text-center py-5">
+    <h3 class="text-muted">No teams yet</h3>
+    <p>Create your first team to get started!</p>
+    <a href="{% url 'team_create' %}" class="btn btn-primary">Create Team</a>
+</div>
 {% endif %}
 {% endblock %}

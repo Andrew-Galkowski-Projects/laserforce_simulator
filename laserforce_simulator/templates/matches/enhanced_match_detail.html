@@ -43,10 +43,8 @@
                         <tbody>
                             <tr>
                                 <td><strong>Round 1</strong></td>
-                                <td>{{ match.red_round1_points }}{% if match.blue_round1_eliminated %} + Elimination{%
-                                    endif %}</td>
-                                <td>{{ match.blue_round1_points }}{% if match.red_round1_eliminated %} + Elimination{%
-                                    endif %}</td>
+                                <td>{{ match.red_round1_points }}{% if match.blue_round1_eliminated %} + Elimination{% endif %}</td>
+                                <td>{{ match.blue_round1_points }}{% if match.red_round1_eliminated %} + Elimination{% endif %}</td>
                                 <td>
                                     {% if match.red_round1_points > match.blue_round1_points %}
                                     <span class="text-danger">{{ match.team_red.name }}</span>
@@ -71,10 +69,8 @@
                             </tr>
                             <tr>
                                 <td><strong>Round 2</strong></td>
-                                <td>{{ match.red_round2_points }}{% if match.blue_round2_eliminated %} + Elimination{%
-                                    endif %}</td>
-                                <td>{{ match.blue_round2_points }}{% if match.red_round2_eliminated %} + Elimination{%
-                                    endif %}</td>
+                                <td>{{ match.red_round2_points }}{% if match.blue_round2_eliminated %} + Elimination{% endif %}</td>
+                                <td>{{ match.blue_round2_points }}{% if match.red_round2_eliminated %} + Elimination{% endif %}</td>
                                 <td>
                                     {% if match.red_round2_points > match.blue_round2_points %}
                                     <span class="text-danger">{{ match.team_red.name }}</span>
@@ -120,9 +116,7 @@
 
 <div class="mt-4">
     <a href="{% url 'match_list' %}" class="btn btn-secondary">← Back to Matches</a>
-    <a href="{% url 'team_match_history' match.team_red.id %}" class="btn btn-outline-primary">{{ match.team_red.name }}
-        History</a>
-    <a href="{% url 'team_match_history' match.team_blue.id %}" class="btn btn-outline-primary">{{ match.team_blue.name
-        }} History</a>
+    <a href="{% url 'team_match_history' match.team_red.id %}" class="btn btn-outline-primary">{{ match.team_red.name }} History</a>
+    <a href="{% url 'team_match_history' match.team_blue.id %}" class="btn btn-outline-primary">{{ match.team_blue.name }} History</a>
 </div>
 {% endblock %}
