@@ -61,9 +61,7 @@
 
 <div class="mt-4">
     <a href="{% url 'match_list' %}" class="btn btn-secondary">← Back to Matches</a>
-    <a href="{% url 'team_match_history' round.team_red.id %}" class="btn btn-outline-primary">{{ round.team_red.name }}
-        History</a>
-    <a href="{% url 'team_match_history' round.team_blue.id %}" class="btn btn-outline-primary">{{ round.team_blue.name
-        }} History</a>
+    <a href="{% url 'team_match_history' round.team_red.id %}" class="btn btn-outline-primary">{{ round.team_red.name }} History</a>
+    <a href="{% url 'team_match_history' round.team_blue.id %}" class="btn btn-outline-primary">{{ round.team_blue.name }} History</a>
 </div>
 {% endblock %}
