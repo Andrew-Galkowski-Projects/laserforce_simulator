@@ -297,3 +297,26 @@ def team_match_history(request, team_id):
     }
 
     return render(request, "matches/team_history.html", context)
+
+
+def game_round_events(request, round_id):
+    """Display detailed event log for a game round"""
+    game_round = get_object_or_404(GameRound, id=round_id)
+
+    # Get all events
+    events = game_round.events.all().select_related("actor", "target")
+
+    # Event summary
+    event_summary = game_round.get_event_summary()
+
+    # Get kill feed (tags and eliminations only)
+    kill_feed = game_round.get_kill_feed()
+
+    context = {
+        "round": game_round,
+        "events": events,
+        "event_summary": event_summary,
+        "kill_feed": kill_feed,
+    }
+
+    return render(request, "matches/game_round_events.html", context)

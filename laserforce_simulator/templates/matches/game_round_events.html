@@ -1,0 +1,171 @@
+{% extends 'base.html' %}
+
+{% block title %}Event Log - {{ round.team_red.name }} vs {{ round.team_blue.name }}{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <h1>Event Log</h1>
+    <p class="text-muted">{{ round.team_red.name }} vs {{ round.team_blue.name }}</p>
+</div>
+
+<!-- Event Summary -->
+<div class="row mb-4">
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body">
+                <h4>{{ event_summary.tags }}</h4>
+                <small>Tags</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body">
+                <h4>{{ event_summary.misses }}</h4>
+                <small>Misses</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body">
+                <h4>{{ event_summary.eliminations }}</h4>
+                <small>Eliminations</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body">
+                <h4>{{ event_summary.specials }}</h4>
+                <small>Specials</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body">
+                <h4>{{ event_summary.resupplies }}</h4>
+                <small>Resupplies</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body">
+                <h4>{{ event_summary.total_events }}</h4>
+                <small>Total Events</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Kill Feed -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">🎯 Kill Feed</h5>
+            </div>
+            <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                {% for event in kill_feed %}
+                <div class="d-flex justify-content-between align-items-center mb-2 p-2 border-bottom">
+                    <span class="badge bg-secondary">{{ event.formatted_timestamp }}</span>
+                    <span>
+                        <strong>{{ event.actor.name }}</strong>
+                        {{ event.get_event_icon }}
+                        <strong>{{ event.target.name }}</strong>
+                    </span>
+                    <span class="badge bg-info">+{{ event.points_awarded }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Event Timeline -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">📋 Full Event Timeline</h5>
+            </div>
+            <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                {% for event in events %}
+                <div class="mb-2 p-2 border-bottom 
+                        {% if event.event_type == 'tag' %}bg-light
+                        {% elif event.event_type == 'elimination' %}bg-danger bg-opacity-10
+                        {% elif event.event_type == 'miss' %}bg-secondary bg-opacity-10
+                        {% elif event.event_type == 'special' %}bg-warning bg-opacity-10
+                        {% endif %}">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <span class="badge bg-dark">{{ event.formatted_timestamp }}</span>
+                        <div class="flex-grow-1 ms-2">
+                            <span>{{ event.get_event_icon }} {{ event.description }}</span>
+                            {% if event.points_awarded > 0 %}
+                            <span class="badge bg-success ms-2">+{{ event.points_awarded }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% if event.metadata %}
+                    <small class="text-muted d-block mt-1">
+                        {% for key, value in event.metadata.items %}
+                        <span class="me-2">{{ key }}: {{ value }}</span>
+                        {% endfor %}
+                    </small>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Event Type Filter (Optional Enhancement) -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Event Breakdown by Type</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <h6>Tags ({{ event_summary.tags }})</h6>
+                        {% for event in events %}
+                        {% if event.event_type == 'tag' %}
+                        <small class="d-block">
+                            [{{ event.formatted_timestamp }}] {{ event.actor.name }} → {{ event.target.name }}
+                        </small>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                    <div class="col-md-4">
+                        <h6>Eliminations ({{ event_summary.eliminations }})</h6>
+                        {% for event in events %}
+                        {% if event.event_type == 'elimination' %}
+                        <small class="d-block">
+                            [{{ event.formatted_timestamp }}] {{ event.target.name }} eliminated
+                        </small>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                    <div class="col-md-4">
+                        <h6>Specials ({{ event_summary.specials }})</h6>
+                        {% for event in events %}
+                        {% if event.event_type == 'special' %}
+                        <small class="d-block">
+                            [{{ event.formatted_timestamp }}] {{ event.actor.name }}
+                        </small>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mt-4">
+    <a href="{% url 'game_round_detail' round.id %}" class="btn btn-secondary">← Back to Round Details</a>
+</div>
+{% endblock %}

@@ -19,11 +19,36 @@ class ResourceBasedSimulator:
 
         # Role effectiveness modifiers
         self.role_modifiers = {
-            "commander": {"shot_power": 2, "shield": 3, "special": "nuke", "special_cost": 20},
-            "heavy": {"shot_power": 3, "shield": 3, "special": "none", "special_cost": 0},
-            "scout": {"shot_power": 1, "shield": 1, "special": "rapid_fire", "special_cost": 10},
-            "medic": {"shot_power": 1, "shield": 1, "special": "life_boost", "special_cost": 10},
-            "ammo": {"shot_power": 1, "shield": 1, "special": "ammo_boost", "special_cost": 15},
+            "commander": {
+                "shot_power": 2,
+                "shield": 3,
+                "special": "nuke",
+                "special_cost": 20,
+            },
+            "heavy": {
+                "shot_power": 3,
+                "shield": 3,
+                "special": "none",
+                "special_cost": 0,
+            },
+            "scout": {
+                "shot_power": 1,
+                "shield": 1,
+                "special": "rapid_fire",
+                "special_cost": 10,
+            },
+            "medic": {
+                "shot_power": 1,
+                "shield": 1,
+                "special": "life_boost",
+                "special_cost": 10,
+            },
+            "ammo": {
+                "shot_power": 1,
+                "shield": 1,
+                "special": "ammo_boost",
+                "special_cost": 15,
+            },
         }
 
     def simulate_match(self, team_red, team_blue, match_type="friendly"):
@@ -107,6 +132,8 @@ class ResourceBasedSimulator:
 
             state = PlayerRoundState.objects.create(
                 game_round=game_round,
+                team_color=team_color,
+                role=player.role,
                 player=player,
                 starting_lives=resources["lives"],
                 starting_shots=resources["shots"],
@@ -126,10 +153,10 @@ class ResourceBasedSimulator:
         # Combat simulation over time (simplified)
         round_duration = 15 * 60  # 15 minutes in seconds
 
-        # TODO: we want to simulate combat much faster than every 30 seconds but this is ok for now to test
-        for second in range(0, round_duration, 30):  # Check every 30 seconds
+        # TODO: we want to simulate combat much faster than every 5 seconds but this is ok for now to test
+        for second in range(0, round_duration, 5):  # Check every 5 seconds
             # Random combat events
-            if random.random() < 0.7:  # 70% chance of combat per 30-second interval
+            if random.random() < 0.7:  # 70% chance of combat per 5 second interval
                 self._simulate_combat_exchange(red_players, blue_players)
 
             # Check for team eliminations
@@ -223,7 +250,7 @@ class ResourceBasedSimulator:
             return
 
         # Get role modifiers
-        #TODO: make sure this works? we should get the player role and modifiers based on that
+        # TODO: make sure this works? we should get the player role and modifiers based on that
         att_mods = self.role_modifiers.get(
             attacker.player.role, self.role_modifiers["scout"]
         )
@@ -233,7 +260,7 @@ class ResourceBasedSimulator:
 
         # Calculate hit probability
         # TODO: accuracy and evasion should be on player model
-        base_accuracy = .6 # 60% for now, will change later to
+        base_accuracy = 0.6  # 60% for now, will change later to
         # accuracy = attacker.player.accuracy
         accuracy = base_accuracy * att_mods.get("accuracy", 1.0)
         evasion = def_mods.get("survival", 1.0)
@@ -246,20 +273,56 @@ class ResourceBasedSimulator:
         attacker.save()
 
         if random.random() < hit_chance:
-            
+
+            # TODO: we also want to randomize/log where the defender was tagged
+
             # Hit! Remove defender life and award points
             defender.final_lives -= 1
             defender.times_tagged += 1
+            defender.points_scored -= 20  # Penalty for being tagged
+            defender.specific_tags[attacker.get_tag_id]["tagged_by"] += 1
 
             attacker.tags_made += 1
-            base_points = 100
-
-            attacker.points_scored += base_points
-            defender.points_scored -= 20  # Penalty for being tagged
+            attacker.points_scored += 100
+            attacker.final_shots -= 1
+            attacker.specific_tags[defender.get_tag_id]["tags"] += 1
+            attacker.last_tag_entity
 
             # Save states
             attacker.save()
             defender.save()
+
+    def _attempt_resupply(self, tagger, teammate):
+        """Simulate a resupply action"""
+        # determine the role of the tagger and teammate
+
+        return None
+
+    def _attempt_missile(self, attacker, defender):
+        return None
+
+    def _use_special(self, player_state):
+        """Simulate using a special ability"""
+        return None
+    
+    def _missile_base(self, player_state, base_id):
+        """Simulate using a missile on a base target"""
+        player_state.missiles_fired += 1
+        player_state.final_missiles -= 1
+        if base_id == "neutral":
+            player_state.neutral_base_destroyed = True
+        else:
+            player_state.opposing_base_destroyed = True
+        player_state.points_scored += 1001 # base destroy score
+
+    # TODO: need to determine if we are choosing who to reset off of first or in method
+    def _attempt_reset(self, player_state):
+        """Simulate a player resetting after being tagged"""
+        return None
+    
+    
+
+        
 
 
 # Legacy simple simulator for backward compatibility

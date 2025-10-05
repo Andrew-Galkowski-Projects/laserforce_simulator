@@ -50,6 +50,7 @@ class Player(models.Model):
 
     team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="players")
     name = models.CharField(max_length=100)
+    # TODO: add role preference that gives a multiplier to stats if player is in that role
 
     # do we need role, shot power, and shield on the player class? can we get them from the role
     role = models.CharField(max_length=20, choices=ROLES)
