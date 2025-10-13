@@ -43,7 +43,8 @@ class Player(models.Model):
     ROLES = [
         ("commander", "Commander"),
         ("heavy", "Heavy Weapons"),
-        ("scout", "Scout"),
+        ("scout 1", "Scout 1"),
+        ("scout 2", "Scout 2"),
         ("medic", "Medic"),
         ("ammo", "Ammo"),
     ]

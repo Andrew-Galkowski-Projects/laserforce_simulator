@@ -219,6 +219,11 @@ class PlayerRoundState(models.Model):
         red_base = 13
         blue_base = 14
         neutral_base = 15
+    
+    class zones(models.IntegerChoices):
+        red_zone = 0
+        neutral_zone = 1
+        blue_zone = 2
 
     game_round = models.ForeignKey(
         GameRound, related_name="player_states", on_delete=models.CASCADE
@@ -236,11 +241,13 @@ class PlayerRoundState(models.Model):
     # these are for resets, ability to be resupplied, and ability to be tagged
     # this will need to be tweaked later when bases are implemented
     last_tagged_id = models.IntegerField(choices=tag_id.choices, default=tag_id.none)
+    shot_power = models.IntegerField(default=1)
     shields = models.IntegerField(default=1)  # When 0 player loses a life and is down for 8 seconds
     is_active = models.BooleanField(default=True)  # false if player is deactivated
     is_taggable = models.BooleanField(default=True)  # false if player is in respawn downtime (4 seconds)
     neutral_base_destroyed = models.BooleanField(default=False)  # true if player has destroyed the neutral base
     opposing_base_destroyed = models.BooleanField(default=False)  # true if player has destroyed the opposing base
+    current_zone = models.IntegerField(choices=zones.choices, default=zones.red_zone) # currently a number between 0 and 2
 
 
     # Final resources
@@ -248,6 +255,7 @@ class PlayerRoundState(models.Model):
     final_shots = models.IntegerField(default=0)
     final_special = models.IntegerField(default=0)
     final_missiles = models.IntegerField(default=0)
+    final_medic_hits = models.IntegerField(default=0)
 
     # Performance stats
     points_scored = models.IntegerField(default=0)
@@ -441,7 +449,7 @@ GameEvent.objects.create(
     actor=attacker_player,
     target=defender_player,
     points_awarded=100,
-    description=f"{attacker_player.name} tagged {defender_player.name}",
+    description=f"{attacker_player.name} zaps {defender_player.name}",
     metadata={
         'attacker_lives': 12,
         'defender_lives': 14,  # before the tag
