@@ -108,9 +108,8 @@ class ResourceBasedSimulator:
             game_round, team_blue.players.all(), "blue"
         )
 
-
-        # Simulate the round
-        round_result = self._simulate_round_combat(red_players, blue_players)
+        # Simulate the round (pass game_round so events can be recorded)
+        round_result = self._simulate_round_combat(game_round, red_players, blue_players)
 
         # Update game round with results
         game_round.red_points = round_result["red_points"]
@@ -134,14 +133,16 @@ class ResourceBasedSimulator:
             modifiers = self.role_modifiers.get(
                 player.role, self.role_modifiers[player.role]
             )
+            starting_zone = 0 if team_color == "red" else 2
 
             state = PlayerRoundState.objects.create(
                 game_round=game_round,
                 team_color=team_color,
                 role=player.role, 
                 player=player,
+                current_zone=starting_zone,
                 shot_power=modifiers["shot_power"],
-                shields=modifiers["shield"]
+                shields=modifiers["shield"],
                 starting_lives=resources["lives"],
                 starting_shots=resources["shots"],
                 starting_special=resources["special"],
@@ -155,16 +156,16 @@ class ResourceBasedSimulator:
 
         return player_states
 
-    def _simulate_round_combat(self, red_players, blue_players):
+    def _simulate_round_combat(self, game_round, red_players, blue_players):
         """Simulate combat between two teams"""
         # Combat simulation over time (simplified)
         round_duration = 15 * 60  # 15 minutes in seconds
 
-        # TODO: we want to simulate combat much faster than every 5 seconds but this is ok for now to test
-        for second in range(0, round_duration, 5):  # Check every 5 seconds
+        # TODO: we want to simulate combat much faster than every 3 seconds but this is ok for now to test
+        for second in range(0, round_duration, 3):  # Check every 3 seconds
             # Random combat events
-            if random.random() < 0.7:  # 70% chance of combat per 5 second interval
-                self._simulate_combat_exchange(red_players, blue_players, second)
+            if random.random() < 0.7:  # 70% chance of combat per 3 second interval
+                self._simulate_combat_exchange(game_round, red_players, blue_players, second)
 
             # Check for team eliminations
             red_alive = [p for p in red_players if p.final_lives > 0]
@@ -213,15 +214,14 @@ class ResourceBasedSimulator:
     # in this simulation we want to also simulate down time when tagged so that weight would change if
     # the combat exchange happens while a player is down
 
-    def _simulate_combat_exchange(self, red_players, blue_players, second):
+    def _simulate_combat_exchange(self, game_round, red_players, blue_players, second):
         """Simulate a single combat exchange between teams"""
         # Get alive players
-        red_alive = [p for p in red_players if p.final_lives > 0]
+        red_alive = [p for p in red_players if p.is_active_at(second)]
         blue_alive = [
-            p for p in blue_players if p.final_lives > 0
+            p for p in blue_players if p.is_active_at(second)
         ]
         all_alive = red_alive + blue_alive
-
 
         # new logic instead of random
         """
@@ -233,28 +233,16 @@ class ResourceBasedSimulator:
         peform action
         determine if follow up action
         """
+        # TODO: change order of players based on some stats
         # randomize the list of players
+        random.shuffle(all_alive)
+        for player in all_alive:
+            # choose action to perform
+            self._choose_action(player, all_alive, second)
 
-
-        # check if one team is eliminated, and stop simulation
-        if not red_alive or not blue_alive:
-            return
-
-        # Random combat
-        for _ in range(random.randint(1, 3)):  # 1-3 tag attempts per exchange
-            # TODO: improve this logic to be less random, we probably want
-            if random.random() < 0.5:  # 50% chance red team attacks
-                attacker = random.choice(red_alive)
-                defenders = [p for p in blue_alive if p.final_lives > 0]
-                if defenders:
-                    defender = random.choice(defenders)
-                    self._attempt_tag(attacker, defender, second)
-            else:  # Blue team attacks
-                attacker = random.choice(blue_alive)
-                defenders = [p for p in red_alive if p.final_lives > 0]
-                if defenders:
-                    defender = random.choice(defenders)
-                    self._attempt_tag(attacker, defender, second)
+            # check if one team is eliminated, and stop simulation
+            if not red_alive or not blue_alive:
+                return
 
             # Update alive lists after potential eliminations
             red_alive = [
@@ -263,12 +251,86 @@ class ResourceBasedSimulator:
             blue_alive = [
                 p for p in blue_players if p.final_lives > 0
             ]
+            all_alive = red_alive + blue_alive
 
             if not red_alive or not blue_alive:
                 break
 
-    def _attempt_tag(self, attacker, defender, second):
-        """Simulate a tag attempt between two players"""
+    def _choose_action(self, player, all_alive, second):
+        # TODO: improve action choice based on player stats and situation
+        if player.player.can_resupply:
+            if (player.team_color == "red" and player.current_zone != 0) or (player.team_color == "blue" and player.current_zone != 2):
+                actions = ["tag_player", "resupply_ally", "change_zone", "capture_base"]
+                weights = [20, 30, 5, 50]  # When able, more likely to capture base
+            else:
+                actions = ["tag_player", "resupply_ally", "change_zone"]
+                weights = [35, 55, 10]  # when in own zone, more likely to tag or resupply
+        if player.role == "commander" or player.role == "heavy":
+            if (player.team_color == "red" and player.current_zone != 0) or (player.team_color == "blue" and player.current_zone != 2):
+                actions = ["tag_player", "missile_player", "change_zone", "capture_base"]
+                weights = [30, 10, 10, 50]  # When able, more likely to capture base, missiles are rare
+            else:
+                actions = ["tag_player", "missile_player", "change_zone"]
+                weights = [70, 10, 20]  # when in own zone, more likely to tag
+        if player.role == "scout" or player.role == "scout":
+            if (player.team_color == "red" and player.current_zone != 0) or (player.team_color == "blue" and player.current_zone != 2):
+                actions = ["tag_player", "change_zone", "capture_base"]
+                weights = [50, 10, 40]  # When able, more likely to capture base
+            else:
+                actions = ["tag_player", "change_zone"]
+                weights = [80, 20]  # when in own zone, more likely to tag
+        print(f"{player.role}, zone: {player.current_zone}, team: {player.team_color}, bases: {player.neutral_base_destroyed},{player.opposing_base_destroyed} {actions}, {weights}")
+        action = random.choices(actions, weights)[0]
+        print(f"chosen action: {action}")
+
+        if action == "tag_player":
+            # choose a target from the opposing team in the same zone
+            potential_targets = [p for p in all_alive if p.team_color != player.team_color and p.current_zone == player.current_zone and p.final_lives > 0]
+            if potential_targets:
+                target = random.choice(potential_targets)
+                self._attempt_tag(player.game_round, player, target, second=second)  # second is not tracked here
+            else:
+                # if no valid targets, change zone instead
+                self._change_zone(player)
+        elif action == "resupply_ally":
+            # choose a teammate in the same zone to resupply
+            potential_teammates = [p for p in all_alive if p.team_color == player.team_color and p.current_zone == player.current_zone and p != player and p.final_lives > 0]
+            if potential_teammates:
+                teammate = random.choice(potential_teammates)
+                self._attempt_resupply(player, teammate, second)
+        elif action == "missile_player":
+            if player.final_missiles > 0:
+                # choose a target from the opposing team in the same zone
+                potential_targets = [p for p in all_alive if p.team_color != player.team_color and p.current_zone == player.current_zone and p.final_lives > 0]
+                if potential_targets:
+                    target = random.choice(potential_targets)
+                    self._start_missile_lock(player, target, second)
+        elif action == "change_zone":
+            # change to an adjacent zone
+            self._change_zone(player)
+        elif action == "capture_base":
+            # assumes already in correct zone to capture base
+            if player.current_zone == 1 and not player.neutral_base_destroyed:
+                base_id = 15
+                self._capture_base(player, base_id, second)
+            elif not player.opposing_base_destroyed:
+                # base id is 14 if player is red, and 13 if blue
+                base_id = 14 if player.team_color == "red" else 13
+                self._capture_base(player, base_id, second)
+            else:
+                # if bases are destroyed, change zone instead
+                self._change_zone(player)
+
+    def _change_zone(self, player):
+        if player.current_zone == 1:
+                    # 50/50 chance to go to either adjacent zone
+            player.current_zone = random.choice([0, 2])
+        else:
+            player.current_zone = 1
+
+
+    def _attempt_tag(self, game_round, attacker, defender, second):
+        """Simulate a tag attempt between two players and record events on game_round"""
         if attacker.final_shots <= 0 or defender.final_lives <= 0:
             return
 
@@ -292,7 +354,7 @@ class ResourceBasedSimulator:
         hit_chance = max(0.1, min(0.95, hit_chance))  # Clamp between 10% and 95%
 
         # Use a shot, except if ammo, they have unlimited
-        if attacker.role != "Ammo":
+        if attacker.role != "ammo":
             attacker.final_shots -= 1
         attacker.save()
         rolled_chance = random.random() # may need to tweak this, should be between 1-100
@@ -302,15 +364,34 @@ class ResourceBasedSimulator:
             # TODO: we also want to randomize/log where the defender was tagged
 
             # Hit! Remove defender life and award points
-            defender.final_lives -= 1
+            defender.shields = max(0, defender.shields - attacker.shot_power)  # lose shields proportional to shot power
+            if defender.shields == 0:
+                defender.final_lives -= 1
+                defender.last_downed_time = second  # set downed time for respawn logic
             defender.times_tagged += 1
             defender.points_scored -= 20  # Penalty for being tagged
-            defender.specific_tags[attacker.get_tag_id]["tagged_by"] += 1
+            
+
+            # Safe-upsert keys in specific_tags to avoid KeyError
+            atk_key = attacker.get_tag_id
+            def_key = defender.get_tag_id
+            if attacker.specific_tags is None:
+                attacker.specific_tags = {}
+            if defender.specific_tags is None:
+                defender.specific_tags = {}
+
+            if def_key not in attacker.specific_tags:
+                attacker.specific_tags[def_key] = {"tags": 0, "tagged_by": 0, "missiled": 0, "missiled by": 0}
+            if atk_key not in defender.specific_tags:
+                defender.specific_tags[atk_key] = {"tags": 0, "tagged_by": 0, "missiled": 0, "missiled by": 0}
+
+            defender.specific_tags[atk_key]["tagged_by"] += 1
 
             attacker.tags_made += 1
+            attacker.final_special += 1
             attacker.points_scored += 100
-            attacker.specific_tags[defender.get_tag_id]["tags"] += 1
-            attacker.last_tagged_id = defender.get_tag_id()
+            attacker.specific_tags[def_key]["tags"] += 1
+            attacker.last_tagged_id = def_key
             if defender.role == "medic":
                 attacker.final_medic_hits += 1
 
@@ -327,10 +408,10 @@ class ResourceBasedSimulator:
                 game_round=game_round,
                 timestamp=second,
                 event_type='tag',
-                actor=attacker,
-                target=defender,
+                actor=attacker.player,
+                target=defender.player,
                 points_awarded=100,
-                description=f"{attacker.name} zaps {defender.name}",
+                description=f"{attacker.player.name} zaps {defender.player.name}",
                 metadata={
                     'attacker_points': attacker.points_scored - 100, # before tag
                     'attacker_lives': attacker.final_lives,
@@ -350,48 +431,171 @@ class ResourceBasedSimulator:
         """Simulate a resupply action"""
         # determine the role of the tagger and teammate
         ammo_resupply_chart = {
-            'Commander': 5,
-            'Heavy': 5,
-            'Scout 1': 10,
-            'Scout 2': 10
-            'Medic': 5
+            'commander': 5,
+            'heavy': 5,
+            'scout': 10,
+            'medic': 5,
         }
-
-        return None
+        medic_resupply_chart = {
+            'commander': 4,
+            'heavy': 3,
+            'scout': 5,
+            'ammo': 3,
+        }
+        print(f"resupply attempt: {tagger.role} to {teammate.role}, {teammate.is_resupplyable_at(second)}, {teammate.final_shots}/{teammate.max_shots} shots, {teammate.final_lives}/{teammate.max_lives} lives")
+        if tagger.role == "ammo" and teammate.is_resupplyable_at(second):
+            resupply_amount = ammo_resupply_chart[teammate.role]
+            # only resupply to cap
+            if teammate.final_shots + resupply_amount > teammate.max_shots:
+                teammate.final_shots = teammate.max_shots
+            else:
+                teammate.final_shots += resupply_amount
+            tagger.save()
+            teammate.save()
+            # create game event for resupply
+            GameEvent.objects.create(
+                game_round=tagger.game_round,
+                timestamp=second,
+                event_type='resupply',
+                actor=tagger.player,
+                target=teammate.player,
+                points_awarded=0,
+                description=f"{tagger.player.name} resupplies {teammate.player.name} with {resupply_amount} shots",
+                metadata={
+                    'tagger_points': tagger.points_scored, # before resupply
+                    'tagger_lives': tagger.final_lives,
+                    'tagger_shots': tagger.final_shots,
+                    'teammate_points': teammate.points_scored,
+                    'teammate_lives': teammate.final_lives,
+                    'teammate_shots': teammate.final_shots - resupply_amount, # before resupply
+                }
+            )
+            return
+        elif tagger.role == "medic" and tagger.final_shots > 0 and teammate.is_resupplyable_at(second):
+            resupply_amount = medic_resupply_chart[teammate.role]
+            # only resupply to cap
+            if teammate.final_lives + resupply_amount > teammate.max_lives:
+                teammate.final_lives = teammate.max_lives
+            else:
+                teammate.final_lives += resupply_amount
+            tagger.save()
+            teammate.save()
+            # create game event for resupply
+            GameEvent.objects.create(
+                game_round=tagger.game_round,
+                timestamp=second,
+                event_type='resupply',
+                actor=tagger.player,
+                target=teammate.player,
+                points_awarded=0,
+                description=f"{tagger.player.name} heals {teammate.player.name} for {resupply_amount} lives",
+                metadata={
+                    'tagger_points': tagger.points_scored, # before resupply
+                    'tagger_lives': tagger.final_lives,
+                    'tagger_shots': tagger.final_shots,
+                    'teammate_points': teammate.points_scored,
+                    'teammate_lives': teammate.final_lives - resupply_amount, # before resupply
+                    'teammate_shots': teammate.final_shots,
+                }
+            )
+            return
+        return
 
     def _start_missile_lock(self, attacker, defender, second):
-        """Simulate starting to missile an opponent, """
+        """Simulate starting to missile an opponent"""
         # check that attacker is active and defender is targetable
         # roll if defender missile dodges/runs away
         # if not then perform complete missile with a 1-1.5 second delay
-        return None
+        if attacker.is_active_at(second) and defender.is_taggable_at(seconds_into_round=second) and attacker.final_missiles > 0:
+            # roll if defender dodges
+            dodge_chance = 0.2  # base 20% chance to dodge
+            #TODO: dodging should be based on player stats
+
+            if random.random() < dodge_chance:
+                # Defender dodges the missile
+                # create game event for dodging missile
+                GameEvent.objects.create(
+                    game_round=attacker.game_round,
+                    timestamp=second,
+                    event_type='missile_dodge',
+                    actor=defender.player,
+                    target=attacker.player,
+                    points_awarded=0,
+                    description=f"{defender.player.name} dodges missile from {attacker.player.name}",
+                    metadata={
+                        'attacker_points': attacker.points_scored,
+                        'attacker_lives': attacker.final_lives,
+                        'attacker_shots': attacker.final_shots,
+                        'defender_points': defender.points_scored,
+                        'defender_lives': defender.final_lives,
+                        'defender_shots': defender.final_shots,
+                    }
+                )
+                return
+
+            # Defender does not dodge, schedule missile completion
+            delay = random.randint(1, 2)  # 1-2 second delay
+            print("about to complete missile")
+            self._complete_missile(attacker, defender, second + delay)
+            return
+        return 
     
     def _complete_missile(self, attacker, defender, second):
         """Simulate finishing missle on opponent"""
-        if attacker.is_active and defender.is_taggable:
-            if defender.role == "Commander" or defender.role == "Heavy":
+        if attacker.is_active_at(second) and defender.is_taggable_at(second):
+            # normalize role checks (roles are stored lowercase elsewhere)
+            if str(defender.role).lower() in ("commander", "heavy"):
                 defender.shields = 3
             else:
                 defender.shields = 1
-            defender.is_active = False
-            defender.is_taggable = False
             defender.points_scored -= 100
             defender.final_lives -= 2
+            defender.last_downed_time = second  # set downed time for respawn logic
             defender.times_missiled += 1
-            defender.specific_tags[attacker.get_tag_id()]["missiled by"] += 1
+            # Ensure keys exist for missile bookkeeping
+            atk_key = attacker.get_tag_id
+            def_key = defender.get_tag_id
+            if attacker.specific_tags is None:
+                attacker.specific_tags = {}
+            if defender.specific_tags is None:
+                defender.specific_tags = {}
+            if atk_key not in defender.specific_tags:
+                defender.specific_tags[atk_key] = {"tags": 0, "tagged_by": 0, "missiled": 0, "missiled by": 0}
+            if def_key not in attacker.specific_tags:
+                attacker.specific_tags[def_key] = {"tags": 0, "tagged_by": 0, "missiled": 0, "missiled by": 0}
 
-            attacker.last_tagged_id = defender.get_tag_id()
-            attacker.specific_tags[defender.get_tag_id()]["missiled"] += 1
+            defender.specific_tags[atk_key]["missiled by"] += 1
+
+            attacker.last_tagged_id = defender.get_tag_id
+            attacker.specific_tags[def_key]["missiled"] += 1
             attacker.points_scored += 500
             attacker.final_missiles -= 1
             attacker.final_special += 2
-            if defender.role == "Medic":
+            if str(defender.role).lower() == "medic":
                 attacker.final_medic_hits += 2
 
             defender.save()
             attacker.save()
 
             # create game event for attacker missiling defender
+            GameEvent.objects.create(
+                game_round=attacker.game_round,
+                timestamp=second,
+                event_type='missile_hit',
+                actor=attacker.player,
+                target=defender.player,
+                points_awarded=500,
+                description=f"{attacker.player.name} hits {defender.player.name} with a missile",
+                metadata={
+                    'attacker_points': attacker.points_scored - 500, # before missile hit
+                    'attacker_lives': attacker.final_lives,
+                    'attacker_shots': attacker.final_shots,
+                    'defender_points': defender.points_scored + 100, # before missile hit
+                    'defender_lives': defender.final_lives + 2, # before missile hit
+                    'defender_shots': defender.final_shots,
+                }
+            )
+            print("missile hit completed")
 
 
 
@@ -401,6 +605,29 @@ class ResourceBasedSimulator:
         # depending on role check special point count
         # if enough specials, do action based on role.
         return None
+    
+    def _reset_base(self, player_state, base_id, second):
+        """Simulate resetting off a base"""
+        # check if player can reset base (is alive, is in zone, hasn't already captured base)
+        # if so, expend 1 ammo and set last_tagged_id to base id
+        return None
+    
+    def _capture_base(self, player_state, base_id, second):
+        """Simulate capturing a base"""
+        # check if player can capture base (is alive, is in zone, hasn't already captured base)
+        # if so, expend 3 shots, set last_tagged_id to base id, and award 1001 points
+        if player_state.final_shots >= 3:
+            player_state.final_shots -= 3
+            player_state.last_tagged_id = base_id
+            if base_id == 15:
+                player_state.neutral_base_destroyed = True
+            else:
+                player_state.opposing_base_destroyed = True
+            player_state.points_scored += 1001  # base capture score
+            player_state.final_special += 5
+            player_state.save()
+            return True
+        return False
     
     def _missile_base(self, player_state, base_id, second):
         """Simulate using a missile on a base target"""

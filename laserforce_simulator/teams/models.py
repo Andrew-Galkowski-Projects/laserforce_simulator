@@ -16,6 +16,25 @@ class Team(models.Model):
         return self.players.count()
 
     @property
+    def players_qs(self):
+        """Return a QuerySet of Player objects that belong to this team.
+
+        Use this when you want to further filter/order without loading the
+        objects into memory.
+        Example: team.players_qs.order_by('name')
+        """
+        return self.players.all()
+
+    @property
+    def players_list(self):
+        """Return a plain Python list of Player instances for this team.
+
+        This is convenient for templates or when you need an in-memory list.
+        Example in template: {% for p in team.players_list %} ... {% endfor %}
+        """
+        return list(self.players.all())
+
+    @property
     def is_valid_roster(self):
         """
         Check if team has exactly 6 players with correct role distribution
@@ -43,8 +62,7 @@ class Player(models.Model):
     ROLES = [
         ("commander", "Commander"),
         ("heavy", "Heavy Weapons"),
-        ("scout 1", "Scout 1"),
-        ("scout 2", "Scout 2"),
+        ("scout", "Scout"),
         ("medic", "Medic"),
         ("ammo", "Ammo"),
     ]
@@ -125,6 +143,37 @@ class Player(models.Model):
     accuracy = models.IntegerField(default=50)  # 0-100
     survival = models.IntegerField(default=50)  # how well they avoid tags
     special_usage = models.IntegerField(default=50)  # tactical ability
+
+    @property
+    def overall_rating(self):
+        # Simple average of all stats for now
+        stats = [
+            self.player_awareness,
+            self.game_awareness,
+            self.resource_awareness,
+            self.decision_making,
+            self.positioning,
+            self.stamina,
+            self.speed,
+            self.flexibility,
+            self.adaptability,
+            self.communication,
+            self.teamwork,
+            self.Offensive_synergy,
+            self.defensive_synergy,
+            self.midfield_synergy,
+            self.resupply_synergy,
+            self.resupply_efficiency,
+            self.accuracy,
+            self.survival,
+            self.special_usage,
+        ]
+        return sum(stats) / len(stats)
+
+    @property
+    def can_resupply(self):
+        return self.role in ["medic", "ammo"]
+    
 
     @property
     def has_missiles(self):

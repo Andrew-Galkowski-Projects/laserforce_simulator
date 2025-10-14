@@ -239,12 +239,10 @@ class PlayerRoundState(models.Model):
     starting_missiles = models.IntegerField(default=0)  # Only for commander/heavy
 
     # these are for resets, ability to be resupplied, and ability to be tagged
-    # this will need to be tweaked later when bases are implemented
     last_tagged_id = models.IntegerField(choices=tag_id.choices, default=tag_id.none)
     shot_power = models.IntegerField(default=1)
     shields = models.IntegerField(default=1)  # When 0 player loses a life and is down for 8 seconds
-    is_active = models.BooleanField(default=True)  # false if player is deactivated
-    is_taggable = models.BooleanField(default=True)  # false if player is in respawn downtime (4 seconds)
+    last_downed_time = models.IntegerField(null=True, blank=True)  # Timestamp of when player was last downed
     neutral_base_destroyed = models.BooleanField(default=False)  # true if player has destroyed the neutral base
     opposing_base_destroyed = models.BooleanField(default=False)  # true if player has destroyed the opposing base
     current_zone = models.IntegerField(choices=zones.choices, default=zones.red_zone) # currently a number between 0 and 2
@@ -295,6 +293,31 @@ class PlayerRoundState(models.Model):
         return f"{self.player.name} - {self.game_round}"
 
     @property
+    def max_lives(self):
+        # Determine max lives based on role
+        max_lives = {
+            "commander": 30,
+            "heavy": 20,
+            "scout": 30,
+            "medic": 20,
+            "ammo": 20,
+        }
+        return max_lives.get(self.role, 15)  # Default to 15 if role unknown
+    
+    @property
+    def max_shots(self):
+        # Determine max shots based on role
+        max_shots = {
+            "commander": 60,
+            "heavy": 40,
+            "scout": 60,
+            "medic": 30,
+            "ammo": 15,
+        }
+        return max_shots.get(self.role, 30)  # Default to 30 if role unknown
+
+
+    @property
     def lives_lost(self):
         # TODO: add lives lost due to nukes
         return max(0, self.times_tagged + self.times_missiled * 2)
@@ -307,37 +330,79 @@ class PlayerRoundState(models.Model):
     def missiles_used(self):
         return max(0, self.missiles_fired)
 
-    @property
-    def is_resupplyable(self):
-        return self.is_active
+    def is_resupplyable_at(self, seconds_into_round):
+        """Return True if the player can be resupplied at the given second into the round."""
+        return self.is_active_at(seconds_into_round)
+
+    def is_active_at(self, seconds_into_round):
+        """Check if player is active at a given time (not in downed cooldown).
+
+        This is a time-based check; use the boolean `is_active` field for
+        instantaneous checks where no timestamp is available.
+        """
+        # Check if player is in respawn downtime (8 seconds after being downed)
+        if getattr(self, "last_downed_time", None) is not None:
+            if seconds_into_round - self.last_downed_time < 8 or self.final_lives == 0:
+                return False
+        return True
+
+    def is_taggable_at(self, seconds_into_round):
+        """Return True if the player can be tagged at the given second (not in respawn resettime)."""
+        # Check if player is in respawn resettable time (4 seconds after being downed)
+        if getattr(self, "last_downed_time", None) is not None:
+            try:
+                if seconds_into_round - self.last_downed_time < 4 or self.final_lives == 0:
+                    return False
+            except Exception:
+                return bool(self.is_taggable)
+        return True
     
     @property
     def get_tag_id(self):
+        # Normalize role comparisons (role strings may be lowercase)
+        role = str(self.role).lower() if self.role is not None else ""
+
         if self.team_color == "red":
-            if self.role == "Commander":
+            if role == "commander":
                 return self.tag_id.red_commander
-            elif self.role == "Heavy":
+            elif role == "heavy":
                 return self.tag_id.red_heavy
-            elif self.role == "Scout 1":
-                return self.tag_id.red_scout_1
-            elif self.role == "Scout 2":
-                return self.tag_id.red_scout_2
-            elif self.role == "Ammo":
+            elif role == "scout":
+                # Determine scout1 vs scout2 by comparing player names on the team
+                try:
+                    scouts = list(self.player.team.players.filter(role="scout").order_by("name"))
+                    if len(scouts) <= 1:
+                        return self.tag_id.red_scout_1
+                    # If this player's name sorts before the other, they're scout_1
+                    if scouts[0].name == self.player.name:
+                        return self.tag_id.red_scout_1
+                    else:
+                        return self.tag_id.red_scout_2
+                except Exception:
+                    return self.tag_id.red_scout_1
+            elif role == "ammo":
                 return self.tag_id.red_ammo
-            elif self.role == "Medic":
+            elif role == "medic":
                 return self.tag_id.red_medic
         elif self.team_color == "blue":
-            if self.role == "Commander":
+            if role == "commander":
                 return self.tag_id.blue_commander
-            elif self.role == "Heavy":
+            elif role == "heavy":
                 return self.tag_id.blue_heavy
-            elif self.role == "Scout 1":
-                return self.tag_id.blue_scout_1
-            elif self.role == "Scout 2":
-                return self.tag_id.blue_scout_2
-            elif self.role == "Ammo":
+            elif role == "scout":
+                try:
+                    scouts = list(self.player.team.players.filter(role="scout").order_by("name"))
+                    if len(scouts) <= 1:
+                        return self.tag_id.blue_scout_1
+                    if scouts[0].name == self.player.name:
+                        return self.tag_id.blue_scout_1
+                    else:
+                        return self.tag_id.blue_scout_2
+                except Exception:
+                    return self.tag_id.blue_scout_1
+            elif role == "ammo":
                 return self.tag_id.blue_ammo
-            elif self.role == "Medic":
+            elif role == "medic":
                 return self.tag_id.blue_medic
         return self.tag_id.none
 

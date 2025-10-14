@@ -1,1 +1,6 @@
 laserforce_simulator/db.sqlite3
+laserforce_simulator/matches/__pycache__/models.cpython-311.pyc
+laserforce_simulator/matches/__pycache__/models.cpython-311.pyc
+laserforce_simulator/matches/__pycache__/simulation.cpython-311.pyc
+laserforce_simulator/matches/__pycache__/urls.cpython-311.pyc
+laserforce_simulator/matches/__pycache__/views.cpython-311.pyc
