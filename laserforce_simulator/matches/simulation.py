@@ -1,6 +1,10 @@
 import random
+import logging
 from .models import GameEvent, Match, GameRound, PlayerRoundState, SingleRound
 from teams.models import Player
+
+# Module logger
+logger = logging.getLogger(__name__)
 
 
 class ResourceBasedSimulator:
@@ -172,6 +176,7 @@ class ResourceBasedSimulator:
             blue_alive = [p for p in blue_players if p.final_lives > 0]
 
             if not red_alive or not blue_alive:
+                logger.debug("Round ends at second %s, red alive %s, blue alive %s", second, red_alive, blue_alive)
                 break  # Round ends on elimination
 
         # Calculate final results
@@ -191,6 +196,7 @@ class ResourceBasedSimulator:
         # Determine eliminations
         red_eliminated = all(p.final_lives <= 0 for p in red_players)
         blue_eliminated = all(p.final_lives <= 0 for p in blue_players)
+        logger.debug("Final Results: %s red points, %s blue points, red eliminated: %s, blue eliminated: %s", red_points, blue_points, red_eliminated, blue_eliminated)
 
         # Save final states
         for p in red_players + blue_players:
@@ -279,14 +285,14 @@ class ResourceBasedSimulator:
             else:
                 actions = ["tag_player", "change_zone"]
                 weights = [80, 20]  # when in own zone, more likely to tag
-        print(f"{player.role}, zone: {player.current_zone}, team: {player.team_color}, bases: {player.neutral_base_destroyed},{player.opposing_base_destroyed} {actions}, {weights}")
+        logger.debug("%s, zone: %s, team: %s, bases: %s,%s %s, %s", player.role, player.current_zone, player.team_color, player.neutral_base_destroyed, player.opposing_base_destroyed, actions, weights)
         action = random.choices(actions, weights)[0]
-        print(f"chosen action: {action}")
+        logger.debug("chosen action: %s", action)
 
         if action == "tag_player":
             # choose a target from the opposing team in the same zone
             potential_targets = [p for p in all_alive if p.team_color != player.team_color and p.current_zone == player.current_zone and p.final_lives > 0]
-            if potential_targets:
+            if potential_targets and player.final_shots > 0:
                 target = random.choice(potential_targets)
                 self._attempt_tag(player.game_round, player, target, second=second)  # second is not tracked here
             else:
@@ -301,7 +307,7 @@ class ResourceBasedSimulator:
         elif action == "missile_player":
             if player.final_missiles > 0:
                 # choose a target from the opposing team in the same zone
-                potential_targets = [p for p in all_alive if p.team_color != player.team_color and p.current_zone == player.current_zone and p.final_lives > 0]
+                potential_targets = [p for p in all_alive if p.team_color != player.team_color and p.current_zone == player.current_zone and p.final_lives > 0 and p.is_taggable_at(second)]
                 if potential_targets:
                     target = random.choice(potential_targets)
                     self._start_missile_lock(player, target, second)
@@ -442,7 +448,7 @@ class ResourceBasedSimulator:
             'scout': 5,
             'ammo': 3,
         }
-        print(f"resupply attempt: {tagger.role} to {teammate.role}, {teammate.is_resupplyable_at(second)}, {teammate.final_shots}/{teammate.max_shots} shots, {teammate.final_lives}/{teammate.max_lives} lives")
+        logger.debug("resupply attempt: %s to %s, %s, %s/%s shots, %s/%s lives", tagger.role, teammate.role, teammate.is_resupplyable_at(second), teammate.final_shots, teammate.max_shots, teammate.final_lives, teammate.max_lives)
         if tagger.role == "ammo" and teammate.is_resupplyable_at(second):
             resupply_amount = ammo_resupply_chart[teammate.role]
             # only resupply to cap
@@ -535,7 +541,7 @@ class ResourceBasedSimulator:
 
             # Defender does not dodge, schedule missile completion
             delay = random.randint(1, 2)  # 1-2 second delay
-            print("about to complete missile")
+            logger.debug("about to complete missile")
             self._complete_missile(attacker, defender, second + delay)
             return
         return 
@@ -595,7 +601,7 @@ class ResourceBasedSimulator:
                     'defender_shots': defender.final_shots,
                 }
             )
-            print("missile hit completed")
+            logger.debug("missile hit completed")
 
 
 

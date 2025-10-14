@@ -170,3 +170,88 @@ class SimulationTests(TestCase):
 
 		# After changing zone, player should be in zone 1
 		self.assertEqual(state2.current_zone, 1)
+
+	def test_specific_tags_bookkeeping_and_resupply_edge_cases(self):
+		simulator = ResourceBasedSimulator()
+		team, players = self.create_team_with_roster("Edge")
+		gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
+
+		# Setup attacker/defender for tagging bookkeeping
+		attacker_player = team.players.filter(role="commander").first()
+		defender_player = team.players.filter(role="scout").first()
+		attacker = PlayerRoundState.objects.create(game_round=gr, player=attacker_player, team_color="red", role="commander", current_zone=0, final_shots=10, final_lives=10)
+		defender = PlayerRoundState.objects.create(game_round=gr, player=defender_player, team_color="blue", role="scout", current_zone=0, final_shots=10, final_lives=10)
+
+		# Force a successful tag and assert specific_tags increment
+		with patch('random.choices', return_value=["tag_player"]), patch('random.choice', return_value=defender), patch('random.random', return_value=0.0):
+			simulator._choose_action(attacker, [attacker, defender], second=1)
+
+		attacker.refresh_from_db()
+		defender.refresh_from_db()
+		atk_key = attacker.get_tag_id
+		def_key = defender.get_tag_id
+		# JSONField serializes dict keys as strings, so ensure we compare string keys
+		self.assertIn(str(def_key), attacker.specific_tags)
+		self.assertGreater(attacker.specific_tags[str(def_key)]["tags"], 0)
+		self.assertIn(str(atk_key), defender.specific_tags)
+		self.assertGreater(defender.specific_tags[str(atk_key)]["tagged_by"], 0)
+
+	def test_max_shots(self):
+		simulator = ResourceBasedSimulator()
+		team, players = self.create_team_with_roster("Edge")
+		gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
+		# Resupply edge case: teammate at max_shots should not exceed cap
+		red_states = simulator._initialize_players(gr, team.players.all(), "red")
+		ammo = next(s for s in red_states if s.role == "ammo")
+		scout_state = next(s for s in red_states if s.role == "scout")
+		scout_state.final_shots = scout_state.max_shots
+		scout_state.save()
+
+		# Attempt resupply should cap at max_shots
+		simulator._attempt_resupply(ammo, scout_state, second=10)
+		scout_state.refresh_from_db()
+		self.assertLessEqual(scout_state.final_shots, scout_state.max_shots)
+
+	def test_resupply_medic_no_shots_no_heal(self):
+		simulator = ResourceBasedSimulator()
+		team, players = self.create_team_with_roster("Edge")
+		gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
+		red_states = simulator._initialize_players(gr, team.players.all(), "red")
+		# Medic with zero shots should not be able to heal (medic.final_shots > 0 required)
+		medic_state = next(s for s in red_states if s.role == "medic")
+		medic_state.final_shots = 0
+		teammate = next(s for s in red_states if s.role == "heavy")
+		teammate.final_lives = max(1, teammate.final_lives - 5)
+		medic_state.save()
+		teammate.save()
+
+		simulator._attempt_resupply(medic_state, teammate, second=20)
+		teammate.refresh_from_db()
+		# No heal should have occurred because medic had 0 final_shots
+		self.assertLessEqual(teammate.final_lives, teammate.max_lives)
+
+	def test_is_active_and_is_taggable_time_boundaries(self):
+		team, players = self.create_team_with_roster("TimeTest")
+		gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
+		p = team.players.first()
+		state = PlayerRoundState.objects.create(game_round=gr, player=p, team_color="red", role="scout", current_zone=0, final_shots=5, final_lives=5)
+
+		# Not downed -> active and taggable
+		self.assertTrue(state.is_active_at(0))
+		self.assertTrue(state.is_taggable_at(0))
+
+		# Simulate downed at second 10
+		state.last_downed_time = 10
+		state.final_lives = 1
+		state.save()
+
+		# Within 3 seconds -> not taggable (less than 4) and not active (less than 8)
+		self.assertFalse(state.is_taggable_at(12))
+		self.assertFalse(state.is_active_at(12))
+
+		# After 5 seconds -> taggable but still not active until 8
+		self.assertTrue(state.is_taggable_at(15))
+		self.assertFalse(state.is_active_at(15))
+
+		# After 9 seconds -> active again
+		self.assertTrue(state.is_active_at(20))
