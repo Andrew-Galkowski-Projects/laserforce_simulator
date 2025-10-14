@@ -6,13 +6,22 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('teams', '0005_alter_player_role'),
+        ("teams", "0005_alter_player_role"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='player',
-            name='role',
-            field=models.CharField(choices=[('commander', 'Commander'), ('heavy', 'Heavy Weapons'), ('scout', 'Scout'), ('medic', 'Medic'), ('ammo', 'Ammo')], max_length=20),
+            model_name="player",
+            name="role",
+            field=models.CharField(
+                choices=[
+                    ("commander", "Commander"),
+                    ("heavy", "Heavy Weapons"),
+                    ("scout", "Scout"),
+                    ("medic", "Medic"),
+                    ("ammo", "Ammo"),
+                ],
+                max_length=20,
+            ),
         ),
     ]

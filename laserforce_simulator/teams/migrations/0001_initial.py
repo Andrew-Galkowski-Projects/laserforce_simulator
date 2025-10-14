@@ -8,33 +8,65 @@ class Migration(migrations.Migration):
 
     initial = True
 
-    dependencies = [
-    ]
+    dependencies = []
 
     operations = [
         migrations.CreateModel(
-            name='Team',
+            name="Team",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('name', models.CharField(max_length=100)),
-                ('created_date', models.DateTimeField(auto_now_add=True)),
-                ('wins', models.IntegerField(default=0)),
-                ('losses', models.IntegerField(default=0)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("name", models.CharField(max_length=100)),
+                ("created_date", models.DateTimeField(auto_now_add=True)),
+                ("wins", models.IntegerField(default=0)),
+                ("losses", models.IntegerField(default=0)),
             ],
         ),
         migrations.CreateModel(
-            name='Player',
+            name="Player",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('name', models.CharField(max_length=100)),
-                ('role', models.CharField(choices=[('commander', 'Commander'), ('heavy', 'Heavy Weapons'), ('scout', 'Scout'), ('medic', 'Medic'), ('ammo', 'Ammo')], max_length=20)),
-                ('accuracy', models.IntegerField(default=50)),
-                ('survival', models.IntegerField(default=50)),
-                ('special_usage', models.IntegerField(default=50)),
-                ('team', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='teams.team')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("name", models.CharField(max_length=100)),
+                (
+                    "role",
+                    models.CharField(
+                        choices=[
+                            ("commander", "Commander"),
+                            ("heavy", "Heavy Weapons"),
+                            ("scout", "Scout"),
+                            ("medic", "Medic"),
+                            ("ammo", "Ammo"),
+                        ],
+                        max_length=20,
+                    ),
+                ),
+                ("accuracy", models.IntegerField(default=50)),
+                ("survival", models.IntegerField(default=50)),
+                ("special_usage", models.IntegerField(default=50)),
+                (
+                    "team",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE, to="teams.team"
+                    ),
+                ),
             ],
             options={
-                'unique_together': {('team', 'name')},
+                "unique_together": {("team", "name")},
             },
         ),
     ]

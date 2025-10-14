@@ -6,63 +6,63 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('teams', '0002_alter_player_team'),
+        ("teams", "0002_alter_player_team"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='player',
-            name='adaptability',
+            model_name="player",
+            name="adaptability",
             field=models.IntegerField(default=50),
         ),
         migrations.AddField(
-            model_name='player',
-            name='communication',
+            model_name="player",
+            name="communication",
             field=models.IntegerField(default=50),
         ),
         migrations.AddField(
-            model_name='player',
-            name='decision_making',
+            model_name="player",
+            name="decision_making",
             field=models.IntegerField(default=50),
         ),
         migrations.AddField(
-            model_name='player',
-            name='flexibility',
+            model_name="player",
+            name="flexibility",
             field=models.IntegerField(default=50),
         ),
         migrations.AddField(
-            model_name='player',
-            name='game_awareness',
+            model_name="player",
+            name="game_awareness",
             field=models.IntegerField(default=50),
         ),
         migrations.AddField(
-            model_name='player',
-            name='player_awareness',
+            model_name="player",
+            name="player_awareness",
             field=models.IntegerField(default=50),
         ),
         migrations.AddField(
-            model_name='player',
-            name='positioning',
+            model_name="player",
+            name="positioning",
             field=models.IntegerField(default=50),
         ),
         migrations.AddField(
-            model_name='player',
-            name='resource_awareness',
+            model_name="player",
+            name="resource_awareness",
             field=models.IntegerField(default=50),
         ),
         migrations.AddField(
-            model_name='player',
-            name='speed',
+            model_name="player",
+            name="speed",
             field=models.IntegerField(default=50),
         ),
         migrations.AddField(
-            model_name='player',
-            name='stamina',
+            model_name="player",
+            name="stamina",
             field=models.IntegerField(default=50),
         ),
         migrations.AddField(
-            model_name='player',
-            name='teamwork',
+            model_name="player",
+            name="teamwork",
             field=models.IntegerField(default=50),
         ),
     ]

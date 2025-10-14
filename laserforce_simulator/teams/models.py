@@ -173,7 +173,6 @@ class Player(models.Model):
     @property
     def can_resupply(self):
         return self.role in ["medic", "ammo"]
-    
 
     @property
     def has_missiles(self):

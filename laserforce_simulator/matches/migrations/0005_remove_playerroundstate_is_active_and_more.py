@@ -6,21 +6,21 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('matches', '0004_playerroundstate_current_zone_and_more'),
+        ("matches", "0004_playerroundstate_current_zone_and_more"),
     ]
 
     operations = [
         migrations.RemoveField(
-            model_name='playerroundstate',
-            name='is_active',
+            model_name="playerroundstate",
+            name="is_active",
         ),
         migrations.RemoveField(
-            model_name='playerroundstate',
-            name='is_taggable',
+            model_name="playerroundstate",
+            name="is_taggable",
         ),
         migrations.AddField(
-            model_name='playerroundstate',
-            name='last_downed_time',
+            model_name="playerroundstate",
+            name="last_downed_time",
             field=models.IntegerField(blank=True, null=True),
         ),
     ]

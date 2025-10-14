@@ -6,43 +6,43 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('teams', '0003_player_adaptability_player_communication_and_more'),
+        ("teams", "0003_player_adaptability_player_communication_and_more"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='player',
-            name='Offensive_synergy',
+            model_name="player",
+            name="Offensive_synergy",
             field=models.IntegerField(default=50),
         ),
         migrations.AddField(
-            model_name='player',
-            name='defensive_synergy',
+            model_name="player",
+            name="defensive_synergy",
             field=models.IntegerField(default=50),
         ),
         migrations.AddField(
-            model_name='player',
-            name='midfield_synergy',
+            model_name="player",
+            name="midfield_synergy",
             field=models.IntegerField(default=50),
         ),
         migrations.AddField(
-            model_name='player',
-            name='resupply_efficiency',
+            model_name="player",
+            name="resupply_efficiency",
             field=models.IntegerField(default=50),
         ),
         migrations.AddField(
-            model_name='player',
-            name='resupply_synergy',
+            model_name="player",
+            name="resupply_synergy",
             field=models.IntegerField(default=50),
         ),
         migrations.AddField(
-            model_name='player',
-            name='shield',
+            model_name="player",
+            name="shield",
             field=models.IntegerField(default=1),
         ),
         migrations.AddField(
-            model_name='player',
-            name='shot_power',
+            model_name="player",
+            name="shot_power",
             field=models.IntegerField(default=1),
         ),
     ]

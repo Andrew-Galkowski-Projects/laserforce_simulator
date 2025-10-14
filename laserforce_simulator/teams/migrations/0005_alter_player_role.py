@@ -6,13 +6,23 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('teams', '0004_player_offensive_synergy_player_defensive_synergy_and_more'),
+        ("teams", "0004_player_offensive_synergy_player_defensive_synergy_and_more"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='player',
-            name='role',
-            field=models.CharField(choices=[('commander', 'Commander'), ('heavy', 'Heavy Weapons'), ('scout 1', 'Scout 1'), ('scout 2', 'Scout 2'), ('medic', 'Medic'), ('ammo', 'Ammo')], max_length=20),
+            model_name="player",
+            name="role",
+            field=models.CharField(
+                choices=[
+                    ("commander", "Commander"),
+                    ("heavy", "Heavy Weapons"),
+                    ("scout 1", "Scout 1"),
+                    ("scout 2", "Scout 2"),
+                    ("medic", "Medic"),
+                    ("ammo", "Ammo"),
+                ],
+                max_length=20,
+            ),
         ),
     ]

@@ -17,5 +17,9 @@ urlpatterns = [
         views.team_match_history,
         name="team_match_history",
     ),
-    path('game-round/<int:round_id>/events/', views.game_round_events, name='game_round_events'),
+    path(
+        "game-round/<int:round_id>/events/",
+        views.game_round_events,
+        name="game_round_events",
+    ),
 ]

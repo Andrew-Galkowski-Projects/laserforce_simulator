@@ -219,7 +219,7 @@ class PlayerRoundState(models.Model):
         red_base = 13
         blue_base = 14
         neutral_base = 15
-    
+
     class zones(models.IntegerChoices):
         red_zone = 0
         neutral_zone = 1
@@ -229,8 +229,12 @@ class PlayerRoundState(models.Model):
         GameRound, related_name="player_states", on_delete=models.CASCADE
     )
     player = models.ForeignKey(Player, on_delete=models.CASCADE)
-    team_color = models.CharField(max_length=10, choices=[("red", "Red"), ("blue", "Blue")], default="red")
-    role = models.CharField(max_length=50, default="commander")  # e.g., "Commander", "Ammo"
+    team_color = models.CharField(
+        max_length=10, choices=[("red", "Red"), ("blue", "Blue")], default="red"
+    )
+    role = models.CharField(
+        max_length=50, default="commander"
+    )  # e.g., "Commander", "Ammo"
 
     # Starting resources
     starting_lives = models.IntegerField(default=15)
@@ -241,12 +245,21 @@ class PlayerRoundState(models.Model):
     # these are for resets, ability to be resupplied, and ability to be tagged
     last_tagged_id = models.IntegerField(choices=tag_id.choices, default=tag_id.none)
     shot_power = models.IntegerField(default=1)
-    shields = models.IntegerField(default=1)  # When 0 player loses a life and is down for 8 seconds
-    last_downed_time = models.IntegerField(null=True, blank=True)  # Timestamp of when player was last downed
-    neutral_base_destroyed = models.BooleanField(default=False)  # true if player has destroyed the neutral base
-    opposing_base_destroyed = models.BooleanField(default=False)  # true if player has destroyed the opposing base
-    current_zone = models.IntegerField(choices=zones.choices, default=zones.red_zone) # currently a number between 0 and 2
-
+    shields = models.IntegerField(
+        default=1
+    )  # When 0 player loses a life and is down for 8 seconds
+    last_downed_time = models.IntegerField(
+        null=True, blank=True
+    )  # Timestamp of when player was last downed
+    neutral_base_destroyed = models.BooleanField(
+        default=False
+    )  # true if player has destroyed the neutral base
+    opposing_base_destroyed = models.BooleanField(
+        default=False
+    )  # true if player has destroyed the opposing base
+    current_zone = models.IntegerField(
+        choices=zones.choices, default=zones.red_zone
+    )  # currently a number between 0 and 2
 
     # Final resources
     final_lives = models.IntegerField(default=0)
@@ -303,7 +316,7 @@ class PlayerRoundState(models.Model):
             "ammo": 20,
         }
         return max_lives.get(self.role, 15)  # Default to 15 if role unknown
-    
+
     @property
     def max_shots(self):
         # Determine max shots based on role
@@ -315,7 +328,6 @@ class PlayerRoundState(models.Model):
             "ammo": 15,
         }
         return max_shots.get(self.role, 30)  # Default to 30 if role unknown
-
 
     @property
     def lives_lost(self):
@@ -351,12 +363,15 @@ class PlayerRoundState(models.Model):
         # Check if player is in respawn resettable time (4 seconds after being downed)
         if getattr(self, "last_downed_time", None) is not None:
             try:
-                if seconds_into_round - self.last_downed_time < 4 or self.final_lives == 0:
+                if (
+                    seconds_into_round - self.last_downed_time < 4
+                    or self.final_lives == 0
+                ):
                     return False
             except Exception:
                 return bool(self.is_taggable)
         return True
-    
+
     @property
     def get_tag_id(self):
         # Normalize role comparisons (role strings may be lowercase)
@@ -370,7 +385,9 @@ class PlayerRoundState(models.Model):
             elif role == "scout":
                 # Determine scout1 vs scout2 by comparing player names on the team
                 try:
-                    scouts = list(self.player.team.players.filter(role="scout").order_by("name"))
+                    scouts = list(
+                        self.player.team.players.filter(role="scout").order_by("name")
+                    )
                     if len(scouts) <= 1:
                         return self.tag_id.red_scout_1
                     # If this player's name sorts before the other, they're scout_1
@@ -391,7 +408,9 @@ class PlayerRoundState(models.Model):
                 return self.tag_id.blue_heavy
             elif role == "scout":
                 try:
-                    scouts = list(self.player.team.players.filter(role="scout").order_by("name"))
+                    scouts = list(
+                        self.player.team.players.filter(role="scout").order_by("name")
+                    )
                     if len(scouts) <= 1:
                         return self.tag_id.blue_scout_1
                     if scouts[0].name == self.player.name:

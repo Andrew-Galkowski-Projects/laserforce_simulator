@@ -6,23 +6,26 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('matches', '0003_gameround_event_log_playerroundstate_is_active_and_more'),
+        ("matches", "0003_gameround_event_log_playerroundstate_is_active_and_more"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='playerroundstate',
-            name='current_zone',
-            field=models.IntegerField(choices=[(0, 'Red Zone'), (1, 'Neutral Zone'), (2, 'Blue Zone')], default=0),
+            model_name="playerroundstate",
+            name="current_zone",
+            field=models.IntegerField(
+                choices=[(0, "Red Zone"), (1, "Neutral Zone"), (2, "Blue Zone")],
+                default=0,
+            ),
         ),
         migrations.AddField(
-            model_name='playerroundstate',
-            name='final_medic_hits',
+            model_name="playerroundstate",
+            name="final_medic_hits",
             field=models.IntegerField(default=0),
         ),
         migrations.AddField(
-            model_name='playerroundstate',
-            name='shot_power',
+            model_name="playerroundstate",
+            name="shot_power",
             field=models.IntegerField(default=1),
         ),
     ]

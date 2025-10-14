@@ -9,85 +9,220 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('teams', '0002_alter_player_team'),
+        ("teams", "0002_alter_player_team"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='Match',
+            name="Match",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('match_type', models.CharField(choices=[('tournament', 'Tournament Match'), ('friendly', 'Friendly Match')], default='friendly', max_length=20)),
-                ('date_played', models.DateTimeField(auto_now_add=True)),
-                ('red_round1_points', models.IntegerField(default=0)),
-                ('blue_round1_points', models.IntegerField(default=0)),
-                ('red_round1_eliminated', models.BooleanField(default=False)),
-                ('blue_round1_eliminated', models.BooleanField(default=False)),
-                ('red_round2_points', models.IntegerField(default=0)),
-                ('blue_round2_points', models.IntegerField(default=0)),
-                ('red_round2_eliminated', models.BooleanField(default=False)),
-                ('blue_round2_eliminated', models.BooleanField(default=False)),
-                ('red_bonus_points', models.IntegerField(default=0)),
-                ('blue_bonus_points', models.IntegerField(default=0)),
-                ('is_completed', models.BooleanField(default=False)),
-                ('team_blue', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='blue_matches', to='teams.team')),
-                ('team_red', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='red_matches', to='teams.team')),
-                ('winner', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='won_matches', to='teams.team')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "match_type",
+                    models.CharField(
+                        choices=[
+                            ("tournament", "Tournament Match"),
+                            ("friendly", "Friendly Match"),
+                        ],
+                        default="friendly",
+                        max_length=20,
+                    ),
+                ),
+                ("date_played", models.DateTimeField(auto_now_add=True)),
+                ("red_round1_points", models.IntegerField(default=0)),
+                ("blue_round1_points", models.IntegerField(default=0)),
+                ("red_round1_eliminated", models.BooleanField(default=False)),
+                ("blue_round1_eliminated", models.BooleanField(default=False)),
+                ("red_round2_points", models.IntegerField(default=0)),
+                ("blue_round2_points", models.IntegerField(default=0)),
+                ("red_round2_eliminated", models.BooleanField(default=False)),
+                ("blue_round2_eliminated", models.BooleanField(default=False)),
+                ("red_bonus_points", models.IntegerField(default=0)),
+                ("blue_bonus_points", models.IntegerField(default=0)),
+                ("is_completed", models.BooleanField(default=False)),
+                (
+                    "team_blue",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="blue_matches",
+                        to="teams.team",
+                    ),
+                ),
+                (
+                    "team_red",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="red_matches",
+                        to="teams.team",
+                    ),
+                ),
+                (
+                    "winner",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="won_matches",
+                        to="teams.team",
+                    ),
+                ),
             ],
             options={
-                'verbose_name_plural': 'Matches',
+                "verbose_name_plural": "Matches",
             },
         ),
         migrations.CreateModel(
-            name='GameRound',
+            name="GameRound",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('round_number', models.IntegerField()),
-                ('red_team_eliminated', models.BooleanField(default=False)),
-                ('blue_team_eliminated', models.BooleanField(default=False)),
-                ('match', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, to='matches.match')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("round_number", models.IntegerField()),
+                ("red_team_eliminated", models.BooleanField(default=False)),
+                ("blue_team_eliminated", models.BooleanField(default=False)),
+                (
+                    "match",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.CASCADE,
+                        to="matches.match",
+                    ),
+                ),
             ],
         ),
         migrations.CreateModel(
-            name='PlayerRoundState',
+            name="PlayerRoundState",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('lives', models.IntegerField(default=15)),
-                ('shots', models.IntegerField(default=30)),
-                ('special_points', models.IntegerField(default=3)),
-                ('missiles', models.IntegerField(default=0)),
-                ('final_lives', models.IntegerField(default=0)),
-                ('final_shots', models.IntegerField(default=0)),
-                ('points_scored', models.IntegerField(default=0)),
-                ('game_round', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='matches.gameround')),
-                ('player', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='teams.player')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("lives", models.IntegerField(default=15)),
+                ("shots", models.IntegerField(default=30)),
+                ("special_points", models.IntegerField(default=3)),
+                ("missiles", models.IntegerField(default=0)),
+                ("final_lives", models.IntegerField(default=0)),
+                ("final_shots", models.IntegerField(default=0)),
+                ("points_scored", models.IntegerField(default=0)),
+                (
+                    "game_round",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        to="matches.gameround",
+                    ),
+                ),
+                (
+                    "player",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE, to="teams.player"
+                    ),
+                ),
             ],
         ),
         migrations.CreateModel(
-            name='SingleRound',
+            name="SingleRound",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('date_played', models.DateTimeField(auto_now_add=True)),
-                ('red_points', models.IntegerField(default=0)),
-                ('blue_points', models.IntegerField(default=0)),
-                ('red_eliminated', models.BooleanField(default=False)),
-                ('blue_eliminated', models.BooleanField(default=False)),
-                ('is_completed', models.BooleanField(default=False)),
-                ('team_blue', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='blue_rounds', to='teams.team')),
-                ('team_red', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='red_rounds', to='teams.team')),
-                ('winner', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='won_rounds', to='teams.team')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("date_played", models.DateTimeField(auto_now_add=True)),
+                ("red_points", models.IntegerField(default=0)),
+                ("blue_points", models.IntegerField(default=0)),
+                ("red_eliminated", models.BooleanField(default=False)),
+                ("blue_eliminated", models.BooleanField(default=False)),
+                ("is_completed", models.BooleanField(default=False)),
+                (
+                    "team_blue",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="blue_rounds",
+                        to="teams.team",
+                    ),
+                ),
+                (
+                    "team_red",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="red_rounds",
+                        to="teams.team",
+                    ),
+                ),
+                (
+                    "winner",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="won_rounds",
+                        to="teams.team",
+                    ),
+                ),
             ],
         ),
         migrations.CreateModel(
-            name='TagEvent',
+            name="TagEvent",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('timestamp', models.IntegerField()),
-                ('tag_type', models.CharField(default='normal', max_length=20)),
-                ('points_awarded', models.IntegerField(default=100)),
-                ('game_round', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='matches.gameround')),
-                ('tagged', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='tags_received', to='teams.player')),
-                ('tagger', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='tags_made', to='teams.player')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("timestamp", models.IntegerField()),
+                ("tag_type", models.CharField(default="normal", max_length=20)),
+                ("points_awarded", models.IntegerField(default=100)),
+                (
+                    "game_round",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        to="matches.gameround",
+                    ),
+                ),
+                (
+                    "tagged",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="tags_received",
+                        to="teams.player",
+                    ),
+                ),
+                (
+                    "tagger",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="tags_made",
+                        to="teams.player",
+                    ),
+                ),
             ],
         ),
     ]
