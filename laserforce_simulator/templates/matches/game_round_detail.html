@@ -104,8 +104,9 @@
                         <th>Role</th>
                         <th>Points</th>
                         <th>Tags</th>
-                        <th>Deaths</th>
+                        <th>Tagged</th>
                         <th>Lives</th>
+                        <th>Shots</th>
                         <th>Status</th>
                     </tr>
                 </thead>
@@ -117,7 +118,8 @@
                         <td>{{ perf.points_scored }}</td>
                         <td>{{ perf.tags_made }}</td>
                         <td>{{ perf.times_tagged }}</td>
-                        <td>{{ perf.final_lives }}/{{ perf.starting_lives }}</td>
+                        <td>{{ perf.final_lives }}/{{ perf.max_lives }}</td>
+                        <td>{{ perf.final_shots }}/{{ perf.max_shots }}</td>
                         <td>
                             {% if perf.was_eliminated %}
                             <span class="badge bg-danger">Eliminated</span>
@@ -142,8 +144,9 @@
                         <th>Role</th>
                         <th>Points</th>
                         <th>Tags</th>
-                        <th>Deaths</th>
+                        <th>Tagged</th>
                         <th>Lives</th>
+                        <th>Shots</th>
                         <th>Status</th>
                     </tr>
                 </thead>
@@ -155,7 +158,8 @@
                         <td>{{ perf.points_scored }}</td>
                         <td>{{ perf.tags_made }}</td>
                         <td>{{ perf.times_tagged }}</td>
-                        <td>{{ perf.final_lives }}/{{ perf.starting_lives }}</td>
+                        <td>{{ perf.final_lives }}/{{ perf.max_lives }}</td>
+                        <td>{{ perf.final_shots }}/{{ perf.max_shots }}</td>
                         <td>
                             {% if perf.was_eliminated %}
                             <span class="badge bg-danger">Eliminated</span>
@@ -186,7 +190,7 @@
                             {% for perf in red_performances %}
                             <li>
                                 <strong>{{ perf.player.name }}:</strong>
-                                {{ perf.shots_used }}/{{ perf.starting_shots }} shots,
+                                {{ perf.shots_used }}/{{ perf.max_shots }} shots,
                                 {{ perf.specials_used }}/{{ perf.starting_special }} specials
                                 {% if perf.starting_missiles > 0 %}
                                 , {{ perf.missiles_used }}/{{ perf.starting_missiles }} missiles
@@ -201,7 +205,7 @@
                             {% for perf in blue_performances %}
                             <li>
                                 <strong>{{ perf.player.name }}:</strong>
-                                {{ perf.shots_used }}/{{ perf.starting_shots }} shots,
+                                {{ perf.shots_used }}/{{ perf.max_shots }} shots,
                                 {{ perf.specials_used }}/{{ perf.starting_special }} specials
                                 {% if perf.starting_missiles > 0 %}
                                 , {{ perf.missiles_used }}/{{ perf.starting_missiles }} missiles
