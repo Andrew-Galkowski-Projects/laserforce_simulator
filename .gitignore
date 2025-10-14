@@ -7,3 +7,4 @@ laserforce_simulator/matches/__pycache__/views.cpython-311.pyc
 laserforce_simulator/teams/migrations/__pycache__/0005_alter_player_role.cpython-311.pyc
 laserforce_simulator/teams/migrations/__pycache__/0006_alter_player_role.cpython-311.pyc
 laserforce_simulator/teams/__pycache__/models.cpython-311.pyc
+laserforce_simulator/matches/__pycache__/tests.cpython-311.pyc
