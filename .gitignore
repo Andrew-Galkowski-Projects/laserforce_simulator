@@ -15,3 +15,6 @@ media/
 
 # VSCode settings
 .vscode/
+
+# Local virtual environment
+.venv/
