@@ -178,6 +178,8 @@ class GameRound(models.Model):
         return {
             "total_events": events.count(),
             "tags": events.filter(event_type="tag").count(),
+            "moves": events.filter(event_type="movement").count(),
+            "missiles": events.filter(event_type="missile").count(),
             "misses": events.filter(event_type="miss").count(),
             "eliminations": events.filter(event_type="elimination").count(),
             "resupplies": events.filter(event_type__startswith="resupply").count(),
@@ -260,6 +262,10 @@ class PlayerRoundState(models.Model):
     current_zone = models.IntegerField(
         choices=zones.choices, default=zones.red_zone
     )  # currently a number between 0 and 2
+    special_active_until = models.IntegerField(
+        null=True, blank=True, default=0
+    )  # Timestamp until which special is active
+    is_hiding = models.BooleanField(default=False)
 
     # Final resources
     final_lives = models.IntegerField(default=0)
@@ -274,8 +280,9 @@ class PlayerRoundState(models.Model):
     shots_missed = models.IntegerField(default=0)
     times_tagged = models.IntegerField(default=0)
     specials_used = models.IntegerField(default=0)
-    missiles_fired = models.IntegerField(default=0)
+    missiles_landed = models.IntegerField(default=0)
     times_missiled = models.IntegerField(default=0)
+    resupplies_given = models.IntegerField(default=0)
 
     # detailed performance stats
     specific_tags = models.JSONField(
@@ -306,6 +313,18 @@ class PlayerRoundState(models.Model):
         return f"{self.player.name} - {self.game_round}"
 
     @property
+    def max_shields(self):
+        # Determine max shields based on role
+        max_shields = {
+            "commander": 3,
+            "heavy": 3,
+            "scout": 1,
+            "medic": 1,
+            "ammo": 1,
+        }
+        return max_shields.get(self.role, 1)  # Default to 1 if role unknown
+
+    @property
     def max_lives(self):
         # Determine max lives based on role
         max_lives = {
@@ -316,6 +335,11 @@ class PlayerRoundState(models.Model):
             "ammo": 20,
         }
         return max_lives.get(self.role, 15)  # Default to 15 if role unknown
+
+    @property
+    def lives_lost(self):
+        # TODO: add lives lost due to nukes
+        return max(0, self.times_tagged + self.times_missiled * 2)
 
     @property
     def max_shots(self):
@@ -330,28 +354,61 @@ class PlayerRoundState(models.Model):
         return max_shots.get(self.role, 30)  # Default to 30 if role unknown
 
     @property
-    def lives_lost(self):
-        # TODO: add lives lost due to nukes
-        return max(0, self.times_tagged + self.times_missiled * 2)
-
-    @property
     def shots_used(self):
         return max(0, self.tags_made + self.shots_missed)
 
     @property
+    def max_special(self):
+        return 99  # limit is 99 at a time
+
+    @property
+    def special_cost(self):
+        special_chart = {
+            "commander": 20,
+            "heavy": 100,  # Heavy cannot use specials
+            "scout": 10,
+            "medic": 10,
+            "ammo": 15,
+        }
+        return special_chart.get(
+            self.role, 100
+        )  # Default to very high cost if role unknown
+
+    @property
+    def can_use_special(self):
+        return self.final_special >= self.special_cost
+
+    @property
+    def can_capture_base_in_current_zone(self):
+        if (
+            self.current_zone == self.zones.neutral_zone
+            and not self.neutral_base_destroyed
+        ):
+            return True
+        elif (
+            self.team_color == "red"
+            and self.current_zone == self.zones.blue_zone
+            and not self.opposing_base_destroyed
+        ):
+            return True
+        elif (
+            self.team_color == "blue"
+            and self.current_zone == self.zones.red_zone
+            and not self.opposing_base_destroyed
+        ):
+            return True
+        return False
+
+    @property
     def missiles_used(self):
-        return max(0, self.missiles_fired)
+        return max(0, self.missiles_landed)
 
     def is_resupplyable_at(self, seconds_into_round):
         """Return True if the player can be resupplied at the given second into the round."""
         return self.is_active_at(seconds_into_round)
 
     def is_active_at(self, seconds_into_round):
-        """Check if player is active at a given time (not in downed cooldown).
-
-        This is a time-based check; use the boolean `is_active` field for
-        instantaneous checks where no timestamp is available.
-        """
+        """Check if player is active at a given time (not in downed cooldown)."""
         # Check if player is in respawn downtime (8 seconds after being downed)
         if getattr(self, "last_downed_time", None) is not None:
             if seconds_into_round - self.last_downed_time < 8 or self.final_lives == 0:

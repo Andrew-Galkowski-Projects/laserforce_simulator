@@ -5,6 +5,7 @@ from teams.models import Player
 
 # Module logger
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
 
 
 class ResourceBasedSimulator:
@@ -26,32 +27,22 @@ class ResourceBasedSimulator:
             "commander": {
                 "shot_power": 2,
                 "shield": 3,
-                "special": "nuke",
-                "special_cost": 20,
             },
             "heavy": {
                 "shot_power": 3,
                 "shield": 3,
-                "special": "none",
-                "special_cost": 0,
             },
             "scout": {
                 "shot_power": 1,
                 "shield": 1,
-                "special": "rapid_fire",
-                "special_cost": 10,
             },
             "medic": {
                 "shot_power": 1,
                 "shield": 1,
-                "special": "life_boost",
-                "special_cost": 10,
             },
             "ammo": {
                 "shot_power": 1,
                 "shield": 1,
-                "special": "ammo_boost",
-                "special_cost": 15,
             },
         }
 
@@ -167,8 +158,8 @@ class ResourceBasedSimulator:
         # Combat simulation over time (simplified)
         round_duration = 15 * 60  # 15 minutes in seconds
 
-        # TODO: we want to simulate combat much faster than every 3 seconds but this is ok for now to test
-        for second in range(0, round_duration, 3):  # Check every 3 seconds
+        # TODO: we want to simulate combat faster than every 2 seconds but this is ok for now to test
+        for second in range(0, round_duration, 2):  # Check every 2 seconds
             self._simulate_combat_exchange(
                 game_round, red_players, blue_players, second
             )
@@ -179,11 +170,21 @@ class ResourceBasedSimulator:
 
             if not red_alive or not blue_alive:
                 logger.debug(
-                    "Round ends at second %s, red alive %s, blue alive %s",
+                    "%s - %s: Round ends at second %s, red alive %s, blue alive %s",
+                    second,
+                    "simulate_round_combat",
                     second,
                     red_alive,
                     blue_alive,
                 )
+                # for p in red_players + blue_players:
+                #     logger.debug(
+                #         "%s tags: %s, tagged %s details: %s",
+                #         p.player.name,
+                #         p.tags_made,
+                #         p.times_tagged,
+                #         p.specific_tags,
+                #     )
                 break  # Round ends on elimination
 
         # Calculate final results
@@ -204,7 +205,9 @@ class ResourceBasedSimulator:
         red_eliminated = all(p.final_lives <= 0 for p in red_players)
         blue_eliminated = all(p.final_lives <= 0 for p in blue_players)
         logger.debug(
-            "Final Results: %s red points, %s blue points, red eliminated: %s, blue eliminated: %s",
+            "%s - %s: Final Results: %s red points, %s blue points, red eliminated: %s, blue eliminated: %s",
+            second,
+            "simulate round combat",
             red_points,
             blue_points,
             red_eliminated,
@@ -271,59 +274,70 @@ class ResourceBasedSimulator:
 
     def _choose_action(self, player, all_alive, second):
         # TODO: improve action choice based on player stats and situation
-        if player.player.can_resupply:
-            if (player.team_color == "red" and player.current_zone != 0) or (
-                player.team_color == "blue" and player.current_zone != 2
-            ):
-                actions = ["tag_player", "resupply_ally", "change_zone", "capture_base"]
-                weights = [20, 30, 5, 50]  # When able, more likely to capture base
-            else:
-                actions = ["tag_player", "resupply_ally", "change_zone"]
-                weights = [
-                    35,
-                    55,
-                    10,
-                ]  # when in own zone, more likely to tag or resupply
-        if player.role == "commander" or player.role == "heavy":
-            if (player.team_color == "red" and player.current_zone != 0) or (
-                player.team_color == "blue" and player.current_zone != 2
-            ):
-                actions = [
-                    "tag_player",
-                    "missile_player",
-                    "change_zone",
-                    "capture_base",
-                ]
-                weights = [
-                    30,
-                    10,
-                    10,
-                    50,
-                ]  # When able, more likely to capture base, missiles are rare
-            else:
-                actions = ["tag_player", "missile_player", "change_zone"]
-                weights = [70, 10, 20]  # when in own zone, more likely to tag
-        if player.role == "scout" or player.role == "scout":
-            if (player.team_color == "red" and player.current_zone != 0) or (
-                player.team_color == "blue" and player.current_zone != 2
-            ):
-                actions = ["tag_player", "change_zone", "capture_base"]
-                weights = [50, 10, 40]  # When able, more likely to capture base
-            else:
-                actions = ["tag_player", "change_zone"]
-                weights = [80, 20]  # when in own zone, more likely to tag
-        logger.debug(
-            "%s, zone: %s, team: %s, bases: %s,%s %s, %s",
-            player.role,
-            player.current_zone,
-            player.team_color,
-            player.neutral_base_destroyed,
-            player.opposing_base_destroyed,
-            actions,
-            weights,
-        )
+        action_to_weight_index = {
+            "tag_player": 0,
+            "change_zone": 1,
+            "hide": 2,
+            "capture_base": 3,
+            "use_special": 4,
+            "resupply_ally": 5,
+            "missile_player": 6,
+        }
+        actions = [
+            "tag_player",
+            "change_zone",
+            "hide",
+            "capture_base",
+            "use_special",
+            "resupply_ally",
+            "missile_player",
+        ]
+        weights = [70, 30, 0, 0, 0, 0, 0]  # default weights
+        # mofify weights based on role, zone, resources, active_status,
+        if player.role == "medic":
+            weights = self._get_medic_weights(
+                player, action_to_weight_index, weights, all_alive, second
+            )
+        if player.role == "ammo":
+            weights = self._get_ammo_weights(
+                player, action_to_weight_index, weights, all_alive, second
+            )
+        if player.role == "scout":
+            weights = self._get_scout_weights(
+                player, action_to_weight_index, weights, all_alive, second
+            )
+        if player.role == "heavy":
+            weights = self._get_heavy_weights(
+                player, action_to_weight_index, weights, all_alive, second
+            )
+        if player.role == "commander":
+            weights = self._get_commander_weights(
+                player, action_to_weight_index, weights, all_alive, second
+            )
+
+        # logger.debug(
+        #     "%s - %s: %s, zone: %s, team: %s, bases: %s,%s weights: %s",
+        #     second,
+        #     "choose action",
+        #     player.role,
+        #     player.current_zone,
+        #     player.team_color,
+        #     player.neutral_base_destroyed,
+        #     player.opposing_base_destroyed,
+        #     weights,
+        # )
         action = random.choices(actions, weights)[0]
-        logger.debug("chosen action: %s", action)
+        # if player is no longer hiding, set false
+        if action != "hide":
+            player.is_hiding = False
+        # logger.debug(
+        #     "%s - %s: role: %s team: %s chosen action: %s",
+        #     second,
+        #     "choose action",
+        #     player.role,
+        #     player.team_color,
+        #     action,
+        # )
 
         if action == "tag_player":
             # choose a target from the opposing team in the same zone
@@ -333,15 +347,42 @@ class ResourceBasedSimulator:
                 if p.team_color != player.team_color
                 and p.current_zone == player.current_zone
                 and p.final_lives > 0
+                and (
+                    p.is_active_at(second)
+                    or p.is_taggable_at(second)
+                    and player.last_tagged_id != p.get_tag_id
+                )
             ]
             if potential_targets and player.final_shots > 0:
-                target = random.choice(potential_targets)
-                self._attempt_tag(
-                    player.game_round, player, target, second=second
-                )  # second is not tracked here
-            else:
-                # if no valid targets, change zone instead
-                self._change_zone(player)
+                # set target weights based on role
+                weights = {
+                    "commander": 5,
+                    "heavy": 8,
+                    "scout": 3,
+                    "medic": 1,
+                    "ammo": 2,
+                }
+                target_weights = []
+                for target in potential_targets:
+                    # prioritize active targets more
+                    active_weighting = 5 if target.is_active_at(second) else 1
+                    target_weights.append(
+                        weights.get(target.role, 1) + active_weighting
+                    )
+
+                target = random.choices(potential_targets, target_weights)[0]
+                self._attempt_tag(player.game_round, player, target, second=second)
+                if player.role == "scout" and player.special_active_until > second:
+                    # if scout with rapid fire, choose 2 targets to tag
+                    second_target = random.choices(potential_targets, target_weights)[0]
+                    self._attempt_tag(
+                        player.game_round, player, second_target, second=second
+                    )
+            # else:
+            #     # if no valid targets, change zone instead
+            #     logger.debug("%s - %s: no valid targets, do nothing", second, "choose action/no_target")
+            # TODO: change zones differently based on role, heavies want to be with medic or ammo, commanders want to be with enemies, scouts want to be with enemies
+            # self._change_zone(player, second)
         elif action == "resupply_ally":
             # choose a teammate in the same zone to resupply
             potential_teammates = [
@@ -351,8 +392,17 @@ class ResourceBasedSimulator:
                 and p.current_zone == player.current_zone
                 and p != player
                 and p.final_lives > 0
+                and p.is_resupplyable_at(second)
             ]
             if potential_teammates:
+                # TODO: weight based on role and resources needed
+                resup_weights = {
+                    "commander": 5,
+                    "heavy": 8,
+                    "scout": 3,
+                    "medic": 1,
+                    "ammo": 6,
+                }
                 teammate = random.choice(potential_teammates)
                 self._attempt_resupply(player, teammate, second)
         elif action == "missile_player":
@@ -371,7 +421,12 @@ class ResourceBasedSimulator:
                     self._start_missile_lock(player, target, second)
         elif action == "change_zone":
             # change to an adjacent zone
-            self._change_zone(player)
+            # TODO: change zones differently based on role,
+            # heavies want to be with medic or ammo,
+            # commanders want to be with enemies,
+            # scouts want to be with enemies,
+            # medics and ammos want to be with each other
+            self._change_zone(player, second)
         elif action == "capture_base":
             # assumes already in correct zone to capture base
             if player.current_zone == 1 and not player.neutral_base_destroyed:
@@ -383,35 +438,608 @@ class ResourceBasedSimulator:
                 self._capture_base(player, base_id, second)
             else:
                 # if bases are destroyed, change zone instead
-                self._change_zone(player)
+                self._change_zone(player, second)
+        elif action == "use_special":
+            if (
+                player.final_special >= player.special_cost
+                and player.special_active_until <= second
+                and player.is_active_at(second)
+            ):
+                self._use_special(player, second)
+        elif action == "hide":
+            # hiding reduces chance of being targeted next round
+            player.is_hiding = True
+            pass
 
-    def _change_zone(self, player):
+    def _get_medic_weights(
+        self, player, action_to_weight_index, weights, all_alive, second
+    ):
+        # change weights based on role
+        weights[action_to_weight_index["tag_player"]] -= 70
+        weights[action_to_weight_index["resupply_ally"]] += 70
+        weights[action_to_weight_index["change_zone"]] -= 30
+        weights[action_to_weight_index["hide"]] += 30
+
+        # change weights based on zone/bases
+        if player.can_capture_base_in_current_zone:
+            weights[action_to_weight_index["resupply_ally"]] -= 50
+            weights[
+                action_to_weight_index["capture_base"]
+            ] += 50  # When able, more likely to capture base
+            weights[action_to_weight_index["hide"]] -= 20
+            weights[action_to_weight_index["change_zone"]] += 20
+
+        # change weights based on resources
+        if player.final_lives <= 3:
+            # when low on lives, more likely to resupply
+            weights[action_to_weight_index["hide"]] -= 30
+            weights[action_to_weight_index["resupply_ally"]] += 30
+
+        if player.final_special >= player.special_cost:
+            allies_active = [
+                p
+                for p in all_alive
+                if p.team_color == player.team_color
+                and p.final_lives > 0
+                and p.is_active_at(second)
+            ]
+            weights[action_to_weight_index["use_special"]] += 20 * len(allies_active)
+
+        # change weights based on active status
+        if not player.is_active_at(second):
+            # if not active and heavy in zone, then hide, else change zone
+            heavy_in_zone = next(
+                (
+                    p
+                    for p in all_alive
+                    if p.team_color == player.team_color
+                    and p.role == "heavy"
+                    and p.current_zone == player.current_zone
+                    and p.final_lives > 0
+                ),
+                None,
+            )
+            if heavy_in_zone:
+                weights[action_to_weight_index["resupply_ally"]] -= 70
+                weights[action_to_weight_index["hide"]] += 70
+            else:
+                weights[action_to_weight_index["resupply_ally"]] -= 70
+                weights[action_to_weight_index["change_zone"]] += 70
+        return weights
+
+    def _get_ammo_weights(
+        self, player, action_to_weight_index, weights, all_alive, second
+    ):
+        # change weights based on role
+        weights[action_to_weight_index["tag_player"]] -= 20
+        weights[action_to_weight_index["change_zone"]] -= 30
+        weights[action_to_weight_index["resupply_ally"]] += 50
+
+        # change weights based on zone/bases
+        if player.can_capture_base_in_current_zone:
+            weights[action_to_weight_index["resupply_ally"]] -= 30
+            weights[action_to_weight_index["tag_player"]] -= 20
+            weights[
+                action_to_weight_index["capture_base"]
+            ] += 30  # When able, more likely to capture base
+            weights[action_to_weight_index["change_zone"]] += 20
+
+        # change weights based on resources
+        if player.final_lives <= 3:
+            # if medic is alive move towards medic, else hide or follow heavy
+            medic_alive = next(
+                (
+                    p
+                    for p in all_alive
+                    if p.team_color == player.team_color
+                    and p.role == "medic"
+                    and p.final_lives > 0
+                ),
+                None,
+            )
+            if medic_alive:
+                if player.current_zone != medic_alive.current_zone:
+                    weights[action_to_weight_index["resupply_ally"]] -= 50
+                    weights[
+                        action_to_weight_index["change_zone"]
+                    ] += 50  # Move towards medic
+                else:
+                    weights[action_to_weight_index["resupply_ally"]] -= 30
+                    weights[
+                        action_to_weight_index["hide"]
+                    ] += 30  # Stay with medic and hide
+            else:
+                heavy_alive = next(
+                    (
+                        p
+                        for p in all_alive
+                        if p.team_color == player.team_color
+                        and p.role == "heavy"
+                        and p.final_lives > 0
+                    ),
+                    None,
+                )
+                if heavy_alive:
+                    if player.current_zone != heavy_alive.current_zone:
+                        weights[action_to_weight_index["resupply_ally"]] -= 50
+                        weights[
+                            action_to_weight_index["change_zone"]
+                        ] += 50  # Move towards heavy
+                    else:
+                        weights[action_to_weight_index["resupply_ally"]] -= 50
+                        weights[
+                            action_to_weight_index["hide"]
+                        ] += 50  # Stay with heavy and hide
+                else:
+                    weights[action_to_weight_index["resupply_ally"]] -= 50
+                    weights[
+                        action_to_weight_index["hide"]
+                    ] += 50  # No medic, no heavy, change zone to find safety
+
+            # when low on lives, more likely to resupply
+            weights[action_to_weight_index["tag_player"]] -= 20
+            weights[action_to_weight_index["resupply_ally"]] += 20
+
+        # change weights based on special resources
+        if player.final_special >= player.special_cost:
+            allies_active = [
+                p
+                for p in all_alive
+                if p.team_color == player.team_color
+                and p.final_lives > 0
+                and p.is_active_at(second)
+            ]
+            weights[action_to_weight_index["use_special"]] += 20 * len(allies_active)
+
+        # change weights based on active status
+        if not player.is_active_at(second):
+            # if not active and heavy in zone, then hide, else change zone
+            heavy_in_zone = next(
+                (
+                    p
+                    for p in all_alive
+                    if p.team_color == player.team_color
+                    and p.role == "heavy"
+                    and p.current_zone == player.current_zone
+                    and p.final_lives > 0
+                ),
+                None,
+            )
+            if heavy_in_zone:
+                weights[action_to_weight_index["resupply_ally"]] -= 70
+                weights[action_to_weight_index["hide"]] += 70
+            else:
+                weights[action_to_weight_index["resupply_ally"]] -= 70
+                weights[action_to_weight_index["change_zone"]] += 70
+        return weights
+
+    def _get_scout_weights(
+        self, player, action_to_weight_index, weights, all_alive, second
+    ):
+        # change weights based on role
+        weights[action_to_weight_index["tag_player"]] -= 10
+        weights[action_to_weight_index["change_zone"]] += 10
+
+        # change weights based on zone/bases
+        if player.can_capture_base_in_current_zone:
+            weights[action_to_weight_index["tag_player"]] -= 20
+            weights[
+                action_to_weight_index["capture_base"]
+            ] += 20  # When able, more likely to capture base
+
+        # change weights based on resources
+        lives_critical = player.starting_lives * 0.3
+        shots_critical = player.starting_shots * 0.3
+        if player.final_lives <= lives_critical:
+            # if medic is alive, determine medic zone and move towards medic,
+            medic_alive = next(
+                (
+                    p
+                    for p in all_alive
+                    if p.team_color == player.team_color
+                    and p.role == "medic"
+                    and p.final_lives > 0
+                ),
+                None,
+            )
+            if medic_alive:
+                if player.current_zone != medic_alive.current_zone:
+                    weights[action_to_weight_index["tag_player"]] -= 30
+                    weights[
+                        action_to_weight_index["change_zone"]
+                    ] += 30  # Move towards medic
+                else:
+                    weights[
+                        action_to_weight_index["change_zone"]
+                    ] -= 20  # scouts still want to move a bit
+                    weights[action_to_weight_index["tag_player"]] -= 20
+                    weights[
+                        action_to_weight_index["hide"]
+                    ] += 40  # Stay with medic and hide
+            else:
+                weights[action_to_weight_index["tag_player"]] -= 30
+                weights[
+                    action_to_weight_index["hide"]
+                ] += 30  # No medic, change zone to find safety
+        if player.final_shots <= shots_critical:
+            # if ammo is alive, determine ammo zone and move towards ammo,
+            ammo_alive = next(
+                (
+                    p
+                    for p in all_alive
+                    if p.team_color == player.team_color
+                    and p.role == "ammo"
+                    and p.final_lives > 0
+                ),
+                None,
+            )
+            if ammo_alive:
+                if player.current_zone != ammo_alive.current_zone:
+                    weights[action_to_weight_index["tag_player"]] -= 30
+                    weights[
+                        action_to_weight_index["change_zone"]
+                    ] += 30  # Move towards ammo
+                else:
+                    weights[
+                        action_to_weight_index["change_zone"]
+                    ] -= 20  # scouts still want to move a bit
+                    weights[action_to_weight_index["tag_player"]] -= 20
+                    weights[
+                        action_to_weight_index["hide"]
+                    ] += 40  # Stay with ammo and hide
+            else:
+                weights[action_to_weight_index["tag_player"]] -= 50
+                weights[
+                    action_to_weight_index["hide"]
+                ] += 50  # No ammo, change zone to find safety
+
+        # change weights based on special resources
+        if (
+            player.final_special >= player.special_cost
+            and player.special_active_until <= second
+        ):
+            # the more ammo a scout has the more likely they are to use their special
+            weights[action_to_weight_index["use_special"]] += 100 * (
+                player.final_shots / player.max_shots
+            )
+
+        # change weights based on active status
+        if not player.is_active_at(second):
+            # scouts are more likely to change zone or hide if not active
+            weights[action_to_weight_index["tag_player"]] -= 60
+            weights[action_to_weight_index["change_zone"]] += 10
+            weights[action_to_weight_index["hide"]] += 50
+        return weights
+
+    def _get_heavy_weights(
+        self, player, action_to_weight_index, weights, all_alive, second
+    ):
+        # change weights based on role
+        # heavies are more likely to tag than change zone or hide, can missile
+        weights[action_to_weight_index["change_zone"]] -= 10
+        weights[action_to_weight_index["tag_player"]] += 10
+        
+        if player.missles_used < 5:
+            weights[action_to_weight_index["change_zone"]] -= 15
+            weights[action_to_weight_index["missile_player"]] += 15
+
+        # change weights based on zone/bases
+        if player.can_capture_base_in_current_zone:
+            weights[action_to_weight_index["change_zone"]] -= 10
+            weights[action_to_weight_index["tag_player"]] -= 40
+            weights[
+                action_to_weight_index["capture_base"]
+            ] += 50  # When able, more likely to capture base
+
+        # change weights based on resources
+        lives_critical = player.starting_lives * 0.3
+        shots_critical = player.starting_shots * 0.3
+        if player.final_lives <= lives_critical:
+            # if medic is alive, determine medic zone and move towards medic,
+            medic_alive = next(
+                (
+                    p
+                    for p in all_alive
+                    if p.team_color == player.team_color
+                    and p.role == "medic"
+                    and p.final_lives > 0
+                ),
+                None,
+            )
+            if medic_alive:
+                if player.current_zone != medic_alive.current_zone:
+                    weights[action_to_weight_index["tag_player"]] -= 30
+                    weights[
+                        action_to_weight_index["change_zone"]
+                    ] += 30  # Move towards medic
+                else:
+                    weights[
+                        action_to_weight_index["change_zone"]
+                    ] -= 10  # don't move away from medic
+                    weights[action_to_weight_index["tag_player"]] -= 20
+                    weights[
+                        action_to_weight_index["hide"]
+                    ] += 30  # Stay with medic and hide to resupply
+            else:
+                ammo_alive = next(
+                    (
+                        p
+                        for p in all_alive
+                        if p.team_color == player.team_color
+                        and p.role == "ammo"
+                        and p.final_lives > 0
+                    ),
+                    None,
+                )
+                if ammo_alive:
+                    if player.current_zone != ammo_alive.current_zone:
+                        weights[action_to_weight_index["tag_player"]] -= 30
+                        weights[
+                            action_to_weight_index["change_zone"]
+                        ] += 30  # Move towards ammo
+                    else:
+                        weights[
+                            action_to_weight_index["change_zone"]
+                        ] -= 10  # don't move away from ammo
+                        weights[action_to_weight_index["tag_player"]] -= 20
+                        weights[
+                            action_to_weight_index["hide"]
+                        ] += 30  # Stay with ammo and hide to resupply
+                else:
+                    weights[action_to_weight_index["tag_player"]] -= 30
+                    weights[
+                        action_to_weight_index["hide"]
+                    ] += 30  # No medic, hide to not get eliminated
+        if player.final_shots <= shots_critical:
+            # if ammo is alive, determine ammo zone and move towards ammo,
+            ammo_alive = next(
+                (
+                    p
+                    for p in all_alive
+                    if p.team_color == player.team_color
+                    and p.role == "ammo"
+                    and p.final_lives > 0
+                ),
+                None,
+            )
+            if ammo_alive:
+                if player.current_zone != ammo_alive.current_zone:
+                    weights[action_to_weight_index["tag_player"]] -= 30
+                    weights[
+                        action_to_weight_index["change_zone"]
+                    ] += 30  # Move towards ammo
+                else:
+                    weights[
+                        action_to_weight_index["change_zone"]
+                    ] -= 10  # don't move away from ammo
+                    weights[action_to_weight_index["tag_player"]] -= 20
+                    weights[
+                        action_to_weight_index["hide"]
+                    ] += 30  # Stay with ammo and hide
+            else:
+                weights[action_to_weight_index["tag_player"]] -= 50
+                weights[
+                    action_to_weight_index["hide"]
+                ] += 50  # No ammo, change zone to find safety
+
+        # change weights based on active status
+        if not player.is_active_at(second):
+            # if not active and medic in zone, then hide, else change zone
+            # TODO: may want to consider ammo as well here
+            medic_in_zone = next(
+                (
+                    p
+                    for p in all_alive
+                    if p.team_color == player.team_color
+                    and p.role == "medic"
+                    and p.current_zone == player.current_zone
+                    and p.final_lives > 0
+                ),
+                None,
+            )
+            if medic_in_zone:
+                weights[action_to_weight_index["tag_player"]] -= 70
+                weights[action_to_weight_index["hide"]] += 70
+            else:
+                weights[action_to_weight_index["tag_player"]] -= 70
+                weights[action_to_weight_index["change_zone"]] += 70
+        return weights
+
+    def _get_commander_weights(
+        self, player, action_to_weight_index, weights, all_alive, second
+    ):
+        # change weights based on role
+        # heavies are more likely to tag than change zone or hide, can missile
+        # if we have missiles left, try to use them
+        if player.missiles_used < 5:
+            weights[action_to_weight_index["change_zone"]] -= 15
+            weights[action_to_weight_index["missile_player"]] += 15
+
+        # change weights based on zone/bases
+        if player.can_capture_base_in_current_zone:
+            weights[action_to_weight_index["change_zone"]] -= 10
+            weights[action_to_weight_index["tag_player"]] -= 40
+            weights[
+                action_to_weight_index["capture_base"]
+            ] += 50  # When able, more likely to capture base
+
+        # change weights based on resources
+        lives_critical = player.starting_lives * 0.3
+        shots_critical = player.starting_shots * 0.3
+        if player.final_lives <= lives_critical:
+            # if medic is alive, determine medic zone and move towards medic,
+            medic_alive = next(
+                (
+                    p
+                    for p in all_alive
+                    if p.team_color == player.team_color
+                    and p.role == "medic"
+                    and p.final_lives > 0
+                ),
+                None,
+            )
+            if medic_alive:
+                if player.current_zone != medic_alive.current_zone:
+                    weights[action_to_weight_index["tag_player"]] -= 30
+                    weights[
+                        action_to_weight_index["change_zone"]
+                    ] += 30  # Move towards medic
+                else:
+                    weights[
+                        action_to_weight_index["change_zone"]
+                    ] -= 10  # don't move away from medic
+                    weights[action_to_weight_index["tag_player"]] -= 20
+                    weights[
+                        action_to_weight_index["hide"]
+                    ] += 30  # Stay with medic and hide to resupply
+            else:
+                ammo_alive = next(
+                    (
+                        p
+                        for p in all_alive
+                        if p.team_color == player.team_color
+                        and p.role == "ammo"
+                        and p.final_lives > 0
+                    ),
+                    None,
+                )
+                if ammo_alive:
+                    if player.current_zone != ammo_alive.current_zone:
+                        weights[action_to_weight_index["tag_player"]] -= 30
+                        weights[
+                            action_to_weight_index["change_zone"]
+                        ] += 30  # Move towards ammo
+                    else:
+                        weights[
+                            action_to_weight_index["change_zone"]
+                        ] -= 10  # don't move away from ammo
+                        weights[action_to_weight_index["tag_player"]] -= 20
+                        weights[
+                            action_to_weight_index["hide"]
+                        ] += 30  # Stay with ammo and hide to resupply
+                else:
+                    weights[action_to_weight_index["tag_player"]] -= 30
+                    weights[
+                        action_to_weight_index["hide"]
+                    ] += 30  # No medic, hide to not get eliminated
+        if player.final_shots <= shots_critical:
+            # if ammo is alive, determine ammo zone and move towards ammo,
+            ammo_alive = next(
+                (
+                    p
+                    for p in all_alive
+                    if p.team_color == player.team_color
+                    and p.role == "ammo"
+                    and p.final_lives > 0
+                ),
+                None,
+            )
+            if ammo_alive:
+                if player.current_zone != ammo_alive.current_zone:
+                    weights[action_to_weight_index["tag_player"]] -= 30
+                    weights[
+                        action_to_weight_index["change_zone"]
+                    ] += 30  # Move towards ammo
+                else:
+                    weights[
+                        action_to_weight_index["change_zone"]
+                    ] -= 10  # don't move away from ammo
+                    weights[action_to_weight_index["tag_player"]] -= 20
+                    weights[
+                        action_to_weight_index["hide"]
+                    ] += 30  # Stay with ammo and hide
+            else:
+                weights[action_to_weight_index["tag_player"]] -= 50
+                weights[
+                    action_to_weight_index["hide"]
+                ] += 50  # No ammo, change zone to find safety
+
+        # change weights based on special resources
+        if player.final_special >= player.special_cost:
+            # TODO: check if enemy would be killed out from nuke and use based on player stats
+            # check how many active enemies in zone, the lower amount the higher the weight to use special
+            enemies_in_zone = [
+                p
+                for p in all_alive
+                if p.team_color != player.team_color
+                and p.current_zone == player.current_zone
+                and p.is_active_at(second)
+            ]
+            weights[action_to_weight_index["use_special"]] = 100 - 20 * len(
+                enemies_in_zone
+            )
+
+        # change weights based on active status
+        if not player.is_active_at(second):
+            # commander tries to kill out enemy medic
+            # if not active and enemy medic in zone, then hide, else change zone
+            # TODO: may want to consider ammo as well here
+            medic_in_zone = next(
+                (
+                    p
+                    for p in all_alive
+                    if p.team_color != player.team_color
+                    and p.role == "medic"
+                    and p.current_zone == player.current_zone
+                    and p.final_lives > 0
+                ),
+                None,
+            )
+            if medic_in_zone:
+                weights[action_to_weight_index["tag_player"]] -= 70
+                weights[action_to_weight_index["hide"]] += 70
+            else:
+                weights[action_to_weight_index["tag_player"]] -= 70
+                weights[action_to_weight_index["change_zone"]] += 70
+
+        return weights
+
+    def _change_zone(self, player, second, towards=None):
         if player.current_zone == 1:
             # 50/50 chance to go to either adjacent zone
-            player.current_zone = random.choice([0, 2])
+            if towards in [0, 2]:
+                player.current_zone = towards
+            else:
+                player.current_zone = random.choice([0, 2])
         else:
             player.current_zone = 1
+        player.save()
+        GameEvent.objects.create(
+            game_round=player.game_round,
+            timestamp=second,
+            event_type="movement",
+            actor=player.player,
+            target=None,
+            points_awarded=0,
+            description=f"{player.player.name} moves to zone {player.current_zone}",
+            metadata={"new_zone": player.current_zone},
+        )
 
     def _attempt_tag(self, game_round, attacker, defender, second):
         """Simulate a tag attempt between two players and record events on game_round"""
         if attacker.final_shots <= 0 or defender.final_lives <= 0:
             return
 
-        # Get role modifiers
-        # TODO: make sure this works? we should get the player role and modifiers based on that
-        att_mods = self.role_modifiers.get(
-            attacker.player.role, self.role_modifiers["scout"]
-        )
-        def_mods = self.role_modifiers.get(
-            defender.player.role, self.role_modifiers["scout"]
-        )
+        # if defender is hiding then 50% chance they don't get tagged
+        if defender.is_hiding and random.random() > 0.5:
+            logging.debug(
+                "%s - %s: defender %s%s hid from %s%s",
+                second,
+                "attempt tag",
+                defender.team_color,
+                defender.role,
+                attacker.team_color,
+                attacker.role,
+            )
+            return
+        # if defender.attacker.last_tagged_id == defender.get_tag_id:
 
         # Calculate hit probability
         # TODO: accuracy and evasion should be on player model
         # base_accuracy = 0.6  # 60% for now, will change later to
         accuracy = attacker.player.accuracy
         # accuracy = base_accuracy * att_mods.get("accuracy", 1.0)
-        evasion = def_mods.get("survival", 1.0)
+        evasion = defender.player.survival
 
         hit_chance = accuracy / evasion
         hit_chance = max(0.1, min(0.95, hit_chance))  # Clamp between 10% and 95%
@@ -420,11 +1048,11 @@ class ResourceBasedSimulator:
         if attacker.role != "ammo":
             attacker.final_shots -= 1
         attacker.save()
-        rolled_chance = (
-            random.random()
-        )  # may need to tweak this, should be between 1-100
 
-        if rolled_chance < hit_chance:
+        # make rolled chance between 1-100
+        rolled_chance = random.randint(1, 100)
+
+        if rolled_chance < (hit_chance * 100):
 
             # TODO: we also want to randomize/log where the defender was tagged
 
@@ -435,6 +1063,27 @@ class ResourceBasedSimulator:
             if defender.shields == 0:
                 defender.final_lives -= 1
                 defender.last_downed_time = second  # set downed time for respawn logic
+                defender.shields = defender.max_shields  # reset shields on life lost
+                if defender.final_lives <= 0:
+                    defender.was_eliminated = True
+                    logger.debug(
+                        "%s - %s: Player eliminated: %s by %s",
+                        second,
+                        "attempt tag",
+                        defender.player.name,
+                        attacker.player.name,
+                    )
+                    GameEvent.objects.create(
+                        game_round=game_round,
+                        timestamp=second,
+                        event_type="elimination",
+                        actor=attacker.player,
+                        target=defender.player,
+                        points_awarded=0,
+                        description=f"{defender.player.name} is eliminated by {attacker.player.name}",
+                        metadata={},
+                    )
+
             defender.times_tagged += 1
             defender.points_scored -= 20  # Penalty for being tagged
 
@@ -480,6 +1129,18 @@ class ResourceBasedSimulator:
             # it exists in def simulate_detailed_round but not in outer scope currently.
             # do we want do put metadata in from pre or post tag? probably post?
             # does this automatically put these things in order?
+            logger.debug(
+                "%s - %s: %s %s tags %s %s atk ammo: %s def shd/lv: %s/%s",
+                second,
+                "attempt tag",
+                attacker.team_color,
+                attacker.role,
+                defender.team_color,
+                defender.role,
+                attacker.final_shots,
+                defender.shields,
+                defender.final_lives,
+            )
             GameEvent.objects.create(
                 game_round=game_round,
                 timestamp=second,
@@ -489,11 +1150,43 @@ class ResourceBasedSimulator:
                 points_awarded=100,
                 description=f"{attacker.player.name} zaps {defender.player.name}",
                 metadata={
-                    "attacker_points": attacker.points_scored - 100,  # before tag
+                    "attacker_points": attacker.points_scored,
                     "attacker_lives": attacker.final_lives,
-                    "attacker_shots": attacker.final_shots + 1,  # before tag
-                    "defender_points": defender.points_scored + 20,  # before tag
-                    "defender_lives": defender.final_lives + 1,  # before tag
+                    "attacker_shots": attacker.final_shots,
+                    "attacker_special": attacker.final_special,
+                    "defender_points": defender.points_scored,
+                    "defender_lives": defender.final_lives,
+                    "defender_shields": defender.shields,
+                    "defender_shots": defender.final_shots,
+                    "rolled_hit_pct": rolled_chance,
+                },
+            )
+        else:
+            attacker.shots_missed += 1
+            attacker.save()
+            logger.debug(
+                "%s - %s: Tag missed: %s to %s, rolled %s vs chance %s",
+                second,
+                "attempt tag",
+                attacker.player.name,
+                defender.player.name,
+                rolled_chance,
+                hit_chance,
+            )
+            GameEvent.objects.create(
+                game_round=game_round,
+                timestamp=second,
+                event_type="miss",
+                actor=attacker.player,
+                target=defender.player,
+                points_awarded=0,
+                description=f"{attacker.player.name} misses {defender.player.name}",
+                metadata={
+                    "attacker_points": attacker.points_scored,
+                    "attacker_lives": attacker.final_lives,
+                    "attacker_shots": attacker.final_shots,
+                    "defender_points": defender.points_scored,
+                    "defender_lives": defender.final_lives,
                     "defender_shots": defender.final_shots,
                     "rolled_hit_pct": rolled_chance,
                 },
@@ -518,7 +1211,9 @@ class ResourceBasedSimulator:
             "ammo": 3,
         }
         logger.debug(
-            "resupply attempt: %s to %s, %s, %s/%s shots, %s/%s lives",
+            "%s - %s: %s to %s, resupplyable: %s, %s/%s shots, %s/%s lives",
+            second,
+            "attempt resup",
             tagger.role,
             teammate.role,
             teammate.is_resupplyable_at(second),
@@ -534,6 +1229,12 @@ class ResourceBasedSimulator:
                 teammate.final_shots = teammate.max_shots
             else:
                 teammate.final_shots += resupply_amount
+            teammate.last_downed_time = second
+            teammate.shields = teammate.max_shields
+            # if scout then end their special
+            if teammate.role == "scout" and teammate.special_active_until > second:
+                teammate.special_active_until = second
+            tagger.resupplies_given += 1
             tagger.save()
             teammate.save()
             # create game event for resupply
@@ -546,13 +1247,12 @@ class ResourceBasedSimulator:
                 points_awarded=0,
                 description=f"{tagger.player.name} resupplies {teammate.player.name} with {resupply_amount} shots",
                 metadata={
-                    "tagger_points": tagger.points_scored,  # before resupply
+                    "tagger_points": tagger.points_scored,
                     "tagger_lives": tagger.final_lives,
                     "tagger_shots": tagger.final_shots,
                     "teammate_points": teammate.points_scored,
                     "teammate_lives": teammate.final_lives,
-                    "teammate_shots": teammate.final_shots
-                    - resupply_amount,  # before resupply
+                    "teammate_shots": teammate.final_shots,
                 },
             )
             return
@@ -567,6 +1267,9 @@ class ResourceBasedSimulator:
                 teammate.final_lives = teammate.max_lives
             else:
                 teammate.final_lives += resupply_amount
+            teammate.last_downed_time = second
+            teammate.shields = teammate.max_shields
+            tagger.resupplies_given += 1
             tagger.save()
             teammate.save()
             # create game event for resupply
@@ -579,12 +1282,11 @@ class ResourceBasedSimulator:
                 points_awarded=0,
                 description=f"{tagger.player.name} heals {teammate.player.name} for {resupply_amount} lives",
                 metadata={
-                    "tagger_points": tagger.points_scored,  # before resupply
+                    "tagger_points": tagger.points_scored,
                     "tagger_lives": tagger.final_lives,
                     "tagger_shots": tagger.final_shots,
                     "teammate_points": teammate.points_scored,
-                    "teammate_lives": teammate.final_lives
-                    - resupply_amount,  # before resupply
+                    "teammate_lives": teammate.final_lives,
                     "teammate_shots": teammate.final_shots,
                 },
             )
@@ -600,9 +1302,11 @@ class ResourceBasedSimulator:
             attacker.is_active_at(second)
             and defender.is_taggable_at(seconds_into_round=second)
             and attacker.final_missiles > 0
+            and not defender.is_hiding
         ):
+            # TODO: sometimes expend missile when dodged, sometimes not, based on player stats
             # roll if defender dodges
-            dodge_chance = 0.2  # base 20% chance to dodge
+            dodge_chance = 0.45  # base 45% chance to dodge
             # TODO: dodging should be based on player stats
 
             if random.random() < dodge_chance:
@@ -620,6 +1324,7 @@ class ResourceBasedSimulator:
                         "attacker_points": attacker.points_scored,
                         "attacker_lives": attacker.final_lives,
                         "attacker_shots": attacker.final_shots,
+                        "attacker_missiles": attacker.final_missiles,
                         "defender_points": defender.points_scored,
                         "defender_lives": defender.final_lives,
                         "defender_shots": defender.final_shots,
@@ -629,7 +1334,12 @@ class ResourceBasedSimulator:
 
             # Defender does not dodge, schedule missile completion
             delay = random.randint(1, 2)  # 1-2 second delay
-            logger.debug("about to complete missile")
+            logger.debug(
+                "%s - %s: about to complete missile delay: %s",
+                second,
+                "start msl lock",
+                delay,
+            )
             self._complete_missile(attacker, defender, second + delay)
             return
         return
@@ -638,12 +1348,28 @@ class ResourceBasedSimulator:
         """Simulate finishing missle on opponent"""
         if attacker.is_active_at(second) and defender.is_taggable_at(second):
             # normalize role checks (roles are stored lowercase elsewhere)
-            if str(defender.role).lower() in ("commander", "heavy"):
-                defender.shields = 3
-            else:
-                defender.shields = 1
+            defender.shields = defender.max_shields  # reset shields on missile hit
             defender.points_scored -= 100
             defender.final_lives -= 2
+            if defender.final_lives <= 0:
+                defender.was_eliminated = True
+                logger.debug(
+                    "%s - %s: Player eliminated: %s by %s",
+                    second,
+                    "complete msl",
+                    defender.player.name,
+                    attacker.player.name,
+                )
+                GameEvent.objects.create(
+                    game_round=attacker.game_round,
+                    timestamp=second,
+                    event_type="elimination",
+                    actor=attacker.player,
+                    target=defender.player,
+                    points_awarded=0,
+                    description=f"{defender.player.name} is eliminated by {attacker.player.name}",
+                    metadata={},
+                )
             defender.last_downed_time = second  # set downed time for respawn logic
             defender.times_missiled += 1
             # Ensure keys exist for missile bookkeeping
@@ -674,6 +1400,7 @@ class ResourceBasedSimulator:
             attacker.specific_tags[def_key]["missiled"] += 1
             attacker.points_scored += 500
             attacker.final_missiles -= 1
+            attacker.missiles_landed += 1
             attacker.final_special += 2
             if str(defender.role).lower() == "medic":
                 attacker.final_medic_hits += 2
@@ -691,24 +1418,215 @@ class ResourceBasedSimulator:
                 points_awarded=500,
                 description=f"{attacker.player.name} hits {defender.player.name} with a missile",
                 metadata={
-                    "attacker_points": attacker.points_scored
-                    - 500,  # before missile hit
+                    "attacker_points": attacker.points_scored,
                     "attacker_lives": attacker.final_lives,
                     "attacker_shots": attacker.final_shots,
-                    "defender_points": defender.points_scored
-                    + 100,  # before missile hit
-                    "defender_lives": defender.final_lives + 2,  # before missile hit
+                    "attacker_missiles": attacker.final_missiles,
+                    "attacker_special": attacker.final_special,
+                    "defender_points": defender.points_scored,
+                    "defender_lives": defender.final_lives,
                     "defender_shots": defender.final_shots,
+                    "defender_shields": defender.shields,
                 },
             )
-            logger.debug("missile hit completed")
+            logger.debug(
+                "%s - %s: missile hit completed a: %s d: %s",
+                second,
+                "complete msl",
+                attacker.role,
+                defender.role,
+            )
 
     def _use_special(self, player_state, second):
         """Simulate using a special ability"""
-        # get player_state.role
-        # depending on role check special point count
-        # if enough specials, do action based on role.
-        return None
+        # if player has enough special points, is alive and is active, expend special points and apply effect
+        logger.debug(
+            "%s - %s: %s at %s, %s/%s special, active until %s, succeds: %s",
+            second,
+            "use special",
+            player_state.player.name,
+            second,
+            player_state.final_special,
+            player_state.special_cost,
+            player_state.special_active_until,
+            player_state.can_use_special
+            and player_state.final_lives > 0
+            and player_state.is_active_at(second),
+        )
+        if (
+            player_state.can_use_special
+            and player_state.final_lives > 0
+            and player_state.is_active_at(second)
+        ):
+            if player_state.role == "commander":
+                # remove special points, set special active until to seconds + 4-7 seconds
+                player_state.final_special -= player_state.special_cost
+                player_state.specials_used += 1
+                countdown = random.randint(4, 7)
+                player_state.special_active_until = second + countdown
+                # TODO: call with delay to complete nuke
+
+                self._complete_nuke(player_state, second + countdown)
+                player_state.save()
+                GameEvent.objects.create(
+                    game_round=player_state.game_round,
+                    timestamp=second,
+                    event_type="special",
+                    actor=player_state.player,
+                    points_awarded=0,
+                    description=f"{player_state.player.name} activates Nuke special",
+                    metadata={
+                        "special_active_until": player_state.special_active_until,
+                        "special_points": player_state.final_special,
+                    },
+                )
+            elif player_state.role == "scout":
+                # remove special points, set special active until to 900 (lasts whole round)
+                player_state.final_special -= player_state.special_cost
+                player_state.specials_used += 1
+                player_state.special_active_until = 900
+                player_state.save()
+                GameEvent.objects.create(
+                    game_round=player_state.game_round,
+                    timestamp=second,
+                    event_type="special",
+                    actor=player_state.player,
+                    points_awarded=0,
+                    description=f"{player_state.player.name} activates rapid fire special",
+                    metadata={
+                        "special_active_until": player_state.special_active_until,
+                        "special_points": player_state.final_special,
+                    },
+                )
+            elif player_state.role == "medic":
+                # remove special points
+                # find all teammates active at second and add lives to each based on role
+                player_state.final_special -= player_state.special_cost
+                player_state.specials_used += 1
+                player_state.save()
+                teammates = PlayerRoundState.objects.filter(
+                    game_round=player_state.game_round,
+                    team_color=player_state.team_color,
+                    final_lives__gt=0,
+                )
+                teammates = [mate for mate in teammates if mate.is_active_at(second)]
+                medic_heal_chart = {
+                    "commander": 4,
+                    "heavy": 3,
+                    "scout": 5,
+                    "ammo": 2,
+                    "medic": 0,
+                }
+                for mate in teammates:
+                    heal_amount = medic_heal_chart[mate.role]
+                    if mate.final_lives + heal_amount > mate.max_lives:
+                        mate.final_lives = mate.max_lives
+                    else:
+                        mate.final_lives += heal_amount
+                    mate.save()
+                GameEvent.objects.create(
+                    game_round=player_state.game_round,
+                    timestamp=second,
+                    event_type="special",
+                    actor=player_state.player,
+                    points_awarded=0,
+                    description=f"{player_state.player.name} resupplies team",
+                    metadata={
+                        "special_points": player_state.final_special,
+                        "teammates_healed": len(teammates),
+                    },
+                )
+            elif player_state.role == "ammo":
+                # remove special points
+                # find all teammates active at second and add shots to each based on role
+                player_state.final_special -= player_state.special_cost
+                player_state.specials_used += 1
+                player_state.save()
+                teammates = PlayerRoundState.objects.filter(
+                    game_round=player_state.game_round,
+                    team_color=player_state.team_color,
+                    final_lives__gt=0,
+                )
+                teammates = [mate for mate in teammates if mate.is_active_at(second)]
+                ammo_resupply_chart = {
+                    "commander": 5,
+                    "heavy": 5,
+                    "scout": 10,
+                    "medic": 5,
+                    "ammo": 0,
+                }
+                for mate in teammates:
+                    resupply_amount = ammo_resupply_chart[mate.role]
+                    if mate.final_shots + resupply_amount > mate.max_shots:
+                        mate.final_shots = mate.max_shots
+                    else:
+                        mate.final_shots += resupply_amount
+                    mate.save()
+                GameEvent.objects.create(
+                    game_round=player_state.game_round,
+                    timestamp=second,
+                    event_type="special",
+                    actor=player_state.player,
+                    points_awarded=0,
+                    description=f"{player_state.player.name} resupplies team",
+                    metadata={
+                        "special_points": player_state.final_special,
+                        "teammates_healed": len(teammates),
+                    },
+                )
+
+    def _complete_nuke(self, player_state, second):
+        """Simulate completing a nuke special ability"""
+        # check if player is active and alive
+        # find all opposing players, subtract 3 lives from each and set their last_downed_time to second
+        # award 500 points to player_state
+        # create game event for nuke
+        if player_state.is_active_at(second) and player_state.final_lives > 0:
+            opposing_players = PlayerRoundState.objects.filter(
+                game_round=player_state.game_round,
+                team_color="blue" if player_state.team_color == "red" else "red",
+                final_lives__gt=0,
+            )
+            for opponent in opposing_players:
+                opponent.final_lives -= 3
+                if opponent.final_lives <= 0:
+                    opponent.final_lives = 0
+                    opponent.was_eliminated = True
+                    logger.debug(
+                        "%s - %s: Player eliminated: %s by %s",
+                        second,
+                        "complete nuke",
+                        opponent.player.name,
+                        player_state.player.name,
+                    )
+                    GameEvent.objects.create(
+                        game_round=player_state.game_round,
+                        timestamp=second,
+                        event_type="elimination",
+                        actor=player_state.player,
+                        target=opponent.player,
+                        points_awarded=0,
+                        description=f"{opponent.player.name} is eliminated by {player_state.player.name}",
+                        metadata={},
+                    )
+                opponent.last_downed_time = second
+                opponent.save()
+
+            player_state.points_scored += 500
+            player_state.save()
+
+            GameEvent.objects.create(
+                game_round=player_state.game_round,
+                timestamp=second,
+                event_type="nuke_detonated",
+                actor=player_state.player,
+                points_awarded=500,
+                description=f"{player_state.player.name} detonates Nuke",
+                metadata={
+                    "special_points": player_state.final_special,
+                    "opponents_affected": opposing_players.count(),
+                },
+            )
 
     def _reset_base(self, player_state, base_id, second):
         """Simulate resetting off a base"""
@@ -730,6 +1648,20 @@ class ResourceBasedSimulator:
             player_state.points_scored += 1001  # base capture score
             player_state.final_special += 5
             player_state.save()
+            GameEvent.objects.create(
+                game_round=player_state.game_round,
+                timestamp=second,
+                event_type="base_capture",
+                actor=player_state.player,
+                points_awarded=1001,
+                description=f"{player_state.player.name} captures base {'neutral' if base_id == 15 else 'opposing'}",
+                metadata={
+                    "base_id": base_id,
+                    "shots_remaining": player_state.final_shots,
+                    "special_points": player_state.final_special,
+                    "points_scored": player_state.points_scored,
+                },
+            )
             return True
         return False
 
@@ -742,6 +1674,22 @@ class ResourceBasedSimulator:
         else:
             player_state.opposing_base_destroyed = True
         player_state.points_scored += 1001  # base destroy score
+        player_state.final_special += 5
+        player_state.save()
+        GameEvent.objects.create(
+            game_round=player_state.game_round,
+            timestamp=second,
+            event_type="base_missile",
+            actor=player_state.player,
+            points_awarded=1001,
+            description=f"{player_state.player.name} missiles base {'neutral' if base_id == 'neutral' else 'opposing'}",
+            metadata={
+                "base_id": base_id,
+                "missiles_remaining": player_state.final_missiles,
+                "special_points": player_state.final_special,
+                "points_scored": player_state.points_scored,
+            },
+        )
 
     # TODO: need to determine if we are choosing who to reset off of first or in method
     def _attempt_reset(self, player_state, second):

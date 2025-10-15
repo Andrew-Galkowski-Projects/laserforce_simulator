@@ -3,6 +3,7 @@
 {% block title %}{{ round.team_red.name }} vs {{ round.team_blue.name }} - Round Detail{% endblock %}
 
 {% block content %}
+{% load team_extras %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
         <h1>{{ round.team_red.name }} vs {{ round.team_blue.name }}</h1>
@@ -45,7 +46,7 @@
                         <small>Players</small>
                     </div>
                     <div class="col-3">
-                        <h5>{% for p in red_performances %}{% if not p.was_eliminated %}{% endif %}{% endfor %}{{ red_performances|length|add:"-6"|add:"6" }}</h5>
+                        <h5>{{ red_performances|count_attr_false:"was_eliminated" }}</h5>
                         <small>Survivors</small>
                     </div>
                     <div class="col-3">
@@ -76,7 +77,7 @@
                         <small>Players</small>
                     </div>
                     <div class="col-3">
-                        <h5>{% for p in blue_performances %}{% if not p.was_eliminated %}{% endif %}{% endfor %}{{ blue_performances|length|add:"-6"|add:"6" }}</h5>
+                        <h5>{{ blue_performances|count_attr_false:"was_eliminated" }}</h5>
                         <small>Survivors</small>
                     </div>
                     <div class="col-3">
@@ -190,8 +191,10 @@
                             {% for perf in red_performances %}
                             <li>
                                 <strong>{{ perf.player.name }}:</strong>
-                                {{ perf.shots_used }}/{{ perf.max_shots }} shots,
-                                {{ perf.specials_used }}/{{ perf.starting_special }} specials
+                                {{ perf.tags_made }}/{{ perf.shots_used }} hit/taken,
+                                {{ perf.specials_used|mul_int:perf.special_cost }}/
+                                {{ perf.final_special|add:0|add:perf.specials_used|mul_int:perf.special_cost }}
+                                specials used
                                 {% if perf.starting_missiles > 0 %}
                                 , {{ perf.missiles_used }}/{{ perf.starting_missiles }} missiles
                                 {% endif %}
@@ -205,10 +208,12 @@
                             {% for perf in blue_performances %}
                             <li>
                                 <strong>{{ perf.player.name }}:</strong>
-                                {{ perf.shots_used }}/{{ perf.max_shots }} shots,
-                                {{ perf.specials_used }}/{{ perf.starting_special }} specials
+                                {{ perf.tags_made }}/{{ perf.shots_used }} hit/taken,
+                                {{ perf.specials_used|mul_int:perf.special_cost }}/
+                                {{ perf.final_special|add:0|add:perf.specials_used|mul_int:perf.special_cost }}
+                                specials used
                                 {% if perf.starting_missiles > 0 %}
-                                , {{ perf.missiles_used }}/{{ perf.starting_missiles }} missiles
+                                , {{ perf.missiles_landed }}/{{ perf.starting_missiles }} missiles
                                 {% endif %}
                             </li>
                             {% endfor %}
@@ -227,7 +232,9 @@
     <a href="{% url 'match_list' %}" class="btn btn-secondary">← Back to Matches</a>
     {% endif %}
     <a href="{% url 'game_round_events' round.id %}" class="btn btn-info">📋 View Event Log</a>
-    <a href="{% url 'team_match_history' round.team_red.id %}" class="btn btn-outline-primary">{{ round.team_red.name }} History</a>
-    <a href="{% url 'team_match_history' round.team_blue.id %}" class="btn btn-outline-primary">{{ round.team_blue.name }} History</a>
+    <a href="{% url 'team_match_history' round.team_red.id %}" class="btn btn-outline-primary">
+        {{ round.team_red.name }} History</a>
+    <a href="{% url 'team_match_history' round.team_blue.id %}" class="btn btn-outline-primary">
+        {{ round.team_blue.name }} History</a>
 </div>
 {% endblock %}

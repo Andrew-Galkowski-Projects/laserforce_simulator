@@ -381,10 +381,183 @@ class SimulationTests(TestCase):
         # Within 3 seconds -> not taggable (less than 4) and not active (less than 8)
         self.assertFalse(state.is_taggable_at(12))
         self.assertFalse(state.is_active_at(12))
+        self.assertFalse(state.is_resupplyable_at(12))
 
         # After 5 seconds -> taggable but still not active until 8
         self.assertTrue(state.is_taggable_at(15))
         self.assertFalse(state.is_active_at(15))
+        self.assertFalse(state.is_resupplyable_at(15))
 
         # After 9 seconds -> active again
         self.assertTrue(state.is_active_at(20))
+        self.assertTrue(state.is_resupplyable_at(20))
+        
+    def test_takes_3_tags_to_down_commander_and_heavy(self):
+        simulator = ResourceBasedSimulator()
+        team, players = self.create_team_with_roster("DownTest")
+        gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
+
+        commander_player = team.players.filter(role="commander").first()
+        heavy_player = team.players.filter(role="heavy").first()
+        attacker_player = team.players.filter(role="scout").first()
+        commander = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=commander_player,
+            team_color="red",
+            role="commander",
+            current_zone=0,
+            final_shots=10,
+            final_lives=3,
+            shields=3,
+        )
+        heavy = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=heavy_player,
+            team_color="red",
+            role="heavy",
+            current_zone=0,
+            final_shots=10,
+            final_lives=3,
+            shields=3,
+        )
+        attacker = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=attacker_player,
+            team_color="blue",
+            role="scout",
+            current_zone=0,
+            final_shots=10,
+            final_lives=10,
+        )
+
+        # Force 3 successful tags on commander
+        for i in range(3):
+            with patch("random.choices", return_value=["tag_player"]), patch(
+                "random.choice", return_value=commander
+            ), patch("random.random", return_value=0.0):
+                simulator._choose_action(attacker, [attacker, commander, heavy], second=i)
+
+        commander.refresh_from_db()
+        # confirm commander has 2 lives left and is downed at second 3
+        self.assertEqual(commander.final_lives, 2)
+        self.assertFalse(commander.is_active_at(3))
+
+        # Reset attacker shots for next test
+        attacker.final_shots = 10
+        attacker.save()
+
+        # Force 3 successful tags on heavy
+        for i in range(3, 6):
+            with patch("random.choices", return_value=["tag_player"]), patch(
+                "random.choice", return_value=heavy
+            ), patch("random.random", return_value=0.0):
+                simulator._choose_action(attacker, [attacker, commander, heavy], second=i)
+
+        heavy.refresh_from_db()
+        # confirm heavy has 2 lives left and is downed at second 3
+        self.assertEqual(heavy.final_lives, 2)
+        self.assertFalse(heavy.is_active_at(3))
+        
+    def test_takes_1_tags_to_down_other_roles(self):
+        simulator = ResourceBasedSimulator()
+        team, players = self.create_team_with_roster("DownTest")
+        gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
+
+        roles_to_test = ["scout", "medic", "ammo"]
+        role_states = {}
+        for role in roles_to_test:
+            player = team.players.filter(role=role).first()
+            state = PlayerRoundState.objects.create(
+                game_round=gr,
+                player=player,
+                team_color="red",
+                role=role,
+                current_zone=0,
+                final_shots=10,
+                final_lives=1,
+                shields=1,
+            )
+            role_states[role] = state
+
+        attacker_player = team.players.filter(role="scout").first()
+        attacker = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=attacker_player,
+            team_color="blue",
+            role="scout",
+            current_zone=0,
+            final_shots=10,
+            final_lives=10,
+        )
+
+        # Force 1 successful tag on each role
+        for role, state in role_states.items():
+            with patch("random.choices", return_value=["tag_player"]), patch(
+                "random.choice", return_value=state
+            ), patch("random.random", return_value=0.0):
+                simulator._choose_action(attacker, [attacker] + list(role_states.values()), second=0)
+
+            state.refresh_from_db()
+            # confirm player has 0 lives left and is downed
+            self.assertEqual(state.final_lives, 0)
+            self.assertFalse(state.is_active_at(1), f"{role} should be downed after 1 tag")
+    
+    def test_takes_2_tags_from_commander_to_down_heavy(self):
+        simulator = ResourceBasedSimulator()
+        team, players = self.create_team_with_roster("DownTest")
+        gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
+
+        heavy_player = team.players.filter(role="heavy").first()
+        heavy = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=heavy_player,
+            team_color="red",
+            role="heavy",
+            current_zone=0,
+            final_shots=10,
+            final_lives=3,
+            shields=3,
+        )
+
+        commander_player = team.players.filter(role="commander").first()
+        commander = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=commander_player,
+            team_color="blue",
+            role="commander",
+            current_zone=0,
+            final_shots=10,
+            final_lives=10,
+        )
+
+        # Force 2 successful tags on heavy by commander
+        for i in range(2):
+            with patch("random.choices", return_value=["tag_player"]), patch(
+                "random.choice", return_value=heavy
+            ), patch("random.random", return_value=0.0):
+                simulator._choose_action(commander, [commander, heavy], second=i)
+
+        heavy.refresh_from_db()
+        # confirm heavy has 1 life left and is downed at second 2
+        self.assertEqual(heavy.final_lives, 1)
+        self.assertFalse(heavy.is_active_at(2))
+    
+    def test_cannot_be_resupplied_while_downed(self):
+        simulator = ResourceBasedSimulator()
+        team, players = self.create_team_with_roster("Edge")
+        gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
+        # Resupply edge case: teammate who is downed should not be resupplyable
+        red_states = simulator._initialize_players(gr, team.players.all(), "red")
+        medic = next(s for s in red_states if s.role == "medic")
+        teammate = next(s for s in red_states if s.role == "heavy")
+        teammate.final_lives = 1
+        teammate.last_downed_time = 5  # downed at second 5
+        medic.save()
+        teammate.save()
+
+        # Attempt resupply at second 10 (within 8 seconds of downed) should not heal
+        simulator._attempt_resupply(medic, teammate, second=10)
+        teammate.refresh_from_db()
+        # No heal should have occurred because teammate is still downed
+        self.assertLessEqual(teammate.final_lives, 1)
+		
