@@ -1,27 +1,17 @@
-laserforce_simulator/matches/__pycache__/__init__.cpython-311.pyc
-laserforce_simulator/matches/__pycache__/admin.cpython-311.pyc
-laserforce_simulator/matches/__pycache__/apps.cpython-311.pyc
-laserforce_simulator/matches/__pycache__/forms.cpython-311.pyc
-laserforce_simulator/matches/__pycache__/models.cpython-311.pyc
-laserforce_simulator/matches/__pycache__/simulation.cpython-311.pyc
-laserforce_simulator/matches/__pycache__/tests.cpython-311.pyc
-laserforce_simulator/matches/__pycache__/urls.cpython-311.pyc
-laserforce_simulator/matches/__pycache__/views.cpython-311.pyc
-laserforce_simulator/matches/migrations/__pycache__/__init__.cpython-311.pyc
-laserforce_simulator/matches/migrations/__pycache__/0001_initial.cpython-311.pyc
-laserforce_simulator/matches/migrations/__pycache__/0002_rename_lives_playerroundstate_starting_lives_and_more.cpython-311.pyc
-laserforce_simulator/matches/migrations/__pycache__/0004_playerroundstate_current_zone_and_more.cpython-311.pyc
-laserforce_simulator/matches/migrations/__pycache__/0005_remove_playerroundstate_is_active_and_more.cpython-311.pyc
-laserforce_simulator/matches/migrations/__pycache__/0006_playerroundstate_special_active_until.cpython-311.pyc
-laserforce_simulator/matches/migrations/__pycache__/0007_playerroundstate_resupplies_given_and_more.cpython-311.pyc
-laserforce_simulator/matches/migrations/__pycache__/0008_rename_missiles_fired_playerroundstate_missiles_landed.cpython-311.pyc
-laserforce_simulator/matches/migrations/__pycache__/0009_playerroundstate_is_hiding.cpython-311.pyc
-laserforce_simulator/teams/__pycache__/admin.cpython-311.pyc
-laserforce_simulator/teams/__pycache__/apps.cpython-311.pyc
-laserforce_simulator/teams/__pycache__/forms.cpython-311.pyc
-laserforce_simulator/teams/__pycache__/models.cpython-311.pyc
-laserforce_simulator/teams/__pycache__/urls.cpython-311.pyc
-laserforce_simulator/teams/__pycache__/views.cpython-311.pyc
-laserforce_simulator/teams/migrations/__pycache__/__init__.cpython-311.pyc
-laserforce_simulator/teams/migrations/__pycache__/0001_initial.cpython-311.pyc
-laserforce_simulator/teams/migrations/__pycache__/0002_alter_player_team.cpython-311.pyc
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller
+#  Usually these files are written by a python script from a template
+#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.manifest
+*.spec
+
+# Django stuff: local DB, media, static files (optional)
+*.sqlite3
+media/
+
+# VSCode settings
+.vscode/
