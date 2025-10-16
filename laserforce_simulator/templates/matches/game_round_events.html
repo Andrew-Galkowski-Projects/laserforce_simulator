@@ -97,6 +97,71 @@
             <div class="card-header">
                 <h5 class="mb-0">📋 Full Event Timeline</h5>
             </div>
+            <!-- Filters: event types + player filters -->
+            <div class="card-body border-bottom bg-light">
+                <div class="row g-3">
+                    <div class="col-12 col-md-6">
+                        <strong>Filter by event type</strong>
+                        <div class="d-flex flex-wrap" id="event-type-filters">
+                            <div class="form-check me-2">
+                                <input class="form-check-input type-filter" type="checkbox" value="tag" id="type-tag"
+                                    checked>
+                                <label class="form-check-label" for="type-tag">Tag</label>
+                            </div>
+                            <div class="form-check me-2">
+                                <input class="form-check-input type-filter" type="checkbox" value="elimination"
+                                    id="type-elim" checked>
+                                <label class="form-check-label" for="type-elim">Elimination</label>
+                            </div>
+                            <div class="form-check me-2">
+                                <input class="form-check-input type-filter" type="checkbox" value="miss" id="type-miss"
+                                    checked>
+                                <label class="form-check-label" for="type-miss">Miss</label>
+                            </div>
+                            <div class="form-check me-2">
+                                <input class="form-check-input type-filter" type="checkbox" value="special"
+                                    id="type-special" checked>
+                                <label class="form-check-label" for="type-special">Special</label>
+                            </div>
+                            <div class="form-check me-2">
+                                <input class="form-check-input type-filter" type="checkbox" value="missile"
+                                    id="type-missile" checked>
+                                <label class="form-check-label" for="type-missile">Missile</label>
+                            </div>
+                            <div class="form-check me-2">
+                                <input class="form-check-input type-filter" type="checkbox" value="resupply_ammo"
+                                    id="type-resup-ammo" checked>
+                                <label class="form-check-label" for="type-resup-ammo">Resupply Ammo</label>
+                            </div>
+                            <div class="form-check me-2">
+                                <input class="form-check-input type-filter" type="checkbox" value="resupply_lives"
+                                    id="type-resup-lives" checked>
+                                <label class="form-check-label" for="type-resup-lives">Resupply Lives</label>
+                            </div>
+                            <div class="form-check me-2">
+                                <input class="form-check-input type-filter" type="checkbox" value="movement"
+                                    id="type-movement" checked>
+                                <label class="form-check-label" for="type-movement">Movement</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <strong>Filter by player</strong>
+                        <div class="d-flex flex-wrap" id="player-filters">
+                            {% for ps in round.player_states.all %}
+                            <div class="form-check me-2">
+                                <input class="form-check-input player-filter" type="checkbox" value="{{ ps.player.id }}"
+                                    id="player-{{ ps.player.id }}" checked>
+                                <label class="form-check-label" for="player-{{ ps.player.id }}">{{ ps.player.name
+                                    }}</label>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        <small class="text-muted d-block">Checking a player shows events where they are actor or
+                            target.</small>
+                    </div>
+                </div>
+            </div>
             <div class="card-body" style="max-height: 400px; overflow-y: auto;">
                 {% for event in events %}
                 <div class="mb-2 p-2 border-bottom 
@@ -104,7 +169,8 @@
                         {% elif event.event_type == 'elimination' %}bg-danger bg-opacity-10
                         {% elif event.event_type == 'miss' %}bg-secondary bg-opacity-10
                         {% elif event.event_type == 'special' %}bg-warning bg-opacity-10
-                        {% endif %}">
+                        {% endif %}" data-event-type="{{ event.event_type }}" data-actor-id="{{ event.actor.id }}"
+                    data-target-id="{% if event.target %}{{ event.target.id }}{% else %}-1{% endif %}">
                     <div class="d-flex justify-content-between align-items-start">
                         <span class="badge bg-dark">{{ event.formatted_timestamp }}</span>
                         <div class="flex-grow-1 ms-2">
@@ -176,4 +242,38 @@
 <div class="mt-4">
     <a href="{% url 'game_round_detail' round.id %}" class="btn btn-secondary">← Back to Round Details</a>
 </div>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const typeCheckboxes = document.querySelectorAll('.type-filter');
+        const playerCheckboxes = document.querySelectorAll('.player-filter');
+
+        function getCheckedValues(nodeList) {
+            return Array.from(nodeList).filter(n => n.checked).map(n => n.value);
+        }
+
+        function applyFilters() {
+            const allowedTypes = getCheckedValues(typeCheckboxes);
+            const allowedPlayers = getCheckedValues(playerCheckboxes);
+            const entries = document.querySelectorAll('[data-event-type]');
+            entries.forEach(el => {
+                const t = el.getAttribute('data-event-type');
+                const actor = el.getAttribute('data-actor-id');
+                const target = el.getAttribute('data-target-id');
+                const playerMatch = allowedPlayers.includes(actor) || allowedPlayers.includes(target);
+                const typeMatch = allowedTypes.includes(t);
+                if (typeMatch && playerMatch) {
+                    el.style.display = '';
+                } else {
+                    el.style.display = 'none';
+                }
+            });
+        }
+
+        typeCheckboxes.forEach(cb => cb.addEventListener('change', applyFilters));
+        playerCheckboxes.forEach(cb => cb.addEventListener('change', applyFilters));
+
+        // initial filter pass
+        applyFilters();
+    });
+</script>
 {% endblock %}
