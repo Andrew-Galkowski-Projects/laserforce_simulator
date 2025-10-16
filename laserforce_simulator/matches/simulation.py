@@ -184,6 +184,15 @@ class ResourceBasedSimulator:
                     red_alive,
                     blue_alive,
                 )
+
+                # award any non-captured bases to alive players on winning team
+                if not red_alive:
+                    for blue_player in blue_alive:
+                        self._award_bases(blue_player, second)
+                if not blue_alive:
+                    for red_player in red_alive:
+                        self._award_bases(red_player, second)
+
                 # for p in red_players + blue_players:
                 #     logger.debug(
                 #         "%s tags: %s, tagged %s details: %s",
@@ -647,7 +656,7 @@ class ResourceBasedSimulator:
                         target=defender.player,
                         points_awarded=0,
                         description=f"{defender.player.name} is eliminated by {attacker.player.name}",
-                        metadata={},
+                        metadata={"defender_lives": defender.final_lives},
                     )
 
             defender.times_tagged += 1
@@ -936,7 +945,7 @@ class ResourceBasedSimulator:
                     target=defender.player,
                     points_awarded=0,
                     description=f"{defender.player.name} is eliminated by {attacker.player.name}",
-                    metadata={},
+                    metadata={"defender_lives": defender.final_lives},
                 )
             defender.last_downed_time = second  # set downed time for respawn logic
             defender.times_missiled += 1
@@ -1183,9 +1192,8 @@ class ResourceBasedSimulator:
                         target=opponent.player,
                         points_awarded=0,
                         description=f"{opponent.player.name} is eliminated by {player_state.player.name}",
-                        metadata={},
+                        metadata={"defender_lives": opponent.final_lives},
                     )
-                opponent.last_downed_time = second
                 opponent.save()
 
             player_state.points_scored += 500
@@ -1242,6 +1250,48 @@ class ResourceBasedSimulator:
             )
             return True
         return False
+
+    def _award_bases(self, player_state, second):
+        # if player is alive then award them any bases they didn't capture
+        if player_state.final_lives > 0:
+            if not player_state.neutral_base_destroyed:
+                player_state.points_scored += 1001
+                player_state.neutral_base_destroyed = True
+                player_state.save()
+                base_id = 15
+                GameEvent.objects.create(
+                    game_round=player_state.game_round,
+                    timestamp=second,
+                    event_type="base_capture",
+                    actor=player_state.player,
+                    points_awarded=1001,
+                    description=f"{player_state.player.name} awarded base {'neutral' if base_id == 15 else 'opposing'}",
+                    metadata={
+                        "base_id": base_id,
+                        "shots_remaining": player_state.final_shots,
+                        "special_points": player_state.final_special,
+                        "points_scored": player_state.points_scored,
+                    },
+                )
+            if not player_state.opposing_base_destroyed:
+                player_state.points_scored += 1001
+                player_state.opposing_base_destroyed = True
+                player_state.save()
+                base_id = 14 if player_state.team_color == "red" else 13
+                GameEvent.objects.create(
+                    game_round=player_state.game_round,
+                    timestamp=second,
+                    event_type="base_capture",
+                    actor=player_state.player,
+                    points_awarded=1001,
+                    description=f"{player_state.player.name} awarded base {'neutral' if base_id == 15 else 'opposing'}",
+                    metadata={
+                        "base_id": base_id,
+                        "shots_remaining": player_state.final_shots,
+                        "special_points": player_state.final_special,
+                        "points_scored": player_state.points_scored,
+                    },
+                )
 
     def _missile_base(self, player_state, base_id, second):
         """Simulate using a missile on a base target"""
