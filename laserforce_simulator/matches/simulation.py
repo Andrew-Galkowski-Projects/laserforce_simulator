@@ -21,7 +21,7 @@ class ResourceBasedSimulator:
     def __init__(self):
         self.elimination_bonus = 10000  # Bonus points for eliminating entire team
         # Role-based starting resources
-        self.role_resources = {
+        self.role_starting_resources = {
             "commander": {"lives": 15, "shots": 30, "special": 0, "missiles": 5},
             "heavy": {"lives": 10, "shots": 20, "special": 0, "missiles": 5},
             "scout": {"lives": 15, "shots": 30, "special": 0, "missiles": 0},
@@ -130,8 +130,8 @@ class ResourceBasedSimulator:
         player_states = []
 
         for player in players:
-            resources = self.role_resources.get(
-                player.role, self.role_resources[player.role]
+            resources = self.role_starting_resources.get(
+                player.role, self.role_starting_resources[player.role]
             )
 
             modifiers = self.role_modifiers.get(

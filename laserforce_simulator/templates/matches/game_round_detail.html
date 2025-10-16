@@ -50,11 +50,11 @@
                         <small>Survivors</small>
                     </div>
                     <div class="col-3">
-                        {% if round.blue_eliminated %}
-                        <span class="badge bg-success">Elimination!</span>
-                        {% else %}
-                        <span class="badge bg-secondary">-</span>
-                        {% endif %}
+                        {% if red_performances|count_attr_false:"was_eliminated" < 1 %} <span class="badge bg-success">
+                            Eliminated!</span>
+                            {% else %}
+                            <span class="badge bg-secondary">-</span>
+                            {% endif %}
                     </div>
                 </div>
             </div>
@@ -81,11 +81,11 @@
                         <small>Survivors</small>
                     </div>
                     <div class="col-3">
-                        {% if round.red_eliminated %}
-                        <span class="badge bg-success">Elimination!</span>
-                        {% else %}
-                        <span class="badge bg-secondary">-</span>
-                        {% endif %}
+                        {% if blue_performances|count_attr_false:"was_eliminated" < 1 %} <span class="badge bg-success">
+                            Eliminated!</span>
+                            {% else %}
+                            <span class="badge bg-secondary">-</span>
+                            {% endif %}
                     </div>
                 </div>
             </div>
