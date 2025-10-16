@@ -104,11 +104,12 @@
                         <th>Player</th>
                         <th>Role</th>
                         <th>Points</th>
-                        <th>Tags</th>
-                        <th>Tagged</th>
+                        <th>Tf</th>
+                        <th>Ta</th>
                         <th>Lives</th>
                         <th>Shots</th>
-                        <th>Status</th>
+                        <th>Spec</th>
+                        <th>Msl</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -121,13 +122,8 @@
                         <td>{{ perf.times_tagged }}</td>
                         <td>{{ perf.final_lives }}/{{ perf.max_lives }}</td>
                         <td>{{ perf.final_shots }}/{{ perf.max_shots }}</td>
-                        <td>
-                            {% if perf.was_eliminated %}
-                            <span class="badge bg-danger">Eliminated</span>
-                            {% else %}
-                            <span class="badge bg-success">Survived</span>
-                            {% endif %}
-                        </td>
+                        <td>{{ perf.final_special }}</td>
+                        <td>{{ perf.final_missiles }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -144,11 +140,12 @@
                         <th>Player</th>
                         <th>Role</th>
                         <th>Points</th>
-                        <th>Tags</th>
-                        <th>Tagged</th>
+                        <th>Tf</th>
+                        <th>Ta</th>
                         <th>Lives</th>
                         <th>Shots</th>
-                        <th>Status</th>
+                        <th>Spec</th>
+                        <th>Msl</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -161,13 +158,8 @@
                         <td>{{ perf.times_tagged }}</td>
                         <td>{{ perf.final_lives }}/{{ perf.max_lives }}</td>
                         <td>{{ perf.final_shots }}/{{ perf.max_shots }}</td>
-                        <td>
-                            {% if perf.was_eliminated %}
-                            <span class="badge bg-danger">Eliminated</span>
-                            {% else %}
-                            <span class="badge bg-success">Survived</span>
-                            {% endif %}
-                        </td>
+                        <td>{{ perf.final_special }}</td>
+                        <td>{{ perf.final_missiles }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -191,10 +183,10 @@
                             {% for perf in red_performances %}
                             <li>
                                 <strong>{{ perf.player.name }}:</strong>
-                                {{ perf.tags_made }}/{{ perf.shots_used }} hit/taken,
+                                {{ perf.tags_made }}/{{ perf.shots_used }} hit/total,
                                 {{ perf.specials_used|mul_int:perf.special_cost }}/
-                                {{ perf.final_special|add:0|add:perf.specials_used|mul_int:perf.special_cost }}
-                                specials used
+                                {{ perf.specials_used|mul_int:perf.special_cost|add:0|add:perf.final_special }}
+                                specials used/gained
                                 {% if perf.starting_missiles > 0 %}
                                 , {{ perf.missiles_used }}/{{ perf.starting_missiles }} missiles
                                 {% endif %}
@@ -208,10 +200,10 @@
                             {% for perf in blue_performances %}
                             <li>
                                 <strong>{{ perf.player.name }}:</strong>
-                                {{ perf.tags_made }}/{{ perf.shots_used }} hit/taken,
+                                {{ perf.tags_made }}/{{ perf.shots_used }} hit/total,
                                 {{ perf.specials_used|mul_int:perf.special_cost }}/
-                                {{ perf.final_special|add:0|add:perf.specials_used|mul_int:perf.special_cost }}
-                                specials used
+                                {{ perf.specials_used|mul_int:perf.special_cost|add:0|add:perf.final_special }}
+                                specials used/gained
                                 {% if perf.starting_missiles > 0 %}
                                 , {{ perf.missiles_landed }}/{{ perf.starting_missiles }} missiles
                                 {% endif %}
