@@ -124,19 +124,14 @@
                                 <label class="form-check-label" for="type-special">Special</label>
                             </div>
                             <div class="form-check me-2">
-                                <input class="form-check-input type-filter" type="checkbox" value="missile"
-                                    id="type-missile" checked>
-                                <label class="form-check-label" for="type-missile">Missile</label>
+                                <input class="form-check-input type-filter" type="checkbox" value="missile_hit"
+                                    id="type-missile_hit" checked>
+                                <label class="form-check-label" for="type-missile_hit">Missile</label>
                             </div>
                             <div class="form-check me-2">
-                                <input class="form-check-input type-filter" type="checkbox" value="resupply_ammo"
-                                    id="type-resup-ammo" checked>
-                                <label class="form-check-label" for="type-resup-ammo">Resupply Ammo</label>
-                            </div>
-                            <div class="form-check me-2">
-                                <input class="form-check-input type-filter" type="checkbox" value="resupply_lives"
-                                    id="type-resup-lives" checked>
-                                <label class="form-check-label" for="type-resup-lives">Resupply Lives</label>
+                                <input class="form-check-input type-filter" type="checkbox" value="resupply"
+                                    id="type-resupply" checked>
+                                <label class="form-check-label" for="type-resupply">Resupply</label>
                             </div>
                             <div class="form-check me-2">
                                 <input class="form-check-input type-filter" type="checkbox" value="movement"
@@ -151,9 +146,10 @@
                             {% for ps in round.player_states.all %}
                             <div class="form-check me-2">
                                 <input class="form-check-input player-filter" type="checkbox" value="{{ ps.player.id }}"
-                                    id="player-{{ ps.player.id }}" checked>
-                                <label class="form-check-label" for="player-{{ ps.player.id }}">{{ ps.player.name
-                                    }}</label>
+                                    id="player-{{ ps.player.id }}" checked data-team="{{ ps.team_color }}"
+                                    data-starting-lives="{{ ps.starting_lives }}">
+                                <label class="form-check-label" for="player-{{ ps.player.id }}">
+                                    {{ ps.player.name }}</label>
                             </div>
                             {% endfor %}
                         </div>
@@ -170,7 +166,8 @@
                         {% elif event.event_type == 'miss' %}bg-secondary bg-opacity-10
                         {% elif event.event_type == 'special' %}bg-warning bg-opacity-10
                         {% endif %}" data-event-type="{{ event.event_type }}" data-actor-id="{{ event.actor.id }}"
-                    data-target-id="{% if event.target %}{{ event.target.id }}{% else %}-1{% endif %}">
+                    data-target-id="{% if event.target %}{{ event.target.id }}{% else %}-1{% endif %}"
+                    data-metadata="{{ event.medadata }}">
                     <div class="d-flex justify-content-between align-items-start">
                         <span class="badge bg-dark">{{ event.formatted_timestamp }}</span>
                         <div class="flex-grow-1 ms-2">
@@ -194,58 +191,58 @@
     </div>
 </div>
 
-<!-- Event Type Filter (Optional Enhancement) -->
-<div class="row">
-    <div class="col-12">
+<!-- Charts: Shots, Lives, Points over time -->
+<div class="row mt-4">
+    <div class="col-md-4">
         <div class="card">
             <div class="card-header">
-                <h5 class="mb-0">Event Breakdown by Type</h5>
+                <h6 class="mb-0">Shots Over Time</h6>
             </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-4">
-                        <h6>Tags ({{ event_summary.tags }})</h6>
-                        {% for event in events %}
-                        {% if event.event_type == 'tag' %}
-                        <small class="d-block">
-                            [{{ event.formatted_timestamp }}] {{ event.actor.name }} → {{ event.target.name }}
-                        </small>
-                        {% endif %}
-                        {% endfor %}
-                    </div>
-                    <div class="col-md-4">
-                        <h6>Eliminations ({{ event_summary.eliminations }})</h6>
-                        {% for event in events %}
-                        {% if event.event_type == 'elimination' %}
-                        <small class="d-block">
-                            [{{ event.formatted_timestamp }}] {{ event.target.name }} eliminated
-                        </small>
-                        {% endif %}
-                        {% endfor %}
-                    </div>
-                    <div class="col-md-4">
-                        <h6>Specials ({{ event_summary.specials }})</h6>
-                        {% for event in events %}
-                        {% if event.event_type == 'special' %}
-                        <small class="d-block">
-                            [{{ event.formatted_timestamp }}] {{ event.actor.name }}
-                        </small>
-                        {% endif %}
-                        {% endfor %}
-                    </div>
-                </div>
+            <div class="card-body"><canvas id="chart-shots" height="200"></canvas></div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0">Team Lives Over Time</h6>
             </div>
+            <div class="card-body"><canvas id="chart-lives" height="200"></canvas></div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0">Points Over Time</h6>
+            </div>
+            <div class="card-body"><canvas id="chart-points" height="200"></canvas></div>
         </div>
     </div>
 </div>
-
-<div class="mt-4">
-    <a href="{% url 'game_round_detail' round.id %}" class="btn btn-secondary">← Back to Round Details</a>
-</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function () {
         const typeCheckboxes = document.querySelectorAll('.type-filter');
         const playerCheckboxes = document.querySelectorAll('.player-filter');
+
+        // Overlay toggles UI (inserted above charts)
+        const chartsRow = document.querySelector('.row.mt-4');
+        const overlayControls = document.createElement('div');
+        overlayControls.className = 'mb-3';
+        overlayControls.innerHTML = `
+            <div class="form-check form-check-inline">
+                <input class="form-check-input overlay-toggle" type="checkbox" id="overlay-elims" value="elimination" checked>
+                <label class="form-check-label" for="overlay-elims">Eliminations</label>
+            </div>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input overlay-toggle" type="checkbox" id="overlay-specials" value="special" checked>
+                <label class="form-check-label" for="overlay-specials">Specials</label>
+            </div>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input overlay-toggle" type="checkbox" id="overlay-nukes" value="nuke_detonated" checked>
+                <label class="form-check-label" for="overlay-nukes">Nukes</label>
+            </div>
+        `;
+        chartsRow.parentNode.insertBefore(overlayControls, chartsRow);
 
         function getCheckedValues(nodeList) {
             return Array.from(nodeList).filter(n => n.checked).map(n => n.value);
@@ -274,6 +271,288 @@
 
         // initial filter pass
         applyFilters();
+
+        // Build time-series arrays for charts with 5s buckets
+        const rawEntries = Array.from(document.querySelectorAll('[data-event-type]'))
+            .map(el => ({
+                t: el.getAttribute('data-event-type'),
+                time: el.querySelector('.badge.bg-dark') ? el.querySelector('.badge.bg-dark').textContent : '',
+                s: el.querySelector('.badge.bg-dark') ? el.querySelector('.badge.bg-dark').textContent : '',
+                actor: el.getAttribute('data-actor-id'),
+                target: el.getAttribute('data-target-id'),
+                points: (el.querySelector('.badge.bg-success') ? parseInt(el.querySelector('.badge.bg-success').textContent.replace('+', '')) : 0),
+                metadata: JSON.parse(el.getAttribute('data-metadata') || '{}')
+            }))
+            .map(e => (Object.assign(e, { sec: (function (mmss) { const p = mmss.split(':'); if (p.length !== 2) return 0; return parseInt(p[0]) * 60 + parseInt(p[1]); })(e.time) })))
+            .sort((a, b) => a.sec - b.sec);
+
+        // Determine bucket range
+        const bucketSize = 2; // seconds
+        const minSec = rawEntries.length ? rawEntries[0].sec : 0;
+        const maxSec = rawEntries.length ? rawEntries[rawEntries.length - 1].sec : 0;
+        const buckets = [];
+        for (let s = minSec; s <= maxSec; s += bucketSize) buckets.push(s);
+
+        // Team player lists and starting lives
+        const redPlayers = Array.from(document.querySelectorAll('.player-filter[data-team="red"]'));
+        const bluePlayers = Array.from(document.querySelectorAll('.player-filter[data-team="blue"]'));
+        const redIds = redPlayers.map(n => n.value);
+        const blueIds = bluePlayers.map(n => n.value);
+        const redStartingLives = redPlayers.reduce((acc, n) => acc + (parseInt(n.getAttribute('data-starting-lives')) || 0), 0);
+        const blueStartingLives = bluePlayers.reduce((acc, n) => acc + (parseInt(n.getAttribute('data-starting-lives')) || 0), 0);
+        // Initialize series
+        const times = buckets;
+        const shotsRed = new Array(buckets.length).fill(0);
+        const shotsBlue = new Array(buckets.length).fill(0);
+        const livesRed = new Array(buckets.length).fill(0);
+        const livesBlue = new Array(buckets.length).fill(0);
+        const pointsRed = new Array(buckets.length).fill(0);
+        const pointsBlue = new Array(buckets.length).fill(0);
+
+        // Start with starting lives
+        let curRedLives = 85, curBlueLives = 85;
+        let curRedShots = 140, curBlueShots = 140;
+        let cumRedPoints = 0, cumBluePoints = 0;
+
+        // Map events into buckets
+        rawEntries.forEach(ev => {
+            const bucketIdx = Math.floor((ev.sec - minSec) / bucketSize);
+
+            if (ev.t === 'tag') {
+                role_to_max_shields = {
+                    "commander": 3,
+                    "heavy": 3,
+                    "scout": 1,
+                    "ammo": 1,
+                    "medic": 1,
+                }
+                if (redIds.includes(ev.actor)) {
+                    curRedShots -= 1;
+                    cumRedPoints += 100;
+                    cumBluePoints -= 20;
+                    // ev.actor is just a number cannot perform operations on it currently
+                    alert(ev.metadata.target_shields)
+                    if (ev.metadata['target_shields'] === role_to_max_shields[ev.actor.role]) {
+                        // assume this means they just lost a life
+                        curBlueLives -= 1
+
+                    }
+                }
+                if (blueIds.includes(ev.actor)) {
+                    curBlueShots -= 1;
+                    cumBluePoints += 100;
+                    cumRedPoints -= 20;
+                    // ev.actor is just a number cannot perform operations on it currently
+                    if (ev.metadata['target_shields'] === role_to_max_shields[ev.actor.role]) {
+                        // assume this means they just lost a life
+                        curRedLives -= 1
+                    }
+                }
+            }
+
+            if (ev.t === 'missile_hit') {
+                if (redIds.includes(ev.actor)) {
+                    cumRedPoints += 500;
+                    cumBluePoints -= 100;
+                    curBlueLives -= 2
+                }
+                if (blueIds.includes(ev.actor)) {
+                    cumBluePoints += 500;
+                    cumRedPoints -= 100;
+                    curRedLives -= 2
+                }
+            }
+
+            if (ev.t === 'special') {
+                // if ammo award shots per active ally
+                if (ev.metadata['actor_role'] === 'ammo') {
+                    if (redIds.includes(ev.actor)) curRedShots += ev.metadata['shots_resupplied'];
+                    if (blueIds.includes(ev.actor)) curBlueShots += ev.metadata['shots_resupplied'];
+                }
+
+                // if medic award lives per active ally
+                if (ev.metadata['actor_role'] === 'medic') {
+                    if (redIds.includes(ev.actor)) curRedLives += ev.metadata['lives_resupplied'];
+                    if (blueIds.includes(ev.actor)) curBlueLives += ev.metadata['lives_resupplied'];
+                }
+            }
+
+            if (ev.t === 'miss') {
+                if (redIds.includes(ev.actor)) curRedShots -= 1;
+                if (blueIds.includes(ev.actor)) curBlueShots -= 1;
+            }
+
+            // if ammo resupply, determine how many shots to increment up
+            if (ev.t === 'resupply' && ev.metadata['actor_role'] === 'ammo') {
+                ammo_resupply_chart = {
+                    "commander": 5,
+                    "heavy": 5,
+                    "scout": 10,
+                    "medic": 5,
+                }
+
+                shot_increment = ammo_resupply_chart[ev.metadata['target_role']]
+                if (redIds.includes(ev.actor)) curRedShots += shot_increment;
+                if (blueIds.includes(ev.actor)) curBlueShots += shot_increment;
+            }
+
+            // if medic resupply, determine how many lives to increment up
+            if (ev.t === 'resupply' && ev.metadata['actor_role'] === 'medic') {
+                medic_resupply_chart = {
+                    "commander": 4,
+                    "heavy": 3,
+                    "scout": 5,
+                    "ammo": 3,
+                }
+
+                // can get role from metadata target_role
+                life_increment = medic_resupply_chart[ev.medadata['target_role']]
+                if (redIds.includes(ev.actor)) curRedLives += life_increment;
+                if (blueIds.includes(ev.actor)) curBlueLives += life_increment;
+            }
+
+            if (ev.t === 'nuke_detonated') {
+                // award 500 points to detonating team and subtract 3 lives from each player opposing with lives above 0
+                if (redIds.includes(ev.actor)) {
+
+                    cumRedPoints += 500;
+                }
+                if (blueIds.includes(ev.actor)) {
+                    cumBluePoints += 500;
+                }
+            }
+
+            if (ev.t === 'base_capture') {
+                // award 1001 points to capturing team
+                if (redIds.includes(ev.actor)) cumRedPoints += 1001;
+                if (blueIds.includes(ev.actor)) cumBluePoints += 1001;
+            }
+            // write cumulative values into this and subsequent buckets
+            for (let i = bucketIdx; i < buckets.length; i++) {
+                shotsRed[i] = curRedShots;
+                shotsBlue[i] = curBlueShots;
+                pointsRed[i] = cumRedPoints;
+                pointsBlue[i] = cumBluePoints;
+                // lives reflect reductions as events processed; we snapshot current lives
+                livesRed[i] = curRedLives;
+                livesBlue[i] = curBlueLives;
+            }
+        });
+
+        // If no events, fill initial values
+        if (rawEntries.length === 0) {
+            shotsRed[0] = 0; shotsBlue[0] = 0;
+            pointsRed[0] = 0; pointsBlue[0] = 0;
+            livesRed[0] = redStartingLives; livesBlue[0] = blueStartingLives;
+        }
+
+        // Smoothing: simple moving average with window 3
+        function smooth(arr) {
+            const out = new Array(arr.length).fill(0);
+            const w = 3;
+            for (let i = 0; i < arr.length; i++) {
+                let sum = 0, cnt = 0;
+                for (let j = i - Math.floor(w / 2); j <= i + Math.floor(w / 2); j++) {
+                    if (j >= 0 && j < arr.length) { sum += arr[j]; cnt++; }
+                }
+                out[i] = cnt ? (sum / cnt) : arr[i];
+            }
+            return out;
+        }
+
+        const shotsRedSm = smooth(shotsRed);
+        const shotsBlueSm = smooth(shotsBlue);
+        const livesRedSm = smooth(livesRed);
+        const livesBlueSm = smooth(livesBlue);
+        const pointsRedSm = smooth(pointsRed);
+        const pointsBlueSm = smooth(pointsBlue);
+
+        // Prepare labels formatted as MM:SS
+        const labelTimes = times.map(s => {
+            const mm = Math.floor(s / 60).toString().padStart(2, '0');
+            const ss = (s % 60).toString().padStart(2, '0');
+            return `${mm}:${ss}`;
+        });
+
+        // Chart helper
+        function makeLine(ctx, labels, dataSets, opts) {
+            return new Chart(ctx, {
+                type: 'line',
+                data: { labels: labels, datasets: dataSets },
+                options: Object.assign({ responsive: true, interaction: { mode: 'index', intersect: false }, stacked: false, plugins: { legend: { position: 'top' } } }, opts || {})
+            });
+        }
+
+        const chartShots = makeLine(document.getElementById('chart-shots'), labelTimes, [
+            { label: '{{ round.team_red.name }} Shots', data: shotsRedSm, borderColor: 'rgba(220,53,69,1)', backgroundColor: 'rgba(220,53,69,0.2)', fill: false, tension: 0.3 },
+            { label: '{{ round.team_blue.name }} Shots', data: shotsBlueSm, borderColor: 'rgba(13,110,253,1)', backgroundColor: 'rgba(13,110,253,0.2)', fill: false, tension: 0.3 }
+        ], { scales: { y: { beginAtZero: true } } });
+
+        const chartLives = makeLine(document.getElementById('chart-lives'), labelTimes, [
+            { label: '{{ round.team_red.name }} Lives', data: livesRedSm, borderColor: 'rgba(220,53,69,1)', backgroundColor: 'rgba(220,53,69,0.2)', fill: false, tension: 0.3 },
+            { label: '{{ round.team_blue.name }} Lives', data: livesBlueSm, borderColor: 'rgba(13,110,253,1)', backgroundColor: 'rgba(13,110,253,0.2)', fill: false, tension: 0.3 }
+        ], { scales: { y: { beginAtZero: true } } });
+
+        const chartPoints = makeLine(document.getElementById('chart-points'), labelTimes, [
+            { label: '{{ round.team_red.name }} Points', data: pointsRedSm, borderColor: 'rgba(220,53,69,1)', backgroundColor: 'rgba(220,53,69,0.2)', fill: false, tension: 0.3 },
+            { label: '{{ round.team_blue.name }} Points', data: pointsBlueSm, borderColor: 'rgba(13,110,253,1)', backgroundColor: 'rgba(13,110,253,0.2)', fill: false, tension: 0.3 }
+        ], { scales: { y: { beginAtZero: true } } });
+
+        // Overlay handling: draw vertical lines on all three charts for selected event types
+        const overlayToggles = document.querySelectorAll('.overlay-toggle');
+        function drawOverlays() {
+            // gather overlay event seconds for enabled types
+            const enabled = getCheckedValues(overlayToggles);
+            const overlaySecs = rawEntries.filter(e => enabled.includes(e.t)).map(e => e.sec);
+            // Clear existing plugin-generated annotations by updating datasets to include extra scatter overlays
+            function makeVLines(chart) {
+                // Remove any existing plugin dataset markers (we won't add datasets; instead we use plugin to draw)
+                // We'll attach a simple plugin to draw afterDraw
+                if (chart.__overlayPlugin) chart.options.plugins._overlay_plugin = chart.__overlayPlugin;
+                chart.__overlayPlugin = {
+                    id: '_overlay_plugin',
+                    afterDraw: function (chartInstance) {
+                        const ctx = chartInstance.ctx;
+                        const xScale = chartInstance.scales['x'] || Object.values(chartInstance.scales).find(s => s.isHorizontal);
+                        if (!xScale) return;
+                        const start = times.length ? times[0] : 0;
+                        overlaySecs.forEach(s => {
+                            const bucketIdx = Math.floor((s - start) / bucketSize);
+                            if (bucketIdx < 0 || bucketIdx >= times.length) return;
+                            // pixel X for the bucket index
+                            let x;
+                            try {
+                                x = xScale.getPixelForValue(bucketIdx);
+                            } catch (e) {
+                                // fallback: compute via proportion
+                                const range = xScale.max - xScale.min || 1;
+                                const frac = (bucketIdx - xScale.min) / range;
+                                x = chartInstance.chartArea.left + frac * (chartInstance.chartArea.right - chartInstance.chartArea.left);
+                            }
+                            ctx.save();
+                            ctx.beginPath();
+                            ctx.strokeStyle = 'rgba(255,0,102,0.6)';
+                            ctx.lineWidth = 2;
+                            ctx.moveTo(x, chartInstance.chartArea.top);
+                            ctx.lineTo(x, chartInstance.chartArea.bottom);
+                            ctx.stroke();
+                            ctx.restore();
+                        });
+                    }
+                };
+                // attach plugin
+                chart.options.plugins._overlay_plugin = chart.__overlayPlugin;
+                chart.update();
+            }
+            [chartShots, chartLives, chartPoints].forEach(makeVLines);
+        }
+
+        overlayToggles.forEach(t => t.addEventListener('change', drawOverlays));
+        // initial overlays
+        drawOverlays();
     });
 </script>
+<div class="mt-4">
+    <a href="{% url 'game_round_detail' round.id %}" class="btn btn-secondary">← Back to Round Details</a>
+</div>
 {% endblock %}
