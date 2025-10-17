@@ -450,7 +450,10 @@ class ResourceBasedSimulator:
             target=None,
             points_awarded=0,
             description=f"{player.player.name} moves to zone {player.current_zone}",
-            metadata={"new_zone": player.current_zone},
+            metadata={
+                "actor_role": player.role,
+                "new_zone": player.current_zone,
+                },
         )
 
     def _choose_tag_target(self, player, all_alive, second):
@@ -656,7 +659,10 @@ class ResourceBasedSimulator:
                         target=defender.player,
                         points_awarded=0,
                         description=f"{defender.player.name} is eliminated by {attacker.player.name}",
-                        metadata={"defender_lives": defender.final_lives},
+                        metadata={
+                            "actor_role": attacker.role,
+                            "target_role": defender.role,
+                            "target_lives": defender.final_lives},
                     )
 
             defender.times_tagged += 1
@@ -727,14 +733,16 @@ class ResourceBasedSimulator:
                 points_awarded=100,
                 description=f"{attacker.player.name} zaps {defender.player.name}",
                 metadata={
-                    "attacker_points": attacker.points_scored,
-                    "attacker_lives": attacker.final_lives,
-                    "attacker_shots": attacker.final_shots,
-                    "attacker_special": attacker.final_special,
-                    "defender_points": defender.points_scored,
-                    "defender_lives": defender.final_lives,
-                    "defender_shields": defender.shields,
-                    "defender_shots": defender.final_shots,
+                    "actor_role": attacker.role,
+                    "actor_points": attacker.points_scored,
+                    "actor_lives": attacker.final_lives,
+                    "actor_shots": attacker.final_shots,
+                    "actor_special": attacker.final_special,
+                    "target_role": defender.role,
+                    "target_points": defender.points_scored,
+                    "target_lives": defender.final_lives,
+                    "target_shields": defender.shields,
+                    "target_shots": defender.final_shots,
                     "rolled_hit_pct": rolled_chance,
                 },
             )
@@ -759,12 +767,14 @@ class ResourceBasedSimulator:
                 points_awarded=0,
                 description=f"{attacker.player.name} misses {defender.player.name}",
                 metadata={
-                    "attacker_points": attacker.points_scored,
-                    "attacker_lives": attacker.final_lives,
-                    "attacker_shots": attacker.final_shots,
-                    "defender_points": defender.points_scored,
-                    "defender_lives": defender.final_lives,
-                    "defender_shots": defender.final_shots,
+                    "actor_role": attacker.role,
+                    "actor_points": attacker.points_scored,
+                    "actor_lives": attacker.final_lives,
+                    "actor_shots": attacker.final_shots,
+                    "target_role": defender.role
+                    "target_points": defender.points_scored,
+                    "target_lives": defender.final_lives,
+                    "target_shots": defender.final_shots,
                     "rolled_hit_pct": rolled_chance,
                 },
             )
@@ -824,12 +834,14 @@ class ResourceBasedSimulator:
                 points_awarded=0,
                 description=f"{tagger.player.name} resupplies {teammate.player.name} with {resupply_amount} shots",
                 metadata={
-                    "tagger_points": tagger.points_scored,
-                    "tagger_lives": tagger.final_lives,
-                    "tagger_shots": tagger.final_shots,
-                    "teammate_points": teammate.points_scored,
-                    "teammate_lives": teammate.final_lives,
-                    "teammate_shots": teammate.final_shots,
+                    "actor_role": tagger.role,
+                    "actor_points": tagger.points_scored,
+                    "actor_lives": tagger.final_lives,
+                    "actor_shots": tagger.final_shots,
+                    "target_role": teammate.role,
+                    "target_points": teammate.points_scored,
+                    "target_lives": teammate.final_lives,
+                    "target_shots": teammate.final_shots,
                 },
             )
             return
@@ -859,12 +871,14 @@ class ResourceBasedSimulator:
                 points_awarded=0,
                 description=f"{tagger.player.name} heals {teammate.player.name} for {resupply_amount} lives",
                 metadata={
-                    "tagger_points": tagger.points_scored,
-                    "tagger_lives": tagger.final_lives,
-                    "tagger_shots": tagger.final_shots,
-                    "teammate_points": teammate.points_scored,
-                    "teammate_lives": teammate.final_lives,
-                    "teammate_shots": teammate.final_shots,
+                    "actor_role": tagger.role,
+                    "actor_points": tagger.points_scored,
+                    "actor_lives": tagger.final_lives,
+                    "actor_shots": tagger.final_shots,
+                    "target_role": teammate.role,
+                    "target_points": teammate.points_scored,
+                    "target_lives": teammate.final_lives,
+                    "target_shots": teammate.final_shots,
                 },
             )
             return
@@ -898,13 +912,15 @@ class ResourceBasedSimulator:
                     points_awarded=0,
                     description=f"{defender.player.name} dodges missile from {attacker.player.name}",
                     metadata={
-                        "attacker_points": attacker.points_scored,
-                        "attacker_lives": attacker.final_lives,
-                        "attacker_shots": attacker.final_shots,
-                        "attacker_missiles": attacker.final_missiles,
-                        "defender_points": defender.points_scored,
-                        "defender_lives": defender.final_lives,
-                        "defender_shots": defender.final_shots,
+                        "actor_role": attacker.role,
+                        "actor_points": attacker.points_scored,
+                        "actor_lives": attacker.final_lives,
+                        "actor_shots": attacker.final_shots,
+                        "actor_missiles": attacker.final_missiles,
+                        "target_role": defender.role,
+                        "target_points": defender.points_scored,
+                        "target_lives": defender.final_lives,
+                        "target_shots": defender.final_shots,
                     },
                 )
                 return
@@ -945,7 +961,10 @@ class ResourceBasedSimulator:
                     target=defender.player,
                     points_awarded=0,
                     description=f"{defender.player.name} is eliminated by {attacker.player.name}",
-                    metadata={"defender_lives": defender.final_lives},
+                    metadata={
+                        "target_role:": defender.role,
+                        "target_lives": defender.final_lives
+                        },
                 )
             defender.last_downed_time = second  # set downed time for respawn logic
             defender.times_missiled += 1
@@ -997,15 +1016,17 @@ class ResourceBasedSimulator:
                 points_awarded=500,
                 description=f"{attacker.player.name} hits {defender.player.name} with a missile",
                 metadata={
-                    "attacker_points": attacker.points_scored,
-                    "attacker_lives": attacker.final_lives,
-                    "attacker_shots": attacker.final_shots,
-                    "attacker_missiles": attacker.final_missiles,
-                    "attacker_special": attacker.final_special,
-                    "defender_points": defender.points_scored,
-                    "defender_lives": defender.final_lives,
-                    "defender_shots": defender.final_shots,
-                    "defender_shields": defender.shields,
+                    "actor_role": attacker.role,
+                    "actor_points": attacker.points_scored,
+                    "actor_lives": attacker.final_lives,
+                    "actor_shots": attacker.final_shots,
+                    "actor_missiles": attacker.final_missiles,
+                    "actor_special": attacker.final_special,
+                    "target_role": defender.role,
+                    "target_points": defender.points_scored,
+                    "target_lives": defender.final_lives,
+                    "target_shots": defender.final_shots,
+                    "target_shields": defender.shields,
                 },
             )
             logger.debug(
@@ -1055,6 +1076,7 @@ class ResourceBasedSimulator:
                     points_awarded=0,
                     description=f"{player_state.player.name} activates Nuke special",
                     metadata={
+                        "actor_role": player_state.role,
                         "special_active_until": player_state.special_active_until,
                         "special_points": player_state.final_special,
                     },
@@ -1073,6 +1095,7 @@ class ResourceBasedSimulator:
                     points_awarded=0,
                     description=f"{player_state.player.name} activates rapid fire special",
                     metadata={
+                        "actor_role": player_state.role,
                         "special_active_until": player_state.special_active_until,
                         "special_points": player_state.final_special,
                     },
@@ -1097,10 +1120,13 @@ class ResourceBasedSimulator:
                     "medic": 0,
                 }
                 for mate in teammates:
+                    total_healed = 0
                     heal_amount = medic_heal_chart[mate.role]
                     if mate.final_lives + heal_amount > mate.max_lives:
+                        total_healed += mate.max_lives - mate.final_lives
                         mate.final_lives = mate.max_lives
                     else:
+                        total_healed += heal_amount
                         mate.final_lives += heal_amount
                     mate.save()
                 GameEvent.objects.create(
@@ -1111,8 +1137,10 @@ class ResourceBasedSimulator:
                     points_awarded=0,
                     description=f"{player_state.player.name} resupplies team",
                     metadata={
+                        "actor_role": player_state.role,
                         "special_points": player_state.final_special,
-                        "teammates_healed": len(teammates),
+                        "teammates_resupplied": len(teammates),
+                        "lives_resupplied": total_healed,
                     },
                 )
             elif player_state.role == "ammo":
@@ -1135,10 +1163,13 @@ class ResourceBasedSimulator:
                     "ammo": 0,
                 }
                 for mate in teammates:
+                    total_ammo = 0
                     resupply_amount = ammo_resupply_chart[mate.role]
                     if mate.final_shots + resupply_amount > mate.max_shots:
+                        total_ammo += mate.max_shots - mate.final_shots
                         mate.final_shots = mate.max_shots
                     else:
+                        total_ammo += resupply_amount
                         mate.final_shots += resupply_amount
                     mate.save()
                 GameEvent.objects.create(
@@ -1149,8 +1180,10 @@ class ResourceBasedSimulator:
                     points_awarded=0,
                     description=f"{player_state.player.name} resupplies team",
                     metadata={
+                        "actor_role": player_state.role,
                         "special_points": player_state.final_special,
-                        "teammates_healed": len(teammates),
+                        "teammates_resupplied": len(teammates),
+                        "shots_resupplied": total_ammo,
                     },
                 )
 
@@ -1192,7 +1225,10 @@ class ResourceBasedSimulator:
                         target=opponent.player,
                         points_awarded=0,
                         description=f"{opponent.player.name} is eliminated by {player_state.player.name}",
-                        metadata={"defender_lives": opponent.final_lives},
+                        metadata={
+                            "actor_role": player_state.role,
+                            "target_role": opponent.role,
+                            "defender_lives": opponent.final_lives},
                     )
                 opponent.save()
 
@@ -1207,6 +1243,7 @@ class ResourceBasedSimulator:
                 points_awarded=500,
                 description=f"{player_state.player.name} detonates Nuke",
                 metadata={
+                    "actor_role": player_state.role,
                     "special_points": player_state.final_special,
                     "opponents_affected": opposing_players.count(),
                 },
@@ -1242,6 +1279,7 @@ class ResourceBasedSimulator:
                 points_awarded=1001,
                 description=f"{player_state.player.name} captures base {'neutral' if base_id == 15 else 'opposing'}",
                 metadata={
+                    "actor_role": player_state.role,
                     "base_id": base_id,
                     "shots_remaining": player_state.final_shots,
                     "special_points": player_state.final_special,
@@ -1267,6 +1305,7 @@ class ResourceBasedSimulator:
                     points_awarded=1001,
                     description=f"{player_state.player.name} awarded base {'neutral' if base_id == 15 else 'opposing'}",
                     metadata={
+                        "actor_role": player_state.role,
                         "base_id": base_id,
                         "shots_remaining": player_state.final_shots,
                         "special_points": player_state.final_special,
@@ -1286,6 +1325,7 @@ class ResourceBasedSimulator:
                     points_awarded=1001,
                     description=f"{player_state.player.name} awarded base {'neutral' if base_id == 15 else 'opposing'}",
                     metadata={
+                        "actor_role": player_state.role,
                         "base_id": base_id,
                         "shots_remaining": player_state.final_shots,
                         "special_points": player_state.final_special,
@@ -1312,6 +1352,7 @@ class ResourceBasedSimulator:
             points_awarded=1001,
             description=f"{player_state.player.name} missiles base {'neutral' if base_id == 'neutral' else 'opposing'}",
             metadata={
+                "actor_role": player_state.role,
                 "base_id": base_id,
                 "missiles_remaining": player_state.final_missiles,
                 "special_points": player_state.final_special,
