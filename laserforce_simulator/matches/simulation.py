@@ -1199,8 +1199,10 @@ class ResourceBasedSimulator:
                 team_color="blue" if player_state.team_color == "red" else "red",
                 final_lives__gt=0,
             )
+            lives_removed_from_nuke = 0
             for opponent in opposing_players:
                 print(f"nuke: {opponent.role}, {opponent.final_lives}")
+                lives_removed_from_nuke += min(opponent.final_lives, 3)
                 opponent.final_lives -= 3
                 opponent.last_downed_time = second
                 opponent.shields = opponent.max_shields
@@ -1246,6 +1248,7 @@ class ResourceBasedSimulator:
                     "actor_role": player_state.role,
                     "special_points": player_state.final_special,
                     "opponents_affected": opposing_players.count(),
+                    "lives_taken": lives_removed_from_nuke,
                 },
             )
 

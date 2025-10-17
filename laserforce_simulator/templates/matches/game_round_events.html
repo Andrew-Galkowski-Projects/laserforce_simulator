@@ -147,7 +147,8 @@
                             <div class="form-check me-2">
                                 <input class="form-check-input player-filter" type="checkbox" value="{{ ps.player.id }}"
                                     id="player-{{ ps.player.id }}" checked data-team="{{ ps.team_color }}"
-                                    data-starting-lives="{{ ps.starting_lives }}">
+                                    data-starting-lives="{{ ps.starting_lives }}"
+                                    data-starting-shots="{{ ps.starting_shots }}">
                                 <label class="form-check-label" for="player-{{ ps.player.id }}">
                                     {{ ps.player.name }}</label>
                             </div>
@@ -167,7 +168,12 @@
                         {% elif event.event_type == 'special' %}bg-warning bg-opacity-10
                         {% endif %}" data-event-type="{{ event.event_type }}" data-actor-id="{{ event.actor.id }}"
                     data-target-id="{% if event.target %}{{ event.target.id }}{% else %}-1{% endif %}"
-                    data-metadata="{{ event.medadata }}">
+                    data-meta-actor-role="{{ event.metadata.actor_role|default:'' }}"
+                    data-meta-target-role="{{ event.metadata.target_role|default:'' }}"
+                    data-meta-target-shields="{{ event.metadata.target_shields|default:0 }}"
+                    data-meta-shots-resupplied="{{ event.metadata.shots_resupplied|default:0 }}"
+                    data-meta-lives-resupplied="{{ event.metadata.lives_resupplied|default:0 }}"
+                    data-meta-lives-taken="{{ event.metadata.lives_taken|default:0 }}">
                     <div class="d-flex justify-content-between align-items-start">
                         <span class="badge bg-dark">{{ event.formatted_timestamp }}</span>
                         <div class="flex-grow-1 ms-2">
@@ -281,17 +287,25 @@
                 actor: el.getAttribute('data-actor-id'),
                 target: el.getAttribute('data-target-id'),
                 points: (el.querySelector('.badge.bg-success') ? parseInt(el.querySelector('.badge.bg-success').textContent.replace('+', '')) : 0),
-                metadata: JSON.parse(el.getAttribute('data-metadata') || '{}')
+                // read structured metadata from data attributes we added
+                meta_actor_role: el.dataset.metaActorRole || el.getAttribute('data-meta-actor-role') || '',
+                meta_target_role: el.dataset.metaTargetRole || el.getAttribute('data-meta-target-role') || '',
+                meta_target_shields: parseInt(el.dataset.metaTargetShields || el.getAttribute('data-meta-target-shields') || 0),
+                meta_shots_resupplied: parseInt(el.dataset.metaShotsResupplied || el.getAttribute('data-meta-shots-resupplied') || 0),
+                meta_lives_resupplied: parseInt(el.dataset.metaLivesResupplied || el.getAttribute('data-meta-lives-resupplied') || 0),
+                meta_nuke_lives: parseInt(el.dataset.meta_nuke_lives) || el.getAttribute('data-meta-lives-taken')
             }))
             .map(e => (Object.assign(e, { sec: (function (mmss) { const p = mmss.split(':'); if (p.length !== 2) return 0; return parseInt(p[0]) * 60 + parseInt(p[1]); })(e.time) })))
             .sort((a, b) => a.sec - b.sec);
 
-        // Determine bucket range
-        const bucketSize = 2; // seconds
+        // Determine bucket range (use 5s buckets)
+        const bucketSize = 5; // seconds
         const minSec = rawEntries.length ? rawEntries[0].sec : 0;
         const maxSec = rawEntries.length ? rawEntries[rawEntries.length - 1].sec : 0;
         const buckets = [];
-        for (let s = minSec; s <= maxSec; s += bucketSize) buckets.push(s);
+        // ensure at least one bucket and include final endpoint
+        if (rawEntries.length === 0) buckets.push(0);
+        for (let s = minSec; s <= maxSec + bucketSize; s += bucketSize) buckets.push(s);
 
         // Team player lists and starting lives
         const redPlayers = Array.from(document.querySelectorAll('.player-filter[data-team="red"]'));
@@ -300,24 +314,33 @@
         const blueIds = bluePlayers.map(n => n.value);
         const redStartingLives = redPlayers.reduce((acc, n) => acc + (parseInt(n.getAttribute('data-starting-lives')) || 0), 0);
         const blueStartingLives = bluePlayers.reduce((acc, n) => acc + (parseInt(n.getAttribute('data-starting-lives')) || 0), 0);
-        // Initialize series
+        const redStartingShots = redPlayers.reduce((acc, n) => acc + (parseInt(n.getAttribute('data-starting-shots')) || 0), 0);
+        const blueStartingShots = bluePlayers.reduce((acc, n) => acc + (parseInt(n.getAttribute('data-starting-shots')) || 0), 0);
+        // Initialize series (prefill with starting values so first/last buckets aren't empty)
         const times = buckets;
-        const shotsRed = new Array(buckets.length).fill(0);
-        const shotsBlue = new Array(buckets.length).fill(0);
-        const livesRed = new Array(buckets.length).fill(0);
-        const livesBlue = new Array(buckets.length).fill(0);
+        const shotsRed = new Array(buckets.length).fill(redStartingShots);
+        const shotsBlue = new Array(buckets.length).fill(blueStartingShots);
+        const livesRed = new Array(buckets.length).fill(redStartingLives);
+        const livesBlue = new Array(buckets.length).fill(blueStartingLives);
         const pointsRed = new Array(buckets.length).fill(0);
         const pointsBlue = new Array(buckets.length).fill(0);
 
-        // Start with starting lives
-        let curRedLives = 85, curBlueLives = 85;
-        let curRedShots = 140, curBlueShots = 140;
+        // Start with starting lives/shots from player data
+        let curRedLives = redStartingLives, curBlueLives = blueStartingLives;
+        let curRedShots = redStartingShots, curBlueShots = blueStartingShots;
         let cumRedPoints = 0, cumBluePoints = 0;
 
         // Map events into buckets
         rawEntries.forEach(ev => {
             const bucketIdx = Math.floor((ev.sec - minSec) / bucketSize);
 
+            // read parsed metadata fields (populated from data attributes)
+            const meta_actor_role = ev.meta_actor_role || '';
+            const meta_target_role = ev.meta_target_role || '';
+            const meta_target_shields = Number.isFinite(ev.meta_target_shields) ? ev.meta_target_shields : parseInt(ev.meta_target_shields || 0) || 0;
+            const meta_shots_resupplied = Number.isFinite(ev.meta_shots_resupplied) ? ev.meta_shots_resupplied : parseInt(ev.meta_shots_resupplied || 0) || 0;
+            const meta_lives_resupplied = Number.isFinite(ev.meta_lives_resupplied) ? ev.meta_lives_resupplied : parseInt(ev.meta_lives_resupplied || 0) || 0;
+            const meta_nuke_lives_taken = Number.isFinite(ev.meta_nuke_lives) ? ev.meta_nuke_lives : parseInt(ev.meta_nuke_lives || 0) || 0;
             if (ev.t === 'tag') {
                 role_to_max_shields = {
                     "commander": 3,
@@ -330,21 +353,17 @@
                     curRedShots -= 1;
                     cumRedPoints += 100;
                     cumBluePoints -= 20;
-                    // ev.actor is just a number cannot perform operations on it currently
-                    if (ev.metadata['target_shields'] === role_to_max_shields[ev.actor.role]) {
-                        // assume this means they just lost a life
-                        curBlueLives -= 1
-
+                    // if target_shields equals max shields for target role, count as life lost
+                    if (meta_target_shields === role_to_max_shields[meta_target_role]) {
+                        curBlueLives = Math.max(0, curBlueLives - 1);
                     }
                 }
                 if (blueIds.includes(ev.actor)) {
                     curBlueShots -= 1;
                     cumBluePoints += 100;
                     cumRedPoints -= 20;
-                    // ev.actor is just a number cannot perform operations on it currently
-                    if (ev.metadata['target_shields'] === role_to_max_shields[ev.actor.role]) {
-                        // assume this means they just lost a life
-                        curRedLives -= 1
+                    if (meta_target_shields === role_to_max_shields[meta_target_role]) {
+                        curRedLives = Math.max(0, curRedLives - 1);
                     }
                 }
             }
@@ -364,15 +383,15 @@
 
             if (ev.t === 'special') {
                 // if ammo award shots per active ally
-                if (ev.metadata['actor_role'] === 'ammo') {
-                    if (redIds.includes(ev.actor)) curRedShots += ev.metadata['shots_resupplied'];
-                    if (blueIds.includes(ev.actor)) curBlueShots += ev.metadata['shots_resupplied'];
+                if (meta_actor_role === 'ammo') {
+                    if (redIds.includes(ev.actor)) curRedShots += meta_shots_resupplied;
+                    if (blueIds.includes(ev.actor)) curBlueShots += meta_shots_resupplied;
                 }
 
                 // if medic award lives per active ally
-                if (ev.metadata['actor_role'] === 'medic') {
-                    if (redIds.includes(ev.actor)) curRedLives += ev.metadata['lives_resupplied'];
-                    if (blueIds.includes(ev.actor)) curBlueLives += ev.metadata['lives_resupplied'];
+                if (meta_actor_role === 'medic') {
+                    if (redIds.includes(ev.actor)) curRedLives += meta_lives_resupplied;
+                    if (blueIds.includes(ev.actor)) curBlueLives += meta_lives_resupplied;
                 }
             }
 
@@ -382,30 +401,28 @@
             }
 
             // if ammo resupply, determine how many shots to increment up
-            if (ev.t === 'resupply' && ev.metadata['actor_role'] === 'ammo') {
+            if (ev.t === 'resupply' && meta_actor_role === 'ammo') {
                 ammo_resupply_chart = {
                     "commander": 5,
                     "heavy": 5,
                     "scout": 10,
                     "medic": 5,
                 }
-
-                shot_increment = ammo_resupply_chart[ev.metadata['target_role']]
+                shot_increment = ammo_resupply_chart[meta_target_role] || 0;
                 if (redIds.includes(ev.actor)) curRedShots += shot_increment;
                 if (blueIds.includes(ev.actor)) curBlueShots += shot_increment;
             }
 
             // if medic resupply, determine how many lives to increment up
-            if (ev.t === 'resupply' && ev.metadata['actor_role'] === 'medic') {
+            if (ev.t === 'resupply' && meta_actor_role === 'medic') {
                 medic_resupply_chart = {
                     "commander": 4,
                     "heavy": 3,
                     "scout": 5,
                     "ammo": 3,
                 }
-
                 // can get role from metadata target_role
-                life_increment = medic_resupply_chart[ev.medadata['target_role']]
+                life_increment = medic_resupply_chart[meta_target_role] || 0;
                 if (redIds.includes(ev.actor)) curRedLives += life_increment;
                 if (blueIds.includes(ev.actor)) curBlueLives += life_increment;
             }
@@ -413,18 +430,25 @@
             if (ev.t === 'nuke_detonated') {
                 // award 500 points to detonating team and subtract 3 lives from each player opposing with lives above 0
                 if (redIds.includes(ev.actor)) {
-
                     cumRedPoints += 500;
+                    curBlueLives -= meta_nuke_lives_taken;
                 }
                 if (blueIds.includes(ev.actor)) {
                     cumBluePoints += 500;
+                    curRedLives -= meta_nuke_lives_taken;
                 }
             }
 
             if (ev.t === 'base_capture') {
                 // award 1001 points to capturing team
-                if (redIds.includes(ev.actor)) cumRedPoints += 1001;
-                if (blueIds.includes(ev.actor)) cumBluePoints += 1001;
+                if (redIds.includes(ev.actor)) {
+                    cumRedPoints += 1001;
+                    curRedShots -= 3;
+                }
+                if (blueIds.includes(ev.actor)) {
+                    cumBluePoints += 1001;
+                    curBlueShots -= 3;
+                }
             }
             // write cumulative values into this and subsequent buckets
             for (let i = bucketIdx; i < buckets.length; i++) {
