@@ -331,7 +331,6 @@
                     cumRedPoints += 100;
                     cumBluePoints -= 20;
                     // ev.actor is just a number cannot perform operations on it currently
-                    alert(ev.metadata.target_shields)
                     if (ev.metadata['target_shields'] === role_to_max_shields[ev.actor.role]) {
                         // assume this means they just lost a life
                         curBlueLives -= 1
