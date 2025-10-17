@@ -453,7 +453,7 @@ class ResourceBasedSimulator:
             metadata={
                 "actor_role": player.role,
                 "new_zone": player.current_zone,
-                },
+            },
         )
 
     def _choose_tag_target(self, player, all_alive, second):
@@ -476,12 +476,12 @@ class ResourceBasedSimulator:
                 "heavy": 8,
                 "scout": 3,
                 "medic": 1,
-                "ammo": 2,
+                "ammo": 3,
             }
             target_weights = []
             for target in potential_targets:
                 # prioritize active targets more
-                active_weighting = 5 if target.is_active_at(second) else 1
+                active_weighting = 10 if target.is_active_at(second) else 1
                 target_weights.append(weights.get(target.role, 1) + active_weighting)
 
             target = random.choices(potential_targets, target_weights)[0]
@@ -662,7 +662,8 @@ class ResourceBasedSimulator:
                         metadata={
                             "actor_role": attacker.role,
                             "target_role": defender.role,
-                            "target_lives": defender.final_lives},
+                            "target_lives": defender.final_lives,
+                        },
                     )
 
             defender.times_tagged += 1
@@ -828,7 +829,7 @@ class ResourceBasedSimulator:
             GameEvent.objects.create(
                 game_round=tagger.game_round,
                 timestamp=second,
-                event_type="resupply",
+                event_type="resupply_ammo",
                 actor=tagger.player,
                 target=teammate.player,
                 points_awarded=0,
@@ -865,7 +866,7 @@ class ResourceBasedSimulator:
             GameEvent.objects.create(
                 game_round=tagger.game_round,
                 timestamp=second,
-                event_type="resupply",
+                event_type="resupply_lives",
                 actor=tagger.player,
                 target=teammate.player,
                 points_awarded=0,
@@ -963,8 +964,8 @@ class ResourceBasedSimulator:
                     description=f"{defender.player.name} is eliminated by {attacker.player.name}",
                     metadata={
                         "target_role:": defender.role,
-                        "target_lives": defender.final_lives
-                        },
+                        "target_lives": defender.final_lives,
+                    },
                 )
             defender.last_downed_time = second  # set downed time for respawn logic
             defender.times_missiled += 1
@@ -1203,14 +1204,13 @@ class ResourceBasedSimulator:
             for opponent in opposing_players:
                 print(f"nuke: {opponent.role}, {opponent.final_lives}")
                 lives_removed_from_nuke += min(opponent.final_lives, 3)
-                opponent.final_lives -= 3
+                opponent.final_lives -= min(opponent.final_lives, 3)
                 opponent.last_downed_time = second
                 opponent.shields = opponent.max_shields
                 if opponent.final_lives <= 0:
                     print(
                         f"nuke result: {opponent.role} eliminated {opponent.final_lives}"
                     )
-                    opponent.final_lives = 0
                     opponent.was_eliminated = True
                     logger.debug(
                         "%s - %s: Player eliminated: %s by %s",
@@ -1230,7 +1230,8 @@ class ResourceBasedSimulator:
                         metadata={
                             "actor_role": player_state.role,
                             "target_role": opponent.role,
-                            "defender_lives": opponent.final_lives},
+                            "defender_lives": opponent.final_lives,
+                        },
                     )
                 opponent.save()
 
@@ -1262,8 +1263,9 @@ class ResourceBasedSimulator:
         """Simulate capturing a base"""
         # check if player can capture base (is alive, is in zone, hasn't already captured base)
         # if so, expend 3 shots, set last_tagged_id to base id, and award 1001 points
-        if player_state.final_shots >= 3:
-            player_state.final_shots -= 3
+        if player_state.final_shots >= 3 or player_state.role == "ammo":
+            if player_state.role != "ammo":
+                player_state.final_shots -= 3
             player_state.last_tagged_id = base_id
             if base_id == 15:
                 player_state.neutral_base_destroyed = True
