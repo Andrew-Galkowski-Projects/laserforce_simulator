@@ -80,9 +80,17 @@
                 <div class="d-flex justify-content-between align-items-center mb-2 p-2 border-bottom">
                     <span class="badge bg-secondary">{{ event.formatted_timestamp }}</span>
                     <span>
-                        <strong>{{ event.actor.name }}</strong>
+                        <strong
+                            class="{% if event.actor.team == round.team_red %}text-danger{% elif event.actor.team == round.team_blue %}text-primary{% endif %}">
+                            {{ event.actor.name }}
+                        </strong>
                         {{ event.get_event_icon }}
-                        <strong>{{ event.target.name }}</strong>
+                        {% if event.target %}
+                        <strong
+                            class="{% if event.target.team == round.team_red %}text-danger{% elif event.target.team == round.team_blue %}text-primary{% endif %}">
+                            {{ event.target.name }}
+                        </strong>
+                        {% endif %}
                     </span>
                     <span class="badge bg-info">+{{ event.points_awarded }}</span>
                 </div>
@@ -101,61 +109,79 @@
             <div class="card-body border-bottom bg-light">
                 <div class="row g-3">
                     <div class="col-12 col-md-6">
-                        <strong>Filter by event type</strong>
-                        <div class="d-flex flex-wrap" id="event-type-filters">
-                            <div class="form-check me-2">
-                                <input class="form-check-input type-filter" type="checkbox" value="tag" id="type-tag"
-                                    checked>
-                                <label class="form-check-label" for="type-tag">Tag</label>
+                        <div class="d-flex align-items-center">
+                            <div class="btn-group me-2">
+                                <button class="btn btn-outline-secondary dropdown-toggle" type="button"
+                                    data-bs-toggle="dropdown" aria-expanded="false">
+                                    Event Types
+                                </button>
+                                <div class="dropdown-menu p-3" style="max-height:300px; overflow:auto;"
+                                    id="event-type-filters">
+                                    <div class="form-check">
+                                        <input class="form-check-input type-filter" type="checkbox" value="tag"
+                                            id="type-tag" checked>
+                                        <label class="form-check-label" for="type-tag">Tag</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input type-filter" type="checkbox" value="elimination"
+                                            id="type-elim" checked>
+                                        <label class="form-check-label" for="type-elim">Elimination</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input type-filter" type="checkbox" value="miss"
+                                            id="type-miss" checked>
+                                        <label class="form-check-label" for="type-miss">Miss</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input type-filter" type="checkbox" value="special"
+                                            id="type-special" checked>
+                                        <label class="form-check-label" for="type-special">Special</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input type-filter" type="checkbox" value="missile_hit"
+                                            id="type-missile_hit" checked>
+                                        <label class="form-check-label" for="type-missile_hit">Missile</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input type-filter" type="checkbox" value="resupply"
+                                            id="type-resupply" checked>
+                                        <label class="form-check-label" for="type-resupply">Resupply</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input type-filter" type="checkbox" value="movement"
+                                            id="type-movement" checked>
+                                        <label class="form-check-label" for="type-movement">Movement</label>
+                                    </div>
+                                </div>
                             </div>
-                            <div class="form-check me-2">
-                                <input class="form-check-input type-filter" type="checkbox" value="elimination"
-                                    id="type-elim" checked>
-                                <label class="form-check-label" for="type-elim">Elimination</label>
+
+                            <div class="btn-group me-2">
+                                <button class="btn btn-outline-secondary dropdown-toggle" type="button"
+                                    data-bs-toggle="dropdown" aria-expanded="false">
+                                    Players
+                                </button>
+                                <div class="dropdown-menu p-3" style="max-height:300px; overflow:auto;"
+                                    id="player-filters">
+                                    {% for ps in round.player_states.all %}
+                                    <div class="form-check">
+                                        <input class="form-check-input player-filter" type="checkbox"
+                                            value="{{ ps.player.id }}" id="player-{{ ps.player.id }}" checked
+                                            data-team="{{ ps.team_color }}"
+                                            data-starting-lives="{{ ps.starting_lives }}"
+                                            data-starting-shots="{{ ps.starting_shots }}">
+                                        <label class="form-check-label" for="player-{{ ps.player.id }}">{{
+                                            ps.player.name }}</label>
+                                    </div>
+                                    {% endfor %}
+                                </div>
                             </div>
-                            <div class="form-check me-2">
-                                <input class="form-check-input type-filter" type="checkbox" value="miss" id="type-miss"
-                                    checked>
-                                <label class="form-check-label" for="type-miss">Miss</label>
-                            </div>
-                            <div class="form-check me-2">
-                                <input class="form-check-input type-filter" type="checkbox" value="special"
-                                    id="type-special" checked>
-                                <label class="form-check-label" for="type-special">Special</label>
-                            </div>
-                            <div class="form-check me-2">
-                                <input class="form-check-input type-filter" type="checkbox" value="missile_hit"
-                                    id="type-missile_hit" checked>
-                                <label class="form-check-label" for="type-missile_hit">Missile</label>
-                            </div>
-                            <div class="form-check me-2">
-                                <input class="form-check-input type-filter" type="checkbox" value="resupply"
-                                    id="type-resupply" checked>
-                                <label class="form-check-label" for="type-resupply">Resupply</label>
-                            </div>
-                            <div class="form-check me-2">
-                                <input class="form-check-input type-filter" type="checkbox" value="movement"
-                                    id="type-movement" checked>
-                                <label class="form-check-label" for="type-movement">Movement</label>
+
+                            <div class="form-check form-check-inline ms-2">
+                                <input class="form-check-input" type="checkbox" id="toggle-metadata">
+                                <label class="form-check-label" for="toggle-metadata">Show metadata</label>
                             </div>
                         </div>
-                    </div>
-                    <div class="col-12 col-md-6">
-                        <strong>Filter by player</strong>
-                        <div class="d-flex flex-wrap" id="player-filters">
-                            {% for ps in round.player_states.all %}
-                            <div class="form-check me-2">
-                                <input class="form-check-input player-filter" type="checkbox" value="{{ ps.player.id }}"
-                                    id="player-{{ ps.player.id }}" checked data-team="{{ ps.team_color }}"
-                                    data-starting-lives="{{ ps.starting_lives }}"
-                                    data-starting-shots="{{ ps.starting_shots }}">
-                                <label class="form-check-label" for="player-{{ ps.player.id }}">
-                                    {{ ps.player.name }}</label>
-                            </div>
-                            {% endfor %}
-                        </div>
-                        <small class="text-muted d-block">Checking a player shows events where they are actor or
-                            target.</small>
+                        <small class="text-muted d-block">Use the dropdowns to compact filter controls.</small>
                     </div>
                 </div>
             </div>
@@ -168,6 +194,10 @@
                         {% elif event.event_type == 'special' %}bg-warning bg-opacity-10
                         {% endif %}" data-event-type="{{ event.event_type }}" data-actor-id="{{ event.actor.id }}"
                     data-target-id="{% if event.target %}{{ event.target.id }}{% else %}-1{% endif %}"
+                    data-actor-name="{{ event.actor.name }}"
+                    data-target-name="{% if event.target %}{{ event.target.name }}{% endif %}"
+                    data-actor-team="{{ event.actor.team.id }}"
+                    data-target-team="{% if event.target %}{{ event.target.team.id }}{% endif %}"
                     data-meta-actor-role="{{ event.metadata.actor_role|default:'' }}"
                     data-meta-target-role="{{ event.metadata.target_role|default:'' }}"
                     data-meta-target-shields="{{ event.metadata.target_shields|default:0 }}"
@@ -177,14 +207,14 @@
                     <div class="d-flex justify-content-between align-items-start">
                         <span class="badge bg-dark">{{ event.formatted_timestamp }}</span>
                         <div class="flex-grow-1 ms-2">
-                            <span>{{ event.get_event_icon }} {{ event.description }}</span>
+                            <span class="event-desc">{{ event.get_event_icon }} {{ event.description }}</span>
                             {% if event.points_awarded > 0 %}
                             <span class="badge bg-success ms-2">+{{ event.points_awarded }}</span>
                             {% endif %}
                         </div>
                     </div>
                     {% if event.metadata %}
-                    <small class="text-muted d-block mt-1">
+                    <small class="text-muted mt-1 event-metadata">
                         {% for key, value in event.metadata.items %}
                         <span class="me-2">{{ key }}: {{ value }}</span>
                         {% endfor %}
@@ -254,6 +284,7 @@
             return Array.from(nodeList).filter(n => n.checked).map(n => n.value);
         }
 
+        // filtering logic
         function applyFilters() {
             const allowedTypes = getCheckedValues(typeCheckboxes);
             const allowedPlayers = getCheckedValues(playerCheckboxes);
@@ -263,7 +294,7 @@
                 const actor = el.getAttribute('data-actor-id');
                 const target = el.getAttribute('data-target-id');
                 const playerMatch = allowedPlayers.includes(actor) || allowedPlayers.includes(target);
-                const typeMatch = allowedTypes.includes(t);
+                const typeMatch = allowedTypes.some(type => t.includes(type));
                 if (typeMatch && playerMatch) {
                     el.style.display = '';
                 } else {
@@ -401,7 +432,7 @@
             }
 
             // if ammo resupply, determine how many shots to increment up
-            if (ev.t === 'resupply' && meta_actor_role === 'ammo') {
+            if (ev.t === 'resupply_ammo' && meta_actor_role === 'ammo') {
                 ammo_resupply_chart = {
                     "commander": 5,
                     "heavy": 5,
@@ -414,7 +445,7 @@
             }
 
             // if medic resupply, determine how many lives to increment up
-            if (ev.t === 'resupply' && meta_actor_role === 'medic') {
+            if (ev.t === 'resupply_lives' && meta_actor_role === 'medic') {
                 medic_resupply_chart = {
                     "commander": 4,
                     "heavy": 3,
@@ -573,6 +604,82 @@
         overlayToggles.forEach(t => t.addEventListener('change', drawOverlays));
         // initial overlays
         drawOverlays();
+
+        // --- Inline color actor/target names inside the event description ---
+        const RED_TEAM_ID = String('{{ round.team_red.id }}');
+        const BLUE_TEAM_ID = String('{{ round.team_blue.id }}');
+
+        function escRegex(s) {
+            return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        // Replace occurrences of a name inside text nodes under `el` with a span of class `cls`.
+        function replaceNameInElement(el, name, cls) {
+            if (!name) return;
+            const re = new RegExp('\\b' + escRegex(name) + '\\b');
+            // Use TreeWalker to only touch text nodes (preserve icons and markup)
+            const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+            const nodes = [];
+            let node;
+            while (node = walker.nextNode()) {
+                if (re.test(node.nodeValue)) nodes.push(node);
+            }
+            nodes.forEach(tn => {
+                // split by the name preserving matches
+                const parts = tn.nodeValue.split(new RegExp('(' + escRegex(name) + ')'));
+                if (parts.length === 1) return;
+                const frag = document.createDocumentFragment();
+                parts.forEach(part => {
+                    if (part === name) {
+                        const span = document.createElement('span');
+                        span.className = cls;
+                        span.textContent = name;
+                        frag.appendChild(span);
+                    } else {
+                        frag.appendChild(document.createTextNode(part));
+                    }
+                });
+                tn.parentNode.replaceChild(frag, tn);
+            });
+        }
+
+        function colorizeAllEvents() {
+            document.querySelectorAll('.mb-2').forEach(evEl => {
+                const actor = evEl.dataset.actorName || '';
+                const target = evEl.dataset.targetName || '';
+                const actorTeam = evEl.dataset.actorTeam || '';
+                const targetTeam = evEl.dataset.targetTeam || '';
+                const descEl = evEl.querySelector('.event-desc');
+                if (!descEl) return;
+                // First replace actor, then target (order matters for same-name edge cases)
+                if (actor) {
+                    const cls = (actorTeam === RED_TEAM_ID) ? 'text-danger' : (actorTeam === BLUE_TEAM_ID ? 'text-primary' : 'fw-bold');
+                    replaceNameInElement(descEl, actor, cls);
+                }
+                if (target) {
+                    const cls = (targetTeam === RED_TEAM_ID) ? 'text-danger' : (targetTeam === BLUE_TEAM_ID ? 'text-primary' : 'fw-bold');
+                    replaceNameInElement(descEl, target, cls);
+                }
+            });
+        }
+
+        // metadata toggle wiring
+        const metaToggle = document.getElementById('toggle-metadata');
+        if (metaToggle) {
+            // Set initial state (hidden by default)
+            document.querySelectorAll('.event-metadata').forEach(el => {
+                el.style.display = 'none';
+            });
+
+            metaToggle.addEventListener('change', (e) => {
+                document.querySelectorAll('.event-metadata').forEach(el => {
+                    el.style.display = e.target.checked ? 'block' : 'none';
+                });
+            });
+        }
+
+        // run initial colorization
+        colorizeAllEvents();
     });
 </script>
 <div class="mt-4">

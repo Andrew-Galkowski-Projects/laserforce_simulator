@@ -570,6 +570,7 @@ class GameEvent(models.Model):
             "missile": "🚀",
             "special": "⚡",
             "miss": "❌",
+            "movement": "🏃",
             "resupply_ammo": "📦",
             "resupply_lives": "💚",
             "elimination": "💀",
