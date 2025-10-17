@@ -254,6 +254,7 @@
             return Array.from(nodeList).filter(n => n.checked).map(n => n.value);
         }
 
+        // filtering logic
         function applyFilters() {
             const allowedTypes = getCheckedValues(typeCheckboxes);
             const allowedPlayers = getCheckedValues(playerCheckboxes);
@@ -263,7 +264,7 @@
                 const actor = el.getAttribute('data-actor-id');
                 const target = el.getAttribute('data-target-id');
                 const playerMatch = allowedPlayers.includes(actor) || allowedPlayers.includes(target);
-                const typeMatch = allowedTypes.includes(t);
+                const typeMatch = allowedTypes.some(type => t.includes(type));
                 if (typeMatch && playerMatch) {
                     el.style.display = '';
                 } else {
@@ -401,7 +402,7 @@
             }
 
             // if ammo resupply, determine how many shots to increment up
-            if (ev.t === 'resupply' && meta_actor_role === 'ammo') {
+            if (ev.t === 'resupply_ammo' && meta_actor_role === 'ammo') {
                 ammo_resupply_chart = {
                     "commander": 5,
                     "heavy": 5,
@@ -414,7 +415,7 @@
             }
 
             // if medic resupply, determine how many lives to increment up
-            if (ev.t === 'resupply' && meta_actor_role === 'medic') {
+            if (ev.t === 'resupply_lives' && meta_actor_role === 'medic') {
                 medic_resupply_chart = {
                     "commander": 4,
                     "heavy": 3,
