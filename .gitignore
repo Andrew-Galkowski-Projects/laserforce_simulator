@@ -10,6 +10,8 @@ __pycache__/
 *.spec
 
 # Django stuff: local DB, media, static files (optional)
+# ignore database file in project root (keep this explicit)
+/db.sqlite3
 *.sqlite3
 media/
 
