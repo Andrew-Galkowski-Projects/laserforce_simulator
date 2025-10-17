@@ -771,7 +771,7 @@ class ResourceBasedSimulator:
                     "actor_points": attacker.points_scored,
                     "actor_lives": attacker.final_lives,
                     "actor_shots": attacker.final_shots,
-                    "target_role": defender.role
+                    "target_role": defender.role,
                     "target_points": defender.points_scored,
                     "target_lives": defender.final_lives,
                     "target_shots": defender.final_shots,
