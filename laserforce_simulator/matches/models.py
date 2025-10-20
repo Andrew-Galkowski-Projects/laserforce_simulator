@@ -310,7 +310,7 @@ class PlayerRoundState(models.Model):
     was_eliminated = models.BooleanField(default=False)  # Ran out of lives
 
     def __str__(self):
-        return f"{self.player.name}:{self.player.id}:{self.team_color}:{self.role} - {self.game_round}"
+        return f"n:{self.player.name} id:{self.player.id} tclr:{self.team_color} rl:{self.role}"
 
     @property
     def max_shields(self):
