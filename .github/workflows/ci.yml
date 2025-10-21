@@ -25,7 +25,7 @@ jobs:
         env:
           DJANGO_SETTINGS_MODULE: laserforce_simulator.settings
         run: |
-          coverage run --source='.' manage.py test --verbosity=2
+          coverage run --source='.' python manage.py test --verbosity=2
           coverage xml -o coverage.xml
       - name: Upload coverage results
         uses: actions/upload-artifact@v4
