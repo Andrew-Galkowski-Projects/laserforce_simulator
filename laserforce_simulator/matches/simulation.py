@@ -286,13 +286,12 @@ class ResourceBasedSimulator:
         #     "simulate round combat",
         #     red_points,
         #     blue_points,
-        #     red_eliminated,
+        #     red_eliminayeated,
         #     blue_eliminated,
         # )
 
         # Save final states
         for p in red_players + blue_players:
-            p.was_eliminated = p.final_lives <= 0
             p.save()
 
         return {
@@ -323,8 +322,8 @@ class ResourceBasedSimulator:
     ):
         """Simulate a single combat exchange between teams"""
         # Get alive players
-        red_alive = [p for p in red_players if p.final_lives > 0]
-        blue_alive = [p for p in blue_players if p.final_lives > 0]
+        red_alive = [p for p in red_players if p.final_lives > 0 and p.was_eliminated_at > second]
+        blue_alive = [p for p in blue_players if p.final_lives > 0 and p.was_eliminated_at > second]
         all_alive = red_alive + blue_alive
         result = ", ".join(str(obj) for obj in all_alive)
 
@@ -700,7 +699,7 @@ class ResourceBasedSimulator:
                     defender.last_downed_time = second
                     defender.shields = defender.max_shields
                     if defender.final_lives <= 0:
-                        defender.was_eliminated = True
+                        defender.was_eliminated_at = second
                         GameEvent.objects.create(
                             game_round=game_round,
                             timestamp=second,
@@ -1082,7 +1081,7 @@ class ResourceBasedSimulator:
             # don't go below 0 lives
             defender.final_lives -= min(defender.final_lives, 2)
             if defender.final_lives <= 0:
-                defender.was_eliminated = True
+                defender.was_eliminated_at = second
                 # logger.debug(
                 #     "%s - %s: Player eliminated: %s by %s",
                 #     second,
@@ -1365,7 +1364,7 @@ class ResourceBasedSimulator:
                 opponent.shields = opponent.max_shields
                 opponent.save()
                 if opponent.final_lives <= 0:
-                    opponent.was_eliminated = True
+                    opponent.was_eliminated_at = second
                     opponent.save()
                     # logger.debug(
                     #     "%s - %s: Player eliminated: %s by %s",

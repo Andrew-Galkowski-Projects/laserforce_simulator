@@ -695,3 +695,98 @@ class SimulationTests(TestCase):
                 event_type="nuke_detonated", actor=commander.player
             ).exists()
         )
+
+    def test_nuke_elim_cannot_be_tagged_after(self):
+        """Test that players with 3 or less lives are no longer taggable after nuke and players with more are after delay"""
+        simulator = ResourceBasedSimulator()
+        team_red, _ = self.create_team_with_roster("NukeRed")
+        team_blue, _ = self.create_team_with_roster("NukeBlue")
+        gr = GameRound.objects.create(
+            team_red=team_red, team_blue=team_blue, round_number=1
+        )
+
+        commander_player = team_red.players.filter(role="commander").first()
+        enemy_player_4_lives = team_blue.players.filter(role="commander").first()
+        enemy_player_3_lives = team_blue.players.filter(role="heavy").first()
+        enemy_player_2_lives = team_blue.players.filter(role="scout").first()
+        enemy_player_1_lives = team_blue.players.filter(role="ammo").first()
+        enemy_player_0_lives = team_blue.players.filter(role="medic").first()
+
+        blue_commander = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=enemy_player_4_lives,
+            team_color="blue",
+            role="heavy",
+            current_zone=0,
+            final_shots=10,
+            final_lives=4,
+        )
+        heavy = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=enemy_player_3_lives,
+            team_color="blue",
+            role="heavy",
+            current_zone=0,
+            final_shots=10,
+            final_lives=3,
+        )
+        scout = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=enemy_player_2_lives,
+            team_color="blue",
+            role="scout",
+            current_zone=0,
+            final_shots=10,
+            final_lives=2,
+        )
+        ammo = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=enemy_player_1_lives,
+            team_color="blue",
+            role="ammo",
+            current_zone=0,
+            final_shots=15,
+            final_lives=1,
+        )
+        medic = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=enemy_player_0_lives,
+            team_color="blue",
+            role="medic",
+            current_zone=0,
+            final_shots=10,
+            final_lives=0,
+            was_eliminated_at=15,
+        )
+
+        commander = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=commander_player,
+            team_color="red",
+            role="commander",
+            current_zone=0,
+            final_shots=10,
+            final_lives=10,
+            final_special=20,
+            points_scored=0,
+        )
+
+        
+        simulator._complete_nuke(commander, 25)
+
+        # get updated data after nuke completes
+        player_list = [commander, blue_commander, heavy, scout, ammo, medic]
+        for player in player_list:
+            player.refresh_from_db()
+
+        self.assertEqual(commander.points_scored, 500)
+        self.assertEqual(blue_commander.final_lives, 1)
+        self.assertEqual(blue_commander.was_eliminated_at, 901)
+        self.assertEqual(heavy.final_lives, 0)
+        self.assertEqual(heavy.was_eliminated_at, 25)
+        self.assertEqual(scout.final_lives, 0)
+        self.assertEqual(scout.was_eliminated_at, 25)
+        self.assertEqual(ammo.final_lives, 0)
+        self.assertEqual(ammo.was_eliminated_at, 25)
+        self.assertEqual(medic.final_lives, 0)
+        self.assertEqual(medic.was_eliminated_at, 15)
