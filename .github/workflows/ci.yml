@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, Nuke_bug, event_readability_updates]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r ./laserforce_simulator/requirements.txt
+          pip install coverage
+
+      - name: Run migrations
+        working-directory: ./laserforce_simulator
+        env:
+          DJANGO_SETTINGS_MODULE: laserforce_simulator.settings
+        run: |
+          python manage.py migrate --noinput
+
+      - name: Run tests with coverage
+        working-directory: ./laserforce_simulator
+        env:
+          DJANGO_SETTINGS_MODULE: laserforce_simulator.settings
+        run: |
+          coverage run --source='.' manage.py test --verbosity=2
+          coverage xml -o coverage.xml
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          name: coverage-report
+          path: ./laserforce_simulator/coverage.xml # Updated path
