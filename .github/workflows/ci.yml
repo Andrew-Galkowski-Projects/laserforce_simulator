@@ -34,6 +34,7 @@ jobs:
         working-directory: ./laserforce_simulator # Change this to where manage.py is located
         env:
           DJANGO_SETTINGS_MODULE: laserforce_simulator.settings
+          DATABASE_URL: sqlite:///db.sqlite3 # or your test DB
         run: |
           coverage run --source='.' manage.py test --verbosity=2
           coverage xml -o coverage.xml
