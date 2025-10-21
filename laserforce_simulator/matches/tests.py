@@ -101,7 +101,7 @@ class SimulationTests(TestCase):
         # Should have created PlayerRoundState rows for each player
         self.assertGreater(game_round.player_states.count(), 0)
 
-    def test_choose_action_weights_for_resupply_player_in_own_zone(self):
+    def test_plan_action_weights_for_resupply_player_in_own_zone(self):
         simulator = ResourceBasedSimulator()
         team, players = self.create_team_with_roster("Weights")
 
@@ -127,14 +127,23 @@ class SimulationTests(TestCase):
             return [seq[0]]
 
         with patch("random.choices", side_effect=fake_choices):
-            simulator._choose_action(medic_state, [medic_state], second=0)
+            simulator._plan_action(medic_state, [medic_state], second=0)
 
         # When medic is in own zone, can_resupply branch should set these actions/weights
         self.assertIn("seq", captured)
         self.assertEqual(
-            captured["seq"], ["tag_player", "resupply_ally", "change_zone"]
+            captured["seq"],
+            [
+                "tag_player",
+                "change_zone",
+                "hide",
+                "capture_base",
+                "use_special",
+                "resupply_ally",
+                "missile_player",
+            ],
         )
-        self.assertEqual(captured["weights"], [35, 55, 10])
+        self.assertEqual(captured["weights"], [0, 0, 30, 0, 0, 70, 0])
 
     def test_tag_event_created_when_hit(self):
         simulator = ResourceBasedSimulator()
@@ -162,11 +171,9 @@ class SimulationTests(TestCase):
             final_lives=10,
         )
 
-        # force _choose_action to pick tag_player, choose defender, and ensure hit occurs
-        with patch("random.choices", return_value=["tag_player"]), patch(
-            "random.choice", return_value=defender
-        ), patch("random.random", return_value=0.0):
-            simulator._choose_action(attacker, [attacker, defender], second=10)
+        tag_attempts = [{"attacker": attacker, "defender": defender}]
+        with patch("random.randint", return_value=0):
+            simulator._resolve_tag_attempts(gr, tag_attempts, 0)
 
         self.assertTrue(
             GameEvent.objects.filter(
@@ -201,11 +208,20 @@ class SimulationTests(TestCase):
             final_lives=10,
         )
 
-        # Dodge: random.random < dodge_chance (0.2)
+        # Dodge: random.random < dodge_chance (0.2). Run exchange to execute missile start and any immediate dodge event.
+        pending_missiles = []
+        pending_nukes = []
         with patch("random.choices", return_value=["missile_player"]), patch(
             "random.choice", return_value=defender
         ), patch("random.random", return_value=0.1):
-            simulator._choose_action(attacker, [attacker, defender], second=5)
+            simulator._simulate_combat_exchange(
+                gr,
+                [attacker],
+                [defender],
+                second=5,
+                pending_missiles=pending_missiles,
+                pending_nukes=pending_nukes,
+            )
 
         self.assertTrue(
             GameEvent.objects.filter(
@@ -215,13 +231,27 @@ class SimulationTests(TestCase):
             ).exists()
         )
 
-        # Hit: random.random >= dodge_chance -> missile_hit created
+        # Hit: random.random >= dodge_chance -> missile is scheduled; run exchange then complete the scheduled missile
+        pending_missiles = []
+        pending_nukes = []
         with patch("random.choices", return_value=["missile_player"]), patch(
             "random.choice", return_value=defender
         ), patch("random.random", return_value=0.5), patch(
             "random.randint", return_value=1
         ):
-            simulator._choose_action(attacker, [attacker, defender], second=6)
+            simulator._simulate_combat_exchange(
+                gr,
+                [attacker],
+                [defender],
+                second=6,
+                pending_missiles=pending_missiles,
+                pending_nukes=pending_nukes,
+            )
+
+        # pending_missiles should have scheduled completion tuples; run them
+        self.assertTrue(len(pending_missiles) >= 1)
+        complete_time, att, defn = pending_missiles[0]
+        simulator._complete_missile(att, defn, complete_time)
 
         self.assertTrue(
             GameEvent.objects.filter(
@@ -246,8 +276,17 @@ class SimulationTests(TestCase):
         )
 
         # Capture base should consume shots and award points
+        pending_missiles = []
+        pending_nukes = []
         with patch("random.choices", return_value=["capture_base"]):
-            simulator._choose_action(state, [state], second=2)
+            simulator._simulate_combat_exchange(
+                gr,
+                [state],
+                [],
+                second=2,
+                pending_missiles=pending_missiles,
+                pending_nukes=pending_nukes,
+            )
 
         state.refresh_from_db()
         self.assertTrue(state.points_scored >= 1001)
@@ -270,10 +309,19 @@ class SimulationTests(TestCase):
             final_shots=5,
             final_lives=10,
         )
+        pending_missiles = []
+        pending_nukes = []
         with patch("random.choices", return_value=["change_zone"]), patch(
             "random.choice", return_value=1
         ):
-            simulator._choose_action(state2, [state2], second=3)
+            simulator._simulate_combat_exchange(
+                gr,
+                [state2],
+                [],
+                second=3,
+                pending_missiles=pending_missiles,
+                pending_nukes=pending_nukes,
+            )
 
         # After changing zone, player should be in zone 1
         self.assertEqual(state2.current_zone, 1)
@@ -305,11 +353,12 @@ class SimulationTests(TestCase):
             final_lives=10,
         )
 
-        # Force a successful tag and assert specific_tags increment
-        with patch("random.choices", return_value=["tag_player"]), patch(
-            "random.choice", return_value=defender
-        ), patch("random.random", return_value=0.0):
-            simulator._choose_action(attacker, [attacker, defender], second=1)
+        # Run a single exchange to perform a tag and assert specific_tags increment
+        pending_missiles = []
+        pending_nukes = []
+        tag_attempts = [{"attacker": attacker, "defender": defender}]
+        with patch("random.randint", return_value=0):
+            simulator._resolve_tag_attempts(gr, tag_attempts, 0)
 
         attacker.refresh_from_db()
         defender.refresh_from_db()
@@ -391,7 +440,7 @@ class SimulationTests(TestCase):
         # After 9 seconds -> active again
         self.assertTrue(state.is_active_at(20))
         self.assertTrue(state.is_resupplyable_at(20))
-        
+
     def test_takes_3_tags_to_down_commander_and_heavy(self):
         simulator = ResourceBasedSimulator()
         team, players = self.create_team_with_roster("DownTest")
@@ -430,12 +479,11 @@ class SimulationTests(TestCase):
             final_lives=10,
         )
 
-        # Force 3 successful tags on commander
+        # Force 3 successful tags on commander (resolve simultaneously per tick)
         for i in range(3):
-            with patch("random.choices", return_value=["tag_player"]), patch(
-                "random.choice", return_value=commander
-            ), patch("random.random", return_value=0.0):
-                simulator._choose_action(attacker, [attacker, commander, heavy], second=i)
+            tag_attempts = [{"attacker": attacker, "defender": commander}]
+            with patch("random.randint", return_value=0):
+                simulator._resolve_tag_attempts(gr, tag_attempts, 0)
 
         commander.refresh_from_db()
         # confirm commander has 2 lives left and is downed at second 3
@@ -448,16 +496,15 @@ class SimulationTests(TestCase):
 
         # Force 3 successful tags on heavy
         for i in range(3, 6):
-            with patch("random.choices", return_value=["tag_player"]), patch(
-                "random.choice", return_value=heavy
-            ), patch("random.random", return_value=0.0):
-                simulator._choose_action(attacker, [attacker, commander, heavy], second=i)
+            tag_attempts = [{"attacker": attacker, "defender": heavy}]
+            with patch("random.randint", return_value=0):
+                simulator._resolve_tag_attempts(gr, tag_attempts, 0)
 
         heavy.refresh_from_db()
         # confirm heavy has 2 lives left and is downed at second 3
         self.assertEqual(heavy.final_lives, 2)
         self.assertFalse(heavy.is_active_at(3))
-        
+
     def test_takes_1_tags_to_down_other_roles(self):
         simulator = ResourceBasedSimulator()
         team, players = self.create_team_with_roster("DownTest")
@@ -492,16 +539,17 @@ class SimulationTests(TestCase):
 
         # Force 1 successful tag on each role
         for role, state in role_states.items():
-            with patch("random.choices", return_value=["tag_player"]), patch(
-                "random.choice", return_value=state
-            ), patch("random.random", return_value=0.0):
-                simulator._choose_action(attacker, [attacker] + list(role_states.values()), second=0)
+            tag_attempts = [{"attacker": attacker, "defender": state}]
+            with patch("random.randint", return_value=0):
+                simulator._resolve_tag_attempts(gr, tag_attempts, 0)
 
             state.refresh_from_db()
             # confirm player has 0 lives left and is downed
             self.assertEqual(state.final_lives, 0)
-            self.assertFalse(state.is_active_at(1), f"{role} should be downed after 1 tag")
-    
+            self.assertFalse(
+                state.is_active_at(1), f"{role} should be downed after 1 tag"
+            )
+
     def test_takes_2_tags_from_commander_to_down_heavy(self):
         simulator = ResourceBasedSimulator()
         team, players = self.create_team_with_roster("DownTest")
@@ -515,7 +563,7 @@ class SimulationTests(TestCase):
             role="heavy",
             current_zone=0,
             final_shots=10,
-            final_lives=3,
+            final_lives=2,
             shields=3,
         )
 
@@ -525,6 +573,7 @@ class SimulationTests(TestCase):
             player=commander_player,
             team_color="blue",
             role="commander",
+            shot_power=2,
             current_zone=0,
             final_shots=10,
             final_lives=10,
@@ -532,16 +581,15 @@ class SimulationTests(TestCase):
 
         # Force 2 successful tags on heavy by commander
         for i in range(2):
-            with patch("random.choices", return_value=["tag_player"]), patch(
-                "random.choice", return_value=heavy
-            ), patch("random.random", return_value=0.0):
-                simulator._choose_action(commander, [commander, heavy], second=i)
+            tag_attempts = [{"attacker": commander, "defender": heavy}]
+            with patch("random.randint", return_value=0):
+                simulator._resolve_tag_attempts(gr, tag_attempts, 0)
 
         heavy.refresh_from_db()
         # confirm heavy has 1 life left and is downed at second 2
         self.assertEqual(heavy.final_lives, 1)
         self.assertFalse(heavy.is_active_at(2))
-    
+
     def test_cannot_be_resupplied_while_downed(self):
         simulator = ResourceBasedSimulator()
         team, players = self.create_team_with_roster("Edge")
@@ -560,4 +608,90 @@ class SimulationTests(TestCase):
         teammate.refresh_from_db()
         # No heal should have occurred because teammate is still downed
         self.assertLessEqual(teammate.final_lives, 1)
-		
+
+    def test_cannot_tag_player_with_zero_lives(self):
+        """Ensure players at 0 lives are not selectable targets for tags."""
+        simulator = ResourceBasedSimulator()
+        team, players = self.create_team_with_roster("NoTag")
+        gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
+
+        attacker_player = team.players.filter(role="scout").first()
+        dead_player = team.players.filter(role="medic").first()
+        attacker = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=attacker_player,
+            team_color="red",
+            role="scout",
+            current_zone=0,
+            final_shots=10,
+            final_lives=10,
+        )
+        dead = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=dead_player,
+            team_color="blue",
+            role="medic",
+            current_zone=0,
+            final_shots=0,
+            final_lives=0,
+        )
+
+        # Ensure _choose_tag_target will not return the dead player
+        with patch("random.choices", return_value=["tag_player"]), patch(
+            "random.choice", return_value=dead
+        ), patch("random.random", return_value=0.0):
+            # run plan action for attacker and see if plan includes target
+            plans = simulator._plan_action(attacker, [attacker, dead], second=1)
+
+        # There should be no tag plan targeting the dead player
+        tag_plans = [p for p in plans if p.get("type") == "tag"]
+        self.assertTrue(
+            len(tag_plans) == 0, "Dead player should not be selectable as tag target"
+        )
+
+    def test_nuke_scheduling_and_cancellation(self):
+        """Test that a scheduled nuke only detonates if the commander is still active at completion."""
+        simulator = ResourceBasedSimulator()
+        team_red, _ = self.create_team_with_roster("NukeRed")
+        team_blue, _ = self.create_team_with_roster("NukeBlue")
+        gr = GameRound.objects.create(
+            team_red=team_red, team_blue=team_blue, round_number=1
+        )
+
+        commander_player = team_red.players.filter(role="commander").first()
+        enemy_player = team_blue.players.filter(role="scout").first()
+
+        commander = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=commander_player,
+            team_color="red",
+            role="commander",
+            current_zone=0,
+            final_shots=10,
+            final_lives=10,
+            final_special=20,
+        )
+
+        # Force commander to use special which should schedule a nuke
+        with patch("random.choices", return_value=["use_special"]):
+            scheduled = simulator._use_special(commander, second=5)
+
+        # scheduled should be a ('nuke', complete_time, player_state) tuple
+        self.assertIsNotNone(scheduled)
+        self.assertEqual(scheduled[0], "nuke")
+
+        # Now simulate commander being downed before nuke completes
+        complete_time = scheduled[1]
+        # down commander so nuke should be cancelled
+        commander.last_downed_time = complete_time - 1
+        commander.save()
+
+        # calling _complete_nuke directly should check is_active and final_lives
+        simulator._complete_nuke(commander, complete_time)
+
+        # There should be no nuke detonation event because commander is down
+        self.assertFalse(
+            GameEvent.objects.filter(
+                event_type="nuke_detonated", actor=commander.player
+            ).exists()
+        )
