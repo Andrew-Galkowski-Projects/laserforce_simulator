@@ -36,7 +36,7 @@ jobs:
           DJANGO_SETTINGS_MODULE: laserforce_simulator.settings
         run: |
           coverage run --source='.' manage.py test --verbosity=2
-          pytest --cov --cov-branch --cov-report=xml
+          coverage xml -o coverage.xml
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
@@ -44,4 +44,3 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           name: coverage-report
           path: ./laserforce_simulator/coverage.xml # Updated path
-
