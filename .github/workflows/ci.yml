@@ -15,26 +15,25 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.13"
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install Django coverage
-          # Add other packages your project needs
+          pip install -r ./laserforce_simulator/requirements.txt
+          pip install coverage
 
       - name: Run migrations
-        working-directory: ./laserforce_simulator # Change this to where manage.py is located
+        working-directory: ./laserforce_simulator
         env:
           DJANGO_SETTINGS_MODULE: laserforce_simulator.settings
         run: |
           python manage.py migrate --noinput
 
       - name: Run tests with coverage
-        working-directory: ./laserforce_simulator # Change this to where manage.py is located
+        working-directory: ./laserforce_simulator
         env:
           DJANGO_SETTINGS_MODULE: laserforce_simulator.settings
-          DATABASE_URL: sqlite:///db.sqlite3 # or your test DB
         run: |
           coverage run --source='.' manage.py test --verbosity=2
           coverage xml -o coverage.xml
@@ -43,4 +42,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
-          path: coverage.xml # May need to adjust path
+          path: ./laserforce_simulator/coverage.xml # Updated path

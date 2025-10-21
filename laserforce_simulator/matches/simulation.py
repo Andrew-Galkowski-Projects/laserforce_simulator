@@ -693,7 +693,6 @@ class ResourceBasedSimulator:
                         "rolled_hit_pct": o.get("rolled", 0),
                     },
                 )
-                print(f"attacker sp: {attacker.shot_power}, def shield before {defender.shields} def shield after {max(0, defender.shields - attacker.shot_power)}")
                 defender.shields = max(0, defender.shields - attacker.shot_power)
                 if defender.shields == 0:
                     # never want to display below 0 even if they were at 1 and took simultaneous tags
