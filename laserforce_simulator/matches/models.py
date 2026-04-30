@@ -25,12 +25,14 @@ class Match(models.Model):
     blue_round1_points = models.IntegerField(default=0)
     red_round1_eliminated = models.BooleanField(default=False)
     blue_round1_eliminated = models.BooleanField(default=False)
+    round1_eliminated_at = models.IntegerField(default=901)
 
     # Round 2 scores (teams switch colors)
     red_round2_points = models.IntegerField(default=0)
     blue_round2_points = models.IntegerField(default=0)
     red_round2_eliminated = models.BooleanField(default=False)
     blue_round2_eliminated = models.BooleanField(default=False)
+    round2_eliminated_at = models.IntegerField(default=901)
 
     # Bonus points for eliminations
     red_bonus_points = models.IntegerField(default=0)
@@ -143,6 +145,7 @@ class GameRound(models.Model):
     blue_points = models.IntegerField(default=0)
     red_team_eliminated = models.BooleanField(default=False)
     blue_team_eliminated = models.BooleanField(default=False)
+    eliminated_at = models.IntegerField(default=901)
 
     winner = models.ForeignKey(
         Team,
@@ -280,6 +283,10 @@ class PlayerRoundState(models.Model):
     shots_missed = models.IntegerField(default=0)
     times_tagged = models.IntegerField(default=0)
     specials_used = models.IntegerField(default=0)
+    own_specials_cancelled = models.IntegerField(default=0)
+    enemy_nuke_cancels = models.IntegerField(default=0)
+    ally_nuke_cancels = models.IntegerField(default=0)
+    medic_lives_removed_from_nuke = models.IntegerField(default=0)
     missiles_landed = models.IntegerField(default=0)
     times_missiled = models.IntegerField(default=0)
     resupplies_given = models.IntegerField(default=0)
@@ -358,6 +365,107 @@ class PlayerRoundState(models.Model):
         return max(0, self.tags_made + self.shots_missed)
 
     @property
+    def get_accuracy(self):
+        return round(
+            (
+                (self.tags_made + self.resupplies_given)
+                / (self.shots_used + self.resupplies_given)
+                * 100
+            ),
+            2,
+        )
+
+    @property
+    def get_mvp(self):
+        total = 0
+        accuracy = round(self.get_accuracy / 10, 2)
+        medic_hits = self.final_medic_hits
+        # 4 + 1/60 per second remaining above 3 min
+        # TODO: fll this in later
+        three_min_threshold = 780  # in second
+        if (self.game_round.blue_team_eliminated and self.team_color == "red") or (
+            self.game_round.red_team_eliminated and self.team_color == "blue"
+        ):
+            elim_bonus = max(
+                4,
+                (4 + (1 / 60) * (three_min_threshold - self.game_round.eliminated_at)),
+            )
+        else:
+            elim_bonus = 0
+        nuke_cancel = self.enemy_nuke_cancels * 3
+        own_nuke_cancel = self.ally_nuke_cancels * -3
+        missiled = self.times_missiled * -1
+        eliminated = -1 if self.role != "medic" and self.was_eliminated_at != 901 else 0
+        role_specific = 0
+        role_score_bonus = {
+            "commander": 10000,
+            "heavy": 7000,
+            "scout": 6000,
+            "ammo": 3000,
+            "medic": 2000,
+        }
+        if self.points_scored > role_score_bonus[self.role]:
+            role_specific += (self.points_scored - role_score_bonus[self.role]) / 1000
+        if self.role == "commander":
+            """
+            Missiles: 1 point for missiling an opponent (does not apply to bases).
+            Nukes: 1 point for each successful nuke.
+            Score bonus: 1 point (applied fractionally) for every 1000 points over 10,000.
+            Get nuke canceled: -1 point.
+            """
+            role_specific += self.missiles_landed
+            # TODO: figure out if cancelled and don't apply bonus
+            role_specific += self.specials_used - self.own_specials_cancelled
+            role_specific -= self.own_specials_cancelled
+        elif self.role == "heavy":
+            """
+            Missiles: 2 points for missiling an opponent (does not apply to bases).
+            Score bonus: 1 point (applied fractionally) for every 1000 points over 7000.
+            """
+            role_specific += self.missiles_landed * 2
+        elif self.role == "scout":
+            """
+            Hits vs. Commander/Heavy: .2 points for every hit on an enemy Heavy or Commander.
+            Score bonus: 1 point (applied fractionally) for every 1000 points over 6000.
+            """
+            # TODO: get a sum of amount of tags against opposing 3 hits (commander/heavy) then multiply by .2
+            three_hit_ids = ["1", "2"] if self.team_color == "blue" else ["7", "8"]
+            three_hit_tags = 0
+            for id in three_hit_ids:
+                three_hit_tags += self.specific_tags[id]["tags"]
+            role_specific += three_hit_tags * 0.2
+        elif self.role == "ammo":
+            """
+            Power Boost: 3 points each time you activate power boost.
+            Score bonus: 1 point (applied fractionally) for every 1000 points over 3000.
+            """
+            role_specific += self.specials_used * 3
+        elif self.role == "medic":
+            """
+            Power Boost: 3 points each time you activate power boost.
+            Survival Bonus: 2 point if you are still alive when the game clock expires.
+            Score bonus: 2 points (applied fractionally) for every 1000 points over 2000.
+            """
+            role_specific += self.specials_used * 3
+            role_specific += 2 if self.was_eliminated_at == 901 else 0
+            # NOTE: this bonus is doubled for medics so we have it one time above and a second time here
+            if self.points_scored > role_score_bonus[self.role]:
+                role_specific += (
+                    self.points_scored - role_score_bonus[self.role]
+                ) / 1000
+        total = (
+            accuracy
+            + medic_hits
+            + elim_bonus
+            + nuke_cancel
+            + own_nuke_cancel
+            + missiled
+            + eliminated
+            + role_specific
+        )
+        return round(total, 2)
+
+    @property
     def max_special(self):
         return 99  # limit is 99 at a time
 
@@ -409,9 +517,10 @@ class PlayerRoundState(models.Model):
 
     def is_active_at(self, seconds_into_round):
         """Check if player is active at a given time (not in downed cooldown)."""
-        # Check if player is in respawn downtime (8 seconds after being downed)
+        # Check if player is in respawn downtime (8 seconds after being downed) (or out of game)
+        # this makes an assumption that we never go back in time, ie last downed time = 43 but seconds into round is 5, will return false
         if getattr(self, "last_downed_time", None) is not None:
-            if seconds_into_round - self.last_downed_time < 8 or self.final_lives == 0:
+            if (seconds_into_round - self.last_downed_time < 8 or self.final_lives == 0) and seconds_into_round < self.was_eliminated_at:
                 return False
         return True
 
@@ -428,6 +537,12 @@ class PlayerRoundState(models.Model):
             except Exception:
                 return bool(self.is_taggable)
         return True
+
+    def eliminated_timestamp(self):
+        """Take the eliminated at time (0-900) and turn it into a minute/second time and return"""
+        minutes = self.was_eliminated_at // 60
+        secs = self.was_eliminated_at % 60
+        return f"{minutes}:{secs:02d}"
 
     @property
     def get_tag_id(self):
