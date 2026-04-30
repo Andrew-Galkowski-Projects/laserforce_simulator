@@ -109,15 +109,19 @@ def create_match(request):
                 return render(request, "matches/match_setup.html", {"form": form})
 
             # Check if both teams have valid rosters
-            if not team_red.is_valid_roster:
+            red_errors = team_red.roster_errors
+            if red_errors:
                 messages.error(
-                    request, f"{team_red.name} does not have a valid roster!"
+                    request,
+                    f"{team_red.name} has an invalid roster: {'; '.join(red_errors)}",
                 )
                 return render(request, "matches/match_setup.html", {"form": form})
 
-            if not team_blue.is_valid_roster:
+            blue_errors = team_blue.roster_errors
+            if blue_errors:
                 messages.error(
-                    request, f"{team_blue.name} does not have a valid roster!"
+                    request,
+                    f"{team_blue.name} has an invalid roster: {'; '.join(blue_errors)}",
                 )
                 return render(request, "matches/match_setup.html", {"form": form})
 
@@ -161,17 +165,21 @@ def create_single_round(request):
                 )
 
             # Check if both teams have valid rosters
-            if not team_red.is_valid_roster:
+            red_errors = team_red.roster_errors
+            if red_errors:
                 messages.error(
-                    request, f"{team_red.name} does not have a valid roster!"
+                    request,
+                    f"{team_red.name} has an invalid roster: {'; '.join(red_errors)}",
                 )
                 return render(
                     request, "matches/single_round_setup.html", {"form": form}
                 )
 
-            if not team_blue.is_valid_roster:
+            blue_errors = team_blue.roster_errors
+            if blue_errors:
                 messages.error(
-                    request, f"{team_blue.name} does not have a valid roster!"
+                    request,
+                    f"{team_blue.name} has an invalid roster: {'; '.join(blue_errors)}",
                 )
                 return render(
                     request, "matches/single_round_setup.html", {"form": form}
