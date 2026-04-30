@@ -106,10 +106,10 @@ class ResourceBasedSimulator:
 
         # Initialize player states
         red_players = self._initialize_players(
-            game_round, team_red.players.all(), "red"
+            game_round, team_red.players.exclude(role="bench"), "red"
         )
         blue_players = self._initialize_players(
-            game_round, team_blue.players.all(), "blue"
+            game_round, team_blue.players.exclude(role="bench"), "blue"
         )
 
         # Simulate the round (pass game_round so events can be recorded)
