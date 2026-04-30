@@ -201,6 +201,8 @@
                     data-meta-actor-role="{{ event.metadata.actor_role|default:'' }}"
                     data-meta-target-role="{{ event.metadata.target_role|default:'' }}"
                     data-meta-target-shields="{{ event.metadata.target_shields|default:0 }}"
+                    data-meta-single-shots-resupplied="{{ event.metadata.target_shots_resupplied|default:0 }}"
+                    data-meta-single-lives-resupplied="{{ event.metadata.target_lives_resupplied|default:0 }}"
                     data-meta-shots-resupplied="{{ event.metadata.shots_resupplied|default:0 }}"
                     data-meta-lives-resupplied="{{ event.metadata.lives_resupplied|default:0 }}"
                     data-meta-lives-taken="{{ event.metadata.lives_taken|default:0 }}">
@@ -322,8 +324,10 @@
                 meta_actor_role: el.dataset.metaActorRole || el.getAttribute('data-meta-actor-role') || '',
                 meta_target_role: el.dataset.metaTargetRole || el.getAttribute('data-meta-target-role') || '',
                 meta_target_shields: parseInt(el.dataset.metaTargetShields || el.getAttribute('data-meta-target-shields') || 0),
-                meta_shots_resupplied: parseInt(el.dataset.metaShotsResupplied || el.getAttribute('data-meta-shots-resupplied') || 0),
-                meta_lives_resupplied: parseInt(el.dataset.metaLivesResupplied || el.getAttribute('data-meta-lives-resupplied') || 0),
+                meta_target_shots_resupplied: parseInt(el.dataset.metaShotsResupplied || el.getAttribute('data-meta-single-shots-resupplied') || 0),
+                meta_target_lives_resupplied: parseInt(el.dataset.metaLivesResupplied || el.getAttribute('data-meta-single-lives-resupplied') || 0),
+                meta_spec_shots_resupplied: parseInt(el.dataset.metaShotsResupplied || el.getAttribute('data-meta-shots-resupplied') || 0),
+                meta_spec_lives_resupplied: parseInt(el.dataset.metaLivesResupplied || el.getAttribute('data-meta-lives-resupplied') || 0),
                 meta_nuke_lives: parseInt(el.dataset.meta_nuke_lives) || el.getAttribute('data-meta-lives-taken')
             }))
             .map(e => (Object.assign(e, { sec: (function (mmss) { const p = mmss.split(':'); if (p.length !== 2) return 0; return parseInt(p[0]) * 60 + parseInt(p[1]); })(e.time) })))
@@ -369,9 +373,12 @@
             const meta_actor_role = ev.meta_actor_role || '';
             const meta_target_role = ev.meta_target_role || '';
             const meta_target_shields = Number.isFinite(ev.meta_target_shields) ? ev.meta_target_shields : parseInt(ev.meta_target_shields || 0) || 0;
-            const meta_shots_resupplied = Number.isFinite(ev.meta_shots_resupplied) ? ev.meta_shots_resupplied : parseInt(ev.meta_shots_resupplied || 0) || 0;
-            const meta_lives_resupplied = Number.isFinite(ev.meta_lives_resupplied) ? ev.meta_lives_resupplied : parseInt(ev.meta_lives_resupplied || 0) || 0;
+            const meta_target_shots_resupplied = Number.isFinite(ev.meta_target_shots_resupplied) ? ev.meta_target_shots_resupplied : parseInt(ev.meta_target_shots_resupplied || 0) || 0;
+            const meta_target_lives_resupplied = Number.isFinite(ev.meta_target_lives_resupplied) ? ev.meta_target_lives_resupplied : parseInt(ev.meta_target_lives_resupplied || 0) || 0;
+            const meta_spec_shots_resupplied = Number.isFinite(ev.meta_spec_shots_resupplied) ? ev.meta_spec_shots_resupplied : parseInt(ev.meta_spec_shots_resupplied || 0) || 0;
+            const meta_spec_lives_resupplied = Number.isFinite(ev.meta_spec_lives_resupplied) ? ev.meta_spec_lives_resupplied : parseInt(ev.meta_spec_lives_resupplied || 0) || 0;
             const meta_nuke_lives_taken = Number.isFinite(ev.meta_nuke_lives) ? ev.meta_nuke_lives : parseInt(ev.meta_nuke_lives || 0) || 0;
+            
             if (ev.t === 'tag') {
                 role_to_max_shields = {
                     "commander": 3,
@@ -415,14 +422,15 @@
             if (ev.t === 'special') {
                 // if ammo award shots per active ally
                 if (meta_actor_role === 'ammo') {
-                    if (redIds.includes(ev.actor)) curRedShots += meta_shots_resupplied;
-                    if (blueIds.includes(ev.actor)) curBlueShots += meta_shots_resupplied;
+                    // alert(meta_spec_shots_resupplied)
+                    if (redIds.includes(ev.actor)) curRedShots += meta_spec_shots_resupplied;
+                    if (blueIds.includes(ev.actor)) curBlueShots += meta_spec_shots_resupplied;
                 }
 
                 // if medic award lives per active ally
                 if (meta_actor_role === 'medic') {
-                    if (redIds.includes(ev.actor)) curRedLives += meta_lives_resupplied;
-                    if (blueIds.includes(ev.actor)) curBlueLives += meta_lives_resupplied;
+                    if (redIds.includes(ev.actor)) curRedLives += meta_spec_lives_resupplied;
+                    if (blueIds.includes(ev.actor)) curBlueLives += meta_spec_lives_resupplied;
                 }
             }
 
@@ -433,29 +441,16 @@
 
             // if ammo resupply, determine how many shots to increment up
             if (ev.t === 'resupply_ammo' && meta_actor_role === 'ammo') {
-                ammo_resupply_chart = {
-                    "commander": 5,
-                    "heavy": 5,
-                    "scout": 10,
-                    "medic": 5,
-                }
-                shot_increment = ammo_resupply_chart[meta_target_role] || 0;
-                if (redIds.includes(ev.actor)) curRedShots += shot_increment;
-                if (blueIds.includes(ev.actor)) curBlueShots += shot_increment;
+                // alert(meta_target_shots_resupplied)
+                if (redIds.includes(ev.actor)) curRedShots += meta_target_shots_resupplied;
+                if (blueIds.includes(ev.actor)) curBlueShots += meta_target_shots_resupplied;
             }
 
             // if medic resupply, determine how many lives to increment up
             if (ev.t === 'resupply_lives' && meta_actor_role === 'medic') {
-                medic_resupply_chart = {
-                    "commander": 4,
-                    "heavy": 3,
-                    "scout": 5,
-                    "ammo": 3,
-                }
-                // can get role from metadata target_role
-                life_increment = medic_resupply_chart[meta_target_role] || 0;
-                if (redIds.includes(ev.actor)) curRedLives += life_increment;
-                if (blueIds.includes(ev.actor)) curBlueLives += life_increment;
+                // alert(meta_target_lives_resupplied)
+                if (redIds.includes(ev.actor)) curRedLives += meta_target_lives_resupplied;
+                if (blueIds.includes(ev.actor)) curBlueLives += meta_target_lives_resupplied;
             }
 
             if (ev.t === 'nuke_detonated') {

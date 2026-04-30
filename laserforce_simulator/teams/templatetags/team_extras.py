@@ -87,3 +87,47 @@ def count_attr_false(iterable, attr_name):
         return count
     except Exception:
         return 0
+
+
+@register.filter
+def count_survivors(iterable):
+    """Count items in iterable where the player is alive (final_lives > 0).
+
+    This replaces older checks that relied on a boolean `was_eliminated` field.
+    """
+    try:
+        count = 0
+        for item in iterable:
+            try:
+                if getattr(item, "final_lives", 1) > 0:
+                    count += 1
+            except Exception:
+                continue
+        return count
+    except Exception:
+        return 0
+
+
+@register.filter
+def is_eliminated(item):
+    """Return True if the given player round state represents an eliminated player.
+
+    Uses `was_eliminated_at` when present, otherwise falls back to `final_lives == 0`.
+    """
+    try:
+        # Prefer explicit timestamp field if present. A sentinel value (e.g. 901)
+        # is treated as not eliminated.
+        ts = getattr(item, "was_eliminated_at", None)
+        if ts is not None:
+            # treat None or large sentinel (>1000) as not eliminated
+            try:
+                val = int(ts)
+                if val > 900 or val == 0:
+                    return False
+                return True
+            except Exception:
+                return False
+        # Fallback to final_lives
+        return getattr(item, "final_lives", 1) <= 0
+    except Exception:
+        return False

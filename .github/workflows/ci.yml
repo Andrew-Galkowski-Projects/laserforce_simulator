@@ -9,11 +9,13 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -21,7 +23,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r ./laserforce_simulator/requirements.txt
-          pip install coverage
 
       - name: Run migrations
         working-directory: ./laserforce_simulator
@@ -35,8 +36,7 @@ jobs:
         env:
           DJANGO_SETTINGS_MODULE: laserforce_simulator.settings
         run: |
-          coverage run --source='.' manage.py test --verbosity=2
-          coverage xml -o coverage.xml
+          pytest --cov=. --cov-report=xml:coverage.xml
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5

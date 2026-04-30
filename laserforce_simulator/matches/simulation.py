@@ -12,7 +12,7 @@ from teams.models import Player
 
 # Module logger
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.CRITICAL)
+logging.basicConfig(level=logging.DEBUG)
 
 
 class ResourceBasedSimulator:
@@ -63,15 +63,17 @@ class ResourceBasedSimulator:
         round1 = self.simulate_detailed_round(team_red, team_blue, match, 1)
         match.red_round1_points = round1.red_points
         match.blue_round1_points = round1.blue_points
-        match.red_round1_eliminated = round1.red_eliminated
-        match.blue_round1_eliminated = round1.blue_eliminated
+        match.red_round1_eliminated = round1.red_team_eliminated
+        match.blue_round1_eliminated = round1.blue_team_eliminated
+        match.round1_eliminated_at = round1.eliminated_at
 
         # Round 2: teams switch colors
         round2 = self.simulate_detailed_round(team_blue, team_red, match, 2)
         match.red_round2_points = round2.blue_points  # Switched
         match.blue_round2_points = round2.red_points  # Switched
-        match.red_round2_eliminated = round2.blue_eliminated  # Switched
-        match.blue_round2_eliminated = round2.red_eliminated  # Switched
+        match.red_round2_eliminated = round2.blue_team_eliminated  # Switched
+        match.blue_round2_eliminated = round2.red_team_eliminated  # Switched
+        match.round2_eliminated_at = round2.eliminated_at
 
         # Calculate bonus points
         if match.red_round1_eliminated:
@@ -118,8 +120,10 @@ class ResourceBasedSimulator:
         # Update game round with results
         game_round.red_points = round_result["red_points"]
         game_round.blue_points = round_result["blue_points"]
-        game_round.red_eliminated = round_result["red_eliminated"]
-        game_round.blue_eliminated = round_result["blue_eliminated"]
+        game_round.red_team_eliminated = round_result["red_eliminated"]
+        game_round.blue_team_eliminated = round_result["blue_eliminated"]
+        game_round.eliminated_at = round_result["eliminated_at"]
+
         game_round.is_completed = True
         game_round.save()
 
@@ -168,7 +172,7 @@ class ResourceBasedSimulator:
         # We'll support scheduled delayed actions (missiles, nukes) that complete on a later tick
         pending_missiles = []  # list of tuples (complete_time, attacker, defender)
         pending_nukes = []  # list of tuples (complete_time, player_state)
-
+        eliminated_at = 901
         # TODO: we want to simulate combat faster than every 2 seconds but this is ok for now to test
         for second in range(0, round_duration, 2):  # Check every 2 seconds
             # First, process any scheduled missile completions for this second
@@ -180,23 +184,23 @@ class ResourceBasedSimulator:
                     complete_time
                 ):
                     self._complete_missile(attacker, defender, complete_time)
-                # else:
-                #     logger.debug(
-                #         "%s - %s: missile cancelled or failed at %s (attacker active: %s, defender taggable: %s)",
-                #         complete_time,
-                #         "missile completion",
-                #         complete_time,
-                #         (
-                #             getattr(attacker, "is_active_at")(complete_time)
-                #             if hasattr(attacker, "is_active_at")
-                #             else False
-                #         ),
-                #         (
-                #             getattr(defender, "is_taggable_at")(complete_time)
-                #             if hasattr(defender, "is_taggable_at")
-                #             else False
-                #         ),
-                #     )
+                else:
+                    logger.debug(
+                        "%s - %s: missile cancelled or failed at %s (attacker active: %s, defender taggable: %s)",
+                        complete_time,
+                        "missile completion",
+                        complete_time,
+                        (
+                            getattr(attacker, "is_active_at")(complete_time)
+                            if hasattr(attacker, "is_active_at")
+                            else False
+                        ),
+                        (
+                            getattr(defender, "is_taggable_at")(complete_time)
+                            if hasattr(defender, "is_taggable_at")
+                            else False
+                        ),
+                    )
 
             # Next, process scheduled nukes
             to_run_n = [n for n in pending_nukes if n[0] <= second]
@@ -207,19 +211,10 @@ class ResourceBasedSimulator:
                     and player_state.final_lives > 0
                 ):
                     self._complete_nuke(player_state, complete_time)
-                # else:
-                #     logger.debug(
-                #         "%s - %s: nuke cancelled or failed at %s (active: %s, lives: %s)",
-                #         complete_time,
-                #         "nuke completion",
-                #         complete_time,
-                #         (
-                #             player_state.is_active_at(complete_time)
-                #             if hasattr(player_state, "is_active_at")
-                #             else False
-                #         ),
-                #         player_state.final_lives,
-                #     )
+
+            # REFRESH player states from database after nukes/missiles to get updated was_eliminated_at values
+            for p in red_players + blue_players:
+                p.refresh_from_db()
 
             # Plan and resolve simultaneous actions for this tick. New signature accepts pending lists so it may append scheduled delayed actions.
             self._simulate_combat_exchange(
@@ -236,14 +231,15 @@ class ResourceBasedSimulator:
             blue_alive = [p for p in blue_players if p.final_lives > 0]
 
             if not red_alive or not blue_alive:
-                # logger.debug(
-                #     "%s - %s: Round ends at second %s, red alive %s, blue alive %s",
-                #     second,
-                #     "simulate_round_combat",
-                #     second,
-                #     red_alive,
-                #     blue_alive,
-                # )
+                eliminated_at = second
+                logger.debug(
+                    "%s - %s: Round ends at second %s, red alive %s, blue alive %s",
+                    second,
+                    "simulate_round_combat",
+                    second,
+                    red_alive,
+                    blue_alive,
+                )
 
                 # award any non-captured bases to alive players on winning team
                 if not red_alive:
@@ -280,15 +276,15 @@ class ResourceBasedSimulator:
         # Determine eliminations
         red_eliminated = all(p.final_lives <= 0 for p in red_players)
         blue_eliminated = all(p.final_lives <= 0 for p in blue_players)
-        # logger.debug(
-        #     "%s - %s: Final Results: %s red points, %s blue points, red eliminated: %s, blue eliminated: %s",
-        #     second,
-        #     "simulate round combat",
-        #     red_points,
-        #     blue_points,
-        #     red_eliminayeated,
-        #     blue_eliminated,
-        # )
+        logger.debug(
+            "%s - %s: Final Results: %s red points, %s blue points, red eliminated: %s, blue eliminated: %s",
+            second,
+            "simulate round combat",
+            red_points,
+            blue_points,
+            red_eliminated,
+            blue_eliminated,
+        )
 
         # Save final states
         for p in red_players + blue_players:
@@ -299,6 +295,7 @@ class ResourceBasedSimulator:
             "blue_points": blue_points,
             "red_eliminated": red_eliminated,
             "blue_eliminated": blue_eliminated,
+            "eliminated_at": eliminated_at,
         }
 
     # this simulates multiple hits between teams at random
@@ -322,8 +319,14 @@ class ResourceBasedSimulator:
     ):
         """Simulate a single combat exchange between teams"""
         # Get alive players
-        red_alive = [p for p in red_players if p.final_lives > 0 and p.was_eliminated_at > second]
-        blue_alive = [p for p in blue_players if p.final_lives > 0 and p.was_eliminated_at > second]
+        red_alive = [
+            p for p in red_players if p.final_lives > 0 and p.was_eliminated_at > second
+        ]
+        blue_alive = [
+            p
+            for p in blue_players
+            if p.final_lives > 0 and p.was_eliminated_at > second
+        ]
         all_alive = red_alive + blue_alive
         result = ", ".join(str(obj) for obj in all_alive)
 
@@ -370,25 +373,25 @@ class ResourceBasedSimulator:
             if zone_name and player.team_color in ["red", "blue"]:
                 counts[(player.team_color, zone_name)] += 1
 
-        # logger.debug(
-        #     "%s - %s: red zone: %s-%s Neutral zone: %s-%s blue zone: %s-%s",
-        #     second,
-        #     "sim-combat-exch",
-        #     counts[("red", "red_zone")],
-        #     counts[("blue", "red_zone")],
-        #     counts[("red", "neutral_zone")],
-        #     counts[("blue", "neutral_zone")],
-        #     counts[("red", "blue_zone")],
-        #     counts[("blue", "blue_zone")],
-        # )
-        # logger.debug(
-        #     "%s - %s: alive: %s r-lives: %s b-lives: %s",
-        #     second,
-        #     "sim-combat-exch",
-        #     len(all_alive),
-        #     r_lives,
-        #     b_lives,
-        # )
+        logger.debug(
+            "%s - %s: red zone: %s-%s Neutral zone: %s-%s blue zone: %s-%s",
+            second,
+            "sim-combat-exch",
+            counts[("red", "red_zone")],
+            counts[("blue", "red_zone")],
+            counts[("red", "neutral_zone")],
+            counts[("blue", "neutral_zone")],
+            counts[("red", "blue_zone")],
+            counts[("blue", "blue_zone")],
+        )
+        logger.debug(
+            "%s - %s: alive: %s r-lives: %s b-lives: %s",
+            second,
+            "sim-combat-exch",
+            len(all_alive),
+            r_lives,
+            b_lives,
+        )
 
         # Apply non-combat actions immediately (resupplies, zone changes, hides, base captures)
         tag_attempts = []  # collect tag attempts for simultaneous resolution
@@ -477,8 +480,10 @@ class ResourceBasedSimulator:
 
         choice = random.choices(choices, weights)[0]
 
-        # only maintain hiding status if they are still hiding
-        if choice != "hide":
+        # only maintain hiding status if they are still hiding, moving, or resupplying
+        if player.is_hiding and not (
+            choice == "hide" or choice == "change_zone" or choice == "resupply_ally"
+        ):
             player.is_hiding = False
             player.save()
 
@@ -487,7 +492,7 @@ class ResourceBasedSimulator:
             target = self._choose_tag_target(player, all_alive, second)
             if target and player.final_shots > 0:
                 plans.append({"type": "tag", "actor": player, "target": target})
-                # scouts may attempt a second tag immediately
+                # scouts may attempt a second tag immediately if rapid fire active
                 if player.role == "scout" and player.special_active_until > second:
                     second_target = self._choose_tag_target(player, all_alive, second)
                     if second_target:
@@ -641,8 +646,6 @@ class ResourceBasedSimulator:
                         "missiled by": 0,
                     }
 
-                
-
                 attacker.tags_made += 1
                 if attacker.role != "heavy":
                     attacker.final_special += 1
@@ -654,18 +657,18 @@ class ResourceBasedSimulator:
 
                 defender.specific_tags[atk_key]["tagged_by"] += 1
 
-                # logger.debug(
-                #     "%s - %s: %s %s tags %s %s atk ammo: %s def shd/lv: %s/%s",
-                #     second,
-                #     "attempt tag",
-                #     attacker.team_color,
-                #     attacker.role,
-                #     defender.team_color,
-                #     defender.role,
-                #     attacker.final_shots,
-                #     defender.shields,
-                #     defender.final_lives,
-                # )
+                logger.debug(
+                    "%s - %s: %s %s tags %s %s atk ammo: %s def shd/lv: %s/%s",
+                    second,
+                    "attempt tag",
+                    attacker.team_color,
+                    attacker.role,
+                    defender.team_color,
+                    defender.role,
+                    attacker.final_shots,
+                    defender.shields,
+                    defender.final_lives,
+                )
                 GameEvent.objects.create(
                     game_round=game_round,
                     timestamp=second,
@@ -694,6 +697,35 @@ class ResourceBasedSimulator:
                 )
                 defender.shields = max(0, defender.shields - attacker.shot_power)
                 if defender.shields == 0:
+                    # code for nuke cancels
+                    if (
+                        defender.role == "commander"
+                        and defender.special_active_until > second
+                    ):
+                        if attacker.team_color != defender.team_color:
+                            attacker.enemy_nuke_cancels += 1
+                        else:
+                            attacker.ally_nuke_cancels += 1
+                        defender.own_specials_cancelled += 1
+                        defender.save()
+                        GameEvent.objects.create(
+                            game_round=game_round,
+                            timestamp=second,
+                            event_type="special",
+                            actor=attacker.player,
+                            target=defender.player,
+                            points_awarded=0,
+                            description=f"{attacker.player.name} cancels {defender.player.name}'s nuke",
+                            metadata={
+                                "canceled_by": "tag",
+                                "actor_role": attacker.role,
+                                "actor_enemy_nuke_cancels": attacker.enemy_nuke_cancels,
+                                "actor_ally_nuke_cancels": attacker.ally_nuke_cancels,
+                                "target_role": defender.role,
+                                "target_own_specials_cancelled": defender.own_specials_cancelled,
+                            },
+                        )
+                        attacker.save()
                     # never want to display below 0 even if they were at 1 and took simultaneous tags
                     defender.final_lives -= min(1, defender.final_lives)
                     defender.last_downed_time = second
@@ -931,21 +963,26 @@ class ResourceBasedSimulator:
             "scout": 5,
             "ammo": 3,
         }
-        # logger.debug(
-        #     "%s - %s: %s to %s, resupplyable: %s, %s/%s shots, %s/%s lives",
-        #     second,
-        #     "attempt resup",
-        #     tagger.role,
-        #     teammate.role,
-        #     teammate.is_resupplyable_at(second),
-        #     teammate.final_shots,
-        #     teammate.max_shots,
-        #     teammate.final_lives,
-        #     teammate.max_lives,
-        # )
+        logger.debug(
+            "%s - %s: %s to %s, resupplyable: %s, %s/%s shots, %s/%s lives",
+            second,
+            "attempt resup",
+            tagger.role,
+            teammate.role,
+            teammate.is_resupplyable_at(second),
+            teammate.final_shots,
+            teammate.max_shots,
+            teammate.final_lives,
+            teammate.max_lives,
+        )
         if tagger.role == "ammo" and teammate.is_resupplyable_at(second):
             resupply_amount = ammo_resupply_chart[teammate.role]
             # only resupply to cap
+            before_shots = teammate.final_shots
+            teammate.final_shots = min(
+                teammate.final_shots + resupply_amount, teammate.max_shots
+            )
+            shots_resupplied = teammate.final_shots - before_shots
             if teammate.final_shots + resupply_amount > teammate.max_shots:
                 teammate.final_shots = teammate.max_shots
             else:
@@ -955,6 +992,28 @@ class ResourceBasedSimulator:
             # if scout then end their special
             if teammate.role == "scout" and teammate.special_active_until > second:
                 teammate.special_active_until = second
+            # resupply nuke cancel code
+            if teammate.role == "commander" and teammate.special_active_until > second:
+                tagger.ally_nuke_cancels += 1
+                teammate.own_specials_cancelled += 1
+                teammate.save()
+                GameEvent.objects.create(
+                    game_round=tagger.game_round,
+                    timestamp=second,
+                    event_type="special",
+                    actor=tagger.player,
+                    target=teammate.player,
+                    points_awarded=0,
+                    description=f"{tagger.player.name} cancels {teammate.player.name}'s nuke",
+                    metadata={
+                        "canceled_by": "ammo resupply",
+                        "actor_role": tagger.role,
+                        "actor_enemy_nuke_cancels": tagger.enemy_nuke_cancels,
+                        "actor_ally_nuke_cancels": tagger.ally_nuke_cancels,
+                        "target_role": teammate.role,
+                        "target_own_specials_cancelled": teammate.own_specials_cancelled,
+                    },
+                )
             tagger.resupplies_given += 1
             tagger.save()
             teammate.save()
@@ -976,6 +1035,7 @@ class ResourceBasedSimulator:
                     "target_points": teammate.points_scored,
                     "target_lives": teammate.final_lives,
                     "target_shots": teammate.final_shots,
+                    "target_shots_resupplied": shots_resupplied,
                 },
             )
             return
@@ -986,12 +1046,38 @@ class ResourceBasedSimulator:
         ):
             resupply_amount = medic_resupply_chart[teammate.role]
             # only resupply to cap
-            if teammate.final_lives + resupply_amount > teammate.max_lives:
-                teammate.final_lives = teammate.max_lives
-            else:
-                teammate.final_lives += resupply_amount
+            before_lives = teammate.final_lives
+            teammate.final_lives = min(
+                teammate.final_lives + resupply_amount, teammate.max_lives
+            )
+            lives_resupplied = teammate.final_lives - before_lives
             teammate.last_downed_time = second
             teammate.shields = teammate.max_shields
+            # if scout then end their special
+            if teammate.role == "scout" and teammate.special_active_until > second:
+                teammate.special_active_until = second
+            # resupply nuke cancel code
+            if teammate.role == "commander" and teammate.special_active_until > second:
+                tagger.ally_nuke_cancels += 1
+                teammate.own_specials_cancelled += 1
+                teammate.save()
+                GameEvent.objects.create(
+                    game_round=tagger.game_round,
+                    timestamp=second,
+                    event_type="special",
+                    actor=tagger.player,
+                    target=teammate.player,
+                    points_awarded=0,
+                    description=f"{tagger.player.name} cancels {teammate.player.name}'s nuke",
+                    metadata={
+                        "canceled_by": "medic resupply",
+                        "actor_role": tagger.role,
+                        "actor_enemy_nuke_cancels": tagger.enemy_nuke_cancels,
+                        "actor_ally_nuke_cancels": tagger.ally_nuke_cancels,
+                        "target_role": teammate.role,
+                        "target_own_specials_cancelled": teammate.own_specials_cancelled,
+                    },
+                )
             tagger.resupplies_given += 1
             tagger.save()
             teammate.save()
@@ -1013,6 +1099,7 @@ class ResourceBasedSimulator:
                     "target_points": teammate.points_scored,
                     "target_lives": teammate.final_lives,
                     "target_shots": teammate.final_shots,
+                    "target_lives_resupplied": lives_resupplied,
                 },
             )
             return
@@ -1061,12 +1148,6 @@ class ResourceBasedSimulator:
 
             # Defender does not dodge, schedule missile completion
             delay = random.randint(1, 2)  # 1-2 second delay
-            # logger.debug(
-            #     "%s - %s: about to complete missile delay: %s",
-            #     second,
-            #     "start msl lock",
-            #     delay,
-            # )
             # return a tuple indicating the scheduled missile completion (complete_time, attacker, defender)
             return (second + delay, attacker, defender)
 
@@ -1082,13 +1163,13 @@ class ResourceBasedSimulator:
             defender.final_lives -= min(defender.final_lives, 2)
             if defender.final_lives <= 0:
                 defender.was_eliminated_at = second
-                # logger.debug(
-                #     "%s - %s: Player eliminated: %s by %s",
-                #     second,
-                #     "complete msl",
-                #     defender.player.name,
-                #     attacker.player.name,
-                # )
+                logger.debug(
+                    "%s - %s: Player eliminated: %s by %s",
+                    second,
+                    "complete msl",
+                    defender.player.name,
+                    attacker.player.name,
+                )
                 GameEvent.objects.create(
                     game_round=attacker.game_round,
                     timestamp=second,
@@ -1166,30 +1247,30 @@ class ResourceBasedSimulator:
                     "target_shields": defender.shields,
                 },
             )
-            # logger.debug(
-            #     "%s - %s: missile hit completed a: %s d: %s",
-            #     second,
-            #     "complete msl",
-            #     attacker.role,
-            #     defender.role,
-            # )
+            logger.debug(
+                "%s - %s: missile hit completed a: %s d: %s",
+                second,
+                "complete msl",
+                attacker.role,
+                defender.role,
+            )
 
     def _use_special(self, player_state, second):
         """Simulate using a special ability"""
         # if player has enough special points, is alive and is active, expend special points and apply effect
-        # logger.debug(
-        #     "%s - %s: %s at %s, %s/%s special, active until %s, succeds: %s",
-        #     second,
-        #     "use special",
-        #     player_state.player.name,
-        #     second,
-        #     player_state.final_special,
-        #     player_state.special_cost,
-        #     player_state.special_active_until,
-        #     player_state.can_use_special
-        #     and player_state.final_lives > 0
-        #     and player_state.is_active_at(second),
-        # )
+        logger.debug(
+            "%s - %s: %s at %s, %s/%s special, active until %s, succeds: %s",
+            second,
+            "use special",
+            player_state.player.name,
+            second,
+            player_state.final_special,
+            player_state.special_cost,
+            player_state.special_active_until,
+            player_state.can_use_special
+            and player_state.final_lives > 0
+            and player_state.is_active_at(second),
+        )
         if (
             player_state.can_use_special
             and player_state.final_lives > 0
@@ -1256,8 +1337,8 @@ class ResourceBasedSimulator:
                     "ammo": 2,
                     "medic": 0,
                 }
+                total_healed = 0
                 for mate in teammates:
-                    total_healed = 0
                     heal_amount = medic_heal_chart[mate.role]
                     if mate.final_lives + heal_amount > mate.max_lives:
                         total_healed += mate.max_lives - mate.final_lives
@@ -1299,8 +1380,8 @@ class ResourceBasedSimulator:
                     "medic": 5,
                     "ammo": 0,
                 }
+                total_ammo = 0
                 for mate in teammates:
-                    total_ammo = 0
                     resupply_amount = ammo_resupply_chart[mate.role]
                     if mate.final_shots + resupply_amount > mate.max_shots:
                         total_ammo += mate.max_shots - mate.final_shots
@@ -1340,12 +1421,43 @@ class ResourceBasedSimulator:
                 final_lives__gt=0,
             )
             lives_removed_from_nuke = 0
+
+            # check for lives removed, medic lives removed and nuke cancels
             for opponent in opposing_players:
                 lives_removed_from_nuke += min(opponent.final_lives, 3)
+                if opponent.role == "medic":
+                    player_state.medic_lives_removed_from_nuke += min(
+                        opponent.final_lives, 3
+                    )
+                elif (
+                    opponent.role == "commander"
+                    and opponent.special_active_until > second
+                ):
+                    player_state.enemy_nuke_cancels += 1
+                    opponent.own_specials_cancelled += 1
+                    opponent.save()
+                    GameEvent.objects.create(
+                        game_round=player_state.game_round,
+                        timestamp=second,
+                        event_type="special",
+                        actor=player_state.player,
+                        target=opponent.player,
+                        points_awarded=0,
+                        description=f"{player_state.player.name} cancels {opponent.player.name}'s nuke",
+                        metadata={
+                            "canceled by": "nuke",
+                            "actor_role": player_state.role,
+                            "actor_enemy_nuke_cancels": player_state.enemy_nuke_cancels,
+                            "actor_ally_nuke_cancels": player_state.ally_nuke_cancels,
+                            "target_role": opponent.role,
+                            "target_own_specials_cancelled": opponent.own_specials_cancelled,
+                        },
+                    )
+                player_state.save()
             GameEvent.objects.create(
                 game_round=player_state.game_round,
                 timestamp=second,
-                event_type="nuke_detonated",
+                event_type="special",
                 actor=player_state.player,
                 points_awarded=500,
                 description=f"{player_state.player.name} detonates Nuke",
@@ -1357,22 +1469,24 @@ class ResourceBasedSimulator:
                 },
             )
 
+            # Apply damage to each opponent
             for opponent in opposing_players:
-                lives_removed_from_nuke += min(opponent.final_lives, 3)
-                opponent.final_lives -= min(opponent.final_lives, 3)
+                lives_taken = min(opponent.final_lives, 3)
+                opponent.lives_lost_to_nukes += lives_taken
+                opponent.final_lives -= lives_taken
                 opponent.last_downed_time = second
                 opponent.shields = opponent.max_shields
-                opponent.save()
+
+                # Check for elimination and set was_eliminated_at
                 if opponent.final_lives <= 0:
                     opponent.was_eliminated_at = second
-                    opponent.save()
-                    # logger.debug(
-                    #     "%s - %s: Player eliminated: %s by %s",
-                    #     second,
-                    #     "complete nuke",
-                    #     opponent.player.name,
-                    #     player_state.player.name,
-                    # )
+                    logger.debug(
+                        "%s - %s: Player eliminated: %s by %s",
+                        second,
+                        "complete nuke",
+                        opponent.player.name,
+                        player_state.player.name,
+                    )
                     GameEvent.objects.create(
                         game_round=player_state.game_round,
                         timestamp=second,
@@ -1388,6 +1502,9 @@ class ResourceBasedSimulator:
                             "target_lives": opponent.final_lives,
                         },
                     )
+
+                # Save once with all changes
+                opponent.save()
 
     def _reset_base(self, player_state, base_id, second):
         """Simulate resetting off a base"""
