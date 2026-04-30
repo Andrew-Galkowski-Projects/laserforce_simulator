@@ -35,27 +35,40 @@ class Team(models.Model):
         return list(self.players.all())
 
     @property
-    def is_valid_roster(self):
-        """
-        Check if team has exactly 6 players with correct role distribution
-        """
-        if self.player_count != 6:
-            return False
+    def active_players(self):
+        """Non-bench players used in simulation."""
+        return self.players.exclude(role="bench")
 
-        roles = self.players.values_list("role", flat=True)
+    @property
+    def is_valid_roster(self):
+        return not self.roster_errors
+
+    @property
+    def roster_errors(self):
+        """Return a list of human-readable problems, or [] if valid."""
+        active = self.active_players
+        roles = list(active.values_list("role", flat=True))
+        required = {"commander", "heavy", "scout", "medic", "ammo"}
+        errors = []
+
+        count = active.count()
+        if count < 6:
+            errors.append(f"only {count} active player{'s' if count != 1 else ''} (need 6)")
+        elif count > 6:
+            errors.append(f"{count} active players (need 6)")
+
+        missing = required - set(roles)
+        for role in sorted(missing):
+            errors.append(f"missing {role.capitalize()}")
+
         role_counts = {}
         for role in roles:
             role_counts[role] = role_counts.get(role, 0) + 1
+        for role, n in role_counts.items():
+            if role != "scout" and n > 1:
+                errors.append(f"duplicate {role.capitalize()}")
 
-        # Check we have exactly one of each role, except one role should have 2
-        unique_roles = set(roles)
-        if len(unique_roles) != 5:  # Should have all 5 different roles
-            return False
-
-        # One role should have 2 players, others should have 1
-        counts = list(role_counts.values())
-        counts.sort()
-        return counts == [1, 1, 1, 1, 2]
+        return errors
 
 
 class Player(models.Model):
@@ -65,6 +78,7 @@ class Player(models.Model):
         ("scout", "Scout"),
         ("medic", "Medic"),
         ("ammo", "Ammo"),
+        ("bench", "Bench"),
     ]
 
     team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="players")
@@ -185,27 +199,36 @@ class Player(models.Model):
         return f"{self.name} ({self.get_role_display()}) - {self.team.name}"
 
     def clean(self):
-        """Validate role constraints"""
-        if self.team_id:
-            # Check if adding this role would violate constraints
-            current_roles = self.team.players.exclude(pk=self.pk).values_list(
-                "role", flat=True
+        """Validate role constraints."""
+        if not self.team_id:
+            return
+
+        current_roles = list(
+            self.team.players.exclude(pk=self.pk).values_list("role", flat=True)
+        )
+        bench_count = current_roles.count("bench")
+        active_roles = [r for r in current_roles if r != "bench"]
+
+        if self.role == "bench":
+            if bench_count >= 6:
+                raise ValidationError("A team cannot have more than 6 bench players.")
+            return
+
+        # Active-player constraints
+        role_counts = {}
+        for role in active_roles:
+            role_counts[role] = role_counts.get(role, 0) + 1
+        role_counts[self.role] = role_counts.get(self.role, 0) + 1
+
+        if sum(role_counts.values()) > 6:
+            raise ValidationError(
+                "A team's active roster cannot have more than 6 players."
             )
-            role_counts = {}
-            for role in current_roles:
-                role_counts[role] = role_counts.get(role, 0) + 1
 
-            # Add the current player's role
-            role_counts[self.role] = role_counts.get(self.role, 0) + 1
+        if self.role != "scout" and role_counts[self.role] > 1:
+            raise ValidationError(
+                "Only the Scout role may appear twice in an SM5 roster."
+            )
 
-            # TODO: change this to validate all roles have 1 except scout which can have 2
-            # For now just ensure no more than 2 of any role
-            # Check constraints: no role can have more than 2 players
-            if role_counts[self.role] > 2:
-                raise ValidationError(
-                    f"Team already has 2 {self.get_role_display()} players"
-                )
-
-            # Check total doesn't exceed 6
-            if sum(role_counts.values()) > 6:
-                raise ValidationError("Team cannot have more than 6 players")
+        if self.role == "scout" and role_counts["scout"] > 2:
+            raise ValidationError("A team cannot have more than 2 Scouts.")

@@ -638,3 +638,134 @@ class TestLivesLost:
         assert target.lives_lost_to_nukes == 6
         assert target.final_lives == 4
         assert target.lives_lost == 6
+
+
+@pytest.mark.django_db
+class TestRosterValidation:
+    def _make_team(self, name="Test"):
+        return Team.objects.create(name=name)
+
+    def _add_player(self, team, role, name=None):
+        return Player.objects.create(
+            team=team, name=name or f"{role}-{team.players.count()}", role=role
+        )
+
+    def _full_roster(self, team, double_role="scout"):
+        """Add a complete valid 6-player roster, doubling the given role."""
+        roles = ["commander", "heavy", "scout", "medic", "ammo", double_role]
+        for i, role in enumerate(roles):
+            Player.objects.create(team=team, name=f"p{i}", role=role)
+
+    # --- is_valid_roster ---
+
+    def test_valid_roster_with_two_scouts(self):
+        team = self._make_team("Valid")
+        self._full_roster(team, double_role="scout")
+        assert team.is_valid_roster
+
+    def test_valid_roster_with_one_scout(self):
+        team = self._make_team("OneScout")
+        for i, role in enumerate(["commander", "heavy", "scout", "medic", "ammo"]):
+            Player.objects.create(team=team, name=f"p{i}", role=role)
+        # 5 players — not valid (needs 6)
+        assert not team.is_valid_roster
+
+    def test_invalid_roster_two_commanders(self):
+        team = self._make_team("2Cmd")
+        self._full_roster(team, double_role="commander")
+        assert not team.is_valid_roster
+
+    def test_invalid_roster_two_medics(self):
+        team = self._make_team("2Med")
+        self._full_roster(team, double_role="medic")
+        assert not team.is_valid_roster
+
+    def test_bench_players_excluded_from_roster_check(self):
+        team = self._make_team("WithBench")
+        self._full_roster(team, double_role="scout")
+        # Add 3 bench players — should still be valid
+        for i in range(3):
+            Player.objects.create(team=team, name=f"bench{i}", role="bench")
+        assert team.is_valid_roster
+
+    def test_bench_players_dont_count_as_active(self):
+        team = self._make_team("BenchOnly")
+        for i in range(6):
+            Player.objects.create(team=team, name=f"bench{i}", role="bench")
+        assert not team.is_valid_roster
+
+    # --- Player.clean() ---
+
+    def test_clean_rejects_second_commander(self):
+        from django.core.exceptions import ValidationError
+        team = self._make_team("CleanCmd")
+        self._add_player(team, "commander")
+        p = Player(team=team, name="cmd2", role="commander")
+        with pytest.raises(ValidationError, match="Only the Scout role"):
+            p.clean()
+
+    def test_clean_rejects_second_medic(self):
+        from django.core.exceptions import ValidationError
+        team = self._make_team("CleanMed")
+        self._add_player(team, "medic")
+        p = Player(team=team, name="med2", role="medic")
+        with pytest.raises(ValidationError, match="Only the Scout role"):
+            p.clean()
+
+    def test_clean_allows_second_scout(self):
+        team = self._make_team("CleanScout")
+        self._add_player(team, "scout")
+        p = Player(team=team, name="scout2", role="scout")
+        p.clean()  # should not raise
+
+    def test_clean_rejects_third_scout(self):
+        from django.core.exceptions import ValidationError
+        team = self._make_team("3Scouts")
+        self._add_player(team, "scout", "s1")
+        self._add_player(team, "scout", "s2")
+        p = Player(team=team, name="s3", role="scout")
+        with pytest.raises(ValidationError):
+            p.clean()
+
+    def test_clean_rejects_more_than_6_bench(self):
+        from django.core.exceptions import ValidationError
+        team = self._make_team("ManyBench")
+        for i in range(6):
+            Player.objects.create(team=team, name=f"b{i}", role="bench")
+        p = Player(team=team, name="b7", role="bench")
+        with pytest.raises(ValidationError, match="6 bench"):
+            p.clean()
+
+    def test_clean_allows_bench_alongside_full_roster(self):
+        team = self._make_team("BenchOK")
+        self._full_roster(team, double_role="scout")
+        p = Player(team=team, name="sub", role="bench")
+        p.clean()  # should not raise
+
+    # --- roster_errors ---
+
+    def test_roster_errors_empty_for_valid_roster(self):
+        team = self._make_team("ErrValid")
+        self._full_roster(team, double_role="scout")
+        assert team.roster_errors == []
+
+    def test_roster_errors_reports_missing_role(self):
+        team = self._make_team("ErrMissing")
+        # Add 6 players but omit medic, double scout instead
+        for i, role in enumerate(["commander", "heavy", "scout", "scout", "ammo", "scout"]):
+            Player.objects.create(team=team, name=f"p{i}", role=role)
+        errors = team.roster_errors
+        assert any("medic" in e.lower() for e in errors)
+
+    def test_roster_errors_reports_duplicate_non_scout(self):
+        team = self._make_team("ErrDupe")
+        self._full_roster(team, double_role="commander")
+        errors = team.roster_errors
+        assert any("commander" in e.lower() for e in errors)
+
+    def test_roster_errors_reports_too_few_players(self):
+        team = self._make_team("ErrFew")
+        for i, role in enumerate(["commander", "heavy", "scout", "medic", "ammo"]):
+            Player.objects.create(team=team, name=f"p{i}", role=role)
+        errors = team.roster_errors
+        assert any("5" in e for e in errors)
