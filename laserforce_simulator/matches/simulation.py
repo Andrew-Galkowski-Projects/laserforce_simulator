@@ -1471,7 +1471,9 @@ class ResourceBasedSimulator:
 
             # Apply damage to each opponent
             for opponent in opposing_players:
-                opponent.final_lives -= min(opponent.final_lives, 3)
+                lives_taken = min(opponent.final_lives, 3)
+                opponent.lives_lost_to_nukes += lives_taken
+                opponent.final_lives -= lives_taken
                 opponent.last_downed_time = second
                 opponent.shields = opponent.max_shields
 

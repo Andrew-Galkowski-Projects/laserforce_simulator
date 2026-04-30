@@ -287,6 +287,7 @@ class PlayerRoundState(models.Model):
     enemy_nuke_cancels = models.IntegerField(default=0)
     ally_nuke_cancels = models.IntegerField(default=0)
     medic_lives_removed_from_nuke = models.IntegerField(default=0)
+    lives_lost_to_nukes = models.IntegerField(default=0)
     missiles_landed = models.IntegerField(default=0)
     times_missiled = models.IntegerField(default=0)
     resupplies_given = models.IntegerField(default=0)
@@ -345,8 +346,7 @@ class PlayerRoundState(models.Model):
 
     @property
     def lives_lost(self):
-        # TODO: add lives lost due to nukes
-        return max(0, self.times_tagged + self.times_missiled * 2)
+        return max(0, self.times_tagged + self.times_missiled * 2 + self.lives_lost_to_nukes)
 
     @property
     def max_shots(self):
@@ -381,7 +381,6 @@ class PlayerRoundState(models.Model):
         accuracy = round(self.get_accuracy / 10, 2)
         medic_hits = self.final_medic_hits
         # 4 + 1/60 per second remaining above 3 min
-        # TODO: fll this in later
         three_min_threshold = 780  # in second
         if (self.game_round.blue_team_eliminated and self.team_color == "red") or (
             self.game_round.red_team_eliminated and self.team_color == "blue"
@@ -414,8 +413,9 @@ class PlayerRoundState(models.Model):
             Get nuke canceled: -1 point.
             """
             role_specific += self.missiles_landed
-            # TODO: figure out if cancelled and don't apply bonus
+            # add a point per special used, cancelling out any that were cancelled
             role_specific += self.specials_used - self.own_specials_cancelled
+            # -1 point per nuke cancelled on top of that
             role_specific -= self.own_specials_cancelled
         elif self.role == "heavy":
             """
@@ -517,25 +517,20 @@ class PlayerRoundState(models.Model):
 
     def is_active_at(self, seconds_into_round):
         """Check if player is active at a given time (not in downed cooldown)."""
-        # Check if player is in respawn downtime (8 seconds after being downed) (or out of game)
-        # this makes an assumption that we never go back in time, ie last downed time = 43 but seconds into round is 5, will return false
+        if self.final_lives == 0:
+            return False
         if getattr(self, "last_downed_time", None) is not None:
-            if (seconds_into_round - self.last_downed_time < 8 or self.final_lives == 0) and seconds_into_round < self.was_eliminated_at:
+            if seconds_into_round - self.last_downed_time < 8:
                 return False
         return True
 
     def is_taggable_at(self, seconds_into_round):
         """Return True if the player can be tagged at the given second (not in respawn resettime)."""
-        # Check if player is in respawn resettable time (4 seconds after being downed)
+        if self.final_lives == 0:
+            return False
         if getattr(self, "last_downed_time", None) is not None:
-            try:
-                if (
-                    seconds_into_round - self.last_downed_time < 4
-                    or self.final_lives == 0
-                ):
-                    return False
-            except Exception:
-                return bool(self.is_taggable)
+            if seconds_into_round - self.last_downed_time < 4:
+                return False
         return True
 
     def eliminated_timestamp(self):

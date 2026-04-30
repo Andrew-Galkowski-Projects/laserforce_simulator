@@ -20,10 +20,10 @@ python manage.py makemigrations
 pytest
 
 # Run a single test file
-pytest matches/tests.py
+pytest matches/simulation_tests.py
 
 # Run a specific test class or method
-pytest matches/tests.py::ClassName::method_name
+pytest matches/simulation_tests.py::ClassName::method_name
 ```
 
 CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci.yml`). Python version is 3.11.
