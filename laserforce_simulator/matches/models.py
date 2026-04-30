@@ -428,7 +428,6 @@ class PlayerRoundState(models.Model):
             Hits vs. Commander/Heavy: .2 points for every hit on an enemy Heavy or Commander.
             Score bonus: 1 point (applied fractionally) for every 1000 points over 6000.
             """
-            # TODO: get a sum of amount of tags against opposing 3 hits (commander/heavy) then multiply by .2
             three_hit_ids = ["1", "2"] if self.team_color == "blue" else ["7", "8"]
             three_hit_tags = 0
             for id in three_hit_ids:
