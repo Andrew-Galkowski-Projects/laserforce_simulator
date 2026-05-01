@@ -4,6 +4,13 @@ from unittest.mock import patch
 from teams.models import Team, Player
 from matches.models import GameRound, PlayerRoundState, GameEvent
 from matches.simulation import ResourceBasedSimulator
+from matches.sim_helpers.weights import (
+    _get_medic_weights,
+    _get_ammo_weights,
+    _get_scout_weights,
+    _get_heavy_weights,
+    _get_commander_weights,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1006,3 +1013,396 @@ class TestMVP:
                         points_scored=4_000, specials_used=0,
                         final_lives=0, tags_made=0, shots_missed=0)
         assert s.get_mvp == 4.0
+
+
+# ---------------------------------------------------------------------------
+# Weight function tests
+# ---------------------------------------------------------------------------
+#
+# Base weights before any role function is applied:
+#   [70, 30, 0, 0, 0, 0, 0]
+#   indices: [tag_player, change_zone, hide, capture_base, use_special, resupply_ally, missile_player]
+#
+# Each role function receives a copy of those base weights and adjusts them
+# according to the player's state and surroundings.
+
+_ACTION_IDX = {
+    "tag_player": 0,
+    "change_zone": 1,
+    "hide": 2,
+    "capture_base": 3,
+    "use_special": 4,
+    "resupply_ally": 5,
+    "missile_player": 6,
+}
+_BASE = [70, 30, 0, 0, 0, 0, 0]
+
+
+@pytest.mark.django_db
+class TestWeightFunctions:
+    """Unit tests for per-role action weight functions in sim_helpers/weights.py."""
+
+    def _fresh(self):
+        return list(_BASE)
+
+    def _state(self, gr, player, role, team_color="red", **kwargs):
+        defaults = dict(final_lives=10, final_shots=15, final_special=0, current_zone=0)
+        defaults.update(kwargs)
+        return PlayerRoundState.objects.create(
+            game_round=gr, player=player, role=role, team_color=team_color, **defaults
+        )
+
+    def setup_method(self):
+        self.team, self.players = make_team_with_slots("W")
+        self.team2, self.players2 = make_team_with_slots("W2")
+        self.gr = GameRound.objects.create(
+            team_red=self.team, team_blue=self.team2, round_number=1
+        )
+
+    # --- Medic ---
+
+    def test_medic_baseline(self):
+        """Medic strongly favors resupply over tagging in default conditions."""
+        s = self._state(self.gr, self.players["medic"], "medic")
+        w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        assert w == [0, 0, 30, 0, 0, 70, 0]
+
+    def test_medic_baseline_sum(self):
+        s = self._state(self.gr, self.players["medic"], "medic")
+        w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        assert sum(w) == 100
+
+    def test_medic_low_lives_maximises_resupply(self):
+        """When medic has <=3 lives, hide collapses to 0 and resupply hits 100."""
+        s = self._state(self.gr, self.players["medic"], "medic", final_lives=3)
+        w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        assert w == [0, 0, 0, 0, 0, 100, 0]
+
+    def test_medic_can_capture_base_prioritises_capture(self):
+        """In neutral zone, medic prefers capturing the base over resupplying."""
+        # current_zone=1 (neutral_zone) → can_capture_base_in_current_zone = True
+        s = self._state(self.gr, self.players["medic"], "medic", current_zone=1)
+        w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        assert w[_ACTION_IDX["capture_base"]] == 50
+        assert w[_ACTION_IDX["capture_base"]] > w[_ACTION_IDX["resupply_ally"]]
+
+    def test_medic_special_available_increases_use_special(self):
+        """With enough special charges and at least one ally active, use_special rises."""
+        s = self._state(self.gr, self.players["medic"], "medic", final_special=10)
+        w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        # 1 active ally (medic herself) → use_special += 20 * 1
+        assert w[_ACTION_IDX["use_special"]] == 20
+
+    def test_medic_not_active_heavy_in_zone_hides(self):
+        """Downed medic with a heavy escort hides to wait under cover."""
+        medic = self._state(
+            self.gr, self.players["medic"], "medic",
+            final_lives=5, last_downed_time=0, current_zone=0,
+        )
+        heavy = self._state(
+            self.gr, self.players2["heavy"], "heavy",
+            team_color="red", final_lives=5, current_zone=0,
+        )
+        w = _get_medic_weights(medic, _ACTION_IDX, self._fresh(), [medic, heavy], 0)
+        assert w == [0, 0, 100, 0, 0, 0, 0]
+
+    def test_medic_not_active_no_heavy_changes_zone(self):
+        """Downed medic with no nearby heavy moves to find protection."""
+        medic = self._state(
+            self.gr, self.players["medic"], "medic",
+            final_lives=5, last_downed_time=0,
+        )
+        w = _get_medic_weights(medic, _ACTION_IDX, self._fresh(), [medic], 0)
+        assert w == [0, 70, 30, 0, 0, 0, 0]
+
+    # --- Ammo ---
+
+    def test_ammo_baseline(self):
+        """Ammo splits attention equally between tagging and resupplying allies."""
+        s = self._state(self.gr, self.players["ammo"], "ammo")
+        w = _get_ammo_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        assert w == [50, 0, 0, 0, 0, 50, 0]
+
+    def test_ammo_baseline_sum(self):
+        s = self._state(self.gr, self.players["ammo"], "ammo")
+        w = _get_ammo_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        assert sum(w) == 100
+
+    def test_ammo_low_lives_medic_same_zone_hides(self):
+        """Low-life ammo hides next to a medic who is already in range."""
+        medic = self._state(
+            self.gr, self.players["medic"], "medic",
+            team_color="red", final_lives=5, current_zone=0,
+        )
+        ammo = self._state(
+            self.gr, self.players["ammo"], "ammo",
+            final_lives=2, current_zone=0,
+        )
+        w = _get_ammo_weights(ammo, _ACTION_IDX, self._fresh(), [ammo, medic], 0)
+        assert w == [30, 0, 30, 0, 0, 40, 0]
+
+    def test_ammo_low_lives_medic_different_zone_moves_toward_medic(self):
+        """Low-life ammo crosses zones to reach the medic."""
+        medic = self._state(
+            self.gr, self.players["medic"], "medic",
+            team_color="red", final_lives=5, current_zone=1,
+        )
+        ammo = self._state(
+            self.gr, self.players["ammo"], "ammo",
+            final_lives=2, current_zone=0,
+        )
+        w = _get_ammo_weights(ammo, _ACTION_IDX, self._fresh(), [ammo, medic], 0)
+        assert w == [30, 50, 0, 0, 0, 20, 0]
+
+    def test_ammo_low_lives_no_medic_no_heavy_hides(self):
+        """Low-life ammo with no support hides to preserve the last few lives."""
+        ammo = self._state(self.gr, self.players["ammo"], "ammo", final_lives=2)
+        w = _get_ammo_weights(ammo, _ACTION_IDX, self._fresh(), [ammo], 0)
+        assert w == [30, 0, 50, 0, 0, 20, 0]
+
+    # --- Scout ---
+
+    def test_scout_baseline(self):
+        """Scout favours tagging and zone changes over stationary roles."""
+        s = self._state(self.gr, self.players["scout"], "scout")
+        w = _get_scout_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        assert w == [60, 40, 0, 0, 0, 0, 0]
+
+    def test_scout_baseline_sum(self):
+        s = self._state(self.gr, self.players["scout"], "scout")
+        w = _get_scout_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        assert sum(w) == 100
+
+    def test_scout_can_capture_base(self):
+        """Scout in neutral zone switches priority to capturing the base."""
+        s = self._state(self.gr, self.players["scout"], "scout", current_zone=1)
+        w = _get_scout_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        # tag -=10 (role) -=20 (base) = 40; change_zone +=10 (role); capture +=20
+        assert w == [40, 40, 0, 20, 0, 0, 0]
+
+    def test_scout_low_lives_medic_same_zone_hides(self):
+        """Critical-health scout hides next to medic to recover lives."""
+        medic = self._state(
+            self.gr, self.players["medic"], "medic",
+            team_color="red", final_lives=5, current_zone=0,
+        )
+        # starting_lives=15 → lives_critical=4.5; final_lives=4 triggers the branch
+        scout = self._state(
+            self.gr, self.players["scout"], "scout",
+            final_lives=4, current_zone=0,
+        )
+        w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout, medic], 0)
+        # role: tag-=10, change_zone+=10 → [60,40,...]; medic same zone: change_zone-=20,tag-=20,hide+=40
+        assert w == [40, 20, 40, 0, 0, 0, 0]
+
+    def test_scout_low_lives_medic_different_zone_moves_toward_medic(self):
+        """Critical-health scout moves into medic's zone instead of hiding."""
+        medic = self._state(
+            self.gr, self.players["medic"], "medic",
+            team_color="red", final_lives=5, current_zone=1,
+        )
+        scout = self._state(
+            self.gr, self.players["scout"], "scout",
+            final_lives=4, current_zone=0,
+        )
+        w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout, medic], 0)
+        # role: [60,40,...]; medic different zone: tag-=30, change_zone+=30
+        assert w == [30, 70, 0, 0, 0, 0, 0]
+
+    def test_scout_low_shots_ammo_different_zone_moves_toward_ammo(self):
+        """Shot-depleted scout crosses zones to resupply from ammo carrier."""
+        ammo = self._state(
+            self.gr, self.players["ammo"], "ammo",
+            team_color="red", final_lives=5, current_zone=1,
+        )
+        # starting_shots=30 → shots_critical=9.0; final_shots=9 ≤ 9.0 triggers
+        scout = self._state(
+            self.gr, self.players["scout"], "scout",
+            final_shots=9, current_zone=0,
+        )
+        w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout, ammo], 0)
+        # role: [60,40,...]; ammo different zone: tag-=30, change_zone+=30
+        assert w == [30, 70, 0, 0, 0, 0, 0]
+
+    def test_scout_special_available_raises_use_special(self):
+        """Scout with special ready is more likely to use rapid-fire as ammo allows."""
+        scout = self._state(
+            self.gr, self.players["scout"], "scout",
+            final_special=10, final_shots=15, special_active_until=0,
+        )
+        w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout], 0)
+        # 100 * (15 / 60) = 25
+        assert w[_ACTION_IDX["use_special"]] == 25
+
+    def test_scout_not_active_stops_tagging(self):
+        """Downed scout stops tagging and waits or repositions instead."""
+        scout = self._state(
+            self.gr, self.players["scout"], "scout",
+            final_lives=5, last_downed_time=0,
+        )
+        w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout], 0)
+        assert w == [0, 50, 50, 0, 0, 0, 0]
+
+    # --- Heavy ---
+
+    def test_heavy_baseline_no_missiles(self):
+        """Heavy with all missiles used focuses on tagging."""
+        # missiles_used = missiles_landed; set >=5 to exhaust missile budget
+        s = self._state(self.gr, self.players["heavy"], "heavy", missiles_landed=5)
+        w = _get_heavy_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        assert w == [80, 20, 0, 0, 0, 0, 0]
+
+    def test_heavy_baseline_no_missiles_sum(self):
+        s = self._state(self.gr, self.players["heavy"], "heavy", missiles_landed=5)
+        w = _get_heavy_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        assert sum(w) == 100
+
+    def test_heavy_with_missiles(self):
+        """Heavy with missiles available splits between tagging and launching missiles."""
+        s = self._state(self.gr, self.players["heavy"], "heavy", missiles_landed=0)
+        w = _get_heavy_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        assert w == [80, 5, 0, 0, 0, 0, 15]
+        assert sum(w) == 100
+
+    def test_heavy_can_capture_base(self):
+        """Heavy in opposing zone takes the base instead of engaging in direct fire."""
+        # Red heavy in blue_zone (2) → can_capture_base = True
+        s = self._state(
+            self.gr, self.players["heavy"], "heavy",
+            current_zone=2, missiles_landed=5,
+        )
+        w = _get_heavy_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        # role (no missiles): [80,20,...]; base capture: change_zone-=10,tag-=40,capture+=50
+        assert w == [40, 10, 0, 50, 0, 0, 0]
+
+    def test_heavy_low_lives_medic_different_zone_moves_toward_medic(self):
+        """Critically low heavy navigates toward the medic to recover."""
+        medic = self._state(
+            self.gr, self.players["medic"], "medic",
+            team_color="red", final_lives=5, current_zone=1,
+        )
+        # starting_lives=15 → lives_critical=4.5; final_lives=4 triggers
+        heavy = self._state(
+            self.gr, self.players["heavy"], "heavy",
+            final_lives=4, current_zone=0, missiles_landed=5,
+        )
+        w = _get_heavy_weights(heavy, _ACTION_IDX, self._fresh(), [heavy, medic], 0)
+        # role (no missiles): [80,20,...]; medic different zone: tag-=30, change_zone+=30
+        assert w == [50, 50, 0, 0, 0, 0, 0]
+
+    def test_heavy_not_active_medic_in_zone_hides(self):
+        """Downed heavy hides when its medic is in the same zone."""
+        medic = self._state(
+            self.gr, self.players["medic"], "medic",
+            team_color="red", final_lives=5, current_zone=0,
+        )
+        heavy = self._state(
+            self.gr, self.players["heavy"], "heavy",
+            final_lives=5, last_downed_time=0, current_zone=0, missiles_landed=5,
+        )
+        w = _get_heavy_weights(heavy, _ACTION_IDX, self._fresh(), [heavy, medic], 0)
+        # role (no missiles): [80,20,...]; not active + medic in zone: tag-=70, hide+=70
+        assert w == [10, 20, 70, 0, 0, 0, 0]
+
+    # --- Commander ---
+
+    def test_commander_baseline_no_missiles(self):
+        """Commander with all missiles used holds base weights."""
+        s = self._state(self.gr, self.players["commander"], "commander", missiles_landed=5)
+        w = _get_commander_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        assert w == [70, 30, 0, 0, 0, 0, 0]
+
+    def test_commander_baseline_no_missiles_sum(self):
+        s = self._state(self.gr, self.players["commander"], "commander", missiles_landed=5)
+        w = _get_commander_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        assert sum(w) == 100
+
+    def test_commander_with_missiles(self):
+        """Commander prioritises launching available missiles."""
+        s = self._state(self.gr, self.players["commander"], "commander", missiles_landed=0)
+        w = _get_commander_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        assert w == [70, 15, 0, 0, 0, 0, 15]
+        assert sum(w) == 100
+
+    def test_commander_special_no_enemies_fires_nuke(self):
+        """Commander with nuke charged and no enemies in zone fires immediately."""
+        s = self._state(
+            self.gr, self.players["commander"], "commander",
+            final_special=20, missiles_landed=5, current_zone=0,
+        )
+        w = _get_commander_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
+        # enemies_in_zone=0 → use_special = 100 - 20*0 = 100
+        assert w[_ACTION_IDX["use_special"]] == 100
+
+    def test_commander_special_one_enemy_reduces_nuke_weight(self):
+        """Commander holds the nuke when surrounded by enemies to avoid wasting it."""
+        cmd = self._state(
+            self.gr, self.players["commander"], "commander",
+            final_special=20, missiles_landed=5, current_zone=0, team_color="red",
+        )
+        enemy = self._state(
+            self.gr, self.players2["scout"], "scout",
+            team_color="blue", final_lives=5, current_zone=0,
+        )
+        w = _get_commander_weights(cmd, _ACTION_IDX, self._fresh(), [cmd, enemy], 0)
+        # enemies_in_zone=1 → use_special = 100 - 20*1 = 80
+        assert w[_ACTION_IDX["use_special"]] == 80
+
+    def test_commander_not_active_enemy_medic_in_zone_hides(self):
+        """Downed commander waits in zone to eliminate the enemy medic on respawn."""
+        enemy_medic = self._state(
+            self.gr, self.players2["medic"], "medic",
+            team_color="blue", final_lives=5, current_zone=0,
+        )
+        cmd = self._state(
+            self.gr, self.players["commander"], "commander",
+            final_lives=5, last_downed_time=0, missiles_landed=5, current_zone=0,
+        )
+        w = _get_commander_weights(cmd, _ACTION_IDX, self._fresh(), [cmd, enemy_medic], 0)
+        # not active, enemy medic in zone: tag-=70, hide+=70
+        assert w == [0, 30, 70, 0, 0, 0, 0]
+
+    def test_commander_not_active_no_enemy_medic_changes_zone(self):
+        """Downed commander moves zone to hunt the enemy medic."""
+        cmd = self._state(
+            self.gr, self.players["commander"], "commander",
+            final_lives=5, last_downed_time=0, missiles_landed=5,
+        )
+        w = _get_commander_weights(cmd, _ACTION_IDX, self._fresh(), [cmd], 0)
+        # not active, no enemy medic found: tag-=70, change_zone+=70
+        assert w == [0, 100, 0, 0, 0, 0, 0]
+
+
+@pytest.mark.django_db
+class TestSimulationChangesWithWeights:
+    """Verify that changing action weights produces different simulation outcomes."""
+
+    def test_patching_medic_weights_changes_resupply_event_count(self):
+        """Forcing medic to always tag eliminates resupply events that normally occur."""
+        import random
+
+        def all_tag_weights(player, action_to_weight_index, weights, all_alive, second):
+            return [100, 0, 0, 0, 0, 0, 0]
+
+        simulator = ResourceBasedSimulator()
+
+        team_r1, _ = make_team_with_slots("WS_R1")
+        team_b1, _ = make_team_with_slots("WS_B1")
+        random.seed(42)
+        round_normal = simulator.simulate_single_round_detailed(team_r1, team_b1)
+        normal_resupply = GameEvent.objects.filter(
+            game_round=round_normal,
+            event_type__in=["resupply_ammo", "resupply_lives"],
+        ).count()
+
+        team_r2, _ = make_team_with_slots("WS_R2")
+        team_b2, _ = make_team_with_slots("WS_B2")
+        random.seed(42)
+        with patch("matches.simulation._get_medic_weights", side_effect=all_tag_weights):
+            round_patched = simulator.simulate_single_round_detailed(team_r2, team_b2)
+        patched_resupply = GameEvent.objects.filter(
+            game_round=round_patched,
+            event_type__in=["resupply_ammo", "resupply_lives"],
+        ).count()
+
+        assert normal_resupply != patched_resupply
