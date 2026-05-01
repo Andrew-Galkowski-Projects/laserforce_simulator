@@ -8,7 +8,7 @@ from .sim_helpers.weights import (
     _get_heavy_weights,
     _get_commander_weights,
 )
-from teams.models import Player
+from teams.models import Player, ROLE_STATS
 
 # Module logger
 logger = logging.getLogger(__name__)
@@ -29,29 +29,6 @@ class ResourceBasedSimulator:
             "ammo": {"lives": 10, "shots": 15, "special": 0, "missiles": 0},
         }
 
-        # Role effectiveness modifiers
-        self.role_modifiers = {
-            "commander": {
-                "shot_power": 2,
-                "shield": 3,
-            },
-            "heavy": {
-                "shot_power": 3,
-                "shield": 3,
-            },
-            "scout": {
-                "shot_power": 1,
-                "shield": 1,
-            },
-            "medic": {
-                "shot_power": 1,
-                "shield": 1,
-            },
-            "ammo": {
-                "shot_power": 1,
-                "shield": 1,
-            },
-        }
 
     def simulate_match(self, team_red, team_blue, match_type="friendly"):
         """Simulate a full 2-round match with detailed tracking"""
@@ -105,12 +82,8 @@ class ResourceBasedSimulator:
         )
 
         # Initialize player states
-        red_players = self._initialize_players(
-            game_round, team_red.players.exclude(role="bench"), "red"
-        )
-        blue_players = self._initialize_players(
-            game_round, team_blue.players.exclude(role="bench"), "blue"
-        )
+        red_players = self._initialize_players(game_round, team_red, "red")
+        blue_players = self._initialize_players(game_round, team_blue, "blue")
 
         # Simulate the round (pass game_round so events can be recorded)
         round_result = self._simulate_round_combat(
@@ -129,28 +102,20 @@ class ResourceBasedSimulator:
 
         return game_round
 
-    def _initialize_players(self, game_round, players, team_color):
-        """Initialize player states with starting resources"""
+    def _initialize_players(self, game_round, team, team_color):
+        """Initialize player states from the team's active slot assignments."""
         player_states = []
+        starting_zone = 0 if team_color == "red" else 2
 
-        for player in players:
-            resources = self.role_starting_resources.get(
-                player.role, self.role_starting_resources[player.role]
-            )
-
-            modifiers = self.role_modifiers.get(
-                player.role, self.role_modifiers[player.role]
-            )
-            starting_zone = 0 if team_color == "red" else 2
-
+        for role, player in team.active_roster:
+            resources = self.role_starting_resources[role]
             state = PlayerRoundState.objects.create(
                 game_round=game_round,
                 team_color=team_color,
-                role=player.role,
+                role=role,
                 player=player,
                 current_zone=starting_zone,
-                shot_power=modifiers["shot_power"],
-                shields=modifiers["shield"],
+                shields=ROLE_STATS[role]["shield"],
                 starting_lives=resources["lives"],
                 starting_shots=resources["shots"],
                 starting_special=resources["special"],

@@ -1,12 +1,47 @@
 from django.db import models
 from django.core.exceptions import ValidationError
 
+ROLE_STATS = {
+    "commander": {"shot_power": 2, "shield": 3},
+    "heavy": {"shot_power": 3, "shield": 3},
+    "scout": {"shot_power": 1, "shield": 1},
+    "medic": {"shot_power": 1, "shield": 1},
+    "ammo": {"shot_power": 1, "shield": 1},
+}
+
+ROLE_CHOICES = [
+    ("commander", "Commander"),
+    ("heavy", "Heavy Weapons"),
+    ("scout", "Scout"),
+    ("medic", "Medic"),
+    ("ammo", "Ammo"),
+]
+
 
 class Team(models.Model):
     name = models.CharField(max_length=100)
     created_date = models.DateTimeField(auto_now_add=True)
     wins = models.IntegerField(default=0)
     losses = models.IntegerField(default=0)
+
+    slot_commander = models.ForeignKey(
+        "Player", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    slot_heavy = models.ForeignKey(
+        "Player", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    slot_scout_1 = models.ForeignKey(
+        "Player", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    slot_scout_2 = models.ForeignKey(
+        "Player", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    slot_medic = models.ForeignKey(
+        "Player", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    slot_ammo = models.ForeignKey(
+        "Player", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
 
     def __str__(self):
         return self.name
@@ -17,27 +52,35 @@ class Team(models.Model):
 
     @property
     def players_qs(self):
-        """Return a QuerySet of Player objects that belong to this team.
-
-        Use this when you want to further filter/order without loading the
-        objects into memory.
-        Example: team.players_qs.order_by('name')
-        """
         return self.players.all()
 
     @property
     def players_list(self):
-        """Return a plain Python list of Player instances for this team.
-
-        This is convenient for templates or when you need an in-memory list.
-        Example in template: {% for p in team.players_list %} ... {% endfor %}
-        """
         return list(self.players.all())
 
     @property
+    def active_roster(self):
+        """Ordered list of (role, player) tuples for filled slots."""
+        slots = [
+            ("commander", self.slot_commander),
+            ("heavy", self.slot_heavy),
+            ("scout", self.slot_scout_1),
+            ("scout", self.slot_scout_2),
+            ("medic", self.slot_medic),
+            ("ammo", self.slot_ammo),
+        ]
+        return [(role, player) for role, player in slots if player is not None]
+
+    @property
     def active_players(self):
-        """Non-bench players used in simulation."""
-        return self.players.exclude(role="bench")
+        """Players assigned to active slots."""
+        return [player for _, player in self.active_roster]
+
+    @property
+    def bench_players(self):
+        """Players on the team not assigned to any slot."""
+        active_ids = {p.pk for p in self.active_players}
+        return list(self.players.exclude(pk__in=active_ids))
 
     @property
     def is_valid_roster(self):
@@ -46,121 +89,63 @@ class Team(models.Model):
     @property
     def roster_errors(self):
         """Return a list of human-readable problems, or [] if valid."""
-        active = self.active_players
-        roles = list(active.values_list("role", flat=True))
-        required = {"commander", "heavy", "scout", "medic", "ammo"}
         errors = []
+        all_slots = [
+            ("Commander", self.slot_commander),
+            ("Heavy", self.slot_heavy),
+            ("Scout 1", self.slot_scout_1),
+            ("Scout 2", self.slot_scout_2),
+            ("Medic", self.slot_medic),
+            ("Ammo", self.slot_ammo),
+        ]
+        filled = []
+        for slot_name, player in all_slots:
+            if player is None:
+                errors.append(f"missing {slot_name}")
+            else:
+                filled.append(player)
 
-        count = active.count()
-        if count < 6:
-            errors.append(f"only {count} active player{'s' if count != 1 else ''} (need 6)")
-        elif count > 6:
-            errors.append(f"{count} active players (need 6)")
+        pks = [p.pk for p in filled]
+        if len(pks) != len(set(pks)):
+            errors.append("same player assigned to multiple slots")
 
-        missing = required - set(roles)
-        for role in sorted(missing):
-            errors.append(f"missing {role.capitalize()}")
-
-        role_counts = {}
-        for role in roles:
-            role_counts[role] = role_counts.get(role, 0) + 1
-        for role, n in role_counts.items():
-            if role != "scout" and n > 1:
-                errors.append(f"duplicate {role.capitalize()}")
+        for player in filled:
+            if player.team_id != self.pk:
+                errors.append(f"{player.name} does not belong to this team")
 
         return errors
 
 
 class Player(models.Model):
-    ROLES = [
-        ("commander", "Commander"),
-        ("heavy", "Heavy Weapons"),
-        ("scout", "Scout"),
-        ("medic", "Medic"),
-        ("ammo", "Ammo"),
-        ("bench", "Bench"),
-    ]
-
     team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="players")
     name = models.CharField(max_length=100)
-    # TODO: add role preference that gives a multiplier to stats if player is in that role
+    # TODO: Apply stat boost when player is assigned to a preferred role
+    preferred_roles = models.JSONField(default=list, blank=True)
 
-    # do we need role, shot power, and shield on the player class? can we get them from the role
-    role = models.CharField(max_length=20, choices=ROLES)
-    # shot power and shield are role dependent, we want to get them from the role
-    shot_power = models.IntegerField(
-        default=1
-    )  # 1-3, affects damage dealt when tagging
-    shield = models.IntegerField(default=1)  # 1-3, when shield is 0 player loses a life
 
     # Base stats that affect gameplay
-    # stats are broken down into several categories to allow for more nuanced simulation
     player_awareness = models.IntegerField(default=50)  # 0-100
-    # how aware are they of players in their zone and adjacent zones
-    # we will use this to influence their ability to stay in the same zone as allies as well as hit enemies
-    # we can also use this to influence their ability to get resets
     game_awareness = models.IntegerField(default=50)  # 0-100
-    # how aware are they of the overall game situation
-    # we will use this to give them an opportunity to act when certain events occur
-    # examples: nuke cancels, using nukes when hearing enemy at low lives, shot boost, life boost, moving from zone to zone if they hear ememy resupply sounds
-
     resource_awareness = models.IntegerField(default=50)  # 0-100
-    # how aware are they of their own lives and the lives of others
-    # we will use this to influence their ability to go back for resources and use specials strategically
     decision_making = models.IntegerField(default=50)  # 0-100
-    # how well they make tactical decisions under pressure
-    # we will use this to influence how often they act when they have the chance
-
     positioning = models.IntegerField(default=50)  # 0-100
-    # how well they position themselves in the field
-    # we will use this to influence their ability to get tags, avoid tags, and stay in the same zone as allies
-
     stamina = models.IntegerField(default=50)  # 0-100
-    # how long they can keep up high activity before needing to rest
-    # we will use this to modify their effectiveness over time
     speed = models.IntegerField(default=50)  # 0-100
-    # how fast they can move around the field
-    # we will use this to influence their ability to act
     flexibility = models.IntegerField(default=50)  # 0-100
-    # how well they can use cover and dodge missiles
-
     adaptability = models.IntegerField(default=50)  # 0-100
-    # how well they can adjust to changing situations
-    # we will use this to influence if they change their strategy based on how the match is going
-    # basically change zones if they have lost gotten tagged a lot recently
-
     communication = models.IntegerField(default=50)  # 0-100
-    # how well they communicate with teammates
-    # we will use this to influence how often when they are part of an event that they share that information with teammates in the same and adjacent zones
-
     teamwork = models.IntegerField(default=50)  # 0-100
-    # how well they work with teammates
-    # we will use this as a modifier on tags and avoiding tags when teammates are in the same zone
-
     Offensive_synergy = models.IntegerField(default=50)  # 0-100
-    # how well they work with teammates offensively
-    # we will use this to influence their ability to tag the same player as teammates
     defensive_synergy = models.IntegerField(default=50)  # 0-100
-    # how well they work with teammates defensively
-    # we will use this to influence their ability to reset off of allies to tag enemies,
-    # and get resupplies after trading tags with enemies
     midfield_synergy = models.IntegerField(default=50)  # 0-100
-    # mainly for scouts, heavies, and commanders
-    # we will use this to influence player rotations between zones to maintain pressure and map control
     resupply_synergy = models.IntegerField(default=50)  # 0-100
-    # how well the player works with their team's other resupply player to "double" allies
-    # we will use this to influence how often they can successfully double allies
     resupply_efficiency = models.IntegerField(default=50)  # 0-100
-    # how efficiently they aqcuire their resupplies
-    # we will use this to influence how long they stay near the resupply players and if they get more resupplies than needed or not
-
     accuracy = models.IntegerField(default=50)  # 0-100
     survival = models.IntegerField(default=50)  # how well they avoid tags
     special_usage = models.IntegerField(default=50)  # tactical ability
 
     @property
     def overall_rating(self):
-        # Simple average of all stats for now
         stats = [
             self.player_awareness,
             self.game_awareness,
@@ -184,51 +169,17 @@ class Player(models.Model):
         ]
         return sum(stats) / len(stats)
 
-    @property
-    def can_resupply(self):
-        return self.role in ["medic", "ammo"]
-
-    @property
-    def has_missiles(self):
-        return self.role in ["commander", "heavy"]
-
     class Meta:
-        unique_together = ["team", "name"]  # No duplicate names within a team
+        unique_together = ["team", "name"]
 
     def __str__(self):
-        return f"{self.name} ({self.get_role_display()}) - {self.team.name}"
+        prefs = ", ".join(self.preferred_roles) if self.preferred_roles else "none"
+        return f"{self.name} (prefers: {prefs}) - {self.team.name}"
 
     def clean(self):
-        """Validate role constraints."""
-        if not self.team_id:
-            return
-
-        current_roles = list(
-            self.team.players.exclude(pk=self.pk).values_list("role", flat=True)
-        )
-        bench_count = current_roles.count("bench")
-        active_roles = [r for r in current_roles if r != "bench"]
-
-        if self.role == "bench":
-            if bench_count >= 6:
-                raise ValidationError("A team cannot have more than 6 bench players.")
-            return
-
-        # Active-player constraints
-        role_counts = {}
-        for role in active_roles:
-            role_counts[role] = role_counts.get(role, 0) + 1
-        role_counts[self.role] = role_counts.get(self.role, 0) + 1
-
-        if sum(role_counts.values()) > 6:
+        valid_roles = {r for r, _ in ROLE_CHOICES}
+        invalid = [r for r in (self.preferred_roles or []) if r not in valid_roles]
+        if invalid:
             raise ValidationError(
-                "A team's active roster cannot have more than 6 players."
+                f"Invalid role(s) in preferred_roles: {', '.join(invalid)}"
             )
-
-        if self.role != "scout" and role_counts[self.role] > 1:
-            raise ValidationError(
-                "Only the Scout role may appear twice in an SM5 roster."
-            )
-
-        if self.role == "scout" and role_counts["scout"] > 2:
-            raise ValidationError("A team cannot have more than 2 Scouts.")
