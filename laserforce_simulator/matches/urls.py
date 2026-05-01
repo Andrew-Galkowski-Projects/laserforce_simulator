@@ -22,4 +22,5 @@ urlpatterns = [
         views.game_round_events,
         name="game_round_events",
     ),
+    path("simulate-batch/", views.simulate_batch, name="simulate_batch"),
 ]

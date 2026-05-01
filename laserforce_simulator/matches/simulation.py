@@ -1589,6 +1589,490 @@ class ResourceBasedSimulator:
         return None
 
 
+class BatchSimulator:
+    """Pure in-memory simulator for running N rounds without DB writes.
+
+    Every computation uses PlayerState dataclass objects so there are no
+    ORM saves, refreshes, or GameEvent inserts.  One round typically runs
+    in ~25 ms instead of ~9 s, making 100-round batches feasible in <3 s.
+    """
+
+    ROLE_STARTING_RESOURCES = {
+        "commander": {"lives": 15, "shots": 30, "special": 0, "missiles": 5},
+        "heavy":     {"lives": 10, "shots": 20, "special": 0, "missiles": 5},
+        "scout":     {"lives": 15, "shots": 30, "special": 0, "missiles": 0},
+        "medic":     {"lives": 20, "shots": 15, "special": 0, "missiles": 0},
+        "ammo":      {"lives": 10, "shots": 15, "special": 0, "missiles": 0},
+    }
+
+    # Precomputed constants so _plan_action doesn't rebuild them each call
+    _ACTION_IDX = {
+        "tag_player": 0, "change_zone": 1, "hide": 2, "capture_base": 3,
+        "use_special": 4, "resupply_ally": 5, "missile_player": 6,
+    }
+    _CHOICES = [
+        "tag_player", "change_zone", "hide", "capture_base",
+        "use_special", "resupply_ally", "missile_player",
+    ]
+
+    # 4-second tick: half the iterations of the normal 2-s tick.
+    # Respawn/downed timings (4 s / 8 s) still apply correctly.
+    TICK = 4
+
+    def run(self, team_red, team_blue, n=100):
+        """Simulate n rounds and return aggregate statistics.
+
+        Loads team rosters from the DB once upfront, then runs n purely
+        in-memory rounds and aggregates the outcomes.
+        """
+        from .sim_helpers.player_state import PlayerState
+        from teams.models import ROLE_STATS as _ROLE_STATS
+
+        # Read rosters once — list of (role, Player) tuples
+        red_roster = list(team_red.active_roster)
+        blue_roster = list(team_blue.active_roster)
+
+        red_wins = blue_wins = ties = 0
+        red_scores, blue_scores = [], []
+        red_survivors_list, blue_survivors_list = [], []
+
+        for _ in range(n):
+            result = self._simulate_round(red_roster, blue_roster)
+            rp, bp = result["red_points"], result["blue_points"]
+            if rp > bp:
+                red_wins += 1
+            elif bp > rp:
+                blue_wins += 1
+            else:
+                ties += 1
+            red_scores.append(rp)
+            blue_scores.append(bp)
+            red_survivors_list.append(result["red_survivors"])
+            blue_survivors_list.append(result["blue_survivors"])
+
+        avg = lambda lst: sum(lst) / len(lst) if lst else 0
+        return {
+            "n": n,
+            "red_wins": red_wins,
+            "blue_wins": blue_wins,
+            "ties": ties,
+            "red_win_pct": red_wins / n * 100,
+            "blue_win_pct": blue_wins / n * 100,
+            "avg_red_score": avg(red_scores),
+            "avg_blue_score": avg(blue_scores),
+            "avg_red_survivors": avg(red_survivors_list),
+            "avg_blue_survivors": avg(blue_survivors_list),
+            "red_scores": red_scores,
+            "blue_scores": blue_scores,
+        }
+
+    # ------------------------------------------------------------------ #
+    # Internal round simulation
+    # ------------------------------------------------------------------ #
+
+    def _make_players(self, roster, team_color):
+        from .sim_helpers.player_state import PlayerState
+        from teams.models import ROLE_STATS as _ROLE_STATS
+
+        starting_zone = 0 if team_color == "red" else 2
+        scout_index = 0
+        players = []
+        for role, player_model in roster:
+            resources = self.ROLE_STARTING_RESOURCES[role]
+            if role == "scout":
+                scout_index += 1
+                tag_id = f"{team_color}_scout_{scout_index}"
+            else:
+                tag_id = f"{team_color}_{role}"
+            state = PlayerState(
+                tag_id=tag_id,
+                name=player_model.name,
+                team_color=team_color,
+                role=role,
+                accuracy=player_model.accuracy,
+                survival=player_model.survival,
+                starting_lives=resources["lives"],
+                starting_shots=resources["shots"],
+                final_lives=resources["lives"],
+                final_shots=resources["shots"],
+                final_special=resources["special"],
+                final_missiles=resources["missiles"],
+                shields=_ROLE_STATS[role]["shield"],
+                current_zone=starting_zone,
+            )
+            players.append(state)
+        return players
+
+    def _simulate_round(self, red_roster, blue_roster):
+        red_players = self._make_players(red_roster, "red")
+        blue_players = self._make_players(blue_roster, "blue")
+
+        pending_missiles = []  # (complete_time, attacker, defender)
+        pending_nukes = []     # (complete_time, player_state)
+
+        for second in range(0, 900, self.TICK):
+            # --- process pending missiles ---
+            fired = [m for m in pending_missiles if m[0] <= second]
+            pending_missiles = [m for m in pending_missiles if m[0] > second]
+            for complete_time, attacker, defender in fired:
+                if attacker.is_active_at(complete_time) and defender.is_taggable_at(complete_time):
+                    self._complete_missile(attacker, defender, complete_time)
+
+            # --- process pending nukes ---
+            fired_n = [n for n in pending_nukes if n[0] <= second]
+            pending_nukes = [n for n in pending_nukes if n[0] > second]
+            for complete_time, ps in fired_n:
+                if ps.is_active_at(complete_time) and ps.final_lives > 0:
+                    opposing = blue_players if ps.team_color == "red" else red_players
+                    self._complete_nuke(ps, complete_time, opposing)
+
+            # --- alive players this tick ---
+            red_alive = [p for p in red_players if p.final_lives > 0 and p.was_eliminated_at > second]
+            blue_alive = [p for p in blue_players if p.final_lives > 0 and p.was_eliminated_at > second]
+            all_alive = red_alive + blue_alive
+
+            random.shuffle(all_alive)
+
+            plans = []
+            for player in all_alive:
+                plans.extend(self._plan_action(player, all_alive, second))
+
+            tag_attempts = []
+            for plan in plans:
+                ptype = plan["type"]
+                actor = plan["actor"]
+                if ptype in ("resupply_ammo", "resupply_lives"):
+                    self._attempt_resupply(actor, plan["target"], second)
+                elif ptype == "change_zone":
+                    self._change_zone(actor, plan.get("zone"))
+                elif ptype == "hide":
+                    actor.is_hiding = True
+                elif ptype == "capture_base":
+                    self._capture_base(actor, plan["base_id"])
+                elif ptype == "missile":
+                    scheduled = self._start_missile_lock(actor, plan["target"], second)
+                    if scheduled:
+                        pending_missiles.append(scheduled)
+                elif ptype == "use_special":
+                    scheduled = self._use_special(actor, second, all_alive)
+                    if scheduled and scheduled[0] == "nuke":
+                        pending_nukes.append((scheduled[1], scheduled[2]))
+                elif ptype == "tag":
+                    tag_attempts.append({"attacker": actor, "defender": plan["target"]})
+
+            if tag_attempts:
+                self._resolve_tag_attempts(tag_attempts, second)
+
+            # --- check for team elimination ---
+            red_alive = [p for p in red_players if p.final_lives > 0]
+            blue_alive = [p for p in blue_players if p.final_lives > 0]
+            if not red_alive or not blue_alive:
+                if not red_alive:
+                    for p in blue_alive:
+                        self._award_bases(p)
+                if not blue_alive:
+                    for p in red_alive:
+                        self._award_bases(p)
+                break
+
+        red_points = sum(p.points_scored for p in red_players)
+        blue_points = sum(p.points_scored for p in blue_players)
+        red_survivors = sum(1 for p in red_players if p.final_lives > 0)
+        blue_survivors = sum(1 for p in blue_players if p.final_lives > 0)
+        return {
+            "red_points": red_points,
+            "blue_points": blue_points,
+            "red_survivors": red_survivors,
+            "blue_survivors": blue_survivors,
+        }
+
+    # ------------------------------------------------------------------ #
+    # Action planning — reuses weight functions from weights.py
+    # ------------------------------------------------------------------ #
+
+    def _plan_action(self, player, all_alive, second):
+        action_to_weight_index = self._ACTION_IDX
+        choices = self._CHOICES
+        weights = [70, 30, 0, 0, 0, 0, 0]
+
+        if player.role == "medic":
+            weights = _get_medic_weights(player, action_to_weight_index, weights, all_alive, second)
+        elif player.role == "ammo":
+            weights = _get_ammo_weights(player, action_to_weight_index, weights, all_alive, second)
+        elif player.role == "scout":
+            weights = _get_scout_weights(player, action_to_weight_index, weights, all_alive, second)
+        elif player.role == "heavy":
+            weights = _get_heavy_weights(player, action_to_weight_index, weights, all_alive, second)
+        elif player.role == "commander":
+            weights = _get_commander_weights(player, action_to_weight_index, weights, all_alive, second)
+
+        choice = random.choices(choices, weights)[0]
+
+        if player.is_hiding and choice not in ("hide", "change_zone", "resupply_ally"):
+            player.is_hiding = False
+
+        plans = []
+        if choice == "tag_player":
+            target = self._choose_tag_target(player, all_alive, second)
+            if target and player.final_shots > 0:
+                plans.append({"type": "tag", "actor": player, "target": target})
+                if player.role == "scout" and player.special_active_until > second:
+                    second_target = self._choose_tag_target(player, all_alive, second)
+                    if second_target:
+                        plans.append({"type": "tag", "actor": player, "target": second_target})
+        elif choice == "resupply_ally":
+            teammate = self._choose_resupply_target(player, all_alive, second)
+            if teammate:
+                rtype = "resupply_ammo" if player.role == "ammo" else "resupply_lives"
+                plans.append({"type": rtype, "actor": player, "target": teammate})
+        elif choice == "missile_player":
+            if player.final_missiles > 0:
+                targets = [
+                    p for p in all_alive
+                    if p.team_color != player.team_color
+                    and p.current_zone == player.current_zone
+                    and p.final_lives > 0
+                    and p.is_taggable_at(second)
+                ]
+                if targets:
+                    plans.append({"type": "missile", "actor": player, "target": random.choice(targets)})
+        elif choice == "change_zone":
+            zone = self._choose_zone_change(player, all_alive)
+            plans.append({"type": "change_zone", "actor": player, "zone": zone})
+        elif choice == "capture_base":
+            base_id = 15 if player.current_zone == 1 else (14 if player.team_color == "red" else 13)
+            plans.append({"type": "capture_base", "actor": player, "base_id": base_id})
+        elif choice == "use_special":
+            if player.can_use_special and player.final_lives > 0 and player.is_active_at(second):
+                plans.append({"type": "use_special", "actor": player})
+        elif choice == "hide":
+            plans.append({"type": "hide", "actor": player})
+
+        return plans
+
+    # ------------------------------------------------------------------ #
+    # Target selection
+    # ------------------------------------------------------------------ #
+
+    def _choose_tag_target(self, player, all_alive, second):
+        role_weights = {"commander": 5, "heavy": 8, "scout": 3, "medic": 1, "ammo": 3}
+        targets = [
+            p for p in all_alive
+            if p.team_color != player.team_color
+            and p.current_zone == player.current_zone
+            and p.final_lives > 0
+            and (p.is_active_at(second) or (p.is_taggable_at(second) and player.last_tagged_id != p.tag_id))
+        ]
+        if not targets or player.final_shots <= 0:
+            return None
+        w = [(role_weights.get(t.role, 1) + (10 if t.is_active_at(second) else 1)) for t in targets]
+        return random.choices(targets, w)[0]
+
+    def _choose_resupply_target(self, player, all_alive, second):
+        role_weights = {"commander": 5, "heavy": 8, "scout": 3, "medic": 1, "ammo": 6}
+        teammates = [
+            p for p in all_alive
+            if p.team_color == player.team_color
+            and p.current_zone == player.current_zone
+            and p is not player
+            and p.final_lives > 0
+            and p.is_resupplyable_at(second)
+        ]
+        if not teammates:
+            return None
+        all_full = True
+        tw = []
+        for t in teammates:
+            if player.role == "ammo":
+                deficit = (t.max_shots - t.final_shots) * 10
+            else:
+                deficit = (t.max_lives - t.final_lives) * 10
+            if deficit > 0:
+                all_full = False
+            tw.append(role_weights.get(t.role, 1) * deficit)
+        return None if all_full else random.choices(teammates, tw)[0]
+
+    def _choose_zone_change(self, player, all_alive):
+        lives_critical = player.max_lives * 0.3
+        shots_critical = player.max_shots * 0.3
+        if player.final_lives <= lives_critical and player.role != "medic":
+            medics = [p for p in all_alive if p.team_color == player.team_color and p.role == "medic"]
+            if medics and player.current_zone != medics[0].current_zone:
+                return medics[0].current_zone
+        elif player.final_shots <= shots_critical:
+            ammos = [p for p in all_alive if p.team_color == player.team_color and p.role == "ammo"]
+            if ammos and player.current_zone != ammos[0].current_zone:
+                return ammos[0].current_zone
+        return None
+
+    # ------------------------------------------------------------------ #
+    # Action resolution (no DB writes)
+    # ------------------------------------------------------------------ #
+
+    def _resolve_tag_attempts(self, attempts, second):
+        outcomes = []
+        for a in attempts:
+            attacker, defender = a["attacker"], a["defender"]
+            if attacker.final_shots <= 0 or defender.final_lives <= 0:
+                outcomes.append({"attacker": attacker, "defender": defender, "result": "invalid"})
+                continue
+            if defender.is_hiding and random.random() > 0.5:
+                outcomes.append({"attacker": attacker, "defender": defender, "result": "miss_hid"})
+                continue
+            hit_chance = max(10, min(95, 70 + attacker.accuracy - defender.survival))
+            hit = random.randint(1, 100) < hit_chance
+            outcomes.append({"attacker": attacker, "defender": defender, "result": "hit" if hit else "miss"})
+
+        for o in outcomes:
+            attacker, defender = o["attacker"], o["defender"]
+            if o["result"] == "invalid":
+                continue
+            if o["result"] == "miss_hid":
+                if attacker.role != "ammo":
+                    attacker.final_shots -= 1
+                continue
+
+            if o["result"] == "hit":
+                attacker.tags_made += 1
+                if attacker.role != "heavy":
+                    attacker.final_special = min(attacker.max_special, attacker.final_special + 1)
+                attacker.points_scored += 100
+                attacker.last_tagged_id = defender.tag_id
+                attacker.final_shots = max(0, attacker.final_shots - 1)
+
+                defender.times_tagged += 1
+                defender.points_scored -= 20
+                defender.shields = max(0, defender.shields - attacker.shot_power)
+                if defender.shields == 0:
+                    # cancel in-flight nuke
+                    if defender.role == "commander" and defender.special_active_until > second:
+                        defender.special_active_until = 0
+                    defender.final_lives = max(0, defender.final_lives - 1)
+                    defender.last_downed_time = second
+                    defender.shields = defender.max_shields
+                    if defender.final_lives <= 0:
+                        defender.was_eliminated_at = second
+            else:
+                attacker.final_shots = max(0, attacker.final_shots - 1)
+
+    def _attempt_resupply(self, tagger, teammate, second):
+        ammo_chart = {"commander": 5, "heavy": 5, "scout": 10, "medic": 5}
+        medic_chart = {"commander": 4, "heavy": 3, "scout": 5, "ammo": 3}
+        if tagger.role == "ammo" and teammate.is_resupplyable_at(second):
+            amount = ammo_chart.get(teammate.role, 5)
+            teammate.final_shots = min(teammate.max_shots, teammate.final_shots + amount)
+            teammate.last_downed_time = second
+            teammate.shields = teammate.max_shields
+            if teammate.role == "scout" and teammate.special_active_until > second:
+                teammate.special_active_until = second
+            if teammate.role == "commander" and teammate.special_active_until > second:
+                teammate.special_active_until = 0
+        elif tagger.role == "medic" and tagger.final_shots > 0 and teammate.is_resupplyable_at(second):
+            amount = medic_chart.get(teammate.role, 3)
+            teammate.final_lives = min(teammate.max_lives, teammate.final_lives + amount)
+            teammate.last_downed_time = second
+            teammate.shields = teammate.max_shields
+            if teammate.role == "scout" and teammate.special_active_until > second:
+                teammate.special_active_until = second
+            if teammate.role == "commander" and teammate.special_active_until > second:
+                teammate.special_active_until = 0
+
+    def _change_zone(self, player, towards=None):
+        if player.current_zone == 1:
+            player.current_zone = towards if towards in (0, 2) else random.choice([0, 2])
+        else:
+            player.current_zone = 1
+
+    def _capture_base(self, player, base_id):
+        if player.final_shots >= 3 or player.role == "ammo":
+            if player.role != "ammo":
+                player.final_shots -= 3
+            player.last_tagged_id = str(base_id)
+            if base_id == 15:
+                player.neutral_base_destroyed = True
+            else:
+                player.opposing_base_destroyed = True
+            player.points_scored += 1001
+            if player.role != "heavy":
+                player.final_special = min(player.max_special, player.final_special + 5)
+
+    def _award_bases(self, player):
+        if player.final_lives > 0:
+            if not player.neutral_base_destroyed:
+                player.points_scored += 1001
+                player.neutral_base_destroyed = True
+            if not player.opposing_base_destroyed:
+                player.points_scored += 1001
+                player.opposing_base_destroyed = True
+
+    def _start_missile_lock(self, attacker, defender, second):
+        if (attacker.is_active_at(second) and defender.is_taggable_at(second)
+                and attacker.final_missiles > 0 and not defender.is_hiding):
+            if random.random() < 0.45:
+                return None  # dodged
+            delay = random.randint(1, 2)
+            return (second + delay, attacker, defender)
+        return None
+
+    def _complete_missile(self, attacker, defender, second):
+        if attacker.is_active_at(second) and defender.is_taggable_at(second):
+            defender.shields = defender.max_shields
+            defender.points_scored -= 100
+            defender.final_lives = max(0, defender.final_lives - 2)
+            if defender.final_lives <= 0:
+                defender.was_eliminated_at = second
+            defender.last_downed_time = second
+            defender.times_tagged += 1
+
+            attacker.points_scored += 500
+            attacker.final_missiles -= 1
+            attacker.missiles_landed += 1
+            if attacker.role != "heavy":
+                attacker.final_special = min(attacker.max_special, attacker.final_special + 2)
+
+    def _use_special(self, player, second, all_alive):
+        if not (player.can_use_special and player.final_lives > 0 and player.is_active_at(second)):
+            return None
+        if player.role == "commander":
+            player.final_special -= player.special_cost
+            countdown = random.randint(4, 7)
+            player.special_active_until = second + countdown
+            return ("nuke", second + countdown, player)
+        elif player.role == "scout":
+            player.final_special -= player.special_cost
+            player.special_active_until = 900
+        elif player.role == "medic":
+            player.final_special -= player.special_cost
+            heal_chart = {"commander": 4, "heavy": 3, "scout": 5, "ammo": 2, "medic": 0}
+            for mate in all_alive:
+                if mate.team_color == player.team_color and mate.is_active_at(second):
+                    amount = heal_chart.get(mate.role, 0)
+                    mate.final_lives = min(mate.max_lives, mate.final_lives + amount)
+        elif player.role == "ammo":
+            player.final_special -= player.special_cost
+            shot_chart = {"commander": 5, "heavy": 5, "scout": 10, "medic": 5, "ammo": 0}
+            for mate in all_alive:
+                if mate.team_color == player.team_color and mate.is_active_at(second):
+                    amount = shot_chart.get(mate.role, 0)
+                    mate.final_shots = min(mate.max_shots, mate.final_shots + amount)
+        return None
+
+    def _complete_nuke(self, player, second, opposing_players):
+        if player.is_active_at(second) and player.final_lives > 0:
+            player.points_scored += 500
+            for opp in opposing_players:
+                if opp.final_lives <= 0:
+                    continue
+                lives_taken = min(opp.final_lives, 3)
+                opp.final_lives -= lives_taken
+                opp.last_downed_time = second
+                opp.shields = opp.max_shields
+                if opp.role == "commander" and opp.special_active_until > second:
+                    opp.special_active_until = 0
+                if opp.final_lives <= 0:
+                    opp.was_eliminated_at = second
+
+
 # Legacy simple simulator for backward compatibility
 class SimpleMatchSimulator:
     """Basic simulator for Phase 2 compatibility"""

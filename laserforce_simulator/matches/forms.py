@@ -65,3 +65,32 @@ class SingleRoundSetupForm(forms.Form):
         )
         self.fields["team_red"].queryset = valid_teams
         self.fields["team_blue"].queryset = valid_teams
+
+
+class BatchSimulateForm(forms.Form):
+    N_CHOICES = [("10", "10"), ("50", "50"), ("100", "100"), ("500", "500")]
+
+    team_red = forms.ModelChoiceField(
+        queryset=Team.objects.none(),
+        widget=forms.Select(attrs={"class": "form-control"}),
+        label="Red Team",
+    )
+    team_blue = forms.ModelChoiceField(
+        queryset=Team.objects.none(),
+        widget=forms.Select(attrs={"class": "form-control"}),
+        label="Blue Team",
+    )
+    n = forms.ChoiceField(
+        choices=N_CHOICES,
+        initial="100",
+        widget=forms.Select(attrs={"class": "form-control"}),
+        label="Number of simulations",
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        valid_teams = Team.objects.filter(
+            id__in=[team.id for team in Team.objects.all() if team.is_valid_roster]
+        )
+        self.fields["team_red"].queryset = valid_teams
+        self.fields["team_blue"].queryset = valid_teams
