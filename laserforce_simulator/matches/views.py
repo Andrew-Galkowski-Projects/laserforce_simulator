@@ -69,13 +69,13 @@ def game_round_detail(request, round_id):
     red_performances = (
         game_round.player_states.filter(player__team=game_round.team_red)
         .select_related("player")
-        .order_by("-points_scored", "player__role", "player__name")
+        .order_by("-points_scored", "role", "player__name")
     )
 
     blue_performances = (
         game_round.player_states.filter(player__team=game_round.team_blue)
         .select_related("player")
-        .order_by("-points_scored", "player__role", "player__name")
+        .order_by("-points_scored", "role", "player__name")
     )
 
     context = {

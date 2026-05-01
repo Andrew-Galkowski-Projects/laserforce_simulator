@@ -95,7 +95,7 @@
                             {{ perf.eliminated_timestamp }} {% else %} <span class="text-success">●</span>
                                 {% endif %}
                         </td>
-                        <td><span class="badge bg-secondary">{{ perf.player.get_role_display }}</span></td>
+                        <td><span class="badge bg-secondary">{{ perf.role|capfirst }}</span></td>
                         <td>{{ perf.points_scored }}</td>
                         <td>{{ perf.get_mvp }}</td>
                         <td>{{ perf.final_lives }}</td>
@@ -187,7 +187,7 @@
                             {{ perf.eliminated_timestamp }} {% else %} <span class="text-success">●</span>
                                 {% endif %}
                         </td>
-                        <td><span class="badge bg-secondary">{{ perf.player.get_role_display }}</span></td>
+                        <td><span class="badge bg-secondary">{{ perf.role|capfirst }}</span></td>
                         <td>{{ perf.points_scored }}</td>
                         <td>{{ perf.get_mvp }}</td>
                         <td>{{ perf.final_lives }}</td>

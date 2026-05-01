@@ -6,30 +6,52 @@ from matches.models import GameRound, PlayerRoundState, GameEvent
 from matches.simulation import ResourceBasedSimulator
 
 
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+def make_team_with_slots(prefix):
+    """Create a team with 6 players (2 scouts) fully assigned to all slots."""
+    team = Team.objects.create(name=f"{prefix} Team")
+    p_cmd  = Player.objects.create(team=team, name=f"{prefix} commander")
+    p_hvy  = Player.objects.create(team=team, name=f"{prefix} heavy")
+    p_s1   = Player.objects.create(team=team, name=f"{prefix} scout1")
+    p_s2   = Player.objects.create(team=team, name=f"{prefix} scout2")
+    p_med  = Player.objects.create(team=team, name=f"{prefix} medic")
+    p_ammo = Player.objects.create(team=team, name=f"{prefix} ammo")
+    team.slot_commander = p_cmd
+    team.slot_heavy     = p_hvy
+    team.slot_scout_1   = p_s1
+    team.slot_scout_2   = p_s2
+    team.slot_medic     = p_med
+    team.slot_ammo      = p_ammo
+    team.save()
+    players = {
+        "commander": p_cmd,
+        "heavy":     p_hvy,
+        "scout":     p_s1,
+        "scout_2":   p_s2,
+        "medic":     p_med,
+        "ammo":      p_ammo,
+    }
+    return team, players
+
+
 @pytest.mark.django_db
 class TestSimulation:
     def create_team_with_roster(self, prefix):
-        team = Team.objects.create(name=f"{prefix} Team")
-        roles = ["commander", "heavy", "scout", "scout", "medic", "ammo"]
-        players = []
-        for i, role in enumerate(roles):
-            p = Player.objects.create(team=team, name=f"{prefix} {role} {i}", role=role)
-            players.append(p)
-        return team, players
+        return make_team_with_slots(prefix)
 
     def test_get_tag_id_scout_ordering(self):
         team, players = self.create_team_with_roster("Alpha")
-        scouts = list(team.players.filter(role="scout").order_by("name"))
-        assert len(scouts) == 2
-
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
 
         s1 = PlayerRoundState.objects.create(
-            game_round=gr, player=scouts[0], team_color="red", role="scout",
+            game_round=gr, player=players["scout"], team_color="red", role="scout",
             final_lives=10, final_shots=10,
         )
         s2 = PlayerRoundState.objects.create(
-            game_round=gr, player=scouts[1], team_color="red", role="scout",
+            game_round=gr, player=players["scout_2"], team_color="red", role="scout",
             final_lives=10, final_shots=10,
         )
 
@@ -38,15 +60,15 @@ class TestSimulation:
 
     def test_resupply_ammo_caps_shots_and_creates_event(self):
         simulator = ResourceBasedSimulator()
-        team_red, red_players = self.create_team_with_roster("Red")
-        team_blue, blue_players = self.create_team_with_roster("Blue")
+        team_red, _ = self.create_team_with_roster("Red")
+        team_blue, _ = self.create_team_with_roster("Blue")
 
         game_round = GameRound.objects.create(
             team_red=team_red, team_blue=team_blue, round_number=1
         )
-        red_states = simulator._initialize_players(game_round, team_red.players.all(), "red")
+        red_states = simulator._initialize_players(game_round, team_red, "red")
 
-        tagger = next(s for s in red_states if s.role == "ammo")
+        tagger   = next(s for s in red_states if s.role == "ammo")
         teammate = next(s for s in red_states if s.role == "scout")
 
         teammate.final_shots = 1
@@ -63,7 +85,7 @@ class TestSimulation:
 
     def test_simulate_single_round_detailed_creates_completed_round(self):
         simulator = ResourceBasedSimulator()
-        team_red, _ = self.create_team_with_roster("RedSim")
+        team_red, _  = self.create_team_with_roster("RedSim")
         team_blue, _ = self.create_team_with_roster("BlueSim")
 
         game_round = simulator.simulate_single_round_detailed(team_red, team_blue)
@@ -76,10 +98,9 @@ class TestSimulation:
         simulator = ResourceBasedSimulator()
         team, players = self.create_team_with_roster("Weights")
 
-        medic_player = next(p for p in team.players.all() if p.role == "medic")
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
         medic_state = PlayerRoundState.objects.create(
-            game_round=gr, player=medic_player, team_color="red", role="medic",
+            game_round=gr, player=players["medic"], team_color="red", role="medic",
             current_zone=0, final_shots=10, final_lives=10,
         )
 
@@ -106,11 +127,11 @@ class TestSimulation:
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
 
         attacker = PlayerRoundState.objects.create(
-            game_round=gr, player=team.players.filter(role="commander").first(),
+            game_round=gr, player=players["commander"],
             team_color="red", role="commander", current_zone=0, final_shots=10, final_lives=10,
         )
         defender = PlayerRoundState.objects.create(
-            game_round=gr, player=team.players.filter(role="scout").first(),
+            game_round=gr, player=players["scout"],
             team_color="blue", role="scout", current_zone=0, final_shots=10, final_lives=10,
         )
 
@@ -127,16 +148,16 @@ class TestSimulation:
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
 
         attacker = PlayerRoundState.objects.create(
-            game_round=gr, player=team.players.filter(role="commander").first(),
+            game_round=gr, player=players["commander"],
             team_color="red", role="commander", current_zone=0,
             final_shots=10, final_lives=10, final_missiles=2,
         )
         defender = PlayerRoundState.objects.create(
-            game_round=gr, player=team.players.filter(role="scout").first(),
+            game_round=gr, player=players["scout"],
             team_color="blue", role="scout", current_zone=0, final_shots=10, final_lives=10,
         )
 
-        # Dodge: random.random < dodge_chance (0.2)
+        # Dodge
         with patch("random.choices", return_value=["missile_player"]), \
              patch("random.choice", return_value=defender), \
              patch("random.random", return_value=0.1):
@@ -149,7 +170,7 @@ class TestSimulation:
             event_type="missile_dodge", actor=defender.player, target=attacker.player,
         ).exists()
 
-        # Hit: random.random >= dodge_chance -> missile is scheduled
+        # Hit
         pending_missiles = []
         with patch("random.choices", return_value=["missile_player"]), \
              patch("random.choice", return_value=defender), \
@@ -173,7 +194,7 @@ class TestSimulation:
         team, players = self.create_team_with_roster("BaseTest")
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
 
-        player_obj = team.players.first()
+        player_obj = players["scout"]
         state = PlayerRoundState.objects.create(
             game_round=gr, player=player_obj, team_color="red", role="scout",
             current_zone=1, final_shots=5, final_lives=10,
@@ -210,11 +231,11 @@ class TestSimulation:
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
 
         attacker = PlayerRoundState.objects.create(
-            game_round=gr, player=team.players.filter(role="commander").first(),
+            game_round=gr, player=players["commander"],
             team_color="red", role="commander", current_zone=0, final_shots=10, final_lives=10,
         )
         defender = PlayerRoundState.objects.create(
-            game_round=gr, player=team.players.filter(role="scout").first(),
+            game_round=gr, player=players["scout"],
             team_color="blue", role="scout", current_zone=0, final_shots=10, final_lives=10,
         )
 
@@ -233,9 +254,9 @@ class TestSimulation:
 
     def test_max_shots(self):
         simulator = ResourceBasedSimulator()
-        team, players = self.create_team_with_roster("Edge")
+        team, _ = self.create_team_with_roster("Edge")
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
-        red_states = simulator._initialize_players(gr, team.players.all(), "red")
+        red_states = simulator._initialize_players(gr, team, "red")
         ammo = next(s for s in red_states if s.role == "ammo")
         scout_state = next(s for s in red_states if s.role == "scout")
         scout_state.final_shots = scout_state.max_shots
@@ -248,9 +269,9 @@ class TestSimulation:
 
     def test_resupply_medic_no_shots_no_heal(self):
         simulator = ResourceBasedSimulator()
-        team, players = self.create_team_with_roster("Edge")
+        team, _ = self.create_team_with_roster("Edge")
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
-        red_states = simulator._initialize_players(gr, team.players.all(), "red")
+        red_states = simulator._initialize_players(gr, team, "red")
         medic_state = next(s for s in red_states if s.role == "medic")
         medic_state.final_shots = 0
         teammate = next(s for s in red_states if s.role == "heavy")
@@ -267,7 +288,7 @@ class TestSimulation:
         team, players = self.create_team_with_roster("TimeTest")
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
         state = PlayerRoundState.objects.create(
-            game_round=gr, player=team.players.first(), team_color="red", role="scout",
+            game_round=gr, player=players["scout"], team_color="red", role="scout",
             current_zone=0, final_shots=5, final_lives=5,
         )
 
@@ -278,17 +299,14 @@ class TestSimulation:
         state.final_lives = 1
         state.save()
 
-        # Within 3 seconds -> not taggable (< 4s) and not active (< 8s)
         assert not state.is_taggable_at(12)
         assert not state.is_active_at(12)
         assert not state.is_resupplyable_at(12)
 
-        # After 5 seconds -> taggable but not active until 8s
         assert state.is_taggable_at(15)
         assert not state.is_active_at(15)
         assert not state.is_resupplyable_at(15)
 
-        # After 9 seconds -> fully active
         assert state.is_active_at(20)
         assert state.is_resupplyable_at(20)
 
@@ -298,17 +316,17 @@ class TestSimulation:
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
 
         commander = PlayerRoundState.objects.create(
-            game_round=gr, player=team.players.filter(role="commander").first(),
+            game_round=gr, player=players["commander"],
             team_color="red", role="commander", current_zone=0,
             final_shots=10, final_lives=3, shields=3,
         )
         heavy = PlayerRoundState.objects.create(
-            game_round=gr, player=team.players.filter(role="heavy").first(),
+            game_round=gr, player=players["heavy"],
             team_color="red", role="heavy", current_zone=0,
             final_shots=10, final_lives=3, shields=3,
         )
         attacker = PlayerRoundState.objects.create(
-            game_round=gr, player=team.players.filter(role="scout").first(),
+            game_round=gr, player=players["scout"],
             team_color="blue", role="scout", current_zone=0, final_shots=10, final_lives=10,
         )
 
@@ -336,18 +354,17 @@ class TestSimulation:
         team, players = self.create_team_with_roster("DownTest")
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
 
-        roles_to_test = ["scout", "medic", "ammo"]
         role_states = {}
-        for role in roles_to_test:
+        for role in ["scout", "medic", "ammo"]:
             state = PlayerRoundState.objects.create(
-                game_round=gr, player=team.players.filter(role=role).first(),
+                game_round=gr, player=players[role],
                 team_color="red", role=role, current_zone=0,
                 final_shots=10, final_lives=1, shields=1,
             )
             role_states[role] = state
 
         attacker = PlayerRoundState.objects.create(
-            game_round=gr, player=team.players.filter(role="scout").first(),
+            game_round=gr, player=players["scout_2"],
             team_color="blue", role="scout", current_zone=0, final_shots=10, final_lives=10,
         )
 
@@ -365,13 +382,13 @@ class TestSimulation:
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
 
         heavy = PlayerRoundState.objects.create(
-            game_round=gr, player=team.players.filter(role="heavy").first(),
+            game_round=gr, player=players["heavy"],
             team_color="red", role="heavy", current_zone=0,
             final_shots=10, final_lives=2, shields=3,
         )
         commander = PlayerRoundState.objects.create(
-            game_round=gr, player=team.players.filter(role="commander").first(),
-            team_color="blue", role="commander", shot_power=2,
+            game_round=gr, player=players["commander"],
+            team_color="blue", role="commander",
             current_zone=0, final_shots=10, final_lives=10,
         )
 
@@ -385,12 +402,12 @@ class TestSimulation:
 
     def test_cannot_be_resupplied_while_downed(self):
         simulator = ResourceBasedSimulator()
-        team, players = self.create_team_with_roster("Edge")
+        team, _ = self.create_team_with_roster("Edge")
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
-        red_states = simulator._initialize_players(gr, team.players.all(), "red")
-        medic = next(s for s in red_states if s.role == "medic")
+        red_states = simulator._initialize_players(gr, team, "red")
+        medic    = next(s for s in red_states if s.role == "medic")
         teammate = next(s for s in red_states if s.role == "heavy")
-        teammate.final_lives = 1
+        teammate.final_lives    = 1
         teammate.last_downed_time = 5
         medic.save()
         teammate.save()
@@ -406,11 +423,11 @@ class TestSimulation:
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
 
         attacker = PlayerRoundState.objects.create(
-            game_round=gr, player=team.players.filter(role="scout").first(),
+            game_round=gr, player=players["scout"],
             team_color="red", role="scout", current_zone=0, final_shots=10, final_lives=10,
         )
         dead = PlayerRoundState.objects.create(
-            game_round=gr, player=team.players.filter(role="medic").first(),
+            game_round=gr, player=players["medic"],
             team_color="blue", role="medic", current_zone=0, final_shots=0, final_lives=0,
         )
 
@@ -424,12 +441,12 @@ class TestSimulation:
 
     def test_nuke_scheduling_and_cancellation(self):
         simulator = ResourceBasedSimulator()
-        team_red, _ = self.create_team_with_roster("NukeRed")
+        team_red, players_red   = self.create_team_with_roster("NukeRed")
         team_blue, _ = self.create_team_with_roster("NukeBlue")
         gr = GameRound.objects.create(team_red=team_red, team_blue=team_blue, round_number=1)
 
         commander = PlayerRoundState.objects.create(
-            game_round=gr, player=team_red.players.filter(role="commander").first(),
+            game_round=gr, player=players_red["commander"],
             team_color="red", role="commander", current_zone=0,
             final_shots=10, final_lives=10, final_special=20,
         )
@@ -452,33 +469,33 @@ class TestSimulation:
 
     def test_nuke_elim_cannot_be_tagged_after(self):
         simulator = ResourceBasedSimulator()
-        team_red, _ = self.create_team_with_roster("NukeRed")
-        team_blue, _ = self.create_team_with_roster("NukeBlue")
+        team_red, players_red   = self.create_team_with_roster("NukeRed")
+        team_blue, players_blue = self.create_team_with_roster("NukeBlue")
         gr = GameRound.objects.create(team_red=team_red, team_blue=team_blue, round_number=1)
 
         blue_commander = PlayerRoundState.objects.create(
-            game_round=gr, player=team_blue.players.filter(role="commander").first(),
+            game_round=gr, player=players_blue["commander"],
             team_color="blue", role="heavy", current_zone=0, final_shots=10, final_lives=4,
         )
         heavy = PlayerRoundState.objects.create(
-            game_round=gr, player=team_blue.players.filter(role="heavy").first(),
+            game_round=gr, player=players_blue["heavy"],
             team_color="blue", role="heavy", current_zone=0, final_shots=10, final_lives=3,
         )
         scout = PlayerRoundState.objects.create(
-            game_round=gr, player=team_blue.players.filter(role="scout").first(),
+            game_round=gr, player=players_blue["scout"],
             team_color="blue", role="scout", current_zone=0, final_shots=10, final_lives=2,
         )
         ammo = PlayerRoundState.objects.create(
-            game_round=gr, player=team_blue.players.filter(role="ammo").first(),
+            game_round=gr, player=players_blue["ammo"],
             team_color="blue", role="ammo", current_zone=0, final_shots=15, final_lives=1,
         )
         medic = PlayerRoundState.objects.create(
-            game_round=gr, player=team_blue.players.filter(role="medic").first(),
+            game_round=gr, player=players_blue["medic"],
             team_color="blue", role="medic", current_zone=0,
             final_shots=10, final_lives=0, was_eliminated_at=15,
         )
         commander = PlayerRoundState.objects.create(
-            game_round=gr, player=team_red.players.filter(role="commander").first(),
+            game_round=gr, player=players_red["commander"],
             team_color="red", role="commander", current_zone=0,
             final_shots=10, final_lives=10, final_special=20, points_scored=0,
         )
@@ -504,10 +521,7 @@ class TestSimulation:
 @pytest.mark.django_db
 class TestLivesLost:
     def create_team_with_roster(self, prefix):
-        team = Team.objects.create(name=f"{prefix} Team")
-        roles = ["commander", "heavy", "scout", "scout", "medic", "ammo"]
-        for i, role in enumerate(roles):
-            Player.objects.create(team=team, name=f"{prefix} {role} {i}", role=role)
+        team, _ = make_team_with_slots(prefix)
         return team
 
     def _make_round(self, team_red, team_blue):
@@ -519,30 +533,28 @@ class TestLivesLost:
             final_shots=10, **kwargs
         )
 
-    # --- property unit tests (no simulation calls) ---
+    # --- property unit tests ---
 
     def test_lives_lost_no_nukes(self):
         team = self.create_team_with_roster("Unit")
         gr = self._make_round(team, team)
-        state = self._make_state(gr, team.players.filter(role="scout").first(), "red", "scout",
+        state = self._make_state(gr, team.slot_scout_1, "red", "scout",
                                  final_lives=10, times_tagged=3, times_missiled=1,
                                  lives_lost_to_nukes=0)
-        # 3 tags + 1 missile * 2 = 5
         assert state.lives_lost == 5
 
     def test_lives_lost_includes_nuke_field(self):
         team = self.create_team_with_roster("Unit2")
         gr = self._make_round(team, team)
-        state = self._make_state(gr, team.players.filter(role="scout").first(), "red", "scout",
+        state = self._make_state(gr, team.slot_scout_1, "red", "scout",
                                  final_lives=4, times_tagged=1, times_missiled=0,
                                  lives_lost_to_nukes=3)
-        # 1 tag + 3 nuke = 4
         assert state.lives_lost == 4
 
     def test_lives_lost_never_negative(self):
         team = self.create_team_with_roster("Unit3")
         gr = self._make_round(team, team)
-        state = self._make_state(gr, team.players.filter(role="scout").first(), "red", "scout",
+        state = self._make_state(gr, team.slot_scout_1, "red", "scout",
                                  final_lives=10, times_tagged=0, times_missiled=0,
                                  lives_lost_to_nukes=0)
         assert state.lives_lost == 0
@@ -551,13 +563,13 @@ class TestLivesLost:
 
     def test_nuke_removes_3_lives_from_healthy_opponent(self):
         simulator = ResourceBasedSimulator()
-        red = self.create_team_with_roster("NukeA_Red")
+        red  = self.create_team_with_roster("NukeA_Red")
         blue = self.create_team_with_roster("NukeA_Blue")
         gr = self._make_round(red, blue)
 
-        commander = self._make_state(gr, red.players.filter(role="commander").first(),
+        commander = self._make_state(gr, red.slot_commander,
                                      "red", "commander", final_lives=10, final_special=20)
-        target = self._make_state(gr, blue.players.filter(role="scout").first(),
+        target = self._make_state(gr, blue.slot_scout_1,
                                   "blue", "scout", final_lives=5)
 
         simulator._complete_nuke(commander, second=30)
@@ -569,13 +581,13 @@ class TestLivesLost:
 
     def test_nuke_exception_player_has_2_lives(self):
         simulator = ResourceBasedSimulator()
-        red = self.create_team_with_roster("NukeB_Red")
+        red  = self.create_team_with_roster("NukeB_Red")
         blue = self.create_team_with_roster("NukeB_Blue")
         gr = self._make_round(red, blue)
 
-        commander = self._make_state(gr, red.players.filter(role="commander").first(),
+        commander = self._make_state(gr, red.slot_commander,
                                      "red", "commander", final_lives=10, final_special=20)
-        target = self._make_state(gr, blue.players.filter(role="scout").first(),
+        target = self._make_state(gr, blue.slot_scout_1,
                                   "blue", "scout", final_lives=2)
 
         simulator._complete_nuke(commander, second=30)
@@ -587,13 +599,13 @@ class TestLivesLost:
 
     def test_nuke_exception_player_has_1_life(self):
         simulator = ResourceBasedSimulator()
-        red = self.create_team_with_roster("NukeC_Red")
+        red  = self.create_team_with_roster("NukeC_Red")
         blue = self.create_team_with_roster("NukeC_Blue")
         gr = self._make_round(red, blue)
 
-        commander = self._make_state(gr, red.players.filter(role="commander").first(),
+        commander = self._make_state(gr, red.slot_commander,
                                      "red", "commander", final_lives=10, final_special=20)
-        target = self._make_state(gr, blue.players.filter(role="scout").first(),
+        target = self._make_state(gr, blue.slot_scout_1,
                                   "blue", "scout", final_lives=1)
 
         simulator._complete_nuke(commander, second=30)
@@ -604,13 +616,13 @@ class TestLivesLost:
 
     def test_nuke_skips_already_eliminated_player(self):
         simulator = ResourceBasedSimulator()
-        red = self.create_team_with_roster("NukeD_Red")
+        red  = self.create_team_with_roster("NukeD_Red")
         blue = self.create_team_with_roster("NukeD_Blue")
         gr = self._make_round(red, blue)
 
-        commander = self._make_state(gr, red.players.filter(role="commander").first(),
+        commander = self._make_state(gr, red.slot_commander,
                                      "red", "commander", final_lives=10, final_special=20)
-        dead = self._make_state(gr, blue.players.filter(role="scout").first(),
+        dead = self._make_state(gr, blue.slot_scout_1,
                                 "blue", "scout", final_lives=0, was_eliminated_at=50)
 
         simulator._complete_nuke(commander, second=30)
@@ -621,13 +633,13 @@ class TestLivesLost:
 
     def test_nuke_accumulates_across_multiple_nukes(self):
         simulator = ResourceBasedSimulator()
-        red = self.create_team_with_roster("NukeE_Red")
+        red  = self.create_team_with_roster("NukeE_Red")
         blue = self.create_team_with_roster("NukeE_Blue")
         gr = self._make_round(red, blue)
 
-        commander = self._make_state(gr, red.players.filter(role="commander").first(),
+        commander = self._make_state(gr, red.slot_commander,
                                      "red", "commander", final_lives=10, final_special=40)
-        target = self._make_state(gr, blue.players.filter(role="heavy").first(),
+        target = self._make_state(gr, blue.slot_heavy,
                                   "blue", "heavy", final_lives=10)
 
         simulator._complete_nuke(commander, second=20)
@@ -645,127 +657,352 @@ class TestRosterValidation:
     def _make_team(self, name="Test"):
         return Team.objects.create(name=name)
 
-    def _add_player(self, team, role, name=None):
+    def _add_player(self, team, name=None):
         return Player.objects.create(
-            team=team, name=name or f"{role}-{team.players.count()}", role=role
+            team=team, name=name or f"player-{team.players.count()}"
         )
 
-    def _full_roster(self, team, double_role="scout"):
-        """Add a complete valid 6-player roster, doubling the given role."""
-        roles = ["commander", "heavy", "scout", "medic", "ammo", double_role]
-        for i, role in enumerate(roles):
-            Player.objects.create(team=team, name=f"p{i}", role=role)
+    def _fill_all_slots(self, team, players=None):
+        """Assign 6 players to all slots; creates them if not provided."""
+        if players is None:
+            players = [self._add_player(team, f"p{i}") for i in range(6)]
+        team.slot_commander = players[0]
+        team.slot_heavy     = players[1]
+        team.slot_scout_1   = players[2]
+        team.slot_scout_2   = players[3]
+        team.slot_medic     = players[4]
+        team.slot_ammo      = players[5]
+        team.save()
+        return players
 
     # --- is_valid_roster ---
 
-    def test_valid_roster_with_two_scouts(self):
+    def test_valid_roster_all_slots_filled(self):
         team = self._make_team("Valid")
-        self._full_roster(team, double_role="scout")
+        self._fill_all_slots(team)
         assert team.is_valid_roster
 
-    def test_valid_roster_with_one_scout(self):
-        team = self._make_team("OneScout")
-        for i, role in enumerate(["commander", "heavy", "scout", "medic", "ammo"]):
-            Player.objects.create(team=team, name=f"p{i}", role=role)
-        # 5 players — not valid (needs 6)
+    def test_invalid_roster_missing_ammo_slot(self):
+        team = self._make_team("MissingAmmo")
+        players = [self._add_player(team, f"p{i}") for i in range(5)]
+        team.slot_commander = players[0]
+        team.slot_heavy     = players[1]
+        team.slot_scout_1   = players[2]
+        team.slot_scout_2   = players[3]
+        team.slot_medic     = players[4]
+        team.save()
         assert not team.is_valid_roster
 
-    def test_invalid_roster_two_commanders(self):
-        team = self._make_team("2Cmd")
-        self._full_roster(team, double_role="commander")
+    def test_invalid_roster_missing_scout_2(self):
+        team = self._make_team("NoScout2")
+        players = [self._add_player(team, f"p{i}") for i in range(5)]
+        team.slot_commander = players[0]
+        team.slot_heavy     = players[1]
+        team.slot_scout_1   = players[2]
+        team.slot_medic     = players[3]
+        team.slot_ammo      = players[4]
+        team.save()
         assert not team.is_valid_roster
 
-    def test_invalid_roster_two_medics(self):
-        team = self._make_team("2Med")
-        self._full_roster(team, double_role="medic")
+    def test_invalid_roster_duplicate_player_in_two_slots(self):
+        team = self._make_team("Dupe")
+        players = [self._add_player(team, f"p{i}") for i in range(5)]
+        team.slot_commander = players[0]
+        team.slot_heavy     = players[0]  # same player!
+        team.slot_scout_1   = players[1]
+        team.slot_scout_2   = players[2]
+        team.slot_medic     = players[3]
+        team.slot_ammo      = players[4]
+        team.save()
         assert not team.is_valid_roster
 
-    def test_bench_players_excluded_from_roster_check(self):
+    def test_bench_players_are_unslotted_team_members(self):
         team = self._make_team("WithBench")
-        self._full_roster(team, double_role="scout")
-        # Add 3 bench players — should still be valid
-        for i in range(3):
-            Player.objects.create(team=team, name=f"bench{i}", role="bench")
-        assert team.is_valid_roster
+        players = [self._add_player(team, f"p{i}") for i in range(8)]
+        self._fill_all_slots(team, players[:6])
+        bench = team.bench_players
+        assert len(bench) == 2
+        bench_ids = {p.pk for p in bench}
+        assert players[6].pk in bench_ids
+        assert players[7].pk in bench_ids
 
-    def test_bench_players_dont_count_as_active(self):
-        team = self._make_team("BenchOnly")
-        for i in range(6):
-            Player.objects.create(team=team, name=f"bench{i}", role="bench")
-        assert not team.is_valid_roster
+    def test_active_players_excludes_bench(self):
+        team = self._make_team("ActiveVsBench")
+        players = [self._add_player(team, f"p{i}") for i in range(8)]
+        self._fill_all_slots(team, players[:6])
+        active = team.active_players
+        assert len(active) == 6
+        active_ids = {p.pk for p in active}
+        assert players[6].pk not in active_ids
 
-    # --- Player.clean() ---
+    def test_active_roster_contains_correct_roles(self):
+        team = self._make_team("Roster")
+        players = [self._add_player(team, f"p{i}") for i in range(6)]
+        self._fill_all_slots(team, players)
+        roster = team.active_roster
+        assert len(roster) == 6
+        roles = [r for r, _ in roster]
+        assert roles.count("scout") == 2
+        assert "commander" in roles
+        assert "heavy" in roles
+        assert "medic" in roles
+        assert "ammo" in roles
 
-    def test_clean_rejects_second_commander(self):
+    # --- Player.clean() (preferred_roles validation) ---
+
+    def test_clean_rejects_invalid_preferred_role(self):
         from django.core.exceptions import ValidationError
-        team = self._make_team("CleanCmd")
-        self._add_player(team, "commander")
-        p = Player(team=team, name="cmd2", role="commander")
-        with pytest.raises(ValidationError, match="Only the Scout role"):
-            p.clean()
-
-    def test_clean_rejects_second_medic(self):
-        from django.core.exceptions import ValidationError
-        team = self._make_team("CleanMed")
-        self._add_player(team, "medic")
-        p = Player(team=team, name="med2", role="medic")
-        with pytest.raises(ValidationError, match="Only the Scout role"):
-            p.clean()
-
-    def test_clean_allows_second_scout(self):
-        team = self._make_team("CleanScout")
-        self._add_player(team, "scout")
-        p = Player(team=team, name="scout2", role="scout")
-        p.clean()  # should not raise
-
-    def test_clean_rejects_third_scout(self):
-        from django.core.exceptions import ValidationError
-        team = self._make_team("3Scouts")
-        self._add_player(team, "scout", "s1")
-        self._add_player(team, "scout", "s2")
-        p = Player(team=team, name="s3", role="scout")
+        team = self._make_team("CleanBad")
+        p = Player(team=team, name="bad", preferred_roles=["not_a_real_role"])
         with pytest.raises(ValidationError):
             p.clean()
 
-    def test_clean_rejects_more_than_6_bench(self):
-        from django.core.exceptions import ValidationError
-        team = self._make_team("ManyBench")
-        for i in range(6):
-            Player.objects.create(team=team, name=f"b{i}", role="bench")
-        p = Player(team=team, name="b7", role="bench")
-        with pytest.raises(ValidationError, match="6 bench"):
-            p.clean()
+    def test_clean_accepts_valid_preferred_roles(self):
+        team = self._make_team("CleanGood")
+        p = Player(team=team, name="good", preferred_roles=["commander", "scout"])
+        p.clean()  # should not raise
 
-    def test_clean_allows_bench_alongside_full_roster(self):
-        team = self._make_team("BenchOK")
-        self._full_roster(team, double_role="scout")
-        p = Player(team=team, name="sub", role="bench")
+    def test_clean_accepts_empty_preferred_roles(self):
+        team = self._make_team("CleanEmpty")
+        p = Player(team=team, name="empty", preferred_roles=[])
         p.clean()  # should not raise
 
     # --- roster_errors ---
 
     def test_roster_errors_empty_for_valid_roster(self):
         team = self._make_team("ErrValid")
-        self._full_roster(team, double_role="scout")
+        self._fill_all_slots(team)
         assert team.roster_errors == []
 
-    def test_roster_errors_reports_missing_role(self):
+    def test_roster_errors_reports_missing_slot(self):
         team = self._make_team("ErrMissing")
-        # Add 6 players but omit medic, double scout instead
-        for i, role in enumerate(["commander", "heavy", "scout", "scout", "ammo", "scout"]):
-            Player.objects.create(team=team, name=f"p{i}", role=role)
+        players = [self._add_player(team, f"p{i}") for i in range(5)]
+        team.slot_commander = players[0]
+        team.slot_heavy     = players[1]
+        team.slot_scout_1   = players[2]
+        team.slot_scout_2   = players[3]
+        team.slot_medic     = players[4]
+        team.save()
         errors = team.roster_errors
-        assert any("medic" in e.lower() for e in errors)
+        assert any("Ammo" in e for e in errors)
 
-    def test_roster_errors_reports_duplicate_non_scout(self):
+    def test_roster_errors_reports_duplicate_player(self):
         team = self._make_team("ErrDupe")
-        self._full_roster(team, double_role="commander")
+        players = [self._add_player(team, f"p{i}") for i in range(5)]
+        team.slot_commander = players[0]
+        team.slot_heavy     = players[0]  # duplicate
+        team.slot_scout_1   = players[1]
+        team.slot_scout_2   = players[2]
+        team.slot_medic     = players[3]
+        team.slot_ammo      = players[4]
+        team.save()
         errors = team.roster_errors
-        assert any("commander" in e.lower() for e in errors)
+        assert any("multiple slots" in e for e in errors)
 
-    def test_roster_errors_reports_too_few_players(self):
+    def test_roster_errors_reports_all_missing_when_no_slots(self):
         team = self._make_team("ErrFew")
-        for i, role in enumerate(["commander", "heavy", "scout", "medic", "ammo"]):
-            Player.objects.create(team=team, name=f"p{i}", role=role)
         errors = team.roster_errors
-        assert any("5" in e for e in errors)
+        assert len(errors) == 6
+
+
+@pytest.mark.django_db
+class TestMVP:
+    def setup_method(self):
+        self.team_red, self.players_red = make_team_with_slots("MVPRed")
+        self.team_blue, self.players_blue = make_team_with_slots("MVPBlue")
+        self.gr = GameRound.objects.create(
+            team_red=self.team_red, team_blue=self.team_blue, round_number=1,
+        )
+
+    def _state(self, player, team_color, role, **kwargs):
+        kwargs.setdefault("final_lives", 3)
+        kwargs.setdefault("final_shots", 10)
+        return PlayerRoundState.objects.create(
+            game_round=self.gr,
+            player=player,
+            team_color=team_color,
+            role=role,
+            **kwargs,
+        )
+
+    # --- get_accuracy ---
+
+    def test_accuracy_zero_shots(self):
+        s = self._state(self.players_red["scout"], "red", "scout",
+                        tags_made=0, shots_missed=0)
+        assert s.get_accuracy == 0
+
+    def test_accuracy_all_hits(self):
+        s = self._state(self.players_red["scout"], "red", "scout",
+                        tags_made=10, shots_missed=0)
+        assert s.get_accuracy == 100
+
+    def test_accuracy_three_quarters(self):
+        s = self._state(self.players_red["scout"], "red", "scout",
+                        tags_made=75, shots_missed=25)
+        assert s.get_accuracy == 75
+
+    # --- All-roles components ---
+
+    def test_accuracy_bonus_100pct(self):
+        # ceil(100 * 0.1 * 2) / 2 = 10.0; ammo with no specials or extra points
+        s = self._state(self.players_red["ammo"], "red", "ammo",
+                        tags_made=10, shots_missed=0, points_scored=0, specials_used=0)
+        assert s.get_mvp == 10.0
+
+    def test_medic_hit_bonus(self):
+        s = self._state(self.players_red["heavy"], "red", "heavy",
+                        final_medic_hits=3, points_scored=0, missiles_landed=0,
+                        tags_made=0, shots_missed=0)
+        assert s.get_mvp == 3.0
+
+    def test_enemy_nuke_cancel_bonus(self):
+        s = self._state(self.players_red["heavy"], "red", "heavy",
+                        enemy_nuke_cancels=2, points_scored=0, missiles_landed=0,
+                        tags_made=0, shots_missed=0)
+        assert s.get_mvp == 6.0
+
+    def test_ally_nuke_cancel_penalty(self):
+        s = self._state(self.players_red["heavy"], "red", "heavy",
+                        ally_nuke_cancels=1, points_scored=0, missiles_landed=0,
+                        tags_made=0, shots_missed=0)
+        assert s.get_mvp == -3.0
+
+    def test_times_missiled_penalty(self):
+        s = self._state(self.players_red["heavy"], "red", "heavy",
+                        times_missiled=3, points_scored=0, missiles_landed=0,
+                        tags_made=0, shots_missed=0)
+        assert s.get_mvp == -3.0
+
+    def test_elimination_penalty_non_medic(self):
+        s = self._state(self.players_red["heavy"], "red", "heavy",
+                        final_lives=0, points_scored=0, missiles_landed=0,
+                        tags_made=0, shots_missed=0)
+        assert s.get_mvp == -1.0
+
+    def test_no_elimination_penalty_for_medic(self):
+        s = self._state(self.players_red["medic"], "red", "medic",
+                        final_lives=0, points_scored=0, specials_used=0,
+                        tags_made=0, shots_missed=0)
+        assert s.get_mvp == 0.0
+
+    def test_elimination_bonus_minimum(self):
+        # Eliminated at second 720 → 180 s remaining → exactly 4 pts (no extra above 3 min)
+        self.gr.blue_team_eliminated = True
+        self.gr.eliminated_at = 720
+        self.gr.save()
+        s = self._state(self.players_red["heavy"], "red", "heavy",
+                        points_scored=0, missiles_landed=0,
+                        tags_made=0, shots_missed=0)
+        assert s.get_mvp == 4.0
+
+    def test_elimination_bonus_with_extra_time(self):
+        # Eliminated at second 540 → 360 s remaining → 4 + (360-180)/60 = 7.0
+        self.gr.blue_team_eliminated = True
+        self.gr.eliminated_at = 540
+        self.gr.save()
+        s = self._state(self.players_red["heavy"], "red", "heavy",
+                        points_scored=0, missiles_landed=0,
+                        tags_made=0, shots_missed=0)
+        assert s.get_mvp == 7.0
+
+    # --- Commander ---
+
+    def test_commander_missile_bonus(self):
+        s = self._state(self.players_red["commander"], "red", "commander",
+                        missiles_landed=3, specials_used=0, own_specials_cancelled=0,
+                        points_scored=0, tags_made=0, shots_missed=0)
+        assert s.get_mvp == 3.0
+
+    def test_commander_nuke_bonus(self):
+        s = self._state(self.players_red["commander"], "red", "commander",
+                        specials_used=2, own_specials_cancelled=0, missiles_landed=0,
+                        points_scored=0, tags_made=0, shots_missed=0)
+        assert s.get_mvp == 2.0
+
+    def test_commander_own_nuke_cancelled_penalty(self):
+        # 2 nukes used, 1 cancelled: successful=1 (+1), cancelled=1 (-1) → net 0
+        s = self._state(self.players_red["commander"], "red", "commander",
+                        specials_used=2, own_specials_cancelled=1, missiles_landed=0,
+                        points_scored=0, tags_made=0, shots_missed=0)
+        assert s.get_mvp == 0.0
+
+    def test_commander_points_bonus(self):
+        s = self._state(self.players_red["commander"], "red", "commander",
+                        points_scored=12_000, specials_used=0, own_specials_cancelled=0,
+                        missiles_landed=0, tags_made=0, shots_missed=0)
+        assert s.get_mvp == 2.0
+
+    # --- Heavy ---
+
+    def test_heavy_missile_bonus(self):
+        s = self._state(self.players_red["heavy"], "red", "heavy",
+                        missiles_landed=2, points_scored=0,
+                        tags_made=0, shots_missed=0)
+        assert s.get_mvp == 4.0
+
+    def test_heavy_points_bonus(self):
+        s = self._state(self.players_red["heavy"], "red", "heavy",
+                        points_scored=9_000, missiles_landed=0,
+                        tags_made=0, shots_missed=0)
+        assert s.get_mvp == 2.0
+
+    # --- Scout ---
+
+    def test_scout_cmd_heavy_hit_bonus(self):
+        cmd_key = str(PlayerRoundState.tag_id.blue_commander)  # "7"
+        hvy_key = str(PlayerRoundState.tag_id.blue_heavy)      # "8"
+        # 80% accuracy → 8.0; (5+3)*0.2 = 1.6; total = 9.6
+        s = self._state(self.players_red["scout"], "red", "scout",
+                        specific_tags={cmd_key: {"tags": 5, "tagged_by": 0},
+                                       hvy_key: {"tags": 3, "tagged_by": 0}},
+                        tags_made=8, shots_missed=2, points_scored=0)
+        assert s.get_mvp == 9.6
+
+    def test_scout_points_bonus(self):
+        s = self._state(self.players_red["scout"], "red", "scout",
+                        points_scored=8_000, specific_tags={},
+                        tags_made=0, shots_missed=0)
+        assert s.get_mvp == 2.0
+
+    # --- Ammo ---
+
+    def test_ammo_power_boost_bonus(self):
+        s = self._state(self.players_red["ammo"], "red", "ammo",
+                        specials_used=3, points_scored=0,
+                        tags_made=0, shots_missed=0)
+        assert s.get_mvp == 9.0
+
+    def test_ammo_points_bonus(self):
+        s = self._state(self.players_red["ammo"], "red", "ammo",
+                        points_scored=5_000, specials_used=0,
+                        tags_made=0, shots_missed=0)
+        assert s.get_mvp == 2.0
+
+    # --- Medic ---
+
+    def test_medic_power_boost_bonus(self):
+        # 4 specials * 3 = 12; survival bonus +2 = 14
+        s = self._state(self.players_red["medic"], "red", "medic",
+                        specials_used=4, points_scored=0,
+                        tags_made=0, shots_missed=0, final_lives=3)
+        assert s.get_mvp == 14.0
+
+    def test_medic_survival_bonus(self):
+        s = self._state(self.players_red["medic"], "red", "medic",
+                        final_lives=5, specials_used=0, points_scored=0,
+                        tags_made=0, shots_missed=0)
+        assert s.get_mvp == 2.0
+
+    def test_medic_no_survival_bonus_when_eliminated(self):
+        s = self._state(self.players_red["medic"], "red", "medic",
+                        final_lives=0, specials_used=0, points_scored=0,
+                        tags_made=0, shots_missed=0)
+        assert s.get_mvp == 0.0
+
+    def test_medic_points_bonus(self):
+        # 2 * (4000 - 2000) / 1000 = 4.0; no survival (lives=0)
+        s = self._state(self.players_red["medic"], "red", "medic",
+                        points_scored=4_000, specials_used=0,
+                        final_lives=0, tags_made=0, shots_missed=0)
+        assert s.get_mvp == 4.0

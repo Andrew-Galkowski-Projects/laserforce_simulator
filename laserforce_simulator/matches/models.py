@@ -1,6 +1,6 @@
 from datetime import datetime
 from django.db import models
-from teams.models import Team, Player
+from teams.models import Team, Player, ROLE_STATS
 
 
 class Match(models.Model):
@@ -249,7 +249,6 @@ class PlayerRoundState(models.Model):
 
     # these are for resets, ability to be resupplied, and ability to be tagged
     last_tagged_id = models.IntegerField(choices=tag_id.choices, default=tag_id.none)
-    shot_power = models.IntegerField(default=1)
     shields = models.IntegerField(
         default=1
     )  # When 0 player loses a life and is down for 8 seconds
@@ -321,16 +320,12 @@ class PlayerRoundState(models.Model):
         return f"n:{self.player.name} id:{self.player.id} tclr:{self.team_color} rl:{self.role}"
 
     @property
+    def shot_power(self):
+        return ROLE_STATS.get(self.role, {}).get("shot_power", 1)
+
+    @property
     def max_shields(self):
-        # Determine max shields based on role
-        max_shields = {
-            "commander": 3,
-            "heavy": 3,
-            "scout": 1,
-            "medic": 1,
-            "ammo": 1,
-        }
-        return max_shields.get(self.role, 1)  # Default to 1 if role unknown
+        return ROLE_STATS.get(self.role, {}).get("shield", 1)
 
     @property
     def max_lives(self):
@@ -449,18 +444,11 @@ class PlayerRoundState(models.Model):
             elif role == "heavy":
                 return self.tag_id.red_heavy
             elif role == "scout":
-                # Determine scout1 vs scout2 by comparing player names on the team
                 try:
-                    scouts = list(
-                        self.player.team.players.filter(role="scout").order_by("name")
-                    )
-                    if len(scouts) <= 1:
+                    team = self.player.team
+                    if self.player_id == team.slot_scout_1_id:
                         return self.tag_id.red_scout_1
-                    # If this player's name sorts before the other, they're scout_1
-                    if scouts[0].name == self.player.name:
-                        return self.tag_id.red_scout_1
-                    else:
-                        return self.tag_id.red_scout_2
+                    return self.tag_id.red_scout_2
                 except Exception:
                     return self.tag_id.red_scout_1
             elif role == "ammo":
@@ -474,15 +462,10 @@ class PlayerRoundState(models.Model):
                 return self.tag_id.blue_heavy
             elif role == "scout":
                 try:
-                    scouts = list(
-                        self.player.team.players.filter(role="scout").order_by("name")
-                    )
-                    if len(scouts) <= 1:
+                    team = self.player.team
+                    if self.player_id == team.slot_scout_1_id:
                         return self.tag_id.blue_scout_1
-                    if scouts[0].name == self.player.name:
-                        return self.tag_id.blue_scout_1
-                    else:
-                        return self.tag_id.blue_scout_2
+                    return self.tag_id.blue_scout_2
                 except Exception:
                     return self.tag_id.blue_scout_1
             elif role == "ammo":
@@ -491,7 +474,123 @@ class PlayerRoundState(models.Model):
                 return self.tag_id.blue_medic
         return self.tag_id.none
 
-    # this one seems kind of useless
+    @property
+    def get_accuracy(self):
+        """Shot accuracy as an integer percentage (0–100)."""
+        total = self.tags_made + self.shots_missed
+        if total == 0:
+            return 0
+        return round(self.tags_made / total * 100)
+
+    @property
+    def get_mvp(self):
+        """
+        SM5 MVP score following official Laserforce rules.
+        The player with the highest score on each team is the round MVP.
+
+        ── All roles ───────────────────────────────────────────────────────
+        +0.1  per 1 % accuracy (rounded up to nearest half-point)
+        +1    per hit on an enemy Medic   (final_medic_hits)
+        +3    per enemy nuke cancelled     (enemy_nuke_cancels)
+        -3    per own-team nuke cancelled  (ally_nuke_cancels, charged to
+              the Medic who triggered the cancel)
+        -1    per time missiled            (times_missiled)
+        -1    if eliminated (all roles except Medic)
+        + elimination bonus when team eliminates the opponent:
+              min 4 pts, +1/60 per second of remaining game time above 3 min
+
+        ── Commander ────────────────────────────────────────────────────────
+        +1    per missile landed on an opponent
+        +1    per successful nuke (specials_used − own_specials_cancelled;
+              note: nukes cancelled by an enemy tag are not yet tracked
+              separately, so the count may be slightly over for those cases)
+        +1/1000 pts over 10 000 (fractional)
+        -1    per own nuke cancelled by ally resupply (own_specials_cancelled)
+
+        ── Heavy ────────────────────────────────────────────────────────────
+        +2    per missile landed on an opponent
+        +1/1000 pts over 7 000 (fractional)
+
+        ── Scout ────────────────────────────────────────────────────────────
+        +0.2  per tag on an enemy Commander or Heavy (read from specific_tags)
+        +1/1000 pts over 6 000 (fractional)
+
+        ── Ammo ─────────────────────────────────────────────────────────────
+        +3    per power-boost activation (specials_used)
+        +1/1000 pts over 3 000 (fractional)
+
+        ── Medic ────────────────────────────────────────────────────────────
+        +3    per power-boost activation (specials_used)
+        +2    survival bonus if alive when the clock expires
+        +2/1000 pts over 2 000 (fractional)
+        (the -1 elimination penalty does not apply to Medics)
+        """
+        import math
+        score = 0.0
+
+        # Accuracy bonus
+        score += math.ceil(self.get_accuracy * 0.1 * 2) / 2  # round up to nearest 0.5
+
+        # Medic-hit bonus/penalty (enemy medic only; own-medic hits not tracked)
+        score += self.final_medic_hits * 1
+
+        # Nuke cancel bonuses
+        score += self.enemy_nuke_cancels * 3
+        score -= self.ally_nuke_cancels * 3
+
+        # Missile penalty
+        score -= self.times_missiled * 1
+
+        # Elimination penalty (not Medics)
+        if self.role != "medic" and self.final_lives == 0:
+            score -= 1
+
+        # Elimination bonus — charged when this player's team wiped the opponent
+        gr = self.game_round
+        team_eliminated_opponent = (
+            gr.blue_team_eliminated if self.team_color == "red" else gr.red_team_eliminated
+        )
+        if team_eliminated_opponent:
+            time_remaining = 900 - gr.eliminated_at
+            extra_seconds_above_3_min = max(0, time_remaining - 180)
+            score += 4 + extra_seconds_above_3_min / 60
+
+        # Role-specific bonuses
+        if self.role == "commander":
+            score += self.missiles_landed * 1
+            successful_nukes = max(0, self.specials_used - self.own_specials_cancelled)
+            score += successful_nukes * 1
+            score += max(0, self.points_scored - 10_000) / 1000
+            score -= self.own_specials_cancelled * 1
+
+        elif self.role == "heavy":
+            score += self.missiles_landed * 2
+            score += max(0, self.points_scored - 7_000) / 1000
+
+        elif self.role == "scout":
+            if self.team_color == "red":
+                cmd_key = str(self.tag_id.blue_commander)
+                hvy_key = str(self.tag_id.blue_heavy)
+            else:
+                cmd_key = str(self.tag_id.red_commander)
+                hvy_key = str(self.tag_id.red_heavy)
+            cmd_hits = self.specific_tags.get(cmd_key, {}).get("tags", 0)
+            hvy_hits = self.specific_tags.get(hvy_key, {}).get("tags", 0)
+            score += (cmd_hits + hvy_hits) * 0.2
+            score += max(0, self.points_scored - 6_000) / 1000
+
+        elif self.role == "ammo":
+            score += self.specials_used * 3
+            score += max(0, self.points_scored - 3_000) / 1000
+
+        elif self.role == "medic":
+            score += self.specials_used * 3
+            if self.final_lives > 0:
+                score += 2  # survival bonus
+            score += 2 * max(0, self.points_scored - 2_000) / 1000
+
+        return round(score, 2)
+
     @property
     def survival_rate(self):
         """Percentage of lives remaining"""

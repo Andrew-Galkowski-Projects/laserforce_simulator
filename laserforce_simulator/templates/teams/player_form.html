@@ -16,12 +16,14 @@
     </div>
 
     <div class="mb-3">
-        <label for="{{ form.role.id_for_label }}" class="form-label">Role</label>
-        {{ form.role }}
-        {% if form.role.errors %}
-        <div class="text-danger">{{ form.role.errors }}</div>
+        <label class="form-label">{{ form.preferred_roles.label }}</label>
+        <div class="d-flex flex-wrap gap-3">
+            {{ form.preferred_roles }}
+        </div>
+        {% if form.preferred_roles.errors %}
+        <div class="text-danger">{{ form.preferred_roles.errors }}</div>
         {% endif %}
-        <div class="form-text">Choose the player's role in Space Marines 5</div>
+        <div class="form-text">{{ form.preferred_roles.help_text }}</div>
     </div>
 
     <button type="submit" class="btn btn-primary">Save Player</button>
@@ -30,6 +32,6 @@
 
 <div class="mt-4">
     <h5>Current Team Composition</h5>
-    <p class="text-muted">{{ team.name }} currently has {{ team.player_count }}/6 players</p>
+    <p class="text-muted">{{ team.name }} currently has {{ team.player_count }} player(s)</p>
 </div>
 {% endblock %}

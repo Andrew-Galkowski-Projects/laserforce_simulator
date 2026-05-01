@@ -1,8 +1,8 @@
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.core.exceptions import ValidationError
-from .models import Team, Player
-from .forms import TeamForm, PlayerForm
+from .models import Team, Player, ROLE_CHOICES
+from .forms import TeamForm, PlayerForm, TeamSlotForm
 
 
 def team_list(request):
@@ -14,25 +14,17 @@ def team_list(request):
 def team_detail(request, team_id):
     """Display team details and roster"""
     team = get_object_or_404(Team, id=team_id)
-    players = team.players.all().order_by("role", "name")
-
-    # Group players by role for display
-    players_by_role = {}
-    for player in players:
-        if player.role not in players_by_role:
-            players_by_role[player.role] = []
-        players_by_role[player.role].append(player)
+    players = team.players.all().order_by("name")
 
     context = {
         "team": team,
         "players": players,
-        "players_by_role": players_by_role,
+        "active_roster": team.active_roster,
+        "bench_players": team.bench_players,
         "is_valid": team.is_valid_roster,
+        "roster_errors": team.roster_errors,
         "player_count": team.player_count,
-        # Pass role choices and how many players are missing so the template
-        # can render correctly even when there are 0 players.
-        "roles": Player.ROLES,
-        "missing": 6 - team.player_count,
+        "role_choices": ROLE_CHOICES,
     }
     return render(request, "teams/team_detail.html", context)
 
@@ -73,6 +65,26 @@ def team_edit(request, team_id):
     )
 
 
+def team_slots_edit(request, team_id):
+    """Assign players to role slots on a team."""
+    team = get_object_or_404(Team, id=team_id)
+
+    if request.method == "POST":
+        form = TeamSlotForm(request.POST, instance=team)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Roster slots updated.")
+            return redirect("team_detail", team_id=team.id)
+    else:
+        form = TeamSlotForm(instance=team)
+
+    return render(
+        request,
+        "teams/team_slots_form.html",
+        {"form": form, "team": team, "title": f"Edit Roster – {team.name}"},
+    )
+
+
 def player_add(request, team_id):
     """Add a player to a team"""
     team = get_object_or_404(Team, id=team_id)
@@ -83,7 +95,7 @@ def player_add(request, team_id):
             player = form.save(commit=False)
             player.team = team
             try:
-                player.full_clean()  # This will call our custom validation
+                player.full_clean()
                 player.save()
                 messages.success(
                     request, f'Player "{player.name}" added to {team.name}!'
