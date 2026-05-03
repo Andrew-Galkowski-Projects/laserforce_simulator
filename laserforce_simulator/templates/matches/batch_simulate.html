@@ -1,0 +1,196 @@
+{% extends 'base.html' %}
+
+{% block title %}Batch Simulation — Laserforce Manager{% endblock %}
+
+{% block content %}
+<h1>Batch Simulation</h1>
+<p class="text-muted">Run 10–500 rounds in memory and see the win-probability distribution. No match records are saved.</p>
+
+<form method="post" class="mb-4">
+  {% csrf_token %}
+  <div class="row g-3 align-items-end">
+    <div class="col-md-4">
+      <label class="form-label">{{ form.team_red.label }}</label>
+      {{ form.team_red }}
+      {% if form.team_red.errors %}<div class="text-danger small">{{ form.team_red.errors }}</div>{% endif %}
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">{{ form.team_blue.label }}</label>
+      {{ form.team_blue }}
+      {% if form.team_blue.errors %}<div class="text-danger small">{{ form.team_blue.errors }}</div>{% endif %}
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">{{ form.n.label }}</label>
+      {{ form.n }}
+      {% if form.n.errors %}<div class="text-danger small">{{ form.n.errors }}</div>{% endif %}
+    </div>
+    <div class="col-md-2">
+      <button type="submit" class="btn btn-primary w-100">Run</button>
+    </div>
+  </div>
+</form>
+
+{% if results %}
+<hr>
+<div class="d-flex align-items-baseline gap-3 mb-3">
+  <h2 class="mb-0">Results — {{ results.n }} simulations</h2>
+  <span class="text-muted small">completed in {{ elapsed }}s</span>
+</div>
+
+{# ---- Win probability ---- #}
+<div class="row g-3 mb-4">
+  <div class="col-md-4">
+    <div class="card border-danger">
+      <div class="card-body text-center">
+        <div class="fs-1 fw-bold text-danger">{{ results.red_win_pct|floatformat:1 }}%</div>
+        <div class="text-muted">{{ team_red.name }} win rate</div>
+        <div class="small text-muted">{{ results.red_wins }} W / {{ results.ties }} T / {{ results.blue_wins }} L</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-body text-center">
+        <div class="fs-1 fw-bold">{{ results.ties }}</div>
+        <div class="text-muted">Ties</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card border-primary">
+      <div class="card-body text-center">
+        <div class="fs-1 fw-bold text-primary">{{ results.blue_win_pct|floatformat:1 }}%</div>
+        <div class="text-muted">{{ team_blue.name }} win rate</div>
+        <div class="small text-muted">{{ results.blue_wins }} W / {{ results.ties }} T / {{ results.red_wins }} L</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ---- Average stats ---- #}
+<div class="row g-3 mb-4">
+  <div class="col-md-6">
+    <table class="table table-sm table-bordered">
+      <thead class="table-danger"><tr><th colspan="2">{{ team_red.name }} averages</th></tr></thead>
+      <tbody>
+        <tr><td>Score</td><td>{{ results.avg_red_score|floatformat:0 }}</td></tr>
+        <tr><td>Survivors</td><td>{{ results.avg_red_survivors|floatformat:2 }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col-md-6">
+    <table class="table table-sm table-bordered">
+      <thead class="table-primary"><tr><th colspan="2">{{ team_blue.name }} averages</th></tr></thead>
+      <tbody>
+        <tr><td>Score</td><td>{{ results.avg_blue_score|floatformat:0 }}</td></tr>
+        <tr><td>Survivors</td><td>{{ results.avg_blue_survivors|floatformat:2 }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ---- Score distribution histogram ---- #}
+<h4>Score distribution</h4>
+<canvas id="scoreChart" height="100"></canvas>
+
+{% if has_seeds %}
+<hr>
+<h4 class="mb-3">Save games</h4>
+<p class="text-muted small">
+  Re-run selected games with the exact same random sequence and save them as browsable rounds.
+  <strong>Average</strong> games have scores closest to the mean; <strong>Highlight</strong> games are the most lopsided or unusual.
+</p>
+<div class="d-flex flex-wrap gap-3 mb-3">
+  <div class="input-group" style="width:auto">
+    <select id="avgN" class="form-select form-select-sm">
+      <option value="1">1 game</option>
+      <option value="5">5 games</option>
+      <option value="10">10 games</option>
+    </select>
+    <button class="btn btn-outline-secondary btn-sm" onclick="saveGames('avg')">Save Average Game(s)</button>
+  </div>
+  <div class="input-group" style="width:auto">
+    <select id="outlierN" class="form-select form-select-sm">
+      <option value="1">1 game</option>
+      <option value="5">5 games</option>
+      <option value="10">10 games</option>
+    </select>
+    <button class="btn btn-outline-danger btn-sm" onclick="saveGames('outlier')">Save Highlight Game(s)</button>
+  </div>
+</div>
+<div id="saveStatus"></div>
+{% endif %}
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+{% if has_seeds %}
+<script>
+const SAVE_URL = "{% url 'save_batch_games' %}";
+const STATUS_BASE = "/matches/save-batch-status/";
+const CSRF = document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+function saveGames(gameType) {
+  const n = document.getElementById(gameType + 'N').value;
+  const statusDiv = document.getElementById('saveStatus');
+  statusDiv.innerHTML = '<div class="alert alert-info">Starting save…</div>';
+  fetch(SAVE_URL, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRFToken': CSRF},
+    body: 'game_type=' + gameType + '&n=' + n,
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) { statusDiv.innerHTML = '<div class="alert alert-danger">' + data.error + '</div>'; return; }
+    statusDiv.innerHTML = '<div class="alert alert-info">Saving ' + n + ' game(s)…</div>';
+    poll(data.job_id, statusDiv);
+  })
+  .catch(() => { statusDiv.innerHTML = '<div class="alert alert-danger">Request failed.</div>'; });
+}
+
+function poll(jobId, statusDiv) {
+  fetch(STATUS_BASE + jobId + '/')
+  .then(r => r.json())
+  .then(data => {
+    if (data.status === 'running') {
+      setTimeout(() => poll(jobId, statusDiv), 1500);
+    } else if (data.status === 'done') {
+      const links = data.round_ids.map(id =>
+        '<a href="/matches/game-round/' + id + '/" class="btn btn-sm btn-outline-primary me-1 mb-1">View Round ' + id + '</a>'
+      ).join('');
+      statusDiv.innerHTML = '<div class="alert alert-success">Saved ' + data.round_ids.length + ' game(s).<br>' + links + '</div>';
+    } else {
+      statusDiv.innerHTML = '<div class="alert alert-danger">Save failed: ' + (data.error || 'unknown error') + '</div>';
+    }
+  });
+}
+</script>
+{% endif %}
+{% if results %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+(function () {
+  const labels = {{ bin_labels_json|safe }};
+  const redData = {{ red_hist_json|safe }};
+  const blueData = {{ blue_hist_json|safe }};
+  new Chart(document.getElementById("scoreChart"), {
+    type: "bar",
+    data: {
+      labels: labels,
+      datasets: [
+        { label: "{{ team_red.name }}", data: redData, backgroundColor: "rgba(220,53,69,0.6)", borderColor: "rgba(220,53,69,1)", borderWidth: 1 },
+        { label: "{{ team_blue.name }}", data: blueData, backgroundColor: "rgba(13,110,253,0.6)", borderColor: "rgba(13,110,253,1)", borderWidth: 1 },
+      ],
+    },
+    options: {
+      plugins: { legend: { position: "top" } },
+      scales: {
+        x: { title: { display: true, text: "Score range" } },
+        y: { title: { display: true, text: "Number of simulations" }, beginAtZero: true },
+      },
+    },
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}
