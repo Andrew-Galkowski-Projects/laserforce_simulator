@@ -1431,10 +1431,10 @@ class TestBatchSimulatorSeedReproducibility:
         state = random.getstate()
 
         random.setstate(state)
-        r1 = sim._simulate_round(red_roster, blue_roster)
+        r1, _, _ = sim._simulate_round(red_roster, blue_roster)
 
         random.setstate(state)
-        r2 = sim._simulate_round(red_roster, blue_roster)
+        r2, _, _ = sim._simulate_round(red_roster, blue_roster)
 
         assert r1["red_points"] == r2["red_points"]
         assert r1["blue_points"] == r2["blue_points"]
@@ -1451,7 +1451,7 @@ class TestBatchSimulatorSeedReproducibility:
         outcomes = set()
         for seed_val in range(20):
             random.seed(seed_val)
-            r = sim._simulate_round(red_roster, blue_roster)
+            r, _, _ = sim._simulate_round(red_roster, blue_roster)
             outcomes.add((r["red_points"], r["blue_points"]))
 
         assert len(outcomes) > 1, "Expected varied results across different seeds"
@@ -1476,10 +1476,10 @@ class TestBatchSimulatorSeedReproducibility:
         state = random.getstate()
 
         random.setstate(state)
-        r1 = sim._simulate_round(red_roster, blue_roster)
+        r1, _, _ = sim._simulate_round(red_roster, blue_roster)
 
         random.setstate(deserialize(serialize(state)))
-        r2 = sim._simulate_round(red_roster, blue_roster)
+        r2, _, _ = sim._simulate_round(red_roster, blue_roster)
 
         assert r1["red_points"] == r2["red_points"]
         assert r1["blue_points"] == r2["blue_points"]
@@ -1498,11 +1498,11 @@ class TestBatchSimulatorSeedReproducibility:
 
         # Capture state before round 4
         state = random.getstate()
-        round4 = sim._simulate_round(red_roster, blue_roster)
+        round4, _, _ = sim._simulate_round(red_roster, blue_roster)
 
         # Replay round 4 from the saved state
         random.setstate(state)
-        replay = sim._simulate_round(red_roster, blue_roster)
+        replay, _, _ = sim._simulate_round(red_roster, blue_roster)
 
         assert round4["red_points"] == replay["red_points"]
         assert round4["blue_points"] == replay["blue_points"]
