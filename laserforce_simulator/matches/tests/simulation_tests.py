@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 from teams.models import Team, Player
 from matches.models import GameRound, PlayerRoundState, GameEvent
-from matches.simulation import ResourceBasedSimulator
+from matches.simulation import ResourceBasedSimulator, BatchSimulator
 from matches.sim_helpers.weights import (
     _get_medic_weights,
     _get_ammo_weights,
@@ -1406,3 +1406,105 @@ class TestSimulationChangesWithWeights:
         ).count()
 
         assert normal_resupply != patched_resupply
+
+
+# ---------------------------------------------------------------------------
+# Batch simulator seed reproducibility
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestBatchSimulatorSeedReproducibility:
+    """Verify that capturing/restoring RNG state reproduces identical rounds."""
+
+    def _rosters(self, prefix):
+        team, _ = make_team_with_slots(prefix)
+        return list(team.active_roster), team
+
+    def test_same_state_produces_identical_round(self):
+        """Restoring the same random.getstate() before _simulate_round gives the same scores."""
+        import random
+        red_roster, _ = self._rosters("SeedR1")
+        blue_roster, _ = self._rosters("SeedB1")
+        sim = BatchSimulator()
+
+        random.seed(42)
+        state = random.getstate()
+
+        random.setstate(state)
+        r1 = sim._simulate_round(red_roster, blue_roster)
+
+        random.setstate(state)
+        r2 = sim._simulate_round(red_roster, blue_roster)
+
+        assert r1["red_points"] == r2["red_points"]
+        assert r1["blue_points"] == r2["blue_points"]
+        assert r1["red_survivors"] == r2["red_survivors"]
+        assert r1["blue_survivors"] == r2["blue_survivors"]
+
+    def test_different_seeds_produce_different_outcomes(self):
+        """Sanity check: across many seeds at least some rounds produce different scores."""
+        import random
+        red_roster, _ = self._rosters("SeedR2")
+        blue_roster, _ = self._rosters("SeedB2")
+        sim = BatchSimulator()
+
+        outcomes = set()
+        for seed_val in range(20):
+            random.seed(seed_val)
+            r = sim._simulate_round(red_roster, blue_roster)
+            outcomes.add((r["red_points"], r["blue_points"]))
+
+        assert len(outcomes) > 1, "Expected varied results across different seeds"
+
+    def test_serialized_seed_reproduces_round(self):
+        """Seeds round-trip through the JSON-serializable format used by views.py."""
+        import random
+
+        def serialize(state):
+            v, internal, gauss = state
+            return [v, list(internal), gauss]
+
+        def deserialize(data):
+            v, internal, gauss = data
+            return (v, tuple(internal), gauss)
+
+        red_roster, _ = self._rosters("SeedR3")
+        blue_roster, _ = self._rosters("SeedB3")
+        sim = BatchSimulator()
+
+        random.seed(7)
+        state = random.getstate()
+
+        random.setstate(state)
+        r1 = sim._simulate_round(red_roster, blue_roster)
+
+        random.setstate(deserialize(serialize(state)))
+        r2 = sim._simulate_round(red_roster, blue_roster)
+
+        assert r1["red_points"] == r2["red_points"]
+        assert r1["blue_points"] == r2["blue_points"]
+
+    def test_mid_run_seed_replays_specific_round(self):
+        """State captured after several rounds replays only that specific round."""
+        import random
+        red_roster, _ = self._rosters("SeedR4")
+        blue_roster, _ = self._rosters("SeedB4")
+        sim = BatchSimulator()
+
+        random.seed(99)
+        # Burn through 3 rounds to advance the RNG
+        for _ in range(3):
+            sim._simulate_round(red_roster, blue_roster)
+
+        # Capture state before round 4
+        state = random.getstate()
+        round4 = sim._simulate_round(red_roster, blue_roster)
+
+        # Replay round 4 from the saved state
+        random.setstate(state)
+        replay = sim._simulate_round(red_roster, blue_roster)
+
+        assert round4["red_points"] == replay["red_points"]
+        assert round4["blue_points"] == replay["blue_points"]
+        assert round4["red_survivors"] == replay["red_survivors"]
+        assert round4["blue_survivors"] == replay["blue_survivors"]

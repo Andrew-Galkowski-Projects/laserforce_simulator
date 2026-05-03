@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load static %}
 
 {% block title %}Event Log - {{ round.team_red.name }} vs {{ round.team_blue.name }}{% endblock %}
 
@@ -713,6 +714,13 @@
         (function pbEngine() {
             const MAX_SH = {commander: 3, heavy: 3, scout: 1, medic: 1, ammo: 1};
             const SHOT_POWER = {commander: 2, heavy: 3, scout: 1, medic: 1, ammo: 1};
+            const ROLE_ICONS = {
+                commander: '{% static "commander.png" %}',
+                heavy:     '{% static "heavy.png" %}',
+                scout:     '{% static "scout.png" %}',
+                medic:     '{% static "medic.png" %}',
+                ammo:      '{% static "ammo.png" %}',
+            };
             const PB_RED = '{{ round.team_red.name|escapejs }}';
             const PB_BLUE = '{{ round.team_blue.name|escapejs }}';
 
@@ -847,7 +855,7 @@
                     const cc = pbCellClass(p);
                     const livesTxt = p.isElim ? '&#9760;' : p.lives;
                     return '<tr class="' + rowCls + '">' +
-                        '<td class="' + cc + '">' + esc(p.name) + '<small class="text-muted ms-1">' + esc(p.role) + '</small></td>' +
+                        '<td class="' + cc + '">' + esc(p.name) + '<img src="' + (ROLE_ICONS[p.role] || '') + '" alt="' + esc(p.role) + '" title="' + esc(p.role) + '" height="16" class="ms-1" style="vertical-align:middle"></td>' +
                         '<td class="' + cc + ' fw-bold">' + p.score.toLocaleString() + '</td>' +
                         '<td class="' + cc + '">' + livesTxt + '</td>' +
                         '<td class="' + cc + '">' + p.shots + '</td></tr>';
