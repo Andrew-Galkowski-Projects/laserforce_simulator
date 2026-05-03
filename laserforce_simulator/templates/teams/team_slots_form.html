@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ title }} - Laserforce Manager{% endblock %}
+
+{% block content %}
+<h1>{{ title }}</h1>
+<p class="text-muted">Assign players to each role slot. Only slotted players are included in the simulation.</p>
+
+<form method="post">
+    {% csrf_token %}
+    {% for field in form %}
+    <div class="mb-3">
+        <label for="{{ field.id_for_label }}" class="form-label fw-semibold">{{ field.label }}</label>
+        {{ field }}
+        {% if field.errors %}
+        <div class="text-danger">{{ field.errors }}</div>
+        {% endif %}
+    </div>
+    {% endfor %}
+
+    <button type="submit" class="btn btn-primary">Save Roster</button>
+    <a href="{% url 'team_detail' team.id %}" class="btn btn-secondary">Cancel</a>
+</form>
+{% endblock %}

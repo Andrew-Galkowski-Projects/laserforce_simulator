@@ -3,7 +3,7 @@
 {% block title %}{{ round.team_red.name }} vs {{ round.team_blue.name }} - Round Detail{% endblock %}
 
 {% block content %}
-{% load team_extras %}
+{% load team_extras static %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
         <h1>{{ round.team_red.name }} vs {{ round.team_blue.name }}</h1>
@@ -95,7 +95,7 @@
                             {{ perf.eliminated_timestamp }} {% else %} <span class="text-success">●</span>
                                 {% endif %}
                         </td>
-                        <td><span class="badge bg-secondary">{{ perf.role|capfirst }}</span></td>
+                        <td>{% with ri=perf.role|add:".png" %}<img src="{% static ri %}" alt="{{ perf.role|capfirst }}" title="{{ perf.role|capfirst }}" height="22" style="vertical-align:middle">{% endwith %}</td>
                         <td>{{ perf.points_scored }}</td>
                         <td>{{ perf.get_mvp }}</td>
                         <td>{{ perf.final_lives }}</td>
@@ -187,7 +187,7 @@
                             {{ perf.eliminated_timestamp }} {% else %} <span class="text-success">●</span>
                                 {% endif %}
                         </td>
-                        <td><span class="badge bg-secondary">{{ perf.role|capfirst }}</span></td>
+                        <td>{% with ri=perf.role|add:".png" %}<img src="{% static ri %}" alt="{{ perf.role|capfirst }}" title="{{ perf.role|capfirst }}" height="22" style="vertical-align:middle">{% endwith %}</td>
                         <td>{{ perf.points_scored }}</td>
                         <td>{{ perf.get_mvp }}</td>
                         <td>{{ perf.final_lives }}</td>
