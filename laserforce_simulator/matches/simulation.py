@@ -1,5 +1,8 @@
 import random
 import logging
+import threading
+import uuid
+from django.db import transaction
 from .models import GameEvent, Match, GameRound, PlayerRoundState, SingleRound
 from .sim_helpers.weights import (
     _get_medic_weights,
@@ -72,6 +75,7 @@ class ResourceBasedSimulator:
         game_round = self.simulate_detailed_round(team_red, team_blue, None, 1)
         return game_round
 
+    @transaction.atomic
     def simulate_detailed_round(self, team_red, team_blue, match=None, round_number=1):
         """Simulate a round with full player resource tracking"""
         game_round = GameRound.objects.create(
@@ -171,11 +175,7 @@ class ResourceBasedSimulator:
             to_run_n = [n for n in pending_nukes if n[0] <= second]
             pending_nukes = [n for n in pending_nukes if n[0] > second]
             for complete_time, player_state in to_run_n:
-                if (
-                    player_state.is_active_at(complete_time)
-                    and player_state.final_lives > 0
-                ):
-                    self._complete_nuke(player_state, complete_time)
+                self._resolve_pending_nuke(player_state, complete_time)
 
             # REFRESH player states from database after nukes/missiles to get updated was_eliminated_at values
             for p in red_players + blue_players:
@@ -672,6 +672,7 @@ class ResourceBasedSimulator:
                         else:
                             attacker.ally_nuke_cancels += 1
                         defender.own_specials_cancelled += 1
+                        defender.special_active_until = 0  # disarm fuse so resolution loop skips it
                         defender.save()
                         GameEvent.objects.create(
                             game_round=game_round,
@@ -1242,12 +1243,10 @@ class ResourceBasedSimulator:
             and player_state.is_active_at(second)
         ):
             if player_state.role == "commander":
-                # remove special points, set special active until to seconds + 4-7 seconds
                 player_state.final_special -= player_state.special_cost
                 player_state.specials_used += 1
                 countdown = random.randint(4, 7)
                 player_state.special_active_until = second + countdown
-                # schedule nuke completion instead of running immediately
                 player_state.save()
                 GameEvent.objects.create(
                     game_round=player_state.game_round,
@@ -1260,9 +1259,9 @@ class ResourceBasedSimulator:
                         "actor_role": player_state.role,
                         "special_active_until": player_state.special_active_until,
                         "special_points": player_state.final_special,
+                        "event_subtype": "nuke_armed",
                     },
                 )
-                # return a tuple indicating a scheduled nuke: ('nuke', complete_time, player_state)
                 return ("nuke", second + countdown, player_state)
             elif player_state.role == "scout":
                 # remove special points, set special active until to 900 (lasts whole round)
@@ -1471,6 +1470,41 @@ class ResourceBasedSimulator:
                 # Save once with all changes
                 opponent.save()
 
+    def _resolve_pending_nuke(self, player_state, complete_time):
+        """Detonate or cancel a pending nuke at its scheduled completion time.
+
+        Nuke fires only if the commander is alive AND the fuse was not disarmed by a
+        tag-cancel (special_active_until would have been reset to 0 in that case).
+        A downed-but-alive commander's nuke still fires — being temporarily down does
+        not cancel the nuke per SM5 rules; only elimination or a tag-cancel does.
+        """
+        nuke_armed = player_state.special_active_until >= complete_time
+        if player_state.final_lives > 0 and nuke_armed:
+            self._complete_nuke(player_state, complete_time)
+            GameEvent.objects.create(
+                game_round=player_state.game_round,
+                timestamp=complete_time,
+                event_type="special",
+                actor=player_state.player,
+                points_awarded=0,
+                description=f"{player_state.player.name}'s nuke detonated",
+                metadata={"event_subtype": "nuke_detonated", "actor_role": "commander"},
+            )
+        elif nuke_armed:
+            # Commander was eliminated during the fuse window — nuke cancelled
+            player_state.own_specials_cancelled += 1
+            player_state.save()
+            GameEvent.objects.create(
+                game_round=player_state.game_round,
+                timestamp=complete_time,
+                event_type="special",
+                actor=player_state.player,
+                points_awarded=0,
+                description=f"{player_state.player.name}'s nuke cancelled — eliminated during fuse",
+                metadata={"event_subtype": "nuke_cancelled", "cancelled_by": "elimination", "actor_role": "commander"},
+            )
+        # else: nuke was already tag-cancelled (special_active_until == 0); counters already updated
+
     def _reset_base(self, player_state, base_id, second):
         """Simulate resetting off a base"""
         # check if player can reset base (is alive, is in zone, hasn't already captured base)
@@ -1635,10 +1669,13 @@ class BatchSimulator:
         red_wins = blue_wins = ties = 0
         red_scores, blue_scores = [], []
         red_survivors_list, blue_survivors_list = [], []
+        round_seeds = []  # (score_diff, random_state)
 
         for _ in range(n):
-            result = self._simulate_round(red_roster, blue_roster)
+            seed_state = random.getstate()
+            result, _, _ = self._simulate_round(red_roster, blue_roster)
             rp, bp = result["red_points"], result["blue_points"]
+            round_seeds.append((rp - bp, seed_state))
             if rp > bp:
                 red_wins += 1
             elif bp > rp:
@@ -1649,6 +1686,15 @@ class BatchSimulator:
             blue_scores.append(bp)
             red_survivors_list.append(result["red_survivors"])
             blue_survivors_list.append(result["blue_survivors"])
+
+        # Pick the 10 most average and 10 most outlier rounds by score diff
+        if round_seeds:
+            mean_diff = sum(d for d, _ in round_seeds) / n
+            ranked = sorted(round_seeds, key=lambda x: abs(x[0] - mean_diff))
+            avg_seeds = [s for _, s in ranked[:10]]
+            outlier_seeds = [s for _, s in ranked[-10:]]
+        else:
+            avg_seeds = outlier_seeds = []
 
         avg = lambda lst: sum(lst) / len(lst) if lst else 0
         return {
@@ -1664,6 +1710,8 @@ class BatchSimulator:
             "avg_blue_survivors": avg(blue_survivors_list),
             "red_scores": red_scores,
             "blue_scores": blue_scores,
+            "avg_seeds": avg_seeds,
+            "outlier_seeds": outlier_seeds,
         }
 
     # ------------------------------------------------------------------ #
@@ -1686,6 +1734,7 @@ class BatchSimulator:
                 tag_id = f"{team_color}_{role}"
             state = PlayerState(
                 tag_id=tag_id,
+                player_id=player_model.id,
                 name=player_model.name,
                 team_color=team_color,
                 role=role,
@@ -1703,12 +1752,18 @@ class BatchSimulator:
             players.append(state)
         return players
 
-    def _simulate_round(self, red_roster, blue_roster):
+    def _simulate_round(self, red_roster, blue_roster, event_log=None):
+        """Returns (result_dict, red_players, blue_players).
+
+        When event_log is a list it is populated with event dicts suitable for
+        _flush_to_db, enabling exact replay and DB persistence.
+        """
         red_players = self._make_players(red_roster, "red")
         blue_players = self._make_players(blue_roster, "blue")
 
         pending_missiles = []  # (complete_time, attacker, defender)
         pending_nukes = []     # (complete_time, player_state)
+        eliminated_at = 901
 
         for second in range(0, 900, self.TICK):
             # --- process pending missiles ---
@@ -1716,7 +1771,7 @@ class BatchSimulator:
             pending_missiles = [m for m in pending_missiles if m[0] > second]
             for complete_time, attacker, defender in fired:
                 if attacker.is_active_at(complete_time) and defender.is_taggable_at(complete_time):
-                    self._complete_missile(attacker, defender, complete_time)
+                    self._complete_missile(attacker, defender, complete_time, event_log)
 
             # --- process pending nukes ---
             fired_n = [n for n in pending_nukes if n[0] <= second]
@@ -1724,7 +1779,7 @@ class BatchSimulator:
             for complete_time, ps in fired_n:
                 if ps.is_active_at(complete_time) and ps.final_lives > 0:
                     opposing = blue_players if ps.team_color == "red" else red_players
-                    self._complete_nuke(ps, complete_time, opposing)
+                    self._complete_nuke(ps, complete_time, opposing, event_log)
 
             # --- alive players this tick ---
             red_alive = [p for p in red_players if p.final_lives > 0 and p.was_eliminated_at > second]
@@ -1742,49 +1797,54 @@ class BatchSimulator:
                 ptype = plan["type"]
                 actor = plan["actor"]
                 if ptype in ("resupply_ammo", "resupply_lives"):
-                    self._attempt_resupply(actor, plan["target"], second)
+                    self._attempt_resupply(actor, plan["target"], second, event_log)
                 elif ptype == "change_zone":
                     self._change_zone(actor, plan.get("zone"))
                 elif ptype == "hide":
                     actor.is_hiding = True
                 elif ptype == "capture_base":
-                    self._capture_base(actor, plan["base_id"])
+                    self._capture_base(actor, plan["base_id"], event_log, second)
                 elif ptype == "missile":
                     scheduled = self._start_missile_lock(actor, plan["target"], second)
                     if scheduled:
                         pending_missiles.append(scheduled)
                 elif ptype == "use_special":
-                    scheduled = self._use_special(actor, second, all_alive)
+                    scheduled = self._use_special(actor, second, all_alive, event_log)
                     if scheduled and scheduled[0] == "nuke":
                         pending_nukes.append((scheduled[1], scheduled[2]))
                 elif ptype == "tag":
                     tag_attempts.append({"attacker": actor, "defender": plan["target"]})
 
             if tag_attempts:
-                self._resolve_tag_attempts(tag_attempts, second)
+                self._resolve_tag_attempts(tag_attempts, second, event_log)
 
             # --- check for team elimination ---
             red_alive = [p for p in red_players if p.final_lives > 0]
             blue_alive = [p for p in blue_players if p.final_lives > 0]
             if not red_alive or not blue_alive:
+                eliminated_at = second
                 if not red_alive:
                     for p in blue_alive:
-                        self._award_bases(p)
+                        self._award_bases(p, event_log, second)
                 if not blue_alive:
                     for p in red_alive:
-                        self._award_bases(p)
+                        self._award_bases(p, event_log, second)
                 break
 
         red_points = sum(p.points_scored for p in red_players)
         blue_points = sum(p.points_scored for p in blue_players)
         red_survivors = sum(1 for p in red_players if p.final_lives > 0)
         blue_survivors = sum(1 for p in blue_players if p.final_lives > 0)
-        return {
+        result = {
             "red_points": red_points,
             "blue_points": blue_points,
             "red_survivors": red_survivors,
             "blue_survivors": blue_survivors,
+            "red_eliminated": all(p.final_lives <= 0 for p in red_players),
+            "blue_eliminated": all(p.final_lives <= 0 for p in blue_players),
+            "eliminated_at": eliminated_at,
         }
+        return result, red_players, blue_players
 
     # ------------------------------------------------------------------ #
     # Action planning — reuses weight functions from weights.py
@@ -1909,7 +1969,7 @@ class BatchSimulator:
     # Action resolution (no DB writes)
     # ------------------------------------------------------------------ #
 
-    def _resolve_tag_attempts(self, attempts, second):
+    def _resolve_tag_attempts(self, attempts, second, event_log=None):
         outcomes = []
         for a in attempts:
             attacker, defender = a["attacker"], a["defender"]
@@ -1930,6 +1990,15 @@ class BatchSimulator:
             if o["result"] == "miss_hid":
                 if attacker.role != "ammo":
                     attacker.final_shots -= 1
+                attacker.shots_missed += 1
+                if event_log is not None:
+                    event_log.append({
+                        "event_type": "miss", "actor_id": attacker.player_id,
+                        "target_id": defender.player_id, "timestamp": second,
+                        "points_awarded": 0,
+                        "description": f"{attacker.name} misses {defender.name} (hiding)",
+                        "metadata": {"reason": "hiding"},
+                    })
                 continue
 
             if o["result"] == "hit":
@@ -1943,8 +2012,20 @@ class BatchSimulator:
                 defender.times_tagged += 1
                 defender.points_scored -= 20
                 defender.shields = max(0, defender.shields - attacker.shot_power)
+
+                if event_log is not None:
+                    event_log.append({
+                        "event_type": "tag", "actor_id": attacker.player_id,
+                        "target_id": defender.player_id, "timestamp": second,
+                        "points_awarded": 100,
+                        "description": f"{attacker.name} tags {defender.name}",
+                        "metadata": {
+                            "actor_role": attacker.role, "target_role": defender.role,
+                            "target_lives": defender.final_lives,
+                        },
+                    })
+
                 if defender.shields == 0:
-                    # cancel in-flight nuke
                     if defender.role == "commander" and defender.special_active_until > second:
                         defender.special_active_until = 0
                     defender.final_lives = max(0, defender.final_lives - 1)
@@ -1952,10 +2033,27 @@ class BatchSimulator:
                     defender.shields = defender.max_shields
                     if defender.final_lives <= 0:
                         defender.was_eliminated_at = second
+                        if event_log is not None:
+                            event_log.append({
+                                "event_type": "elimination", "actor_id": attacker.player_id,
+                                "target_id": defender.player_id, "timestamp": second,
+                                "points_awarded": 0,
+                                "description": f"{defender.name} eliminated by {attacker.name}",
+                                "metadata": {"elimination_action": "tag"},
+                            })
             else:
                 attacker.final_shots = max(0, attacker.final_shots - 1)
+                attacker.shots_missed += 1
+                if event_log is not None:
+                    event_log.append({
+                        "event_type": "miss", "actor_id": attacker.player_id,
+                        "target_id": defender.player_id, "timestamp": second,
+                        "points_awarded": 0,
+                        "description": f"{attacker.name} misses {defender.name}",
+                        "metadata": {},
+                    })
 
-    def _attempt_resupply(self, tagger, teammate, second):
+    def _attempt_resupply(self, tagger, teammate, second, event_log=None):
         ammo_chart = {"commander": 5, "heavy": 5, "scout": 10, "medic": 5}
         medic_chart = {"commander": 4, "heavy": 3, "scout": 5, "ammo": 3}
         if tagger.role == "ammo" and teammate.is_resupplyable_at(second):
@@ -1967,6 +2065,15 @@ class BatchSimulator:
                 teammate.special_active_until = second
             if teammate.role == "commander" and teammate.special_active_until > second:
                 teammate.special_active_until = 0
+            tagger.resupplies_given += 1
+            if event_log is not None:
+                event_log.append({
+                    "event_type": "resupply_ammo", "actor_id": tagger.player_id,
+                    "target_id": teammate.player_id, "timestamp": second,
+                    "points_awarded": 0,
+                    "description": f"{tagger.name} resupplies {teammate.name}",
+                    "metadata": {"amount": amount, "actor_role": tagger.role, "target_role": teammate.role},
+                })
         elif tagger.role == "medic" and tagger.final_shots > 0 and teammate.is_resupplyable_at(second):
             amount = medic_chart.get(teammate.role, 3)
             teammate.final_lives = min(teammate.max_lives, teammate.final_lives + amount)
@@ -1976,6 +2083,15 @@ class BatchSimulator:
                 teammate.special_active_until = second
             if teammate.role == "commander" and teammate.special_active_until > second:
                 teammate.special_active_until = 0
+            tagger.resupplies_given += 1
+            if event_log is not None:
+                event_log.append({
+                    "event_type": "resupply_lives", "actor_id": tagger.player_id,
+                    "target_id": teammate.player_id, "timestamp": second,
+                    "points_awarded": 0,
+                    "description": f"{tagger.name} heals {teammate.name}",
+                    "metadata": {"amount": amount, "actor_role": tagger.role, "target_role": teammate.role},
+                })
 
     def _change_zone(self, player, towards=None):
         if player.current_zone == 1:
@@ -1983,7 +2099,7 @@ class BatchSimulator:
         else:
             player.current_zone = 1
 
-    def _capture_base(self, player, base_id):
+    def _capture_base(self, player, base_id, event_log=None, second=0):
         if player.final_shots >= 3 or player.role == "ammo":
             if player.role != "ammo":
                 player.final_shots -= 3
@@ -1995,15 +2111,36 @@ class BatchSimulator:
             player.points_scored += 1001
             if player.role != "heavy":
                 player.final_special = min(player.max_special, player.final_special + 5)
+            if event_log is not None:
+                event_log.append({
+                    "event_type": "base_capture", "actor_id": player.player_id, "target_id": None,
+                    "timestamp": second, "points_awarded": 1001,
+                    "description": f"{player.name} captures base",
+                    "metadata": {"base_id": base_id, "actor_role": player.role},
+                })
 
-    def _award_bases(self, player):
+    def _award_bases(self, player, event_log=None, second=0):
         if player.final_lives > 0:
             if not player.neutral_base_destroyed:
                 player.points_scored += 1001
                 player.neutral_base_destroyed = True
+                if event_log is not None:
+                    event_log.append({
+                        "event_type": "base_capture", "actor_id": player.player_id, "target_id": None,
+                        "timestamp": second, "points_awarded": 1001,
+                        "description": f"{player.name} awarded neutral base",
+                        "metadata": {"base_id": 15, "actor_role": player.role},
+                    })
             if not player.opposing_base_destroyed:
                 player.points_scored += 1001
                 player.opposing_base_destroyed = True
+                if event_log is not None:
+                    event_log.append({
+                        "event_type": "base_capture", "actor_id": player.player_id, "target_id": None,
+                        "timestamp": second, "points_awarded": 1001,
+                        "description": f"{player.name} awarded opposing base",
+                        "metadata": {"base_id": 14 if player.team_color == "red" else 13, "actor_role": player.role},
+                    })
 
     def _start_missile_lock(self, attacker, defender, second):
         if (attacker.is_active_at(second) and defender.is_taggable_at(second)
@@ -2014,33 +2151,67 @@ class BatchSimulator:
             return (second + delay, attacker, defender)
         return None
 
-    def _complete_missile(self, attacker, defender, second):
+    def _complete_missile(self, attacker, defender, second, event_log=None):
         if attacker.is_active_at(second) and defender.is_taggable_at(second):
             defender.shields = defender.max_shields
             defender.points_scored -= 100
             defender.final_lives = max(0, defender.final_lives - 2)
             if defender.final_lives <= 0:
                 defender.was_eliminated_at = second
+                if event_log is not None:
+                    event_log.append({
+                        "event_type": "elimination", "actor_id": attacker.player_id,
+                        "target_id": defender.player_id, "timestamp": second,
+                        "points_awarded": 0,
+                        "description": f"{defender.name} eliminated by missile from {attacker.name}",
+                        "metadata": {"elimination_action": "missile"},
+                    })
             defender.last_downed_time = second
-            defender.times_tagged += 1
+            defender.times_missiled += 1
 
             attacker.points_scored += 500
             attacker.final_missiles -= 1
             attacker.missiles_landed += 1
             if attacker.role != "heavy":
                 attacker.final_special = min(attacker.max_special, attacker.final_special + 2)
+            if event_log is not None:
+                event_log.append({
+                    "event_type": "missile", "actor_id": attacker.player_id,
+                    "target_id": defender.player_id, "timestamp": second,
+                    "points_awarded": 500,
+                    "description": f"{attacker.name} hits {defender.name} with missile",
+                    "metadata": {
+                        "actor_role": attacker.role, "target_role": defender.role,
+                        "target_lives": defender.final_lives,
+                    },
+                })
 
-    def _use_special(self, player, second, all_alive):
+    def _use_special(self, player, second, all_alive, event_log=None):
         if not (player.can_use_special and player.final_lives > 0 and player.is_active_at(second)):
             return None
+        player.specials_used += 1
         if player.role == "commander":
             player.final_special -= player.special_cost
             countdown = random.randint(4, 7)
             player.special_active_until = second + countdown
+            if event_log is not None:
+                event_log.append({
+                    "event_type": "special", "actor_id": player.player_id, "target_id": None,
+                    "timestamp": second, "points_awarded": 0,
+                    "description": f"{player.name} activates nuke",
+                    "metadata": {"actor_role": player.role, "fires_at": second + countdown},
+                })
             return ("nuke", second + countdown, player)
         elif player.role == "scout":
             player.final_special -= player.special_cost
             player.special_active_until = 900
+            if event_log is not None:
+                event_log.append({
+                    "event_type": "special", "actor_id": player.player_id, "target_id": None,
+                    "timestamp": second, "points_awarded": 0,
+                    "description": f"{player.name} activates rapid fire",
+                    "metadata": {"actor_role": player.role},
+                })
         elif player.role == "medic":
             player.final_special -= player.special_cost
             heal_chart = {"commander": 4, "heavy": 3, "scout": 5, "ammo": 2, "medic": 0}
@@ -2048,6 +2219,13 @@ class BatchSimulator:
                 if mate.team_color == player.team_color and mate.is_active_at(second):
                     amount = heal_chart.get(mate.role, 0)
                     mate.final_lives = min(mate.max_lives, mate.final_lives + amount)
+            if event_log is not None:
+                event_log.append({
+                    "event_type": "special", "actor_id": player.player_id, "target_id": None,
+                    "timestamp": second, "points_awarded": 0,
+                    "description": f"{player.name} team heal special",
+                    "metadata": {"actor_role": player.role},
+                })
         elif player.role == "ammo":
             player.final_special -= player.special_cost
             shot_chart = {"commander": 5, "heavy": 5, "scout": 10, "medic": 5, "ammo": 0}
@@ -2055,11 +2233,25 @@ class BatchSimulator:
                 if mate.team_color == player.team_color and mate.is_active_at(second):
                     amount = shot_chart.get(mate.role, 0)
                     mate.final_shots = min(mate.max_shots, mate.final_shots + amount)
+            if event_log is not None:
+                event_log.append({
+                    "event_type": "special", "actor_id": player.player_id, "target_id": None,
+                    "timestamp": second, "points_awarded": 0,
+                    "description": f"{player.name} team ammo special",
+                    "metadata": {"actor_role": player.role},
+                })
         return None
 
-    def _complete_nuke(self, player, second, opposing_players):
+    def _complete_nuke(self, player, second, opposing_players, event_log=None):
         if player.is_active_at(second) and player.final_lives > 0:
             player.points_scored += 500
+            if event_log is not None:
+                event_log.append({
+                    "event_type": "special", "actor_id": player.player_id, "target_id": None,
+                    "timestamp": second, "points_awarded": 500,
+                    "description": f"{player.name} nuke detonates",
+                    "metadata": {"actor_role": player.role},
+                })
             for opp in opposing_players:
                 if opp.final_lives <= 0:
                     continue
@@ -2071,6 +2263,117 @@ class BatchSimulator:
                     opp.special_active_until = 0
                 if opp.final_lives <= 0:
                     opp.was_eliminated_at = second
+                    if event_log is not None:
+                        event_log.append({
+                            "event_type": "elimination", "actor_id": player.player_id,
+                            "target_id": opp.player_id, "timestamp": second,
+                            "points_awarded": 0,
+                            "description": f"{opp.name} eliminated by nuke",
+                            "metadata": {"elimination_action": "nuke"},
+                        })
+
+
+    # ------------------------------------------------------------------ #
+    # Seed-based exact replay and DB persistence
+    # ------------------------------------------------------------------ #
+
+    def replay_round(self, red_roster, blue_roster, seed_state):
+        """Replay one round from a saved random state, collecting full event log."""
+        events = []
+        random.setstate(seed_state)
+        result, red_players, blue_players = self._simulate_round(red_roster, blue_roster, event_log=events)
+        return result, red_players, blue_players, events
+
+    def save_games(self, team_red, team_blue, seeds, n):
+        """Replay and persist n games using the provided seed states."""
+        red_roster = list(team_red.active_roster)
+        blue_roster = list(team_blue.active_roster)
+        saved = []
+        for seed_state in seeds[:n]:
+            result, red_players, blue_players, events = self.replay_round(
+                red_roster, blue_roster, seed_state
+            )
+            gr = self._flush_to_db(team_red, team_blue, result, red_players, blue_players, events)
+            saved.append(gr)
+        return saved
+
+    @transaction.atomic
+    def _flush_to_db(self, team_red, team_blue, result, red_players, blue_players, events):
+        """Write a replayed in-memory round to DB as a standalone GameRound."""
+        from teams.models import Player as PlayerModel
+
+        game_round = GameRound.objects.create(
+            match=None,
+            round_number=1,
+            team_red=team_red,
+            team_blue=team_blue,
+            red_points=result["red_points"],
+            blue_points=result["blue_points"],
+            red_team_eliminated=result["red_eliminated"],
+            blue_team_eliminated=result["blue_eliminated"],
+            eliminated_at=result["eliminated_at"],
+            is_completed=True,
+        )
+        # Trigger winner calculation
+        game_round.save()
+
+        # Build id → Player ORM object map (one query)
+        all_pids = [p.player_id for p in red_players + blue_players if p.player_id]
+        players_by_id = {p.id: p for p in PlayerModel.objects.filter(id__in=all_pids)}
+
+        # Create PlayerRoundState rows
+        for p in red_players + blue_players:
+            player_obj = players_by_id.get(p.player_id)
+            if not player_obj:
+                continue
+            PlayerRoundState.objects.create(
+                game_round=game_round,
+                player=player_obj,
+                team_color=p.team_color,
+                role=p.role,
+                current_zone=p.current_zone,
+                shields=p.shields,
+                starting_lives=p.starting_lives,
+                starting_shots=p.starting_shots,
+                starting_special=0,
+                starting_missiles=self.ROLE_STARTING_RESOURCES[p.role]["missiles"],
+                final_lives=p.final_lives,
+                final_shots=p.final_shots,
+                final_special=p.final_special,
+                final_missiles=p.final_missiles,
+                neutral_base_destroyed=p.neutral_base_destroyed,
+                opposing_base_destroyed=p.opposing_base_destroyed,
+                special_active_until=p.special_active_until or 0,
+                is_hiding=p.is_hiding,
+                points_scored=p.points_scored,
+                tags_made=p.tags_made,
+                shots_missed=p.shots_missed,
+                times_tagged=p.times_tagged,
+                times_missiled=p.times_missiled,
+                missiles_landed=p.missiles_landed,
+                resupplies_given=p.resupplies_given,
+                specials_used=p.specials_used,
+                was_eliminated_at=p.was_eliminated_at,
+            )
+
+        # Create GameEvent rows
+        for ev in events:
+            actor_obj = players_by_id.get(ev["actor_id"])
+            if not actor_obj:
+                continue
+            target_obj = players_by_id.get(ev.get("target_id")) if ev.get("target_id") else None
+            GameEvent.objects.create(
+                game_round=game_round,
+                timestamp=ev["timestamp"],
+                event_type=ev["event_type"],
+                actor=actor_obj,
+                target=target_obj,
+                points_awarded=ev.get("points_awarded", 0),
+                description=ev.get("description", ""),
+                metadata=ev.get("metadata", {}),
+            )
+
+        return game_round
 
 
 # Legacy simple simulator for backward compatibility

@@ -1,10 +1,54 @@
+import json
+import threading
+import uuid
+
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.db.models import Q
+from django.http import JsonResponse
 from teams.models import Team
 from .models import Match, SingleRound, GameRound, PlayerRoundState
-from .simulation import ResourceBasedSimulator, SimpleMatchSimulator, BatchSimulator
-from .forms import MatchSetupForm, SingleRoundSetupForm, BatchSimulateForm
+from .simulation import ResourceBasedSimulator, SimpleMatchSimulator
+from .forms import MatchSetupForm, SingleRoundSetupForm
+
+# In-process job store for async save operations
+_SAVE_JOBS: dict = {}
+_JOBS_LOCK = threading.Lock()
+
+
+def _serialize_seeds(seeds):
+    """Convert random state tuples to JSON-serialisable lists."""
+    result = []
+    for state in seeds:
+        v, internal, gauss = state
+        result.append([v, list(internal), gauss])
+    return result
+
+
+def _deserialize_seeds(data):
+    """Restore random state tuples from serialised lists."""
+    result = []
+    for item in data:
+        v, internal, gauss = item
+        result.append((v, tuple(internal), gauss))
+    return result
+
+
+def _run_save_job(job_id, team_red_id, team_blue_id, seeds, n):
+    """Background thread: replay and persist n games, then update job status."""
+    import django.db
+    try:
+        team_red = Team.objects.get(id=team_red_id)
+        team_blue = Team.objects.get(id=team_blue_id)
+        game_rounds = BatchSimulator().save_games(team_red, team_blue, seeds, n)
+        round_ids = [gr.id for gr in game_rounds]
+        with _JOBS_LOCK:
+            _SAVE_JOBS[job_id] = {"status": "done", "round_ids": round_ids, "error": None}
+    except Exception as exc:
+        with _JOBS_LOCK:
+            _SAVE_JOBS[job_id] = {"status": "error", "round_ids": [], "error": str(exc)}
+    finally:
+        django.db.close_old_connections()
 
 
 def match_list(request):
@@ -309,7 +353,6 @@ def team_match_history(request, team_id):
 
 def simulate_batch(request):
     """Run N in-memory simulations and display aggregate statistics."""
-    import json
     import time
 
     form = BatchSimulateForm(request.POST or None)
@@ -333,6 +376,16 @@ def simulate_batch(request):
         t0 = time.time()
         results = BatchSimulator().run(team_red, team_blue, n)
         elapsed = time.time() - t0
+
+        # Stash seeds in session for the save-games views (strip from template context)
+        avg_seeds = results.pop("avg_seeds", [])
+        outlier_seeds = results.pop("outlier_seeds", [])
+        request.session["batch_seeds"] = {
+            "team_red_id": team_red.id,
+            "team_blue_id": team_blue.id,
+            "avg_seeds": _serialize_seeds(avg_seeds),
+            "outlier_seeds": _serialize_seeds(outlier_seeds),
+        }
 
         # Build histogram bins (5 000-point buckets)
         all_scores = results["red_scores"] + results["blue_scores"]
@@ -361,9 +414,49 @@ def simulate_batch(request):
             "bin_labels_json": json.dumps(bin_labels),
             "red_hist_json": json.dumps(red_hist),
             "blue_hist_json": json.dumps(blue_hist),
+            "has_seeds": bool(avg_seeds or outlier_seeds),
         })
 
     return render(request, "matches/batch_simulate.html", context)
+
+
+def save_batch_games(request):
+    """Start an async save of selected batch games; returns JSON {job_id}."""
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    seeds_data = request.session.get("batch_seeds")
+    if not seeds_data:
+        return JsonResponse({"error": "No batch results found. Run a simulation first."}, status=400)
+
+    game_type = request.POST.get("game_type")  # "avg" or "outlier"
+    n = max(1, min(10, int(request.POST.get("n", 1))))
+
+    raw = seeds_data.get("avg_seeds" if game_type == "avg" else "outlier_seeds", [])
+    seeds = _deserialize_seeds(raw[:n])
+    if not seeds:
+        return JsonResponse({"error": "No saved seeds for this category."}, status=400)
+
+    job_id = str(uuid.uuid4())
+    with _JOBS_LOCK:
+        _SAVE_JOBS[job_id] = {"status": "running", "round_ids": [], "error": None}
+
+    thread = threading.Thread(
+        target=_run_save_job,
+        args=(job_id, seeds_data["team_red_id"], seeds_data["team_blue_id"], seeds, n),
+        daemon=True,
+    )
+    thread.start()
+    return JsonResponse({"job_id": job_id})
+
+
+def save_batch_status(request, job_id):
+    """Return JSON status of a save job."""
+    with _JOBS_LOCK:
+        job = dict(_SAVE_JOBS.get(job_id, {}))
+    if not job:
+        return JsonResponse({"status": "not_found"}, status=404)
+    return JsonResponse(job)
 
 
 def game_round_events(request, round_id):

@@ -23,4 +23,6 @@ urlpatterns = [
         name="game_round_events",
     ),
     path("simulate-batch/", views.simulate_batch, name="simulate_batch"),
+    path("save-batch-games/", views.save_batch_games, name="save_batch_games"),
+    path("save-batch-status/<str:job_id>/", views.save_batch_status, name="save_batch_status"),
 ]
