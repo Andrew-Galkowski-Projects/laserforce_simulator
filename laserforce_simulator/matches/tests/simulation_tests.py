@@ -126,7 +126,7 @@ class TestSimulation:
             "tag_player", "change_zone", "hide", "capture_base",
             "use_special", "resupply_ally", "missile_player",
         ]
-        assert captured["weights"] == [0, 0, 30, 0, 0, 70, 0]
+        assert captured["weights"] == [5, 0, 30, 0, 0, 65, 0]
 
     def test_tag_event_created_when_hit(self):
         simulator = ResourceBasedSimulator()
@@ -1062,10 +1062,10 @@ class TestWeightFunctions:
     # --- Medic ---
 
     def test_medic_baseline(self):
-        """Medic strongly favors resupply over tagging in default conditions."""
+        """Medic favors resupply over tagging but can occasionally tag."""
         s = self._state(self.gr, self.players["medic"], "medic")
         w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [0, 0, 30, 0, 0, 70, 0]
+        assert w == [5, 0, 30, 0, 0, 65, 0]
 
     def test_medic_baseline_sum(self):
         s = self._state(self.gr, self.players["medic"], "medic")
@@ -1073,18 +1073,19 @@ class TestWeightFunctions:
         assert sum(w) == 100
 
     def test_medic_low_lives_maximises_resupply(self):
-        """When medic has <=3 lives, hide collapses to 0 and resupply hits 100."""
+        """When medic has <=3 lives, hide and tagging both collapse and resupply maximises."""
         s = self._state(self.gr, self.players["medic"], "medic", final_lives=3)
         w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
         assert w == [0, 0, 0, 0, 0, 100, 0]
 
-    def test_medic_can_capture_base_prioritises_capture(self):
-        """In neutral zone, medic prefers capturing the base over resupplying."""
+    def test_medic_can_capture_base_gets_small_boost(self):
+        """In neutral zone, medic gets a small capture weight boost while resupply stays dominant."""
         # current_zone=1 (neutral_zone) → can_capture_base_in_current_zone = True
+        # Medic role: resupply=60, capture=0 → after +5/-5: capture=5, resupply=55
         s = self._state(self.gr, self.players["medic"], "medic", current_zone=1)
         w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w[_ACTION_IDX["capture_base"]] == 50
-        assert w[_ACTION_IDX["capture_base"]] > w[_ACTION_IDX["resupply_ally"]]
+        assert w[_ACTION_IDX["capture_base"]] == 5
+        assert w[_ACTION_IDX["resupply_ally"]] > w[_ACTION_IDX["capture_base"]]
 
     def test_medic_special_available_increases_use_special(self):
         """With enough special charges and at least one ally active, use_special rises."""
@@ -1104,7 +1105,7 @@ class TestWeightFunctions:
             team_color="red", final_lives=5, current_zone=0,
         )
         w = _get_medic_weights(medic, _ACTION_IDX, self._fresh(), [medic, heavy], 0)
-        assert w == [0, 0, 100, 0, 0, 0, 0]
+        assert w == [5, 0, 90, 0, 0, 5, 0]
 
     def test_medic_not_active_no_heavy_changes_zone(self):
         """Downed medic with no nearby heavy moves to find protection."""
@@ -1113,15 +1114,15 @@ class TestWeightFunctions:
             final_lives=5, last_downed_time=0,
         )
         w = _get_medic_weights(medic, _ACTION_IDX, self._fresh(), [medic], 0)
-        assert w == [0, 70, 30, 0, 0, 0, 0]
+        assert w == [5, 60, 30, 0, 0, 5, 0]
 
     # --- Ammo ---
 
     def test_ammo_baseline(self):
-        """Ammo splits attention equally between tagging and resupplying allies."""
+        """Ammo primarily resupplies allies, tagging occasionally."""
         s = self._state(self.gr, self.players["ammo"], "ammo")
         w = _get_ammo_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [50, 0, 0, 0, 0, 50, 0]
+        assert w == [45, 0, 0, 0, 0, 55, 0]
 
     def test_ammo_baseline_sum(self):
         s = self._state(self.gr, self.players["ammo"], "ammo")
@@ -1139,7 +1140,7 @@ class TestWeightFunctions:
             final_lives=2, current_zone=0,
         )
         w = _get_ammo_weights(ammo, _ACTION_IDX, self._fresh(), [ammo, medic], 0)
-        assert w == [30, 0, 30, 0, 0, 40, 0]
+        assert w == [25, 0, 30, 0, 0, 45, 0]
 
     def test_ammo_low_lives_medic_different_zone_moves_toward_medic(self):
         """Low-life ammo crosses zones to reach the medic."""
@@ -1152,21 +1153,21 @@ class TestWeightFunctions:
             final_lives=2, current_zone=0,
         )
         w = _get_ammo_weights(ammo, _ACTION_IDX, self._fresh(), [ammo, medic], 0)
-        assert w == [30, 50, 0, 0, 0, 20, 0]
+        assert w == [25, 50, 0, 0, 0, 25, 0]
 
     def test_ammo_low_lives_no_medic_no_heavy_hides(self):
         """Low-life ammo with no support hides to preserve the last few lives."""
         ammo = self._state(self.gr, self.players["ammo"], "ammo", final_lives=2)
         w = _get_ammo_weights(ammo, _ACTION_IDX, self._fresh(), [ammo], 0)
-        assert w == [30, 0, 50, 0, 0, 20, 0]
+        assert w == [25, 0, 50, 0, 0, 25, 0]
 
     # --- Scout ---
 
     def test_scout_baseline(self):
-        """Scout favours tagging and zone changes over stationary roles."""
+        """Scout favours zone movement and tagging roughly equally."""
         s = self._state(self.gr, self.players["scout"], "scout")
         w = _get_scout_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [60, 40, 0, 0, 0, 0, 0]
+        assert w == [40, 60, 0, 0, 0, 0, 0]
 
     def test_scout_baseline_sum(self):
         s = self._state(self.gr, self.players["scout"], "scout")
@@ -1177,8 +1178,8 @@ class TestWeightFunctions:
         """Scout in neutral zone switches priority to capturing the base."""
         s = self._state(self.gr, self.players["scout"], "scout", current_zone=1)
         w = _get_scout_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        # tag -=10 (role) -=20 (base) = 40; change_zone +=10 (role); capture +=20
-        assert w == [40, 40, 0, 20, 0, 0, 0]
+        # tag -=30 (role) -=20 (base) = 20; change_zone +=30 (role); capture +=20
+        assert w == [20, 60, 0, 20, 0, 0, 0]
 
     def test_scout_low_lives_medic_same_zone_hides(self):
         """Critical-health scout hides next to medic to recover lives."""
@@ -1192,8 +1193,8 @@ class TestWeightFunctions:
             final_lives=4, current_zone=0,
         )
         w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout, medic], 0)
-        # role: tag-=10, change_zone+=10 → [60,40,...]; medic same zone: change_zone-=20,tag-=20,hide+=40
-        assert w == [40, 20, 40, 0, 0, 0, 0]
+        # role: tag-=30, change_zone+=30 → [40,60,...]; medic same zone: change_zone-=20,tag-=20,hide+=40
+        assert w == [20, 40, 40, 0, 0, 0, 0]
 
     def test_scout_low_lives_medic_different_zone_moves_toward_medic(self):
         """Critical-health scout moves into medic's zone instead of hiding."""
@@ -1206,8 +1207,8 @@ class TestWeightFunctions:
             final_lives=4, current_zone=0,
         )
         w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout, medic], 0)
-        # role: [60,40,...]; medic different zone: tag-=30, change_zone+=30
-        assert w == [30, 70, 0, 0, 0, 0, 0]
+        # role: [40,60,...]; medic different zone: tag-=30, change_zone+=30
+        assert w == [10, 90, 0, 0, 0, 0, 0]
 
     def test_scout_low_shots_ammo_different_zone_moves_toward_ammo(self):
         """Shot-depleted scout crosses zones to resupply from ammo carrier."""
@@ -1221,8 +1222,8 @@ class TestWeightFunctions:
             final_shots=9, current_zone=0,
         )
         w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout, ammo], 0)
-        # role: [60,40,...]; ammo different zone: tag-=30, change_zone+=30
-        assert w == [30, 70, 0, 0, 0, 0, 0]
+        # role: [40,60,...]; ammo different zone: tag-=30, change_zone+=30
+        assert w == [10, 90, 0, 0, 0, 0, 0]
 
     def test_scout_special_available_raises_use_special(self):
         """Scout with special ready is more likely to use rapid-fire as ammo allows."""
@@ -1241,16 +1242,18 @@ class TestWeightFunctions:
             final_lives=5, last_downed_time=0,
         )
         w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout], 0)
-        assert w == [0, 50, 50, 0, 0, 0, 0]
+        # role: [40,60,...]; not active: tag zeroed, 10 to change_zone, rest to hide
+        assert w == [0, 70, 30, 0, 0, 0, 0]
 
     # --- Heavy ---
 
     def test_heavy_baseline_no_missiles(self):
-        """Heavy with all missiles used focuses on tagging."""
+        """Heavy with all missiles used holds position and tags at baseline rate."""
         # missiles_used = missiles_landed; set >=5 to exhaust missile budget
         s = self._state(self.gr, self.players["heavy"], "heavy", missiles_landed=5)
         w = _get_heavy_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [80, 20, 0, 0, 0, 0, 0]
+        # role: change_zone-=5 (25), hide+=5 (5); tag stays at base 70
+        assert w == [70, 25, 5, 0, 0, 0, 0]
 
     def test_heavy_baseline_no_missiles_sum(self):
         s = self._state(self.gr, self.players["heavy"], "heavy", missiles_landed=5)
@@ -1261,7 +1264,8 @@ class TestWeightFunctions:
         """Heavy with missiles available splits between tagging and launching missiles."""
         s = self._state(self.gr, self.players["heavy"], "heavy", missiles_landed=0)
         w = _get_heavy_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [80, 5, 0, 0, 0, 0, 15]
+        # role: [70,25,5,...]; missiles: change_zone-=15, missile+=15 → [70,10,5,0,0,0,15]
+        assert w == [70, 10, 5, 0, 0, 0, 15]
         assert sum(w) == 100
 
     def test_heavy_can_capture_base(self):
@@ -1272,8 +1276,8 @@ class TestWeightFunctions:
             current_zone=2, missiles_landed=5,
         )
         w = _get_heavy_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        # role (no missiles): [80,20,...]; base capture: change_zone-=10,tag-=40,capture+=50
-        assert w == [40, 10, 0, 50, 0, 0, 0]
+        # role (no missiles): [70,25,5,...]; base capture: change_zone-=10,tag-=20,capture+=30
+        assert w == [50, 15, 5, 30, 0, 0, 0]
 
     def test_heavy_low_lives_medic_different_zone_moves_toward_medic(self):
         """Critically low heavy navigates toward the medic to recover."""
@@ -1287,8 +1291,8 @@ class TestWeightFunctions:
             final_lives=4, current_zone=0, missiles_landed=5,
         )
         w = _get_heavy_weights(heavy, _ACTION_IDX, self._fresh(), [heavy, medic], 0)
-        # role (no missiles): [80,20,...]; medic different zone: tag-=30, change_zone+=30
-        assert w == [50, 50, 0, 0, 0, 0, 0]
+        # role (no missiles): [70,25,5,...]; medic different zone: tag-=30, change_zone+=30
+        assert w == [40, 55, 5, 0, 0, 0, 0]
 
     def test_heavy_not_active_medic_in_zone_hides(self):
         """Downed heavy hides when its medic is in the same zone."""
@@ -1301,8 +1305,8 @@ class TestWeightFunctions:
             final_lives=5, last_downed_time=0, current_zone=0, missiles_landed=5,
         )
         w = _get_heavy_weights(heavy, _ACTION_IDX, self._fresh(), [heavy, medic], 0)
-        # role (no missiles): [80,20,...]; not active + medic in zone: tag-=70, hide+=70
-        assert w == [10, 20, 70, 0, 0, 0, 0]
+        # role (no missiles): [70,25,5,...]; not active + medic in zone: tag-=70, hide+=70
+        assert w == [0, 25, 75, 0, 0, 0, 0]
 
     # --- Commander ---
 
@@ -1310,7 +1314,7 @@ class TestWeightFunctions:
         """Commander with all missiles used holds base weights."""
         s = self._state(self.gr, self.players["commander"], "commander", missiles_landed=5)
         w = _get_commander_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [70, 30, 0, 0, 0, 0, 0]
+        assert w == [85, 15, 0, 0, 0, 0, 0]
 
     def test_commander_baseline_no_missiles_sum(self):
         s = self._state(self.gr, self.players["commander"], "commander", missiles_landed=5)
@@ -1321,7 +1325,7 @@ class TestWeightFunctions:
         """Commander prioritises launching available missiles."""
         s = self._state(self.gr, self.players["commander"], "commander", missiles_landed=0)
         w = _get_commander_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [70, 15, 0, 0, 0, 0, 15]
+        assert w == [85, 0, 0, 0, 0, 0, 15]
         assert sum(w) == 100
 
     def test_commander_special_no_enemies_fires_nuke(self):
@@ -1359,8 +1363,8 @@ class TestWeightFunctions:
             final_lives=5, last_downed_time=0, missiles_landed=5, current_zone=0,
         )
         w = _get_commander_weights(cmd, _ACTION_IDX, self._fresh(), [cmd, enemy_medic], 0)
-        # not active, enemy medic in zone: tag-=70, hide+=70
-        assert w == [0, 30, 70, 0, 0, 0, 0]
+        # not active, enemy medic in zone: tag-=70, hide+=70; base [85,15]
+        assert w == [15, 15, 70, 0, 0, 0, 0]
 
     def test_commander_not_active_no_enemy_medic_changes_zone(self):
         """Downed commander moves zone to hunt the enemy medic."""
@@ -1369,8 +1373,8 @@ class TestWeightFunctions:
             final_lives=5, last_downed_time=0, missiles_landed=5,
         )
         w = _get_commander_weights(cmd, _ACTION_IDX, self._fresh(), [cmd], 0)
-        # not active, no enemy medic found: tag-=70, change_zone+=70
-        assert w == [0, 100, 0, 0, 0, 0, 0]
+        # not active, no enemy medic found: tag-=70, change_zone+=70; base [85,15]
+        assert w == [15, 85, 0, 0, 0, 0, 0]
 
 
 @pytest.mark.django_db
@@ -1508,3 +1512,301 @@ class TestBatchSimulatorSeedReproducibility:
         assert round4["blue_points"] == replay["blue_points"]
         assert round4["red_survivors"] == replay["red_survivors"]
         assert round4["blue_survivors"] == replay["blue_survivors"]
+
+
+# ---------------------------------------------------------------------------
+# BatchSimulator — shot cooldown, follow-ups, and reactions
+# ---------------------------------------------------------------------------
+
+def _make_ps(role, team_color="red", **kwargs):
+    """Create a PlayerState with sensible defaults for unit tests."""
+    from matches.sim_helpers.player_state import PlayerState
+    tag_id = kwargs.pop("tag_id", f"{team_color}_{role}")
+    defaults = dict(
+        tag_id=tag_id,
+        name=f"{team_color} {role}",
+        team_color=team_color,
+        role=role,
+        accuracy=50,
+        survival=0,
+        player_awareness=50,
+        starting_lives=10,
+        starting_shots=20,
+        final_lives=10,
+        final_shots=20,
+    )
+    defaults.update(kwargs)
+    return PlayerState(**defaults)
+
+
+class TestSimulatorTicks:
+    def test_batch_simulator_tick_is_half_second(self):
+        assert BatchSimulator.TICK == 0.5
+
+    def test_resource_based_simulator_tick_is_half_second(self):
+        assert ResourceBasedSimulator.TICK == 0.5
+
+
+class TestBatchSimulatorShotCooldown:
+    """_shot_cooldown values and per-tick tag-weight suppression in _plan_action."""
+
+    def _sim(self):
+        return BatchSimulator()
+
+    def test_regular_roles_return_half_second(self):
+        sim = self._sim()
+        for role in ("commander", "medic", "ammo"):
+            assert sim._shot_cooldown(_make_ps(role), 0.0) == 0.5
+
+    def test_heavy_returns_one_second(self):
+        sim = self._sim()
+        assert sim._shot_cooldown(_make_ps("heavy"), 0.0) == 1.0
+
+    def test_scout_without_special_returns_half_second(self):
+        sim = self._sim()
+        assert sim._shot_cooldown(_make_ps("scout", special_active_until=0), 1.0) == 0.5
+
+    def test_rapid_fire_scout_returns_zero(self):
+        sim = self._sim()
+        # special_active_until=10 > second=2.0 → rapid fire active
+        assert sim._shot_cooldown(_make_ps("scout", special_active_until=10), 2.0) == 0.0
+
+    def test_plan_action_zeroes_tag_weight_when_fired_too_recently(self):
+        sim = self._sim()
+        # Commander cooldown=0.5; last shot at 5.0; tick=5.3 → gap=0.3 < 0.5
+        p = _make_ps("commander", last_shot_time=5.0, final_shots=20)
+        captured = []
+
+        def capture(ch, wt):
+            captured.append(list(wt))
+            return ["change_zone"]
+
+        with patch("random.choices", side_effect=capture):
+            sim._plan_action(p, [p], 5.3)
+
+        assert len(captured) == 1
+        assert captured[0][0] == 0, "tag_player weight must be zeroed when cooldown has not elapsed"
+
+    def test_plan_action_allows_tag_after_cooldown_elapsed(self):
+        sim = self._sim()
+        # Gap=0.6 > 0.5 cooldown → tag weight should be non-zero
+        p = _make_ps("commander", last_shot_time=5.0, final_shots=20)
+        captured = []
+
+        def capture(ch, wt):
+            captured.append(list(wt))
+            return ["change_zone"]
+
+        with patch("random.choices", side_effect=capture):
+            sim._plan_action(p, [p], 5.6)
+
+        assert len(captured) == 1
+        assert captured[0][0] > 0, "tag_player weight must be non-zero after cooldown has elapsed"
+
+    def test_last_shot_time_updated_on_hit(self):
+        sim = self._sim()
+        attacker = _make_ps("commander", team_color="red", final_shots=20)
+        defender = _make_ps("scout", team_color="blue")
+        defender.shields = 3  # commander shot_power=2; 3-2=1, not downed
+        with patch("random.randint", return_value=1):  # roll 1 < hit_chance=95 → always hit
+            sim._resolve_tag_attempts([{"attacker": attacker, "defender": defender}], second=7.0)
+        assert attacker.last_shot_time == 7.0
+
+    def test_last_shot_time_updated_on_miss(self):
+        sim = self._sim()
+        attacker = _make_ps("commander", team_color="red", final_shots=20)
+        defender = _make_ps("scout", team_color="blue")
+        # survival=100 → hit_chance=max(10,min(95,70+50-100))=20; roll 99 ≥ 20 → miss
+        defender.survival = 100
+        with patch("random.randint", return_value=99):
+            sim._resolve_tag_attempts([{"attacker": attacker, "defender": defender}], second=7.0)
+        assert attacker.last_shot_time == 7.0
+
+
+class TestBatchSimulatorFollowUps:
+    """Follow-up shot scheduling in _resolve_tag_attempts."""
+
+    def test_non_downed_hit_schedules_follow_up(self):
+        sim = BatchSimulator()
+        # Scout (shot_power=1) vs commander (shields=3): 3-1=2, not downed → follow-up eligible
+        attacker = _make_ps("scout", team_color="red", final_shots=20, player_awareness=0)
+        defender = _make_ps("commander", team_color="blue", player_awareness=0)
+        defender.shields = 3
+
+        pending_fu = []
+        with patch("random.randint", return_value=1):
+            # hit: 1<95 ✓; follow-up: defender_awareness=0 < 1 → True ✓
+            sim._resolve_tag_attempts(
+                [{"attacker": attacker, "defender": defender}],
+                second=10.0, pending_followups=pending_fu,
+            )
+
+        assert len(pending_fu) == 1
+        fire_at, fu_atk, fu_def, chain = pending_fu[0]
+        assert fire_at == pytest.approx(10.5)  # scout cooldown = 0.5s
+        assert fu_atk is attacker
+        assert fu_def is defender
+        assert chain == 1
+
+    def test_downed_hit_no_follow_up(self):
+        sim = BatchSimulator()
+        # Heavy (shot_power=3) vs medic (shields=1): max(0,1-3)=0, downed → no follow-up
+        attacker = _make_ps("heavy", team_color="red", final_shots=20)
+        defender = _make_ps("medic", team_color="blue", player_awareness=0)
+        defender.shields = 1
+
+        pending_fu = []
+        with patch("random.randint", return_value=1):
+            sim._resolve_tag_attempts(
+                [{"attacker": attacker, "defender": defender}],
+                second=10.0, pending_followups=pending_fu,
+            )
+
+        assert len(pending_fu) == 0
+
+    def test_rapid_fire_scout_follow_up_fires_immediately(self):
+        sim = BatchSimulator()
+        # Rapid-fire scout (cooldown=0.0) executes follow-ups inline, not via pending list
+        attacker = _make_ps("scout", team_color="red", special_active_until=20, final_shots=20, player_awareness=0)
+        defender = _make_ps("commander", team_color="blue", player_awareness=0)
+        defender.shields = 3  # 3 hits to down (3→2→1→0)
+
+        pending_fu = []
+        with patch("random.randint", return_value=1):
+            sim._resolve_tag_attempts(
+                [{"attacker": attacker, "defender": defender}],
+                second=10.0, pending_followups=pending_fu,
+            )
+
+        # Immediate execution, not scheduled
+        assert len(pending_fu) == 0
+        # Chain 1 and chain 2 both fired (commander shields: 3→2→1→0, chain stops when downed)
+        assert attacker.follow_up_shots == 2
+
+    def test_high_defender_awareness_suppresses_follow_up(self):
+        sim = BatchSimulator()
+        # defender_awareness=100: 100 < randint(0,100)=50 → False → no follow-up
+        attacker = _make_ps("scout", team_color="red", final_shots=20)
+        defender = _make_ps("commander", team_color="blue", player_awareness=100)
+        defender.shields = 3
+
+        pending_fu = []
+        with patch("random.randint", return_value=50):
+            # hit: 50<95 ✓; follow-up: 100<50 → False → not scheduled
+            sim._resolve_tag_attempts(
+                [{"attacker": attacker, "defender": defender}],
+                second=10.0, pending_followups=pending_fu,
+            )
+
+        assert len(pending_fu) == 0
+
+    def test_initial_hit_uses_one_shot_follow_up_not_yet(self):
+        sim = BatchSimulator()
+        # After initial hit, exactly one shot consumed; pending follow-up has NOT fired yet
+        attacker = _make_ps("scout", team_color="red", final_shots=10, player_awareness=0)
+        defender = _make_ps("commander", team_color="blue", player_awareness=0)
+        defender.shields = 3
+
+        shots_before = attacker.final_shots
+        pending_fu = []
+        with patch("random.randint", return_value=1):
+            sim._resolve_tag_attempts(
+                [{"attacker": attacker, "defender": defender}],
+                second=10.0, pending_followups=pending_fu,
+            )
+
+        assert attacker.final_shots == shots_before - 1
+        assert len(pending_fu) == 1  # scheduled, not yet fired
+
+
+class TestBatchSimulatorReactions:
+    """Reaction shot scheduling in _resolve_tag_attempts."""
+
+    def test_reaction_scheduled_on_hit_when_awareness_passes(self):
+        sim = BatchSimulator()
+        # Scout (shot_power=1) vs commander (shields=3): not downed
+        # Commander awareness=100 ≥ roll=50 → reaction triggered
+        attacker = _make_ps("scout", team_color="red", final_shots=20)
+        defender = _make_ps("commander", team_color="blue", player_awareness=100, final_shots=20)
+        defender.shields = 3
+
+        pending_rx = []
+        with patch("random.randint", return_value=50):
+            # hit: 50<95 ✓; reaction: 100≥50 → True; follow-up: 100<50 → False
+            sim._resolve_tag_attempts(
+                [{"attacker": attacker, "defender": defender}],
+                second=10.0, pending_reactions=pending_rx,
+            )
+
+        assert len(pending_rx) == 1
+        fire_at, r_atk, r_def = pending_rx[0]
+        assert fire_at == pytest.approx(10.5)  # commander cooldown = 0.5s
+        assert r_atk is defender
+        assert r_def is attacker
+
+    def test_no_reaction_when_awareness_roll_fails(self):
+        sim = BatchSimulator()
+        attacker = _make_ps("scout", team_color="red", final_shots=20)
+        # awareness=0: 0 ≥ roll=50 → False → no reaction
+        defender = _make_ps("commander", team_color="blue", player_awareness=0, final_shots=20)
+        defender.shields = 3
+
+        pending_rx = []
+        with patch("random.randint", return_value=50):
+            sim._resolve_tag_attempts(
+                [{"attacker": attacker, "defender": defender}],
+                second=10.0, pending_reactions=pending_rx,
+            )
+
+        assert len(pending_rx) == 0
+
+    def test_heavy_defender_reaction_has_1s_delay(self):
+        sim = BatchSimulator()
+        # Scout vs heavy (shields=3): not downed; heavy cooldown=1.0s
+        attacker = _make_ps("scout", team_color="red", final_shots=20)
+        defender = _make_ps("heavy", team_color="blue", player_awareness=100, final_shots=20)
+        defender.shields = 3
+
+        pending_rx = []
+        with patch("random.randint", return_value=50):
+            sim._resolve_tag_attempts(
+                [{"attacker": attacker, "defender": defender}],
+                second=10.0, pending_reactions=pending_rx,
+            )
+
+        assert len(pending_rx) == 1
+        assert pending_rx[0][0] == pytest.approx(11.0)  # 10.0 + 1.0
+
+    def test_inactive_defender_does_not_react(self):
+        sim = BatchSimulator()
+        attacker = _make_ps("scout", team_color="red", final_shots=20)
+        # last_downed_time=5 at second=10: 10-5=5 < 8 → inactive → no reaction
+        defender = _make_ps("commander", team_color="blue", player_awareness=100, final_shots=20,
+                            last_downed_time=5)
+        defender.shields = 3
+
+        pending_rx = []
+        with patch("random.randint", return_value=50):
+            sim._resolve_tag_attempts(
+                [{"attacker": attacker, "defender": defender}],
+                second=10.0, pending_reactions=pending_rx,
+            )
+
+        assert len(pending_rx) == 0
+
+    def test_reaction_scheduled_on_miss_when_awareness_passes(self):
+        sim = BatchSimulator()
+        attacker = _make_ps("scout", team_color="red", final_shots=20)
+        # survival=100 → hit_chance=20; roll=99 → miss; then awareness=100 ≥ 99 → reaction
+        defender = _make_ps("commander", team_color="blue", player_awareness=100, final_shots=20)
+        defender.shields = 3
+        defender.survival = 100
+
+        pending_rx = []
+        with patch("random.randint", return_value=99):
+            sim._resolve_tag_attempts(
+                [{"attacker": attacker, "defender": defender}],
+                second=10.0, pending_reactions=pending_rx,
+            )
+
+        assert len(pending_rx) == 1

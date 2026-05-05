@@ -21,6 +21,8 @@ logging.basicConfig(level=logging.DEBUG)
 class ResourceBasedSimulator:
     """Enhanced simulator that tracks individual player resources"""
 
+    TICK = 0.5  # seconds per simulation tick (matches BatchSimulator)
+
     def __init__(self):
         self.elimination_bonus = 10000  # Bonus points for eliminating entire team
         # Role-based starting resources
@@ -31,7 +33,6 @@ class ResourceBasedSimulator:
             "medic": {"lives": 20, "shots": 15, "special": 0, "missiles": 0},
             "ammo": {"lives": 10, "shots": 15, "special": 0, "missiles": 0},
         }
-
 
     def simulate_match(self, team_red, team_blue, match_type="friendly"):
         """Simulate a full 2-round match with detailed tracking"""
@@ -135,53 +136,187 @@ class ResourceBasedSimulator:
 
     def _simulate_round_combat(self, game_round, red_players, blue_players):
         """Simulate combat between two teams"""
-        # Combat simulation over time (simplified)
         round_duration = 15 * 60  # 15 minutes in seconds
 
-        # We'll support scheduled delayed actions (missiles, nukes) that complete on a later tick
-        pending_missiles = []  # list of tuples (complete_time, attacker, defender)
-        pending_nukes = []  # list of tuples (complete_time, player_state)
+        pending_missiles = []   # (complete_time, attacker, defender)
+        pending_nukes = []      # (complete_time, player_state)
+        pending_followups = []  # (fire_at, attacker, defender, chain)
+        pending_reactions = []  # (fire_at, attacker, defender)
+        last_shot_times = {}    # player.id → float last-shot second (survives refresh_from_db)
         eliminated_at = 901
-        # TODO: we want to simulate combat faster than every 2 seconds but this is ok for now to test
-        for second in range(0, round_duration, 2):  # Check every 2 seconds
-            # First, process any scheduled missile completions for this second
+
+        second = 0.0
+        while second < round_duration:
+            db_second = int(second)
+
+            # --- process pending missiles ---
             to_run = [m for m in pending_missiles if m[0] <= second]
             pending_missiles = [m for m in pending_missiles if m[0] > second]
             for complete_time, attacker, defender in to_run:
-                # missile only completes if attacker still active at completion and defender still taggable
-                if attacker.is_active_at(complete_time) and defender.is_taggable_at(
-                    complete_time
-                ):
-                    self._complete_missile(attacker, defender, complete_time)
+                ct = int(complete_time)
+                if attacker.is_active_at(ct) and defender.is_taggable_at(ct):
+                    self._complete_missile(attacker, defender, ct)
                 else:
                     logger.debug(
-                        "%s - %s: missile cancelled or failed at %s (attacker active: %s, defender taggable: %s)",
-                        complete_time,
-                        "missile completion",
-                        complete_time,
-                        (
-                            getattr(attacker, "is_active_at")(complete_time)
-                            if hasattr(attacker, "is_active_at")
-                            else False
-                        ),
-                        (
-                            getattr(defender, "is_taggable_at")(complete_time)
-                            if hasattr(defender, "is_taggable_at")
-                            else False
-                        ),
+                        "%s - %s: missile cancelled or failed at %s",
+                        ct, "missile completion", ct,
                     )
 
-            # Next, process scheduled nukes
+            # --- process pending nukes ---
             to_run_n = [n for n in pending_nukes if n[0] <= second]
             pending_nukes = [n for n in pending_nukes if n[0] > second]
             for complete_time, player_state in to_run_n:
-                self._resolve_pending_nuke(player_state, complete_time)
+                self._resolve_pending_nuke(player_state, int(complete_time))
 
-            # REFRESH player states from database after nukes/missiles to get updated was_eliminated_at values
+            # REFRESH player states from database after nukes/missiles
             for p in red_players + blue_players:
                 p.refresh_from_db()
 
-            # Plan and resolve simultaneous actions for this tick. New signature accepts pending lists so it may append scheduled delayed actions.
+            # --- process pending reactions (deferred by shot cooldown) ---
+            due_rx = [item for item in pending_reactions if item[0] <= second]
+            pending_reactions = [item for item in pending_reactions if item[0] > second]
+            for _, r_attacker, r_defender in due_rx:
+                if r_attacker.final_lives <= 0 or r_defender.final_lives <= 0:
+                    continue
+                if not r_attacker.is_active_at(db_second):
+                    continue
+                if r_attacker.final_shots <= 0 and r_attacker.role != "ammo":
+                    continue
+                r_attacker.reaction_shots += 1
+                last_shot_times[r_attacker.id] = second
+                hit_chance = max(10, min(95, 70 + r_attacker.player.accuracy - r_defender.player.survival))
+                react_hit = random.randint(1, 100) < hit_chance
+                if r_attacker.role != "ammo":
+                    r_attacker.final_shots = max(0, r_attacker.final_shots - 1)
+                if react_hit:
+                    r_attacker.tags_made += 1
+                    if r_attacker.role != "heavy":
+                        r_attacker.final_special += 1
+                    r_attacker.points_scored += 100
+                    if r_defender.role == "medic":
+                        r_attacker.final_medic_hits += 1
+                    r_defender.times_tagged += 1
+                    r_defender.points_scored -= 20
+                    if not r_defender.is_active_at(db_second) and r_defender.is_taggable_at(db_second):
+                        r_defender.times_tagged_in_reset_window += 1
+                    r_defender.shields = max(0, r_defender.shields - r_attacker.shot_power)
+                    if r_defender.shields == 0:
+                        r_defender.final_lives = max(0, r_defender.final_lives - 1)
+                        r_defender.last_downed_time = db_second
+                        r_defender.shields = r_defender.max_shields
+                        GameEvent.objects.create(
+                            game_round=game_round, timestamp=db_second,
+                            event_type="player_downed", actor=r_attacker.player, target=r_defender.player,
+                            points_awarded=0,
+                            description=f"{r_defender.player.name} downed by {r_attacker.player.name} (reaction)",
+                            metadata={"cause": "reaction", "actor_role": r_attacker.role, "target_role": r_defender.role,
+                                      "target_lives": r_defender.final_lives},
+                        )
+                        if r_defender.final_lives <= 0:
+                            r_defender.was_eliminated_at = db_second
+                            GameEvent.objects.create(
+                                game_round=game_round, timestamp=db_second,
+                                event_type="elimination", actor=r_attacker.player, target=r_defender.player,
+                                points_awarded=0,
+                                description=f"{r_defender.player.name} eliminated by {r_attacker.player.name} (reaction)",
+                                metadata={"elimination_action": "reaction", "actor_role": r_attacker.role,
+                                          "target_role": r_defender.role},
+                            )
+                    GameEvent.objects.create(
+                        game_round=game_round, timestamp=db_second,
+                        event_type="tag", actor=r_attacker.player, target=r_defender.player,
+                        points_awarded=100,
+                        description=f"{r_attacker.player.name} reacts and zaps {r_defender.player.name}",
+                        metadata={"actor_role": r_attacker.role, "target_role": r_defender.role, "is_reaction": True},
+                    )
+                    r_attacker.save()
+                    r_defender.save()
+                else:
+                    r_attacker.shots_missed += 1
+                    r_attacker.save()
+                    GameEvent.objects.create(
+                        game_round=game_round, timestamp=db_second,
+                        event_type="miss", actor=r_attacker.player, target=r_defender.player,
+                        points_awarded=0,
+                        description=f"{r_attacker.player.name} reaction miss on {r_defender.player.name}",
+                        metadata={"actor_role": r_attacker.role, "is_reaction": True},
+                    )
+
+            # --- process pending follow-ups (deferred by shot cooldown) ---
+            due_fu = [item for item in pending_followups if item[0] <= second]
+            pending_followups = [item for item in pending_followups if item[0] > second]
+            for _, fu_attacker, fu_defender, chain in due_fu:
+                if fu_attacker.final_lives <= 0 or fu_defender.final_lives <= 0:
+                    continue
+                if fu_attacker.final_shots <= 0 and fu_attacker.role != "ammo":
+                    continue
+                fu_attacker.follow_up_shots += 1
+                last_shot_times[fu_attacker.id] = second
+                hit_chance = max(10, min(95, 70 + fu_attacker.player.accuracy - fu_defender.player.survival))
+                fu_hit = random.randint(1, 100) < hit_chance
+                if fu_attacker.role != "ammo":
+                    fu_attacker.final_shots = max(0, fu_attacker.final_shots - 1)
+                if fu_hit:
+                    fu_attacker.tags_made += 1
+                    if fu_attacker.role != "heavy":
+                        fu_attacker.final_special += 1
+                    fu_attacker.points_scored += 100
+                    if fu_defender.role == "medic":
+                        fu_attacker.final_medic_hits += 1
+                    fu_defender.times_tagged += 1
+                    fu_defender.points_scored -= 20
+                    if not fu_defender.is_active_at(db_second) and fu_defender.is_taggable_at(db_second):
+                        fu_defender.times_tagged_in_reset_window += 1
+                    fu_defender.shields = max(0, fu_defender.shields - fu_attacker.shot_power)
+                    downed = fu_defender.shields == 0
+                    if downed:
+                        fu_defender.final_lives = max(0, fu_defender.final_lives - 1)
+                        fu_defender.last_downed_time = db_second
+                        fu_defender.shields = fu_defender.max_shields
+                        GameEvent.objects.create(
+                            game_round=game_round, timestamp=db_second,
+                            event_type="player_downed", actor=fu_attacker.player, target=fu_defender.player,
+                            points_awarded=0,
+                            description=f"{fu_defender.player.name} downed by {fu_attacker.player.name} (follow-up)",
+                            metadata={"cause": "follow_up_tag", "actor_role": fu_attacker.role,
+                                      "target_role": fu_defender.role, "target_lives": fu_defender.final_lives},
+                        )
+                        if fu_defender.final_lives <= 0:
+                            fu_defender.was_eliminated_at = db_second
+                            GameEvent.objects.create(
+                                game_round=game_round, timestamp=db_second,
+                                event_type="elimination", actor=fu_attacker.player, target=fu_defender.player,
+                                points_awarded=0,
+                                description=f"{fu_defender.player.name} eliminated by {fu_attacker.player.name} (follow-up)",
+                                metadata={"elimination_action": "follow_up_tag", "actor_role": fu_attacker.role,
+                                          "target_role": fu_defender.role},
+                            )
+                    GameEvent.objects.create(
+                        game_round=game_round, timestamp=db_second,
+                        event_type="tag", actor=fu_attacker.player, target=fu_defender.player,
+                        points_awarded=100,
+                        description=f"{fu_attacker.player.name} follow-up tags {fu_defender.player.name}",
+                        metadata={"actor_role": fu_attacker.role, "target_role": fu_defender.role,
+                                  "is_follow_up": True, "chain": chain},
+                    )
+                    fu_attacker.save()
+                    fu_defender.save()
+                    if not downed and chain < 2 and fu_defender.final_lives > 0:
+                        if fu_defender.player.player_awareness < random.randint(0, 100):
+                            cooldown = self._shot_cooldown(fu_attacker, second)
+                            pending_followups.append((second + cooldown, fu_attacker, fu_defender, chain + 1))
+                else:
+                    fu_attacker.shots_missed += 1
+                    fu_attacker.save()
+                    GameEvent.objects.create(
+                        game_round=game_round, timestamp=db_second,
+                        event_type="miss", actor=fu_attacker.player, target=fu_defender.player,
+                        points_awarded=0,
+                        description=f"{fu_attacker.player.name} follow-up miss on {fu_defender.player.name}",
+                        metadata={"actor_role": fu_attacker.role, "is_follow_up": True},
+                    )
+
+            # Plan and resolve simultaneous actions for this tick
             self._simulate_combat_exchange(
                 game_round,
                 red_players,
@@ -189,6 +324,9 @@ class ResourceBasedSimulator:
                 second,
                 pending_missiles,
                 pending_nukes,
+                pending_followups,
+                pending_reactions,
+                last_shot_times,
             )
 
             # Check for team eliminations
@@ -206,23 +344,18 @@ class ResourceBasedSimulator:
                     blue_alive,
                 )
 
-                # award any non-captured bases to alive players on winning team
-                if not red_alive:
+                # award uncaptured bases to alive players on the winning team,
+                # but only if eliminated with more than 1 minute remaining
+                if not red_alive and second < 840:
                     for blue_player in blue_alive:
                         self._award_bases(blue_player, second)
-                if not blue_alive:
+                if not blue_alive and second < 840:
                     for red_player in red_alive:
                         self._award_bases(red_player, second)
 
-                # for p in red_players + blue_players:
-                #     logger.debug(
-                #         "%s tags: %s, tagged %s details: %s",
-                #         p.player.name,
-                #         p.tags_made,
-                #         p.times_tagged,
-                #         p.specific_tags,
-                #     )
                 break  # Round ends on elimination
+
+            second += self.TICK
 
         # Calculate final results
         red_points = sum(p.points_scored for p in red_players)
@@ -274,13 +407,16 @@ class ResourceBasedSimulator:
     # the combat exchange happens while a player is down
 
     def _simulate_combat_exchange(
-        self,
-        game_round,
-        red_players,
-        blue_players,
-        second,
-        pending_missiles=None,
-        pending_nukes=None,
+            self,
+            game_round,
+            red_players,
+            blue_players,
+            second,
+            pending_missiles=None,
+            pending_nukes=None,
+            pending_followups=None,
+            pending_reactions=None,
+            last_shot_times=None,
     ):
         """Simulate a single combat exchange between teams"""
         # Get alive players
@@ -310,12 +446,18 @@ class ResourceBasedSimulator:
             pending_missiles = []
         if pending_nukes is None:
             pending_nukes = []
+        if pending_followups is None:
+            pending_followups = []
+        if pending_reactions is None:
+            pending_reactions = []
+        if last_shot_times is None:
+            last_shot_times = {}
 
         # TODO: eventually want to sort all_alive by player decision making or something
         random.shuffle(all_alive)
         plans = []
         for player in all_alive:
-            plans.extend(self._plan_action(player, all_alive, second))
+            plans.extend(self._plan_action(player, all_alive, second, last_shot_times))
 
         zone_map = {0: "red_zone", 1: "neutral_zone", 2: "blue_zone"}
 
@@ -395,14 +537,24 @@ class ResourceBasedSimulator:
 
         # Combat phase: resolve all tag attempts simultaneously
         if tag_attempts:
-            self._resolve_tag_attempts(game_round, tag_attempts, second)
+            self._resolve_tag_attempts(game_round, tag_attempts, second, last_shot_times,
+                                       pending_followups, pending_reactions)
 
-    def _plan_action(self, player, all_alive, second):
+    def _shot_cooldown(self, player, second: float) -> float:
+        """Seconds the player must wait between shots (mirrors BatchSimulator)."""
+        if player.role == "scout" and player.special_active_until > second:
+            return 0.0
+        if player.role == "heavy":
+            return 1.0
+        return 0.5
+
+    def _plan_action(self, player, all_alive, second, last_shot_times=None):
         """Return a list of planned actions (dict) for the player at this tick without applying changes.
 
         Each plan dict may have keys: type, actor, target, zone, base_id
         """
-        actions = []
+        if last_shot_times is None:
+            last_shot_times = {}
         action_to_weight_index = {
             "tag_player": 0,
             "change_zone": 1,
@@ -443,11 +595,18 @@ class ResourceBasedSimulator:
                 player, action_to_weight_index, weights, all_alive, second
             )
 
+        # Enforce shot cooldown — zero tag weight if player fired too recently
+        cooldown = self._shot_cooldown(player, second)
+        if cooldown > 0.0 and (second - last_shot_times.get(player.id, -99.0)) < cooldown:
+            weights[action_to_weight_index["tag_player"]] = 0
+            if sum(weights) == 0:
+                weights[action_to_weight_index["hide"]] = 1
+
         choice = random.choices(choices, weights)[0]
 
         # only maintain hiding status if they are still hiding, moving, or resupplying
         if player.is_hiding and not (
-            choice == "hide" or choice == "change_zone" or choice == "resupply_ally"
+                choice == "hide" or choice == "change_zone" or choice == "resupply_ally"
         ):
             player.is_hiding = False
             player.save()
@@ -482,9 +641,9 @@ class ResourceBasedSimulator:
                     p
                     for p in all_alive
                     if p.team_color != player.team_color
-                    and p.current_zone == player.current_zone
-                    and p.final_lives > 0
-                    and p.is_taggable_at(second)
+                       and p.current_zone == player.current_zone
+                       and p.final_lives > 0
+                       and p.is_taggable_at(second)
                 ]
                 if potential_targets:
                     tgt = random.choice(potential_targets)
@@ -502,9 +661,9 @@ class ResourceBasedSimulator:
             plans.append({"type": "capture_base", "actor": player, "base_id": base_id})
         elif choice == "use_special":
             if (
-                player.final_special >= player.special_cost
-                and player.special_active_until <= second
-                and player.is_active_at(second)
+                    player.final_special >= player.special_cost
+                    and player.special_active_until <= second
+                    and player.is_active_at(second)
             ):
                 plans.append({"type": "use_special", "actor": player})
         elif choice == "hide":
@@ -512,11 +671,19 @@ class ResourceBasedSimulator:
 
         return plans
 
-    def _resolve_tag_attempts(self, game_round, attempts, second):
+    def _resolve_tag_attempts(self, game_round, attempts, second, last_shot_times=None,
+                              pending_followups=None, pending_reactions=None):
         """Resolve multiple tag attempts simultaneously.
 
         attempts: list of {'attacker': PlayerRoundState, 'defender': PlayerRoundState}
         """
+        if last_shot_times is None:
+            last_shot_times = {}
+        if pending_followups is None:
+            pending_followups = []
+        if pending_reactions is None:
+            pending_reactions = []
+        db_second = int(second)
         # First, determine outcomes without mutating shared state that would affect other attempts in this tick
         outcomes = []
         for a in attempts:
@@ -552,40 +719,39 @@ class ResourceBasedSimulator:
 
         # Apply outcomes: decrement shots for attackers, apply damage to defenders and create events
         for o in outcomes:
-            if o["result"] in ("invalid", "miss_hid"):
-                # use a shot unless ammo
-                if attacker.role != "ammo":
-                    attacker.final_shots -= 1
-                # record miss if appropriate
-                if o["result"] == "miss_hid":
-                    attacker = o["attacker"]
-                    defender = o["defender"]
-                    attacker.shots_missed += 1
-                    attacker.save()
-                    GameEvent.objects.create(
-                        game_round=game_round,
-                        timestamp=second,
-                        event_type="miss",
-                        actor=attacker.player,
-                        target=defender.player,
-                        points_awarded=0,
-                        description=f"{attacker.player.name} misses {defender.player.name}",
-                        metadata={
-                            "actor_role": attacker.role,
-                            "actor_points": attacker.points_scored,
-                            "actor_lives": attacker.final_lives,
-                            "actor_shots": attacker.final_shots,
-                            "target_role": defender.role,
-                            "target_points": defender.points_scored,
-                            "target_lives": defender.final_lives,
-                            "target_shots": defender.final_shots,
-                            "rolled_hit_pct": o.get("rolled", 0),
-                        },
-                    )
-                continue
-
             attacker = o["attacker"]
             defender = o["defender"]
+
+            if o["result"] == "miss_hid":
+                if attacker.role != "ammo":
+                    attacker.final_shots -= 1
+                attacker.shots_missed += 1
+                last_shot_times[attacker.id] = second
+                attacker.save()
+                GameEvent.objects.create(
+                    game_round=game_round,
+                    timestamp=db_second,
+                    event_type="miss",
+                    actor=attacker.player,
+                    target=defender.player,
+                    points_awarded=0,
+                    description=f"{attacker.player.name} misses {defender.player.name}",
+                    metadata={
+                        "actor_role": attacker.role,
+                        "actor_points": attacker.points_scored,
+                        "actor_lives": attacker.final_lives,
+                        "actor_shots": attacker.final_shots,
+                        "target_role": defender.role,
+                        "target_points": defender.points_scored,
+                        "target_lives": defender.final_lives,
+                        "target_shots": defender.final_shots,
+                        "rolled_hit_pct": o.get("rolled", 0),
+                    },
+                )
+                continue
+
+            if o["result"] == "invalid":
+                continue
 
             # Apply hit or miss
             if o["result"] == "hit":
@@ -617,6 +783,7 @@ class ResourceBasedSimulator:
                 attacker.points_scored += 100
                 attacker.specific_tags[def_key]["tags"] += 1
                 attacker.last_tagged_id = def_key
+                last_shot_times[attacker.id] = second
                 if defender.role == "medic":
                     attacker.final_medic_hits += 1
 
@@ -624,7 +791,7 @@ class ResourceBasedSimulator:
 
                 logger.debug(
                     "%s - %s: %s %s tags %s %s atk ammo: %s def shd/lv: %s/%s",
-                    second,
+                    db_second,
                     "attempt tag",
                     attacker.team_color,
                     attacker.role,
@@ -636,7 +803,7 @@ class ResourceBasedSimulator:
                 )
                 GameEvent.objects.create(
                     game_round=game_round,
-                    timestamp=second,
+                    timestamp=db_second,
                     event_type="tag",
                     actor=attacker.player,
                     target=defender.player,
@@ -651,8 +818,8 @@ class ResourceBasedSimulator:
                         "actor_last_tag_id": attacker.last_tagged_id,
                         "target_role": defender.role,
                         "target_points": defender.points_scored,
-                        "target_active": defender.is_active_at(second),
-                        "target_taggable": defender.is_taggable_at(second),
+                        "target_active": defender.is_active_at(db_second),
+                        "target_taggable": defender.is_taggable_at(db_second),
                         "target_id": defender.get_tag_id,
                         "target_lives": defender.final_lives,
                         "target_shields": defender.shields,
@@ -660,23 +827,23 @@ class ResourceBasedSimulator:
                         "rolled_hit_pct": o.get("rolled", 0),
                     },
                 )
+                if not defender.is_active_at(db_second) and defender.is_taggable_at(db_second):
+                    defender.times_tagged_in_reset_window += 1
                 defender.shields = max(0, defender.shields - attacker.shot_power)
+                o["downed"] = defender.shields == 0
                 if defender.shields == 0:
-                    # code for nuke cancels
-                    if (
-                        defender.role == "commander"
-                        and defender.special_active_until > second
-                    ):
+                    # nuke cancel check
+                    if defender.role == "commander" and defender.special_active_until > db_second:
                         if attacker.team_color != defender.team_color:
                             attacker.enemy_nuke_cancels += 1
                         else:
                             attacker.ally_nuke_cancels += 1
                         defender.own_specials_cancelled += 1
-                        defender.special_active_until = 0  # disarm fuse so resolution loop skips it
+                        defender.special_active_until = 0
                         defender.save()
                         GameEvent.objects.create(
                             game_round=game_round,
-                            timestamp=second,
+                            timestamp=db_second,
                             event_type="special",
                             actor=attacker.player,
                             target=defender.player,
@@ -692,15 +859,25 @@ class ResourceBasedSimulator:
                             },
                         )
                         attacker.save()
-                    # never want to display below 0 even if they were at 1 and took simultaneous tags
                     defender.final_lives -= min(1, defender.final_lives)
-                    defender.last_downed_time = second
+                    defender.last_downed_time = db_second
                     defender.shields = defender.max_shields
+                    GameEvent.objects.create(
+                        game_round=game_round,
+                        timestamp=db_second,
+                        event_type="player_downed",
+                        actor=attacker.player,
+                        target=defender.player,
+                        points_awarded=0,
+                        description=f"{defender.player.name} downed by {attacker.player.name} (tag)",
+                        metadata={"cause": "tag", "actor_role": attacker.role, "target_role": defender.role,
+                                  "target_lives": defender.final_lives},
+                    )
                     if defender.final_lives <= 0:
-                        defender.was_eliminated_at = second
+                        defender.was_eliminated_at = db_second
                         GameEvent.objects.create(
                             game_round=game_round,
-                            timestamp=second,
+                            timestamp=db_second,
                             event_type="elimination",
                             actor=attacker.player,
                             target=defender.player,
@@ -722,19 +899,11 @@ class ResourceBasedSimulator:
 
             else:
                 attacker.shots_missed += 1
+                last_shot_times[attacker.id] = second
                 attacker.save()
-                # logger.debug(
-                #     "%s - %s: Tag missed: %s to %s, rolled %s vs chance %s",
-                #     second,
-                #     "attempt tag",
-                #     attacker.player.name,
-                #     defender.player.name,
-                #     hit,
-                #     hit_chance,
-                # )
                 GameEvent.objects.create(
                     game_round=game_round,
-                    timestamp=second,
+                    timestamp=db_second,
                     event_type="miss",
                     actor=attacker.player,
                     target=defender.player,
@@ -752,6 +921,35 @@ class ResourceBasedSimulator:
                         "rolled_hit_pct": o.get("rolled", 0),
                     },
                 )
+
+        # Reactions: schedule via pending_reactions so they fire after the shot cooldown.
+        for o in outcomes:
+            if o["result"] not in ("hit", "miss"):
+                continue
+            r_reactor = o["defender"]
+            r_target = o["attacker"]
+            if not r_reactor.is_active_at(db_second) or r_reactor.final_lives <= 0:
+                continue
+            if r_reactor.final_shots <= 0 and r_reactor.role != "ammo":
+                continue
+            if r_target.final_lives <= 0:
+                continue
+            if r_reactor.player.player_awareness >= random.randint(0, 100):
+                cooldown = self._shot_cooldown(r_reactor, second)
+                pending_reactions.append((second + cooldown, r_reactor, r_target))
+
+        # Follow-up tags: schedule via pending_followups so they fire after the shot cooldown.
+        # A hit that downs the defender (shields → 0) never generates a follow-up.
+        for o in outcomes:
+            if o["result"] != "hit" or o.get("downed", False):
+                continue
+            if o["defender"].final_lives <= 0:
+                continue
+            if o["attacker"].final_shots <= 0 and o["attacker"].role != "ammo":
+                continue
+            if o["defender"].player.player_awareness < random.randint(0, 100):
+                cooldown = self._shot_cooldown(o["attacker"], second)
+                pending_followups.append((second + cooldown, o["attacker"], o["defender"], 1))
 
     def _change_zone(self, player, second, towards=None):
         if player.current_zone == 1:
@@ -782,13 +980,13 @@ class ResourceBasedSimulator:
             p
             for p in all_alive
             if p.team_color != player.team_color
-            and p.current_zone == player.current_zone
-            and p.final_lives > 0
-            and (
-                p.is_active_at(second)
-                or p.is_taggable_at(second)
-                and player.last_tagged_id != p.get_tag_id
-            )
+               and p.current_zone == player.current_zone
+               and p.final_lives > 0
+               and (
+                       p.is_active_at(second)
+                       or p.is_taggable_at(second)
+                       and player.last_tagged_id != p.get_tag_id
+               )
         ]
         if potential_targets and player.final_shots > 0:
             # set target weights based on role
@@ -815,10 +1013,10 @@ class ResourceBasedSimulator:
             p
             for p in all_alive
             if p.team_color == player.team_color
-            and p.current_zone == player.current_zone
-            and p != player
-            and p.final_lives > 0
-            and p.is_resupplyable_at(second)
+               and p.current_zone == player.current_zone
+               and p != player
+               and p.final_lives > 0
+               and p.is_resupplyable_at(second)
         ]
         if potential_teammates:
             # TODO: weight based on role and resources needed
@@ -836,14 +1034,14 @@ class ResourceBasedSimulator:
                 # prioritize low allies
                 if player.role == "ammo":
                     resource_weighting = (
-                        teammate.max_shots - teammate.final_shots
-                    ) * 10
+                                                 teammate.max_shots - teammate.final_shots
+                                         ) * 10
                     if resource_weighting > 0:
                         all_full = False
                 else:
                     resource_weighting = (
-                        teammate.max_lives - teammate.final_lives
-                    ) * 10
+                                                 teammate.max_lives - teammate.final_lives
+                                         ) * 10
                     if resource_weighting > 0:
                         all_full = False
                 teammate_weights.append(
@@ -873,8 +1071,8 @@ class ResourceBasedSimulator:
                 p
                 for p in all_alive
                 if p.team_color == player.team_color
-                and p != player
-                and p.role == "medic"
+                   and p != player
+                   and p.role == "medic"
             ]
             # if medic alive go find them
             if medic and player.current_zone != medic[0].current_zone:
@@ -887,8 +1085,8 @@ class ResourceBasedSimulator:
                 p
                 for p in all_alive
                 if p.team_color == player.team_color
-                and p != player
-                and p.role == "ammo"
+                   and p != player
+                   and p.role == "ammo"
             ]
             # if ammo alive go find them
             if ammo and player.current_zone != ammo[0].current_zone:
@@ -1006,9 +1204,9 @@ class ResourceBasedSimulator:
             )
             return
         elif (
-            tagger.role == "medic"
-            and tagger.final_shots > 0
-            and teammate.is_resupplyable_at(second)
+                tagger.role == "medic"
+                and tagger.final_shots > 0
+                and teammate.is_resupplyable_at(second)
         ):
             resupply_amount = medic_resupply_chart[teammate.role]
             # only resupply to cap
@@ -1077,10 +1275,10 @@ class ResourceBasedSimulator:
         # roll if defender missile dodges/runs away
         # if not then perform complete missile with a 1-1.5 second delay
         if (
-            attacker.is_active_at(second)
-            and defender.is_taggable_at(seconds_into_round=second)
-            and attacker.final_missiles > 0
-            and not defender.is_hiding
+                attacker.is_active_at(second)
+                and defender.is_taggable_at(seconds_into_round=second)
+                and attacker.final_missiles > 0
+                and not defender.is_hiding
         ):
             # TODO: sometimes expend missile when dodged, sometimes not, based on player stats
             # roll if defender dodges
@@ -1123,6 +1321,8 @@ class ResourceBasedSimulator:
         """Simulate finishing missle on opponent"""
         if attacker.is_active_at(second) and defender.is_taggable_at(second):
             # normalize role checks (roles are stored lowercase elsewhere)
+            if not defender.is_active_at(second) and defender.is_taggable_at(second):
+                defender.times_tagged_in_reset_window += 1
             defender.shields = defender.max_shields  # reset shields on missile hit
             defender.points_scored -= 100
             # don't go below 0 lives
@@ -1151,6 +1351,17 @@ class ResourceBasedSimulator:
                     },
                 )
             defender.last_downed_time = second  # set downed time for respawn logic
+            GameEvent.objects.create(
+                game_round=attacker.game_round,
+                timestamp=second,
+                event_type="player_downed",
+                actor=attacker.player,
+                target=defender.player,
+                points_awarded=0,
+                description=f"{defender.player.name} downed by {attacker.player.name} (missile)",
+                metadata={"cause": "missile", "actor_role": attacker.role, "target_role": defender.role,
+                          "target_lives": defender.final_lives},
+            )
             defender.times_missiled += 1
             # Ensure keys exist for missile bookkeeping
             atk_key = attacker.get_tag_id
@@ -1238,9 +1449,9 @@ class ResourceBasedSimulator:
             and player_state.is_active_at(second),
         )
         if (
-            player_state.can_use_special
-            and player_state.final_lives > 0
-            and player_state.is_active_at(second)
+                player_state.can_use_special
+                and player_state.final_lives > 0
+                and player_state.is_active_at(second)
         ):
             if player_state.role == "commander":
                 player_state.final_special -= player_state.special_cost
@@ -1394,8 +1605,8 @@ class ResourceBasedSimulator:
                         opponent.final_lives, 3
                     )
                 elif (
-                    opponent.role == "commander"
-                    and opponent.special_active_until > second
+                        opponent.role == "commander"
+                        and opponent.special_active_until > second
                 ):
                     player_state.enemy_nuke_cancels += 1
                     opponent.own_specials_cancelled += 1
@@ -1435,11 +1646,24 @@ class ResourceBasedSimulator:
 
             # Apply damage to each opponent
             for opponent in opposing_players:
+                if not opponent.is_active_at(second) and opponent.is_taggable_at(second):
+                    opponent.times_tagged_in_reset_window += 1
                 lives_taken = min(opponent.final_lives, 3)
                 opponent.lives_lost_to_nukes += lives_taken
                 opponent.final_lives -= lives_taken
                 opponent.last_downed_time = second
                 opponent.shields = opponent.max_shields
+                GameEvent.objects.create(
+                    game_round=player_state.game_round,
+                    timestamp=second,
+                    event_type="player_downed",
+                    actor=player_state.player,
+                    target=opponent.player,
+                    points_awarded=0,
+                    description=f"{opponent.player.name} downed by {player_state.player.name} (nuke)",
+                    metadata={"cause": "nuke", "actor_role": player_state.role, "target_role": opponent.role,
+                              "target_lives": opponent.final_lives},
+                )
 
                 # Check for elimination and set was_eliminated_at
                 if opponent.final_lives <= 0:
@@ -1633,10 +1857,10 @@ class BatchSimulator:
 
     ROLE_STARTING_RESOURCES = {
         "commander": {"lives": 15, "shots": 30, "special": 0, "missiles": 5},
-        "heavy":     {"lives": 10, "shots": 20, "special": 0, "missiles": 5},
-        "scout":     {"lives": 15, "shots": 30, "special": 0, "missiles": 0},
-        "medic":     {"lives": 20, "shots": 15, "special": 0, "missiles": 0},
-        "ammo":      {"lives": 10, "shots": 15, "special": 0, "missiles": 0},
+        "heavy": {"lives": 10, "shots": 20, "special": 0, "missiles": 5},
+        "scout": {"lives": 15, "shots": 30, "special": 0, "missiles": 0},
+        "medic": {"lives": 20, "shots": 15, "special": 0, "missiles": 0},
+        "ammo": {"lives": 10, "shots": 15, "special": 0, "missiles": 0},
     }
 
     # Precomputed constants so _plan_action doesn't rebuild them each call
@@ -1649,9 +1873,8 @@ class BatchSimulator:
         "use_special", "resupply_ally", "missile_player",
     ]
 
-    # 4-second tick: half the iterations of the normal 2-s tick.
-    # Respawn/downed timings (4 s / 8 s) still apply correctly.
-    TICK = 4
+    # 0.5-second tick: models real shot speeds (regular=2/s, heavy=1/s).
+    TICK = 0.5
 
     def run(self, team_red, team_blue, n=100):
         """Simulate n rounds and return aggregate statistics.
@@ -1740,6 +1963,7 @@ class BatchSimulator:
                 role=role,
                 accuracy=player_model.accuracy,
                 survival=player_model.survival,
+                player_awareness=player_model.player_awareness,
                 starting_lives=resources["lives"],
                 starting_shots=resources["shots"],
                 final_lives=resources["lives"],
@@ -1762,10 +1986,13 @@ class BatchSimulator:
         blue_players = self._make_players(blue_roster, "blue")
 
         pending_missiles = []  # (complete_time, attacker, defender)
-        pending_nukes = []     # (complete_time, player_state)
+        pending_nukes = []  # (complete_time, player_state)
+        pending_followups = []  # (fire_at, attacker, defender, chain)
+        pending_reactions = []  # (fire_at, attacker, defender)
         eliminated_at = 901
 
-        for second in range(0, 900, self.TICK):
+        for _tick in range(int(900 / self.TICK)):
+            second = _tick * self.TICK
             # --- process pending missiles ---
             fired = [m for m in pending_missiles if m[0] <= second]
             pending_missiles = [m for m in pending_missiles if m[0] > second]
@@ -1781,10 +2008,153 @@ class BatchSimulator:
                     opposing = blue_players if ps.team_color == "red" else red_players
                     self._complete_nuke(ps, complete_time, opposing, event_log)
 
+            # --- process pending reactions (deferred by shot cooldown) ---
+            due_rx = [item for item in pending_reactions if item[0] <= second]
+            pending_reactions = [item for item in pending_reactions if item[0] > second]
+            for _, r_attacker, r_defender in due_rx:
+                if r_attacker.final_lives <= 0 or r_defender.final_lives <= 0:
+                    continue
+                if not r_attacker.is_active_at(second):
+                    continue
+                if r_attacker.final_shots <= 0 and r_attacker.role != "ammo":
+                    continue
+                r_attacker.reaction_shots += 1
+                r_attacker.last_shot_time = second
+                hit_chance = max(10, min(95, 70 + r_attacker.accuracy - r_defender.survival))
+                react_hit = random.randint(1, 100) < hit_chance
+                if r_attacker.role != "ammo":
+                    r_attacker.final_shots = max(0, r_attacker.final_shots - 1)
+                if react_hit:
+                    r_attacker.tags_made += 1
+                    if r_attacker.role != "heavy":
+                        r_attacker.final_special = min(r_attacker.max_special, r_attacker.final_special + 1)
+                    r_attacker.points_scored += 100
+                    r_attacker.last_tagged_id = r_defender.tag_id
+                    r_defender.times_tagged += 1
+                    r_defender.points_scored -= 20
+                    if not r_defender.is_active_at(second) and r_defender.is_taggable_at(second):
+                        r_defender.times_tagged_in_reset_window += 1
+                    r_defender.shields = max(0, r_defender.shields - r_attacker.shot_power)
+                    if r_defender.shields == 0:
+                        r_defender.final_lives = max(0, r_defender.final_lives - 1)
+                        r_defender.last_downed_time = second
+                        r_defender.shields = r_defender.max_shields
+                        if r_defender.final_lives <= 0:
+                            r_defender.was_eliminated_at = second
+                            if event_log is not None:
+                                event_log.append({
+                                    "event_type": "elimination", "actor_id": r_attacker.player_id,
+                                    "target_id": r_defender.player_id, "timestamp": second,
+                                    "points_awarded": 0,
+                                    "description": f"{r_attacker.name} eliminates {r_defender.name} (reaction)",
+                                    "metadata": {"elimination_action": "reaction"},
+                                })
+                    if event_log is not None:
+                        event_log.append({
+                            "event_type": "tag", "actor_id": r_attacker.player_id,
+                            "target_id": r_defender.player_id, "timestamp": second,
+                            "points_awarded": 100,
+                            "description": f"{r_attacker.name} reacts to {r_defender.name}",
+                            "metadata": {"actor_role": r_attacker.role, "target_role": r_defender.role,
+                                         "is_reaction": True},
+                        })
+                else:
+                    r_attacker.shots_missed += 1
+                    if event_log is not None:
+                        event_log.append({
+                            "event_type": "miss", "actor_id": r_attacker.player_id,
+                            "target_id": r_defender.player_id, "timestamp": second,
+                            "points_awarded": 0,
+                            "description": f"{r_attacker.name} reaction miss on {r_defender.name}",
+                            "metadata": {"is_reaction": True},
+                        })
+
+            # --- process pending follow-ups (deferred by shot cooldown) ---
+            due_fu = [item for item in pending_followups if item[0] <= second]
+            pending_followups = [item for item in pending_followups if item[0] > second]
+            for _, fu_attacker, fu_defender, chain in due_fu:
+                if fu_attacker.final_lives <= 0 or fu_defender.final_lives <= 0:
+                    continue
+                if fu_attacker.final_shots <= 0 and fu_attacker.role != "ammo":
+                    continue
+                fu_attacker.follow_up_shots += 1
+                fu_attacker.last_shot_time = second
+                hit_chance = max(10, min(95, 70 + fu_attacker.accuracy - fu_defender.survival))
+                fu_hit = random.randint(1, 100) < hit_chance
+                if fu_attacker.role != "ammo":
+                    fu_attacker.final_shots = max(0, fu_attacker.final_shots - 1)
+                if fu_hit:
+                    fu_attacker.tags_made += 1
+                    if fu_attacker.role != "heavy":
+                        fu_attacker.final_special = min(fu_attacker.max_special, fu_attacker.final_special + 1)
+                    fu_attacker.points_scored += 100
+                    fu_attacker.last_tagged_id = fu_defender.tag_id
+                    fu_defender.times_tagged += 1
+                    fu_defender.points_scored -= 20
+                    if not fu_defender.is_active_at(second) and fu_defender.is_taggable_at(second):
+                        fu_defender.times_tagged_in_reset_window += 1
+                    fu_defender.shields = max(0, fu_defender.shields - fu_attacker.shot_power)
+                    downed = fu_defender.shields == 0
+                    if downed:
+                        fu_defender.final_lives = max(0, fu_defender.final_lives - 1)
+                        fu_defender.last_downed_time = second
+                        fu_defender.shields = fu_defender.max_shields
+                        if fu_defender.final_lives <= 0:
+                            fu_defender.was_eliminated_at = second
+                            if event_log is not None:
+                                event_log.append({
+                                    "event_type": "elimination",
+                                    "actor_id": fu_attacker.player_id,
+                                    "target_id": fu_defender.player_id,
+                                    "timestamp": second,
+                                    "points_awarded": 0,
+                                    "description": f"{fu_attacker.name} eliminates {fu_defender.name} (follow-up)",
+                                    "metadata": {"elimination_action": "follow_up_tag"},
+                                })
+                    if event_log is not None:
+                        event_log.append({
+                            "event_type": "tag",
+                            "actor_id": fu_attacker.player_id,
+                            "target_id": fu_defender.player_id,
+                            "timestamp": second,
+                            "points_awarded": 100,
+                            "description": f"{fu_attacker.name} follow-up tags {fu_defender.name}",
+                            "metadata": {"actor_role": fu_attacker.role, "target_role": fu_defender.role,
+                                         "is_follow_up": True, "chain": chain},
+                        })
+                    if not downed and chain < 2 and fu_defender.final_lives > 0:
+                        if fu_defender.player_awareness < random.randint(0, 100):
+                            cooldown = self._shot_cooldown(fu_attacker, second)
+                            if cooldown == 0.0:
+                                due_fu.append((second, fu_attacker, fu_defender, chain + 1))
+                            else:
+                                pending_followups.append((second + cooldown, fu_attacker, fu_defender, chain + 1))
+                else:
+                    fu_attacker.shots_missed += 1
+                    if event_log is not None:
+                        event_log.append({
+                            "event_type": "miss",
+                            "actor_id": fu_attacker.player_id,
+                            "target_id": fu_defender.player_id,
+                            "timestamp": second,
+                            "points_awarded": 0,
+                            "description": f"{fu_attacker.name} follow-up miss on {fu_defender.name}",
+                            "metadata": {"is_follow_up": True},
+                        })
+
             # --- alive players this tick ---
             red_alive = [p for p in red_players if p.final_lives > 0 and p.was_eliminated_at > second]
             blue_alive = [p for p in blue_players if p.final_lives > 0 and p.was_eliminated_at > second]
             all_alive = red_alive + blue_alive
+
+            # accumulate uptime for all living players
+            for p in all_alive:
+                if not p.is_active_at(second) and not p.is_taggable_at(second):
+                    p.seconds_not_targetable += self.TICK
+                elif not p.is_active_at(second):
+                    p.seconds_reset_window += self.TICK
+                else:
+                    p.seconds_active += self.TICK
 
             random.shuffle(all_alive)
 
@@ -1816,7 +2186,7 @@ class BatchSimulator:
                     tag_attempts.append({"attacker": actor, "defender": plan["target"]})
 
             if tag_attempts:
-                self._resolve_tag_attempts(tag_attempts, second, event_log)
+                self._resolve_tag_attempts(tag_attempts, second, event_log, pending_followups, pending_reactions)
 
             # --- check for team elimination ---
             red_alive = [p for p in red_players if p.final_lives > 0]
@@ -1866,6 +2236,13 @@ class BatchSimulator:
         elif player.role == "commander":
             weights = _get_commander_weights(player, action_to_weight_index, weights, all_alive, second)
 
+        # Enforce shot cooldown — zero tag weight if player fired too recently
+        cooldown = self._shot_cooldown(player, second)
+        if cooldown > 0.0 and (second - player.last_shot_time) < cooldown:
+            weights[action_to_weight_index["tag_player"]] = 0
+            if sum(weights) == 0:
+                weights[action_to_weight_index["hide"]] = 1
+
         choice = random.choices(choices, weights)[0]
 
         if player.is_hiding and choice not in ("hide", "change_zone", "resupply_ally"):
@@ -1890,9 +2267,9 @@ class BatchSimulator:
                 targets = [
                     p for p in all_alive
                     if p.team_color != player.team_color
-                    and p.current_zone == player.current_zone
-                    and p.final_lives > 0
-                    and p.is_taggable_at(second)
+                       and p.current_zone == player.current_zone
+                       and p.final_lives > 0
+                       and p.is_taggable_at(second)
                 ]
                 if targets:
                     plans.append({"type": "missile", "actor": player, "target": random.choice(targets)})
@@ -1910,6 +2287,18 @@ class BatchSimulator:
 
         return plans
 
+    def _shot_cooldown(self, player, second: float) -> float:
+        """Seconds the player must wait between shots.
+
+        Rapid-fire scouts (special active) have no restriction.
+        Heavies fire once per second. Everyone else twice per second.
+        """
+        if player.role == "scout" and player.special_active_until > second:
+            return 0.0
+        if player.role == "heavy":
+            return 1.0
+        return 0.5
+
     # ------------------------------------------------------------------ #
     # Target selection
     # ------------------------------------------------------------------ #
@@ -1919,9 +2308,9 @@ class BatchSimulator:
         targets = [
             p for p in all_alive
             if p.team_color != player.team_color
-            and p.current_zone == player.current_zone
-            and p.final_lives > 0
-            and (p.is_active_at(second) or (p.is_taggable_at(second) and player.last_tagged_id != p.tag_id))
+               and p.current_zone == player.current_zone
+               and p.final_lives > 0
+               and (p.is_active_at(second) or (p.is_taggable_at(second) and player.last_tagged_id != p.tag_id))
         ]
         if not targets or player.final_shots <= 0:
             return None
@@ -1933,10 +2322,10 @@ class BatchSimulator:
         teammates = [
             p for p in all_alive
             if p.team_color == player.team_color
-            and p.current_zone == player.current_zone
-            and p is not player
-            and p.final_lives > 0
-            and p.is_resupplyable_at(second)
+               and p.current_zone == player.current_zone
+               and p is not player
+               and p.final_lives > 0
+               and p.is_resupplyable_at(second)
         ]
         if not teammates:
             return None
@@ -1969,7 +2358,7 @@ class BatchSimulator:
     # Action resolution (no DB writes)
     # ------------------------------------------------------------------ #
 
-    def _resolve_tag_attempts(self, attempts, second, event_log=None):
+    def _resolve_tag_attempts(self, attempts, second, event_log=None, pending_followups=None, pending_reactions=None):
         outcomes = []
         for a in attempts:
             attacker, defender = a["attacker"], a["defender"]
@@ -1991,6 +2380,7 @@ class BatchSimulator:
                 if attacker.role != "ammo":
                     attacker.final_shots -= 1
                 attacker.shots_missed += 1
+                attacker.last_shot_time = second
                 if event_log is not None:
                     event_log.append({
                         "event_type": "miss", "actor_id": attacker.player_id,
@@ -2008,10 +2398,12 @@ class BatchSimulator:
                 attacker.points_scored += 100
                 attacker.last_tagged_id = defender.tag_id
                 attacker.final_shots = max(0, attacker.final_shots - 1)
+                attacker.last_shot_time = second
 
                 defender.times_tagged += 1
                 defender.points_scored -= 20
                 defender.shields = max(0, defender.shields - attacker.shot_power)
+                o["downed"] = defender.shields == 0
 
                 if event_log is not None:
                     event_log.append({
@@ -2025,6 +2417,8 @@ class BatchSimulator:
                         },
                     })
 
+                if not defender.is_active_at(second) and defender.is_taggable_at(second):
+                    defender.times_tagged_in_reset_window += 1
                 if defender.shields == 0:
                     if defender.role == "commander" and defender.special_active_until > second:
                         defender.special_active_until = 0
@@ -2044,6 +2438,7 @@ class BatchSimulator:
             else:
                 attacker.final_shots = max(0, attacker.final_shots - 1)
                 attacker.shots_missed += 1
+                attacker.last_shot_time = second
                 if event_log is not None:
                     event_log.append({
                         "event_type": "miss", "actor_id": attacker.player_id,
@@ -2051,6 +2446,172 @@ class BatchSimulator:
                         "points_awarded": 0,
                         "description": f"{attacker.name} misses {defender.name}",
                         "metadata": {},
+                    })
+
+        # Reactions: hit or miss may trigger a player_awareness roll.
+        # Rapid-fire scouts react this tick; everyone else is scheduled for their next eligible shot.
+        immediate_reactions = []
+        for o in outcomes:
+            if o["result"] not in ("hit", "miss"):
+                continue
+            r_reactor = o["defender"]
+            r_target = o["attacker"]
+            if not r_reactor.is_active_at(second) or r_reactor.final_lives <= 0:
+                continue
+            if r_reactor.final_shots <= 0 and r_reactor.role != "ammo":
+                continue
+            if r_target.final_lives <= 0:
+                continue
+            if r_reactor.player_awareness >= random.randint(0, 100):
+                cooldown = self._shot_cooldown(r_reactor, second)
+                if cooldown == 0.0:
+                    immediate_reactions.append({"attacker": r_reactor, "defender": r_target})
+                elif pending_reactions is not None:
+                    pending_reactions.append((second + cooldown, r_reactor, r_target))
+
+        for ra in immediate_reactions:
+            r_attacker = ra["attacker"]
+            r_defender = ra["defender"]
+            if r_defender.final_lives <= 0:
+                continue
+            hit_chance = max(10, min(95, 70 + r_attacker.accuracy - r_defender.survival))
+            react_hit = random.randint(1, 100) < hit_chance
+            r_attacker.reaction_shots += 1
+            r_attacker.last_shot_time = second
+            if r_attacker.role != "ammo":
+                r_attacker.final_shots = max(0, r_attacker.final_shots - 1)
+            if react_hit:
+                r_attacker.tags_made += 1
+                if r_attacker.role != "heavy":
+                    r_attacker.final_special = min(r_attacker.max_special, r_attacker.final_special + 1)
+                r_attacker.points_scored += 100
+                r_attacker.last_tagged_id = r_defender.tag_id
+                r_defender.times_tagged += 1
+                r_defender.points_scored -= 20
+                if not r_defender.is_active_at(second) and r_defender.is_taggable_at(second):
+                    r_defender.times_tagged_in_reset_window += 1
+                r_defender.shields = max(0, r_defender.shields - r_attacker.shot_power)
+                if r_defender.shields == 0:
+                    r_defender.final_lives = max(0, r_defender.final_lives - 1)
+                    r_defender.last_downed_time = second
+                    r_defender.shields = r_defender.max_shields
+                    if r_defender.final_lives <= 0:
+                        r_defender.was_eliminated_at = second
+                        if event_log is not None:
+                            event_log.append({
+                                "event_type": "elimination", "actor_id": r_attacker.player_id,
+                                "target_id": r_defender.player_id, "timestamp": second,
+                                "points_awarded": 0,
+                                "description": f"{r_attacker.name} eliminates {r_defender.name} (reaction)",
+                                "metadata": {"elimination_action": "reaction"},
+                            })
+                if event_log is not None:
+                    event_log.append({
+                        "event_type": "tag", "actor_id": r_attacker.player_id,
+                        "target_id": r_defender.player_id, "timestamp": second,
+                        "points_awarded": 100,
+                        "description": f"{r_attacker.name} reacts to {r_defender.name}",
+                        "metadata": {"actor_role": r_attacker.role, "target_role": r_defender.role,
+                                     "is_reaction": True},
+                    })
+            else:
+                r_attacker.shots_missed += 1
+                if event_log is not None:
+                    event_log.append({
+                        "event_type": "miss", "actor_id": r_attacker.player_id,
+                        "target_id": r_defender.player_id, "timestamp": second,
+                        "points_awarded": 0,
+                        "description": f"{r_attacker.name} reaction miss on {r_defender.name}",
+                        "metadata": {"is_reaction": True},
+                    })
+
+        # Follow-up tags: if a hit did NOT down the defender (shields still > 0 after
+        # the shot), the attacker may fire again. A hit that takes shields to 0 is
+        # never eligible — a heavy one-shotting a commander never generates follow-ups.
+        # Rapid-fire scouts fire this tick; everyone else is scheduled for their next eligible shot.
+        immediate_follow_ups = []
+        for o in outcomes:
+            if o["result"] != "hit" or o.get("downed", False):
+                continue
+            if o["defender"].final_lives <= 0:
+                continue
+            if o["attacker"].final_shots <= 0 and o["attacker"].role != "ammo":
+                continue
+            if o["defender"].player_awareness < random.randint(0, 100):
+                cooldown = self._shot_cooldown(o["attacker"], second)
+                if cooldown == 0.0:
+                    immediate_follow_ups.append({"attacker": o["attacker"], "defender": o["defender"], "chain": 1})
+                elif pending_followups is not None:
+                    pending_followups.append((second + cooldown, o["attacker"], o["defender"], 1))
+
+        for fu in immediate_follow_ups:
+            fu_attacker = fu["attacker"]
+            fu_defender = fu["defender"]
+            if fu_defender.final_lives <= 0:
+                continue
+            if fu_attacker.final_shots <= 0 and fu_attacker.role != "ammo":
+                continue
+            hit_chance = max(10, min(95, 70 + fu_attacker.accuracy - fu_defender.survival))
+            fu_hit = random.randint(1, 100) < hit_chance
+            fu_attacker.follow_up_shots += 1
+            fu_attacker.last_shot_time = second
+            if fu_attacker.role != "ammo":
+                fu_attacker.final_shots = max(0, fu_attacker.final_shots - 1)
+            if fu_hit:
+                fu_attacker.tags_made += 1
+                if fu_attacker.role != "heavy":
+                    fu_attacker.final_special = min(fu_attacker.max_special, fu_attacker.final_special + 1)
+                fu_attacker.points_scored += 100
+                fu_attacker.last_tagged_id = fu_defender.tag_id
+                fu_defender.times_tagged += 1
+                fu_defender.points_scored -= 20
+                if not fu_defender.is_active_at(second) and fu_defender.is_taggable_at(second):
+                    fu_defender.times_tagged_in_reset_window += 1
+                fu_defender.shields = max(0, fu_defender.shields - fu_attacker.shot_power)
+                downed = fu_defender.shields == 0
+                if downed:
+                    fu_defender.final_lives = max(0, fu_defender.final_lives - 1)
+                    fu_defender.last_downed_time = second
+                    fu_defender.shields = fu_defender.max_shields
+                    if fu_defender.final_lives <= 0:
+                        fu_defender.was_eliminated_at = second
+                        if event_log is not None:
+                            event_log.append({
+                                "event_type": "elimination",
+                                "actor_id": fu_attacker.player_id,
+                                "target_id": fu_defender.player_id,
+                                "timestamp": second,
+                                "points_awarded": 0,
+                                "description": f"{fu_attacker.name} eliminates {fu_defender.name} (follow-up)",
+                                "metadata": {"elimination_action": "follow_up_tag"},
+                            })
+                if event_log is not None:
+                    event_log.append({
+                        "event_type": "tag",
+                        "actor_id": fu_attacker.player_id,
+                        "target_id": fu_defender.player_id,
+                        "timestamp": second,
+                        "points_awarded": 100,
+                        "description": f"{fu_attacker.name} follow-up tags {fu_defender.name}",
+                        "metadata": {"actor_role": fu_attacker.role, "target_role": fu_defender.role,
+                                     "is_follow_up": True, "chain": fu["chain"]},
+                    })
+                if not downed and fu["chain"] < 2 and fu_defender.final_lives > 0:
+                    if fu_defender.player_awareness < random.randint(0, 100):
+                        # rapid-fire: chain immediately in this loop
+                        immediate_follow_ups.append(
+                            {"attacker": fu_attacker, "defender": fu_defender, "chain": fu["chain"] + 1})
+            else:
+                fu_attacker.shots_missed += 1
+                if event_log is not None:
+                    event_log.append({
+                        "event_type": "miss",
+                        "actor_id": fu_attacker.player_id,
+                        "target_id": fu_defender.player_id,
+                        "timestamp": second,
+                        "points_awarded": 0,
+                        "description": f"{fu_attacker.name} follow-up miss on {fu_defender.name}",
+                        "metadata": {"is_follow_up": True},
                     })
 
     def _attempt_resupply(self, tagger, teammate, second, event_log=None):
@@ -2153,6 +2714,8 @@ class BatchSimulator:
 
     def _complete_missile(self, attacker, defender, second, event_log=None):
         if attacker.is_active_at(second) and defender.is_taggable_at(second):
+            if not defender.is_active_at(second) and defender.is_taggable_at(second):
+                defender.times_tagged_in_reset_window += 1
             defender.shields = defender.max_shields
             defender.points_scored -= 100
             defender.final_lives = max(0, defender.final_lives - 2)
@@ -2170,6 +2733,7 @@ class BatchSimulator:
             defender.times_missiled += 1
 
             attacker.points_scored += 500
+            attacker.missile_points += 500
             attacker.final_missiles -= 1
             attacker.missiles_landed += 1
             if attacker.role != "heavy":
@@ -2271,7 +2835,6 @@ class BatchSimulator:
                             "description": f"{opp.name} eliminated by nuke",
                             "metadata": {"elimination_action": "nuke"},
                         })
-
 
     # ------------------------------------------------------------------ #
     # Seed-based exact replay and DB persistence
