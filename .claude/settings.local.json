@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest --collect-only -q)",
+      "Bash(python manage.py check)",
+      "Bash(pytest matches/tests/simulation_tests.py -x -q)",
+      "Bash(python -m pytest matches/tests/simulation_tests.py -k \"heavy_baseline or commander_baseline\" -v)",
+      "Bash(python -m pytest --tb=short -q)",
+      "Bash(python manage.py score_averages --rounds 200 --seed 42)",
+      "Bash(python -m pytest matches/tests/simulation_tests.py -x -q)",
+      "Bash(python manage.py score_averages --rounds 50 --seed 42)",
+      "Bash(python manage.py score_averages --rounds 20 --seed 42)",
+      "Bash(python -m pytest matches/tests/simulation_tests.py -q)",
+      "Bash(python manage.py score_averages --rounds 50)",
+      "Bash(python -m pytest matches/tests/simulation_tests.py -x --tb=short -q)",
+      "Bash(python -m pytest matches/tests/simulation_tests.py::TestWeightFunctions -x -q)",
+      "Bash(Get-Content \"C:\\\\Users\\\\Andrew Galkowski\\\\Desktop\\\\programming\\\\laserforce_simulator\\\\laserforce_simulator\\\\matches\\\\sim_helpers\\\\weights.py\")",
+      "Bash(Select-Object -First 60)",
+      "Bash(python -c ' *)"
+    ]
+  }
+}

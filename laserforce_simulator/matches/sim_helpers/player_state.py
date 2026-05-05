@@ -31,6 +31,7 @@ class PlayerState:
     final_special: int = 0
     final_missiles: int = 0
     shields: int = 1
+    player_awareness: int = 50  # 0-100, from Player model
 
     current_zone: int = 0
     was_eliminated_at: int = 901
@@ -57,6 +58,16 @@ class PlayerState:
     times_missiled: int = 0
     resupplies_given: int = 0
     specials_used: int = 0
+    times_tagged_in_reset_window: int = 0
+    missile_points: int = 0
+    follow_up_shots: int = 0
+    reaction_shots: int = 0
+    last_shot_time: float = -99.0  # transient; tracks shot cooldown enforcement
+
+    # uptime breakdown in seconds (accumulated each tick)
+    seconds_active: int = 0
+    seconds_not_targetable: int = 0
+    seconds_reset_window: int = 0
 
     # ------------------------------------------------------------------ #
     # Properties matching PlayerRoundState interface used by weights.py

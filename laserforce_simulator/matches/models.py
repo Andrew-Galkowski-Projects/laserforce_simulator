@@ -290,6 +290,9 @@ class PlayerRoundState(models.Model):
     missiles_landed = models.IntegerField(default=0)
     times_missiled = models.IntegerField(default=0)
     resupplies_given = models.IntegerField(default=0)
+    times_tagged_in_reset_window = models.IntegerField(default=0)  # tagged while taggable but not yet active (4-7s after downed)
+    follow_up_shots = models.IntegerField(default=0)  # shots fired as follow-ups on high-shield targets
+    reaction_shots = models.IntegerField(default=0)  # shots fired as reactions to being tagged/missed
 
     # detailed performance stats
     specific_tags = models.JSONField(
