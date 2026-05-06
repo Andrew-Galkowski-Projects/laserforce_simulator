@@ -20,10 +20,19 @@ python manage.py makemigrations
 pytest
 
 # Run a single test file
-pytest matches/simulation_tests.py
+pytest matches/tests/simulation_tests.py
 
 # Run a specific test class or method
-pytest matches/simulation_tests.py::ClassName::method_name
+pytest matches/tests/simulation_tests.py::ClassName::method_name
+
+# Batch-simulate N rounds and print average scores per role
+python manage.py score_averages --rounds 50
+
+# Score averages for specific teams
+python manage.py score_averages --rounds 100 --team-red "Team A" --team-blue "Team B"
+
+# Analyse events from a completed DB round
+python manage.py game_analysis --round-id <id>
 ```
 
 CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci.yml`). Python version is 3.11.
@@ -68,35 +77,71 @@ Match (2 rounds, winner by rounds then points)
 
 **Match** (`matches/models.py`): Two `GameRound`s; teams swap colors between rounds. Winner is determined by rounds won, then total cumulative points. A 10,000-point bonus is awarded for eliminating the opposing team entirely.
 
-**PlayerRoundState** (`matches/models.py`): Starting resources are role-dependent (lives, shots, special, missiles). Tracks final resource counts, tags, misses, zone visits, MVP score. `was_eliminated_at` stores seconds into the round (901 = survived the full round). The MVP formula is role-specific and weighted heavily toward that role's primary contribution.
+**PlayerRoundState** (`matches/models.py`): Starting resources are role-dependent (lives, shots, special, missiles). Tracks final resource counts, tags, misses, zone visits, MVP score. `was_eliminated_at` stores seconds into the round (901 = survived the full round). The MVP formula is role-specific and weighted heavily toward that role's primary contribution. Also tracks `follow_up_shots`, `reaction_shots`, and uptime breakdown fields (`seconds_active`, `seconds_not_targetable`, `seconds_reset_window`).
 
 **GameEvent** (`matches/models.py`): Every action (tag, missile, special, miss, resupply, base capture, elimination) is logged here with an actor, optional target, timestamp in seconds, points, and a JSON `metadata` field.
 
 ### Simulation Engine (`matches/simulation.py`)
 
-`ResourceBasedSimulator` is the active simulator. It runs in 2-second ticks over 900 seconds:
+Two simulators live in `matches/simulation.py`:
+
+**`ResourceBasedSimulator`** — DB-backed, writes `GameEvent` rows and `PlayerRoundState`. Runs in 2-second ticks. Used for full match simulation with event replay. Prefer this when you need the game event log or a persisted round.
+
+**`BatchSimulator`** — pure in-memory, no DB writes. Uses `PlayerState` dataclasses (see `matches/sim_helpers/player_state.py`). Runs in **0.5-second ticks** to model real shot speeds. Used by `score_averages` and batch win-rate analysis. A round typically runs in ~25 ms vs ~9 s for the DB-backed simulator.
+
+Both simulators follow the same per-tick loop:
 
 1. Process pending missiles/nukes that have completed their delay
-2. Each active player picks an action (weighted random by role, zone context, remaining resources)
-3. Resolve the action — update `PlayerRoundState` fields and write a `GameEvent`
-4. Check for eliminations after each tick
-5. Return aggregated round results
+2. Process pending deferred follow-up and reaction shots (shots scheduled by shot-cooldown logic)
+3. Each active player picks an action (weighted random by role, zone, remaining resources)
+4. Resolve the action — update state and optionally write a `GameEvent`
+5. Check for team eliminations
 
-Action weights are in `matches/sim_helpers/weights.py` — separate functions per role (`_get_medic_weights`, `_get_heavy_weights`, etc.) that return a dict of action → weight. Weights shift based on remaining lives, special charges, zone, and allied presence.
+Action weights are in `matches/sim_helpers/weights.py`. See `matches/sim_helpers/CLAUDE.md` for details.
 
-`SimpleMatchSimulator` is an older, simpler fallback; prefer `ResourceBasedSimulator` for new work.
+### Shot Speed & Follow-up Mechanics (BatchSimulator)
+
+Real Laserforce shot speeds are modelled in `BatchSimulator`:
+
+| Class | Shot cooldown | Notes |
+|-------|--------------|-------|
+| Scout with rapid fire | 0.0 s | Unlimited; follow-ups fire in the same tick |
+| All others | 0.5 s | 2 shots/second |
+| Heavy | 1.0 s | 1 shot/second |
+
+`_shot_cooldown(player, second)` returns the cooldown. `_plan_action` zeroes the `tag_player` weight when `second - player.last_shot_time < cooldown`. `last_shot_time` is updated on every fired shot (hit, miss, or hidden-miss).
+
+**Follow-up shots**: when a hit does NOT down the defender (shields > 0 after impact), the attacker may fire again. The follow-up is scheduled into `pending_followups` at `second + cooldown` and processed at the start of the next eligible tick. Rapid-fire scouts chain immediately in the same tick. Chain depth is capped at 2. A hit that takes shields to 0 is never eligible — a heavy always downs its target in one shot so never generates follow-ups.
+
+**Reaction shots**: after being tagged or missed, the defender may fire back (rolled against `player_awareness`). Same cooldown scheduling logic applies.
 
 ### Role Mechanics
 
-| Role | Shields/Shot Power | Has Missiles | Can Resupply |
-|------|-------------------|--------------|--------------|
-| Commander | 2 / 3 | Yes | No |
+| Role | Shields / Shot Power | Has Missiles | Can Resupply |
+|------|---------------------|--------------|--------------|
+| Commander | 3 / 2 | Yes | No |
 | Heavy | 3 / 3 | Yes | No |
 | Scout | 1 / 1 | No | No |
 | Medic | 1 / 1 | No | Yes (lives) |
 | Ammo | 1 / 1 | No | Yes (shots) |
 
-Shields absorb damage; depleting shields at 0 lives causes elimination. Respawn after being tagged requires an 8-second cooldown. Zone values: 0 = red_zone, 1 = neutral_zone, 2 = blue_zone.
+Shields absorb damage; a hit that reduces shields to 0 costs the defender one life and resets shields to max. Respawn after a life loss requires an 8-second cooldown (4 seconds taggable in the "reset window", 4 more seconds until fully active). Zone values: 0 = red_zone, 1 = neutral_zone, 2 = blue_zone.
+
+**Heavy nerf**: heavies have 1 shot/second (vs 2/s for other roles) and always down their target in one hit, so they never generate follow-up shots.
+
+**Scout rapid fire**: when the scout's special is active (`special_active_until > second`), `_shot_cooldown` returns 0.0, giving unlimited fire rate.
+
+### Score Calibration Targets
+
+Used by `score_averages` to measure simulation accuracy against real-world averages:
+
+| Role | Target score |
+|------|-------------|
+| Commander | 9,952 |
+| Heavy | 6,482 |
+| Scout | 5,102 |
+| Ammo | 3,242 |
+| Medic | 2,282 |
 
 ### URL Structure
 

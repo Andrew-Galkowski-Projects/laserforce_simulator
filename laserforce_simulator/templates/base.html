@@ -13,6 +13,7 @@
             <div class="navbar-nav ms-auto">
                 <a class="nav-link" href="{% url 'team_list' %}">Teams</a>
                 <a class="nav-link" href="{% url 'match_list' %}">Matches</a>
+                <a class="nav-link" href="{% url 'simulate_batch' %}">Batch Sim</a>
                 <a class="nav-link" href="{% url 'team_create' %}">Create Team</a>
                 <a class="nav-link" href="{% url 'map_list' %}">Maps</a>
             </div>
@@ -34,5 +35,6 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    {% block extra_scripts %}{% endblock %}
 </body>
 </html>
