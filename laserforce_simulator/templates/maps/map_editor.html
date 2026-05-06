@@ -1,0 +1,744 @@
+{% extends "base.html" %}
+
+{% block title %}Map Editor — {{ arena_map.name }}{% endblock %}
+
+{% block content %}
+{# ── Top bar ─────────────────────────────────────────────────────────────── #}
+<div class="d-flex align-items-center gap-3 mb-2 flex-wrap">
+    <h4 class="mb-0">{{ arena_map.name }}</h4>
+
+    <div class="d-flex align-items-center gap-2">
+        <label for="zone-size-select" class="form-label mb-0 text-nowrap">Zone size:</label>
+        <select id="zone-size-select" class="form-select form-select-sm" style="width:auto;">
+            <option value="20">20px</option>
+            <option value="30">30px</option>
+            <option value="40">40px</option>
+            <option value="50" selected>50px</option>
+            <option value="60">60px</option>
+            <option value="80">80px</option>
+            <option value="100">100px</option>
+        </select>
+    </div>
+
+    <div class="btn-group btn-group-sm" role="group">
+        <button id="mode-zones" class="btn btn-secondary active">Zones &amp; Bases</button>
+        <button id="mode-sight" class="btn btn-secondary">Sight Lines</button>
+    </div>
+
+    <button id="save-btn" class="btn btn-success btn-sm">Save Configuration</button>
+
+    <div class="d-flex align-items-center gap-2 ms-auto">
+        <small class="text-muted">Zone legend:</small>
+        <span class="badge" style="background:rgba(40,40,40,0.85);border:1px solid #ccc;">Wall</span>
+        <span class="badge" style="background:rgba(180,180,200,0.85);color:#333;border:1px solid #ccc;">Floor</span>
+        <span class="badge" style="background:rgba(200,60,60,0.85);">Red Zone</span>
+        <span class="badge" style="background:rgba(60,60,200,0.85);">Blue Zone</span>
+    </div>
+</div>
+
+{# ── Zones & Bases controls ───────────────────────────────────────────────── #}
+<div id="zones-controls" class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+    <small class="text-muted text-nowrap fw-semibold">Place base:</small>
+    <div class="btn-group btn-group-sm" role="group">
+        <button class="btn btn-outline-danger  base-btn" data-type="red">Red Base</button>
+        <button class="btn btn-outline-primary base-btn" data-type="blue">Blue Base</button>
+        <button class="btn btn-outline-warning base-btn" data-type="neutral_1">Neutral 1</button>
+        <button class="btn btn-outline-warning base-btn" data-type="neutral_2">Neutral 2</button>
+        <button class="btn btn-outline-warning base-btn" data-type="neutral_3">Neutral 3</button>
+        <button class="btn btn-outline-warning base-btn" data-type="neutral_4">Neutral 4</button>
+    </div>
+    <button id="clear-bases-btn" class="btn btn-sm btn-outline-secondary">Clear All Bases</button>
+    <small class="text-muted">Select a base type, then click a cell on the Zone Map. Click again to remove.</small>
+</div>
+
+{# ── Sight Lines controls ─────────────────────────────────────────────────── #}
+<div id="sight-controls" class="d-none d-flex align-items-center gap-2 mb-3 flex-wrap">
+    <small class="text-muted text-nowrap fw-semibold">Viewing:</small>
+    <select id="sight-view-select" class="form-select form-select-sm" style="width:auto;">
+        <option value="zone">Zone (click map)</option>
+        <option value="red">Red Base</option>
+        <option value="blue">Blue Base</option>
+        <option value="neutral_1">Neutral 1</option>
+        <option value="neutral_2">Neutral 2</option>
+        <option value="neutral_3">Neutral 3</option>
+        <option value="neutral_4">Neutral 4</option>
+    </select>
+    <button id="compute-btn" class="btn btn-sm btn-outline-primary">Compute Sight Lines</button>
+    <span id="compute-spinner" class="spinner-border spinner-border-sm text-secondary d-none" role="status"></span>
+    <button id="save-sight-btn" class="btn btn-sm btn-success">Save Sight Lines</button>
+    <button id="bulk-edit-btn" class="btn btn-sm btn-outline-secondary">Bulk Edit: Off</button>
+    <small id="sight-hint" class="text-muted fst-italic">Switch to this mode to begin.</small>
+</div>
+
+<div id="save-alert"       class="alert d-none" role="alert"></div>
+<div id="save-sight-alert" class="alert d-none" role="alert"></div>
+
+{# ── Side-by-side panels ─────────────────────────────────────────────────── #}
+<div class="row g-3">
+    <div class="col-12 col-xl-6">
+        <div class="card">
+            <div class="card-header py-2"><strong>Original</strong></div>
+            <div class="card-body p-2 text-center">
+                <img id="original-img" src="{{ arena_map.image.url }}"
+                     alt="{{ arena_map.name }}"
+                     style="max-width:100%;height:auto;display:block;margin:auto;">
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-xl-6">
+        <div class="card">
+            <div class="card-header py-2 d-flex align-items-center gap-2">
+                <strong>Zone Map</strong>
+                <small class="text-muted">(B&amp;W, labels removed)</small>
+                <span id="loading-indicator" class="spinner-border spinner-border-sm text-secondary d-none" role="status"></span>
+            </div>
+            <div class="card-body p-2 text-center">
+                <div style="position:relative;display:inline-block;max-width:100%;">
+                    <img id="zone-img" src="{% url 'processed_image' arena_map.pk %}"
+                         alt="{{ arena_map.name }}"
+                         style="max-width:100%;height:auto;display:block;">
+                    <canvas id="zone-canvas"
+                            style="position:absolute;top:0;left:0;width:100%;height:100%;">
+                    </canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<a href="{% url 'map_list' %}" class="btn btn-outline-secondary btn-sm mt-3">&larr; Back to Maps</a>
+
+<script>
+// ── URLs ────────────────────────────────────────────────────────────────────
+const ZONES_URL        = "{% url 'process_zones'       arena_map.pk %}";
+const SAVE_URL         = "{% url 'save_zone_config'    arena_map.pk %}";
+const GET_SIGHT_URL    = "{% url 'get_sight_lines'     arena_map.pk %}";
+const COMPUTE_SIGHT_URL= "{% url 'compute_sight_lines' arena_map.pk %}";
+const SAVE_SIGHT_URL   = "{% url 'save_sight_lines'    arena_map.pk %}";
+const CSRF_TOKEN       = "{{ csrf_token }}";
+const DEFAULT_ZONE_SIZE= {{ saved_zone_size }};
+
+// ── Colors ──────────────────────────────────────────────────────────────────
+const ZONE_COLORS = {
+    0: "rgba(40,40,40,0.72)",
+    1: "rgba(255,255,255,0.08)",
+    2: "rgba(200,60,60,0.62)",
+    3: "rgba(60,60,200,0.62)",
+};
+const ZONE_COLORS_FAINT = {
+    0: "rgba(40,40,40,0.55)",
+    1: "rgba(200,205,215,0.30)",
+    2: "rgba(200,60,60,0.25)",
+    3: "rgba(60,60,200,0.25)",
+};
+const GRID_COLOR = "rgba(0,0,0,0.55)";
+
+const BASE_FILL_COLORS = {
+    red:       "rgba(220,53,69,0.70)",
+    blue:      "rgba(13,110,253,0.70)",
+    neutral_1: "rgba(255,193,7,0.80)",
+    neutral_2: "rgba(255,193,7,0.70)",
+    neutral_3: "rgba(255,193,7,0.60)",
+    neutral_4: "rgba(255,193,7,0.50)",
+};
+const BASE_TEXT_COLORS = {
+    red:"#fff", blue:"#fff",
+    neutral_1:"#333", neutral_2:"#333", neutral_3:"#333", neutral_4:"#333",
+};
+const BASE_LABELS = {
+    red:"R", blue:"B",
+    neutral_1:"N1", neutral_2:"N2", neutral_3:"N3", neutral_4:"N4",
+};
+
+// ── Shared state ─────────────────────────────────────────────────────────────
+const bases = {};
+let currentZoneData  = null;
+let currentMode      = "zones";  // "zones" | "sight"
+
+// ── Zones & Bases state ──────────────────────────────────────────────────────
+let selectedBaseType = null;
+
+// ── Sight Lines state ─────────────────────────────────────────────────────────
+let sightData        = {};
+let baseSights       = { red:[], blue:[], neutral_1:[], neutral_2:[], neutral_3:[], neutral_4:[] };
+let selectedCell     = null;   // {row, col}
+let sightViewMode    = "zone"; // "zone" | base type
+let dragSelecting    = false;  // Is user dragging to select cells?
+let dragStart        = null;   // {row, col} where drag started
+let selectedCells    = new Set(); // Set of "r,c" strings for bulk operations
+let bulkEditMode     = false;  // Bulk edit (drag-select) enabled
+let dragMoved        = false;  // Did mouse actually cross a cell boundary?
+let wasJustDragging  = false;  // Suppress click event after a completed drag
+
+// ── Bootstrap saved bases ────────────────────────────────────────────────────
+const INITIAL_BASES = {{ bases_json|safe }};
+Object.assign(bases, INITIAL_BASES);
+
+// ── DOM refs ─────────────────────────────────────────────────────────────────
+const select          = document.getElementById("zone-size-select");
+const canvas          = document.getElementById("zone-canvas");
+const loadingSpinner  = document.getElementById("loading-indicator");
+const saveBtn         = document.getElementById("save-btn");
+const saveAlert       = document.getElementById("save-alert");
+const saveSightBtn    = document.getElementById("save-sight-btn");
+const saveSightAlert  = document.getElementById("save-sight-alert");
+const sightHint       = document.getElementById("sight-hint");
+const computeBtn      = document.getElementById("compute-btn");
+const computeSpinner  = document.getElementById("compute-spinner");
+const bulkEditBtn     = document.getElementById("bulk-edit-btn");
+const sightViewSelect = document.getElementById("sight-view-select");
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function getCellFromClick(e) {
+    const rect   = canvas.getBoundingClientRect();
+    const scaleX = canvas.width  / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const col    = Math.floor((e.clientX - rect.left) * scaleX / currentZoneData.cell_size);
+    const row    = Math.floor((e.clientY - rect.top)  * scaleY / currentZoneData.cell_size);
+    return { row, col };
+}
+
+function drawGrid(ctx, data) {
+    const cw = data.cell_size, ch = data.cell_size;
+    ctx.strokeStyle = GRID_COLOR;
+    ctx.lineWidth   = 0.8;
+    ctx.beginPath();
+    for (let c = 0; c <= data.cols; c++) { ctx.moveTo(c*cw, 0); ctx.lineTo(c*cw, data.rows*ch); }
+    for (let r = 0; r <= data.rows; r++) { ctx.moveTo(0, r*ch); ctx.lineTo(data.cols*cw, r*ch); }
+    ctx.stroke();
+}
+
+function drawBases(ctx, data) {
+    const cw = data.cell_size, ch = data.cell_size;
+    const fontSize = Math.max(9, Math.floor(cw * 0.35));
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const [type, pos] of Object.entries(bases)) {
+        const col = Math.floor(pos.x_px / cw);
+        const row = Math.floor(pos.y_px / ch);
+        if (col >= data.cols || row >= data.rows) continue;
+        ctx.fillStyle   = BASE_FILL_COLORS[type] ?? "rgba(128,128,128,0.6)";
+        ctx.fillRect(col*cw, row*ch, cw, ch);
+        ctx.strokeStyle = "rgba(255,255,255,0.9)";
+        ctx.lineWidth   = 2;
+        ctx.strokeRect(col*cw+1, row*ch+1, cw-2, ch-2);
+        ctx.fillStyle   = BASE_TEXT_COLORS[type] ?? "#fff";
+        ctx.fillText(BASE_LABELS[type] ?? type, (col+0.5)*cw, (row+0.5)*ch);
+    }
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
+function renderCanvas() {
+    if (!currentZoneData) return;
+    if (currentMode === "zones") renderZonesAndBases();
+    else                         renderSightLines();
+}
+
+function renderZonesAndBases() {
+    const data = currentZoneData;
+    const ctx  = canvas.getContext("2d");
+    canvas.width  = data.img_width;
+    canvas.height = data.img_height;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const cw = data.cell_size, ch = data.cell_size;
+
+    for (let r = 0; r < data.rows; r++) {
+        for (let c = 0; c < data.cols; c++) {
+            ctx.fillStyle = ZONE_COLORS[data.zones[r][c]] ?? ZONE_COLORS[1];
+            ctx.fillRect(c*cw, r*ch, cw, ch);
+        }
+    }
+    drawGrid(ctx, data);
+    drawBases(ctx, data);
+}
+
+function renderSightLines() {
+    const data = currentZoneData;
+    const ctx  = canvas.getContext("2d");
+    canvas.width  = data.img_width;
+    canvas.height = data.img_height;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const cw = data.cell_size, ch = data.cell_size;
+
+    if (sightViewMode === "zone") {
+        // Build visible set for the selected cell
+        const visibleSet = new Set();
+        if (selectedCell) {
+            const key = `${selectedCell.row},${selectedCell.col}`;
+            (sightData[key] || []).forEach(k => visibleSet.add(k));
+        }
+
+        for (let r = 0; r < data.rows; r++) {
+            for (let c = 0; c < data.cols; c++) {
+                const ztype = data.zones[r][c];
+                const key   = `${r},${c}`;
+                const isSelected = selectedCells.has(key);
+
+                if (ztype === 0) {
+                    ctx.fillStyle = ZONE_COLORS_FAINT[0];
+                } else if (selectedCell && selectedCell.row === r && selectedCell.col === c) {
+                    ctx.fillStyle = "rgba(255,220,0,0.90)";
+                } else if (isSelected) {
+                    // Drag-selected cells: purple highlight
+                    ctx.fillStyle = "rgba(200,0,200,0.60)";
+                } else if (selectedCell && visibleSet.has(key)) {
+                    ctx.fillStyle = "rgba(0,200,80,0.70)";
+                } else {
+                    ctx.fillStyle = ZONE_COLORS_FAINT[ztype] ?? ZONE_COLORS_FAINT[1];
+                    ctx.fillRect(c*cw, r*ch, cw, ch);
+                    if (selectedCell) {
+                        ctx.fillStyle = "rgba(180,0,0,0.18)";
+                    } else {
+                        ctx.fillRect(c*cw, r*ch, cw, ch);
+                        continue;
+                    }
+                }
+                ctx.fillRect(c*cw, r*ch, cw, ch);
+            }
+        }
+    } else {
+        // Base sight line view
+        const btype    = sightViewMode;
+        const cellList = baseSights[btype] || [];
+        const cellSet  = new Set(cellList.map(([r, c]) => `${r},${c}`));
+        const bpos     = bases[btype];
+
+        for (let r = 0; r < data.rows; r++) {
+            for (let c = 0; c < data.cols; c++) {
+                const ztype = data.zones[r][c];
+                const key   = `${r},${c}`;
+                if (cellSet.has(key)) {
+                    ctx.fillStyle = BASE_FILL_COLORS[btype] ?? "rgba(128,128,128,0.65)";
+                } else {
+                    ctx.fillStyle = ZONE_COLORS_FAINT[ztype] ?? ZONE_COLORS_FAINT[1];
+                }
+                ctx.fillRect(c*cw, r*ch, cw, ch);
+            }
+        }
+
+        // Outline the base's own cell for reference
+        if (bpos) {
+            const bc = Math.floor(bpos.x_px / cw);
+            const br = Math.floor(bpos.y_px / ch);
+            if (bc < data.cols && br < data.rows) {
+                ctx.strokeStyle = "rgba(255,255,255,0.95)";
+                ctx.lineWidth   = 3;
+                ctx.strokeRect(bc*cw+1, br*ch+1, cw-2, ch-2);
+            }
+        }
+    }
+
+    drawGrid(ctx, data);
+    drawBases(ctx, data);
+}
+
+// ── Fetch zone data ───────────────────────────────────────────────────────────
+function fetchAndRenderZones(zoneSize) {
+    loadingSpinner.classList.remove("d-none");
+    fetch(`${ZONES_URL}?zone_size=${zoneSize}`)
+        .then(r => r.json())
+        .then(data => {
+            currentZoneData = data;
+            renderCanvas();
+            loadingSpinner.classList.add("d-none");
+        })
+        .catch(() => loadingSpinner.classList.add("d-none"));
+}
+
+// ── Sight line fetch/compute ──────────────────────────────────────────────────
+function loadSightLines() {
+    const zs = select.value;
+    fetch(`${GET_SIGHT_URL}?zone_size=${zs}`)
+        .then(r => r.json())
+        .then(data => {
+        if (data.sight_data) {
+            sightData = data.sight_data;
+            sightHint.textContent = "Click a zone cell to view its sight lines. Enable Bulk Edit to drag-select multiple cells.";
+        } else {
+            sightData = {};
+            sightHint.textContent = "Not computed yet for this zone size. Click 'Compute Sight Lines'.";
+        }
+            if (data.base_sights) Object.assign(baseSights, data.base_sights);
+            selectedCell = null;
+            renderCanvas();
+        });
+}
+
+computeBtn.addEventListener("click", () => {
+    const zs = select.value;
+    computeSpinner.classList.remove("d-none");
+    computeBtn.disabled = true;
+    sightHint.textContent = "Computing… this may take a moment for large maps.";
+
+    fetch(COMPUTE_SIGHT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF_TOKEN },
+        body: JSON.stringify({ zone_size: parseInt(zs, 10) }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        computeSpinner.classList.add("d-none");
+        computeBtn.disabled = false;
+        if (data.sight_data) {
+            sightData    = data.sight_data;
+            selectedCell = null;
+            sightHint.textContent = "Done! Click a zone cell to see its sight lines. Enable Bulk Edit to drag-select.";
+            renderCanvas();
+        } else {
+            sightHint.textContent = data.error || "Error computing sight lines.";
+        }
+    })
+    .catch(() => {
+        computeSpinner.classList.add("d-none");
+        computeBtn.disabled = false;
+        sightHint.textContent = "Network error during computation.";
+    });
+});
+
+// ── Mode toggle ────────────────────────────────────────────────────────────────
+document.getElementById("mode-zones").addEventListener("click", () => {
+    currentMode = "zones";
+    document.getElementById("mode-zones").classList.add("active");
+    document.getElementById("mode-sight").classList.remove("active");
+    document.getElementById("zones-controls").classList.remove("d-none");
+    document.getElementById("sight-controls").classList.add("d-none");
+    canvas.style.cursor = selectedBaseType ? "crosshair" : "default";
+    selectedCell = null;
+    bulkEditMode = false;
+    bulkEditBtn.textContent = "Bulk Edit: Off";
+    bulkEditBtn.classList.remove("btn-warning");
+    bulkEditBtn.classList.add("btn-outline-secondary");
+    selectedCells.clear();
+    renderCanvas();
+});
+
+document.getElementById("mode-sight").addEventListener("click", () => {
+    currentMode = "sight";
+    document.getElementById("mode-zones").classList.remove("active");
+    document.getElementById("mode-sight").classList.add("active");
+    document.getElementById("zones-controls").classList.add("d-none");
+    document.getElementById("sight-controls").classList.remove("d-none");
+    // Dearm any base type
+    selectedBaseType = null;
+    document.querySelectorAll(".base-btn").forEach(b => b.classList.remove("active"));
+    canvas.style.cursor = "pointer";
+    loadSightLines();
+});
+
+// ── Zone size change ───────────────────────────────────────────────────────────
+select.addEventListener("change", () => {
+    selectedCell = null;
+    fetchAndRenderZones(select.value);
+    if (currentMode === "sight") loadSightLines();
+});
+
+// ── Sight view dropdown ────────────────────────────────────────────────────────
+sightViewSelect.addEventListener("change", () => {
+    sightViewMode = sightViewSelect.value;
+    selectedCell  = null;
+    selectedCells.clear();
+    if (sightViewMode !== "zone" && bulkEditMode) {
+        bulkEditMode = false;
+        bulkEditBtn.textContent = "Bulk Edit: Off";
+        bulkEditBtn.classList.remove("btn-warning");
+        bulkEditBtn.classList.add("btn-outline-secondary");
+        canvas.style.cursor = "pointer";
+    }
+    if (sightViewMode === "zone") {
+        sightHint.textContent = "Click a zone cell to view its sight lines. Enable Bulk Edit to drag-select multiple cells.";
+    } else {
+        const label = sightViewSelect.options[sightViewSelect.selectedIndex].text;
+        sightHint.textContent = `Showing cells that can tag ${label}. Click to add/remove.`;
+    }
+    renderCanvas();
+});
+
+// ── Canvas interaction (drag select + click) ────────────────────────────────
+canvas.addEventListener("mousedown", e => {
+    if (!currentZoneData || currentMode !== "sight" || !selectedCell || !bulkEditMode || sightViewMode !== "zone") return;
+
+    const { row, col } = getCellFromClick(e);
+    if (row < 0 || col < 0 || row >= currentZoneData.rows || col >= currentZoneData.cols) return;
+
+    dragStart = { row, col };
+    dragSelecting = true;
+    dragMoved = false;
+    selectedCells.clear();
+    selectedCells.add(`${row},${col}`);
+    renderCanvas();
+});
+
+canvas.addEventListener("mousemove", e => {
+    if (!dragSelecting || !dragStart || !currentZoneData) return;
+
+    const { row, col } = getCellFromClick(e);
+    if (row < 0 || col < 0 || row >= currentZoneData.rows || col >= currentZoneData.cols) return;
+
+    if (row !== dragStart.row || col !== dragStart.col) dragMoved = true;
+
+    // Select all cells in the bounding rectangle from dragStart to current
+    const r_min = Math.min(dragStart.row, row);
+    const r_max = Math.max(dragStart.row, row);
+    const c_min = Math.min(dragStart.col, col);
+    const c_max = Math.max(dragStart.col, col);
+
+    selectedCells.clear();
+    for (let r = r_min; r <= r_max; r++) {
+        for (let c = c_min; c <= c_max; c++) {
+            if (currentZoneData.zones[r][c] !== 0) { // Skip walls
+                selectedCells.add(`${r},${c}`);
+            }
+        }
+    }
+
+    renderCanvas();
+});
+
+canvas.addEventListener("mouseup", e => {
+    if (!dragSelecting) return;
+    const moved = dragMoved;
+    dragSelecting = false;
+    dragMoved = false;
+
+    if (moved && selectedCells.size > 0 && selectedCell) {
+        bulkToggleSightLines();
+        wasJustDragging = true;
+    }
+
+    selectedCells.clear();
+    if (currentZoneData) renderCanvas();
+});
+
+canvas.addEventListener("click", e => {
+    if (!currentZoneData || dragSelecting) return;
+    if (wasJustDragging) { wasJustDragging = false; return; }
+    const { row, col } = getCellFromClick(e);
+    if (row < 0 || col < 0 || row >= currentZoneData.rows || col >= currentZoneData.cols) return;
+
+    if (currentMode === "zones") {
+        handleZonesModeClick(row, col);
+    } else {
+        handleSightModeClick(row, col);
+    }
+});
+
+function handleZonesModeClick(row, col) {
+    if (!selectedBaseType) return;
+    const cw   = currentZoneData.cell_size;
+    const x_px = Math.floor((col + 0.5) * cw);
+    const y_px = Math.floor((row + 0.5) * cw);
+
+    if (bases[selectedBaseType]) {
+        const ec = Math.floor(bases[selectedBaseType].x_px / cw);
+        const er = Math.floor(bases[selectedBaseType].y_px / cw);
+        if (ec === col && er === row) { delete bases[selectedBaseType]; renderCanvas(); return; }
+    }
+    bases[selectedBaseType] = { x_px, y_px };
+    renderCanvas();
+}
+
+function handleSightModeClick(row, col) {
+    if (sightViewMode === "zone") {
+        handleZoneSightClick(row, col);
+    } else {
+        handleBaseSightClick(row, col, sightViewMode);
+    }
+}
+
+function handleZoneSightClick(row, col) {
+    if (currentZoneData.zones[row][col] === 0) return;  // wall
+    const key = `${row},${col}`;
+
+    if (!selectedCell) {
+        selectedCell = { row, col };
+        renderCanvas();
+        return;
+    }
+    if (selectedCell.row === row && selectedCell.col === col) {
+        selectedCell = null;
+        renderCanvas();
+        return;
+    }
+
+    // Toggle LOS between selectedCell and this cell
+    const selKey    = `${selectedCell.row},${selectedCell.col}`;
+    const existing  = (sightData[selKey] || []);
+    const idx       = existing.indexOf(key);
+
+    if (idx >= 0) {
+        sightData[selKey] = existing.filter(k => k !== key);
+        if (!sightData[selKey].length) delete sightData[selKey];
+        if (sightData[key]) {
+            sightData[key] = sightData[key].filter(k => k !== selKey);
+            if (!sightData[key].length) delete sightData[key];
+        }
+    } else {
+        sightData[selKey] = [...existing, key];
+        sightData[key]    = [...(sightData[key] || []), selKey];
+    }
+    renderCanvas();
+}
+
+function handleBaseSightClick(row, col, btype) {
+    if (currentZoneData.zones[row][col] === 0) return;  // wall
+    if (!baseSights[btype]) baseSights[btype] = [];
+    const i = baseSights[btype].findIndex(([r, c]) => r === row && c === col);
+    if (i >= 0) baseSights[btype].splice(i, 1);
+    else        baseSights[btype].push([row, col]);
+    renderCanvas();
+}
+
+// ── Bulk Edit toggle ──────────────────────────────────────────────────────────
+bulkEditBtn.addEventListener("click", () => {
+    bulkEditMode = !bulkEditMode;
+    bulkEditBtn.textContent = bulkEditMode ? "Bulk Edit: On" : "Bulk Edit: Off";
+    bulkEditBtn.classList.toggle("btn-warning", bulkEditMode);
+    bulkEditBtn.classList.toggle("btn-outline-secondary", !bulkEditMode);
+    if (!bulkEditMode) {
+        selectedCells.clear();
+        dragSelecting = false;
+        if (currentZoneData) renderCanvas();
+    }
+    canvas.style.cursor = bulkEditMode ? "crosshair" : "pointer";
+});
+
+function bulkToggleSightLines() {
+    if (!selectedCell || selectedCells.size === 0) return;
+
+    const selKey = `${selectedCell.row},${selectedCell.col}`;
+    const cellsToProcess = [...selectedCells].filter(k => k !== selKey);
+    if (cellsToProcess.length === 0) return;
+
+    const visibleFromSel = sightData[selKey] || [];
+    const onCells = cellsToProcess.filter(k => visibleFromSel.includes(k));
+
+    if (onCells.length > 0) {
+        // Some or all are visible — turn all OFF
+        for (const cellKey of onCells) {
+            sightData[selKey] = (sightData[selKey] || []).filter(k => k !== cellKey);
+            if (!sightData[selKey]?.length) delete sightData[selKey];
+            if (sightData[cellKey]) {
+                sightData[cellKey] = sightData[cellKey].filter(k => k !== selKey);
+                if (!sightData[cellKey].length) delete sightData[cellKey];
+            }
+        }
+    } else {
+        // All are already off — turn all ON
+        for (const cellKey of cellsToProcess) {
+            if (!sightData[selKey]) sightData[selKey] = [];
+            if (!sightData[selKey].includes(cellKey)) sightData[selKey].push(cellKey);
+            if (!sightData[cellKey]) sightData[cellKey] = [];
+            if (!sightData[cellKey].includes(selKey)) sightData[cellKey].push(selKey);
+        }
+    }
+
+    renderCanvas();
+}
+
+// ── Base buttons ───────────────────────────────────────────────────────────────
+document.querySelectorAll(".base-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+        const type = btn.dataset.type;
+        if (selectedBaseType === type) {
+            selectedBaseType = null;
+            btn.classList.remove("active");
+            canvas.style.cursor = "default";
+        } else {
+            document.querySelectorAll(".base-btn").forEach(b => b.classList.remove("active"));
+            selectedBaseType = type;
+            btn.classList.add("active");
+            canvas.style.cursor = "crosshair";
+        }
+    });
+});
+
+document.getElementById("clear-bases-btn").addEventListener("click", () => {
+    Object.keys(bases).forEach(k => delete bases[k]);
+    if (currentZoneData) renderCanvas();
+});
+
+// ── Save Zone Config ───────────────────────────────────────────────────────────
+saveBtn.addEventListener("click", () => {
+    const zoneSize = parseInt(select.value, 10);
+    saveAlert.classList.add("d-none");
+    saveBtn.disabled = true;
+
+    fetch(SAVE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF_TOKEN },
+        body: JSON.stringify({
+            zone_size: zoneSize,
+            bases: Object.entries(bases).map(([type, pos]) => ({ type, ...pos })),
+        }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        saveBtn.disabled = false;
+        saveAlert.textContent = data.status === "ok"
+            ? `Configuration saved! (${zoneSize}px zones, ${Object.keys(bases).length} base(s))`
+            : "Error saving configuration.";
+        saveAlert.className = `alert alert-${data.status === "ok" ? "success" : "danger"}`;
+        saveAlert.classList.remove("d-none");
+    })
+    .catch(() => {
+        saveBtn.disabled = false;
+        saveAlert.textContent = "Network error. Please try again.";
+        saveAlert.className = "alert alert-danger";
+        saveAlert.classList.remove("d-none");
+    });
+});
+
+// ── Save Sight Lines ───────────────────────────────────────────────────────────
+saveSightBtn.addEventListener("click", async () => {
+    const zoneSize = parseInt(select.value, 10);
+    saveSightAlert.classList.add("d-none");
+    saveSightBtn.disabled = true;
+
+    try {
+        const entries = Object.entries(sightData);
+        const BATCH_SIZE = 100;
+        const totalBatches = Math.max(1, Math.ceil(entries.length / BATCH_SIZE));
+
+        for (let i = 0; i < totalBatches; i++) {
+            const batch = Object.fromEntries(entries.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE));
+            const isFirst = i === 0;
+
+            if (totalBatches > 1) {
+                saveSightAlert.textContent = `Saving... (${i + 1}/${totalBatches})`;
+                saveSightAlert.className = "alert alert-info";
+                saveSightAlert.classList.remove("d-none");
+            }
+
+            const resp = await fetch(SAVE_SIGHT_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF_TOKEN },
+                body: JSON.stringify({
+                    zone_size: zoneSize,
+                    sight_data: batch,
+                    base_sights: isFirst ? baseSights : {},
+                    replace: isFirst,
+                }),
+            });
+            const data = await resp.json();
+            if (data.status !== "ok") throw new Error(data.message || "Server error");
+        }
+
+        saveSightAlert.textContent = "Sight lines saved!";
+        saveSightAlert.className = "alert alert-success";
+        saveSightAlert.classList.remove("d-none");
+    } catch (err) {
+        saveSightAlert.textContent = `Error: ${err.message}`;
+        saveSightAlert.className = "alert alert-danger";
+        saveSightAlert.classList.remove("d-none");
+    } finally {
+        saveSightBtn.disabled = false;
+    }
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+select.value = DEFAULT_ZONE_SIZE;
+fetchAndRenderZones(DEFAULT_ZONE_SIZE);
+</script>
+{% endblock %}

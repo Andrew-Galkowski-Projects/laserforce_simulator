@@ -15,6 +15,8 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path, include
 
@@ -22,5 +24,6 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("teams/", include("teams.urls")),
     path("matches/", include("matches.urls")),
+    path("maps/", include("core.urls")),
     path("", include("teams.urls")),  # Homepage still goes to teams
-]
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

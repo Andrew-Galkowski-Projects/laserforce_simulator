@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+      "Bash(python manage.py runserver)"
       "Bash(python -m pytest --collect-only -q)",
       "Bash(python manage.py check)",
       "Bash(pytest matches/tests/simulation_tests.py -x -q)",
