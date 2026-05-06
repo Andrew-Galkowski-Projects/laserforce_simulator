@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}Arena Maps{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>Arena Maps</h2>
+</div>
+
+{% if maps %}
+<div class="row row-cols-1 row-cols-md-3 g-4 mb-5">
+    {% for arena_map in maps %}
+    <div class="col">
+        <div class="card h-100">
+            <img src="{{ arena_map.image.url }}" class="card-img-top" alt="{{ arena_map.name }}"
+                 style="height: 180px; object-fit: cover;">
+            <div class="card-body">
+                <h5 class="card-title">
+                    {{ arena_map.name }}
+                    {% if arena_map.is_default %}
+                    <span class="badge bg-secondary ms-1">Default</span>
+                    {% endif %}
+                </h5>
+                <p class="card-text text-muted small">
+                    {{ arena_map.img_width }} &times; {{ arena_map.img_height }} px
+                </p>
+                {% with config=arena_map.latest_confirmed_config %}
+                {% if config %}
+                <span class="badge bg-success mb-2">Configured — {{ config.zone_size }}px zones</span>
+                {% else %}
+                <span class="badge bg-warning text-dark mb-2">No zone config</span>
+                {% endif %}
+                {% endwith %}
+            </div>
+            <div class="card-footer">
+                <a href="{% url 'map_editor' arena_map.pk %}" class="btn btn-primary btn-sm w-100">Open Editor</a>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<p class="text-muted">No maps found.</p>
+{% endif %}
+
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0">Upload New Map</h5>
+    </div>
+    <div class="card-body">
+        <form method="post" action="{% url 'upload_map' %}" enctype="multipart/form-data">
+            {% csrf_token %}
+            <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label for="map-name" class="form-label">Map Name</label>
+                    <input type="text" class="form-control" id="map-name" name="name" required>
+                </div>
+                <div class="col-md-5">
+                    <label for="map-file" class="form-label">Image File (PNG, JPG)</label>
+                    <input type="file" class="form-control" id="map-file" name="image"
+                           accept="image/png,image/jpeg,image/jpg" required>
+                </div>
+                <div class="col-md-3">
+                    <button type="submit" class="btn btn-success w-100">Upload &amp; Edit</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
