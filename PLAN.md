@@ -54,6 +54,15 @@ Update the weight functions in `weights.py` to express goals in terms of target 
 ### MAP-06 · Fallback for rounds without a map
 When `GameRound.arena_map` is null (map not assigned), fall back to the existing 3-zone logic so that existing tests and simulations without maps continue to work. This is a compatibility shim — new matches should always have a map.
 
+### MAP-07 · Map wall hazards
+Maps provided can have multiple different wall types: low walls that block movement but not sight, high walls that block both movement and sight, mirrored/reflective walls that shots can be bounced off of to hit players around corners, and windowed walls that block sight but allow tagging through them. Add a `wall_type` field to the map data and update the movement and targeting logic to respect these distinctions. For example, a player behind a low wall can be targeted if the attacker has LOS to the wall cell, but not if there's a high wall in between.
+
+### MAP-08 · Map-based spawn points
+Players should spawn within 5-10 cells of their base's cell
+
+### MAP-09 · High Ground
+Some maps have multiple levels of elevation. Add a `height' attribute that both modifies hit-chance against players on high ground from low ground and also provides a small visibility bonus to players on high ground (more cells visible in `SightLineConfig`).
+This should allow high ground players to shoot over some high walls
 ---
 
 ## Phase 2 — Player Stats Integration
@@ -88,7 +97,7 @@ Map each relevant stat to a weight modifier in `weights.py`:
 New and corrected mechanics that make the simulator more faithful to SM5 rules and more interesting strategically.
 
 ### MECH-01 · Medic/Ammo follow-up combo tag
-A Medic or Ammo can perform a "follow-up" action: tag an ally immediately after a resupply, granting that ally both a life restore (Medic) and a shot resupply (Ammo) in the same interaction. The ally and support player both receive the benefit. In game terms this represents a quick hand-off. Implement as a new action type `combo_resupply` with its own weight (high when both Medic and Ammo are in the same cell as a low-resource ally). Create a `GameEvent` of type `combo_resupply` with both resource grants logged in `metadata`.
+A Medic or Ammo can perform a "follow-up" action: tag an ally immediately after a resupply, granting that ally both a life restore (Medic) and a shot resupply (Ammo) in the same interaction. The ally and support player both receive the benefit. In game terms this represents a `double` since both players are tagging the target at the same time. Implement as a new action type `combo_resupply` with its own weight (high when both Medic and Ammo are in the same cell as a low-resource ally). Create a `GameEvent` of type `combo_resupply` with both resource grants logged in `metadata`.
 
 ### MECH-02 · Base tag to reset same-target restriction
 After tagging an enemy and depleting their shields (scoring a life), the attacker normally must wait 8 seconds before tagging the same target again. Implement a rule: tagging a neutral or opposing base resets this per-target cooldown for the attacker. Similarly, tagging any other enemy or ally in the same cell/radius also resets it. Track the "last tagged player" per attacker and clear it on base interaction or zone-wide tag of any other valid target.
