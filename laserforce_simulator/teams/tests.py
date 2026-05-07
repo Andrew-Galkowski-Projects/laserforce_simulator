@@ -28,19 +28,20 @@ class RosterValidationTests(TestCase):
         errors = self.team.roster_errors
         self.assertEqual(errors, [], f"Valid roster should have no errors, got: {errors}")
 
-    def test_valid_roster_with_same_scout_twice(self):
-        """Valid: Same Scout player in both Scout slots (edge case allowed by model)."""
+    def test_invalid_roster_same_scout_twice(self):
+        """Invalid: Same Scout player in both Scout slots (each player appears only once)."""
         self.team.slot_commander = self.commander
         self.team.slot_heavy = self.heavy
         self.team.slot_scout_1 = self.scout1
-        self.team.slot_scout_2 = self.scout1  # Same scout twice
+        self.team.slot_scout_2 = self.scout1  # Same scout twice — INVALID
         self.team.slot_medic = self.medic
         self.team.slot_ammo = self.ammo
         self.team.save()
 
         errors = self.team.roster_errors
-        # Same scout twice should be allowed (scout-only rule permits doubling)
-        self.assertEqual(errors, [], f"Same Scout twice should be allowed, got: {errors}")
+        # Same scout twice should NOT be allowed (each player appears exactly once)
+        error_str = " ".join(errors)
+        self.assertIn("cannot fill multiple slots", error_str)
 
     def test_invalid_roster_commander_twice(self):
         """Invalid: Commander appears in two different slots."""
@@ -54,11 +55,10 @@ class RosterValidationTests(TestCase):
 
         errors = self.team.roster_errors
         error_str = " ".join(errors)
-        self.assertIn("Commander", error_str)
-        self.assertIn("cannot appear twice", error_str)
+        self.assertIn("cannot fill multiple slots", error_str)
 
     def test_invalid_roster_heavy_in_scout_slot(self):
-        """Invalid: Heavy player assigned to Scout slot (mixed roles)."""
+        """Invalid: Heavy player assigned to Scout slot (player in multiple slots)."""
         self.team.slot_commander = self.commander
         self.team.slot_heavy = self.heavy
         self.team.slot_scout_1 = self.heavy  # Heavy also in scout slot
@@ -69,11 +69,10 @@ class RosterValidationTests(TestCase):
 
         errors = self.team.roster_errors
         error_str = " ".join(errors)
-        self.assertIn("Heavy", error_str)
-        self.assertIn("cannot appear twice", error_str)
+        self.assertIn("cannot fill multiple slots", error_str)
 
     def test_invalid_roster_medic_in_scout_slot(self):
-        """Invalid: Medic player assigned to Scout slot (mixed roles)."""
+        """Invalid: Medic player assigned to Scout slot (player in multiple slots)."""
         self.team.slot_commander = self.commander
         self.team.slot_heavy = self.heavy
         self.team.slot_scout_1 = self.medic  # Medic in scout slot
@@ -84,11 +83,10 @@ class RosterValidationTests(TestCase):
 
         errors = self.team.roster_errors
         error_str = " ".join(errors)
-        self.assertIn("Medic", error_str)
-        self.assertIn("cannot appear twice", error_str)
+        self.assertIn("cannot fill multiple slots", error_str)
 
     def test_invalid_roster_ammo_in_scout_slot(self):
-        """Invalid: Ammo player assigned to Scout slot (mixed roles)."""
+        """Invalid: Ammo player assigned to Scout slot (player in multiple slots)."""
         self.team.slot_commander = self.commander
         self.team.slot_heavy = self.heavy
         self.team.slot_scout_1 = self.scout1
@@ -99,8 +97,7 @@ class RosterValidationTests(TestCase):
 
         errors = self.team.roster_errors
         error_str = " ".join(errors)
-        self.assertIn("Ammo", error_str)
-        self.assertIn("cannot appear twice", error_str)
+        self.assertIn("cannot fill multiple slots", error_str)
 
     def test_invalid_roster_missing_slots(self):
         """Invalid: Missing required slots."""
