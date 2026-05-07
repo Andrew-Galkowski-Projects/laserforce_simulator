@@ -88,28 +88,65 @@ class Team(models.Model):
 
     @property
     def roster_errors(self):
-        """Return a list of human-readable problems, or [] if valid."""
+        """Return a list of human-readable problems, or [] if valid.
+
+        SM5 roster rules:
+        - All 6 slots must be filled
+        - Each player appears exactly once (no player can fill multiple slots)
+        - Only the Scout ROLE can appear twice (two different Scout players)
+        - Players must belong to the team
+        """
         errors = []
         all_slots = [
-            ("Commander", self.slot_commander),
-            ("Heavy", self.slot_heavy),
-            ("Scout 1", self.slot_scout_1),
-            ("Scout 2", self.slot_scout_2),
-            ("Medic", self.slot_medic),
-            ("Ammo", self.slot_ammo),
+            ("Commander", self.slot_commander, "commander"),
+            ("Heavy", self.slot_heavy, "heavy"),
+            ("Scout 1", self.slot_scout_1, "scout"),
+            ("Scout 2", self.slot_scout_2, "scout"),
+            ("Medic", self.slot_medic, "medic"),
+            ("Ammo", self.slot_ammo, "ammo"),
         ]
         filled = []
-        for slot_name, player in all_slots:
+        for slot_name, player, role in all_slots:
             if player is None:
                 errors.append(f"missing {slot_name}")
             else:
-                filled.append(player)
+                filled.append((player, role, slot_name))
 
-        pks = [p.pk for p in filled]
-        if len(pks) != len(set(pks)):
-            errors.append("same player assigned to multiple slots")
+        # Check for duplicate players (each player can only appear once)
+        player_slots = {}
+        for player, role, slot_name in filled:
+            if player.pk not in player_slots:
+                player_slots[player.pk] = []
+            player_slots[player.pk].append((role, slot_name))
 
-        for player in filled:
+        has_duplicate_players = False
+        for player_id, slots in player_slots.items():
+            if len(slots) > 1:
+                # Player appears multiple times — this is always invalid
+                has_duplicate_players = True
+                slot_names = ", ".join([sname for _, sname in slots])
+                # Get player name from filled list
+                for p, _, sname in filled:
+                    if p.pk == player_id:
+                        errors.append(f"{p.name} cannot fill multiple slots: {slot_names}")
+                        break
+
+        # Only check role distribution if there are no duplicate players
+        if not has_duplicate_players:
+            role_counts = {}
+            for player, role, slot_name in filled:
+                role_counts[role] = role_counts.get(role, 0) + 1
+
+            for role, count in role_counts.items():
+                if count > 2:
+                    role_display = dict(ROLE_CHOICES)[role]
+                    errors.append(f"{role_display} appears {count} times (max is 2)")
+                elif count == 2 and role != "scout":
+                    role_display = dict(ROLE_CHOICES)[role]
+                    errors.append(f"{role_display} cannot appear twice (Scout-only rule)")
+
+        # Check that all players belong to team
+        for player, role, slot_name in filled:
             if player.team_id != self.pk:
                 errors.append(f"{player.name} does not belong to this team")
 
