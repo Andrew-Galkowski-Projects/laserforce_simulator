@@ -7,9 +7,6 @@ urlpatterns = [
     path("single-round/create/", views.create_single_round, name="create_single_round"),
     path("<int:match_id>/", views.match_detail, name="match_detail"),
     path(
-        "round/<int:round_id>/", views.single_round_detail, name="single_round_detail"
-    ),
-    path(
         "game-round/<int:round_id>/", views.game_round_detail, name="game_round_detail"
     ),
     path(

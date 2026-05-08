@@ -16,7 +16,7 @@ Handles match creation, game round simulation, event logging, and result views.
 
 Two simulators live in `matches/simulation.py`:
 
-**`ResourceBasedSimulator`** — DB-backed, writes `GameEvent` rows and `PlayerRoundState`. Runs in 2-second ticks. Used for full match simulation with event replay. Prefer this when you need the game event log or a persisted round.
+**`ResourceBasedSimulator`** — DB-backed, writes `GameEvent` rows and `PlayerRoundState`. Runs in 2-second ticks. Used for full match simulation with event replay. Prefer this when you need the game event log or a persisted round. All match and single-round creation views use this exclusively — the legacy `SimpleMatchSimulator` has been removed.
 
 **`BatchSimulator`** — pure in-memory, no DB writes. Uses `PlayerState` dataclasses (see `matches/sim_helpers/player_state.py`). Runs in **0.5-second ticks** to model real shot speeds. Used by `score_averages` and batch win-rate analysis. A round typically runs in ~25 ms vs ~9 s for the DB-backed simulator.
 
@@ -78,9 +78,12 @@ Used by `score_averages` to measure simulation accuracy against real-world avera
 
 ```
 /matches/                            → match list, create, detail
+/matches/create/                     → create a full 2-round match
+/matches/single-round/create/        → create a standalone game round (always detailed)
 /matches/game-round/<id>/            → detailed round view
 /matches/game-round/<id>/events/     → event timeline/filtering
 /matches/team/<id>/history/          → team win/loss history
+/matches/simulate-batch/             → run N in-memory simulations
 ```
 
 ## Templates
@@ -90,7 +93,8 @@ All templates live in `laserforce_simulator/templates/`. The `game_round_events.
 ## Tests
 
 `matches/tests/simulation_tests.py` — simulator logic, game events, round outcomes.
-`matches/tests.py` — match/round model behavior, views.
+`matches/tests/views_tests.py` — view behaviour: URL routing, form submissions, context keys.
+`matches/tests/conftest.py` — shared `make_team_with_slots(prefix)` helper used by both test modules.
 
 ## Sub-packages
 
