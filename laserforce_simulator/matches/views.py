@@ -7,9 +7,9 @@ from django.contrib import messages
 from django.db.models import Q
 from django.http import JsonResponse
 from teams.models import Team
-from .models import Match, SingleRound, GameRound, PlayerRoundState
-from .simulation import ResourceBasedSimulator, SimpleMatchSimulator
-from .forms import MatchSetupForm, SingleRoundSetupForm
+from .models import Match, GameRound, PlayerRoundState
+from .simulation import ResourceBasedSimulator, BatchSimulator
+from .forms import MatchSetupForm, SingleRoundSetupForm, BatchSimulateForm
 
 # In-process job store for async save operations
 _SAVE_JOBS: dict = {}
@@ -52,14 +52,9 @@ def _run_save_job(job_id, team_red_id, team_blue_id, seeds, n):
 
 
 def match_list(request):
-    """Display all matches and single rounds"""
+    """Display all matches and standalone game rounds."""
     matches = (
         Match.objects.all()
-        .select_related("team_red", "team_blue", "winner")
-        .order_by("-date_played")
-    )
-    single_rounds = (
-        SingleRound.objects.all()
         .select_related("team_red", "team_blue", "winner")
         .order_by("-date_played")
     )
@@ -74,7 +69,6 @@ def match_list(request):
         "matches/match_list.html",
         {
             "matches": matches,
-            "single_rounds": single_rounds,
             "detailed_rounds": detailed_rounds,
         },
     )
@@ -131,12 +125,6 @@ def game_round_detail(request, round_id):
     return render(request, "matches/game_round_detail.html", context)
 
 
-def single_round_detail(request, round_id):
-    """Display single round results (legacy)"""
-    single_round = get_object_or_404(SingleRound, id=round_id)
-    return render(request, "matches/single_round_detail.html", {"round": single_round})
-
-
 def create_match(request):
     """Set up and simulate a new match with detailed tracking"""
     if request.method == "POST":
@@ -145,12 +133,11 @@ def create_match(request):
             team_red = form.cleaned_data["team_red"]
             team_blue = form.cleaned_data["team_blue"]
             match_type = form.cleaned_data["match_type"]
-            use_detailed = form.cleaned_data.get("use_detailed_simulation", True)
 
             # Validate teams are different
             if team_red == team_blue:
                 messages.error(request, "A team cannot play against itself!")
-                return render(request, "matches/match_setup.html", {"form": form})
+                return render(request, "matches/enhanced_match_setup.html", {"form": form, "title": "Create Tournament Match"})
 
             # Check if both teams have valid rosters
             red_errors = team_red.roster_errors
@@ -159,7 +146,7 @@ def create_match(request):
                     request,
                     f"{team_red.name} has an invalid roster: {'; '.join(red_errors)}",
                 )
-                return render(request, "matches/match_setup.html", {"form": form})
+                return render(request, "matches/enhanced_match_setup.html", {"form": form, "title": "Create Tournament Match"})
 
             blue_errors = team_blue.roster_errors
             if blue_errors:
@@ -167,14 +154,9 @@ def create_match(request):
                     request,
                     f"{team_blue.name} has an invalid roster: {'; '.join(blue_errors)}",
                 )
-                return render(request, "matches/match_setup.html", {"form": form})
+                return render(request, "matches/enhanced_match_setup.html", {"form": form, "title": "Create Tournament Match"})
 
-            # Choose simulator
-            if use_detailed:
-                simulator = ResourceBasedSimulator()
-            else:
-                simulator = SimpleMatchSimulator()
-
+            simulator = ResourceBasedSimulator()
             match = simulator.simulate_match(team_red, team_blue, match_type)
 
             messages.success(
@@ -193,19 +175,18 @@ def create_match(request):
 
 
 def create_single_round(request):
-    """Set up and simulate a detailed single round"""
+    """Set up and simulate a detailed single round."""
     if request.method == "POST":
         form = SingleRoundSetupForm(request.POST)
         if form.is_valid():
             team_red = form.cleaned_data["team_red"]
             team_blue = form.cleaned_data["team_blue"]
-            use_detailed = form.cleaned_data.get("use_detailed_simulation", True)
 
             # Validate teams are different
             if team_red == team_blue:
                 messages.error(request, "A team cannot play against itself!")
                 return render(
-                    request, "matches/single_round_setup.html", {"form": form}
+                    request, "matches/enhanced_single_round_setup.html", {"form": form, "title": "Create Single Round"}
                 )
 
             # Check if both teams have valid rosters
@@ -216,7 +197,7 @@ def create_single_round(request):
                     f"{team_red.name} has an invalid roster: {'; '.join(red_errors)}",
                 )
                 return render(
-                    request, "matches/single_round_setup.html", {"form": form}
+                    request, "matches/enhanced_single_round_setup.html", {"form": form, "title": "Create Single Round"}
                 )
 
             blue_errors = team_blue.roster_errors
@@ -226,29 +207,16 @@ def create_single_round(request):
                     f"{team_blue.name} has an invalid roster: {'; '.join(blue_errors)}",
                 )
                 return render(
-                    request, "matches/single_round_setup.html", {"form": form}
+                    request, "matches/enhanced_single_round_setup.html", {"form": form, "title": "Create Single Round"}
                 )
 
-            if use_detailed:
-                # Use new detailed simulation
-                simulator = ResourceBasedSimulator()
-                game_round = simulator.simulate_single_round_detailed(
-                    team_red, team_blue
-                )
-                messages.success(
-                    request,
-                    f"Round complete! {game_round.winner.name if game_round.winner else 'Tie'} won!",
-                )
-                return redirect("game_round_detail", round_id=game_round.id)
-            else:
-                # Use legacy simple simulation
-                simulator = SimpleMatchSimulator()
-                single_round = simulator.simulate_single_round(team_red, team_blue)
-                messages.success(
-                    request,
-                    f"Round complete! {single_round.winner.name if single_round.winner else 'Tie'} won!",
-                )
-                return redirect("single_round_detail", round_id=single_round.id)
+            simulator = ResourceBasedSimulator()
+            game_round = simulator.simulate_single_round_detailed(team_red, team_blue)
+            messages.success(
+                request,
+                f"Round complete! {game_round.winner.name if game_round.winner else 'Tie'} won!",
+            )
+            return redirect("game_round_detail", round_id=game_round.id)
     else:
         form = SingleRoundSetupForm()
 
@@ -269,16 +237,10 @@ def team_match_history(request, team_id):
         .order_by("-date_played")
     )
 
-    single_rounds = (
-        SingleRound.objects.filter(Q(team_red=team) | Q(team_blue=team))
-        .select_related("team_red", "team_blue", "winner")
-        .order_by("-date_played")
-    )
-
     detailed_rounds = (
         GameRound.objects.filter(
             Q(team_red=team) | Q(team_blue=team),
-            match__isnull=True,  # Only standalone rounds
+            match__isnull=True,
         )
         .select_related("team_red", "team_blue", "winner")
         .order_by("-date_played")
@@ -290,19 +252,10 @@ def team_match_history(request, team_id):
     losses = matches.exclude(winner=team).exclude(winner=None).count()
     ties = matches.filter(winner=None).count()
 
-    total_rounds = single_rounds.count() + detailed_rounds.count()
-    round_wins = (
-        single_rounds.filter(winner=team).count()
-        + detailed_rounds.filter(winner=team).count()
-    )
-    round_losses = (
-        single_rounds.exclude(winner=team).exclude(winner=None).count()
-        + detailed_rounds.exclude(winner=team).exclude(winner=None).count()
-    )
-    round_ties = (
-        single_rounds.filter(winner=None).count()
-        + detailed_rounds.filter(winner=None).count()
-    )
+    total_rounds = detailed_rounds.count()
+    round_wins = detailed_rounds.filter(winner=team).count()
+    round_losses = detailed_rounds.exclude(winner=team).exclude(winner=None).count()
+    round_ties = detailed_rounds.filter(winner=None).count()
 
     # Player performance stats
     player_stats = []
@@ -331,7 +284,6 @@ def team_match_history(request, team_id):
     context = {
         "team": team,
         "matches": matches,
-        "single_rounds": single_rounds,
         "detailed_rounds": detailed_rounds,
         "player_stats": sorted(
             player_stats, key=lambda x: x["avg_points"], reverse=True

@@ -97,7 +97,7 @@
 </div>
 {% endif %}
 
-{% if matches or single_rounds or detailed_rounds %}
+{% if matches or detailed_rounds %}
 <div class="row">
     <div class="col-md-6">
         <h3>Tournament Matches</h3>
@@ -139,34 +139,7 @@
 
     <div class="col-md-6">
         <h3>Single Rounds</h3>
-        {% if single_rounds or detailed_rounds %}
-        {% for round in single_rounds %}
-        <div class="card mb-3">
-            <div class="card-body">
-                <h5 class="card-title">
-                    vs {% if round.team_red == team %}{{ round.team_blue.name }}{% else %}{{ round.team_red.name }}{% endif %}
-                    {% if round.winner == team %}
-                    <span class="badge bg-success ms-2">Won</span>
-                    {% elif round.winner %}
-                    <span class="badge bg-danger ms-2">Lost</span>
-                    {% else %}
-                    <span class="badge bg-secondary ms-2">Tie</span>
-                    {% endif %}
-                    <span class="badge bg-info ms-1">Basic</span>
-                </h5>
-                <p class="card-text">
-                    {% if round.team_red == team %}
-                    <strong>Score:</strong> {{ round.red_points }} - {{ round.blue_points }}
-                    {% else %}
-                    <strong>Score:</strong> {{ round.blue_points }} - {{ round.red_points }}
-                    {% endif %}
-                    <br>
-                    <small class="text-muted">{{ round.date_played|date:"M d, Y H:i" }}</small>
-                </p>
-                <a href="{% url 'single_round_detail' round.id %}" class="btn btn-sm btn-primary">View Details</a>
-            </div>
-        </div>
-        {% endfor %}
+        {% if detailed_rounds %}
         {% for round in detailed_rounds %}
         <div class="card mb-3">
             <div class="card-body">
@@ -179,7 +152,6 @@
                     {% else %}
                     <span class="badge bg-secondary ms-2">Tie</span>
                     {% endif %}
-                    <span class="badge bg-warning ms-1">Detailed</span>
                 </h5>
                 <p class="card-text">
                     {% if round.team_red == team %}

@@ -25,14 +25,17 @@ broken roster to `ResourceBasedSimulator`.
 ### FIX-02 · Derive shot_power and shield from role
 `teams/models.py` — `shot_power` and `shield` are stored as DB columns but should be computed from the player's role. 
 Convert to `@property` on `Player`, delete the DB columns, and update any simulator code that reads them directly.
+- completed: DB columns removed in teams/0008 and matches/0016; both `PlayerRoundState` and `PlayerState` expose `shot_power` and `max_shields` as `@property` derived from `ROLE_STATS`.
 
 ### FIX-03 · Remove SingleRound legacy model and route
 `matches/models.py` — `SingleRound` is superseded by `GameRound`. Remove the model, its migration, 
 the `/matches/round/<id>/` route, and its view. Update any templates that still link to it.
+- completed: SingleRound model removed (migration 0019), SimpleMatchSimulator removed, SingleRoundSetupForm simplified, all views and templates updated to use GameRound only.
 
 ### FIX-04 · Clean up stale TODO comments in get_mvp
 Minor — remove or update the two stale TODO comments in `PlayerRoundState.get_mvp`. 
 Add a docstring explaining the weighting formula. No functional change.
+- completed: No TODO comments remain; `get_mvp` has a detailed docstring covering all roles and scoring rules.
 
 ---
 

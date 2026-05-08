@@ -39,31 +39,9 @@
                 <div class="form-text">Tournament matches are best of 2 rounds with team color switching</div>
             </div>
         </div>
-        <div class="col-md-6">
-            <div class="mb-3">
-                <div class="form-check">
-                    {{ form.use_detailed_simulation }}
-                    <label class="form-check-label" for="{{ form.use_detailed_simulation.id_for_label }}">
-                        {{ form.use_detailed_simulation.label }}
-                    </label>
-                    <div class="form-text">{{ form.use_detailed_simulation.help_text }}</div>
-                </div>
-            </div>
-        </div>
     </div>
 
     <button type="submit" class="btn btn-primary">Simulate Match</button>
     <a href="{% url 'match_list' %}" class="btn btn-secondary">Cancel</a>
 </form>
-
-<div class="mt-4">
-    <div class="alert alert-info">
-        <strong>How it works:</strong>
-        <ul class="mb-0">
-            <li><strong>Basic Simulation:</strong> Quick random results similar to Phase 2</li>
-            <li><strong>Detailed Simulation:</strong> Tracks individual player resources (Lives, Shots, Special Points,
-                Missiles), performance statistics, and realistic combat simulation</li>
-        </ul>
-    </div>
-</div>
 {% endblock %}

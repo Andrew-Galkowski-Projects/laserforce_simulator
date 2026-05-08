@@ -28,28 +28,7 @@
         </div>
     </div>
 
-    <div class="mb-3">
-        <div class="form-check">
-            {{ form.use_detailed_simulation }}
-            <label class="form-check-label" for="{{ form.use_detailed_simulation.id_for_label }}">
-                {{ form.use_detailed_simulation.label }}
-            </label>
-            <div class="form-text">{{ form.use_detailed_simulation.help_text }}</div>
-        </div>
-    </div>
-
     <button type="submit" class="btn btn-success">Simulate Round</button>
     <a href="{% url 'match_list' %}" class="btn btn-secondary">Cancel</a>
 </form>
-
-<div class="mt-4">
-    <div class="alert alert-info">
-        <strong>Simulation Types:</strong>
-        <ul class="mb-0">
-            <li><strong>Basic:</strong> Simple point-based results</li>
-            <li><strong>Detailed:</strong> Full player resource tracking with individual performance metrics including
-                Lives, Shots, Special Points, Missiles, tags made/received, and survival statistics</li>
-        </ul>
-    </div>
-</div>
 {% endblock %}

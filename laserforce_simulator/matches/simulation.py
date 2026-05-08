@@ -3,7 +3,7 @@ import logging
 import threading
 import uuid
 from django.db import transaction
-from .models import GameEvent, Match, GameRound, PlayerRoundState, SingleRound
+from .models import GameEvent, Match, GameRound, PlayerRoundState
 from .sim_helpers.weights import (
     _get_medic_weights,
     _get_ammo_weights,
@@ -2937,65 +2937,3 @@ class BatchSimulator:
             )
 
         return game_round
-
-
-# Legacy simple simulator for backward compatibility
-class SimpleMatchSimulator:
-    """Basic simulator for Phase 2 compatibility"""
-
-    def __init__(self):
-        self.base_points_range = (800, 1500)
-        self.elimination_bonus = 500
-        self.elimination_probability = 0.15
-
-    def simulate_match(self, team_red, team_blue, match_type="friendly"):
-        """Use resource-based simulator but return simple results"""
-        simulator = ResourceBasedSimulator()
-        return simulator.simulate_match(team_red, team_blue, match_type)
-
-    def simulate_single_round(self, team_red, team_blue):
-        """Legacy single round simulation"""
-        single_round = SingleRound.objects.create(
-            team_red=team_red, team_blue=team_blue
-        )
-
-        result = self._simulate_round()
-        single_round.red_points = result["red_points"]
-        single_round.blue_points = result["blue_points"]
-        single_round.red_eliminated = result["red_eliminated"]
-        single_round.blue_eliminated = result["blue_eliminated"]
-        single_round.is_completed = True
-        single_round.save()
-
-        return single_round
-
-    def _simulate_round(self):
-        """Simulate a single round with random results"""
-        # Generate random base points for each team
-        red_points = random.randint(*self.base_points_range)
-        blue_points = random.randint(*self.base_points_range)
-
-        # Check for eliminations
-        red_eliminated = random.random() < self.elimination_probability
-        blue_eliminated = random.random() < self.elimination_probability
-
-        # If a team is eliminated, they typically score fewer points
-        if red_eliminated:
-            red_points = int(red_points * random.uniform(0.3, 0.7))
-        if blue_eliminated:
-            blue_points = int(blue_points * random.uniform(0.3, 0.7))
-
-        # Ensure eliminated teams don't both happen (very rare)
-        if red_eliminated and blue_eliminated:
-            # Randomly pick one to not be eliminated
-            if random.choice([True, False]):
-                red_eliminated = False
-            else:
-                blue_eliminated = False
-
-        return {
-            "red_points": red_points,
-            "blue_points": blue_points,
-            "red_eliminated": red_eliminated,
-            "blue_eliminated": blue_eliminated,
-        }

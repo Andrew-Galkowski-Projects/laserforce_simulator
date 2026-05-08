@@ -17,7 +17,10 @@
       "Bash(python -m pytest matches/tests/simulation_tests.py::TestWeightFunctions -x -q)",
       "Bash(Get-Content \"C:\\\\Users\\\\Andrew Galkowski\\\\Desktop\\\\programming\\\\laserforce_simulator\\\\laserforce_simulator\\\\matches\\\\sim_helpers\\\\weights.py\")",
       "Bash(Select-Object -First 60)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(git checkout *)",
+      "Bash(python -m pytest matches/tests/views_tests.py -v)",
+      "Bash(python -m pytest -v)"
     ]
   }
 }

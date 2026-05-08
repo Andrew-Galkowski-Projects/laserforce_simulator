@@ -89,7 +89,7 @@ Action weights live in `matches/sim_helpers/weights.py` and shift dynamically ba
 
 | Role | Shields | Shot Power | Missiles | Resupply |
 |------|---------|------------|----------|----------|
-| Commander | 2 | 3 | Yes | — |
+| Commander | 3 | 2 | Yes | — |
 | Heavy | 3 | 3 | Yes | — |
 | Scout | 1 | 1 | — | — |
 | Medic | 1 | 1 | — | Lives |
@@ -102,6 +102,9 @@ Action weights live in `matches/sim_helpers/weights.py` and shift dynamically ba
 | `/` | Team list (homepage) |
 | `/teams/` | Team & player management |
 | `/matches/` | Match list and creation |
+| `/matches/create/` | Create a full 2-round match |
+| `/matches/single-round/create/` | Create a standalone game round |
+| `/matches/simulate-batch/` | Run N in-memory simulations |
 | `/matches/game-round/<id>/` | Per-player round stats |
 | `/matches/game-round/<id>/events/` | Filterable event timeline |
 | `/matches/team/<id>/history/` | Team win/loss history |
