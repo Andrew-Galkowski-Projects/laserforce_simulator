@@ -18,6 +18,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - SQLite (default); PostgreSQL in production via `dj-database-url`
 - `python-decouple` for environment variable configuration (`.env` for local, env vars in production)
 - `gunicorn` as the production WSGI server (start with `gunicorn laserforce_simulator.wsgi:application --bind 0.0.0.0:8000`)
+- `whitenoise` for production static file serving directly from Django (no separate nginx required)
 - pytest + pytest-django for testing, with Codecov coverage reporting
 
 ## Getting Started

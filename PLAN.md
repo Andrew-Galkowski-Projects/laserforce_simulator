@@ -447,6 +447,7 @@ WhiteNoise lets Django serve them directly from the container without needing a 
 - Add `WhiteNoiseMiddleware` to `MIDDLEWARE` in `settings.py` (must come directly after `SecurityMiddleware`)
 - Set `STATIC_ROOT = BASE_DIR / "staticfiles"` so `collectstatic` knows where to write files
 - `collectstatic` will be run during the Docker image build step (DEPLOY-06)
+- completed: `whitenoise>=6.0.0` added to requirements.txt; `WhiteNoiseMiddleware` inserted after `SecurityMiddleware` in MIDDLEWARE; `STATIC_ROOT = BASE_DIR / "staticfiles"` added to settings.py. collectstatic wiring deferred to DEPLOY-06.
 
 ### DEPLOY-04 · Media file storage (Cloudflare R2)
 Uploaded map images are "media files" stored on disk by default. In a Docker container the disk is
