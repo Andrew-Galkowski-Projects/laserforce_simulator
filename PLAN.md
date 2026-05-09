@@ -53,11 +53,16 @@ place players on or near their team's base cell. Persist the active zone_size an
 and `cell_col` integers. Keep `current_zone` as a derived property (red/neutral/blue based on cell's zone type)
 for backwards compatibility with existing views.
 
+Existing match/round data is disposable — no data migration required.
+
 ### MAP-02 · Cell-aware zone movement
 Replace `_change_zone()` with a pathfinding step that moves a player to an adjacent passable cell each tick. 
-Use the `SightLineConfig` adjacency data (cells that can see each other share an edge or corridor) 
-as a proxy for connectivity, or derive an explicit adjacency list from `MapZoneConfig.zones`. 
-Players navigate toward a goal cell (enemy base, ally position, nearest resupply) using a simple weighted heuristic.
+Derive a dedicated movement adjacency list from `MapZoneConfig.zones` — do not reuse `SightLineConfig` for 
+movement (LOS ≠ adjacency). Players navigate toward a goal cell (enemy base, ally position, nearest resupply) 
+using a simple weighted heuristic.
+
+Moving uphill (to a higher-elevation cell) applies a movement speed penalty. Moving downhill has no effect.
+Adjacent non-wall cells are always traversable regardless of elevation difference.
 
 **Acceptance:** A player starting at their home base will reach the enemy base in a realistic number of ticks
 proportional to map size. Players never move into wall cells.
@@ -76,31 +81,48 @@ Replace the abstract base-capture zone check with `BaseSightLineConfig` lookups.
 Load `BaseSightLineConfig` at round start alongside `SightLineConfig`.
 
 ### MAP-05 · Role-aware goal selection
-Update the weight functions in `weights.py` to express goals in terms of target cells rather than abstract zones. 
-Each role picks a goal cell (enemy base, ally player position, nearest cover) and the movement action moves 
-one step toward it. Scouts prioritize high-LOS cells; Heavies hold near chokepoints; 
-Medics/Ammos follow the ally they intend to resupply.
+Update the weight functions in `weights.py` to express goals in terms of target cells rather than abstract zones.
+Each role picks a goal cell and the movement action moves one step toward it.
+
+- **Scouts** prioritize high-LOS cells (cells with the most entries in `SightLineConfig`).
+- **Heavies** use a dual-mode system: precomputed strong spots (defensive corridors between enemy entry points
+  and the allied base area, stored on the map at save time, user-overridable) OR dynamic per-tick goal
+  computation tracking current allied Medic/Ammo positions. The Heavy switches between modes based on player
+  stats (stat wiring in Phase 2).
+- **Medics/Ammos** follow the ally they intend to resupply.
+
+High-LOS cells and Heavy strong spots are precomputed and stored when a map is saved. Heavy strong spots
+can be manually added or overridden by the map editor.
 
 ### MAP-06 · Fallback for rounds without a map
 When `GameRound.arena_map` is null (map not assigned), fall back to the existing 3-zone logic so that existing tests
 and simulations without maps continue to work. This is a compatibility shim — new matches should always have a map.
 
 ### MAP-07 · Map wall hazards
-Maps provided can have multiple different wall types: low walls that block movement but not sight, 
-high walls that block both movement and sight, mirrored/reflective walls that shots can be bounced off of to hit
-players around corners, and windowed walls that block sight but allow tagging through them. Add a `wall_type` field
-to the map data and update the movement and targeting logic to respect these distinctions. 
-For example, a player behind a low wall can be targeted if the attacker has LOS to the wall cell, 
-but not if there's a high wall in between.
+Maps have three active wall types:
+
+- **Low walls** — block movement but not sight.
+- **High walls** — block both movement and sight.
+- **Windowed walls** — block sight but allow tagging through them (gun-port style aperture).
+
+Mirrored/reflective walls (shot bouncing) are **deferred** — see Deferred Items section.
+
+Add a `wall_type` field to the map cell data and update movement and targeting logic to respect these distinctions.
 
 ### MAP-08 · Map-based spawn points
-Players should spawn within 5-10 cells of their base's cell
+Spawn cells are precomputed and stored on the map at save time (base zones are static). Players spawn within
+one of these precomputed spawn cells near their team's base at round start.
 
 ### MAP-09 · High Ground
-Some maps have multiple levels of elevation. Add a `height` attribute that both modifies hit-chance against players 
-on high ground from low ground and also provides a small visibility bonus to players on high ground 
-(more cells visible in `SightLineConfig`).
-This should allow high ground players to shoot over some high walls
+Map cells have a continuous numeric `elevation` attribute. High walls also carry a numeric `height` value.
+
+**Shoot-over formula:** the map editor computes a default `can_shoot_over` boolean for each high wall based on
+relative elevation (attacker elevation vs wall height). The map editor exposes a per-wall manual override for
+cases where the formula output is incorrect.
+
+High-ground players gain a visibility bonus (more cells visible in `SightLineConfig`). The hit-chance formula
+applies a modifier making it harder to hit players on higher ground from below.
+
 ---
 
 ## Phase 2 — Player Stats Integration
@@ -109,33 +131,35 @@ Most of the 19 player stats exist on the model but are not used in simulation. T
 
 ### STAT-01 · Expose all 19 stats in the add/edit player UI
 `teams/` — Both the add and edit player forms must render all 19 stat fields grouped by category 
-(Awareness, Decision-making, Physical, Team, Role). New players default to 50 for all stats. 
+(Awareness, Decision-making, Physical, Team, Role). New players default to 50 for all stats.
+Existing player data is disposable — no backfill migration required.
 Show `overall_rating` as a live-updating summary. Add a convenience "Set to Average / Elite" bulk preset.
 
-### STAT-02 · Role-preference stat multipliers
-Define `ROLE_STAT_WEIGHTS` mapping role → {stat_name: multiplier} for all 19 stats. 
-Example: Scout `accuracy` weight = 1.5, Medic `accuracy` weight = 0.4, Medic `resupply_efficiency` weight = 2.0. 
-Add `Player.stat_for_simulation(stat_name)` which returns `stat_value × role_weight`. Update `ResourceBasedSimulator`
-and `weights.py` to use this method. Keep `overall_rating` as the unweighted display average.
+### STAT-02 · Role-preference stat multiplier
+`Player` has a multi-valued `preferred_roles` field. Add `Player.stat_for_simulation(stat_name)` which returns
+`stat_value × 1.2` if the player's current game role is in their `preferred_roles` set, otherwise returns
+`stat_value` unmodified. This flat 20% boost across all stats is the first pass.
+
+Per-stat-per-role weight tuning (e.g. Scout `accuracy` weight = 1.5, Medic `resupply_efficiency` weight = 2.0)
+is **deferred** — see Deferred Items section. Keep `overall_rating` as the unweighted display average.
 
 ### STAT-03 · Wire stats into action weight functions
-Map each relevant stat to a weight modifier in `weights.py`:
+Map each relevant stat to a weight modifier in `weights.py`. Stats are wired in their respective phases:
+
+**Phase 1 (map-dependent):**
+- `positioning` — biases movement toward high-value cells (pairs with MAP-05)
+- `speed` — allows more cells traversed per tick (pairs with MAP-02)
+
+**Phase 2 (this phase):**
 - `accuracy` / `survival` — already used in hit-chance formula; confirm they feed in correctly
-- `decision_making` — scales the spread between actions 
-  - (high decision-making = weights more concentrated on optimal action)
-- `positioning` — biases movement toward high-value cells (map integration; pairs with MAP-05)
+- `decision_making` — scales the spread between actions (high = weights more concentrated on optimal action)
 - `stamina` — degrades action quality / effective hit-chance in second half of round
-- `speed` — allows more cells traversed per tick (map integration)
 - `special_usage` — scales special activation weight directly
 - `resupply_efficiency` / `resupply_synergy` — scale resupply weight for Medic/Ammo
 - `teamwork` / `communication` — scale ally-following behavior weight
-- `game_awareness` / `player_awareness` — scale reaction to enemy nuke (see Phase 3)
 
-### STAT-04 · Seed stats from match history
-`teams/` — "Update stats from history" button on player edit page. Derives `accuracy` from
-`tags_made/(tags_made+shots_missed)` ratio, `survival` from avg `was_eliminated_at`, `special_usage` 
-from SP spend rate, across the player's `PlayerRoundState` history. Show a diff before applying. 
-Only available after minimum 5 games.
+**Phase 3 (nuke-mechanic-dependent):**
+- `game_awareness` / `player_awareness` — scale reaction to enemy nuke (see MECH-04)
 
 ---
 
@@ -143,20 +167,23 @@ Only available after minimum 5 games.
 
 New and corrected mechanics that make the simulator more faithful to SM5 rules and more interesting strategically.
 
-### MECH-01 · Medic/Ammo follow-up combo tag
-A Medic or Ammo can perform a "follow-up" action: tag an ally immediately after a resupply, 
-granting that ally both a life restore (Medic) and a shot resupply (Ammo) in the same interaction. 
-The ally and support player both receive the benefit. In game terms this represents a `double` since both players
-are tagging the target at the same time. Implement as a new action type `combo_resupply` with its own weight 
-(high when both Medic and Ammo are in the same cell as a low-resource ally). Create a `GameEvent` of 
+### MECH-01 · Medic/Ammo follow-up combo resupply
+When an ally requests resupply and both a Medic and an Ammo are within LOS of that ally simultaneously,
+the ally receives both a life restore (Medic) and a shot resupply (Ammo) in one interaction.
+This is ally-initiated — the ally moves toward support players and requests resupply; if both are in LOS,
+both resupply simultaneously.
+
+The weight for seeking resupply is higher when the ally is below threshold on lives OR ammo.
+
+Implement as a new action type `combo_resupply`. No bonus points beyond the sum of a standard medic
+resupply + ammo resupply. Track `combo_resupply_count` on `PlayerRoundState`. Create a `GameEvent` of
 type `combo_resupply` with both resource grants logged in `metadata`.
 
-### MECH-02 · Base tag to reset same-target restriction
-After tagging an enemy and depleting their shields (scoring a life), 
-the attacker normally must wait 8 seconds before tagging the same target again. Implement a rule: 
-tagging a neutral or opposing base resets this per-target cooldown for the attacker. 
-Similarly, tagging any other enemy or ally in the same cell/radius also resets it. 
-Track the "last tagged player" per attacker and clear it on base interaction or zone-wide tag of any other valid target.
+### MECH-02 · Tag of any entity resets same-target restriction
+After scoring a life against an enemy, the attacker must wait 8 seconds before tagging the same target again.
+This per-target cooldown resets whenever the attacker tags any other entity — any player (ally or enemy),
+any base, or any other valid target. Track the "last tagged player" per attacker and clear it on any
+successful tag of a different entity.
 
 ### MECH-03 · Commander nuke stacking behavior
 Currently Commanders almost never queue a second nuke during the first nuke's fuse window. 
@@ -169,8 +196,8 @@ than being near-zero for all Commanders.
 When a pending nuke is in flight (fuse window active), players should react based on stats. Add a nuke-awareness 
 check each tick for all active players on the target team:
 - High `game_awareness` + `player_awareness`: player attempts to tag the Commander to cancel the nuke 
-- (raises `tag_player` weight toward the Commander specifically, regardless of zone)
-- High `survival`: player hides or moves to a different cell to reduce the nuke's impact (hide weight increases)
+  (raises `tag_player` weight toward the Commander specifically, overriding normal role behavior)
+- High `survival`: player moves to a different cell to reduce the nuke's impact (hide weight increases)
 - Low awareness stats: player ignores the nuke and continues their normal action
 
 ### MECH-05 · Nuke cancellation fuse window fix (SIM-03)
@@ -209,8 +236,9 @@ Detect: nuke events, first elimination, largest 30-second point swing, team elim
 Show as a "Highlights" tab on the events page. Store results in `GameRound.highlights_json` (new field) at round completion.
 
 ### RV-03 · Export round report as PDF
-`GET /matches/game-round/<id>/export/` — WeasyPrint or ReportLab. Contains round summary, scoreboards, 
-per-player table, resource summary. "[Simulated]" watermark on simulator-generated rounds.
+`GET /matches/game-round/<id>/export/` — ReportLab (programmatic PDF generation; chosen over WeasyPrint to
+avoid template dependency ahead of the Angular migration). Contains round summary, scoreboards, per-player table,
+resource summary. "[Simulated]" watermark on simulator-generated rounds.
 
 ### SIM-01 · Document and test action weights
 Add docstrings to every weight function in `weights.py`. Cover weight sums with unit tests. 
@@ -219,7 +247,8 @@ Provide a clearly documented constant dict so weights are adjustable without tou
 ### SIM-02 · Batch simulation mode
 `POST /matches/simulate-batch/` — accepts `red_team_id`, `blue_team_id`, `n` (10/50/100/500). 
 Runs `ResourceBasedSimulator` n times, returns aggregate stats (win%, avg score, avg survivors, 
-score distribution histogram). Background task if sync >5 seconds. Results not stored as permanent Match records.
+score distribution histogram). Uses simple in-process threading when the run exceeds ~5 seconds;
+results are not stored as permanent Match records.
 
 ### SIM-04 · Simulation confidence display
 Per-player data source label ("40 real games" vs "Role defaults — no history") on simulation summary. 
@@ -254,68 +283,140 @@ Recommended scenario highlighted with rationale.
 Fork a real `GameRound`, change one variable (swap role, adjust stat, change player), 
 re-simulate, show diff vs original. Forked scenario is temporary, not a permanent Match record.
 
-### STAT-03-UI · Stat derivation from history (pairs with STAT-04)
-See Phase 2 entry. Surfaces in Analytics phase as a user-facing button.
-
 ---
 
 ## Phase 5 — Infrastructure & League System
 
 ### API-01 · Migrate to PostgreSQL for production
-`settings.py` — read `DATABASE_URL` via `dj-database-url`. SQLite for local dev/CI; PostgreSQL in production. 
-Verify all migrations against PostgreSQL. Update GitHub Actions to spin up a Postgres service container.
+See DEPLOY-05 in Phase 7 — the two are the same work and should be done together.
 
 ### API-02 · Read-only REST API
-Add Django REST Framework (or django-ninja). Endpoints: `GET /api/teams/`, `GET /api/teams/<id>/`,
+Add Django REST Framework. Endpoints: `GET /api/teams/`, `GET /api/teams/<id>/`,
 `GET /api/matches/<id>/`, `GET /api/rounds/<id>/`, `GET /api/rounds/<id>/events/`. Pagination (default 20). 
 Token auth for API consumers; session auth for web views.
 
 ### API-03 · Async batch simulation endpoint
-`POST /api/simulate-batch/` — returns `job_id` immediately. Background worker (Celery + Redis or Django-Q) processes. 
+`POST /api/simulate-batch/` — returns `job_id` immediately. Background worker via **Celery + Redis**
+(Fly.io Upstash free Redis add-on) processes the job.
 `GET /api/simulate-batch/<job_id>/` polls status and returns results. Frontend progress bar. Jobs expire after 1 hour.
 
 ### LG-00 · Player Generation Tools
-There should be a way for players to generate new rosters of players to play in a season/league/tournament.
-This can be as simple as "generate league/season/tournament X with Y teams" 
-these stats would be randomized on a bell curve with some variance.
+Generate a full set of randomized players for a league, season, or tournament. The generation UI accepts:
+- Number of teams and players per team
+- Bell curve mean and variance for stat distribution (configurable per generation run)
+
+Stats are randomized on the configured bell curve. Intended to bootstrap new leagues quickly.
 
 ### LG-00b · Roster Import from CSV
-Allow users to import a roster of players from a CSV file. The CSV should have columns for player name, role, and stats.
-
+Allow users to import a roster of players from a CSV file. Required columns: player name, role.
+All 19 stat columns are optional — unspecified stats default to 50 on import.
 
 ### LG-01 · Seasons and standings
 New `Season` model: name, start/end dates, enrolled teams (M2M). Standings: W/L/T, points (3W/1T/0L),
 round wins, total score. Matches linked to season via FK. Active vs completed states.
-This should look at the screenshots existing within the /Screenshots_and_video_examples/ directory 
+This should look at the screenshots existing within the /Screenshots_and_video_examples/ directory.
 
-### LG-02 · Tournament bracket
-Single-elimination bracket for 4/8/16 teams; seeded by standings or manual order. 
-Results auto-advance winners. Bracket rendered as a visual tree.
-This should look at the screenshots existing within the /Screenshots_and_video_examples/ directory
+### LG-02 · Tournament formats
+Support the following tournament types:
+
+- **Single elimination** — 4/8/16 teams; standard knockout bracket.
+- **Double elimination** — losers get a second chance via the losers bracket.
+- **Round robin** — all teams play each other; used for seeding.
+- **Round robin → Double elimination** — round robin seeding phase feeds into a double elimination finals.
+- **Swiss** — pairings based on current standings; rounds auto-calculated from participant count
+  (typically ⌈log₂(N)⌉), overridable by tournament admin.
+- **Random Draw** — a pool of individual players with no pre-set teams. When all participants
+  are registered, the system randomizes team assignments. Tournament admin reviews and edits
+  the assignments, then confirms to lock them in. Format runs as Round Robin → Double Elimination.
+- **Duos** — players register as pairs. Pairs are placed on 6v6 teams alongside other pairs.
+  Pair performance is tracked independently across games. Requires `TournamentSubGroup` model.
+- **Trios** — same as Duos but groups of three.
+
+**TournamentSubGroup model:** links players as partners within a specific tournament. Used by Duos and Trios
+to track sub-group performance independently of the full team result.
+
+Bracket rendered as a visual tree. Results auto-advance winners.
+This should look at the screenshots existing within the /Screenshots_and_video_examples/ directory.
 
 ### LG-03 · Season-end awards
 Computed from `PlayerRoundState` aggregates: Most Points, Highest K/D by role, Best Medic, 
 Most Efficient Nuke, Best Accuracy. Awards page at `/seasons/<id>/awards/`. Award badge on player profile.
+
+### LG-04 · Season-end stat updates
+At the end of each season, all players (on active teams or otherwise) receive a stat update.
+The update factors in:
+- **New experience** — games played this season
+- **Player age** — older players improve more slowly
+- **Prior experience** — players with more historical games have a smaller update magnitude
+
+Default weights for these three factors are fixed in code but overridable per season by the league admin.
+
+### LG-05 · Player potential
+Each player carries a `potential` attribute: a dynamically computed estimate of their likely stat ceiling.
+
+- Computed at each season-end stat update, not on demand.
+- Derived from current player stats + the team's seasonal scouting budget allocation.
+- **Scouting budget** is a per-season allocation on the team. Higher budget = more accurate `potential`
+  estimate. Lower budget = noisier estimate with added randomness.
+- `potential` has a floor of `overall_rating` — it can never predict a player will regress below
+  their current average.
+- `potential` is not exposed in the UI until this phase is complete.
+
+---
+
+## Phase 5.5 — Single-Player Career Mode
+
+A single-user play mode where the user acts as a team manager navigating a league season. This phase
+sits between the League system (Phase 5) and full multiplayer (Phase 6).
+
+### CAR-01 · Manager role and team assignment
+In single-player career mode, the user is a team manager (not a player in the simulation).
+The user is assigned to a team at the start of a career league. Each season the user manages their
+team through the league schedule.
+
+### CAR-02 · Performance-based firing
+The system tracks manager performance metrics (win rate, standings position, point differential).
+When a manager's performance falls below a configurable threshold, the system fires them automatically.
+After being fired, the manager can apply for or be assigned to another team in the league.
+
+### CAR-03 · Career isolation from multiplayer
+The firing mechanic and team-switching only apply in single-user career mode. In multiplayer leagues,
+each user is locked to their team for the full duration of the league — no transfers, no firing.
 
 ---
 
 ## Phase 6 — Users and Multiplayer
 
 ### UX-01 · User accounts and team ownership
-Django auth system. Users can see teams and players they have created, along with leagues/seasons/tournaments.
+Django auth system (email + password). Open self-registration — anyone can create an account.
+Admins can remove user accounts via Django Admin.
+
 Permissions: only team owners can edit their teams/players; read-only access to others.
-This should look at the screenshots existing within the /Screenshots_and_video_examples/ directory
+Users can see the teams, players, leagues, seasons, and tournaments they have created.
 
+League access is **closed by default** (invite-only). League creators can set a league to open
+(anyone can join) or send invitations to specific users.
 
+Google/OAuth social login is deferred — see Deferred Items section.
+
+### UX-02 · User–player link
+Each user account may be linked to exactly one `Player` record (one-to-one). This link represents
+a self-insert — the user's personal profile of what they believe their own stats are or aspire to be.
+The linked player is a vanity record and does not automatically appear on any simulated team.
+
+This should look at the screenshots existing within the /Screenshots_and_video_examples/ directory.
+
+---
 
 ## Phase 7 — Docker & Production Deployment
 
-The app currently runs only on a local dev machine. This phase makes it deployable as a Docker container
-to any cloud host. It can be done as soon as Phase 0 is complete — you don't need to wait for later phases.
-Deploy early with the Django template UI; re-deploy again as features land.
+The app currently runs only on a local dev machine. This phase makes it deployable as a Docker container.
 
-**What Docker is:** a container packages the app + all its dependencies into a single portable unit that
-runs the same way on any machine or cloud host, eliminating "it works on my machine" problems.
+**Deployment target:** Fly.io (free tier — persistent storage, native Docker support, does not spin down).
+**Media storage:** Cloudflare R2 (free tier — 10 GB, no egress fees, S3-compatible API).
+**Deploy trigger:** auto-deploy to Fly.io on every push to `main` via CI.
+**Domain:** fly.dev default subdomain for now; custom domain deferred until the project grows.
+  (Custom domains on Fly.io are free — only the domain registration itself costs money.)
 
 ### DEPLOY-01 · Environment variable configuration
 `settings.py` currently has `SECRET_KEY`, `DEBUG = True`, and `ALLOWED_HOSTS` hardcoded. In production
@@ -324,9 +425,11 @@ these must come from environment variables so secrets are never in the repositor
 - Add `python-decouple` to `requirements.txt`
 - Rewrite the relevant `settings.py` values to read from env vars with safe defaults:
   `SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS`, `DATABASE_URL`
+- R2 credentials (`R2_BUCKET_NAME`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`, `R2_ENDPOINT_URL`) also go here
 - Add a `.env` file for local development (contains real values, never committed)
 - Add a `.env.example` file (placeholder values, committed as documentation)
 - Add `.env` to `.gitignore`
+- completed: `python-decouple` and `dj-database-url` added to requirements.txt; settings.py reads SECRET_KEY, DEBUG, ALLOWED_HOSTS via decouple and DATABASES via dj_database_url.config(); R2 placeholders added; .env/.env.example created; .gitignore and ci.yml updated; mypy.ini added for import-untyped suppression.
 
 ### DEPLOY-02 · Production WSGI server (gunicorn)
 Django's built-in `runserver` is a dev-only server — it is single-threaded and not safe for production.
@@ -344,15 +447,14 @@ WhiteNoise lets Django serve them directly from the container without needing a 
 - Set `STATIC_ROOT = BASE_DIR / "staticfiles"` so `collectstatic` knows where to write files
 - `collectstatic` will be run during the Docker image build step (DEPLOY-06)
 
-### DEPLOY-04 · Media file storage for map uploads (Cloudflare R2 or S3)
+### DEPLOY-04 · Media file storage (Cloudflare R2)
 Uploaded map images are "media files" stored on disk by default. In a Docker container the disk is
 ephemeral — files written during one deploy disappear when the container restarts. They must be stored
-in an external object-storage service instead.
+in Cloudflare R2 instead.
 
-- Recommended: Cloudflare R2 (free tier, S3-compatible API)
 - Add `django-storages[s3]` and `boto3` to `requirements.txt`
 - Configure `DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"` in production settings
-- Credentials (bucket name, access key, secret) added as environment variables — never hardcoded
+- R2 credentials added as environment variables (see DEPLOY-01) — never hardcoded
 - Test: upload a map image in the editor and verify the file URL points to R2, not local disk
 
 ### DEPLOY-05 · PostgreSQL database (see also API-01 in Phase 5)
@@ -367,8 +469,6 @@ doesn't support multiple concurrent connections well. PostgreSQL is the producti
 - Note: this is the same work as API-01 in Phase 5 — the two can be merged/done together
 
 ### DEPLOY-06 · Dockerfile
-The Dockerfile defines exactly how to build the container image. Uses a two-stage build: the first
-stage installs all Python dependencies; the second stage copies only what's needed to run.
 
 ```dockerfile
 # Stage 1 — install dependencies
@@ -397,11 +497,11 @@ CMD ["gunicorn", "laserforce_simulator.wsgi:application", "--bind", "0.0.0.0:800
 - `docker compose run app python manage.py migrate` runs migrations inside the container
 
 ### DEPLOY-08 · CI pipeline update
-Update `.github/workflows/ci.yml` to build the Docker image and verify it starts cleanly, so a broken
-Dockerfile is caught before it reaches a real deployment.
+Update `.github/workflows/ci.yml` to build the Docker image and auto-deploy to Fly.io on every push to `main`.
 
 - Add a `docker build` step after the existing `pytest` step
 - Add a smoke test: start the container, hit `/`, expect HTTP 200
+- Add a Fly.io deploy step using the official `fly-apps/deploy` GitHub Action
 
 ---
 
@@ -411,14 +511,11 @@ Replaces Django's server-rendered HTML templates with an Angular single-page app
 Django becomes a pure API backend; Angular handles all UI in the browser. This phase requires Phase 5's
 API-02 (REST API) to be complete and deployed (Phase 7) before starting.
 
-**What Angular is:** a TypeScript framework for building SPAs — the server sends one HTML page and all
-navigation/rendering happens in JavaScript in the browser, talking to the backend via API calls.
-
 **Approach:** migrate one feature area at a time. Django templates remain live until the Angular
-equivalent is complete and verified. There is no big-bang cutover.
+equivalent is complete and verified. Django Admin is a permanent exception and is never migrated.
 
 ### ANG-01 · Harden and complete the REST API (prerequisite)
-API-02 in Phase 5 establishes the REST API skeleton. Before building Angular against it, ensure:
+Before building Angular against it, ensure:
 
 - All endpoints needed by the UI exist: teams, players, matches, rounds, events, maps
 - Consistent JSON envelope (data, pagination, errors)
@@ -427,43 +524,30 @@ API-02 in Phase 5 establishes the REST API skeleton. Before building Angular aga
 
 ### ANG-02 · CORS configuration
 During development Angular runs on `http://localhost:4200` and Django runs on `http://localhost:8000`.
-Browsers block cross-origin requests by default — CORS headers tell the browser to allow them.
 
 - Add `django-cors-headers` to `requirements.txt`
 - Add `CorsMiddleware` to `MIDDLEWARE` (before `CommonMiddleware`)
 - Set `CORS_ALLOWED_ORIGINS = ["http://localhost:4200"]` for dev; production domain added when known
 
 ### ANG-03 · JWT authentication
-Django's default session auth (cookies) doesn't work cleanly for SPAs. JSON Web Tokens (JWTs) are the
-standard alternative: login returns a short-lived access token and a longer-lived refresh token;
-Angular sends the access token with every API request.
-
 - Add `djangorestframework-simplejwt` to `requirements.txt`
 - Add `/api/token/` (login) and `/api/token/refresh/` endpoints
-- Angular stores tokens in memory (not `localStorage` — avoids XSS token theft)
+- **Access token** stored in memory (not localStorage — avoids XSS token theft)
+- **Refresh token** stored in an httpOnly cookie (survives page refresh without re-login)
 - Angular `HttpInterceptor` attaches `Authorization: Bearer <token>` to every API request automatically
-- Note: this work is only required if Phase 6 (user accounts) is in scope; skip if the app stays public
 
 ### ANG-04 · Angular project scaffold
-One-time setup of the Angular application. Lives in a `/frontend/` directory at the repo root,
-separate from the Django project.
+One-time setup in a `/frontend/` directory at the repo root.
 
 ```bash
-# Prerequisites: Node.js LTS + npm
 npm install -g @angular/cli
 ng new frontend --routing --style=scss --strict
 cd frontend
-ng add @angular/material   # Material Design component library
+ng add @angular/material
 ```
 
-Key files:
-- `frontend/src/app/` — all Angular components and services live here
-- `frontend/src/environments/` — `environment.ts` (dev API URL) and `environment.prod.ts` (prod API URL)
-- `frontend/angular.json` — build config
-
 ### ANG-05 · Angular API services
-One Angular service per Django API resource. Each service wraps the HTTP calls and returns typed
-observables. Components never call `HttpClient` directly — they go through the service.
+One Angular service per Django API resource. Components never call `HttpClient` directly.
 
 ```
 TeamsService     → GET/POST/PATCH /api/teams/
@@ -485,42 +569,48 @@ verify feature parity with the existing Django template, then remove the Django 
 5. **Event timeline** — filtered event log, color-coded by type (SIM-05 replay controls slot in here)
 6. **Map editor** — most complex: canvas overlay, zone painting, sight-line drag-select (migrate last)
 
-### ANG-07 · Serve Angular from Docker
-Once Angular is built (`ng build --configuration production`), it produces a `/frontend/dist/` folder
-of static HTML/JS/CSS files. Two clean ways to serve it:
-
-**Option A — nginx sidecar (recommended):**
-Add a second `nginx` service to `docker-compose.yml`. nginx serves the Angular static files on port 80
-and proxies `/api/` requests to the Django container on port 8000. Clean separation of concerns.
-
-**Option B — Django serves Angular:**
-Copy the Angular build output into Django's `STATIC_ROOT`. Works but mixes concerns and requires
-a full Django rebuild whenever the frontend changes.
-
-Go with Option A. Add `nginx.conf` and update `docker-compose.yml` with the `nginx` service.
+### ANG-07 · Serve Angular from Docker (nginx sidecar)
+Once Angular is built (`ng build --configuration production`), serve it via an nginx sidecar service.
+nginx serves the Angular static files on port 80 and proxies `/api/` requests to the Django container
+on port 8000. Add `nginx.conf` and update `docker-compose.yml` with the `nginx` service.
 
 ### ANG-08 · Remove Django template views
 Once each Angular view is verified, delete the corresponding Django template file and its
 HTML-serving view function. Keep the API endpoint. Update URL routing to remove the old path.
-The app should have zero `.html` template files by the end of this phase (except Django admin).
+The app should have zero `.html` template files by the end of this phase, except Django Admin
+(which is a permanent exception and stays indefinitely).
 
 ---
 
 ## Sequencing Summary
 
 ```
-Phase 0 (Fixes)
-  → Phase 7 (Docker & Deployment) ← do this early; ship the Django template UI to prod
-  → Phase 1 (Map Integration)  ← required for meaningful positional mechanics
-    → Phase 2 (Stats Integration)  ← required before Phase 3 stat-driven behaviors
+Phase 0 (Fixes) ← complete
+  → Phase 7 (Docker & Deployment) ← do this first; ship the Django template UI to prod early
+  → Phase 1 (Map Integration)
+    → Phase 2 (Stats Integration)
       → Phase 3 (Simulation Mechanics)
-        → Phase 4 (Analytics — most of this can run in parallel with Phase 3)
-          → Phase 5 (Infrastructure & League)  ← API-02 REST API is required before Phase 8
-            → Phase 6 (Users and Multiplayer)
-              → Phase 8 (Angular Frontend Migration)
+        → Phase 4 (Analytics — most items can run in parallel with Phase 3)
+          → Phase 5 (Infrastructure & League)
+            → Phase 5.5 (Single-Player Career Mode)
+              → Phase 6 (Users and Multiplayer)
+                → Phase 8 (Angular Frontend Migration)
+                  (requires Phase 5 API-02 REST API)
 ```
 
 Phase 4 items RES-01 (accuracy %), RES-02 (SP chart), RES-03 (missile log), and SIM-01 (document weights)
 are quick wins that can be done any time after Phase 0.
 
 Phase 7 (Deployment) can be done in parallel with any feature phase — re-deploy as features land.
+
+---
+
+## Deferred Items
+
+The following were explicitly scoped out and should not be implemented until re-evaluated:
+
+- **Mirrored/reflective walls** (MAP-07) — shot-bouncing mechanic; deferred from Phase 1
+- **Per-stat-per-role weight tuning** (STAT-02 follow-up) — granular multipliers per stat per role;
+  deferred until baseline simulation data exists to inform the values
+- **Google/OAuth social login** (UX-01) — deferred from Phase 6; email/password only for now
+- **Custom domain** — deferred until the project grows; fly.dev subdomain is sufficient for now
