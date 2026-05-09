@@ -24,7 +24,15 @@
       "Bash(pytest --tb=short -q)",
       "Bash(python -m black --check laserforce_simulator/settings.py)",
       "Bash(python -m mypy laserforce_simulator/settings.py)",
-      "Bash(python -m pytest -q)"
+      "Bash(python -m pytest -q)",
+      "Bash(pip install *)",
+      "Bash(python -m pytest core/tests.py -x -q)",
+      "Bash(black --check core/tests.py core/views.py laserforce_simulator/settings.py)",
+      "Bash(black core/tests.py core/views.py laserforce_simulator/settings.py)",
+      "Bash(python -m pytest core/tests.py -q)",
+      "Bash(mypy core/tests.py core/views.py laserforce_simulator/settings.py)",
+      "Bash(black --check core/tests.py core/views.py laserforce_simulator/urls.py)",
+      "Bash(mypy core/tests.py core/views.py laserforce_simulator/urls.py)"
     ]
   }
 }

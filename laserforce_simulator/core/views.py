@@ -1,10 +1,14 @@
+import io
 import json
 import shutil
+from pathlib import Path
 
 from django.conf import settings
+from django.db.models.fields.files import FieldFile
 from django.http import FileResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
+from PIL import Image as PILImage, UnidentifiedImageError
 
 from .map_processing import compute_sight_lines, create_processed_image, detect_zones
 from .models import (
@@ -22,6 +26,26 @@ _DEFAULT_MAPS = [
 ]
 
 
+def _get_image_local_path(image_field: FieldFile) -> str:
+    """Return a local filesystem path for image_field.
+
+    Works for both local FileSystemStorage (returns .path directly) and remote
+    backends such as R2 (downloads to MEDIA_ROOT/maps/_remote_cache/ on first
+    access and returns that cached path on subsequent calls).
+    Map images are immutable after upload so the cache never goes stale.
+    """
+    try:
+        return image_field.path
+    except NotImplementedError:
+        local_dir = settings.MEDIA_ROOT / "maps" / "_remote_cache"
+        local_dir.mkdir(parents=True, exist_ok=True)
+        local_path = local_dir / Path(image_field.name).name
+        if not local_path.exists():
+            with image_field.open("rb") as remote_f:
+                local_path.write_bytes(remote_f.read())
+        return str(local_path)
+
+
 def _clear_processed_cache(map_id):
     """Clear the cached processed image for a map."""
     processed_path = settings.MEDIA_ROOT / "maps" / f"processed_{map_id}.png"
@@ -30,6 +54,11 @@ def _clear_processed_cache(map_id):
 
 
 def _seed_defaults():
+    from django.core.files.storage import FileSystemStorage, default_storage
+
+    if not isinstance(default_storage, FileSystemStorage):
+        return
+
     screenshots_dir = settings.BASE_DIR.parent / "Screenshots_and_video_examples"
     maps_dir = settings.MEDIA_ROOT / "maps"
     maps_dir.mkdir(parents=True, exist_ok=True)
@@ -43,7 +72,6 @@ def _seed_defaults():
             shutil.copy2(src, dst)
         relative_path = f"maps/{filename}"
         if not ArenaMap.objects.filter(image=relative_path).exists():
-            from PIL import Image as PILImage
             with PILImage.open(dst) as img:
                 w, h = img.size
             ArenaMap.objects.create(
@@ -75,9 +103,15 @@ def upload_map(request):
     arena_map = ArenaMap(name=name, image=image_file)
     arena_map.save()
 
-    from PIL import Image as PILImage
-    with PILImage.open(arena_map.image.path) as img:
-        arena_map.img_width, arena_map.img_height = img.size
+    with arena_map.image.open("rb") as f:
+        content = f.read()
+    try:
+        with PILImage.open(io.BytesIO(content)) as img:
+            arena_map.img_width, arena_map.img_height = img.size
+    except (UnidentifiedImageError, OSError):
+        arena_map.image.delete(save=False)
+        arena_map.delete()
+        return redirect("map_list")
     arena_map.save(update_fields=["img_width", "img_height"])
 
     # Clear cached processed image
@@ -94,11 +128,15 @@ def map_editor(request, map_id):
         b.base_type: {"x_px": b.x_px, "y_px": b.y_px}
         for b in arena_map.base_configs.all()
     }
-    return render(request, "maps/map_editor.html", {
-        "arena_map": arena_map,
-        "saved_zone_size": saved_zone_size,
-        "bases_json": json.dumps(base_data),
-    })
+    return render(
+        request,
+        "maps/map_editor.html",
+        {
+            "arena_map": arena_map,
+            "saved_zone_size": saved_zone_size,
+            "bases_json": json.dumps(base_data),
+        },
+    )
 
 
 def process_zones(request, map_id):
@@ -108,7 +146,7 @@ def process_zones(request, map_id):
     except (ValueError, TypeError):
         cell_size = 50
     cell_size = max(10, min(cell_size, 200))
-    data = detect_zones(arena_map.image.path, cell_size)
+    data = detect_zones(_get_image_local_path(arena_map.image), cell_size)
     return JsonResponse(data)
 
 
@@ -118,7 +156,7 @@ def processed_image(request, map_id):
 
     if not processed_path.exists():
         (settings.MEDIA_ROOT / "maps").mkdir(parents=True, exist_ok=True)
-        img = create_processed_image(arena_map.image.path)
+        img = create_processed_image(_get_image_local_path(arena_map.image))
         img.save(str(processed_path))
 
     return FileResponse(open(processed_path, "rb"), content_type="image/png")
@@ -131,12 +169,16 @@ def save_zone_config(request, map_id):
         body = json.loads(request.body)
         zone_size = int(body.get("zone_size", 50))
     except (ValueError, TypeError, json.JSONDecodeError):
-        return JsonResponse({"status": "error", "message": "Invalid zone_size"}, status=400)
+        return JsonResponse(
+            {"status": "error", "message": "Invalid zone_size"}, status=400
+        )
 
     zone_size = max(10, min(zone_size, 200))
-    data = detect_zones(arena_map.image.path, zone_size)
+    data = detect_zones(_get_image_local_path(arena_map.image), zone_size)
 
-    MapZoneConfig.objects.filter(arena_map=arena_map, confirmed=True).update(confirmed=False)
+    MapZoneConfig.objects.filter(arena_map=arena_map, confirmed=True).update(
+        confirmed=False
+    )
     MapZoneConfig.objects.create(
         arena_map=arena_map,
         zone_size=zone_size,
@@ -172,7 +214,9 @@ def get_sight_lines(request, map_id):
         zone_size = 50
     zone_size = max(10, min(zone_size, 200))
 
-    sight_config = SightLineConfig.objects.filter(arena_map=arena_map, zone_size=zone_size).first()
+    sight_config = SightLineConfig.objects.filter(
+        arena_map=arena_map, zone_size=zone_size
+    ).first()
 
     base_sights = {}
     for btype in VALID_BASE_TYPES:
@@ -181,11 +225,13 @@ def get_sight_lines(request, map_id):
         ).first()
         base_sights[btype] = bsc.visible_cells if bsc else []
 
-    return JsonResponse({
-        "zone_size": zone_size,
-        "sight_data": sight_config.sight_data if sight_config else None,
-        "base_sights": base_sights,
-    })
+    return JsonResponse(
+        {
+            "zone_size": zone_size,
+            "sight_data": sight_config.sight_data if sight_config else None,
+            "base_sights": base_sights,
+        }
+    )
 
 
 @require_POST
@@ -199,7 +245,11 @@ def compute_sight_lines_view(request, map_id):
 
     zone_size = max(10, min(zone_size, 200))
 
-    zone_config = arena_map.zone_configs.filter(zone_size=zone_size).order_by("-created_at").first()
+    zone_config = (
+        arena_map.zone_configs.filter(zone_size=zone_size)
+        .order_by("-created_at")
+        .first()
+    )
     if zone_config:
         zone_data_full = zone_config.zone_data
         # Rebuild blocked_edges_grid from stored zone_data if available
@@ -207,9 +257,13 @@ def compute_sight_lines_view(request, map_id):
             zone_data = zone_data_full
         else:
             # Fall back to stored zones
-            zone_data = {"zones": zone_data_full} if isinstance(zone_data_full, list) else zone_data_full
+            zone_data = (
+                {"zones": zone_data_full}
+                if isinstance(zone_data_full, list)
+                else zone_data_full
+            )
     else:
-        zone_data = detect_zones(arena_map.image.path, zone_size)
+        zone_data = detect_zones(_get_image_local_path(arena_map.image), zone_size)
 
     sight_data = compute_sight_lines(zone_data, use_quadtree=True)
 
@@ -224,10 +278,10 @@ def compute_sight_lines_view(request, map_id):
 
 def compute_single_cell_sight(request, map_id):
     """Lazy sight line compute: get visibility from ONE clicked cell (fast!).
-    
+
     Query params: zone_size, r, c (cell coordinates)
     Returns: {"visible_cells": ["r,c", ...]}
-    
+
     ~1000x faster than all-pairs for large maps.
     """
     arena_map = get_object_or_404(ArenaMap, pk=map_id)
@@ -240,17 +294,26 @@ def compute_single_cell_sight(request, map_id):
 
     zone_size = max(10, min(zone_size, 200))
 
-    zone_config = arena_map.zone_configs.filter(zone_size=zone_size).order_by("-created_at").first()
+    zone_config = (
+        arena_map.zone_configs.filter(zone_size=zone_size)
+        .order_by("-created_at")
+        .first()
+    )
     if zone_config:
         zone_data_full = zone_config.zone_data
         if isinstance(zone_data_full, dict) and "zones" in zone_data_full:
             zone_data = zone_data_full
         else:
-            zone_data = {"zones": zone_data_full} if isinstance(zone_data_full, list) else zone_data_full
+            zone_data = (
+                {"zones": zone_data_full}
+                if isinstance(zone_data_full, list)
+                else zone_data_full
+            )
     else:
-        zone_data = detect_zones(arena_map.image.path, zone_size)
+        zone_data = detect_zones(_get_image_local_path(arena_map.image), zone_size)
 
     from .map_processing import compute_single_cell_visibility
+
     visible = compute_single_cell_visibility(r, c, zone_data)
 
     return JsonResponse({"visible_cells": visible})
