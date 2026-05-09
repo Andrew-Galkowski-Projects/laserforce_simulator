@@ -19,6 +19,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - `python-decouple` for environment variable configuration (`.env` for local, env vars in production)
 - `gunicorn` as the production WSGI server (start with `gunicorn laserforce_simulator.wsgi:application --bind 0.0.0.0:8000`)
 - `whitenoise` for production static file serving directly from Django (no separate nginx required)
+- `django-storages` + `boto3` for Cloudflare R2 media storage in production (set `R2_*` env vars to activate; falls back to local disk when unset)
 - pytest + pytest-django for testing, with Codecov coverage reporting
 
 ## Getting Started

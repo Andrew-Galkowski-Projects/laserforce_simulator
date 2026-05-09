@@ -54,10 +54,21 @@ Two modes toggled in the top bar:
 /maps/<id>/sight-lines/save/        → POST: save sight lines (batched)
 ```
 
+## Storage Backend (`core/views.py`)
+
+**`_get_image_local_path(image_field: FieldFile) -> str`** — storage-agnostic helper used by every view that needs to pass an image path to OpenCV/PIL. For local `FileSystemStorage`, returns `image_field.path` directly. For remote backends (R2/S3), downloads the image to `MEDIA_ROOT/maps/_remote_cache/<filename>` on first access and returns that cached local path on subsequent calls. Map images are treated as immutable after upload so the cache never goes stale.
+
+**`_seed_defaults()`** — skips seeding entirely when the active storage backend is not `FileSystemStorage` (i.e., R2 is configured). Default map images cannot be seeded from the local `Screenshots_and_video_examples/` directory in production.
+
+**`upload_map` view** — reads image dimensions via `image_field.open("rb")` (works for both local and remote storage) instead of `image_field.path`. Handles corrupt/non-image uploads gracefully: deletes the partial record and redirects back to the map list rather than returning a 500.
+
 ## Dependencies
 
-`requirements.txt` includes `Pillow>=10.0.0` and `opencv-python-headless>=4.0.0` for image processing.
+`requirements.txt` includes `Pillow>=10.0.0` and `opencv-python-headless>=4.0.0` for image processing, and `django-storages[s3]>=1.14` + `boto3>=1.34` for Cloudflare R2 media storage.
 
 ## Tests
 
-`core/tests.py` — map processing, zone detection, sight line computation.
+`core/tests.py`:
+- `GetImageLocalPathTests` — local storage path passthrough, remote download-to-cache, cache reuse (no duplicate downloads)
+- `SeedDefaultsTests` — skips seeding when non-`FileSystemStorage` is active
+- `UploadMapViewTests` — dimensions stored correctly after upload; corrupt uploads rejected and not persisted
