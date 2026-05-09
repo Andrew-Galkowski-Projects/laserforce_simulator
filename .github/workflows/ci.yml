@@ -4,16 +4,30 @@ on:
   push:
     branches: [main, master, Nuke_bug, event_readability_updates]
   pull_request:
-    branches: [main, master]
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: laserforce_test
+          POSTGRES_USER: laserforce
+          POSTGRES_PASSWORD: laserforce
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       DJANGO_SETTINGS_MODULE: laserforce_simulator.settings
       SECRET_KEY: ${{ secrets.DJANGO_CI_SECRET_KEY || 'django-insecure-ci-only-not-a-real-secret' }}
       DEBUG: "True"
+      DATABASE_URL: postgres://laserforce:laserforce@localhost:5432/laserforce_test
     steps:
       - uses: actions/checkout@v4
 

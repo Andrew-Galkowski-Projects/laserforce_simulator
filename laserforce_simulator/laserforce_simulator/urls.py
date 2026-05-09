@@ -22,6 +22,7 @@ from django.urls import path, include
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("api/", include("laserforce_simulator.api_urls")),
     path("teams/", include("teams.urls")),
     path("matches/", include("matches.urls")),
     path("maps/", include("core.urls")),

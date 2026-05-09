@@ -11,6 +11,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - **MVP scoring** — Role-specific formulas weighted toward each role's primary contribution
 - **Game replay** — Step through match events chronologically with per-player stat tracking
 - **Team history** — Win/loss records across all matches
+- **Read-only REST API** — JSON endpoints for teams, players, matches, rounds, and events at `/api/` (paginated, 20 per page)
 
 ## Tech Stack
 
@@ -20,6 +21,8 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - `gunicorn` as the production WSGI server (start with `gunicorn laserforce_simulator.wsgi:application --bind 0.0.0.0:8000`)
 - `whitenoise` for production static file serving directly from Django (no separate nginx required)
 - `django-storages` + `boto3` for Cloudflare R2 media storage in production (set `R2_*` env vars to activate; falls back to local disk when unset)
+- `djangorestframework` for the read-only JSON API at `/api/`
+- `psycopg2-binary` for PostgreSQL support in production (CI runs tests against `postgres:16`)
 - pytest + pytest-django for testing, with Codecov coverage reporting
 
 ## Getting Started
@@ -116,3 +119,9 @@ Action weights live in `matches/sim_helpers/weights.py` and shift dynamically ba
 | `/matches/game-round/<id>/` | Per-player round stats |
 | `/matches/game-round/<id>/events/` | Filterable event timeline |
 | `/matches/team/<id>/history/` | Team win/loss history |
+| `/api/teams/` | Team list (paginated JSON) |
+| `/api/teams/<id>/` | Team detail with full player stats |
+| `/api/players/` | Player list (paginated JSON) |
+| `/api/matches/<id>/` | Match detail with round ID list |
+| `/api/rounds/<id>/` | Round detail with player states |
+| `/api/rounds/<id>/events/` | Paginated event log for a round |

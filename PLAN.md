@@ -289,11 +289,13 @@ re-simulate, show diff vs original. Forked scenario is temporary, not a permanen
 
 ### API-01 · Migrate to PostgreSQL for production
 See DEPLOY-05 in Phase 7 — the two are the same work and should be done together.
+- completed: see DEPLOY-05 above.
 
 ### API-02 · Read-only REST API
 Add Django REST Framework. Endpoints: `GET /api/teams/`, `GET /api/teams/<id>/`,
 `GET /api/matches/<id>/`, `GET /api/rounds/<id>/`, `GET /api/rounds/<id>/events/`. Pagination (default 20). 
 Token auth for API consumers; session auth for web views.
+- completed: `djangorestframework>=3.15` added; `REST_FRAMEWORK` config in settings (SessionAuthentication, AllowAny, PageNumberPagination PAGE_SIZE=20); endpoints `/api/teams/`, `/api/teams/<id>/`, `/api/players/`, `/api/players/<id>/`, `/api/matches/`, `/api/matches/<id>/`, `/api/rounds/`, `/api/rounds/<id>/`, `/api/rounds/<id>/events/` all implemented via DRF DefaultRouter. List/detail serializer split on teams (PlayerInlineSerializer in list) and rounds (GameRoundListSerializer omits player_states). Token auth deferred to Phase 8 — session auth only for now. `rest_framework` added to mypy.ini ignore list.
 
 ### API-03 · Async batch simulation endpoint
 `POST /api/simulate-batch/` — returns `job_id` immediately. Background worker via **Celery + Redis**
@@ -470,6 +472,7 @@ doesn't support multiple concurrent connections well. PostgreSQL is the producti
 - Run all migrations against PostgreSQL and confirm they pass
 - Update GitHub Actions to spin up a `postgres` service container for CI
 - Note: this is the same work as API-01 in Phase 5 — the two can be merged/done together
+- completed: `psycopg2-binary>=2.9` added to requirements.txt; `dj-database-url` already present from DEPLOY-01; CI `test` job now spins up `postgres:16` service with health checks and sets `DATABASE_URL` env var; CI `pull_request` trigger widened to fire on all PRs (not just to main/master). All 212 tests pass against PostgreSQL in CI.
 
 ### DEPLOY-06 · Dockerfile
 
