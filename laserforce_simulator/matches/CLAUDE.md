@@ -74,6 +74,26 @@ Used by `score_averages` to measure simulation accuracy against real-world avera
 | Ammo | 3,242 |
 | Medic | 2,282 |
 
+## REST API (`matches/serializers.py`, `matches/api_views.py`)
+
+Read-only DRF endpoints registered under `/api/`:
+
+| Endpoint | Serializer | Notes |
+|----------|-----------|-------|
+| `GET /api/matches/` | `MatchSerializer` | Includes `round_ids` (PK list, not nested) |
+| `GET /api/matches/<id>/` | `MatchSerializer` | Same — full match fields + round PK list |
+| `GET /api/rounds/` | `GameRoundListSerializer` | Slim — no `player_states`, no `event_log` |
+| `GET /api/rounds/<id>/` | `GameRoundSerializer` | Full — nested `player_states` array |
+| `GET /api/rounds/<id>/events/` | `GameEventSerializer` | Paginated, ordered by timestamp |
+
+**Serializer split:** `GameRoundListSerializer` (list) omits `player_states` to prevent serializing up to 240 objects per page. `GameRoundSerializer` (detail) adds the full nested `player_states`. Both share `_GAME_ROUND_FIELDS` and explicitly exclude `event_log` (legacy text dump).
+
+**`MatchSerializer`** — exposes `round_ids` as a `PrimaryKeyRelatedField` (source=`game_rounds`). Uses `fields = "__all__"` since Match has no sensitive or volatile fields.
+
+**`GameEventSerializer`** / **`PlayerRoundStateSerializer`** — exclude the parent FK (`game_round`) since events and states are always accessed through their parent round.
+
+**N+1 guard:** the `/events/` action adds `.select_related("actor", "target")` so actor/target player lookups are batched. The `GameRoundViewSet.get_queryset()` only adds `.prefetch_related("player_states")` for the `retrieve` action — list and events requests skip the prefetch.
+
 ## URLs
 
 ```
@@ -84,6 +104,10 @@ Used by `score_averages` to measure simulation accuracy against real-world avera
 /matches/game-round/<id>/events/     → event timeline/filtering
 /matches/team/<id>/history/          → team win/loss history
 /matches/simulate-batch/             → run N in-memory simulations
+
+/api/matches/                        → MatchViewSet (list, detail)
+/api/rounds/                         → GameRoundViewSet (list, detail, events action)
+/api/rounds/<id>/events/             → paginated GameEvent list for that round
 ```
 
 ## Templates
@@ -92,9 +116,12 @@ All templates live in `laserforce_simulator/templates/`. The `game_round_events.
 
 ## Tests
 
-`matches/tests/simulation_tests.py` — simulator logic, game events, round outcomes.
-`matches/tests/views_tests.py` — view behaviour: URL routing, form submissions, context keys.
-`matches/tests/conftest.py` — shared `make_team_with_slots(prefix)` helper used by both test modules.
+`matches/tests/` package:
+- `simulation_tests.py` — simulator logic, game events, round outcomes
+- `views_tests.py` — view behaviour: URL routing, form submissions, context keys
+- `test_serializers.py` — unit tests for all five serializer classes (including list vs detail split)
+- `test_apis.py` — HTTP-level tests for `/api/matches/` and `/api/rounds/` (including `/events/` action)
+- `conftest.py` — shared `make_team_with_slots(prefix)` helper
 
 ## Sub-packages
 

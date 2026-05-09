@@ -33,7 +33,19 @@
       "Bash(mypy core/tests.py core/views.py laserforce_simulator/settings.py)",
       "Bash(black --check core/tests.py core/views.py laserforce_simulator/urls.py)",
       "Bash(mypy core/tests.py core/views.py laserforce_simulator/urls.py)",
-      "Bash(black laserforce_simulator/settings.py)"
+      "Bash(black laserforce_simulator/settings.py)",
+      "mcp__chrome-devtools__navigate_page",
+      "mcp__chrome-devtools__take_screenshot",
+      "Bash(pytest teams/tests/ matches/tests/test_serializers.py matches/tests/test_apis.py -v)",
+      "Bash(pytest)",
+      "Bash(black --check laserforce_simulator/settings.py laserforce_simulator/urls.py laserforce_simulator/api_urls.py matches/api_views.py matches/serializers.py matches/tests/test_apis.py matches/tests/test_serializers.py teams/api_views.py teams/serializers.py teams/tests/test_apis.py teams/tests/test_models.py teams/tests/test_serializers.py)",
+      "Bash(black matches/api_views.py matches/tests/test_apis.py matches/tests/test_serializers.py teams/tests/test_apis.py teams/tests/test_serializers.py teams/tests/test_models.py)",
+      "Bash(mypy laserforce_simulator/settings.py laserforce_simulator/urls.py laserforce_simulator/api_urls.py matches/api_views.py matches/serializers.py teams/api_views.py teams/serializers.py)",
+      "Bash(pytest -q)",
+      "Bash(python -c \"import matches.api_views; import inspect; print\\(inspect.getsource\\(matches.api_views\\)\\)\")",
+      "Bash(black teams/serializers.py teams/api_views.py matches/serializers.py matches/api_views.py matches/tests/test_apis.py matches/tests/test_serializers.py teams/tests/test_serializers.py --check)",
+      "Bash(black matches/tests/test_serializers.py)",
+      "Bash(mypy teams/serializers.py teams/api_views.py matches/serializers.py matches/api_views.py)"
     ]
   }
 }
