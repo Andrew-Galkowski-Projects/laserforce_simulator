@@ -131,8 +131,41 @@ MEDIA_ROOT = BASE_DIR / "media"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
-# Cloudflare R2 / media storage (wired up in DEPLOY-04)
+# Cloudflare R2 credentials — all four must be present to activate remote storage
 R2_BUCKET_NAME = config("R2_BUCKET_NAME", default=None)
 R2_ACCESS_KEY = config("R2_ACCESS_KEY", default=None)
 R2_SECRET_KEY = config("R2_SECRET_KEY", default=None)
 R2_ENDPOINT_URL = config("R2_ENDPOINT_URL", default=None)
+# Optional: public URL for serving media files (custom domain or R2 public bucket URL).
+# If unset, falls back to the S3 API endpoint — only works if the R2 bucket has
+# "Allow Public Access" enabled in the Cloudflare dashboard.
+R2_PUBLIC_URL = config("R2_PUBLIC_URL", default=None)
+
+_r2_active = bool(
+    R2_BUCKET_NAME and R2_ACCESS_KEY and R2_SECRET_KEY and R2_ENDPOINT_URL
+)
+
+STORAGES = {
+    "default": {
+        "BACKEND": (
+            "storages.backends.s3boto3.S3Boto3Storage"
+            if _r2_active
+            else "django.core.files.storage.FileSystemStorage"
+        ),
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
+
+if _r2_active:
+    AWS_STORAGE_BUCKET_NAME = R2_BUCKET_NAME
+    AWS_ACCESS_KEY_ID = R2_ACCESS_KEY
+    AWS_SECRET_ACCESS_KEY = R2_SECRET_KEY
+    AWS_S3_ENDPOINT_URL = R2_ENDPOINT_URL
+    AWS_S3_REGION_NAME = "auto"
+    AWS_DEFAULT_ACL = "public-read"
+    AWS_QUERYSTRING_AUTH = False
+    MEDIA_URL = (
+        f"{R2_PUBLIC_URL}/" if R2_PUBLIC_URL else f"{R2_ENDPOINT_URL}/{R2_BUCKET_NAME}/"
+    )

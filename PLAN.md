@@ -458,6 +458,7 @@ in Cloudflare R2 instead.
 - Configure `DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"` in production settings
 - R2 credentials added as environment variables (see DEPLOY-01) — never hardcoded
 - Test: upload a map image in the editor and verify the file URL points to R2, not local disk
+- completed: `django-storages[s3]>=1.14` and `boto3>=1.34` added to requirements.txt; `settings.py` uses Django 5.2 `STORAGES` dict (not deprecated `DEFAULT_FILE_STORAGE`); activates `S3Boto3Storage` when all four R2 env vars are set, falls back to local `FileSystemStorage` otherwise. Added `_get_image_local_path()` helper in `core/views.py` so OpenCV/PIL processing works with both local and remote storage (remote images are downloaded to a local cache). Added `R2_PUBLIC_URL` env var for custom domain or R2 public bucket URL. `_seed_defaults()` guarded to skip when remote storage is active. `upload_map` reads dimensions via storage API rather than `.path`; handles corrupt uploads. Real-R2 end-to-end test deferred until a bucket is provisioned.
 
 ### DEPLOY-05 · PostgreSQL database (see also API-01 in Phase 5)
 SQLite writes to a single file on disk. Like media files, this disappears when a container restarts and
