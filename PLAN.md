@@ -437,6 +437,7 @@ Django's built-in `runserver` is a dev-only server — it is single-threaded and
 
 - Add `gunicorn` to `requirements.txt`
 - Confirm the app starts with: `gunicorn laserforce_simulator.wsgi:application --bind 0.0.0.0:8000`
+- completed: `gunicorn>=20.1.0` added to requirements.txt; `Procfile` added at repo root for Fly.io/Heroku (`web: gunicorn ... --chdir laserforce_simulator`); `gunicorn.conf.py` added at repo root with workers=3, sync worker class, 30s timeout, stdout logging. Docker verification deferred to DEPLOY-06.
 
 ### DEPLOY-03 · Static file serving (WhiteNoise)
 In production, Django does not serve its own CSS/JS/images — a separate web server normally does that.
