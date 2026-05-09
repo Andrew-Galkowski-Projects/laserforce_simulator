@@ -21,7 +21,10 @@
       "Bash(git checkout *)",
       "Bash(python -m pytest matches/tests/views_tests.py -v)",
       "Bash(python -m pytest -v)",
-      "Bash(pytest --tb=short -q)"
+      "Bash(pytest --tb=short -q)",
+      "Bash(python -m black --check laserforce_simulator/settings.py)",
+      "Bash(python -m mypy laserforce_simulator/settings.py)",
+      "Bash(python -m pytest -q)"
     ]
   }
 }
