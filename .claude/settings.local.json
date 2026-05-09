@@ -20,7 +20,8 @@
       "Bash(python -c ' *)",
       "Bash(git checkout *)",
       "Bash(python -m pytest matches/tests/views_tests.py -v)",
-      "Bash(python -m pytest -v)"
+      "Bash(python -m pytest -v)",
+      "Bash(pytest --tb=short -q)"
     ]
   }
 }

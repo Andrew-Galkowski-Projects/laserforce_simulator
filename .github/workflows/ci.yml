@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      DJANGO_SETTINGS_MODULE: laserforce_simulator.settings
+      SECRET_KEY: ${{ secrets.DJANGO_CI_SECRET_KEY || 'django-insecure-ci-only-not-a-real-secret' }}
+      DEBUG: "True"
     steps:
       - uses: actions/checkout@v4
 
@@ -26,15 +29,11 @@ jobs:
 
       - name: Run migrations
         working-directory: ./laserforce_simulator
-        env:
-          DJANGO_SETTINGS_MODULE: laserforce_simulator.settings
         run: |
           python manage.py migrate --noinput
 
       - name: Run tests with coverage
         working-directory: ./laserforce_simulator
-        env:
-          DJANGO_SETTINGS_MODULE: laserforce_simulator.settings
         run: |
           pytest --cov=. --cov-report=xml:coverage.xml
 

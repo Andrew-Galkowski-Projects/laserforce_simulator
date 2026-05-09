@@ -15,7 +15,8 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 ## Tech Stack
 
 - Python 3.11 / Django 5.2
-- SQLite (default)
+- SQLite (default); PostgreSQL in production via `dj-database-url`
+- `python-decouple` for environment variable configuration (`.env` for local, env vars in production)
 - pytest + pytest-django for testing, with Codecov coverage reporting
 
 ## Getting Started
@@ -32,6 +33,10 @@ python -m venv .venv
 
 # Install dependencies
 pip install -r laserforce_simulator/requirements.txt
+
+# Configure environment variables
+cp laserforce_simulator/.env.example laserforce_simulator/.env
+# Edit .env and set a real SECRET_KEY (the example value is a placeholder)
 
 # Apply migrations
 cd laserforce_simulator
