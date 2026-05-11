@@ -6,18 +6,18 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('matches', '0006_playerroundstate_special_active_until'),
+        ("matches", "0006_playerroundstate_special_active_until"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='playerroundstate',
-            name='resupplies_given',
+            model_name="playerroundstate",
+            name="resupplies_given",
             field=models.IntegerField(default=0),
         ),
         migrations.AlterField(
-            model_name='playerroundstate',
-            name='special_active_until',
+            model_name="playerroundstate",
+            name="special_active_until",
             field=models.IntegerField(blank=True, default=0, null=True),
         ),
     ]

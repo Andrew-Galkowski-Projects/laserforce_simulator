@@ -19,19 +19,27 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
-            "--rounds", type=int, default=50,
+            "--rounds",
+            type=int,
+            default=50,
             help="Number of rounds to simulate (default: 50)",
         )
         parser.add_argument(
-            "--team-red", dest="team_red", default=None,
+            "--team-red",
+            dest="team_red",
+            default=None,
             help="Name of the red team (default: first team in DB)",
         )
         parser.add_argument(
-            "--team-blue", dest="team_blue", default=None,
+            "--team-blue",
+            dest="team_blue",
+            default=None,
             help="Name of the blue team (default: second team in DB)",
         )
         parser.add_argument(
-            "--seed", type=int, default=None,
+            "--seed",
+            type=int,
+            default=None,
             help="Optional RNG seed for reproducible results",
         )
 
@@ -128,14 +136,17 @@ class Command(BaseCommand):
             target = TARGETS.get(role, 0)
             diff = avg - target
             diff_str = f"{diff:+.0f}"
-            style = self.style.ERROR if diff > 1000 else (
-                self.style.WARNING if diff > 500 else self.style.SUCCESS
+            style = (
+                self.style.ERROR
+                if diff > 1000
+                else (self.style.WARNING if diff > 500 else self.style.SUCCESS)
             )
             self.stdout.write(
                 style(
                     f"{role:<12} {avg:>10.0f} {target:>10} {diff_str:>8} "
                     f"{avg_tags:>10.1f} {avg_tagged:>12.1f}"
-                ) + "\n"
+                )
+                + "\n"
             )
 
         # ── Missile breakdown ────────────────────────────────────────────────
@@ -158,9 +169,7 @@ class Command(BaseCommand):
             )
 
         # ── Reset-window tags ────────────────────────────────────────────────
-        self.stdout.write(
-            f"\n{'Role':<12} {'Avg Reset Tags':>16}\n"
-        )
+        self.stdout.write(f"\n{'Role':<12} {'Avg Reset Tags':>16}\n")
         self.stdout.write("-" * 30 + "\n")
 
         for role in ROLE_ORDER:

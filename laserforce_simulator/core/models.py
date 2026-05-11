@@ -17,7 +17,9 @@ class ArenaMap(models.Model):
 
 
 class MapZoneConfig(models.Model):
-    arena_map = models.ForeignKey(ArenaMap, on_delete=models.CASCADE, related_name="zone_configs")
+    arena_map = models.ForeignKey(
+        ArenaMap, on_delete=models.CASCADE, related_name="zone_configs"
+    )
     zone_size = models.IntegerField()
     zone_data = models.JSONField()
     confirmed = models.BooleanField(default=False)
@@ -31,7 +33,9 @@ VALID_BASE_TYPES = {"red", "blue", "neutral_1", "neutral_2", "neutral_3", "neutr
 
 
 class MapBaseConfig(models.Model):
-    arena_map = models.ForeignKey(ArenaMap, on_delete=models.CASCADE, related_name="base_configs")
+    arena_map = models.ForeignKey(
+        ArenaMap, on_delete=models.CASCADE, related_name="base_configs"
+    )
     base_type = models.CharField(max_length=20)
     x_px = models.IntegerField()
     y_px = models.IntegerField()
@@ -44,7 +48,9 @@ class MapBaseConfig(models.Model):
 
 
 class SightLineConfig(models.Model):
-    arena_map = models.ForeignKey(ArenaMap, on_delete=models.CASCADE, related_name="sight_configs")
+    arena_map = models.ForeignKey(
+        ArenaMap, on_delete=models.CASCADE, related_name="sight_configs"
+    )
     zone_size = models.IntegerField()
     sight_data = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
@@ -57,7 +63,9 @@ class SightLineConfig(models.Model):
 
 
 class BaseSightLineConfig(models.Model):
-    arena_map = models.ForeignKey(ArenaMap, on_delete=models.CASCADE, related_name="base_sight_configs")
+    arena_map = models.ForeignKey(
+        ArenaMap, on_delete=models.CASCADE, related_name="base_sight_configs"
+    )
     base_type = models.CharField(max_length=20)
     zone_size = models.IntegerField()
     visible_cells = models.JSONField(default=list)

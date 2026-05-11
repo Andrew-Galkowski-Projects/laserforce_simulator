@@ -58,6 +58,9 @@
       "Bash(black matches/sim_helpers/player_state.py matches/simulation.py matches/sim_helpers/pathfinding.py matches/tests/test_batch_sim.py matches/tests/test_map.py matches/tests/test_mvp.py matches/tests/test_roster.py matches/tests/test_sim_core.py matches/tests/test_weights.py)",
       "Bash(mypy matches/sim_helpers/player_state.py matches/simulation.py matches/sim_helpers/pathfinding.py matches/tests/test_batch_sim.py matches/tests/test_map.py matches/tests/test_mvp.py matches/tests/test_roster.py matches/tests/test_sim_core.py matches/tests/test_weights.py)",
       "Bash(black matches/sim_helpers/pathfinding.py matches/simulation.py matches/tests/test_map.py)"
+      "Bash(python -m black --version)",
+      "Bash(python -m black . --diff --quiet)",
+      "Bash(python -m black .)"
     ]
   }
 }

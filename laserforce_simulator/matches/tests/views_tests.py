@@ -49,7 +49,9 @@ class TestSingleRoundRemoval:
         """team_match_history view must not pass single_rounds to the template context."""
         team, _ = make_team_with_slots("History")
         client = Client()
-        response = client.get(reverse("team_match_history", kwargs={"team_id": team.id}))
+        response = client.get(
+            reverse("team_match_history", kwargs={"team_id": team.id})
+        )
         assert response.status_code == 200
         assert "single_rounds" not in response.context
 

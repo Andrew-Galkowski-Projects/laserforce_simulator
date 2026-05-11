@@ -7,21 +7,36 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0001_initial'),
+        ("core", "0001_initial"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='MapBaseConfig',
+            name="MapBaseConfig",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('base_type', models.CharField(max_length=20)),
-                ('x_px', models.IntegerField()),
-                ('y_px', models.IntegerField()),
-                ('arena_map', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='base_configs', to='core.arenamap')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("base_type", models.CharField(max_length=20)),
+                ("x_px", models.IntegerField()),
+                ("y_px", models.IntegerField()),
+                (
+                    "arena_map",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="base_configs",
+                        to="core.arenamap",
+                    ),
+                ),
             ],
             options={
-                'unique_together': {('arena_map', 'base_type')},
+                "unique_together": {("arena_map", "base_type")},
             },
         ),
     ]

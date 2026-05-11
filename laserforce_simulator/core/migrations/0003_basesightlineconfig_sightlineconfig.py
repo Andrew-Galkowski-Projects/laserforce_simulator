@@ -7,35 +7,65 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0002_mapbaseconfig'),
+        ("core", "0002_mapbaseconfig"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='BaseSightLineConfig',
+            name="BaseSightLineConfig",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('base_type', models.CharField(max_length=20)),
-                ('zone_size', models.IntegerField()),
-                ('visible_cells', models.JSONField(default=list)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('arena_map', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='base_sight_configs', to='core.arenamap')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("base_type", models.CharField(max_length=20)),
+                ("zone_size", models.IntegerField()),
+                ("visible_cells", models.JSONField(default=list)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "arena_map",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="base_sight_configs",
+                        to="core.arenamap",
+                    ),
+                ),
             ],
             options={
-                'unique_together': {('arena_map', 'base_type', 'zone_size')},
+                "unique_together": {("arena_map", "base_type", "zone_size")},
             },
         ),
         migrations.CreateModel(
-            name='SightLineConfig',
+            name="SightLineConfig",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('zone_size', models.IntegerField()),
-                ('sight_data', models.JSONField()),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('arena_map', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='sight_configs', to='core.arenamap')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("zone_size", models.IntegerField()),
+                ("sight_data", models.JSONField()),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "arena_map",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="sight_configs",
+                        to="core.arenamap",
+                    ),
+                ),
             ],
             options={
-                'unique_together': {('arena_map', 'zone_size')},
+                "unique_together": {("arena_map", "zone_size")},
             },
         ),
     ]

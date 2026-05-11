@@ -6,23 +6,23 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('matches', '0012_playerroundstate_ally_nuke_cancels_and_more'),
+        ("matches", "0012_playerroundstate_ally_nuke_cancels_and_more"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='gameround',
-            name='eliminated_at',
+            model_name="gameround",
+            name="eliminated_at",
             field=models.IntegerField(default=901),
         ),
         migrations.AddField(
-            model_name='match',
-            name='round1_eliminated_at',
+            model_name="match",
+            name="round1_eliminated_at",
             field=models.IntegerField(default=901),
         ),
         migrations.AddField(
-            model_name='match',
-            name='round2_eliminated_at',
+            model_name="match",
+            name="round2_eliminated_at",
             field=models.IntegerField(default=901),
         ),
     ]

@@ -6,12 +6,12 @@ from django.db import migrations
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('matches', '0015_playerroundstate_lives_lost_to_nukes'),
+        ("matches", "0015_playerroundstate_lives_lost_to_nukes"),
     ]
 
     operations = [
         migrations.RemoveField(
-            model_name='playerroundstate',
-            name='shot_power',
+            model_name="playerroundstate",
+            name="shot_power",
         ),
     ]

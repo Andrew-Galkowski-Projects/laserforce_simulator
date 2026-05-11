@@ -7,55 +7,91 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('teams', '0007_alter_player_role'),
+        ("teams", "0007_alter_player_role"),
     ]
 
     operations = [
         migrations.RemoveField(
-            model_name='player',
-            name='role',
+            model_name="player",
+            name="role",
         ),
         migrations.RemoveField(
-            model_name='player',
-            name='shield',
+            model_name="player",
+            name="shield",
         ),
         migrations.RemoveField(
-            model_name='player',
-            name='shot_power',
+            model_name="player",
+            name="shot_power",
         ),
         migrations.AddField(
-            model_name='player',
-            name='preferred_roles',
+            model_name="player",
+            name="preferred_roles",
             field=models.JSONField(blank=True, default=list),
         ),
         migrations.AddField(
-            model_name='team',
-            name='slot_ammo',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='+', to='teams.player'),
+            model_name="team",
+            name="slot_ammo",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="+",
+                to="teams.player",
+            ),
         ),
         migrations.AddField(
-            model_name='team',
-            name='slot_commander',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='+', to='teams.player'),
+            model_name="team",
+            name="slot_commander",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="+",
+                to="teams.player",
+            ),
         ),
         migrations.AddField(
-            model_name='team',
-            name='slot_heavy',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='+', to='teams.player'),
+            model_name="team",
+            name="slot_heavy",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="+",
+                to="teams.player",
+            ),
         ),
         migrations.AddField(
-            model_name='team',
-            name='slot_medic',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='+', to='teams.player'),
+            model_name="team",
+            name="slot_medic",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="+",
+                to="teams.player",
+            ),
         ),
         migrations.AddField(
-            model_name='team',
-            name='slot_scout_1',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='+', to='teams.player'),
+            model_name="team",
+            name="slot_scout_1",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="+",
+                to="teams.player",
+            ),
         ),
         migrations.AddField(
-            model_name='team',
-            name='slot_scout_2',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='+', to='teams.player'),
+            model_name="team",
+            name="slot_scout_2",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="+",
+                to="teams.player",
+            ),
         ),
     ]

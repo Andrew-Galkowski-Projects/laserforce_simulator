@@ -1,7 +1,6 @@
 from django.core.management.base import BaseCommand, CommandError
 from matches.models import GameRound, PlayerRoundState, GameEvent
 
-
 ROLE_ORDER = ["commander", "heavy", "scout", "ammo", "medic"]
 
 
@@ -27,7 +26,8 @@ def _uptime_breakdown(player: PlayerRoundState, events, round_duration: int = 90
     resupply_times = sorted(
         e.timestamp
         for e in events
-        if e.event_type in ("resupply_ammo", "resupply_lives") and e.target_id == player.player_id
+        if e.event_type in ("resupply_ammo", "resupply_lives")
+        and e.target_id == player.player_id
     )
 
     end = player.was_eliminated_at if player.was_eliminated_at < 901 else round_duration
@@ -82,7 +82,10 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
-            "--round", dest="round_id", type=int, default=None,
+            "--round",
+            dest="round_id",
+            type=int,
+            default=None,
             help="GameRound ID to analyse (default: most recent round)",
         )
 
@@ -101,16 +104,26 @@ class Command(BaseCommand):
         self.stdout.write(f"\nGame Round #{game_round.pk}  —  {game_round}\n")
 
         players = list(
-            PlayerRoundState.objects.filter(game_round=game_round).select_related("player")
+            PlayerRoundState.objects.filter(game_round=game_round).select_related(
+                "player"
+            )
         )
         if not players:
             raise CommandError("No players found for this round.")
 
-        events = list(GameEvent.objects.filter(game_round=game_round).select_related("actor", "target"))
+        events = list(
+            GameEvent.objects.filter(game_round=game_round).select_related(
+                "actor", "target"
+            )
+        )
 
         # ── Reset-window tags ──────────────────────────────────────────────────
-        self.stdout.write("\n--- Reset-Window Tags (tagged while 4-7s into respawn) ---\n")
-        self.stdout.write(f"{'Player':<20} {'Role':<12} {'Team':<6} {'Reset Tags':>12}\n")
+        self.stdout.write(
+            "\n--- Reset-Window Tags (tagged while 4-7s into respawn) ---\n"
+        )
+        self.stdout.write(
+            f"{'Player':<20} {'Role':<12} {'Team':<6} {'Reset Tags':>12}\n"
+        )
         self.stdout.write("-" * 54 + "\n")
         for role in ROLE_ORDER:
             for p in sorted(players, key=lambda x: x.player.name):
@@ -142,7 +155,9 @@ class Command(BaseCommand):
 
         # ── Missile contribution ───────────────────────────────────────────────
         self.stdout.write("\n--- Missile Points ---\n")
-        self.stdout.write(f"{'Player':<20} {'Role':<12} {'Missiles Hit':>14} {'Missile Pts':>13}\n")
+        self.stdout.write(
+            f"{'Player':<20} {'Role':<12} {'Missiles Hit':>14} {'Missile Pts':>13}\n"
+        )
         self.stdout.write("-" * 63 + "\n")
 
         missile_hits = {}

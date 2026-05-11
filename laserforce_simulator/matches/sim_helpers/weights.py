@@ -3,68 +3,117 @@
 # ---------------------------------------------------------------------------
 
 _MEDIC = dict(
-    baseline_tag=-65, baseline_cz=-30, baseline_hide=+30, baseline_resupply=+65,
-    support_capture_gain=5, support_capture_resupply_cost=5,
-    low_lives_threshold=3,          # fixed life count (not a percentage)
-    low_lives_hide_cost=30, low_lives_resupply_gain=30,
+    baseline_tag=-65,
+    baseline_cz=-30,
+    baseline_hide=+30,
+    baseline_resupply=+65,
+    support_capture_gain=5,
+    support_capture_resupply_cost=5,
+    low_lives_threshold=3,  # fixed life count (not a percentage)
+    low_lives_hide_cost=30,
+    low_lives_resupply_gain=30,
     not_active_resupply_cost=60,
-    endgame_capture_gain=40, endgame_resupply_cost=40,
+    endgame_capture_gain=40,
+    endgame_resupply_cost=40,
     special_per_ally=20,
 )
 
 _AMMO = dict(
-    baseline_tag=-25, baseline_cz=-30, baseline_resupply=+55,
-    support_capture_gain=5, support_capture_resupply_cost=5,
+    baseline_tag=-25,
+    baseline_cz=-30,
+    baseline_resupply=+55,
+    support_capture_gain=5,
+    support_capture_resupply_cost=5,
     low_lives_threshold=3,
     low_lives_diff_zone_resupply_cost=50,
-    low_lives_same_zone_resupply_cost=30, low_lives_same_zone_hide_gain=30,
-    low_lives_fallback_resupply_cost=50, low_lives_fallback_hide_gain=50,
-    low_lives_tag_cost=20, low_lives_resupply_gain=20,
+    low_lives_same_zone_resupply_cost=30,
+    low_lives_same_zone_hide_gain=30,
+    low_lives_fallback_resupply_cost=50,
+    low_lives_fallback_hide_gain=50,
+    low_lives_tag_cost=20,
+    low_lives_resupply_gain=20,
     special_per_ally=20,
-    endgame_capture_gain=40, endgame_resupply_cost=40,
+    endgame_capture_gain=40,
+    endgame_resupply_cost=40,
 )
 
 _SCOUT = dict(
-    baseline_tag=-30, baseline_cz=+30,
+    baseline_tag=-30,
+    baseline_cz=+30,
     critical_pct=0.3,
-    base_capture_gain=20, base_capture_tag_cost=20,
-    seek_diff_tag=30, seek_diff_cz=30,
-    seek_same_cz=20, seek_same_tag=20, seek_same_hide=40,
-    seek_base_capture_gain=40, seek_base_tag_cost=20, seek_base_cz_cost=20,
-    seek_no_ally_tag=30, seek_no_ally_hide=30,
-    seek_no_ammo_tag=50, seek_no_ammo_hide=50,
+    base_capture_gain=20,
+    base_capture_tag_cost=20,
+    seek_diff_tag=30,
+    seek_diff_cz=30,
+    seek_same_cz=20,
+    seek_same_tag=20,
+    seek_same_hide=40,
+    seek_base_capture_gain=40,
+    seek_base_tag_cost=20,
+    seek_base_cz_cost=20,
+    seek_no_ally_tag=30,
+    seek_no_ally_hide=30,
+    seek_no_ammo_tag=50,
+    seek_no_ammo_hide=50,
     not_active_cz_cap=10,
-    endgame_capture_gain=30, endgame_tag_cost=30,
+    endgame_capture_gain=30,
+    endgame_tag_cost=30,
 )
 
 _HEAVY = dict(
-    baseline_cz=-5, baseline_hide=+5,
+    baseline_cz=-5,
+    baseline_hide=+5,
     critical_pct=0.3,
-    missile_cz_cost=15, missile_gain=15,
-    base_capture_gain=30, base_capture_tag_cost=20, base_capture_cz_cost=10,
-    seek_diff_tag=30, seek_diff_cz=30,
-    seek_same_cz=10, seek_same_tag=20, seek_same_hide=30,
-    seek_base_capture_gain=40, seek_base_tag_cost=20, seek_base_cz_cost=20,
-    seek_no_ally_tag=30, seek_no_ally_hide=30,
-    seek_no_ammo_tag=50, seek_no_ammo_hide=50,
+    missile_cz_cost=15,
+    missile_gain=15,
+    base_capture_gain=30,
+    base_capture_tag_cost=20,
+    base_capture_cz_cost=10,
+    seek_diff_tag=30,
+    seek_diff_cz=30,
+    seek_same_cz=10,
+    seek_same_tag=20,
+    seek_same_hide=30,
+    seek_base_capture_gain=40,
+    seek_base_tag_cost=20,
+    seek_base_cz_cost=20,
+    seek_no_ally_tag=30,
+    seek_no_ally_hide=30,
+    seek_no_ammo_tag=50,
+    seek_no_ammo_hide=50,
     not_active_tag_cost=70,
-    endgame_capture_gain=30, endgame_tag_cost=30,
+    endgame_capture_gain=30,
+    endgame_tag_cost=30,
 )
 
 _COMMANDER = dict(
-    baseline_tag=+15, baseline_cz=-15,
+    baseline_tag=+15,
+    baseline_cz=-15,
     critical_pct=0.3,
-    missile_cz_cost=15, missile_gain=15,
-    base_capture_gain=50, base_capture_tag_cost=40, base_capture_cz_cost=10,
-    base_early_bonus=20, base_early_threshold=300,
-    seek_diff_tag=30, seek_diff_cz=30,
-    seek_same_cz=10, seek_same_tag=20, seek_same_hide=30,
-    seek_base_capture_gain=40, seek_base_tag_cost=20, seek_base_cz_cost=20,
-    seek_no_ally_tag=30, seek_no_ally_hide=30,
-    seek_no_ammo_tag=50, seek_no_ammo_hide=50,
+    missile_cz_cost=15,
+    missile_gain=15,
+    base_capture_gain=50,
+    base_capture_tag_cost=40,
+    base_capture_cz_cost=10,
+    base_early_bonus=20,
+    base_early_threshold=300,
+    seek_diff_tag=30,
+    seek_diff_cz=30,
+    seek_same_cz=10,
+    seek_same_tag=20,
+    seek_same_hide=30,
+    seek_base_capture_gain=40,
+    seek_base_tag_cost=20,
+    seek_base_cz_cost=20,
+    seek_no_ally_tag=30,
+    seek_no_ally_hide=30,
+    seek_no_ammo_tag=50,
+    seek_no_ammo_hide=50,
     not_active_tag_cost=70,
-    special_base=100, special_per_enemy=20,
-    endgame_capture_gain=30, endgame_tag_cost=30,
+    special_base=100,
+    special_per_enemy=20,
+    endgame_capture_gain=30,
+    endgame_tag_cost=30,
 )
 
 
@@ -72,10 +121,14 @@ _COMMANDER = dict(
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+
 def _find_ally(all_alive, team_color, role):
     return next(
-        (p for p in all_alive
-         if p.team_color == team_color and p.role == role and p.final_lives > 0),
+        (
+            p
+            for p in all_alive
+            if p.team_color == team_color and p.role == role and p.final_lives > 0
+        ),
         None,
     )
 
@@ -99,7 +152,8 @@ def _apply_support_special(w, c, i, player, all_alive, second):
     """use_special += special_per_ally * active_ally_count (medic/ammo formula)."""
     if player.final_special >= player.special_cost:
         active_allies = [
-            p for p in all_alive
+            p
+            for p in all_alive
             if p.team_color == player.team_color
             and p.final_lives > 0
             and p.is_active_at(second)
@@ -107,7 +161,9 @@ def _apply_support_special(w, c, i, player, all_alive, second):
         w[i["use_special"]] += c["special_per_ally"] * len(active_allies)
 
 
-def _apply_seek_ally(w, c, i, player, primary_ally, fallback_ally=None, no_resource=False):
+def _apply_seek_ally(
+    w, c, i, player, primary_ally, fallback_ally=None, no_resource=False
+):
     """
     Redirect weights toward a support ally (or toward safety when none is available).
 
@@ -146,9 +202,18 @@ def _apply_seek_ally(w, c, i, player, primary_ally, fallback_ally=None, no_resou
         w[i["hide"]] += c["seek_no_ally_hide"]
 
 
-def _apply_not_active(w, c, i, player, all_alive, second,
-                      watch_role, watch_team_color,
-                      drain_key="tag_player", also_drain_resupply=False):
+def _apply_not_active(
+    w,
+    c,
+    i,
+    player,
+    all_alive,
+    second,
+    watch_role,
+    watch_team_color,
+    drain_key="tag_player",
+    also_drain_resupply=False,
+):
     """
     When downed, redistribute idle weight to hide or change_zone based on a nearby ally.
 
@@ -158,11 +223,14 @@ def _apply_not_active(w, c, i, player, all_alive, second,
     """
     if not player.is_active_at(second):
         ally_in_zone = next(
-            (p for p in all_alive
-             if p.team_color == watch_team_color
-             and p.role == watch_role
-             and p.current_zone == player.current_zone
-             and p.final_lives > 0),
+            (
+                p
+                for p in all_alive
+                if p.team_color == watch_team_color
+                and p.role == watch_role
+                and p.current_zone == player.current_zone
+                and p.final_lives > 0
+            ),
             None,
         )
         if also_drain_resupply:
@@ -170,7 +238,9 @@ def _apply_not_active(w, c, i, player, all_alive, second,
             w[i["tag_player"]] = 0
             w[i["resupply_ally"]] = 0
         else:
-            cost = c[f"not_active_{drain_key.replace('tag_player', 'tag').replace('resupply_ally', 'resupply')}_cost"]
+            cost = c[
+                f"not_active_{drain_key.replace('tag_player', 'tag').replace('resupply_ally', 'resupply')}_cost"
+            ]
             idle = cost
             w[i[drain_key]] -= cost
 
@@ -193,6 +263,7 @@ def _apply_endgame_rush(w, c, i, player, second, offset_key):
 # Role weight functions (public API — signatures unchanged)
 # ---------------------------------------------------------------------------
 
+
 def _get_medic_weights(player, action_to_weight_index, weights, all_alive, second):
     w, c, i = weights, _MEDIC, action_to_weight_index
 
@@ -207,8 +278,17 @@ def _get_medic_weights(player, action_to_weight_index, weights, all_alive, secon
         w[i["tag_player"]] = 0
 
     _apply_support_special(w, c, i, player, all_alive, second)
-    _apply_not_active(w, c, i, player, all_alive, second,
-                      "heavy", player.team_color, drain_key="resupply_ally")
+    _apply_not_active(
+        w,
+        c,
+        i,
+        player,
+        all_alive,
+        second,
+        "heavy",
+        player.team_color,
+        drain_key="resupply_ally",
+    )
     _apply_endgame_rush(w, c, i, player, second, "resupply_ally")
 
     return weights
@@ -245,8 +325,17 @@ def _get_ammo_weights(player, action_to_weight_index, weights, all_alive, second
         w[i["resupply_ally"]] += c["low_lives_resupply_gain"]
 
     _apply_support_special(w, c, i, player, all_alive, second)
-    _apply_not_active(w, c, i, player, all_alive, second,
-                      "heavy", player.team_color, also_drain_resupply=True)
+    _apply_not_active(
+        w,
+        c,
+        i,
+        player,
+        all_alive,
+        second,
+        "heavy",
+        player.team_color,
+        also_drain_resupply=True,
+    )
     _apply_endgame_rush(w, c, i, player, second, "resupply_ally")
 
     return weights
@@ -272,7 +361,10 @@ def _get_scout_weights(player, action_to_weight_index, weights, all_alive, secon
         ammo = _find_ally(all_alive, player.team_color, "ammo")
         _apply_seek_ally(w, c, i, player, ammo, no_resource=True)
 
-    if player.final_special >= player.special_cost and player.special_active_until <= second:
+    if (
+        player.final_special >= player.special_cost
+        and player.special_active_until <= second
+    ):
         w[i["use_special"]] += 100 * (player.final_shots / player.max_shots)
 
     # Not active: redistribute tag weight — 20% to change_zone (capped), 80% to hide
@@ -307,7 +399,9 @@ def _get_heavy_weights(player, action_to_weight_index, weights, all_alive, secon
 
     if player.final_lives <= lives_critical:
         medic = _find_ally(all_alive, player.team_color, "medic")
-        ammo = _find_ally(all_alive, player.team_color, "ammo") if medic is None else None
+        ammo = (
+            _find_ally(all_alive, player.team_color, "ammo") if medic is None else None
+        )
         _apply_seek_ally(w, c, i, player, medic, fallback_ally=ammo)
 
     if player.final_shots <= shots_critical:
@@ -340,7 +434,9 @@ def _get_commander_weights(player, action_to_weight_index, weights, all_alive, s
 
     if player.final_lives <= lives_critical:
         medic = _find_ally(all_alive, player.team_color, "medic")
-        ammo = _find_ally(all_alive, player.team_color, "ammo") if medic is None else None
+        ammo = (
+            _find_ally(all_alive, player.team_color, "ammo") if medic is None else None
+        )
         _apply_seek_ally(w, c, i, player, medic, fallback_ally=ammo)
 
     if player.final_shots <= shots_critical:
@@ -349,12 +445,15 @@ def _get_commander_weights(player, action_to_weight_index, weights, all_alive, s
 
     if player.final_special >= player.special_cost:
         enemies_in_zone = [
-            p for p in all_alive
+            p
+            for p in all_alive
             if p.team_color != player.team_color
             and p.current_zone == player.current_zone
             and p.is_active_at(second)
         ]
-        w[i["use_special"]] = c["special_base"] - c["special_per_enemy"] * len(enemies_in_zone)
+        w[i["use_special"]] = c["special_base"] - c["special_per_enemy"] * len(
+            enemies_in_zone
+        )
 
     enemy_color = "blue" if player.team_color == "red" else "red"
     _apply_not_active(w, c, i, player, all_alive, second, "medic", enemy_color)
