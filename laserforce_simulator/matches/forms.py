@@ -1,6 +1,11 @@
 from django import forms
 from teams.models import Team
 from .models import Match
+from core.models import ArenaMap
+
+
+def _maps_with_confirmed_config():
+    return ArenaMap.objects.filter(zone_configs__confirmed=True).distinct()
 
 
 class MatchSetupForm(forms.Form):
@@ -20,14 +25,22 @@ class MatchSetupForm(forms.Form):
         label="Match Type",
         initial="friendly",
     )
+    arena_map = forms.ModelChoiceField(
+        queryset=ArenaMap.objects.none(),
+        widget=forms.Select(attrs={"class": "form-control"}),
+        label="Arena Map",
+        required=False,
+        empty_label="No map (3-zone fallback)",
+    )
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Only show teams with valid rosters
         valid_teams = Team.objects.filter(
             id__in=[team.id for team in Team.objects.all() if team.is_valid_roster]
         )
         self.fields["team_red"].queryset = valid_teams
         self.fields["team_blue"].queryset = valid_teams
+        self.fields["arena_map"].queryset = _maps_with_confirmed_config()
 
 
 class SingleRoundSetupForm(forms.Form):
@@ -41,15 +54,22 @@ class SingleRoundSetupForm(forms.Form):
         widget=forms.Select(attrs={"class": "form-control"}),
         label="Blue Team",
     )
+    arena_map = forms.ModelChoiceField(
+        queryset=ArenaMap.objects.none(),
+        widget=forms.Select(attrs={"class": "form-control"}),
+        label="Arena Map",
+        required=False,
+        empty_label="No map (3-zone fallback)",
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Only show teams with valid rosters
         valid_teams = Team.objects.filter(
             id__in=[team.id for team in Team.objects.all() if team.is_valid_roster]
         )
         self.fields["team_red"].queryset = valid_teams
         self.fields["team_blue"].queryset = valid_teams
+        self.fields["arena_map"].queryset = _maps_with_confirmed_config()
 
 
 class BatchSimulateForm(forms.Form):

@@ -37,13 +37,18 @@ def _deserialize_seeds(data):
 def _run_save_job(job_id, team_red_id, team_blue_id, seeds, n):
     """Background thread: replay and persist n games, then update job status."""
     import django.db
+
     try:
         team_red = Team.objects.get(id=team_red_id)
         team_blue = Team.objects.get(id=team_blue_id)
         game_rounds = BatchSimulator().save_games(team_red, team_blue, seeds, n)
         round_ids = [gr.id for gr in game_rounds]
         with _JOBS_LOCK:
-            _SAVE_JOBS[job_id] = {"status": "done", "round_ids": round_ids, "error": None}
+            _SAVE_JOBS[job_id] = {
+                "status": "done",
+                "round_ids": round_ids,
+                "error": None,
+            }
     except Exception as exc:
         with _JOBS_LOCK:
             _SAVE_JOBS[job_id] = {"status": "error", "round_ids": [], "error": str(exc)}
@@ -137,7 +142,11 @@ def create_match(request):
             # Validate teams are different
             if team_red == team_blue:
                 messages.error(request, "A team cannot play against itself!")
-                return render(request, "matches/enhanced_match_setup.html", {"form": form, "title": "Create Tournament Match"})
+                return render(
+                    request,
+                    "matches/enhanced_match_setup.html",
+                    {"form": form, "title": "Create Tournament Match"},
+                )
 
             # Check if both teams have valid rosters
             red_errors = team_red.roster_errors
@@ -146,7 +155,11 @@ def create_match(request):
                     request,
                     f"{team_red.name} has an invalid roster: {'; '.join(red_errors)}",
                 )
-                return render(request, "matches/enhanced_match_setup.html", {"form": form, "title": "Create Tournament Match"})
+                return render(
+                    request,
+                    "matches/enhanced_match_setup.html",
+                    {"form": form, "title": "Create Tournament Match"},
+                )
 
             blue_errors = team_blue.roster_errors
             if blue_errors:
@@ -154,10 +167,25 @@ def create_match(request):
                     request,
                     f"{team_blue.name} has an invalid roster: {'; '.join(blue_errors)}",
                 )
-                return render(request, "matches/enhanced_match_setup.html", {"form": form, "title": "Create Tournament Match"})
+                return render(
+                    request,
+                    "matches/enhanced_match_setup.html",
+                    {"form": form, "title": "Create Tournament Match"},
+                )
 
+            arena_map = form.cleaned_data.get("arena_map")
             simulator = ResourceBasedSimulator()
-            match = simulator.simulate_match(team_red, team_blue, match_type)
+            try:
+                match = simulator.simulate_match(
+                    team_red, team_blue, match_type, arena_map=arena_map
+                )
+            except ValueError as exc:
+                messages.error(request, str(exc))
+                return render(
+                    request,
+                    "matches/enhanced_match_setup.html",
+                    {"form": form, "title": "Create Tournament Match"},
+                )
 
             messages.success(
                 request,
@@ -186,7 +214,9 @@ def create_single_round(request):
             if team_red == team_blue:
                 messages.error(request, "A team cannot play against itself!")
                 return render(
-                    request, "matches/enhanced_single_round_setup.html", {"form": form, "title": "Create Single Round"}
+                    request,
+                    "matches/enhanced_single_round_setup.html",
+                    {"form": form, "title": "Create Single Round"},
                 )
 
             # Check if both teams have valid rosters
@@ -197,7 +227,9 @@ def create_single_round(request):
                     f"{team_red.name} has an invalid roster: {'; '.join(red_errors)}",
                 )
                 return render(
-                    request, "matches/enhanced_single_round_setup.html", {"form": form, "title": "Create Single Round"}
+                    request,
+                    "matches/enhanced_single_round_setup.html",
+                    {"form": form, "title": "Create Single Round"},
                 )
 
             blue_errors = team_blue.roster_errors
@@ -207,11 +239,24 @@ def create_single_round(request):
                     f"{team_blue.name} has an invalid roster: {'; '.join(blue_errors)}",
                 )
                 return render(
-                    request, "matches/enhanced_single_round_setup.html", {"form": form, "title": "Create Single Round"}
+                    request,
+                    "matches/enhanced_single_round_setup.html",
+                    {"form": form, "title": "Create Single Round"},
                 )
 
+            arena_map = form.cleaned_data.get("arena_map")
             simulator = ResourceBasedSimulator()
-            game_round = simulator.simulate_single_round_detailed(team_red, team_blue)
+            try:
+                game_round = simulator.simulate_single_round_detailed(
+                    team_red, team_blue, arena_map=arena_map
+                )
+            except ValueError as exc:
+                messages.error(request, str(exc))
+                return render(
+                    request,
+                    "matches/enhanced_single_round_setup.html",
+                    {"form": form, "title": "Create Single Round"},
+                )
             messages.success(
                 request,
                 f"Round complete! {game_round.winner.name if game_round.winner else 'Tie'} won!",
@@ -322,7 +367,9 @@ def simulate_batch(request):
         for team, label in [(team_red, team_red.name), (team_blue, team_blue.name)]:
             errors = team.roster_errors
             if errors:
-                messages.error(request, f"{label} has an invalid roster: {'; '.join(errors)}")
+                messages.error(
+                    request, f"{label} has an invalid roster: {'; '.join(errors)}"
+                )
                 return render(request, "matches/batch_simulate.html", context)
 
         t0 = time.time()
@@ -358,16 +405,18 @@ def simulate_batch(request):
         else:
             bin_labels = red_hist = blue_hist = []
 
-        context.update({
-            "results": results,
-            "team_red": team_red,
-            "team_blue": team_blue,
-            "elapsed": round(elapsed, 2),
-            "bin_labels_json": json.dumps(bin_labels),
-            "red_hist_json": json.dumps(red_hist),
-            "blue_hist_json": json.dumps(blue_hist),
-            "has_seeds": bool(avg_seeds or outlier_seeds),
-        })
+        context.update(
+            {
+                "results": results,
+                "team_red": team_red,
+                "team_blue": team_blue,
+                "elapsed": round(elapsed, 2),
+                "bin_labels_json": json.dumps(bin_labels),
+                "red_hist_json": json.dumps(red_hist),
+                "blue_hist_json": json.dumps(blue_hist),
+                "has_seeds": bool(avg_seeds or outlier_seeds),
+            }
+        )
 
     return render(request, "matches/batch_simulate.html", context)
 
@@ -379,7 +428,9 @@ def save_batch_games(request):
 
     seeds_data = request.session.get("batch_seeds")
     if not seeds_data:
-        return JsonResponse({"error": "No batch results found. Run a simulation first."}, status=400)
+        return JsonResponse(
+            {"error": "No batch results found. Run a simulation first."}, status=400
+        )
 
     game_type = request.POST.get("game_type")  # "avg" or "outlier"
     n = max(1, min(10, int(request.POST.get("n", 1))))

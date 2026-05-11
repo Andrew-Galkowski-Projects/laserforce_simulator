@@ -24,12 +24,20 @@ class TestSimulation:
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
 
         s1 = PlayerRoundState.objects.create(
-            game_round=gr, player=players["scout"], team_color="red", role="scout",
-            final_lives=10, final_shots=10,
+            game_round=gr,
+            player=players["scout"],
+            team_color="red",
+            role="scout",
+            final_lives=10,
+            final_shots=10,
         )
         s2 = PlayerRoundState.objects.create(
-            game_round=gr, player=players["scout_2"], team_color="red", role="scout",
-            final_lives=10, final_shots=10,
+            game_round=gr,
+            player=players["scout_2"],
+            team_color="red",
+            role="scout",
+            final_lives=10,
+            final_shots=10,
         )
 
         assert s1.get_tag_id == PlayerRoundState.tag_id.red_scout_1
@@ -43,9 +51,11 @@ class TestSimulation:
         game_round = GameRound.objects.create(
             team_red=team_red, team_blue=team_blue, round_number=1
         )
-        red_states = simulator._initialize_players(game_round, team_red, "red")
+        red_states = simulator._initialize_players(
+            game_round, team_red, "red", {}, None
+        )
 
-        tagger   = next(s for s in red_states if s.role == "ammo")
+        tagger = next(s for s in red_states if s.role == "ammo")
         teammate = next(s for s in red_states if s.role == "scout")
 
         teammate.final_shots = 1
@@ -58,11 +68,13 @@ class TestSimulation:
         assert teammate.final_shots <= teammate.max_shots
         assert GameEvent.objects.filter(
             actor=tagger.player, target=teammate.player
-        ).exists(), "Resupply action should create a GameEvent with actor and target set"
+        ).exists(), (
+            "Resupply action should create a GameEvent with actor and target set"
+        )
 
     def test_simulate_single_round_detailed_creates_completed_round(self):
         simulator = ResourceBasedSimulator()
-        team_red, _  = self.create_team_with_roster("RedSim")
+        team_red, _ = self.create_team_with_roster("RedSim")
         team_blue, _ = self.create_team_with_roster("BlueSim")
 
         game_round = simulator.simulate_single_round_detailed(team_red, team_blue)
@@ -77,8 +89,13 @@ class TestSimulation:
 
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
         medic_state = PlayerRoundState.objects.create(
-            game_round=gr, player=players["medic"], team_color="red", role="medic",
-            current_zone=0, final_shots=10, final_lives=10,
+            game_round=gr,
+            player=players["medic"],
+            team_color="red",
+            role="medic",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=10,
         )
 
         captured = {}
@@ -93,8 +110,13 @@ class TestSimulation:
 
         assert "seq" in captured
         assert captured["seq"] == [
-            "tag_player", "change_zone", "hide", "capture_base",
-            "use_special", "resupply_ally", "missile_player",
+            "tag_player",
+            "change_zone",
+            "hide",
+            "capture_base",
+            "use_special",
+            "resupply_ally",
+            "missile_player",
         ]
         assert captured["weights"] == [5, 0, 30, 0, 0, 65, 0]
 
@@ -104,16 +126,28 @@ class TestSimulation:
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
 
         attacker = PlayerRoundState.objects.create(
-            game_round=gr, player=players["commander"],
-            team_color="red", role="commander", current_zone=0, final_shots=10, final_lives=10,
+            game_round=gr,
+            player=players["commander"],
+            team_color="red",
+            role="commander",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=10,
         )
         defender = PlayerRoundState.objects.create(
-            game_round=gr, player=players["scout"],
-            team_color="blue", role="scout", current_zone=0, final_shots=10, final_lives=10,
+            game_round=gr,
+            player=players["scout"],
+            team_color="blue",
+            role="scout",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=10,
         )
 
         with patch("random.randint", return_value=0):
-            simulator._resolve_tag_attempts(gr, [{"attacker": attacker, "defender": defender}], 0)
+            simulator._resolve_tag_attempts(
+                gr, [{"attacker": attacker, "defender": defender}], 0
+            )
 
         assert GameEvent.objects.filter(
             event_type="tag", actor=attacker.player, target=defender.player
@@ -125,37 +159,58 @@ class TestSimulation:
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
 
         attacker = PlayerRoundState.objects.create(
-            game_round=gr, player=players["commander"],
-            team_color="red", role="commander", current_zone=0,
-            final_shots=10, final_lives=10, final_missiles=2,
+            game_round=gr,
+            player=players["commander"],
+            team_color="red",
+            role="commander",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=10,
+            final_missiles=2,
         )
         defender = PlayerRoundState.objects.create(
-            game_round=gr, player=players["scout"],
-            team_color="blue", role="scout", current_zone=0, final_shots=10, final_lives=10,
+            game_round=gr,
+            player=players["scout"],
+            team_color="blue",
+            role="scout",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=10,
         )
 
         # Dodge
-        with patch("random.choices", return_value=["missile_player"]), \
-             patch("random.choice", return_value=defender), \
-             patch("random.random", return_value=0.1):
+        with patch("random.choices", return_value=["missile_player"]), patch(
+            "random.choice", return_value=defender
+        ), patch("random.random", return_value=0.1):
             simulator._simulate_combat_exchange(
-                gr, [attacker], [defender], second=5,
-                pending_missiles=[], pending_nukes=[],
+                gr,
+                [attacker],
+                [defender],
+                second=5,
+                pending_missiles=[],
+                pending_nukes=[],
             )
 
         assert GameEvent.objects.filter(
-            event_type="missile_dodge", actor=defender.player, target=attacker.player,
+            event_type="missile_dodge",
+            actor=defender.player,
+            target=attacker.player,
         ).exists()
 
         # Hit
         pending_missiles = []
-        with patch("random.choices", return_value=["missile_player"]), \
-             patch("random.choice", return_value=defender), \
-             patch("random.random", return_value=0.5), \
-             patch("random.randint", return_value=1):
+        with patch("random.choices", return_value=["missile_player"]), patch(
+            "random.choice", return_value=defender
+        ), patch("random.random", return_value=0.5), patch(
+            "random.randint", return_value=1
+        ):
             simulator._simulate_combat_exchange(
-                gr, [attacker], [defender], second=6,
-                pending_missiles=pending_missiles, pending_nukes=[],
+                gr,
+                [attacker],
+                [defender],
+                second=6,
+                pending_missiles=pending_missiles,
+                pending_nukes=[],
             )
 
         assert len(pending_missiles) >= 1
@@ -173,13 +228,23 @@ class TestSimulation:
 
         player_obj = players["scout"]
         state = PlayerRoundState.objects.create(
-            game_round=gr, player=player_obj, team_color="red", role="scout",
-            current_zone=1, final_shots=5, final_lives=10,
+            game_round=gr,
+            player=player_obj,
+            team_color="red",
+            role="scout",
+            zone_fallback=1,
+            final_shots=5,
+            final_lives=10,
         )
 
         with patch("random.choices", return_value=["capture_base"]):
             simulator._simulate_combat_exchange(
-                gr, [state], [], second=2, pending_missiles=[], pending_nukes=[],
+                gr,
+                [state],
+                [],
+                second=2,
+                pending_missiles=[],
+                pending_nukes=[],
             )
 
         state.refresh_from_db()
@@ -191,13 +256,24 @@ class TestSimulation:
         ]
 
         state2 = PlayerRoundState.objects.create(
-            game_round=gr, player=player_obj, team_color="red", role="scout",
-            current_zone=0, final_shots=5, final_lives=10,
+            game_round=gr,
+            player=player_obj,
+            team_color="red",
+            role="scout",
+            zone_fallback=0,
+            final_shots=5,
+            final_lives=10,
         )
-        with patch("random.choices", return_value=["change_zone"]), \
-             patch("random.choice", return_value=1):
+        with patch("random.choices", return_value=["change_zone"]), patch(
+            "random.choice", return_value=1
+        ):
             simulator._simulate_combat_exchange(
-                gr, [state2], [], second=3, pending_missiles=[], pending_nukes=[],
+                gr,
+                [state2],
+                [],
+                second=3,
+                pending_missiles=[],
+                pending_nukes=[],
             )
 
         assert state2.current_zone == 1
@@ -208,16 +284,28 @@ class TestSimulation:
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
 
         attacker = PlayerRoundState.objects.create(
-            game_round=gr, player=players["commander"],
-            team_color="red", role="commander", current_zone=0, final_shots=10, final_lives=10,
+            game_round=gr,
+            player=players["commander"],
+            team_color="red",
+            role="commander",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=10,
         )
         defender = PlayerRoundState.objects.create(
-            game_round=gr, player=players["scout"],
-            team_color="blue", role="scout", current_zone=0, final_shots=10, final_lives=10,
+            game_round=gr,
+            player=players["scout"],
+            team_color="blue",
+            role="scout",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=10,
         )
 
         with patch("random.randint", return_value=0):
-            simulator._resolve_tag_attempts(gr, [{"attacker": attacker, "defender": defender}], 0)
+            simulator._resolve_tag_attempts(
+                gr, [{"attacker": attacker, "defender": defender}], 0
+            )
 
         attacker.refresh_from_db()
         defender.refresh_from_db()
@@ -233,7 +321,7 @@ class TestSimulation:
         simulator = ResourceBasedSimulator()
         team, _ = self.create_team_with_roster("Edge")
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
-        red_states = simulator._initialize_players(gr, team, "red")
+        red_states = simulator._initialize_players(gr, team, "red", {}, None)
         ammo = next(s for s in red_states if s.role == "ammo")
         scout_state = next(s for s in red_states if s.role == "scout")
         scout_state.final_shots = scout_state.max_shots
@@ -248,7 +336,7 @@ class TestSimulation:
         simulator = ResourceBasedSimulator()
         team, _ = self.create_team_with_roster("Edge")
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
-        red_states = simulator._initialize_players(gr, team, "red")
+        red_states = simulator._initialize_players(gr, team, "red", {}, None)
         medic_state = next(s for s in red_states if s.role == "medic")
         medic_state.final_shots = 0
         teammate = next(s for s in red_states if s.role == "heavy")
@@ -265,8 +353,13 @@ class TestSimulation:
         team, players = self.create_team_with_roster("TimeTest")
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
         state = PlayerRoundState.objects.create(
-            game_round=gr, player=players["scout"], team_color="red", role="scout",
-            current_zone=0, final_shots=5, final_lives=5,
+            game_round=gr,
+            player=players["scout"],
+            team_color="red",
+            role="scout",
+            zone_fallback=0,
+            final_shots=5,
+            final_lives=5,
         )
 
         assert state.is_active_at(0)
@@ -293,23 +386,40 @@ class TestSimulation:
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
 
         commander = PlayerRoundState.objects.create(
-            game_round=gr, player=players["commander"],
-            team_color="red", role="commander", current_zone=0,
-            final_shots=10, final_lives=3, shields=3,
+            game_round=gr,
+            player=players["commander"],
+            team_color="red",
+            role="commander",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=3,
+            shields=3,
         )
         heavy = PlayerRoundState.objects.create(
-            game_round=gr, player=players["heavy"],
-            team_color="red", role="heavy", current_zone=0,
-            final_shots=10, final_lives=3, shields=3,
+            game_round=gr,
+            player=players["heavy"],
+            team_color="red",
+            role="heavy",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=3,
+            shields=3,
         )
         attacker = PlayerRoundState.objects.create(
-            game_round=gr, player=players["scout"],
-            team_color="blue", role="scout", current_zone=0, final_shots=10, final_lives=10,
+            game_round=gr,
+            player=players["scout"],
+            team_color="blue",
+            role="scout",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=10,
         )
 
         for _ in range(3):
             with patch("random.randint", return_value=0):
-                simulator._resolve_tag_attempts(gr, [{"attacker": attacker, "defender": commander}], 0)
+                simulator._resolve_tag_attempts(
+                    gr, [{"attacker": attacker, "defender": commander}], 0
+                )
 
         commander.refresh_from_db()
         assert commander.final_lives == 2
@@ -320,7 +430,9 @@ class TestSimulation:
 
         for _ in range(3):
             with patch("random.randint", return_value=0):
-                simulator._resolve_tag_attempts(gr, [{"attacker": attacker, "defender": heavy}], 0)
+                simulator._resolve_tag_attempts(
+                    gr, [{"attacker": attacker, "defender": heavy}], 0
+                )
 
         heavy.refresh_from_db()
         assert heavy.final_lives == 2
@@ -334,20 +446,32 @@ class TestSimulation:
         role_states = {}
         for role in ["scout", "medic", "ammo"]:
             state = PlayerRoundState.objects.create(
-                game_round=gr, player=players[role],
-                team_color="red", role=role, current_zone=0,
-                final_shots=10, final_lives=1, shields=1,
+                game_round=gr,
+                player=players[role],
+                team_color="red",
+                role=role,
+                zone_fallback=0,
+                final_shots=10,
+                final_lives=1,
+                shields=1,
             )
             role_states[role] = state
 
         attacker = PlayerRoundState.objects.create(
-            game_round=gr, player=players["scout_2"],
-            team_color="blue", role="scout", current_zone=0, final_shots=10, final_lives=10,
+            game_round=gr,
+            player=players["scout_2"],
+            team_color="blue",
+            role="scout",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=10,
         )
 
         for role, state in role_states.items():
             with patch("random.randint", return_value=0):
-                simulator._resolve_tag_attempts(gr, [{"attacker": attacker, "defender": state}], 0)
+                simulator._resolve_tag_attempts(
+                    gr, [{"attacker": attacker, "defender": state}], 0
+                )
 
             state.refresh_from_db()
             assert state.final_lives == 0
@@ -359,19 +483,30 @@ class TestSimulation:
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
 
         heavy = PlayerRoundState.objects.create(
-            game_round=gr, player=players["heavy"],
-            team_color="red", role="heavy", current_zone=0,
-            final_shots=10, final_lives=2, shields=3,
+            game_round=gr,
+            player=players["heavy"],
+            team_color="red",
+            role="heavy",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=2,
+            shields=3,
         )
         commander = PlayerRoundState.objects.create(
-            game_round=gr, player=players["commander"],
-            team_color="blue", role="commander",
-            current_zone=0, final_shots=10, final_lives=10,
+            game_round=gr,
+            player=players["commander"],
+            team_color="blue",
+            role="commander",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=10,
         )
 
         for _ in range(2):
             with patch("random.randint", return_value=0):
-                simulator._resolve_tag_attempts(gr, [{"attacker": commander, "defender": heavy}], 0)
+                simulator._resolve_tag_attempts(
+                    gr, [{"attacker": commander, "defender": heavy}], 0
+                )
 
         heavy.refresh_from_db()
         assert heavy.final_lives == 1
@@ -381,10 +516,10 @@ class TestSimulation:
         simulator = ResourceBasedSimulator()
         team, _ = self.create_team_with_roster("Edge")
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
-        red_states = simulator._initialize_players(gr, team, "red")
-        medic    = next(s for s in red_states if s.role == "medic")
+        red_states = simulator._initialize_players(gr, team, "red", {}, None)
+        medic = next(s for s in red_states if s.role == "medic")
         teammate = next(s for s in red_states if s.role == "heavy")
-        teammate.final_lives    = 1
+        teammate.final_lives = 1
         teammate.last_downed_time = 5
         medic.save()
         teammate.save()
@@ -400,17 +535,27 @@ class TestSimulation:
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
 
         attacker = PlayerRoundState.objects.create(
-            game_round=gr, player=players["scout"],
-            team_color="red", role="scout", current_zone=0, final_shots=10, final_lives=10,
+            game_round=gr,
+            player=players["scout"],
+            team_color="red",
+            role="scout",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=10,
         )
         dead = PlayerRoundState.objects.create(
-            game_round=gr, player=players["medic"],
-            team_color="blue", role="medic", current_zone=0, final_shots=0, final_lives=0,
+            game_round=gr,
+            player=players["medic"],
+            team_color="blue",
+            role="medic",
+            zone_fallback=0,
+            final_shots=0,
+            final_lives=0,
         )
 
-        with patch("random.choices", return_value=["tag_player"]), \
-             patch("random.choice", return_value=dead), \
-             patch("random.random", return_value=0.0):
+        with patch("random.choices", return_value=["tag_player"]), patch(
+            "random.choice", return_value=dead
+        ), patch("random.random", return_value=0.0):
             plans = simulator._plan_action(attacker, [attacker, dead], second=1)
 
         tag_plans = [p for p in plans if p.get("type") == "tag"]
@@ -418,14 +563,21 @@ class TestSimulation:
 
     def test_nuke_scheduling_and_cancellation(self):
         simulator = ResourceBasedSimulator()
-        team_red, players_red   = self.create_team_with_roster("NukeRed")
+        team_red, players_red = self.create_team_with_roster("NukeRed")
         team_blue, _ = self.create_team_with_roster("NukeBlue")
-        gr = GameRound.objects.create(team_red=team_red, team_blue=team_blue, round_number=1)
+        gr = GameRound.objects.create(
+            team_red=team_red, team_blue=team_blue, round_number=1
+        )
 
         commander = PlayerRoundState.objects.create(
-            game_round=gr, player=players_red["commander"],
-            team_color="red", role="commander", current_zone=0,
-            final_shots=10, final_lives=10, final_special=20,
+            game_round=gr,
+            player=players_red["commander"],
+            team_color="red",
+            role="commander",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=10,
+            final_special=20,
         )
 
         with patch("random.choices", return_value=["use_special"]):
@@ -446,35 +598,68 @@ class TestSimulation:
 
     def test_nuke_elim_cannot_be_tagged_after(self):
         simulator = ResourceBasedSimulator()
-        team_red, players_red   = self.create_team_with_roster("NukeRed")
+        team_red, players_red = self.create_team_with_roster("NukeRed")
         team_blue, players_blue = self.create_team_with_roster("NukeBlue")
-        gr = GameRound.objects.create(team_red=team_red, team_blue=team_blue, round_number=1)
+        gr = GameRound.objects.create(
+            team_red=team_red, team_blue=team_blue, round_number=1
+        )
 
         blue_commander = PlayerRoundState.objects.create(
-            game_round=gr, player=players_blue["commander"],
-            team_color="blue", role="heavy", current_zone=0, final_shots=10, final_lives=4,
+            game_round=gr,
+            player=players_blue["commander"],
+            team_color="blue",
+            role="heavy",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=4,
         )
         heavy = PlayerRoundState.objects.create(
-            game_round=gr, player=players_blue["heavy"],
-            team_color="blue", role="heavy", current_zone=0, final_shots=10, final_lives=3,
+            game_round=gr,
+            player=players_blue["heavy"],
+            team_color="blue",
+            role="heavy",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=3,
         )
         scout = PlayerRoundState.objects.create(
-            game_round=gr, player=players_blue["scout"],
-            team_color="blue", role="scout", current_zone=0, final_shots=10, final_lives=2,
+            game_round=gr,
+            player=players_blue["scout"],
+            team_color="blue",
+            role="scout",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=2,
         )
         ammo = PlayerRoundState.objects.create(
-            game_round=gr, player=players_blue["ammo"],
-            team_color="blue", role="ammo", current_zone=0, final_shots=15, final_lives=1,
+            game_round=gr,
+            player=players_blue["ammo"],
+            team_color="blue",
+            role="ammo",
+            zone_fallback=0,
+            final_shots=15,
+            final_lives=1,
         )
         medic = PlayerRoundState.objects.create(
-            game_round=gr, player=players_blue["medic"],
-            team_color="blue", role="medic", current_zone=0,
-            final_shots=10, final_lives=0, was_eliminated_at=15,
+            game_round=gr,
+            player=players_blue["medic"],
+            team_color="blue",
+            role="medic",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=0,
+            was_eliminated_at=15,
         )
         commander = PlayerRoundState.objects.create(
-            game_round=gr, player=players_red["commander"],
-            team_color="red", role="commander", current_zone=0,
-            final_shots=10, final_lives=10, final_special=20, points_scored=0,
+            game_round=gr,
+            player=players_red["commander"],
+            team_color="red",
+            role="commander",
+            zone_fallback=0,
+            final_shots=10,
+            final_lives=10,
+            final_special=20,
+            points_scored=0,
         )
 
         simulator._complete_nuke(commander, 25)
@@ -502,12 +687,18 @@ class TestLivesLost:
         return team
 
     def _make_round(self, team_red, team_blue):
-        return GameRound.objects.create(team_red=team_red, team_blue=team_blue, round_number=1)
+        return GameRound.objects.create(
+            team_red=team_red, team_blue=team_blue, round_number=1
+        )
 
     def _make_state(self, gr, player, team_color, role, **kwargs):
         return PlayerRoundState.objects.create(
-            game_round=gr, player=player, team_color=team_color, role=role,
-            final_shots=10, **kwargs
+            game_round=gr,
+            player=player,
+            team_color=team_color,
+            role=role,
+            final_shots=10,
+            **kwargs,
         )
 
     # --- property unit tests ---
@@ -515,39 +706,60 @@ class TestLivesLost:
     def test_lives_lost_no_nukes(self):
         team = self.create_team_with_roster("Unit")
         gr = self._make_round(team, team)
-        state = self._make_state(gr, team.slot_scout_1, "red", "scout",
-                                 final_lives=10, times_tagged=3, times_missiled=1,
-                                 lives_lost_to_nukes=0)
+        state = self._make_state(
+            gr,
+            team.slot_scout_1,
+            "red",
+            "scout",
+            final_lives=10,
+            times_tagged=3,
+            times_missiled=1,
+            lives_lost_to_nukes=0,
+        )
         assert state.lives_lost == 5
 
     def test_lives_lost_includes_nuke_field(self):
         team = self.create_team_with_roster("Unit2")
         gr = self._make_round(team, team)
-        state = self._make_state(gr, team.slot_scout_1, "red", "scout",
-                                 final_lives=4, times_tagged=1, times_missiled=0,
-                                 lives_lost_to_nukes=3)
+        state = self._make_state(
+            gr,
+            team.slot_scout_1,
+            "red",
+            "scout",
+            final_lives=4,
+            times_tagged=1,
+            times_missiled=0,
+            lives_lost_to_nukes=3,
+        )
         assert state.lives_lost == 4
 
     def test_lives_lost_never_negative(self):
         team = self.create_team_with_roster("Unit3")
         gr = self._make_round(team, team)
-        state = self._make_state(gr, team.slot_scout_1, "red", "scout",
-                                 final_lives=10, times_tagged=0, times_missiled=0,
-                                 lives_lost_to_nukes=0)
+        state = self._make_state(
+            gr,
+            team.slot_scout_1,
+            "red",
+            "scout",
+            final_lives=10,
+            times_tagged=0,
+            times_missiled=0,
+            lives_lost_to_nukes=0,
+        )
         assert state.lives_lost == 0
 
     # --- integration tests via _complete_nuke ---
 
     def test_nuke_removes_3_lives_from_healthy_opponent(self):
         simulator = ResourceBasedSimulator()
-        red  = self.create_team_with_roster("NukeA_Red")
+        red = self.create_team_with_roster("NukeA_Red")
         blue = self.create_team_with_roster("NukeA_Blue")
         gr = self._make_round(red, blue)
 
-        commander = self._make_state(gr, red.slot_commander,
-                                     "red", "commander", final_lives=10, final_special=20)
-        target = self._make_state(gr, blue.slot_scout_1,
-                                  "blue", "scout", final_lives=5)
+        commander = self._make_state(
+            gr, red.slot_commander, "red", "commander", final_lives=10, final_special=20
+        )
+        target = self._make_state(gr, blue.slot_scout_1, "blue", "scout", final_lives=5)
 
         simulator._complete_nuke(commander, second=30)
         target.refresh_from_db()
@@ -558,14 +770,14 @@ class TestLivesLost:
 
     def test_nuke_exception_player_has_2_lives(self):
         simulator = ResourceBasedSimulator()
-        red  = self.create_team_with_roster("NukeB_Red")
+        red = self.create_team_with_roster("NukeB_Red")
         blue = self.create_team_with_roster("NukeB_Blue")
         gr = self._make_round(red, blue)
 
-        commander = self._make_state(gr, red.slot_commander,
-                                     "red", "commander", final_lives=10, final_special=20)
-        target = self._make_state(gr, blue.slot_scout_1,
-                                  "blue", "scout", final_lives=2)
+        commander = self._make_state(
+            gr, red.slot_commander, "red", "commander", final_lives=10, final_special=20
+        )
+        target = self._make_state(gr, blue.slot_scout_1, "blue", "scout", final_lives=2)
 
         simulator._complete_nuke(commander, second=30)
         target.refresh_from_db()
@@ -576,14 +788,14 @@ class TestLivesLost:
 
     def test_nuke_exception_player_has_1_life(self):
         simulator = ResourceBasedSimulator()
-        red  = self.create_team_with_roster("NukeC_Red")
+        red = self.create_team_with_roster("NukeC_Red")
         blue = self.create_team_with_roster("NukeC_Blue")
         gr = self._make_round(red, blue)
 
-        commander = self._make_state(gr, red.slot_commander,
-                                     "red", "commander", final_lives=10, final_special=20)
-        target = self._make_state(gr, blue.slot_scout_1,
-                                  "blue", "scout", final_lives=1)
+        commander = self._make_state(
+            gr, red.slot_commander, "red", "commander", final_lives=10, final_special=20
+        )
+        target = self._make_state(gr, blue.slot_scout_1, "blue", "scout", final_lives=1)
 
         simulator._complete_nuke(commander, second=30)
         target.refresh_from_db()
@@ -593,14 +805,16 @@ class TestLivesLost:
 
     def test_nuke_skips_already_eliminated_player(self):
         simulator = ResourceBasedSimulator()
-        red  = self.create_team_with_roster("NukeD_Red")
+        red = self.create_team_with_roster("NukeD_Red")
         blue = self.create_team_with_roster("NukeD_Blue")
         gr = self._make_round(red, blue)
 
-        commander = self._make_state(gr, red.slot_commander,
-                                     "red", "commander", final_lives=10, final_special=20)
-        dead = self._make_state(gr, blue.slot_scout_1,
-                                "blue", "scout", final_lives=0, was_eliminated_at=50)
+        commander = self._make_state(
+            gr, red.slot_commander, "red", "commander", final_lives=10, final_special=20
+        )
+        dead = self._make_state(
+            gr, blue.slot_scout_1, "blue", "scout", final_lives=0, was_eliminated_at=50
+        )
 
         simulator._complete_nuke(commander, second=30)
         dead.refresh_from_db()
@@ -610,14 +824,14 @@ class TestLivesLost:
 
     def test_nuke_accumulates_across_multiple_nukes(self):
         simulator = ResourceBasedSimulator()
-        red  = self.create_team_with_roster("NukeE_Red")
+        red = self.create_team_with_roster("NukeE_Red")
         blue = self.create_team_with_roster("NukeE_Blue")
         gr = self._make_round(red, blue)
 
-        commander = self._make_state(gr, red.slot_commander,
-                                     "red", "commander", final_lives=10, final_special=40)
-        target = self._make_state(gr, blue.slot_heavy,
-                                  "blue", "heavy", final_lives=10)
+        commander = self._make_state(
+            gr, red.slot_commander, "red", "commander", final_lives=10, final_special=40
+        )
+        target = self._make_state(gr, blue.slot_heavy, "blue", "heavy", final_lives=10)
 
         simulator._complete_nuke(commander, second=20)
         target.refresh_from_db()
@@ -644,11 +858,11 @@ class TestRosterValidation:
         if players is None:
             players = [self._add_player(team, f"p{i}") for i in range(6)]
         team.slot_commander = players[0]
-        team.slot_heavy     = players[1]
-        team.slot_scout_1   = players[2]
-        team.slot_scout_2   = players[3]
-        team.slot_medic     = players[4]
-        team.slot_ammo      = players[5]
+        team.slot_heavy = players[1]
+        team.slot_scout_1 = players[2]
+        team.slot_scout_2 = players[3]
+        team.slot_medic = players[4]
+        team.slot_ammo = players[5]
         team.save()
         return players
 
@@ -663,10 +877,10 @@ class TestRosterValidation:
         team = self._make_team("MissingAmmo")
         players = [self._add_player(team, f"p{i}") for i in range(5)]
         team.slot_commander = players[0]
-        team.slot_heavy     = players[1]
-        team.slot_scout_1   = players[2]
-        team.slot_scout_2   = players[3]
-        team.slot_medic     = players[4]
+        team.slot_heavy = players[1]
+        team.slot_scout_1 = players[2]
+        team.slot_scout_2 = players[3]
+        team.slot_medic = players[4]
         team.save()
         assert not team.is_valid_roster
 
@@ -674,10 +888,10 @@ class TestRosterValidation:
         team = self._make_team("NoScout2")
         players = [self._add_player(team, f"p{i}") for i in range(5)]
         team.slot_commander = players[0]
-        team.slot_heavy     = players[1]
-        team.slot_scout_1   = players[2]
-        team.slot_medic     = players[3]
-        team.slot_ammo      = players[4]
+        team.slot_heavy = players[1]
+        team.slot_scout_1 = players[2]
+        team.slot_medic = players[3]
+        team.slot_ammo = players[4]
         team.save()
         assert not team.is_valid_roster
 
@@ -685,11 +899,11 @@ class TestRosterValidation:
         team = self._make_team("Dupe")
         players = [self._add_player(team, f"p{i}") for i in range(5)]
         team.slot_commander = players[0]
-        team.slot_heavy     = players[0]  # same player!
-        team.slot_scout_1   = players[1]
-        team.slot_scout_2   = players[2]
-        team.slot_medic     = players[3]
-        team.slot_ammo      = players[4]
+        team.slot_heavy = players[0]  # same player!
+        team.slot_scout_1 = players[1]
+        team.slot_scout_2 = players[2]
+        team.slot_medic = players[3]
+        team.slot_ammo = players[4]
         team.save()
         assert not team.is_valid_roster
 
@@ -729,6 +943,7 @@ class TestRosterValidation:
 
     def test_clean_rejects_invalid_preferred_role(self):
         from django.core.exceptions import ValidationError
+
         team = self._make_team("CleanBad")
         p = Player(team=team, name="bad", preferred_roles=["not_a_real_role"])
         with pytest.raises(ValidationError):
@@ -755,10 +970,10 @@ class TestRosterValidation:
         team = self._make_team("ErrMissing")
         players = [self._add_player(team, f"p{i}") for i in range(5)]
         team.slot_commander = players[0]
-        team.slot_heavy     = players[1]
-        team.slot_scout_1   = players[2]
-        team.slot_scout_2   = players[3]
-        team.slot_medic     = players[4]
+        team.slot_heavy = players[1]
+        team.slot_scout_1 = players[2]
+        team.slot_scout_2 = players[3]
+        team.slot_medic = players[4]
         team.save()
         errors = team.roster_errors
         assert any("Ammo" in e for e in errors)
@@ -767,11 +982,11 @@ class TestRosterValidation:
         team = self._make_team("ErrDupe")
         players = [self._add_player(team, f"p{i}") for i in range(5)]
         team.slot_commander = players[0]
-        team.slot_heavy     = players[0]  # duplicate
-        team.slot_scout_1   = players[1]
-        team.slot_scout_2   = players[2]
-        team.slot_medic     = players[3]
-        team.slot_ammo      = players[4]
+        team.slot_heavy = players[0]  # duplicate
+        team.slot_scout_1 = players[1]
+        team.slot_scout_2 = players[2]
+        team.slot_medic = players[3]
+        team.slot_ammo = players[4]
         team.save()
         errors = team.roster_errors
         assert any("multiple slots" in e for e in errors)
@@ -788,7 +1003,9 @@ class TestMVP:
         self.team_red, self.players_red = make_team_with_slots("MVPRed")
         self.team_blue, self.players_blue = make_team_with_slots("MVPBlue")
         self.gr = GameRound.objects.create(
-            team_red=self.team_red, team_blue=self.team_blue, round_number=1,
+            team_red=self.team_red,
+            team_blue=self.team_blue,
+            round_number=1,
         )
 
     def _state(self, player, team_color, role, **kwargs):
@@ -805,62 +1022,114 @@ class TestMVP:
     # --- get_accuracy ---
 
     def test_accuracy_zero_shots(self):
-        s = self._state(self.players_red["scout"], "red", "scout",
-                        tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["scout"], "red", "scout", tags_made=0, shots_missed=0
+        )
         assert s.get_accuracy == 0
 
     def test_accuracy_all_hits(self):
-        s = self._state(self.players_red["scout"], "red", "scout",
-                        tags_made=10, shots_missed=0)
+        s = self._state(
+            self.players_red["scout"], "red", "scout", tags_made=10, shots_missed=0
+        )
         assert s.get_accuracy == 100
 
     def test_accuracy_three_quarters(self):
-        s = self._state(self.players_red["scout"], "red", "scout",
-                        tags_made=75, shots_missed=25)
+        s = self._state(
+            self.players_red["scout"], "red", "scout", tags_made=75, shots_missed=25
+        )
         assert s.get_accuracy == 75
 
     # --- All-roles components ---
 
     def test_accuracy_bonus_100pct(self):
         # ceil(100 * 0.1 * 2) / 2 = 10.0; ammo with no specials or extra points
-        s = self._state(self.players_red["ammo"], "red", "ammo",
-                        tags_made=10, shots_missed=0, points_scored=0, specials_used=0)
+        s = self._state(
+            self.players_red["ammo"],
+            "red",
+            "ammo",
+            tags_made=10,
+            shots_missed=0,
+            points_scored=0,
+            specials_used=0,
+        )
         assert s.get_mvp == 10.0
 
     def test_medic_hit_bonus(self):
-        s = self._state(self.players_red["heavy"], "red", "heavy",
-                        final_medic_hits=3, points_scored=0, missiles_landed=0,
-                        tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["heavy"],
+            "red",
+            "heavy",
+            final_medic_hits=3,
+            points_scored=0,
+            missiles_landed=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 3.0
 
     def test_enemy_nuke_cancel_bonus(self):
-        s = self._state(self.players_red["heavy"], "red", "heavy",
-                        enemy_nuke_cancels=2, points_scored=0, missiles_landed=0,
-                        tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["heavy"],
+            "red",
+            "heavy",
+            enemy_nuke_cancels=2,
+            points_scored=0,
+            missiles_landed=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 6.0
 
     def test_ally_nuke_cancel_penalty(self):
-        s = self._state(self.players_red["heavy"], "red", "heavy",
-                        ally_nuke_cancels=1, points_scored=0, missiles_landed=0,
-                        tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["heavy"],
+            "red",
+            "heavy",
+            ally_nuke_cancels=1,
+            points_scored=0,
+            missiles_landed=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == -3.0
 
     def test_times_missiled_penalty(self):
-        s = self._state(self.players_red["heavy"], "red", "heavy",
-                        times_missiled=3, points_scored=0, missiles_landed=0,
-                        tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["heavy"],
+            "red",
+            "heavy",
+            times_missiled=3,
+            points_scored=0,
+            missiles_landed=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == -3.0
 
     def test_elimination_penalty_non_medic(self):
-        s = self._state(self.players_red["heavy"], "red", "heavy",
-                        final_lives=0, points_scored=0, missiles_landed=0,
-                        tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["heavy"],
+            "red",
+            "heavy",
+            final_lives=0,
+            points_scored=0,
+            missiles_landed=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == -1.0
 
     def test_no_elimination_penalty_for_medic(self):
-        s = self._state(self.players_red["medic"], "red", "medic",
-                        final_lives=0, points_scored=0, specials_used=0,
-                        tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["medic"],
+            "red",
+            "medic",
+            final_lives=0,
+            points_scored=0,
+            specials_used=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 0.0
 
     def test_elimination_bonus_minimum(self):
@@ -868,9 +1137,15 @@ class TestMVP:
         self.gr.blue_team_eliminated = True
         self.gr.eliminated_at = 720
         self.gr.save()
-        s = self._state(self.players_red["heavy"], "red", "heavy",
-                        points_scored=0, missiles_landed=0,
-                        tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["heavy"],
+            "red",
+            "heavy",
+            points_scored=0,
+            missiles_landed=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 4.0
 
     def test_elimination_bonus_with_extra_time(self):
@@ -878,110 +1153,214 @@ class TestMVP:
         self.gr.blue_team_eliminated = True
         self.gr.eliminated_at = 540
         self.gr.save()
-        s = self._state(self.players_red["heavy"], "red", "heavy",
-                        points_scored=0, missiles_landed=0,
-                        tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["heavy"],
+            "red",
+            "heavy",
+            points_scored=0,
+            missiles_landed=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 7.0
 
     # --- Commander ---
 
     def test_commander_missile_bonus(self):
-        s = self._state(self.players_red["commander"], "red", "commander",
-                        missiles_landed=3, specials_used=0, own_specials_cancelled=0,
-                        points_scored=0, tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["commander"],
+            "red",
+            "commander",
+            missiles_landed=3,
+            specials_used=0,
+            own_specials_cancelled=0,
+            points_scored=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 3.0
 
     def test_commander_nuke_bonus(self):
-        s = self._state(self.players_red["commander"], "red", "commander",
-                        specials_used=2, own_specials_cancelled=0, missiles_landed=0,
-                        points_scored=0, tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["commander"],
+            "red",
+            "commander",
+            specials_used=2,
+            own_specials_cancelled=0,
+            missiles_landed=0,
+            points_scored=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 2.0
 
     def test_commander_own_nuke_cancelled_penalty(self):
         # 2 nukes used, 1 cancelled: successful=1 (+1), cancelled=1 (-1) → net 0
-        s = self._state(self.players_red["commander"], "red", "commander",
-                        specials_used=2, own_specials_cancelled=1, missiles_landed=0,
-                        points_scored=0, tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["commander"],
+            "red",
+            "commander",
+            specials_used=2,
+            own_specials_cancelled=1,
+            missiles_landed=0,
+            points_scored=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 0.0
 
     def test_commander_points_bonus(self):
-        s = self._state(self.players_red["commander"], "red", "commander",
-                        points_scored=12_000, specials_used=0, own_specials_cancelled=0,
-                        missiles_landed=0, tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["commander"],
+            "red",
+            "commander",
+            points_scored=12_000,
+            specials_used=0,
+            own_specials_cancelled=0,
+            missiles_landed=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 2.0
 
     # --- Heavy ---
 
     def test_heavy_missile_bonus(self):
-        s = self._state(self.players_red["heavy"], "red", "heavy",
-                        missiles_landed=2, points_scored=0,
-                        tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["heavy"],
+            "red",
+            "heavy",
+            missiles_landed=2,
+            points_scored=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 4.0
 
     def test_heavy_points_bonus(self):
-        s = self._state(self.players_red["heavy"], "red", "heavy",
-                        points_scored=9_000, missiles_landed=0,
-                        tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["heavy"],
+            "red",
+            "heavy",
+            points_scored=9_000,
+            missiles_landed=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 2.0
 
     # --- Scout ---
 
     def test_scout_cmd_heavy_hit_bonus(self):
         cmd_key = str(PlayerRoundState.tag_id.blue_commander)  # "7"
-        hvy_key = str(PlayerRoundState.tag_id.blue_heavy)      # "8"
+        hvy_key = str(PlayerRoundState.tag_id.blue_heavy)  # "8"
         # 80% accuracy → 8.0; (5+3)*0.2 = 1.6; total = 9.6
-        s = self._state(self.players_red["scout"], "red", "scout",
-                        specific_tags={cmd_key: {"tags": 5, "tagged_by": 0},
-                                       hvy_key: {"tags": 3, "tagged_by": 0}},
-                        tags_made=8, shots_missed=2, points_scored=0)
+        s = self._state(
+            self.players_red["scout"],
+            "red",
+            "scout",
+            specific_tags={
+                cmd_key: {"tags": 5, "tagged_by": 0},
+                hvy_key: {"tags": 3, "tagged_by": 0},
+            },
+            tags_made=8,
+            shots_missed=2,
+            points_scored=0,
+        )
         assert s.get_mvp == 9.6
 
     def test_scout_points_bonus(self):
-        s = self._state(self.players_red["scout"], "red", "scout",
-                        points_scored=8_000, specific_tags={},
-                        tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["scout"],
+            "red",
+            "scout",
+            points_scored=8_000,
+            specific_tags={},
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 2.0
 
     # --- Ammo ---
 
     def test_ammo_power_boost_bonus(self):
-        s = self._state(self.players_red["ammo"], "red", "ammo",
-                        specials_used=3, points_scored=0,
-                        tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["ammo"],
+            "red",
+            "ammo",
+            specials_used=3,
+            points_scored=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 9.0
 
     def test_ammo_points_bonus(self):
-        s = self._state(self.players_red["ammo"], "red", "ammo",
-                        points_scored=5_000, specials_used=0,
-                        tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["ammo"],
+            "red",
+            "ammo",
+            points_scored=5_000,
+            specials_used=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 2.0
 
     # --- Medic ---
 
     def test_medic_power_boost_bonus(self):
         # 4 specials * 3 = 12; survival bonus +2 = 14
-        s = self._state(self.players_red["medic"], "red", "medic",
-                        specials_used=4, points_scored=0,
-                        tags_made=0, shots_missed=0, final_lives=3)
+        s = self._state(
+            self.players_red["medic"],
+            "red",
+            "medic",
+            specials_used=4,
+            points_scored=0,
+            tags_made=0,
+            shots_missed=0,
+            final_lives=3,
+        )
         assert s.get_mvp == 14.0
 
     def test_medic_survival_bonus(self):
-        s = self._state(self.players_red["medic"], "red", "medic",
-                        final_lives=5, specials_used=0, points_scored=0,
-                        tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["medic"],
+            "red",
+            "medic",
+            final_lives=5,
+            specials_used=0,
+            points_scored=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 2.0
 
     def test_medic_no_survival_bonus_when_eliminated(self):
-        s = self._state(self.players_red["medic"], "red", "medic",
-                        final_lives=0, specials_used=0, points_scored=0,
-                        tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["medic"],
+            "red",
+            "medic",
+            final_lives=0,
+            specials_used=0,
+            points_scored=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 0.0
 
     def test_medic_points_bonus(self):
         # 2 * (4000 - 2000) / 1000 = 4.0; no survival (lives=0)
-        s = self._state(self.players_red["medic"], "red", "medic",
-                        points_scored=4_000, specials_used=0,
-                        final_lives=0, tags_made=0, shots_missed=0)
+        s = self._state(
+            self.players_red["medic"],
+            "red",
+            "medic",
+            points_scored=4_000,
+            specials_used=0,
+            final_lives=0,
+            tags_made=0,
+            shots_missed=0,
+        )
         assert s.get_mvp == 4.0
 
 
@@ -1016,7 +1395,9 @@ class TestWeightFunctions:
         return list(_BASE)
 
     def _state(self, gr, player, role, team_color="red", **kwargs):
-        defaults = dict(final_lives=10, final_shots=15, final_special=0, current_zone=0)
+        defaults = dict(
+            final_lives=10, final_shots=15, final_special=0, zone_fallback=0
+        )
         defaults.update(kwargs)
         return PlayerRoundState.objects.create(
             game_round=gr, player=player, role=role, team_color=team_color, **defaults
@@ -1050,9 +1431,9 @@ class TestWeightFunctions:
 
     def test_medic_can_capture_base_gets_small_boost(self):
         """In neutral zone, medic gets a small capture weight boost while resupply stays dominant."""
-        # current_zone=1 (neutral_zone) → can_capture_base_in_current_zone = True
+        # zone_fallback=1 (neutral_zone) → can_capture_base_in_current_zone = True
         # Medic role: resupply=60, capture=0 → after +5/-5: capture=5, resupply=55
-        s = self._state(self.gr, self.players["medic"], "medic", current_zone=1)
+        s = self._state(self.gr, self.players["medic"], "medic", zone_fallback=1)
         w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
         assert w[_ACTION_IDX["capture_base"]] == 5
         assert w[_ACTION_IDX["resupply_ally"]] > w[_ACTION_IDX["capture_base"]]
@@ -1067,12 +1448,20 @@ class TestWeightFunctions:
     def test_medic_not_active_heavy_in_zone_hides(self):
         """Downed medic with a heavy escort hides to wait under cover."""
         medic = self._state(
-            self.gr, self.players["medic"], "medic",
-            final_lives=5, last_downed_time=0, current_zone=0,
+            self.gr,
+            self.players["medic"],
+            "medic",
+            final_lives=5,
+            last_downed_time=0,
+            zone_fallback=0,
         )
         heavy = self._state(
-            self.gr, self.players2["heavy"], "heavy",
-            team_color="red", final_lives=5, current_zone=0,
+            self.gr,
+            self.players2["heavy"],
+            "heavy",
+            team_color="red",
+            final_lives=5,
+            zone_fallback=0,
         )
         w = _get_medic_weights(medic, _ACTION_IDX, self._fresh(), [medic, heavy], 0)
         assert w == [5, 0, 90, 0, 0, 5, 0]
@@ -1080,8 +1469,11 @@ class TestWeightFunctions:
     def test_medic_not_active_no_heavy_changes_zone(self):
         """Downed medic with no nearby heavy moves to find protection."""
         medic = self._state(
-            self.gr, self.players["medic"], "medic",
-            final_lives=5, last_downed_time=0,
+            self.gr,
+            self.players["medic"],
+            "medic",
+            final_lives=5,
+            last_downed_time=0,
         )
         w = _get_medic_weights(medic, _ACTION_IDX, self._fresh(), [medic], 0)
         assert w == [5, 60, 30, 0, 0, 5, 0]
@@ -1102,12 +1494,19 @@ class TestWeightFunctions:
     def test_ammo_low_lives_medic_same_zone_hides(self):
         """Low-life ammo hides next to a medic who is already in range."""
         medic = self._state(
-            self.gr, self.players["medic"], "medic",
-            team_color="red", final_lives=5, current_zone=0,
+            self.gr,
+            self.players["medic"],
+            "medic",
+            team_color="red",
+            final_lives=5,
+            zone_fallback=0,
         )
         ammo = self._state(
-            self.gr, self.players["ammo"], "ammo",
-            final_lives=2, current_zone=0,
+            self.gr,
+            self.players["ammo"],
+            "ammo",
+            final_lives=2,
+            zone_fallback=0,
         )
         w = _get_ammo_weights(ammo, _ACTION_IDX, self._fresh(), [ammo, medic], 0)
         assert w == [25, 0, 30, 0, 0, 45, 0]
@@ -1115,12 +1514,19 @@ class TestWeightFunctions:
     def test_ammo_low_lives_medic_different_zone_moves_toward_medic(self):
         """Low-life ammo crosses zones to reach the medic."""
         medic = self._state(
-            self.gr, self.players["medic"], "medic",
-            team_color="red", final_lives=5, current_zone=1,
+            self.gr,
+            self.players["medic"],
+            "medic",
+            team_color="red",
+            final_lives=5,
+            zone_fallback=1,
         )
         ammo = self._state(
-            self.gr, self.players["ammo"], "ammo",
-            final_lives=2, current_zone=0,
+            self.gr,
+            self.players["ammo"],
+            "ammo",
+            final_lives=2,
+            zone_fallback=0,
         )
         w = _get_ammo_weights(ammo, _ACTION_IDX, self._fresh(), [ammo, medic], 0)
         assert w == [25, 50, 0, 0, 0, 25, 0]
@@ -1146,7 +1552,7 @@ class TestWeightFunctions:
 
     def test_scout_can_capture_base(self):
         """Scout in neutral zone switches priority to capturing the base."""
-        s = self._state(self.gr, self.players["scout"], "scout", current_zone=1)
+        s = self._state(self.gr, self.players["scout"], "scout", zone_fallback=1)
         w = _get_scout_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
         # tag -=30 (role) -=20 (base) = 20; change_zone +=30 (role); capture +=20
         assert w == [20, 60, 0, 20, 0, 0, 0]
@@ -1154,13 +1560,20 @@ class TestWeightFunctions:
     def test_scout_low_lives_medic_same_zone_hides(self):
         """Critical-health scout hides next to medic to recover lives."""
         medic = self._state(
-            self.gr, self.players["medic"], "medic",
-            team_color="red", final_lives=5, current_zone=0,
+            self.gr,
+            self.players["medic"],
+            "medic",
+            team_color="red",
+            final_lives=5,
+            zone_fallback=0,
         )
         # starting_lives=15 → lives_critical=4.5; final_lives=4 triggers the branch
         scout = self._state(
-            self.gr, self.players["scout"], "scout",
-            final_lives=4, current_zone=0,
+            self.gr,
+            self.players["scout"],
+            "scout",
+            final_lives=4,
+            zone_fallback=0,
         )
         w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout, medic], 0)
         # role: tag-=30, change_zone+=30 → [40,60,...]; medic same zone: change_zone-=20,tag-=20,hide+=40
@@ -1169,12 +1582,19 @@ class TestWeightFunctions:
     def test_scout_low_lives_medic_different_zone_moves_toward_medic(self):
         """Critical-health scout moves into medic's zone instead of hiding."""
         medic = self._state(
-            self.gr, self.players["medic"], "medic",
-            team_color="red", final_lives=5, current_zone=1,
+            self.gr,
+            self.players["medic"],
+            "medic",
+            team_color="red",
+            final_lives=5,
+            zone_fallback=1,
         )
         scout = self._state(
-            self.gr, self.players["scout"], "scout",
-            final_lives=4, current_zone=0,
+            self.gr,
+            self.players["scout"],
+            "scout",
+            final_lives=4,
+            zone_fallback=0,
         )
         w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout, medic], 0)
         # role: [40,60,...]; medic different zone: tag-=30, change_zone+=30
@@ -1183,13 +1603,20 @@ class TestWeightFunctions:
     def test_scout_low_shots_ammo_different_zone_moves_toward_ammo(self):
         """Shot-depleted scout crosses zones to resupply from ammo carrier."""
         ammo = self._state(
-            self.gr, self.players["ammo"], "ammo",
-            team_color="red", final_lives=5, current_zone=1,
+            self.gr,
+            self.players["ammo"],
+            "ammo",
+            team_color="red",
+            final_lives=5,
+            zone_fallback=1,
         )
         # starting_shots=30 → shots_critical=9.0; final_shots=9 ≤ 9.0 triggers
         scout = self._state(
-            self.gr, self.players["scout"], "scout",
-            final_shots=9, current_zone=0,
+            self.gr,
+            self.players["scout"],
+            "scout",
+            final_shots=9,
+            zone_fallback=0,
         )
         w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout, ammo], 0)
         # role: [40,60,...]; ammo different zone: tag-=30, change_zone+=30
@@ -1198,8 +1625,12 @@ class TestWeightFunctions:
     def test_scout_special_available_raises_use_special(self):
         """Scout with special ready is more likely to use rapid-fire as ammo allows."""
         scout = self._state(
-            self.gr, self.players["scout"], "scout",
-            final_special=10, final_shots=15, special_active_until=0,
+            self.gr,
+            self.players["scout"],
+            "scout",
+            final_special=10,
+            final_shots=15,
+            special_active_until=0,
         )
         w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout], 0)
         # 100 * (15 / 60) = 25
@@ -1208,8 +1639,11 @@ class TestWeightFunctions:
     def test_scout_not_active_stops_tagging(self):
         """Downed scout stops tagging and waits or repositions instead."""
         scout = self._state(
-            self.gr, self.players["scout"], "scout",
-            final_lives=5, last_downed_time=0,
+            self.gr,
+            self.players["scout"],
+            "scout",
+            final_lives=5,
+            last_downed_time=0,
         )
         w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout], 0)
         # role: [40,60,...]; not active: tag zeroed, 10 to change_zone, rest to hide
@@ -1242,8 +1676,11 @@ class TestWeightFunctions:
         """Heavy in opposing zone takes the base instead of engaging in direct fire."""
         # Red heavy in blue_zone (2) → can_capture_base = True
         s = self._state(
-            self.gr, self.players["heavy"], "heavy",
-            current_zone=2, missiles_landed=5,
+            self.gr,
+            self.players["heavy"],
+            "heavy",
+            zone_fallback=2,
+            missiles_landed=5,
         )
         w = _get_heavy_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
         # role (no missiles): [70,25,5,...]; base capture: change_zone-=10,tag-=20,capture+=30
@@ -1252,13 +1689,21 @@ class TestWeightFunctions:
     def test_heavy_low_lives_medic_different_zone_moves_toward_medic(self):
         """Critically low heavy navigates toward the medic to recover."""
         medic = self._state(
-            self.gr, self.players["medic"], "medic",
-            team_color="red", final_lives=5, current_zone=1,
+            self.gr,
+            self.players["medic"],
+            "medic",
+            team_color="red",
+            final_lives=5,
+            zone_fallback=1,
         )
         # starting_lives=15 → lives_critical=4.5; final_lives=4 triggers
         heavy = self._state(
-            self.gr, self.players["heavy"], "heavy",
-            final_lives=4, current_zone=0, missiles_landed=5,
+            self.gr,
+            self.players["heavy"],
+            "heavy",
+            final_lives=4,
+            zone_fallback=0,
+            missiles_landed=5,
         )
         w = _get_heavy_weights(heavy, _ACTION_IDX, self._fresh(), [heavy, medic], 0)
         # role (no missiles): [70,25,5,...]; medic different zone: tag-=30, change_zone+=30
@@ -1267,12 +1712,21 @@ class TestWeightFunctions:
     def test_heavy_not_active_medic_in_zone_hides(self):
         """Downed heavy hides when its medic is in the same zone."""
         medic = self._state(
-            self.gr, self.players["medic"], "medic",
-            team_color="red", final_lives=5, current_zone=0,
+            self.gr,
+            self.players["medic"],
+            "medic",
+            team_color="red",
+            final_lives=5,
+            zone_fallback=0,
         )
         heavy = self._state(
-            self.gr, self.players["heavy"], "heavy",
-            final_lives=5, last_downed_time=0, current_zone=0, missiles_landed=5,
+            self.gr,
+            self.players["heavy"],
+            "heavy",
+            final_lives=5,
+            last_downed_time=0,
+            zone_fallback=0,
+            missiles_landed=5,
         )
         w = _get_heavy_weights(heavy, _ACTION_IDX, self._fresh(), [heavy, medic], 0)
         # role (no missiles): [70,25,5,...]; not active + medic in zone: tag-=70, hide+=70
@@ -1282,18 +1736,24 @@ class TestWeightFunctions:
 
     def test_commander_baseline_no_missiles(self):
         """Commander with all missiles used holds base weights."""
-        s = self._state(self.gr, self.players["commander"], "commander", missiles_landed=5)
+        s = self._state(
+            self.gr, self.players["commander"], "commander", missiles_landed=5
+        )
         w = _get_commander_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
         assert w == [85, 15, 0, 0, 0, 0, 0]
 
     def test_commander_baseline_no_missiles_sum(self):
-        s = self._state(self.gr, self.players["commander"], "commander", missiles_landed=5)
+        s = self._state(
+            self.gr, self.players["commander"], "commander", missiles_landed=5
+        )
         w = _get_commander_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
         assert sum(w) == 100
 
     def test_commander_with_missiles(self):
         """Commander prioritises launching available missiles."""
-        s = self._state(self.gr, self.players["commander"], "commander", missiles_landed=0)
+        s = self._state(
+            self.gr, self.players["commander"], "commander", missiles_landed=0
+        )
         w = _get_commander_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
         assert w == [85, 0, 0, 0, 0, 0, 15]
         assert sum(w) == 100
@@ -1301,8 +1761,12 @@ class TestWeightFunctions:
     def test_commander_special_no_enemies_fires_nuke(self):
         """Commander with nuke charged and no enemies in zone fires immediately."""
         s = self._state(
-            self.gr, self.players["commander"], "commander",
-            final_special=20, missiles_landed=5, current_zone=0,
+            self.gr,
+            self.players["commander"],
+            "commander",
+            final_special=20,
+            missiles_landed=5,
+            zone_fallback=0,
         )
         w = _get_commander_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
         # enemies_in_zone=0 → use_special = 100 - 20*0 = 100
@@ -1311,12 +1775,21 @@ class TestWeightFunctions:
     def test_commander_special_one_enemy_reduces_nuke_weight(self):
         """Commander holds the nuke when surrounded by enemies to avoid wasting it."""
         cmd = self._state(
-            self.gr, self.players["commander"], "commander",
-            final_special=20, missiles_landed=5, current_zone=0, team_color="red",
+            self.gr,
+            self.players["commander"],
+            "commander",
+            final_special=20,
+            missiles_landed=5,
+            zone_fallback=0,
+            team_color="red",
         )
         enemy = self._state(
-            self.gr, self.players2["scout"], "scout",
-            team_color="blue", final_lives=5, current_zone=0,
+            self.gr,
+            self.players2["scout"],
+            "scout",
+            team_color="blue",
+            final_lives=5,
+            zone_fallback=0,
         )
         w = _get_commander_weights(cmd, _ACTION_IDX, self._fresh(), [cmd, enemy], 0)
         # enemies_in_zone=1 → use_special = 100 - 20*1 = 80
@@ -1325,22 +1798,37 @@ class TestWeightFunctions:
     def test_commander_not_active_enemy_medic_in_zone_hides(self):
         """Downed commander waits in zone to eliminate the enemy medic on respawn."""
         enemy_medic = self._state(
-            self.gr, self.players2["medic"], "medic",
-            team_color="blue", final_lives=5, current_zone=0,
+            self.gr,
+            self.players2["medic"],
+            "medic",
+            team_color="blue",
+            final_lives=5,
+            zone_fallback=0,
         )
         cmd = self._state(
-            self.gr, self.players["commander"], "commander",
-            final_lives=5, last_downed_time=0, missiles_landed=5, current_zone=0,
+            self.gr,
+            self.players["commander"],
+            "commander",
+            final_lives=5,
+            last_downed_time=0,
+            missiles_landed=5,
+            zone_fallback=0,
         )
-        w = _get_commander_weights(cmd, _ACTION_IDX, self._fresh(), [cmd, enemy_medic], 0)
+        w = _get_commander_weights(
+            cmd, _ACTION_IDX, self._fresh(), [cmd, enemy_medic], 0
+        )
         # not active, enemy medic in zone: tag-=70, hide+=70; base [85,15]
         assert w == [15, 15, 70, 0, 0, 0, 0]
 
     def test_commander_not_active_no_enemy_medic_changes_zone(self):
         """Downed commander moves zone to hunt the enemy medic."""
         cmd = self._state(
-            self.gr, self.players["commander"], "commander",
-            final_lives=5, last_downed_time=0, missiles_landed=5,
+            self.gr,
+            self.players["commander"],
+            "commander",
+            final_lives=5,
+            last_downed_time=0,
+            missiles_landed=5,
         )
         w = _get_commander_weights(cmd, _ACTION_IDX, self._fresh(), [cmd], 0)
         # not active, no enemy medic found: tag-=70, change_zone+=70; base [85,15]
@@ -1372,7 +1860,9 @@ class TestSimulationChangesWithWeights:
         team_r2, _ = make_team_with_slots("WS_R2")
         team_b2, _ = make_team_with_slots("WS_B2")
         random.seed(42)
-        with patch("matches.simulation._get_medic_weights", side_effect=all_tag_weights):
+        with patch(
+            "matches.simulation._get_medic_weights", side_effect=all_tag_weights
+        ):
             round_patched = simulator.simulate_single_round_detailed(team_r2, team_b2)
         patched_resupply = GameEvent.objects.filter(
             game_round=round_patched,
@@ -1386,6 +1876,7 @@ class TestSimulationChangesWithWeights:
 # Batch simulator seed reproducibility
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 class TestBatchSimulatorSeedReproducibility:
     """Verify that capturing/restoring RNG state reproduces identical rounds."""
@@ -1397,6 +1888,7 @@ class TestBatchSimulatorSeedReproducibility:
     def test_same_state_produces_identical_round(self):
         """Restoring the same random.getstate() before _simulate_round gives the same scores."""
         import random
+
         red_roster, _ = self._rosters("SeedR1")
         blue_roster, _ = self._rosters("SeedB1")
         sim = BatchSimulator()
@@ -1418,6 +1910,7 @@ class TestBatchSimulatorSeedReproducibility:
     def test_different_seeds_produce_different_outcomes(self):
         """Sanity check: across many seeds at least some rounds produce different scores."""
         import random
+
         red_roster, _ = self._rosters("SeedR2")
         blue_roster, _ = self._rosters("SeedB2")
         sim = BatchSimulator()
@@ -1461,6 +1954,7 @@ class TestBatchSimulatorSeedReproducibility:
     def test_mid_run_seed_replays_specific_round(self):
         """State captured after several rounds replays only that specific round."""
         import random
+
         red_roster, _ = self._rosters("SeedR4")
         blue_roster, _ = self._rosters("SeedB4")
         sim = BatchSimulator()
@@ -1488,9 +1982,11 @@ class TestBatchSimulatorSeedReproducibility:
 # BatchSimulator — shot cooldown, follow-ups, and reactions
 # ---------------------------------------------------------------------------
 
+
 def _make_ps(role, team_color="red", **kwargs):
     """Create a PlayerState with sensible defaults for unit tests."""
     from matches.sim_helpers.player_state import PlayerState
+
     tag_id = kwargs.pop("tag_id", f"{team_color}_{role}")
     defaults = dict(
         tag_id=tag_id,
@@ -1539,7 +2035,9 @@ class TestBatchSimulatorShotCooldown:
     def test_rapid_fire_scout_returns_zero(self):
         sim = self._sim()
         # special_active_until=10 > second=2.0 → rapid fire active
-        assert sim._shot_cooldown(_make_ps("scout", special_active_until=10), 2.0) == 0.0
+        assert (
+            sim._shot_cooldown(_make_ps("scout", special_active_until=10), 2.0) == 0.0
+        )
 
     def test_plan_action_zeroes_tag_weight_when_fired_too_recently(self):
         sim = self._sim()
@@ -1555,7 +2053,9 @@ class TestBatchSimulatorShotCooldown:
             sim._plan_action(p, [p], 5.3)
 
         assert len(captured) == 1
-        assert captured[0][0] == 0, "tag_player weight must be zeroed when cooldown has not elapsed"
+        assert (
+            captured[0][0] == 0
+        ), "tag_player weight must be zeroed when cooldown has not elapsed"
 
     def test_plan_action_allows_tag_after_cooldown_elapsed(self):
         sim = self._sim()
@@ -1571,15 +2071,21 @@ class TestBatchSimulatorShotCooldown:
             sim._plan_action(p, [p], 5.6)
 
         assert len(captured) == 1
-        assert captured[0][0] > 0, "tag_player weight must be non-zero after cooldown has elapsed"
+        assert (
+            captured[0][0] > 0
+        ), "tag_player weight must be non-zero after cooldown has elapsed"
 
     def test_last_shot_time_updated_on_hit(self):
         sim = self._sim()
         attacker = _make_ps("commander", team_color="red", final_shots=20)
         defender = _make_ps("scout", team_color="blue")
         defender.shields = 3  # commander shot_power=2; 3-2=1, not downed
-        with patch("random.randint", return_value=1):  # roll 1 < hit_chance=95 → always hit
-            sim._resolve_tag_attempts([{"attacker": attacker, "defender": defender}], second=7.0)
+        with patch(
+            "random.randint", return_value=1
+        ):  # roll 1 < hit_chance=95 → always hit
+            sim._resolve_tag_attempts(
+                [{"attacker": attacker, "defender": defender}], second=7.0
+            )
         assert attacker.last_shot_time == 7.0
 
     def test_last_shot_time_updated_on_miss(self):
@@ -1589,7 +2095,9 @@ class TestBatchSimulatorShotCooldown:
         # survival=100 → hit_chance=max(10,min(95,70+50-100))=20; roll 99 ≥ 20 → miss
         defender.survival = 100
         with patch("random.randint", return_value=99):
-            sim._resolve_tag_attempts([{"attacker": attacker, "defender": defender}], second=7.0)
+            sim._resolve_tag_attempts(
+                [{"attacker": attacker, "defender": defender}], second=7.0
+            )
         assert attacker.last_shot_time == 7.0
 
 
@@ -1599,7 +2107,9 @@ class TestBatchSimulatorFollowUps:
     def test_non_downed_hit_schedules_follow_up(self):
         sim = BatchSimulator()
         # Scout (shot_power=1) vs commander (shields=3): 3-1=2, not downed → follow-up eligible
-        attacker = _make_ps("scout", team_color="red", final_shots=20, player_awareness=0)
+        attacker = _make_ps(
+            "scout", team_color="red", final_shots=20, player_awareness=0
+        )
         defender = _make_ps("commander", team_color="blue", player_awareness=0)
         defender.shields = 3
 
@@ -1608,7 +2118,8 @@ class TestBatchSimulatorFollowUps:
             # hit: 1<95 ✓; follow-up: defender_awareness=0 < 1 → True ✓
             sim._resolve_tag_attempts(
                 [{"attacker": attacker, "defender": defender}],
-                second=10.0, pending_followups=pending_fu,
+                second=10.0,
+                pending_followups=pending_fu,
             )
 
         assert len(pending_fu) == 1
@@ -1629,7 +2140,8 @@ class TestBatchSimulatorFollowUps:
         with patch("random.randint", return_value=1):
             sim._resolve_tag_attempts(
                 [{"attacker": attacker, "defender": defender}],
-                second=10.0, pending_followups=pending_fu,
+                second=10.0,
+                pending_followups=pending_fu,
             )
 
         assert len(pending_fu) == 0
@@ -1637,7 +2149,13 @@ class TestBatchSimulatorFollowUps:
     def test_rapid_fire_scout_follow_up_fires_immediately(self):
         sim = BatchSimulator()
         # Rapid-fire scout (cooldown=0.0) executes follow-ups inline, not via pending list
-        attacker = _make_ps("scout", team_color="red", special_active_until=20, final_shots=20, player_awareness=0)
+        attacker = _make_ps(
+            "scout",
+            team_color="red",
+            special_active_until=20,
+            final_shots=20,
+            player_awareness=0,
+        )
         defender = _make_ps("commander", team_color="blue", player_awareness=0)
         defender.shields = 3  # 3 hits to down (3→2→1→0)
 
@@ -1645,7 +2163,8 @@ class TestBatchSimulatorFollowUps:
         with patch("random.randint", return_value=1):
             sim._resolve_tag_attempts(
                 [{"attacker": attacker, "defender": defender}],
-                second=10.0, pending_followups=pending_fu,
+                second=10.0,
+                pending_followups=pending_fu,
             )
 
         # Immediate execution, not scheduled
@@ -1665,7 +2184,8 @@ class TestBatchSimulatorFollowUps:
             # hit: 50<95 ✓; follow-up: 100<50 → False → not scheduled
             sim._resolve_tag_attempts(
                 [{"attacker": attacker, "defender": defender}],
-                second=10.0, pending_followups=pending_fu,
+                second=10.0,
+                pending_followups=pending_fu,
             )
 
         assert len(pending_fu) == 0
@@ -1673,7 +2193,9 @@ class TestBatchSimulatorFollowUps:
     def test_initial_hit_uses_one_shot_follow_up_not_yet(self):
         sim = BatchSimulator()
         # After initial hit, exactly one shot consumed; pending follow-up has NOT fired yet
-        attacker = _make_ps("scout", team_color="red", final_shots=10, player_awareness=0)
+        attacker = _make_ps(
+            "scout", team_color="red", final_shots=10, player_awareness=0
+        )
         defender = _make_ps("commander", team_color="blue", player_awareness=0)
         defender.shields = 3
 
@@ -1682,7 +2204,8 @@ class TestBatchSimulatorFollowUps:
         with patch("random.randint", return_value=1):
             sim._resolve_tag_attempts(
                 [{"attacker": attacker, "defender": defender}],
-                second=10.0, pending_followups=pending_fu,
+                second=10.0,
+                pending_followups=pending_fu,
             )
 
         assert attacker.final_shots == shots_before - 1
@@ -1697,7 +2220,9 @@ class TestBatchSimulatorReactions:
         # Scout (shot_power=1) vs commander (shields=3): not downed
         # Commander awareness=100 ≥ roll=50 → reaction triggered
         attacker = _make_ps("scout", team_color="red", final_shots=20)
-        defender = _make_ps("commander", team_color="blue", player_awareness=100, final_shots=20)
+        defender = _make_ps(
+            "commander", team_color="blue", player_awareness=100, final_shots=20
+        )
         defender.shields = 3
 
         pending_rx = []
@@ -1705,7 +2230,8 @@ class TestBatchSimulatorReactions:
             # hit: 50<95 ✓; reaction: 100≥50 → True; follow-up: 100<50 → False
             sim._resolve_tag_attempts(
                 [{"attacker": attacker, "defender": defender}],
-                second=10.0, pending_reactions=pending_rx,
+                second=10.0,
+                pending_reactions=pending_rx,
             )
 
         assert len(pending_rx) == 1
@@ -1718,14 +2244,17 @@ class TestBatchSimulatorReactions:
         sim = BatchSimulator()
         attacker = _make_ps("scout", team_color="red", final_shots=20)
         # awareness=0: 0 ≥ roll=50 → False → no reaction
-        defender = _make_ps("commander", team_color="blue", player_awareness=0, final_shots=20)
+        defender = _make_ps(
+            "commander", team_color="blue", player_awareness=0, final_shots=20
+        )
         defender.shields = 3
 
         pending_rx = []
         with patch("random.randint", return_value=50):
             sim._resolve_tag_attempts(
                 [{"attacker": attacker, "defender": defender}],
-                second=10.0, pending_reactions=pending_rx,
+                second=10.0,
+                pending_reactions=pending_rx,
             )
 
         assert len(pending_rx) == 0
@@ -1734,14 +2263,17 @@ class TestBatchSimulatorReactions:
         sim = BatchSimulator()
         # Scout vs heavy (shields=3): not downed; heavy cooldown=1.0s
         attacker = _make_ps("scout", team_color="red", final_shots=20)
-        defender = _make_ps("heavy", team_color="blue", player_awareness=100, final_shots=20)
+        defender = _make_ps(
+            "heavy", team_color="blue", player_awareness=100, final_shots=20
+        )
         defender.shields = 3
 
         pending_rx = []
         with patch("random.randint", return_value=50):
             sim._resolve_tag_attempts(
                 [{"attacker": attacker, "defender": defender}],
-                second=10.0, pending_reactions=pending_rx,
+                second=10.0,
+                pending_reactions=pending_rx,
             )
 
         assert len(pending_rx) == 1
@@ -1751,15 +2283,21 @@ class TestBatchSimulatorReactions:
         sim = BatchSimulator()
         attacker = _make_ps("scout", team_color="red", final_shots=20)
         # last_downed_time=5 at second=10: 10-5=5 < 8 → inactive → no reaction
-        defender = _make_ps("commander", team_color="blue", player_awareness=100, final_shots=20,
-                            last_downed_time=5)
+        defender = _make_ps(
+            "commander",
+            team_color="blue",
+            player_awareness=100,
+            final_shots=20,
+            last_downed_time=5,
+        )
         defender.shields = 3
 
         pending_rx = []
         with patch("random.randint", return_value=50):
             sim._resolve_tag_attempts(
                 [{"attacker": attacker, "defender": defender}],
-                second=10.0, pending_reactions=pending_rx,
+                second=10.0,
+                pending_reactions=pending_rx,
             )
 
         assert len(pending_rx) == 0
@@ -1768,7 +2306,9 @@ class TestBatchSimulatorReactions:
         sim = BatchSimulator()
         attacker = _make_ps("scout", team_color="red", final_shots=20)
         # survival=100 → hit_chance=20; roll=99 → miss; then awareness=100 ≥ 99 → reaction
-        defender = _make_ps("commander", team_color="blue", player_awareness=100, final_shots=20)
+        defender = _make_ps(
+            "commander", team_color="blue", player_awareness=100, final_shots=20
+        )
         defender.shields = 3
         defender.survival = 100
 
@@ -1776,7 +2316,273 @@ class TestBatchSimulatorReactions:
         with patch("random.randint", return_value=99):
             sim._resolve_tag_attempts(
                 [{"attacker": attacker, "defender": defender}],
-                second=10.0, pending_reactions=pending_rx,
+                second=10.0,
+                pending_reactions=pending_rx,
             )
 
         assert len(pending_rx) == 1
+
+
+# ---------------------------------------------------------------------------
+# MAP-01 — cell grid position and map-aware spawn
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestMap01CellGrid:
+    """Tests for MAP-01: player cell coordinates and map-aware spawning."""
+
+    def _make_arena_map(self, name="TestArena"):
+        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig
+
+        arena_map = ArenaMap.objects.create(name=name, img_width=200, img_height=200)
+        # 4×4 grid: 0=wall, 1=floor, 2=red zone, 3=blue zone
+        zone_data = [
+            [0, 2, 1, 0],
+            [2, 2, 1, 3],
+            [0, 1, 1, 3],
+            [0, 1, 3, 3],
+        ]
+        MapZoneConfig.objects.create(
+            arena_map=arena_map, zone_size=50, zone_data=zone_data, confirmed=True
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="red", x_px=25, y_px=75
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="blue", x_px=175, y_px=125
+        )
+        return arena_map
+
+    def test_gameround_has_arena_map_and_zone_size_fields(self):
+        team, _ = make_team_with_slots("MapFld")
+        gr = GameRound.objects.create(
+            team_red=team,
+            team_blue=team,
+            round_number=1,
+        )
+        assert gr.arena_map is None
+        assert gr.zone_size is None
+
+    def test_playerroundstate_has_cell_fields(self):
+        team, players = make_team_with_slots("CellFld")
+        gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
+        state = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=players["scout"],
+            team_color="red",
+            role="scout",
+            final_lives=10,
+            final_shots=10,
+        )
+        assert state.cell_row is None
+        assert state.cell_col is None
+
+    def test_current_zone_property_reads_zone_fallback(self):
+        team, players = make_team_with_slots("ZoneProp")
+        gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
+        state = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=players["scout"],
+            team_color="blue",
+            role="scout",
+            zone_fallback=2,
+            final_lives=10,
+            final_shots=10,
+        )
+        assert state.current_zone == 2
+
+    def test_no_map_simulation_uses_default_zones(self):
+        """Without a map, red starts zone 0 and blue starts zone 2."""
+        team_red, _ = make_team_with_slots("NoMapR")
+        team_blue, _ = make_team_with_slots("NoMapB")
+        sim = ResourceBasedSimulator()
+        game_round = sim.simulate_single_round_detailed(team_red, team_blue)
+
+        assert game_round.arena_map is None
+        assert game_round.zone_size is None
+
+        red_states = game_round.player_states.filter(team_color="red")
+        blue_states = game_round.player_states.filter(team_color="blue")
+        assert all(s.cell_row is None for s in red_states)
+        assert all(s.cell_row is None for s in blue_states)
+
+    def test_map_simulation_stores_arena_map_and_zone_size(self):
+        """GameRound stores the arena_map FK and zone_size after map simulation."""
+        team_red, _ = make_team_with_slots("MapR")
+        team_blue, _ = make_team_with_slots("MapB")
+        arena_map = self._make_arena_map("StoreMapTest")
+        sim = ResourceBasedSimulator()
+        game_round = sim.simulate_single_round_detailed(
+            team_red, team_blue, arena_map=arena_map
+        )
+
+        assert game_round.arena_map == arena_map
+        assert game_round.zone_size == 50
+
+    def test_map_simulation_sets_cell_coordinates(self):
+        """Players get cell coordinates derived from base pixel positions."""
+        team_red, _ = make_team_with_slots("CellR")
+        team_blue, _ = make_team_with_slots("CellB")
+        arena_map = self._make_arena_map("CellCoordTest")
+        sim = ResourceBasedSimulator()
+        game_round = sim.simulate_single_round_detailed(
+            team_red, team_blue, arena_map=arena_map
+        )
+
+        # Red base: x_px=25, y_px=75, zone_size=50 → col=0, row=1
+        red_states = list(game_round.player_states.filter(team_color="red"))
+        for s in red_states:
+            assert s.cell_row == 1
+            assert s.cell_col == 0
+
+        # Blue base: x_px=175, y_px=125, zone_size=50 → col=3, row=2
+        blue_states = list(game_round.player_states.filter(team_color="blue"))
+        for s in blue_states:
+            assert s.cell_row == 2
+            assert s.cell_col == 3
+
+    def test_zone_from_cell_maps_correctly(self):
+        """_zone_from_cell converts core zone_data types to PlayerRoundState zone indices."""
+        sim = ResourceBasedSimulator()
+        zone_data = [
+            [0, 2, 1, 0],
+            [2, 2, 1, 3],
+            [0, 1, 1, 3],
+            [0, 1, 3, 3],
+        ]
+        assert sim._zone_from_cell(zone_data, 0, 1) == 0  # cell_type=2 → red zone
+        assert sim._zone_from_cell(zone_data, 1, 3) == 2  # cell_type=3 → blue zone
+        assert sim._zone_from_cell(zone_data, 1, 2) == 1  # cell_type=1 → neutral zone
+        assert (
+            sim._zone_from_cell(zone_data, 0, 0) == 1
+        )  # cell_type=0 (wall) → neutral zone
+
+    def test_resolve_map_data_returns_spawn_cells_and_zone_data(self):
+        """_resolve_map_data returns zone_size, spawn cells and zone_data from a configured map."""
+        arena_map = self._make_arena_map("ResolveTest")
+        sim = ResourceBasedSimulator()
+        zone_size, spawn_cells, zone_grid = sim._resolve_map_data(arena_map)
+
+        assert zone_size == 50
+        assert spawn_cells["red"] == (1, 0)  # y_px=75 // 50 = 1, x_px=25 // 50 = 0
+        assert spawn_cells["blue"] == (2, 3)  # y_px=125 // 50 = 2, x_px=175 // 50 = 3
+        assert zone_grid[1][0] == 2  # red zone cell value
+
+    def test_resolve_map_data_unwraps_dict_zone_data(self):
+        """_resolve_map_data unwraps the production dict format {"zones": [...], "blocked_edges": {...}}."""
+        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig
+
+        arena_map = ArenaMap.objects.create(
+            name="DictFmt", img_width=100, img_height=100
+        )
+        raw_zones = [[2, 1], [1, 3]]
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=50,
+            zone_data={"zones": raw_zones, "blocked_edges": {}},
+            confirmed=True,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="red", x_px=25, y_px=25
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="blue", x_px=75, y_px=75
+        )
+
+        _, _, zone_grid = ResourceBasedSimulator._resolve_map_data(arena_map)
+        assert zone_grid == raw_zones  # dict was unwrapped to the raw 2D list
+
+    def test_initial_spawn_zone_derived_from_zone_data(self):
+        """Players' starting zone_fallback is derived from zone_data at spawn — tested at init."""
+        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig
+
+        # Simplified 2×2 map: red zone (2) top-left, blue zone (3) bottom-right
+        arena_map = ArenaMap.objects.create(
+            name="ZoneDeriveTest", img_width=100, img_height=100
+        )
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=50,
+            zone_data=[[2, 1], [1, 3]],
+            confirmed=True,
+        )
+        # Red base at top-left cell (0,0), Blue base at bottom-right cell (1,1)
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="red", x_px=25, y_px=25
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="blue", x_px=75, y_px=75
+        )
+
+        team_red, _ = make_team_with_slots("ZoneR")
+        team_blue, _ = make_team_with_slots("ZoneB")
+        gr = GameRound.objects.create(
+            team_red=team_red,
+            team_blue=team_blue,
+            round_number=1,
+            arena_map=arena_map,
+            zone_size=50,
+        )
+        sim = ResourceBasedSimulator()
+        _, spawn_cells, zone_data = sim._resolve_map_data(arena_map)
+
+        red_states = sim._initialize_players(
+            gr, team_red, "red", spawn_cells, zone_data
+        )
+        blue_states = sim._initialize_players(
+            gr, team_blue, "blue", spawn_cells, zone_data
+        )
+
+        # Red spawn cell (0,0): zone_data[0][0]=2 → zone 0 (red_zone)
+        for s in red_states:
+            assert s.zone_fallback == 0
+            assert s.current_zone == 0
+
+        # Blue spawn cell (1,1): zone_data[1][1]=3 → zone 2 (blue_zone)
+        for s in blue_states:
+            assert s.zone_fallback == 2
+            assert s.current_zone == 2
+
+    def test_missing_red_base_config_raises(self):
+        """Simulating with a map that has no red base raises ValueError."""
+        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig
+
+        arena_map = ArenaMap.objects.create(
+            name="NoRedBase", img_width=100, img_height=100
+        )
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=50,
+            zone_data=[[1, 1], [1, 1]],
+            confirmed=True,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="blue", x_px=75, y_px=75
+        )
+
+        team_red, _ = make_team_with_slots("ErrR")
+        team_blue, _ = make_team_with_slots("ErrB")
+        sim = ResourceBasedSimulator()
+        with pytest.raises(ValueError, match="red base"):
+            sim.simulate_single_round_detailed(team_red, team_blue, arena_map=arena_map)
+
+    def test_no_confirmed_config_raises(self):
+        """Simulating with a map that has no confirmed zone config raises ValueError."""
+        from core.models import ArenaMap, MapZoneConfig
+
+        arena_map = ArenaMap.objects.create(
+            name="NoConfig", img_width=100, img_height=100
+        )
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=50,
+            zone_data=[[1, 1], [1, 1]],
+            confirmed=False,
+        )
+
+        team_red, _ = make_team_with_slots("NoCfgR")
+        team_blue, _ = make_team_with_slots("NoCfgB")
+        sim = ResourceBasedSimulator()
+        with pytest.raises(ValueError, match="confirmed zone configuration"):
+            sim.simulate_single_round_detailed(team_red, team_blue, arena_map=arena_map)

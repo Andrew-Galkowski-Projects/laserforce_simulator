@@ -6,6 +6,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 
 - **Team & player management** — Create teams with 6 role-based player slots (Commander, Heavy, Scout, Medic, Ammo, + one duplicate)
 - **Match simulation** — 2-round matches, 15 minutes each, simulated in 2-second ticks with role-specific action weights
+- **Arena map support** — Optionally attach a confirmed arena map to any match or round; players spawn at their team's base cell and `PlayerRoundState` records the cell grid position (`cell_row`, `cell_col`)
 - **Role mechanics** — Shields, lives, missiles/nukes, resupply, special charges, and zone movement all modeled
 - **Game event log** — Every tag, miss, missile, resupply, and base capture is recorded with timestamps and points
 - **MVP scoring** — Role-specific formulas weighted toward each role's primary contribution

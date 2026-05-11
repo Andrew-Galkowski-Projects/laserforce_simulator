@@ -45,7 +45,16 @@
       "Bash(python -c \"import matches.api_views; import inspect; print\\(inspect.getsource\\(matches.api_views\\)\\)\")",
       "Bash(black teams/serializers.py teams/api_views.py matches/serializers.py matches/api_views.py matches/tests/test_apis.py matches/tests/test_serializers.py teams/tests/test_serializers.py --check)",
       "Bash(black matches/tests/test_serializers.py)",
-      "Bash(mypy teams/serializers.py teams/api_views.py matches/serializers.py matches/api_views.py)"
+      "Bash(mypy teams/serializers.py teams/api_views.py matches/serializers.py matches/api_views.py)",
+      "Bash(git add *)",
+      "Bash(git restore *)",
+      "Bash(python -m pytest matches/tests/simulation_tests.py -q --tb=short)",
+      "Bash(black --check ../laserforce_simulator/matches/forms.py ../laserforce_simulator/matches/models.py ../laserforce_simulator/matches/simulation.py ../laserforce_simulator/matches/tests/simulation_tests.py ../laserforce_simulator/matches/views.py)",
+      "Bash(black ../laserforce_simulator/matches/forms.py ../laserforce_simulator/matches/models.py ../laserforce_simulator/matches/simulation.py ../laserforce_simulator/matches/tests/simulation_tests.py ../laserforce_simulator/matches/views.py)",
+      "Bash(mypy matches/forms.py matches/models.py matches/simulation.py matches/tests/simulation_tests.py matches/views.py)",
+      "Bash(python -m pytest matches/tests/simulation_tests.py matches/tests/views_tests.py matches/tests/test_apis.py matches/tests/test_serializers.py -q)",
+      "Bash(black matches/simulation.py matches/tests/simulation_tests.py)",
+      "Bash(mypy matches/simulation.py matches/tests/simulation_tests.py)"
     ]
   }
 }

@@ -6,9 +6,9 @@ Handles match creation, game round simulation, event logging, and result views.
 
 **`Match`**: Two `GameRound`s; teams swap colors between rounds. Winner is determined by rounds won, then total cumulative points. A 10,000-point bonus is awarded for eliminating the opposing team entirely.
 
-**`GameRound`**: One of the two rounds in a match; represents a 15-minute simulation.
+**`GameRound`**: One of the two rounds in a match; represents a 15-minute simulation. Has an optional `arena_map` FK (`core.ArenaMap`, null/blank, SET_NULL) and `zone_size` IntegerField (null/blank). Both are set by the simulator when a map is provided; null means the round ran with the 3-zone fallback.
 
-**`PlayerRoundState`**: Starting resources are role-dependent (lives, shots, special, missiles). Tracks final resource counts, tags, misses, zone visits, MVP score. `was_eliminated_at` stores seconds into the round (901 = survived the full round). The MVP formula is role-specific and weighted heavily toward that role's primary contribution. Also tracks `follow_up_shots`, `reaction_shots`, and uptime breakdown fields (`seconds_active`, `seconds_not_targetable`, `seconds_reset_window`).
+**`PlayerRoundState`**: Starting resources are role-dependent (lives, shots, special, missiles). Tracks final resource counts, tags, misses, zone visits, MVP score. `was_eliminated_at` stores seconds into the round (901 = survived the full round). The MVP formula is role-specific and weighted heavily toward that role's primary contribution. Also tracks `follow_up_shots`, `reaction_shots`, and uptime breakdown fields (`seconds_active`, `seconds_not_targetable`, `seconds_reset_window`). Cell position: `cell_row` and `cell_col` (IntegerFields, null/blank) store the player's spawn position when a map is used. `zone_fallback` (was `current_zone` DB column) stores the zone index (0=red, 1=neutral, 2=blue); `current_zone` is now a `@property` that reads `zone_fallback` — in MAP-02+ it will derive from live cell coordinates.
 
 **`GameEvent`**: Every action (tag, missile, special, miss, resupply, base capture, elimination) is logged here with an actor, optional target, timestamp in seconds, points, and a JSON `metadata` field.
 
@@ -17,6 +17,15 @@ Handles match creation, game round simulation, event logging, and result views.
 Two simulators live in `matches/simulation.py`:
 
 **`ResourceBasedSimulator`** — DB-backed, writes `GameEvent` rows and `PlayerRoundState`. Runs in 2-second ticks. Used for full match simulation with event replay. Prefer this when you need the game event log or a persisted round. All match and single-round creation views use this exclusively — the legacy `SimpleMatchSimulator` has been removed.
+
+Public methods accept an optional keyword-only `arena_map` parameter:
+- `simulate_match(team_red, team_blue, match_type="friendly", *, arena_map=None)`
+- `simulate_single_round_detailed(team_red, team_blue, *, arena_map=None)`
+- `simulate_detailed_round(team_red, team_blue, match=None, round_number=1, *, arena_map=None)`
+
+Static helpers:
+- `_resolve_map_data(arena_map)` — validates the map's confirmed zone config, unwraps `zone_data` dict format (`{"zones": [...], "blocked_edges": {...}}` in production; raw list in older/test data), batches base config queries. Returns `(zone_size, spawn_cells, zone_grid)` or `(None, {}, None)` when `arena_map` is `None`. Raises `ValueError` if the map has no confirmed config or a missing base.
+- `_zone_from_cell(zone_data, row, col)` — maps cell type to zone index: 2→0 (red), 3→2 (blue), else 1 (neutral).
 
 **`BatchSimulator`** — pure in-memory, no DB writes. Uses `PlayerState` dataclasses (see `matches/sim_helpers/player_state.py`). Runs in **0.5-second ticks** to model real shot speeds. Used by `score_averages` and batch win-rate analysis. A round typically runs in ~25 ms vs ~9 s for the DB-backed simulator.
 
@@ -110,9 +119,15 @@ Read-only DRF endpoints registered under `/api/`:
 /api/rounds/<id>/events/             → paginated GameEvent list for that round
 ```
 
+## Forms (`matches/forms.py`)
+
+**`MatchSetupForm`** and **`SingleRoundSetupForm`** both include an optional `arena_map` `ModelChoiceField` (empty_label="No map (3-zone fallback)"). The queryset is populated in `__init__` via `_maps_with_confirmed_config()` which returns only `ArenaMap` objects with at least one confirmed `MapZoneConfig`. Rounds without a map fall back to the existing 3-zone logic.
+
+The corresponding views (`create_match`, `create_single_round`) extract `arena_map = form.cleaned_data.get("arena_map")`, pass it keyword-only to the simulator, and catch `ValueError` (missing config or missing base) to display a form error without crashing.
+
 ## Templates
 
-All templates live in `laserforce_simulator/templates/`. The `game_round_events.html` template has event filtering and color-coded display; `game_round_detail.html` shows per-player stats and MVP scores.
+All templates live in `laserforce_simulator/templates/`. The `game_round_events.html` template has event filtering and color-coded display; `game_round_detail.html` shows per-player stats and MVP scores. Both `enhanced_match_setup.html` and `enhanced_single_round_setup.html` include the optional `arena_map` picker field.
 
 ## Tests
 
