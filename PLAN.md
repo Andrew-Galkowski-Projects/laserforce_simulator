@@ -68,6 +68,7 @@ Adjacent non-wall cells are always traversable regardless of elevation differenc
 
 **Acceptance:** A player starting at their home base will reach the enemy base in a realistic number of ticks
 proportional to map size. Players never move into wall cells.
+- completed: `matches/sim_helpers/pathfinding.py` added with `build_movement_adjacency` (4-connected, walls excluded) and `astar_next_step` (A* with Manhattan heuristic). Elevation stub added (`_elevation_at`, `_movement_cost`: uphill=1.5×, flat/downhill=1.0). `ResourceBasedSimulator` and `BatchSimulator` both use cell-aware movement when a map is provided via new `_build_movement_ctx`, `_move_to_cell`, and `_choose_goal_cell` methods. Default goal: enemy base cell; lives-critical → allied medic's cell; shots-critical → allied ammo's cell. Each movement step writes a `GameEvent(event_type="movement")` with `cell_row`/`cell_col` in metadata for replay. `PlayerState` dataclass gains `cell_row`/`cell_col` fields. Fallback to old 3-zone `_change_zone` when no map is assigned (MAP-06 compat). `simulation_tests.py` split into 6 focused files under `matches/tests/`; `TestMap02CellMovement` added with 7 tests covering adjacency, A*, movement events, fallback, and player-reaches-base. All 189 tests pass.
 
 ### MAP-03 · Line-of-sight targeting
 Replace the current "same zone = can tag" rule with LOS-based targeting. 
@@ -438,6 +439,7 @@ these must come from environment variables so secrets are never in the repositor
 ### DEPLOY-02 · Production WSGI server (gunicorn)
 Django's built-in `runserver` is a dev-only server — it is single-threaded and not safe for production.
 `gunicorn` is the standard production server for Django.
+
 
 - Add `gunicorn` to `requirements.txt`
 - Confirm the app starts with: `gunicorn laserforce_simulator.wsgi:application --bind 0.0.0.0:8000`

@@ -4,6 +4,11 @@ import threading
 import uuid
 from django.db import transaction
 from .models import GameEvent, Match, GameRound, PlayerRoundState
+from .sim_helpers.pathfinding import (
+    build_movement_adjacency,
+    astar_next_step,
+    choose_goal_cell,
+)
 from .sim_helpers.weights import (
     _get_medic_weights,
     _get_ammo_weights,
@@ -110,8 +115,11 @@ class ResourceBasedSimulator:
         )
 
         # Simulate the round (pass game_round so events can be recorded)
+        movement_ctx = ResourceBasedSimulator._build_movement_ctx(
+            zone_data, spawn_cells
+        )
         round_result = self._simulate_round_combat(
-            game_round, red_players, blue_players
+            game_round, red_players, blue_players, movement_ctx=movement_ctx
         )
 
         # Update game round with results
@@ -181,6 +189,16 @@ class ResourceBasedSimulator:
             return 2  # blue_zone
         return 1  # neutral_zone (floor or wall treated as neutral)
 
+    @staticmethod
+    def _build_movement_ctx(zone_data, spawn_cells):
+        if zone_data is None:
+            return None
+        return {
+            "adj": build_movement_adjacency(zone_data),
+            "spawn_cells": spawn_cells,
+            "zone_data": zone_data,
+        }
+
     def _initialize_players(self, game_round, team, team_color, spawn_cells, zone_data):
         """Initialize player states from the team's active slot assignments."""
         player_states = []
@@ -219,7 +237,9 @@ class ResourceBasedSimulator:
 
         return player_states
 
-    def _simulate_round_combat(self, game_round, red_players, blue_players):
+    def _simulate_round_combat(
+        self, game_round, red_players, blue_players, movement_ctx=None
+    ):
         """Simulate combat between two teams"""
         round_duration = 15 * 60  # 15 minutes in seconds
 
@@ -483,6 +503,7 @@ class ResourceBasedSimulator:
                 pending_followups,
                 pending_reactions,
                 last_shot_times,
+                movement_ctx=movement_ctx,
             )
 
             # Check for team eliminations
@@ -573,6 +594,7 @@ class ResourceBasedSimulator:
         pending_followups=None,
         pending_reactions=None,
         last_shot_times=None,
+        movement_ctx=None,
     ):
         """Simulate a single combat exchange between teams"""
         # Get alive players
@@ -585,7 +607,6 @@ class ResourceBasedSimulator:
             if p.final_lives > 0 and p.was_eliminated_at > second
         ]
         all_alive = red_alive + blue_alive
-        result = ", ".join(str(obj) for obj in all_alive)
 
         # new logic instead of random
         """
@@ -613,7 +634,15 @@ class ResourceBasedSimulator:
         random.shuffle(all_alive)
         plans = []
         for player in all_alive:
-            plans.extend(self._plan_action(player, all_alive, second, last_shot_times))
+            plans.extend(
+                self._plan_action(
+                    player,
+                    all_alive,
+                    second,
+                    last_shot_times,
+                    movement_ctx=movement_ctx,
+                )
+            )
 
         zone_map = {0: "red_zone", 1: "neutral_zone", 2: "blue_zone"}
 
@@ -673,7 +702,12 @@ class ResourceBasedSimulator:
                 # use existing helper
                 self._attempt_resupply(actor, plan.get("target"), second)
             elif ptype == "change_zone":
-                self._change_zone(actor, second, towards=plan.get("zone"))
+                goal_cell = plan.get("goal_cell")
+                ctx = plan.get("movement_ctx")
+                if goal_cell is not None and ctx is not None:
+                    self._move_to_cell(actor, second, goal_cell, ctx)
+                else:
+                    self._change_zone(actor, second, towards=plan.get("zone"))
             elif ptype == "hide":
                 actor.is_hiding = True
                 actor.save()
@@ -710,10 +744,12 @@ class ResourceBasedSimulator:
             return 1.0
         return 0.5
 
-    def _plan_action(self, player, all_alive, second, last_shot_times=None):
+    def _plan_action(
+        self, player, all_alive, second, last_shot_times=None, movement_ctx=None
+    ):
         """Return a list of planned actions (dict) for the player at this tick without applying changes.
 
-        Each plan dict may have keys: type, actor, target, zone, base_id
+        Each plan dict may have keys: type, actor, target, zone, base_id, goal_cell, movement_ctx
         """
         if last_shot_times is None:
             last_shot_times = {}
@@ -814,8 +850,19 @@ class ResourceBasedSimulator:
                     tgt = random.choice(potential_targets)
                     plans.append({"type": "missile", "actor": player, "target": tgt})
         elif choice == "change_zone":
-            zone = self._choose_zone_change(player, all_alive, second)
-            plans.append({"type": "change_zone", "actor": player, "zone": zone})
+            if movement_ctx is not None and player.cell_row is not None:
+                goal = self._choose_goal_cell(player, all_alive, movement_ctx)
+                plans.append(
+                    {
+                        "type": "change_zone",
+                        "actor": player,
+                        "goal_cell": goal,
+                        "movement_ctx": movement_ctx,
+                    }
+                )
+            else:
+                zone = self._choose_zone_change(player, all_alive, second)
+                plans.append({"type": "change_zone", "actor": player, "zone": zone})
         elif choice == "capture_base":
             # simple heuristic
             base_id = (
@@ -1133,6 +1180,41 @@ class ResourceBasedSimulator:
                 pending_followups.append(
                     (second + cooldown, o["attacker"], o["defender"], 1)
                 )
+
+    def _choose_goal_cell(self, player, all_alive, movement_ctx):
+        return choose_goal_cell(player, all_alive, movement_ctx["spawn_cells"])
+
+    def _move_to_cell(self, player, second, goal_cell, movement_ctx):
+        if goal_cell is None:
+            return
+        adj = movement_ctx["adj"]
+        zone_data = movement_ctx["zone_data"]
+        current = (player.cell_row, player.cell_col)
+        if current == goal_cell or current not in adj:
+            return
+        next_cell = astar_next_step(current, goal_cell, adj)
+        if next_cell == current:
+            return
+        player.cell_row, player.cell_col = next_cell
+        player.zone_fallback = self._zone_from_cell(
+            zone_data, next_cell[0], next_cell[1]
+        )
+        player.save(update_fields=["cell_row", "cell_col", "zone_fallback"])
+        GameEvent.objects.create(
+            game_round=player.game_round,
+            timestamp=second,
+            event_type="movement",
+            actor=player.player,
+            target=None,
+            points_awarded=0,
+            description=f"{player.player.name} moves to cell ({next_cell[0]}, {next_cell[1]})",
+            metadata={
+                "actor_role": player.role,
+                "cell_row": next_cell[0],
+                "cell_col": next_cell[1],
+                "new_zone": player.current_zone,
+            },
+        )
 
     def _change_zone(self, player, second, towards=None):
         if player.zone_fallback == 1:
@@ -2083,11 +2165,12 @@ class BatchSimulator:
     # 0.5-second tick: models real shot speeds (regular=2/s, heavy=1/s).
     TICK = 0.5
 
-    def run(self, team_red, team_blue, n=100):
+    def run(self, team_red, team_blue, n=100, *, arena_map=None):
         """Simulate n rounds and return aggregate statistics.
 
         Loads team rosters from the DB once upfront, then runs n purely
-        in-memory rounds and aggregates the outcomes.
+        in-memory rounds and aggregates the outcomes. Pass arena_map to enable
+        cell-aware pathfinding movement; omit for the 3-zone fallback.
         """
         from .sim_helpers.player_state import PlayerState
         from teams.models import ROLE_STATS as _ROLE_STATS
@@ -2096,6 +2179,15 @@ class BatchSimulator:
         red_roster = list(team_red.active_roster)
         blue_roster = list(team_blue.active_roster)
 
+        movement_ctx = None
+        if arena_map is not None:
+            _, spawn_cells, zone_data = ResourceBasedSimulator._resolve_map_data(
+                arena_map
+            )
+            movement_ctx = ResourceBasedSimulator._build_movement_ctx(
+                zone_data, spawn_cells
+            )
+
         red_wins = blue_wins = ties = 0
         red_scores, blue_scores = [], []
         red_survivors_list, blue_survivors_list = [], []
@@ -2103,7 +2195,9 @@ class BatchSimulator:
 
         for _ in range(n):
             seed_state = random.getstate()
-            result, _, _ = self._simulate_round(red_roster, blue_roster)
+            result, _, _ = self._simulate_round(
+                red_roster, blue_roster, movement_ctx=movement_ctx
+            )
             rp, bp = result["red_points"], result["blue_points"]
             round_seeds.append((rp - bp, seed_state))
             if rp > bp:
@@ -2148,11 +2242,28 @@ class BatchSimulator:
     # Internal round simulation
     # ------------------------------------------------------------------ #
 
-    def _make_players(self, roster, team_color):
+    def _make_players(
+        self,
+        roster,
+        team_color: str,
+        spawn_cells: dict[str, tuple[int, int]] | None = None,
+        zone_data: list[list[int]] | None = None,
+    ):
         from .sim_helpers.player_state import PlayerState
         from teams.models import ROLE_STATS as _ROLE_STATS
 
-        starting_zone = 0 if team_color == "red" else 2
+        spawn = spawn_cells.get(team_color) if spawn_cells else None
+        cell_row = spawn[0] if spawn else None
+        cell_col = spawn[1] if spawn else None
+
+        default_zone = 0 if team_color == "red" else 2
+        if spawn is not None and zone_data is not None:
+            starting_zone = ResourceBasedSimulator._zone_from_cell(
+                zone_data, cell_row, cell_col
+            )
+        else:
+            starting_zone = default_zone
+
         scout_index = 0
         players = []
         for role, player_model in roster:
@@ -2179,18 +2290,28 @@ class BatchSimulator:
                 final_missiles=resources["missiles"],
                 shields=_ROLE_STATS[role]["shield"],
                 current_zone=starting_zone,
+                cell_row=cell_row,
+                cell_col=cell_col,
             )
             players.append(state)
         return players
 
-    def _simulate_round(self, red_roster, blue_roster, event_log=None):
+    def _simulate_round(
+        self, red_roster, blue_roster, event_log=None, movement_ctx=None
+    ):
         """Returns (result_dict, red_players, blue_players).
 
         When event_log is a list it is populated with event dicts suitable for
         _flush_to_db, enabling exact replay and DB persistence.
         """
-        red_players = self._make_players(red_roster, "red")
-        blue_players = self._make_players(blue_roster, "blue")
+        spawn_cells = movement_ctx["spawn_cells"] if movement_ctx else None
+        zone_data = movement_ctx["zone_data"] if movement_ctx else None
+        red_players = self._make_players(
+            red_roster, "red", spawn_cells=spawn_cells, zone_data=zone_data
+        )
+        blue_players = self._make_players(
+            blue_roster, "blue", spawn_cells=spawn_cells, zone_data=zone_data
+        )
 
         pending_missiles = []  # (complete_time, attacker, defender)
         pending_nukes = []  # (complete_time, player_state)
@@ -2429,7 +2550,11 @@ class BatchSimulator:
 
             plans = []
             for player in all_alive:
-                plans.extend(self._plan_action(player, all_alive, second))
+                plans.extend(
+                    self._plan_action(
+                        player, all_alive, second, movement_ctx=movement_ctx
+                    )
+                )
 
             tag_attempts = []
             for plan in plans:
@@ -2438,7 +2563,12 @@ class BatchSimulator:
                 if ptype in ("resupply_ammo", "resupply_lives"):
                     self._attempt_resupply(actor, plan["target"], second, event_log)
                 elif ptype == "change_zone":
-                    self._change_zone(actor, plan.get("zone"))
+                    goal_cell = plan.get("goal_cell")
+                    ctx = plan.get("movement_ctx")
+                    if goal_cell is not None and ctx is not None:
+                        self._move_player_in_memory(actor, goal_cell, ctx)
+                    else:
+                        self._change_zone(actor, plan.get("zone"))
                 elif ptype == "hide":
                     actor.is_hiding = True
                 elif ptype == "capture_base":
@@ -2495,7 +2625,7 @@ class BatchSimulator:
     # Action planning — reuses weight functions from weights.py
     # ------------------------------------------------------------------ #
 
-    def _plan_action(self, player, all_alive, second):
+    def _plan_action(self, player, all_alive, second, movement_ctx=None):
         action_to_weight_index = self._ACTION_IDX
         choices = self._CHOICES
         weights = [70, 30, 0, 0, 0, 0, 0]
@@ -2568,8 +2698,19 @@ class BatchSimulator:
                         }
                     )
         elif choice == "change_zone":
-            zone = self._choose_zone_change(player, all_alive)
-            plans.append({"type": "change_zone", "actor": player, "zone": zone})
+            if movement_ctx is not None and player.cell_row is not None:
+                goal = self._choose_goal_cell_batch(player, all_alive, movement_ctx)
+                plans.append(
+                    {
+                        "type": "change_zone",
+                        "actor": player,
+                        "goal_cell": goal,
+                        "movement_ctx": movement_ctx,
+                    }
+                )
+            else:
+                zone = self._choose_zone_change(player, all_alive)
+                plans.append({"type": "change_zone", "actor": player, "zone": zone})
         elif choice == "capture_base":
             base_id = (
                 15
@@ -2671,6 +2812,25 @@ class BatchSimulator:
             if ammos and player.current_zone != ammos[0].current_zone:
                 return ammos[0].current_zone
         return None
+
+    def _choose_goal_cell_batch(self, player, all_alive, movement_ctx):
+        return choose_goal_cell(player, all_alive, movement_ctx["spawn_cells"])
+
+    def _move_player_in_memory(self, player, goal_cell, movement_ctx):
+        if goal_cell is None or player.cell_row is None:
+            return
+        adj = movement_ctx["adj"]
+        zone_data = movement_ctx["zone_data"]
+        current = (player.cell_row, player.cell_col)
+        if current == goal_cell or current not in adj:
+            return
+        next_cell = astar_next_step(current, goal_cell, adj)
+        if next_cell == current:
+            return
+        player.cell_row, player.cell_col = next_cell
+        player.current_zone = ResourceBasedSimulator._zone_from_cell(
+            zone_data, next_cell[0], next_cell[1]
+        )
 
     # ------------------------------------------------------------------ #
     # Action resolution (no DB writes)

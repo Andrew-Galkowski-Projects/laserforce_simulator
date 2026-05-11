@@ -17,12 +17,12 @@ _SPECIAL_COST = {"commander": 20, "scout": 10, "medic": 10, "ammo": 15}
 class PlayerState:
     """In-memory player state for batch simulation. No DB writes ever occur."""
 
-    tag_id: str        # unique string e.g. "red_commander", "blue_scout_1"
+    tag_id: str  # unique string e.g. "red_commander", "blue_scout_1"
     name: str
     team_color: str
     role: str
-    accuracy: int      # 0-100, from Player model
-    survival: int      # 0-100, from Player model
+    accuracy: int  # 0-100, from Player model
+    survival: int  # 0-100, from Player model
 
     starting_lives: int
     starting_shots: int
@@ -34,6 +34,8 @@ class PlayerState:
     player_awareness: int = 50  # 0-100, from Player model
 
     current_zone: int = 0
+    cell_row: Optional[int] = None
+    cell_col: Optional[int] = None
     was_eliminated_at: int = 901
     last_downed_time: Optional[int] = None
     special_active_until: int = 0
@@ -110,9 +112,17 @@ class PlayerState:
     def can_capture_base_in_current_zone(self) -> bool:
         if self.current_zone == 1 and not self.neutral_base_destroyed:
             return True
-        if self.team_color == "red" and self.current_zone == 2 and not self.opposing_base_destroyed:
+        if (
+            self.team_color == "red"
+            and self.current_zone == 2
+            and not self.opposing_base_destroyed
+        ):
             return True
-        if self.team_color == "blue" and self.current_zone == 0 and not self.opposing_base_destroyed:
+        if (
+            self.team_color == "blue"
+            and self.current_zone == 0
+            and not self.opposing_base_destroyed
+        ):
             return True
         return False
 

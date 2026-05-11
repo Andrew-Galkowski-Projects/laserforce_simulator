@@ -1,6 +1,6 @@
 # matches/sim_helpers
 
-Helper modules used exclusively by `BatchSimulator` in `matches/simulation.py`. No Django ORM or DB access — everything is pure Python.
+Helper modules used by both `ResourceBasedSimulator` and `BatchSimulator` in `matches/simulation.py`. No Django ORM or DB access — everything is pure Python.
 
 ## player_state.py
 
@@ -52,7 +52,7 @@ The caller (`BatchSimulator._plan_action`) passes a baseline of `[70, 30, 0, 0, 
 
 - Before subtracting from a weight, check that the result can't go below zero given the baseline.
 - The not-active blocks zero out `tag_player` and/or `resupply_ally` and redistribute to `hide`/`change_zone`. They must not push any other weight negative.
-- Tests in `matches/tests/simulation_tests.py::TestWeightFunctions` cover representative state combinations for each role. Run these whenever changing weights.
+- Tests in `matches/tests/test_weights.py::TestWeightFunctions` cover representative state combinations for each role. Run these whenever changing weights.
 
 ### Role baselines (after role-adjustment, before situational modifiers)
 
@@ -67,3 +67,27 @@ The caller (`BatchSimulator._plan_action`) passes a baseline of `[70, 30, 0, 0, 
 ### Known pre-existing test failure
 
 `test_medic_can_capture_base_prioritises_capture` expects `capture_base == 50` but the medic weight code only adds +5. This predates current work and is not a regression.
+
+---
+
+## pathfinding.py
+
+Cell-aware movement helpers shared by both simulators. Used when `arena_map` is provided; 3-zone fallback is used otherwise.
+
+### Functions
+
+**`build_movement_adjacency(zone_data)`** — builds a 4-connected adjacency dict `{cell: [neighbor, ...]}` for every non-wall cell (value ≠ 0). Wall cells are excluded entirely so `cell in adj` doubles as a passability check.
+
+**`astar_next_step(start, goal, adj, elevation_data=None)`** — returns the immediate next cell on the shortest path from `start` to `goal` using A* with a Manhattan heuristic. Returns `start` unchanged when `start == goal`, no path exists, or `start` is not in the adjacency graph.
+
+**`choose_goal_cell(player, all_alive, spawn_cells)`** — duck-typed goal selector shared by both simulators. Default goal: enemy base cell from `spawn_cells`. Overrides: allied medic's cell when lives ≤ 30% of max (non-medic only); allied ammo's cell when shots ≤ 30% of max.
+
+### Elevation model (stub)
+
+**`_elevation_at(r, c, elevation_data=None)`** — returns 0 for all cells until MAP-09 populates real elevation data.
+
+**`_movement_cost(from_cell, to_cell, elevation_data=None)`** — uphill costs 1.5×, flat/downhill costs 1.0. Wired into the A* edge cost.
+
+### Tests
+
+`matches/tests/test_map.py::TestMap02CellMovement` covers adjacency building, A* correctness, elevation stubs, movement cost, goal-cell selection, and the batch-simulator code path.
