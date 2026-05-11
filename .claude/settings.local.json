@@ -54,7 +54,10 @@
       "Bash(mypy matches/forms.py matches/models.py matches/simulation.py matches/tests/simulation_tests.py matches/views.py)",
       "Bash(python -m pytest matches/tests/simulation_tests.py matches/tests/views_tests.py matches/tests/test_apis.py matches/tests/test_serializers.py -q)",
       "Bash(black matches/simulation.py matches/tests/simulation_tests.py)",
-      "Bash(mypy matches/simulation.py matches/tests/simulation_tests.py)"
+      "Bash(mypy matches/simulation.py matches/tests/simulation_tests.py)",
+      "Bash(python -m black --version)",
+      "Bash(python -m black . --diff --quiet)",
+      "Bash(python -m black .)"
     ]
   }
 }
