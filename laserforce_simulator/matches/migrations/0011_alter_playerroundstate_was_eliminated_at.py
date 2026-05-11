@@ -6,13 +6,13 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('matches', '0010_remove_playerroundstate_was_eliminated_and_more'),
+        ("matches", "0010_remove_playerroundstate_was_eliminated_and_more"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='playerroundstate',
-            name='was_eliminated_at',
+            model_name="playerroundstate",
+            name="was_eliminated_at",
             field=models.IntegerField(default=901),
         ),
     ]

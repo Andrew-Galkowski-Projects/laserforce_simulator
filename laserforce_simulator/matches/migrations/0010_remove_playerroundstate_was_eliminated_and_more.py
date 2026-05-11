@@ -6,17 +6,17 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('matches', '0009_playerroundstate_is_hiding'),
+        ("matches", "0009_playerroundstate_is_hiding"),
     ]
 
     operations = [
         migrations.RemoveField(
-            model_name='playerroundstate',
-            name='was_eliminated',
+            model_name="playerroundstate",
+            name="was_eliminated",
         ),
         migrations.AddField(
-            model_name='playerroundstate',
-            name='was_eliminated_at',
+            model_name="playerroundstate",
+            name="was_eliminated_at",
             field=models.IntegerField(default=900),
         ),
     ]

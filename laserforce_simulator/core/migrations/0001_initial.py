@@ -8,31 +8,53 @@ class Migration(migrations.Migration):
 
     initial = True
 
-    dependencies = [
-    ]
+    dependencies = []
 
     operations = [
         migrations.CreateModel(
-            name='ArenaMap',
+            name="ArenaMap",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('name', models.CharField(max_length=100)),
-                ('image', models.ImageField(upload_to='maps/')),
-                ('is_default', models.BooleanField(default=False)),
-                ('img_width', models.IntegerField(null=True)),
-                ('img_height', models.IntegerField(null=True)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("name", models.CharField(max_length=100)),
+                ("image", models.ImageField(upload_to="maps/")),
+                ("is_default", models.BooleanField(default=False)),
+                ("img_width", models.IntegerField(null=True)),
+                ("img_height", models.IntegerField(null=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
             ],
         ),
         migrations.CreateModel(
-            name='MapZoneConfig',
+            name="MapZoneConfig",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('zone_size', models.IntegerField()),
-                ('zone_data', models.JSONField()),
-                ('confirmed', models.BooleanField(default=False)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('arena_map', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='zone_configs', to='core.arenamap')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("zone_size", models.IntegerField()),
+                ("zone_data", models.JSONField()),
+                ("confirmed", models.BooleanField(default=False)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "arena_map",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="zone_configs",
+                        to="core.arenamap",
+                    ),
+                ),
             ],
         ),
     ]

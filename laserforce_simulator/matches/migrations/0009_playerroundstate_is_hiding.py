@@ -6,13 +6,13 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('matches', '0008_rename_missiles_fired_playerroundstate_missiles_landed'),
+        ("matches", "0008_rename_missiles_fired_playerroundstate_missiles_landed"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='playerroundstate',
-            name='is_hiding',
+            model_name="playerroundstate",
+            name="is_hiding",
             field=models.BooleanField(default=False),
         ),
     ]
