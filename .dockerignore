@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+*.env.local
+.venv
+.claude/
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+*.coverage
+coverage.xml
+.mypy_cache
+*.sqlite3
+media/
+staticfiles/
+node_modules/

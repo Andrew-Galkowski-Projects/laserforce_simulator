@@ -24,8 +24,11 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - `djangorestframework` for the read-only JSON API at `/api/`
 - `psycopg2-binary` for PostgreSQL support in production (CI runs tests against `postgres:16`)
 - pytest + pytest-django for testing, with Codecov coverage reporting
+- Docker (multi-stage `python:3.11-slim`); `docker-compose.yml` for local dev with PostgreSQL; deployed to Fly.io via CI on push to `main`
 
 ## Getting Started
+
+### Option A — local Python
 
 ```bash
 # Clone the repo
@@ -53,6 +56,21 @@ python manage.py runserver
 ```
 
 Then open http://127.0.0.1:8000/ in your browser.
+
+### Option B — Docker Compose (production-like stack)
+
+```bash
+# Copy and configure environment
+cp laserforce_simulator/.env.example laserforce_simulator/.env
+# Edit .env and set a real SECRET_KEY
+
+# Start app + PostgreSQL
+docker compose up
+
+# (first run) migrations are applied automatically by entrypoint.sh
+```
+
+Then open http://localhost:8000/ in your browser.
 
 ## Running Tests
 

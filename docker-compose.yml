@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:16
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: laserforce
+      POSTGRES_USER: laserforce
+      POSTGRES_PASSWORD: laserforce
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U laserforce"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    env_file:
+      - laserforce_simulator/.env
+    environment:
+      DATABASE_URL: postgres://laserforce:laserforce@db:5432/laserforce
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
