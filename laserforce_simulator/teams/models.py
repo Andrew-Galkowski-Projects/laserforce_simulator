@@ -128,7 +128,9 @@ class Team(models.Model):
                 # Get player name from filled list
                 for p, _, sname in filled:
                     if p.pk == player_id:
-                        errors.append(f"{p.name} cannot fill multiple slots: {slot_names}")
+                        errors.append(
+                            f"{p.name} cannot fill multiple slots: {slot_names}"
+                        )
                         break
 
         # Only check role distribution if there are no duplicate players
@@ -143,7 +145,9 @@ class Team(models.Model):
                     errors.append(f"{role_display} appears {count} times (max is 2)")
                 elif count == 2 and role != "scout":
                     role_display = dict(ROLE_CHOICES)[role]
-                    errors.append(f"{role_display} cannot appear twice (Scout-only rule)")
+                    errors.append(
+                        f"{role_display} cannot appear twice (Scout-only rule)"
+                    )
 
         # Check that all players belong to team
         for player, role, slot_name in filled:
@@ -158,7 +162,6 @@ class Player(models.Model):
     name = models.CharField(max_length=100)
     # TODO: Apply stat boost when player is assigned to a preferred role
     preferred_roles = models.JSONField(default=list, blank=True)
-
 
     # Base stats that affect gameplay
     player_awareness = models.IntegerField(default=50)  # 0-100

@@ -7,87 +7,192 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('matches', '0002_rename_lives_playerroundstate_starting_lives_and_more'),
-        ('teams', '0004_player_offensive_synergy_player_defensive_synergy_and_more'),
+        ("matches", "0002_rename_lives_playerroundstate_starting_lives_and_more"),
+        ("teams", "0004_player_offensive_synergy_player_defensive_synergy_and_more"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='gameround',
-            name='event_log',
-            field=models.TextField(blank=True, help_text='Log of events during the round'),
+            model_name="gameround",
+            name="event_log",
+            field=models.TextField(
+                blank=True, help_text="Log of events during the round"
+            ),
         ),
         migrations.AddField(
-            model_name='playerroundstate',
-            name='is_active',
+            model_name="playerroundstate",
+            name="is_active",
             field=models.BooleanField(default=True),
         ),
         migrations.AddField(
-            model_name='playerroundstate',
-            name='is_taggable',
+            model_name="playerroundstate",
+            name="is_taggable",
             field=models.BooleanField(default=True),
         ),
         migrations.AddField(
-            model_name='playerroundstate',
-            name='last_tagged_id',
-            field=models.IntegerField(choices=[(0, 'None'), (1, 'Red Commander'), (2, 'Red Heavy'), (3, 'Red Scout 1'), (4, 'Red Scout 2'), (5, 'Red Ammo'), (6, 'Red Medic'), (7, 'Blue Commander'), (8, 'Blue Heavy'), (9, 'Blue Scout 1'), (10, 'Blue Scout 2'), (11, 'Blue Ammo'), (12, 'Blue Medic'), (13, 'Red Base'), (14, 'Blue Base'), (15, 'Neutral Base')], default=0),
+            model_name="playerroundstate",
+            name="last_tagged_id",
+            field=models.IntegerField(
+                choices=[
+                    (0, "None"),
+                    (1, "Red Commander"),
+                    (2, "Red Heavy"),
+                    (3, "Red Scout 1"),
+                    (4, "Red Scout 2"),
+                    (5, "Red Ammo"),
+                    (6, "Red Medic"),
+                    (7, "Blue Commander"),
+                    (8, "Blue Heavy"),
+                    (9, "Blue Scout 1"),
+                    (10, "Blue Scout 2"),
+                    (11, "Blue Ammo"),
+                    (12, "Blue Medic"),
+                    (13, "Red Base"),
+                    (14, "Blue Base"),
+                    (15, "Neutral Base"),
+                ],
+                default=0,
+            ),
         ),
         migrations.AddField(
-            model_name='playerroundstate',
-            name='neutral_base_destroyed',
+            model_name="playerroundstate",
+            name="neutral_base_destroyed",
             field=models.BooleanField(default=False),
         ),
         migrations.AddField(
-            model_name='playerroundstate',
-            name='opposing_base_destroyed',
+            model_name="playerroundstate",
+            name="opposing_base_destroyed",
             field=models.BooleanField(default=False),
         ),
         migrations.AddField(
-            model_name='playerroundstate',
-            name='role',
-            field=models.CharField(default='commander', max_length=50),
+            model_name="playerroundstate",
+            name="role",
+            field=models.CharField(default="commander", max_length=50),
         ),
         migrations.AddField(
-            model_name='playerroundstate',
-            name='shields',
+            model_name="playerroundstate",
+            name="shields",
             field=models.IntegerField(default=1),
         ),
         migrations.AddField(
-            model_name='playerroundstate',
-            name='shots_missed',
+            model_name="playerroundstate",
+            name="shots_missed",
             field=models.IntegerField(default=0),
         ),
         migrations.AddField(
-            model_name='playerroundstate',
-            name='specific_tags',
-            field=models.JSONField(default=dict, help_text='Details of tags made: {target_id: count, ...}'),
+            model_name="playerroundstate",
+            name="specific_tags",
+            field=models.JSONField(
+                default=dict, help_text="Details of tags made: {target_id: count, ...}"
+            ),
         ),
         migrations.AddField(
-            model_name='playerroundstate',
-            name='team_color',
-            field=models.CharField(choices=[('red', 'Red'), ('blue', 'Blue')], default='red', max_length=10),
+            model_name="playerroundstate",
+            name="team_color",
+            field=models.CharField(
+                choices=[("red", "Red"), ("blue", "Blue")], default="red", max_length=10
+            ),
         ),
         migrations.AddField(
-            model_name='playerroundstate',
-            name='times_missiled',
+            model_name="playerroundstate",
+            name="times_missiled",
             field=models.IntegerField(default=0),
         ),
         migrations.CreateModel(
-            name='GameEvent',
+            name="GameEvent",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('timestamp', models.IntegerField(help_text='Seconds into the round (0-900 for 15 min game)')),
-                ('event_type', models.CharField(choices=[('tag', 'Tag'), ('missile', 'Missile Hit'), ('special', 'Special Activated'), ('miss', 'Missed Shot'), ('resupply_ammo', 'Ammo Resupply'), ('resupply_lives', 'Medic Heal'), ('elimination', 'Player Eliminated'), ('team_elimination', 'Team Eliminated')], max_length=20)),
-                ('points_awarded', models.IntegerField(default=0, help_text='Points awarded for this event')),
-                ('description', models.TextField(blank=True, help_text='Human-readable description of the event')),
-                ('metadata', models.JSONField(blank=True, default=dict, help_text='Additional data: lives_remaining, shots_used, special_type, etc.')),
-                ('actor', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='events_as_actor', to='teams.player')),
-                ('game_round', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='events', to='matches.gameround')),
-                ('target', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='events_as_target', to='teams.player')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "timestamp",
+                    models.IntegerField(
+                        help_text="Seconds into the round (0-900 for 15 min game)"
+                    ),
+                ),
+                (
+                    "event_type",
+                    models.CharField(
+                        choices=[
+                            ("tag", "Tag"),
+                            ("missile", "Missile Hit"),
+                            ("special", "Special Activated"),
+                            ("miss", "Missed Shot"),
+                            ("resupply_ammo", "Ammo Resupply"),
+                            ("resupply_lives", "Medic Heal"),
+                            ("elimination", "Player Eliminated"),
+                            ("team_elimination", "Team Eliminated"),
+                        ],
+                        max_length=20,
+                    ),
+                ),
+                (
+                    "points_awarded",
+                    models.IntegerField(
+                        default=0, help_text="Points awarded for this event"
+                    ),
+                ),
+                (
+                    "description",
+                    models.TextField(
+                        blank=True, help_text="Human-readable description of the event"
+                    ),
+                ),
+                (
+                    "metadata",
+                    models.JSONField(
+                        blank=True,
+                        default=dict,
+                        help_text="Additional data: lives_remaining, shots_used, special_type, etc.",
+                    ),
+                ),
+                (
+                    "actor",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="events_as_actor",
+                        to="teams.player",
+                    ),
+                ),
+                (
+                    "game_round",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="events",
+                        to="matches.gameround",
+                    ),
+                ),
+                (
+                    "target",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="events_as_target",
+                        to="teams.player",
+                    ),
+                ),
             ],
             options={
-                'ordering': ['timestamp'],
-                'indexes': [models.Index(fields=['game_round', 'timestamp'], name='matches_gam_game_ro_2b4413_idx'), models.Index(fields=['event_type'], name='matches_gam_event_t_e81be2_idx'), models.Index(fields=['actor'], name='matches_gam_actor_i_20c99a_idx')],
+                "ordering": ["timestamp"],
+                "indexes": [
+                    models.Index(
+                        fields=["game_round", "timestamp"],
+                        name="matches_gam_game_ro_2b4413_idx",
+                    ),
+                    models.Index(
+                        fields=["event_type"], name="matches_gam_event_t_e81be2_idx"
+                    ),
+                    models.Index(
+                        fields=["actor"], name="matches_gam_actor_i_20c99a_idx"
+                    ),
+                ],
             },
         ),
     ]
