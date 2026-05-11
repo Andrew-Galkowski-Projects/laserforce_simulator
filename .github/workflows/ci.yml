@@ -57,3 +57,62 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           name: coverage-report
           path: ./laserforce_simulator/coverage.xml # Updated path
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: laserforce_smoke
+          POSTGRES_USER: laserforce
+          POSTGRES_PASSWORD: laserforce
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t laserforce-simulator .
+
+      - name: Smoke test
+        run: |
+          docker run -d --name smoke \
+            --network host \
+            -e SECRET_KEY=smoke-test-only-not-real \
+            -e DEBUG=True \
+            -e ALLOWED_HOSTS=localhost,127.0.0.1 \
+            -e DATABASE_URL=postgres://laserforce:laserforce@localhost:5432/laserforce_smoke \
+            laserforce-simulator
+          trap 'docker stop smoke 2>/dev/null || true' EXIT
+          ready=false
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null http://localhost:8000/; then
+              echo "App is ready after ${i}s"
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != "true" ]; then
+            echo "App did not become ready after 30s"
+            docker logs smoke
+            exit 1
+          fi
+          curl -f -L http://localhost:8000/
+
+      - name: Set up flyctl
+        if: github.ref == 'refs/heads/main' && secrets.FLY_API_TOKEN != ''
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy to Fly.io
+        if: github.ref == 'refs/heads/main' && secrets.FLY_API_TOKEN != ''
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only

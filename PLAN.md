@@ -475,39 +475,13 @@ doesn't support multiple concurrent connections well. PostgreSQL is the producti
 - completed: `psycopg2-binary>=2.9` added to requirements.txt; `dj-database-url` already present from DEPLOY-01; CI `test` job now spins up `postgres:16` service with health checks and sets `DATABASE_URL` env var; CI `pull_request` trigger widened to fire on all PRs (not just to main/master). All 212 tests pass against PostgreSQL in CI.
 
 ### DEPLOY-06 · Dockerfile
-
-```dockerfile
-# Stage 1 — install dependencies
-FROM python:3.11-slim AS builder
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Stage 2 — runtime image
-FROM python:3.11-slim
-WORKDIR /app
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
-COPY . .
-RUN python laserforce_simulator/manage.py collectstatic --noinput
-EXPOSE 8000
-CMD ["gunicorn", "laserforce_simulator.wsgi:application", "--bind", "0.0.0.0:8000", "--chdir", "laserforce_simulator"]
-```
+- completed: Multi-stage build (`python:3.11-slim` builder + runtime). Builder installs system deps (`libglib2.0-0`, `libgomp1` for opencv-python-headless) and Python packages. Runtime copies site-packages from builder, runs `collectstatic` at build time with a dummy SECRET_KEY. `entrypoint.sh` runs `manage.py migrate` at container start before gunicorn. `fly.toml` added for Fly.io (app=laserforce-simulator, region=ord). `.dockerignore` excludes .git, .env, __pycache__, media/, staticfiles/. `staticfiles/` added to .gitignore.
 
 ### DEPLOY-07 · docker-compose.yml for local development
-`docker-compose` lets you run the full production-like stack locally with one command: app + PostgreSQL together.
-
-- `app` service: builds from the Dockerfile, mounts source code for live edits, loads `.env`
-- `db` service: official `postgres:16` image, data volume so the database survives container restarts
-- `docker compose up` replaces `python manage.py runserver` for a production-like local environment
-- `docker compose run app python manage.py migrate` runs migrations inside the container
+- completed: `docker-compose.yml` added at repo root. `db` service is `postgres:16` with a health check and a persistent named volume. `app` service builds from Dockerfile, mounts source code for live edits, loads `laserforce_simulator/.env`, and overrides `DATABASE_URL` to point to the compose `db` service. Run with `docker compose up`; run migrations with `docker compose run app python laserforce_simulator/manage.py migrate`.
 
 ### DEPLOY-08 · CI pipeline update
-Update `.github/workflows/ci.yml` to build the Docker image and auto-deploy to Fly.io on every push to `main`.
-
-- Add a `docker build` step after the existing `pytest` step
-- Add a smoke test: start the container, hit `/`, expect HTTP 200
-- Add a Fly.io deploy step using the official `fly-apps/deploy` GitHub Action
+- completed: New `docker` job added to `ci.yml` (runs after `test`). Spins up a postgres:16 service, builds the Docker image, then runs a smoke test (container started with `--network host`; polls `GET /` up to 30 times; expects HTTP 200). Deploy steps (`setup-flyctl` + `flyctl deploy --remote-only`) are gated on `github.ref == refs/heads/main && secrets.FLY_API_TOKEN != ''` — silently skipped until the secret is added to GitHub Actions secrets.
 
 ---
 

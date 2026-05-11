@@ -1,0 +1,22 @@
+app = "laserforce-simulator"
+primary_region = "ord"
+
+[build]
+
+[env]
+  PORT = "8000"
+  # Set secrets via: flyctl secrets set SECRET_KEY=... ALLOWED_HOSTS=laserforce-simulator.fly.dev DATABASE_URL=...
+  # R2 storage: flyctl secrets set R2_BUCKET_NAME=... R2_ACCESS_KEY=... R2_SECRET_KEY=... R2_ENDPOINT_URL=...
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1
