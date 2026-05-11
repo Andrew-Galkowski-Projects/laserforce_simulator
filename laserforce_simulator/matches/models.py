@@ -119,6 +119,15 @@ class GameRound(models.Model):
     )
     round_number = models.IntegerField()  # 1 or 2 for matches, 1 for single rounds
 
+    arena_map = models.ForeignKey(
+        "core.ArenaMap",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="game_rounds",
+    )
+    zone_size = models.IntegerField(null=True, blank=True)
+
     # add a log of events that happened during the round with associated timestamps
     event_log = models.TextField(blank=True, help_text="Log of events during the round")
 
@@ -261,9 +270,19 @@ class PlayerRoundState(models.Model):
     opposing_base_destroyed = models.BooleanField(
         default=False
     )  # true if player has destroyed the opposing base
-    current_zone = models.IntegerField(
-        choices=zones.choices, default=zones.red_zone
-    )  # currently a number between 0 and 2
+    zone_fallback = models.IntegerField(choices=zones.choices, default=zones.red_zone)
+    cell_row = models.IntegerField(null=True, blank=True)
+    cell_col = models.IntegerField(null=True, blank=True)
+
+    @property
+    def current_zone(self) -> int:
+        """Zone index (0=red, 1=neutral, 2=blue) derived from zone_fallback.
+
+        In MAP-02+ this will derive from cell_row/cell_col and the map's zone_data.
+        For now the simulator keeps zone_fallback in sync so this is a direct read.
+        """
+        return self.zone_fallback
+
     special_active_until = models.IntegerField(
         null=True, blank=True, default=0
     )  # Timestamp until which special is active
@@ -290,9 +309,15 @@ class PlayerRoundState(models.Model):
     missiles_landed = models.IntegerField(default=0)
     times_missiled = models.IntegerField(default=0)
     resupplies_given = models.IntegerField(default=0)
-    times_tagged_in_reset_window = models.IntegerField(default=0)  # tagged while taggable but not yet active (4-7s after downed)
-    follow_up_shots = models.IntegerField(default=0)  # shots fired as follow-ups on high-shield targets
-    reaction_shots = models.IntegerField(default=0)  # shots fired as reactions to being tagged/missed
+    times_tagged_in_reset_window = models.IntegerField(
+        default=0
+    )  # tagged while taggable but not yet active (4-7s after downed)
+    follow_up_shots = models.IntegerField(
+        default=0
+    )  # shots fired as follow-ups on high-shield targets
+    reaction_shots = models.IntegerField(
+        default=0
+    )  # shots fired as reactions to being tagged/missed
 
     # detailed performance stats
     specific_tags = models.JSONField(
@@ -344,7 +369,9 @@ class PlayerRoundState(models.Model):
 
     @property
     def lives_lost(self):
-        return max(0, self.times_tagged + self.times_missiled * 2 + self.lives_lost_to_nukes)
+        return max(
+            0, self.times_tagged + self.times_missiled * 2 + self.lives_lost_to_nukes
+        )
 
     @property
     def max_shots(self):
@@ -529,6 +556,7 @@ class PlayerRoundState(models.Model):
         (the -1 elimination penalty does not apply to Medics)
         """
         import math
+
         score = 0.0
 
         # Accuracy bonus
@@ -551,7 +579,9 @@ class PlayerRoundState(models.Model):
         # Elimination bonus — charged when this player's team wiped the opponent
         gr = self.game_round
         team_eliminated_opponent = (
-            gr.blue_team_eliminated if self.team_color == "red" else gr.red_team_eliminated
+            gr.blue_team_eliminated
+            if self.team_color == "red"
+            else gr.red_team_eliminated
         )
         if team_eliminated_opponent:
             time_remaining = 900 - gr.eliminated_at
@@ -688,4 +718,3 @@ class GameEvent(models.Model):
             "team_elimination": "☠️",
         }
         return icons.get(self.event_type, "•")
-

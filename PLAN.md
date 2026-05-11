@@ -54,6 +54,8 @@ and `cell_col` integers. Keep `current_zone` as a derived property (red/neutral/
 for backwards compatibility with existing views.
 
 Existing match/round data is disposable — no data migration required.
+- completed
+- note: `current_zone` DB column renamed to `zone_fallback` via `RenameField` migration (0020); `current_zone` re-exposed as `@property` that reads `zone_fallback` directly (MAP-02+ will derive it from live cell coordinates). Map is optional at match creation — UI lets user pick a confirmed map or run with the 3-zone fallback. `MapZoneConfig.zone_data` dual format handled: production stores `{"zones": [...], "blocked_edges": {...}}` dict; simulator unwraps with `isinstance(raw, dict)` check. `_resolve_map_data()` and `_zone_from_cell()` added as `@staticmethod` on `ResourceBasedSimulator`. Base configs queried in a single batched DB call (not per-color loop).
 
 ### MAP-02 · Cell-aware zone movement
 Replace `_change_zone()` with a pathfinding step that moves a player to an adjacent passable cell each tick. 

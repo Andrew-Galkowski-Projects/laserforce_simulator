@@ -28,6 +28,19 @@
         </div>
     </div>
 
+    <div class="row">
+        <div class="col-md-6">
+            <div class="mb-3">
+                <label for="{{ form.arena_map.id_for_label }}" class="form-label">Arena Map</label>
+                {{ form.arena_map }}
+                {% if form.arena_map.errors %}
+                <div class="text-danger">{{ form.arena_map.errors }}</div>
+                {% endif %}
+                <div class="form-text">Only maps with a confirmed zone config appear here</div>
+            </div>
+        </div>
+    </div>
+
     <button type="submit" class="btn btn-success">Simulate Round</button>
     <a href="{% url 'match_list' %}" class="btn btn-secondary">Cancel</a>
 </form>
