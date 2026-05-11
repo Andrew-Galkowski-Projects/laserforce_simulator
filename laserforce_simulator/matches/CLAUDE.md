@@ -8,9 +8,9 @@ Handles match creation, game round simulation, event logging, and result views.
 
 **`GameRound`**: One of the two rounds in a match; represents a 15-minute simulation. Has an optional `arena_map` FK (`core.ArenaMap`, null/blank, SET_NULL) and `zone_size` IntegerField (null/blank). Both are set by the simulator when a map is provided; null means the round ran with the 3-zone fallback.
 
-**`PlayerRoundState`**: Starting resources are role-dependent (lives, shots, special, missiles). Tracks final resource counts, tags, misses, zone visits, MVP score. `was_eliminated_at` stores seconds into the round (901 = survived the full round). The MVP formula is role-specific and weighted heavily toward that role's primary contribution. Also tracks `follow_up_shots`, `reaction_shots`, and uptime breakdown fields (`seconds_active`, `seconds_not_targetable`, `seconds_reset_window`). Cell position: `cell_row` and `cell_col` (IntegerFields, null/blank) store the player's spawn position when a map is used. `zone_fallback` (was `current_zone` DB column) stores the zone index (0=red, 1=neutral, 2=blue); `current_zone` is now a `@property` that reads `zone_fallback` — in MAP-02+ it will derive from live cell coordinates.
+**`PlayerRoundState`**: Starting resources are role-dependent (lives, shots, special, missiles). Tracks final resource counts, tags, misses, zone visits, MVP score. `was_eliminated_at` stores seconds into the round (901 = survived the full round). The MVP formula is role-specific and weighted heavily toward that role's primary contribution. Also tracks `follow_up_shots`, `reaction_shots`, and uptime breakdown fields (`seconds_active`, `seconds_not_targetable`, `seconds_reset_window`). Cell position: `cell_row` and `cell_col` (IntegerFields, null/blank) store the player's current cell when a map is used — updated each tick after movement. `zone_fallback` (was `current_zone` DB column) stores the zone index (0=red, 1=neutral, 2=blue); `current_zone` is a `@property` that reads `zone_fallback`. The simulator updates `zone_fallback` after each cell move via `player.save(update_fields=["cell_row", "cell_col", "zone_fallback"])`.
 
-**`GameEvent`**: Every action (tag, missile, special, miss, resupply, base capture, elimination) is logged here with an actor, optional target, timestamp in seconds, points, and a JSON `metadata` field.
+**`GameEvent`**: Every action (tag, missile, special, miss, resupply, base capture, elimination, movement) is logged here with an actor, optional target, timestamp in seconds, points, and a JSON `metadata` field. Movement events (`event_type="movement"`) carry `cell_row`, `cell_col`, `new_zone`, and `actor_role` in `metadata` for replay.
 
 ## Simulation Engine (`matches/simulation.py`)
 
@@ -26,8 +26,17 @@ Public methods accept an optional keyword-only `arena_map` parameter:
 Static helpers:
 - `_resolve_map_data(arena_map)` — validates the map's confirmed zone config, unwraps `zone_data` dict format (`{"zones": [...], "blocked_edges": {...}}` in production; raw list in older/test data), batches base config queries. Returns `(zone_size, spawn_cells, zone_grid)` or `(None, {}, None)` when `arena_map` is `None`. Raises `ValueError` if the map has no confirmed config or a missing base.
 - `_zone_from_cell(zone_data, row, col)` — maps cell type to zone index: 2→0 (red), 3→2 (blue), else 1 (neutral).
+- `_build_movement_ctx(zone_data, spawn_cells)` — returns `{"adj": ..., "spawn_cells": ..., "zone_data": ...}` or `None` when `zone_data` is `None`. The `adj` dict is built once per round by `build_movement_adjacency` and passed through the call chain to avoid rebuilding every tick.
+
+Cell-aware movement (MAP-02, active when `movement_ctx is not None` and `player.cell_row is not None`):
+- `_choose_goal_cell(player, all_alive, movement_ctx)` — delegates to `pathfinding.choose_goal_cell`; default goal is the enemy base cell; overridden by medic's or ammo's cell when resources are critical.
+- `_move_to_cell(player, second, goal_cell, movement_ctx)` — calls `astar_next_step`, updates `cell_row`/`cell_col`/`zone_fallback`, saves to DB, writes a `GameEvent(event_type="movement")`.
+
+When no map is assigned (`movement_ctx is None`), the old `_change_zone` 3-zone fallback is used (MAP-06 compatibility).
 
 **`BatchSimulator`** — pure in-memory, no DB writes. Uses `PlayerState` dataclasses (see `matches/sim_helpers/player_state.py`). Runs in **0.5-second ticks** to model real shot speeds. Used by `score_averages` and batch win-rate analysis. A round typically runs in ~25 ms vs ~9 s for the DB-backed simulator.
+
+`run(team_red, team_blue, n=100, *, arena_map=None)` — accepts an optional `arena_map` keyword argument; when provided, resolves map data, builds a `movement_ctx`, and passes it to `_simulate_round` so players navigate by A* rather than the 3-zone fallback. `_make_players` accepts `spawn_cells` and `zone_data` kwargs and initialises `cell_row`/`cell_col` from the team's spawn cell. `_move_player_in_memory` mirrors `_move_to_cell` but updates `player.current_zone` directly without any DB writes.
 
 Both simulators follow the same per-tick loop:
 
@@ -132,7 +141,12 @@ All templates live in `laserforce_simulator/templates/`. The `game_round_events.
 ## Tests
 
 `matches/tests/` package:
-- `simulation_tests.py` — simulator logic, game events, round outcomes
+- `test_sim_core.py` — `ResourceBasedSimulator` mechanics, game events, round outcomes
+- `test_batch_sim.py` — `BatchSimulator` mechanics
+- `test_map.py` — map-related tests: adjacency building, A* pathfinding, movement events, cell-aware movement, batch-sim with map (`TestMap02CellMovement`)
+- `test_roster.py` — team/player roster validation
+- `test_mvp.py` — MVP scoring formulas
+- `test_weights.py` — weight function unit tests (`TestWeightFunctions`)
 - `views_tests.py` — view behaviour: URL routing, form submissions, context keys
 - `test_serializers.py` — unit tests for all five serializer classes (including list vs detail split)
 - `test_apis.py` — HTTP-level tests for `/api/matches/` and `/api/rounds/` (including `/events/` action)
@@ -140,5 +154,5 @@ All templates live in `laserforce_simulator/templates/`. The `game_round_events.
 
 ## Sub-packages
 
-- [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules (`PlayerState`, action weights)
+- [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules (`PlayerState`, action weights, pathfinding)
 - [`management/commands/CLAUDE.md`](management/commands/CLAUDE.md) — `score_averages` and `game_analysis` management commands

@@ -6,7 +6,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 
 - **Team & player management** — Create teams with 6 role-based player slots (Commander, Heavy, Scout, Medic, Ammo, + one duplicate)
 - **Match simulation** — 2-round matches, 15 minutes each, simulated in 2-second ticks with role-specific action weights
-- **Arena map support** — Optionally attach a confirmed arena map to any match or round; players spawn at their team's base cell and `PlayerRoundState` records the cell grid position (`cell_row`, `cell_col`)
+- **Arena map support** — Optionally attach a confirmed arena map to any match or round; players navigate via A* pathfinding on the real cell grid toward the enemy base (or a critical ally), recording a `movement` event per step for replay
 - **Role mechanics** — Shields, lives, missiles/nukes, resupply, special charges, and zone movement all modeled
 - **Game event log** — Every tag, miss, missile, resupply, and base capture is recorded with timestamps and points
 - **MVP scoring** — Role-specific formulas weighted toward each role's primary contribution
@@ -83,10 +83,10 @@ cd laserforce_simulator
 pytest
 
 # Run a single test file
-pytest matches/tests/simulation_tests.py
+pytest matches/tests/test_sim_core.py
 
 # Run a specific test class or method
-pytest matches/tests/simulation_tests.py::ClassName::method_name
+pytest matches/tests/test_map.py::TestMap02CellMovement
 ```
 
 ## Project Structure
@@ -94,8 +94,10 @@ pytest matches/tests/simulation_tests.py::ClassName::method_name
 ```
 laserforce_simulator/
 ├── matches/               # Match, GameRound, PlayerRoundState, GameEvent models
-│   ├── simulation.py      # ResourceBasedSimulator — main simulation engine
+│   ├── simulation.py      # ResourceBasedSimulator + BatchSimulator
 │   ├── sim_helpers/
+│   │   ├── pathfinding.py # A* movement, adjacency building, goal selection
+│   │   ├── player_state.py# In-memory PlayerState dataclass for BatchSimulator
 │   │   └── weights.py     # Per-role action weight functions
 │   ├── models.py
 │   ├── views.py

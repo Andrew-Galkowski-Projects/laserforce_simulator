@@ -34,6 +34,8 @@ class PlayerState:
     player_awareness: int = 50  # 0-100, from Player model
 
     current_zone: int = 0
+    cell_row: Optional[int] = None
+    cell_col: Optional[int] = None
     was_eliminated_at: int = 901
     last_downed_time: Optional[int] = None
     special_active_until: int = 0
