@@ -18,7 +18,13 @@ class TestMap01CellGrid:
     """Tests for MAP-01: player cell coordinates and map-aware spawning."""
 
     def _make_arena_map(self, name="TestArena"):
-        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig, SightLineConfig
+        from core.models import (
+            ArenaMap,
+            BaseSightLineConfig,
+            MapZoneConfig,
+            MapBaseConfig,
+            SightLineConfig,
+        )
         from core.map_processing import compute_sight_lines
 
         arena_map = ArenaMap.objects.create(name=name, img_width=200, img_height=200)
@@ -42,6 +48,12 @@ class TestMap01CellGrid:
             arena_map=arena_map,
             zone_size=50,
             sight_data=compute_sight_lines(zone_data),
+        )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="red", zone_size=50, visible_cells=[]
+        )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="blue", zone_size=50, visible_cells=[]
         )
         return arena_map
 
@@ -145,22 +157,27 @@ class TestMap01CellGrid:
         )  # cell_type=0 (wall) → neutral zone
 
     def test_resolve_map_data_returns_spawn_cells_and_zone_data(self):
-        """_resolve_map_data returns zone_size, spawn cells, zone_data, and sight_data."""
+        """_resolve_map_data returns zone_size, spawn cells, zone_data, sight_data, and base_sight_data."""
         arena_map = self._make_arena_map("ResolveTest")
         sim = ResourceBasedSimulator()
-        zone_size, spawn_cells, zone_grid, sight_data = sim._resolve_map_data(arena_map)
+        zone_size, spawn_cells, zone_grid, sight_data, base_sight_data = sim._resolve_map_data(arena_map)
 
         assert zone_size == 50
         assert spawn_cells["red"] == (1, 0)
         assert spawn_cells["blue"] == (2, 3)
         assert zone_grid[1][0] == 2  # red zone cell value
-        assert isinstance(
-            sight_data, dict
-        )  # sight_data returned as frozenset-valued dict
+        assert isinstance(sight_data, dict)  # sight_data returned as frozenset-valued dict
+        assert isinstance(base_sight_data, dict)
 
     def test_resolve_map_data_unwraps_dict_zone_data(self):
         """_resolve_map_data unwraps the production dict format {"zones": [...], "blocked_edges": {...}}."""
-        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig, SightLineConfig
+        from core.models import (
+            ArenaMap,
+            BaseSightLineConfig,
+            MapZoneConfig,
+            MapBaseConfig,
+            SightLineConfig,
+        )
         from core.map_processing import compute_sight_lines
 
         arena_map = ArenaMap.objects.create(
@@ -184,13 +201,22 @@ class TestMap01CellGrid:
             zone_size=50,
             sight_data=compute_sight_lines(raw_zones),
         )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="red", zone_size=50, visible_cells=[]
+        )
 
-        _, _, zone_grid, _ = ResourceBasedSimulator._resolve_map_data(arena_map)
+        _, _, zone_grid, _, _ = ResourceBasedSimulator._resolve_map_data(arena_map)
         assert zone_grid == raw_zones
 
     def test_initial_spawn_zone_derived_from_zone_data(self):
         """Players' starting zone_fallback is derived from zone_data at spawn — tested at init."""
-        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig, SightLineConfig
+        from core.models import (
+            ArenaMap,
+            BaseSightLineConfig,
+            MapZoneConfig,
+            MapBaseConfig,
+            SightLineConfig,
+        )
         from core.map_processing import compute_sight_lines
 
         zone_layout = [[2, 1], [1, 3]]
@@ -214,6 +240,9 @@ class TestMap01CellGrid:
             zone_size=50,
             sight_data=compute_sight_lines(zone_layout),
         )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="red", zone_size=50, visible_cells=[]
+        )
 
         team_red, _ = make_team_with_slots("ZoneR")
         team_blue, _ = make_team_with_slots("ZoneB")
@@ -225,7 +254,7 @@ class TestMap01CellGrid:
             zone_size=50,
         )
         sim = ResourceBasedSimulator()
-        _, spawn_cells, zone_data, _ = sim._resolve_map_data(arena_map)
+        _, spawn_cells, zone_data, _, _ = sim._resolve_map_data(arena_map)
 
         red_states = sim._initialize_players(
             gr, team_red, "red", spawn_cells, zone_data
@@ -302,7 +331,13 @@ class TestMap02CellMovement:
     """Tests for MAP-02: cell-aware pathfinding movement."""
 
     def _make_map(self, name, zone_data, zone_size=100):
-        from core.models import ArenaMap, MapBaseConfig, MapZoneConfig, SightLineConfig
+        from core.models import (
+            ArenaMap,
+            BaseSightLineConfig,
+            MapBaseConfig,
+            MapZoneConfig,
+            SightLineConfig,
+        )
         from core.map_processing import compute_sight_lines
 
         rows, cols, px = len(zone_data), len(zone_data[0]), zone_size
@@ -325,6 +360,12 @@ class TestMap02CellMovement:
             arena_map=arena_map,
             zone_size=px,
             sight_data=compute_sight_lines(zone_data),
+        )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="red", zone_size=px, visible_cells=[]
+        )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="blue", zone_size=px, visible_cells=[]
         )
         return arena_map
 
@@ -709,7 +750,13 @@ class TestMap03DBIntegration:
 
     def _make_map_with_wall(self):
         """3×3 map with a wall column in the middle blocking LOS between left and right."""
-        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig, SightLineConfig
+        from core.models import (
+            ArenaMap,
+            BaseSightLineConfig,
+            MapZoneConfig,
+            MapBaseConfig,
+            SightLineConfig,
+        )
 
         # Columns: 0=passable, 1=wall, 2=passable
         zone_data = [
@@ -736,6 +783,12 @@ class TestMap03DBIntegration:
         sight_data = compute_sight_lines(zone_data)
         SightLineConfig.objects.create(
             arena_map=arena_map, zone_size=100, sight_data=sight_data
+        )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="red", zone_size=100, visible_cells=[]
+        )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="blue", zone_size=100, visible_cells=[]
         )
         return arena_map
 
@@ -798,10 +851,275 @@ class TestMap03DBIntegration:
     def test_resolve_map_data_returns_sight_data(self):
         """_resolve_map_data 4th return value is a dict of frozensets."""
         arena_map = self._make_map_with_wall()
-        _, _, _, sight_data = ResourceBasedSimulator._resolve_map_data(arena_map)
+        _, _, _, sight_data, _ = ResourceBasedSimulator._resolve_map_data(arena_map)
 
         assert isinstance(sight_data, dict)
         # Each value should be a frozenset
         for visible in sight_data.values():
             assert isinstance(visible, frozenset)
             break  # just check first entry
+
+
+# ---------------------------------------------------------------------------
+# MAP-04 — base interaction via BaseSightLineConfig
+# ---------------------------------------------------------------------------
+
+
+class TestMap04BaseInteraction:
+    """Unit tests for _get_base_interaction and the MAP-04 base visibility gate."""
+
+    _LIVES = {"commander": 30, "heavy": 20, "scout": 30, "medic": 20, "ammo": 20}
+    _SHOTS = {"commander": 60, "heavy": 40, "scout": 60, "medic": 30, "ammo": 15}
+
+    def _make_player(
+        self,
+        tag_id,
+        team_color,
+        role="commander",
+        cell_row=None,
+        cell_col=None,
+        neutral_base_destroyed=False,
+        opposing_base_destroyed=False,
+    ):
+        from matches.sim_helpers.player_state import PlayerState
+
+        return PlayerState(
+            tag_id=tag_id,
+            name=tag_id,
+            team_color=team_color,
+            role=role,
+            accuracy=50,
+            survival=50,
+            starting_lives=self._LIVES[role],
+            starting_shots=self._SHOTS[role],
+            final_lives=self._LIVES[role],
+            final_shots=self._SHOTS[role],
+            cell_row=cell_row,
+            cell_col=cell_col,
+            neutral_base_destroyed=neutral_base_destroyed,
+            opposing_base_destroyed=opposing_base_destroyed,
+        )
+
+    def _make_ctx(self, base_sight_data):
+        return {
+            "adj": {},
+            "spawn_cells": {},
+            "zone_data": None,
+            "sight_data": None,
+            "base_sight_data": base_sight_data,
+        }
+
+    def test_no_map_returns_none(self):
+        from matches.simulation import _get_base_interaction
+
+        player = self._make_player("red_cmd", "red", cell_row=0, cell_col=0)
+        assert _get_base_interaction(player, None) is None
+
+    def test_no_base_sight_data_in_ctx_returns_none(self):
+        from matches.simulation import _get_base_interaction
+
+        player = self._make_player("red_cmd", "red", cell_row=0, cell_col=0)
+        ctx = {"adj": {}, "spawn_cells": {}, "zone_data": None, "sight_data": None}
+        assert _get_base_interaction(player, ctx) is None
+
+    def test_no_cell_position_returns_none(self):
+        from matches.simulation import _get_base_interaction
+
+        player = self._make_player("red_cmd", "red", cell_row=None, cell_col=None)
+        ctx = self._make_ctx({"neutral_1": frozenset({"0,0"})})
+        assert _get_base_interaction(player, ctx) is None
+
+    def test_neutral_base_in_range_returns_15(self):
+        from matches.simulation import _get_base_interaction
+
+        player = self._make_player("red_cmd", "red", cell_row=1, cell_col=1)
+        ctx = self._make_ctx({"neutral_1": frozenset({"1,1", "1,2"})})
+        assert _get_base_interaction(player, ctx) == 15
+
+    def test_opposing_base_red_player_returns_14(self):
+        """Red player in blue base visible cells → base_id 14."""
+        from matches.simulation import _get_base_interaction
+
+        player = self._make_player("red_cmd", "red", cell_row=9, cell_col=9)
+        ctx = self._make_ctx({"blue": frozenset({"9,9", "9,8"})})
+        assert _get_base_interaction(player, ctx) == 14
+
+    def test_opposing_base_blue_player_returns_13(self):
+        """Blue player in red base visible cells → base_id 13."""
+        from matches.simulation import _get_base_interaction
+
+        player = self._make_player("blue_cmd", "blue", cell_row=0, cell_col=0)
+        ctx = self._make_ctx({"red": frozenset({"0,0", "0,1"})})
+        assert _get_base_interaction(player, ctx) == 13
+
+    def test_neutral_captured_falls_through_to_opposing(self):
+        """With neutral already captured, opposing base is returned if in range."""
+        from matches.simulation import _get_base_interaction
+
+        player = self._make_player(
+            "red_cmd", "red", cell_row=2, cell_col=2, neutral_base_destroyed=True
+        )
+        ctx = self._make_ctx(
+            {
+                "neutral_1": frozenset({"2,2"}),  # in range but already captured
+                "blue": frozenset({"2,2"}),  # also in range and not captured
+            }
+        )
+        assert _get_base_interaction(player, ctx) == 14
+
+    def test_all_captured_returns_none(self):
+        """Both neutral and opposing already captured → None."""
+        from matches.simulation import _get_base_interaction
+
+        player = self._make_player(
+            "red_cmd",
+            "red",
+            cell_row=2,
+            cell_col=2,
+            neutral_base_destroyed=True,
+            opposing_base_destroyed=True,
+        )
+        ctx = self._make_ctx(
+            {
+                "neutral_1": frozenset({"2,2"}),
+                "blue": frozenset({"2,2"}),
+            }
+        )
+        assert _get_base_interaction(player, ctx) is None
+
+    def test_cell_not_in_any_base_returns_none(self):
+        """Player cell not visible to any base → None."""
+        from matches.simulation import _get_base_interaction
+
+        player = self._make_player("red_cmd", "red", cell_row=5, cell_col=5)
+        ctx = self._make_ctx({"neutral_1": frozenset({"0,0"}), "blue": frozenset({"9,9"})})
+        assert _get_base_interaction(player, ctx) is None
+
+    def test_batch_capture_base_guard_blocks_out_of_range(self):
+        """BatchSimulator._capture_base does not award points when cell is not in base visible_cells."""
+        from matches.simulation import BatchSimulator
+
+        player = self._make_player("red_cmd", "red", cell_row=5, cell_col=5)
+        ctx = self._make_ctx(
+            {
+                "blue": frozenset({"9,9", "9,8"}),  # player is at 5,5 — not in range
+            }
+        )
+        initial_points = player.points_scored
+        BatchSimulator()._capture_base(player, 14, movement_ctx=ctx)
+        assert player.points_scored == initial_points, "Capture should be blocked when out of range"
+
+    def test_batch_capture_base_succeeds_when_in_range(self):
+        """BatchSimulator._capture_base awards 1001 points when cell is in base visible_cells."""
+        from matches.simulation import BatchSimulator
+
+        player = self._make_player("red_cmd", "red", cell_row=9, cell_col=9)
+        ctx = self._make_ctx({"blue": frozenset({"9,9", "9,8"})})
+        BatchSimulator()._capture_base(player, 14, movement_ctx=ctx)
+        assert player.points_scored == 1001
+
+    def test_batch_capture_base_no_map_still_captures(self):
+        """BatchSimulator._capture_base falls back to unconditional capture when no ctx."""
+        from matches.simulation import BatchSimulator
+
+        player = self._make_player("red_cmd", "red", cell_row=None, cell_col=None)
+        BatchSimulator()._capture_base(player, 14, movement_ctx=None)
+        assert player.points_scored == 1001
+
+
+@pytest.mark.django_db
+class TestMap04DBIntegration:
+    """DB-backed MAP-04 tests: BaseSightLineConfig loading and error handling."""
+
+    def _make_base_map(self, name="BaseTestMap"):
+        """3×3 all-floor map with all config including BaseSightLineConfig."""
+        from core.models import (
+            ArenaMap,
+            BaseSightLineConfig,
+            MapZoneConfig,
+            MapBaseConfig,
+            SightLineConfig,
+        )
+        from core.map_processing import compute_sight_lines
+
+        zone_data = [[1, 1, 1], [1, 1, 1], [1, 1, 1]]
+        arena_map = ArenaMap.objects.create(name=name, img_width=300, img_height=300)
+        MapZoneConfig.objects.create(
+            arena_map=arena_map, zone_size=100, zone_data=zone_data, confirmed=True
+        )
+        MapBaseConfig.objects.create(arena_map=arena_map, base_type="red", x_px=50, y_px=50)
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="blue", x_px=250, y_px=250
+        )
+        SightLineConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=100,
+            sight_data=compute_sight_lines(zone_data),
+        )
+        # Red base (0,0) is visible from (0,0) and (0,1) and (1,0)
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map,
+            base_type="red",
+            zone_size=100,
+            visible_cells=[[0, 0], [0, 1], [1, 0]],
+        )
+        # Blue base (2,2) is visible from (2,2) and (2,1) and (1,2)
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map,
+            base_type="blue",
+            zone_size=100,
+            visible_cells=[[2, 2], [2, 1], [1, 2]],
+        )
+        return arena_map
+
+    def test_missing_base_sight_config_raises_valueerror(self):
+        """Simulating with a map that has no BaseSightLineConfig raises ValueError."""
+        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig, SightLineConfig
+        from core.map_processing import compute_sight_lines
+
+        zone_data = [[1, 1], [1, 1]]
+        arena_map = ArenaMap.objects.create(name="NoBaseSight", img_width=200, img_height=200)
+        MapZoneConfig.objects.create(
+            arena_map=arena_map, zone_size=100, zone_data=zone_data, confirmed=True
+        )
+        MapBaseConfig.objects.create(arena_map=arena_map, base_type="red", x_px=50, y_px=50)
+        MapBaseConfig.objects.create(arena_map=arena_map, base_type="blue", x_px=150, y_px=150)
+        SightLineConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=100,
+            sight_data=compute_sight_lines(zone_data),
+        )
+        # No BaseSightLineConfig created
+
+        team_red, _ = make_team_with_slots("BSCErrR")
+        team_blue, _ = make_team_with_slots("BSCErrB")
+        with pytest.raises(ValueError, match="base sight lines"):
+            ResourceBasedSimulator().simulate_single_round_detailed(
+                team_red, team_blue, arena_map=arena_map
+            )
+
+    def test_resolve_map_data_returns_base_sight_data(self):
+        """_resolve_map_data 5th return value is a dict of frozensets keyed by base_type."""
+        arena_map = self._make_base_map("ResolveBSD")
+        _, _, _, _, base_sight_data = ResourceBasedSimulator._resolve_map_data(arena_map)
+
+        assert isinstance(base_sight_data, dict)
+        assert "red" in base_sight_data
+        assert "blue" in base_sight_data
+        assert isinstance(base_sight_data["red"], frozenset)
+        assert isinstance(base_sight_data["blue"], frozenset)
+        # Red base has 3 visible cells
+        assert len(base_sight_data["red"]) == 3
+        assert "0,0" in base_sight_data["red"]
+
+    def test_base_sight_data_included_in_movement_ctx(self):
+        """_build_movement_ctx includes base_sight_data from _resolve_map_data."""
+        arena_map = self._make_base_map("CtxBSD")
+        _, spawn_cells, zone_data, sight_data, base_sight_data = (
+            ResourceBasedSimulator._resolve_map_data(arena_map)
+        )
+        ctx = ResourceBasedSimulator._build_movement_ctx(
+            zone_data, spawn_cells, sight_data, base_sight_data
+        )
+        assert "base_sight_data" in ctx
+        assert ctx["base_sight_data"] is base_sight_data
