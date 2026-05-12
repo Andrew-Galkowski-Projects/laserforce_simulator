@@ -181,18 +181,32 @@ def save_zone_config(request, map_id):
         )
 
     zone_size = max(10, min(zone_size, 200))
-    data = detect_zones(_get_image_local_path(arena_map.image), zone_size)
+
+    # If the client sends a full zones grid (user-edited wall types), use it.
+    # Otherwise fall back to server-side auto-detection from the image.
+    client_zones = body.get("zones")
+    wall_meta: dict = body.get("wall_meta") or {}
+    if client_zones and isinstance(client_zones, list):
+        zones = client_zones
+        blocked_edges: dict = {}
+    else:
+        data = detect_zones(_get_image_local_path(arena_map.image), zone_size)
+        zones = data["zones"]
+        blocked_edges = data.get("blocked_edges", {})
 
     MapZoneConfig.objects.filter(arena_map=arena_map, confirmed=True).update(
         confirmed=False
     )
+    zone_data_payload: dict = {
+        "zones": zones,
+        "blocked_edges": blocked_edges,
+    }
+    if wall_meta:
+        zone_data_payload["wall_meta"] = wall_meta
     MapZoneConfig.objects.create(
         arena_map=arena_map,
         zone_size=zone_size,
-        zone_data={
-            "zones": data["zones"],
-            "blocked_edges": data.get("blocked_edges", {}),
-        },
+        zone_data=zone_data_payload,
         confirmed=True,
     )
 

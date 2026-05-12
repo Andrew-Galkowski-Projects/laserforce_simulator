@@ -2,6 +2,11 @@ import cv2
 import numpy as np
 from PIL import Image
 
+# Cells that are valid player positions for LOS computation.
+# Low wall (4) and windowed wall (5) block movement and are not LOS origins, but are transparent to LOS.
+# Legacy values 2/3 (red/blue zone) kept for backward compatibility with old maps.
+_LOS_PASSABLE = {1, 2, 3}
+
 
 # TODO: eventually want to process 3d maps in order to use some maps that are not usable without it
 # ── Quadtree Node for Spatial Acceleration ──────────────────────────────────
@@ -83,12 +88,10 @@ class QuadtreeNode:
 
 
 def detect_zones(image_path, cell_size):
-    img = Image.open(image_path).convert("RGB")
-    img_width, img_height = img.size
-
-    # Use the processed B&W image to accurately detect walls
+    # Use the processed B&W image for wall detection; read dimensions from it.
     processed_bw_pil = create_processed_image(image_path)
     processed_bw = np.array(processed_bw_pil)
+    img_width, img_height = processed_bw_pil.size
 
     cols = img_width // cell_size
     rows = img_height // cell_size
@@ -108,28 +111,10 @@ def detect_zones(image_path, cell_size):
             dark_pixel_count = sum(1 for p in bw_pixels if p < 128)
             wall_ratio = dark_pixel_count / len(bw_pixels)
 
-            # Check the original image for color zones (red/blue)
-            cell = img.crop((x, y, x + cell_size, y + cell_size))
-            pixels = list(cell.getdata())
-
-            total_r = total_g = total_b = 0
-            for pr, pg, pb in pixels:
-                total_r += pr
-                total_g += pg
-                total_b += pb
-
-            n = len(pixels)
-            avg_r = total_r / n
-            avg_g = total_g / n
-            avg_b = total_b / n
-
-            # Determine zone type: prioritize walls, then colored zones, then floor
+            # Determine zone type: wall (0) or floor (1).
+            # Red/blue zone coloring (2/3) was a legacy 3-zone artifact — no longer produced.
             if wall_ratio > 0.01:  # Cell is >1% walls
-                zone_type = 0  # wall
-            elif avg_r > 160 and avg_r > avg_g * 1.4 and avg_r > avg_b * 1.4:
-                zone_type = 2  # red zone
-            elif avg_b > 160 and avg_b > avg_r * 1.4 and avg_b > avg_g * 1.4:
-                zone_type = 3  # blue zone
+                zone_type = 0  # high wall
             else:
                 zone_type = 1  # floor
 
@@ -288,7 +273,8 @@ def _has_los(zone_data, r1, c1, r2, c2, blocked_edges_grid=None):
         if cx == x1 and cy == y1:
             return True
 
-        # Full cell is wall
+        # High wall (0) blocks LOS.
+        # Low wall (4) and windowed wall (5) are transparent — sight passes through but movement does not.
         if zone_data[cy][cx] == 0:
             return False
 
@@ -349,7 +335,10 @@ def compute_sight_lines(zone_data, blocked_edges_grid=None, use_quadtree=True):
     rows = len(zone_grid)
     cols = len(zone_grid[0]) if rows else 0
     passable = [
-        (r, c) for r in range(rows) for c in range(cols) if zone_grid[r][c] != 0
+        (r, c)
+        for r in range(rows)
+        for c in range(cols)
+        if zone_grid[r][c] in _LOS_PASSABLE
     ]
 
     if not passable:
@@ -414,13 +403,15 @@ def compute_single_cell_visibility(r1, c1, zone_data, blocked_edges_grid=None):
     rows = len(zone_grid)
     cols = len(zone_grid[0]) if rows else 0
 
-    # Check source cell is valid and passable
-    if not (0 <= r1 < rows and 0 <= c1 < cols and zone_grid[r1][c1] != 0):
+    if not (0 <= r1 < rows and 0 <= c1 < cols and zone_grid[r1][c1] in _LOS_PASSABLE):
         return []
 
     visible = []
     passable = [
-        (r, c) for r in range(rows) for c in range(cols) if zone_grid[r][c] != 0
+        (r, c)
+        for r in range(rows)
+        for c in range(cols)
+        if zone_grid[r][c] in _LOS_PASSABLE
     ]
 
     for r2, c2 in passable:

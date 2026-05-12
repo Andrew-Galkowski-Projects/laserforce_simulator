@@ -77,7 +77,7 @@ Cell-aware movement helpers shared by both simulators. Used when `arena_map` is 
 
 ### Functions
 
-**`build_movement_adjacency(zone_data)`** — builds a 4-connected adjacency dict `{cell: [neighbor, ...]}` for every non-wall cell (value ≠ 0). Wall cells are excluded entirely so `cell in adj` doubles as a passability check.
+**`build_movement_adjacency(zone_data)`** — builds a 4-connected adjacency dict `{cell: [neighbor, ...]}` for every movement-passable cell. Uses module constant `_MOVEMENT_PASSABLE = {1, 2, 3}` (floor + legacy red/blue zones). High wall (0), low wall (4), and windowed wall (5) all block movement and are excluded entirely, so `cell in adj` doubles as a passability check.
 
 **`astar_next_step(start, goal, adj, elevation_data=None)`** — returns the immediate next cell on the shortest path from `start` to `goal` using A* with a Manhattan heuristic. Returns `start` unchanged when `start == goal`, no path exists, or `start` is not in the adjacency graph.
 

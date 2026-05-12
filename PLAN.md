@@ -117,6 +117,8 @@ Maps have three active wall types:
 Mirrored/reflective walls (shot bouncing) are **deferred** — see Deferred Items section.
 
 Add a `wall_type` field to the map cell data and update movement and targeting logic to respect these distinctions.
+- completed
+- note: wall types encoded as cell values in the existing `zones` 2D array (0=high wall, 1=floor, 4=low wall, 5=windowed wall); no new DB column required. `wall_meta` JSON object `{"r,c": {"facing": "N"|"S"|"E"|"W"}}` stored alongside `zones` in `MapZoneConfig.zone_data` for windowed wall aperture directions. `_MOVEMENT_PASSABLE = {1, 2, 3}` and `_LOS_PASSABLE = {1, 2, 3}` module constants added (low/windowed wall block both movement and LOS; low wall transparent to sight only). `_has_los` updated: value 5 now blocks like 0; value 4 is transparent. `detect_zones` no longer opens the original color image (legacy RGB red/blue zone detection removed; dead pixel-classification code removed). `_resolve_map_data` now returns 8-tuple (added `wall_meta`); `_build_movement_ctx` gains `wall_meta` key. `_zone_from_cell` changed from cell-value lookup to proximity-based Manhattan distance (legacy 2/3 values no longer produced by auto-detection). New module-level `_can_tag_through_windowed_wall` for aperture targeting; `_get_los_targets` extended to check windowed wall apertures for candidates not in normal sight_data. Map editor gains wall-brush UI (Low Wall, Windowed Wall, High Wall, Floor buttons) and windowed facing picker; save payload includes `zones` grid and optional `wall_meta`.
 
 ### MAP-08 · Map-based spawn points
 Spawn cells are precomputed and stored on the map at save time (base zones are static). Players spawn within

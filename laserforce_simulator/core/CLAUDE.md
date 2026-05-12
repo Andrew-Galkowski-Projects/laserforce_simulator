@@ -5,7 +5,7 @@ The `core` app provides a 2D arena map importer and editor used to configure map
 ## Models (`core/models.py`)
 
 - **`ArenaMap`**: uploaded map image + pixel dimensions
-- **`MapZoneConfig`**: 2D zone grid (`zones` 2D list: 0=wall, 1=floor, 2=red, 3=blue) + `blocked_edges_grid` (dict of edge blockages for sub-cell wall precision). One confirmed config per map per zone_size.
+- **`MapZoneConfig`**: 2D zone grid stored in `zone_data` JSON field as `{"zones": [[int, ...], ...], "blocked_edges": {...}, "wall_meta": {...}}`. Zone cell values: 0=high wall (blocks movement + LOS), 1=floor, 2=red zone (legacy), 3=blue zone (legacy), 4=low wall (blocks movement, transparent to LOS), 5=windowed wall (blocks LOS, but allows directional tagging through an aperture). `wall_meta` is an optional `{"r,c": {"facing": "N"|"S"|"E"|"W"}}` dict that describes windowed wall aperture directions — stored alongside `zones` in the same JSON field (no separate DB column). One confirmed config per map per zone_size.
 - **`MapBaseConfig`**: pixel-coordinate (x_px, y_px) of each base (red, blue, neutral_1–4). Zone-size independent.
 - **`SightLineConfig`**: bidirectional adjacency dict `{"r,c": ["r,c", ...]}` for all non-wall cell pairs. Keyed per (map, zone_size).
 - **`BaseSightLineConfig`**: list of cells `[[row, col], ...]` that can tag each base. Keyed per (map, base_type, zone_size). User-defined (bases sit on raised platforms).
@@ -16,14 +16,16 @@ The `core` app provides a 2D arena map importer and editor used to configure map
 
 **`detect_zones(image_path, cell_size)`** — classifies each grid cell:
 - Uses `create_processed_image()` internally to build a wall mask (CV threshold 210 + connected-component filtering discards text blobs, keeps large wall features)
-- Cell is wall if ≥1% of pixels are dark in the wall mask; otherwise checks avg RGB for red/blue zone coloring, defaults to floor
-- Returns `zones`, `blocked_edges` (dict), `blocked_edges_grid` (2D array)
+- Cell is high wall (0) if ≥1% of pixels are dark in the wall mask; otherwise floor (1). No longer produces legacy 2/3 red/blue zone values — those are user-placed or backward-compat only.
+- The original color image is no longer opened by this function (dead pixel-classification code removed); dimensions are read from the B&W processed image.
+- Returns `zones`, `blocked_edges` (dict), `blocked_edges_grid` (2D array). Wall types 4/5 are never auto-detected; they are placed manually in the editor.
+- Module constant `_LOS_PASSABLE = {1, 2, 3}` defined at module level (floor + legacy zones); used by both `compute_sight_lines` and `compute_single_cell_visibility`.
 
 **`create_processed_image(image_path)`** — returns a B&W PIL Image: threshold at 210, keep connected components with area ≥ 600 or max dimension ≥ 80px (walls), discard smaller (text). Cached to `media/maps/processed_<id>.png`.
 
 **`_compute_blocked_edges(processed_bw, rows, cols, cell_size)`** — samples the pixel column/row at each cell boundary; marks the edge blocked if ≥30% of edge pixels are dark. Enables sub-cell wall precision for near-miss sight lines.
 
-**`_has_los(zone_data, r1, c1, r2, c2, blocked_edges_grid)`** — Bresenham's line algorithm. Adjacent cells return immediately (checking only their shared edge). Longer paths walk the line and return False on the first wall cell or blocked edge encountered.
+**`_has_los(zone_data, r1, c1, r2, c2, blocked_edges_grid)`** — Bresenham's line algorithm. Adjacent cells return immediately (checking only their shared edge). Longer paths walk the line. Wall semantics: high wall (0) and windowed wall (5) both block LOS; low wall (4) is transparent (sight passes through, movement does not). Returns False on the first blocking cell or blocked edge encountered.
 
 **`compute_sight_lines(zone_data, use_quadtree=True)`** — all-pairs LOS. Uses a `QuadtreeNode` spatial index when >50 passable cells: each cell only tests neighbors within `max(rows,cols)//4` radius (50–100× speedup over brute force). Falls back to O(n²) for small maps. Accepts both list and dict `zone_data` formats.
 
@@ -35,7 +37,7 @@ The `core` app provides a 2D arena map importer and editor used to configure map
 
 Two modes toggled in the top bar:
 
-**Zones & Bases mode**: zone grid overlay on B&W processed image. Click base-type buttons (Red/Blue/Neutral 1–4) then click a cell to place. Clicking the same cell again removes it. "Save Configuration" POSTs zone_size + base pixel positions.
+**Zones & Bases mode**: zone grid overlay on B&W processed image. Click base-type buttons (Red/Blue/Neutral 1–4) then click a cell to place. Clicking the same cell again removes it. Wall brush buttons (None, Low Wall, Windowed Wall, High Wall, Floor) let the user paint cell types 4/5/0/1 directly onto the grid. When Windowed Wall is selected, a direction picker (N/S/E/W) sets the aperture facing stored in `wall_meta`. "Save Configuration" POSTs `zone_size`, base pixel positions, the full `zones` grid, and (when non-empty) `wall_meta`. On zone-size change, `wallMeta` is reset and a console warning is emitted if unsaved windowed-wall placements would be discarded.
 
 **Sight Lines mode**:
 - *Zone view*: click a cell (highlights yellow) to see its visible cells (green) and blocked cells (faint red). Click any cell to toggle its LOS link with the selected cell.
@@ -79,6 +81,8 @@ Two modes toggled in the top bar:
 - `SeedDefaultsTests` — skips seeding when non-`FileSystemStorage` is active
 - `UploadMapViewTests` — dimensions stored correctly after upload; corrupt uploads rejected and not persisted
 
-Map-processing tests for MAP-05 features live in `matches/tests/test_map.py` alongside the MAP-02–04 tests:
+Map-processing tests for MAP-05/07 features live in `matches/tests/test_map.py` alongside the MAP-02–04 tests:
 - `TestMap05ComputeHighLosRanking` — sort correctness (highest-LOS cell first), all cells returned, empty input returns empty
 - `TestMap05StrongSpotsViews` — GET returns cells, returns `[]` when no config, POST persists cells, POST rejects non-list cells and non-int pairs, GET method not allowed on save endpoint
+- `TestMap07WallTypes` — 25 pure unit tests covering: movement adjacency (high/low/windowed wall block, legacy 2/3 passable), LOS (low wall transparent, windowed/high wall block), `compute_sight_lines` passable-origin filtering, `_can_tag_through_windowed_wall` N-S/E-W axis and unknown facing, `_get_los_targets` aperture hit and miss, proximity-based `_zone_from_cell` cases
+- `TestMap07DBIntegration` — 2 DB tests: `wall_meta` round-trip through `save_zone_config` → `_resolve_map_data`, and `wall_meta` key present in `_build_movement_ctx` result
