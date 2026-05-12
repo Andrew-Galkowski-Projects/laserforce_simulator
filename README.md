@@ -7,6 +7,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - **Team & player management** — Create teams with 6 role-based player slots (Commander, Heavy, Scout, Medic, Ammo, + one duplicate)
 - **Match simulation** — 2-round matches, 15 minutes each, simulated in 2-second ticks with role-specific action weights
 - **Arena map support** — Optionally attach a confirmed arena map to any match or round; players navigate via A* pathfinding on the real cell grid toward the enemy base (or a critical ally), recording a `movement` event per step for replay
+- **Wall hazards** — Three wall types on the map grid: high walls (block movement + sight), low walls (block movement, transparent to LOS), and windowed walls (block sight but allow directional tagging through a user-placed aperture). Wall types are painted in the map editor; windowed wall facing (N/S/E/W) determines which axis an attack can pass through
 - **Role mechanics** — Shields, lives, missiles/nukes, resupply, special charges, and zone movement all modeled
 - **Game event log** — Every tag, miss, missile, resupply, and base capture is recorded with timestamps and points
 - **MVP scoring** — Role-specific formulas weighted toward each role's primary contribution

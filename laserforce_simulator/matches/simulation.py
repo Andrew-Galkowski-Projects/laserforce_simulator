@@ -30,13 +30,59 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
 
+def _can_tag_through_windowed_wall(
+    r1: int, c1: int, r2: int, c2: int, zone_grid: list, wall_meta: dict
+) -> bool:
+    """Check whether a tag can reach (r2,c2) from (r1,c1) through windowed walls.
+
+    Windowed walls block normal LOS but have a directional aperture:
+      facing N/S → aperture along N-S axis (same column required: c1 == c2).
+      facing E/W → aperture along E-W axis (same row required: r1 == r2).
+    High walls (0) on the path always block regardless of windowed walls.
+    Returns False if any cell on the path is an unpassable high wall, or if a
+    windowed wall's aperture axis does not align with the attack direction.
+    """
+    x0, y0 = c1, r1
+    x1, y1 = c2, r2
+    dx = abs(x1 - x0)
+    dy = abs(y1 - y0)
+    sx = 1 if x0 < x1 else -1
+    sy = 1 if y0 < y1 else -1
+    err = dx - dy
+    cx, cy = x0, y0
+
+    while True:
+        e2 = 2 * err
+        if e2 > -dy:
+            err -= dy
+            cx += sx
+        if e2 < dx:
+            err += dx
+            cy += sy
+        if cx == x1 and cy == y1:
+            return True
+        cell_val = zone_grid[cy][cx]
+        if cell_val == 0:
+            return False
+        if cell_val == 5:
+            meta = wall_meta.get(f"{cy},{cx}", {})
+            facing = meta.get("facing", "")
+            if facing in ("N", "S"):
+                if c1 != c2:
+                    return False
+            elif facing in ("E", "W"):
+                if r1 != r2:
+                    return False
+            else:
+                return False
+
+
 def _get_los_targets(actor, candidates: list, movement_ctx: dict | None) -> list:
     """Return subset of candidates visible to actor.
 
-    candidates is used as a filter for enemies, allies, targets or a combination.
-    With a map: looks up actor's cell in SightLineConfig and keeps only candidates
-    whose cell key appears in the visible set. Falls back to same-zone filtering when
-    no map is active, actor has no cell position, or sight_data is absent.
+    With a map: looks up actor's cell in SightLineConfig (normal LOS), then
+    additionally checks windowed-wall aperture targeting for candidates not in
+    normal sight. Falls back to same-zone filtering when no map is active.
     """
     if movement_ctx is None:
         return [p for p in candidates if p.current_zone == actor.current_zone]
@@ -45,12 +91,31 @@ def _get_los_targets(actor, candidates: list, movement_ctx: dict | None) -> list
         return [p for p in candidates if p.current_zone == actor.current_zone]
     actor_key = f"{actor.cell_row},{actor.cell_col}"
     visible_cells = sight_data.get(actor_key, frozenset())
+
     result = []
+    windowed_candidates = []
     for p in candidates:
         if p.cell_row is not None:
-            target_key = f"{p.cell_row},{p.cell_col}"
-            if target_key in visible_cells:
+            if f"{p.cell_row},{p.cell_col}" in visible_cells:
                 result.append(p)
+            else:
+                windowed_candidates.append(p)
+
+    # Windowed-wall aperture check for targets not in normal sight
+    zone_grid = movement_ctx.get("zone_data")
+    wall_meta: dict = movement_ctx.get("wall_meta", {})
+    if zone_grid is not None and wall_meta and windowed_candidates:
+        for p in windowed_candidates:
+            if _can_tag_through_windowed_wall(
+                actor.cell_row,
+                actor.cell_col,
+                p.cell_row,
+                p.cell_col,
+                zone_grid,
+                wall_meta,
+            ):
+                result.append(p)
+
     return result
 
 
@@ -167,6 +232,7 @@ class ResourceBasedSimulator:
             base_sight_data,
             cell_ranking,
             strong_spots,
+            wall_meta,
         ) = self._resolve_map_data(arena_map)
 
         game_round = GameRound.objects.create(
@@ -194,6 +260,7 @@ class ResourceBasedSimulator:
             base_sight_data,
             cell_ranking,
             strong_spots,
+            wall_meta,
         )
         round_result = self._simulate_round_combat(
             game_round, red_players, blue_players, movement_ctx=movement_ctx
@@ -214,20 +281,21 @@ class ResourceBasedSimulator:
     @staticmethod
     def _resolve_map_data(arena_map):
         """Load zone_size, spawn cells, zone_data, sight_data, base_sight_data,
-        cell_ranking, and strong_spots from a map.
+        cell_ranking, strong_spots, and wall_meta from a map.
 
         Returns (zone_size, spawn_cells, zone_grid, sight_data, base_sight_data,
-                 cell_ranking, strong_spots) where:
+                 cell_ranking, strong_spots, wall_meta) where:
         - All values are None/{}/[] when no map is provided.
         - sight_data is {"r,c": frozenset(["r,c", ...])} keyed by cell — O(1) lookup.
         - base_sight_data is {"base_type": frozenset(["r,c", ...])} for O(1) cell lookup.
         - cell_ranking is [[r,c], ...] sorted highest-LOS first (empty if not yet computed).
         - strong_spots is [[r,c], ...] of Heavy defensive positions (empty if not computed).
+        - wall_meta is {"r,c": {"facing": "N"|"S"|"E"|"W"}} for windowed wall apertures.
         Raises ValueError if the map is missing its zone config, a base, sight lines, or
         base sight line configs.
         """
         if arena_map is None:
-            return None, {}, None, None, {}, [], []
+            return None, {}, None, None, {}, [], [], {}
 
         config = arena_map.latest_confirmed_config()
         if config is None:
@@ -239,6 +307,7 @@ class ResourceBasedSimulator:
         zone_size = config.zone_size
         raw = config.zone_data
         zone_grid = raw["zones"] if isinstance(raw, dict) else raw
+        wall_meta: dict = raw.get("wall_meta", {}) if isinstance(raw, dict) else {}
 
         base_cfgs = {
             bc.base_type: bc
@@ -301,17 +370,40 @@ class ResourceBasedSimulator:
             base_sight_data,
             cell_ranking,
             strong_spots,
+            wall_meta,
         )
 
     @staticmethod
-    def _zone_from_cell(zone_data, row: int, col: int) -> int:
-        """Return zone index (0=red, 1=neutral, 2=blue) for a cell in the 2D zone grid."""
-        cell_type = zone_data[row][col]
-        if cell_type == 2:
-            return 0  # red_zone
-        if cell_type == 3:
-            return 2  # blue_zone
-        return 1  # neutral_zone (floor or wall treated as neutral)
+    def _zone_from_cell(row: int, col: int, spawn_cells: dict | None) -> int:
+        """Return zone index (0=red, 1=neutral, 2=blue) via proximity to base cells.
+
+        Nearest base type determines the zone. Neutral bases take precedence over
+        team bases when equidistant or closer.
+        """
+        if not spawn_cells:
+            return 1
+        red_base = spawn_cells.get("red")
+        blue_base = spawn_cells.get("blue")
+        if red_base is None or blue_base is None:
+            return 1
+        dist_red = abs(row - red_base[0]) + abs(col - red_base[1])
+        dist_blue = abs(row - blue_base[0]) + abs(col - blue_base[1])
+        neutral_bases = [
+            spawn_cells[f"neutral_{i}"]
+            for i in range(1, 5)
+            if f"neutral_{i}" in spawn_cells
+        ]
+        dist_neutral = min(
+            (abs(row - nb[0]) + abs(col - nb[1]) for nb in neutral_bases),
+            default=float("inf"),
+        )
+        if dist_neutral < dist_red and dist_neutral < dist_blue:
+            return 1  # nearest to a neutral base
+        if dist_red < dist_blue:
+            return 0  # red zone
+        if dist_blue < dist_red:
+            return 2  # blue zone
+        return 1  # equidistant = neutral
 
     @staticmethod
     def _build_movement_ctx(
@@ -321,6 +413,7 @@ class ResourceBasedSimulator:
         base_sight_data=None,
         cell_ranking=None,
         strong_spots=None,
+        wall_meta=None,
     ):
         if zone_data is None:
             return None
@@ -340,6 +433,7 @@ class ResourceBasedSimulator:
             "cell_los_counts": cell_los_counts,
             "high_los_cells": high_los_cells,
             "strong_spots": [tuple(rc) for rc in (strong_spots or [])],
+            "wall_meta": wall_meta or {},
         }
 
     def _initialize_players(self, game_round, team, team_color, spawn_cells, zone_data):
@@ -351,7 +445,7 @@ class ResourceBasedSimulator:
         cell_row = spawn[0] if spawn else None
         cell_col = spawn[1] if spawn else None
         starting_zone = (
-            self._zone_from_cell(zone_data, cell_row, cell_col)
+            self._zone_from_cell(cell_row, cell_col, spawn_cells)
             if spawn is not None
             else default_zone
         )
@@ -1374,7 +1468,7 @@ class ResourceBasedSimulator:
             return
         player.cell_row, player.cell_col = next_cell
         player.zone_fallback = self._zone_from_cell(
-            zone_data, next_cell[0], next_cell[1]
+            next_cell[0], next_cell[1], movement_ctx["spawn_cells"]
         )
         player.save(update_fields=["cell_row", "cell_col", "zone_fallback"])
         GameEvent.objects.create(
@@ -2370,6 +2464,7 @@ class BatchSimulator:
                 base_sight_data,
                 cell_ranking,
                 strong_spots,
+                wall_meta,
             ) = ResourceBasedSimulator._resolve_map_data(arena_map)
             movement_ctx = ResourceBasedSimulator._build_movement_ctx(
                 zone_data,
@@ -2378,6 +2473,7 @@ class BatchSimulator:
                 base_sight_data,
                 cell_ranking,
                 strong_spots,
+                wall_meta,
             )
 
         red_wins = blue_wins = ties = 0
@@ -2450,7 +2546,7 @@ class BatchSimulator:
             cell_row: int | None = spawn[0]
             cell_col: int | None = spawn[1]
             starting_zone = ResourceBasedSimulator._zone_from_cell(
-                zone_data, spawn[0], spawn[1]
+                spawn[0], spawn[1], spawn_cells
             )
         else:
             cell_row = None
@@ -3058,7 +3154,7 @@ class BatchSimulator:
             return
         player.cell_row, player.cell_col = next_cell
         player.current_zone = ResourceBasedSimulator._zone_from_cell(
-            zone_data, next_cell[0], next_cell[1]
+            next_cell[0], next_cell[1], movement_ctx["spawn_cells"]
         )
 
     # ------------------------------------------------------------------ #

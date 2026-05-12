@@ -65,7 +65,15 @@
       "Bash(python -m pytest laserforce_simulator/matches/tests/test_map.py -x -q)",
       "Bash(python -m pytest -x -q)",
       "Bash(black *)",
-      "Bash(mypy *)"
+      "Bash(mypy *)",
+      "Bash(python -m pytest matches/tests/test_map.py::TestMap07WallTypes -x -q)",
+      "Bash(python -m pytest -x)",
+      "Bash(pytest matches/tests/test_map.py matches/tests/test_goal_selection.py matches/tests/simulation_tests.py -q)",
+      "Bash(pytest matches/tests/test_map.py matches/tests/test_goal_selection.py matches/tests/test_sim_core.py matches/tests/test_batch_sim.py core/tests.py -q)",
+      "Bash(pytest matches/tests/test_map.py -q)",
+      "mcp__chrome-devtools__take_snapshot",
+      "mcp__chrome-devtools__click",
+      "mcp__chrome-devtools__evaluate_script"
     ]
   }
 }

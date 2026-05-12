@@ -28,11 +28,11 @@
     <button id="save-btn" class="btn btn-success btn-sm">Save Configuration</button>
 
     <div class="d-flex align-items-center gap-2 ms-auto">
-        <small class="text-muted">Zone legend:</small>
-        <span class="badge" style="background:rgba(40,40,40,0.85);border:1px solid #ccc;">Wall</span>
+        <small class="text-muted">Legend:</small>
+        <span class="badge" style="background:rgba(40,40,40,0.85);border:1px solid #ccc;">High Wall</span>
         <span class="badge" style="background:rgba(180,180,200,0.85);color:#333;border:1px solid #ccc;">Floor</span>
-        <span class="badge" style="background:rgba(200,60,60,0.85);">Red Zone</span>
-        <span class="badge" style="background:rgba(60,60,200,0.85);">Blue Zone</span>
+        <span class="badge" style="background:rgba(120,80,20,0.85);">Low Wall</span>
+        <span class="badge" style="background:rgba(0,180,180,0.85);">Windowed Wall</span>
     </div>
 </div>
 
@@ -48,7 +48,25 @@
         <button class="btn btn-outline-warning base-btn" data-type="neutral_4">Neutral 4</button>
     </div>
     <button id="clear-bases-btn" class="btn btn-sm btn-outline-secondary">Clear All Bases</button>
-    <small class="text-muted">Select a base type, then click a cell on the Zone Map. Click again to remove.</small>
+    <span class="vr"></span>
+    <small class="text-muted text-nowrap fw-semibold">Paint wall:</small>
+    <div class="btn-group btn-group-sm" role="group">
+        <button class="btn btn-outline-secondary wall-brush-btn active" data-wall="none">None</button>
+        <button class="btn btn-outline-secondary wall-brush-btn" data-wall="4" style="color:#7a5010;border-color:#7a5010;">Low Wall</button>
+        <button class="btn btn-outline-info    wall-brush-btn" data-wall="5">Windowed Wall</button>
+        <button class="btn btn-outline-dark    wall-brush-btn" data-wall="0">High Wall</button>
+        <button class="btn btn-outline-light   wall-brush-btn" data-wall="1" style="border-color:#999;">Floor</button>
+    </div>
+    <div id="windowed-dir-picker" class="d-none d-flex align-items-center gap-1 ms-1">
+        <small class="text-muted">Dir:</small>
+        <select id="windowed-facing" class="form-select form-select-sm" style="width:auto;">
+            <option value="N">N</option>
+            <option value="S">S</option>
+            <option value="E">E</option>
+            <option value="W">W</option>
+        </select>
+    </div>
+    <small class="text-muted">Select brush then click a cell. Low/windowed walls are user-drawn (not auto-detected).</small>
 </div>
 
 {# ── Sight Lines controls ─────────────────────────────────────────────────── #}
@@ -123,14 +141,18 @@ const DEFAULT_ZONE_SIZE= {{ saved_zone_size }};
 const ZONE_COLORS = {
     0: "rgba(40,40,40,0.72)",
     1: "rgba(255,255,255,0.08)",
-    2: "rgba(200,60,60,0.62)",
-    3: "rgba(60,60,200,0.62)",
+    2: "rgba(200,60,60,0.62)",  // legacy red zone (backward compat)
+    3: "rgba(60,60,200,0.62)",  // legacy blue zone (backward compat)
+    4: "rgba(120,80,20,0.80)",  // low wall — brown
+    5: "rgba(0,180,180,0.75)",  // windowed wall — teal
 };
 const ZONE_COLORS_FAINT = {
     0: "rgba(40,40,40,0.55)",
     1: "rgba(200,205,215,0.30)",
     2: "rgba(200,60,60,0.25)",
     3: "rgba(60,60,200,0.25)",
+    4: "rgba(120,80,20,0.50)",
+    5: "rgba(0,180,180,0.45)",
 };
 const GRID_COLOR = "rgba(0,0,0,0.55)";
 
@@ -158,6 +180,8 @@ let currentMode      = "zones";  // "zones" | "sight"
 
 // ── Zones & Bases state ──────────────────────────────────────────────────────
 let selectedBaseType = null;
+let selectedWallBrush = "none";  // "none" | "0" | "1" | "4" | "5"
+let wallMeta = {};               // {"r,c": {facing: "N"|"S"|"E"|"W"}}
 
 // ── Sight Lines state ─────────────────────────────────────────────────────────
 let sightData        = {};
@@ -244,10 +268,23 @@ function renderZonesAndBases() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const cw = data.cell_size, ch = data.cell_size;
 
+    const fontSize = Math.max(7, Math.floor(cw * 0.28));
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
     for (let r = 0; r < data.rows; r++) {
         for (let c = 0; c < data.cols; c++) {
-            ctx.fillStyle = ZONE_COLORS[data.zones[r][c]] ?? ZONE_COLORS[1];
+            const ztype = data.zones[r][c];
+            ctx.fillStyle = ZONE_COLORS[ztype] ?? ZONE_COLORS[1];
             ctx.fillRect(c*cw, r*ch, cw, ch);
+            // Draw aperture direction label for windowed walls
+            if (ztype === 5) {
+                const meta = wallMeta[`${r},${c}`];
+                if (meta && meta.facing) {
+                    ctx.fillStyle = "rgba(0,0,0,0.85)";
+                    ctx.fillText(meta.facing, (c+0.5)*cw, (r+0.5)*ch);
+                }
+            }
         }
     }
     drawGrid(ctx, data);
@@ -337,6 +374,11 @@ function renderSightLines() {
 // ── Fetch zone data ───────────────────────────────────────────────────────────
 function fetchAndRenderZones(zoneSize) {
     loadingSpinner.classList.remove("d-none");
+    // Reset wall meta when zone size changes — old meta is invalid at new resolution.
+    if (Object.keys(wallMeta).length) {
+        console.warn("Zone size changed: unsaved windowed-wall placements discarded.");
+    }
+    wallMeta = {};
     fetch(`${ZONES_URL}?zone_size=${zoneSize}`)
         .then(r => r.json())
         .then(data => {
@@ -525,6 +567,21 @@ canvas.addEventListener("click", e => {
 });
 
 function handleZonesModeClick(row, col) {
+    // Wall brush takes priority over base placement
+    if (selectedWallBrush !== "none") {
+        const newVal = parseInt(selectedWallBrush, 10);
+        currentZoneData.zones[row][col] = newVal;
+        const key = `${row},${col}`;
+        if (newVal === 5) {
+            const facing = document.getElementById("windowed-facing").value;
+            wallMeta[key] = { facing };
+        } else {
+            delete wallMeta[key];
+        }
+        renderCanvas();
+        return;
+    }
+
     if (!selectedBaseType) return;
     const cw   = currentZoneData.cell_size;
     const x_px = Math.floor((col + 0.5) * cw);
@@ -659,6 +716,29 @@ document.getElementById("clear-bases-btn").addEventListener("click", () => {
     if (currentZoneData) renderCanvas();
 });
 
+// ── Wall brush buttons ─────────────────────────────────────────────────────────
+document.querySelectorAll(".wall-brush-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+        document.querySelectorAll(".wall-brush-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        selectedWallBrush = btn.dataset.wall;
+        const picker = document.getElementById("windowed-dir-picker");
+        if (selectedWallBrush === "5") {
+            picker.classList.remove("d-none");
+        } else {
+            picker.classList.add("d-none");
+        }
+        // Dearm base selection when a wall brush is active
+        if (selectedWallBrush !== "none") {
+            selectedBaseType = null;
+            document.querySelectorAll(".base-btn").forEach(b => b.classList.remove("active"));
+            canvas.style.cursor = "crosshair";
+        } else {
+            canvas.style.cursor = "default";
+        }
+    });
+});
+
 // ── Save Zone Config ───────────────────────────────────────────────────────────
 saveBtn.addEventListener("click", () => {
     const zoneSize = parseInt(select.value, 10);
@@ -671,6 +751,8 @@ saveBtn.addEventListener("click", () => {
         body: JSON.stringify({
             zone_size: zoneSize,
             bases: Object.entries(bases).map(([type, pos]) => ({ type, ...pos })),
+            zones: currentZoneData ? currentZoneData.zones : undefined,
+            wall_meta: Object.keys(wallMeta).length ? wallMeta : undefined,
         }),
     })
     .then(r => r.json())

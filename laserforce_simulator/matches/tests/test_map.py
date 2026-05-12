@@ -140,24 +140,18 @@ class TestMap01CellGrid:
             assert 0 <= s.cell_row <= 3, f"cell_row {s.cell_row} out of bounds"
             assert 0 <= s.cell_col <= 3, f"cell_col {s.cell_col} out of bounds"
 
-    def test_zone_from_cell_maps_correctly(self):
-        """_zone_from_cell converts core zone_data types to PlayerRoundState zone indices."""
-        sim = ResourceBasedSimulator()
-        zone_data = [
-            [0, 2, 1, 0],
-            [2, 2, 1, 3],
-            [0, 1, 1, 3],
-            [0, 1, 3, 3],
-        ]
-        assert sim._zone_from_cell(zone_data, 0, 1) == 0  # cell_type=2 → red zone
-        assert sim._zone_from_cell(zone_data, 1, 3) == 2  # cell_type=3 → blue zone
-        assert sim._zone_from_cell(zone_data, 1, 2) == 1  # cell_type=1 → neutral zone
-        assert (
-            sim._zone_from_cell(zone_data, 0, 0) == 1
-        )  # cell_type=0 (wall) → neutral zone
+    def test_zone_from_cell_proximity_based(self):
+        """_zone_from_cell uses proximity to spawn cells (not grid cell values)."""
+        spawn_cells = {"red": (0, 0), "blue": (3, 3)}
+        # Cell near red base
+        assert ResourceBasedSimulator._zone_from_cell(0, 0, spawn_cells) == 0
+        # Cell near blue base
+        assert ResourceBasedSimulator._zone_from_cell(3, 3, spawn_cells) == 2
+        # Cell equidistant → neutral
+        assert ResourceBasedSimulator._zone_from_cell(1, 2, spawn_cells) == 1
 
     def test_resolve_map_data_returns_spawn_cells_and_zone_data(self):
-        """_resolve_map_data returns zone_size, spawn cells, zone_data, sight_data, base_sight_data, cell_ranking, strong_spots."""
+        """_resolve_map_data returns 8-tuple including wall_meta."""
         arena_map = self._make_arena_map("ResolveTest")
         sim = ResourceBasedSimulator()
         (
@@ -168,6 +162,7 @@ class TestMap01CellGrid:
             base_sight_data,
             cell_ranking,
             strong_spots,
+            wall_meta,
         ) = sim._resolve_map_data(arena_map)
 
         assert zone_size == 50
@@ -1252,3 +1247,298 @@ class TestMap05StrongSpotsViews:
         arena_map = self._make_arena_map("MethodSSView")
         response = client.get(f"/maps/{arena_map.pk}/strong-spots/save/")
         assert response.status_code == 405
+
+
+# ---------------------------------------------------------------------------
+# MAP-07 — Map wall hazards
+# ---------------------------------------------------------------------------
+
+
+class TestMap07WallTypes:
+    """Unit tests for MAP-07 wall type semantics (no DB required)."""
+
+    @staticmethod
+    def _make_player(tag, team, row, col):
+        from matches.sim_helpers.player_state import PlayerState
+
+        return PlayerState(
+            tag_id=tag,
+            name=tag,
+            team_color=team,
+            role="scout",
+            accuracy=50,
+            survival=50,
+            starting_lives=10,
+            starting_shots=30,
+            final_lives=10,
+            final_shots=30,
+            current_zone=1,
+            cell_row=row,
+            cell_col=col,
+        )
+
+    # ── Movement adjacency ──────────────────────────────────────────────────
+
+    def test_high_wall_blocks_movement(self):
+        from matches.sim_helpers.pathfinding import build_movement_adjacency
+
+        zone_data = [[1, 0, 1]]
+        adj = build_movement_adjacency(zone_data)
+        assert (0, 0) in adj
+        assert (0, 2) in adj
+        assert (0, 1) not in adj
+        assert (0, 2) not in adj[(0, 0)]
+
+    def test_low_wall_blocks_movement(self):
+        from matches.sim_helpers.pathfinding import build_movement_adjacency
+
+        zone_data = [[1, 4, 1]]
+        adj = build_movement_adjacency(zone_data)
+        assert (0, 0) in adj
+        assert (0, 2) in adj
+        assert (0, 1) not in adj
+        assert (0, 2) not in adj[(0, 0)]
+
+    def test_windowed_wall_blocks_movement(self):
+        from matches.sim_helpers.pathfinding import build_movement_adjacency
+
+        zone_data = [[1, 5, 1]]
+        adj = build_movement_adjacency(zone_data)
+        assert (0, 1) not in adj
+
+    def test_legacy_red_blue_zone_still_passable(self):
+        """Values 2/3 (legacy zone colors) remain passable for backward compat."""
+        from matches.sim_helpers.pathfinding import build_movement_adjacency
+
+        zone_data = [[2, 3, 1]]
+        adj = build_movement_adjacency(zone_data)
+        assert (0, 0) in adj
+        assert (0, 1) in adj
+        assert (0, 2) in adj
+
+    # ── LOS computation ─────────────────────────────────────────────────────
+
+    def test_low_wall_transparent_for_los(self):
+        from core.map_processing import _has_los
+
+        zone_data = [[1, 4, 1]]
+        assert _has_los(zone_data, 0, 0, 0, 2) is True
+
+    def test_windowed_wall_transparent_los(self):
+        from core.map_processing import _has_los
+
+        zone_data = [[1, 5, 1]]
+        assert _has_los(zone_data, 0, 0, 0, 2) is True
+
+    def test_high_wall_blocks_los(self):
+        from core.map_processing import _has_los
+
+        zone_data = [[1, 0, 1]]
+        assert _has_los(zone_data, 0, 0, 0, 2) is False
+
+    def test_compute_sight_lines_low_wall_transparent(self):
+        from core.map_processing import compute_sight_lines
+
+        zone_data = [[1, 4, 1]]
+        sight = compute_sight_lines(zone_data)
+        assert "0,2" in sight.get("0,0", [])
+        assert "0,0" in sight.get("0,2", [])
+
+    def test_compute_sight_lines_windowed_wall_transparent(self):
+        from core.map_processing import compute_sight_lines
+
+        zone_data = [[1, 5, 1]]
+        sight = compute_sight_lines(zone_data)
+        assert "0,2" in sight.get("0,0", [])
+        assert "0,0" in sight.get("0,2", [])
+
+    def test_low_wall_not_a_los_origin(self):
+        from core.map_processing import compute_sight_lines
+
+        zone_data = [[1, 4, 1]]
+        sight = compute_sight_lines(zone_data)
+        assert "0,1" not in sight
+
+    # ── Windowed wall aperture targeting ────────────────────────────────────
+
+    def test_can_tag_through_windowed_wall_ns_axis(self):
+        """N-facing aperture allows attack along N-S axis (same column)."""
+        from matches.simulation import _can_tag_through_windowed_wall
+
+        zone_data = [
+            [0, 1, 0],
+            [0, 5, 0],
+            [0, 1, 0],
+        ]
+        wall_meta = {"1,1": {"facing": "N"}}
+        assert _can_tag_through_windowed_wall(0, 1, 2, 1, zone_data, wall_meta) is True
+
+    def test_cannot_tag_through_windowed_wall_wrong_axis(self):
+        """N-facing aperture blocks attack that is not along N-S axis."""
+        from matches.simulation import _can_tag_through_windowed_wall
+
+        zone_data = [[1, 5, 1]]
+        wall_meta = {"0,1": {"facing": "N"}}
+        assert _can_tag_through_windowed_wall(0, 0, 0, 2, zone_data, wall_meta) is False
+
+    def test_can_tag_through_windowed_wall_ew_axis(self):
+        """E-facing aperture allows attack along E-W axis (same row)."""
+        from matches.simulation import _can_tag_through_windowed_wall
+
+        zone_data = [[1, 5, 1]]
+        wall_meta = {"0,1": {"facing": "E"}}
+        assert _can_tag_through_windowed_wall(0, 0, 0, 2, zone_data, wall_meta) is True
+
+    def test_windowed_wall_no_facing_blocks(self):
+        from matches.simulation import _can_tag_through_windowed_wall
+
+        zone_data = [[1, 5, 1]]
+        wall_meta = {"0,1": {}}
+        assert _can_tag_through_windowed_wall(0, 0, 0, 2, zone_data, wall_meta) is False
+
+    def test_high_wall_always_blocks(self):
+        from matches.simulation import _can_tag_through_windowed_wall
+
+        zone_data = [[1, 0, 1]]
+        assert _can_tag_through_windowed_wall(0, 0, 0, 2, zone_data, {}) is False
+
+    def test_get_los_targets_windowed_aperture_hit(self):
+        """_get_los_targets includes target accessible through aligned aperture."""
+        from matches.simulation import _get_los_targets
+
+        zone_data = [[1, 5, 1]]
+        wall_meta = {"0,1": {"facing": "E"}}
+        ctx = {
+            "sight_data": {"0,0": frozenset(), "0,2": frozenset()},
+            "adj": {},
+            "spawn_cells": {},
+            "zone_data": zone_data,
+            "wall_meta": wall_meta,
+        }
+
+        actor = self._make_player("red_scout", "red", 0, 0)
+        target = self._make_player("blue_scout", "blue", 0, 2)
+        assert _get_los_targets(actor, [target], ctx) == [target]
+
+    def test_get_los_targets_windowed_aperture_miss(self):
+        """_get_los_targets excludes target when aperture axis does not align."""
+        from matches.simulation import _get_los_targets
+
+        zone_data = [[1, 5, 1]]
+        wall_meta = {"0,1": {"facing": "N"}}  # N/S aperture, attack is E-W
+        ctx = {
+            "sight_data": {"0,0": frozenset(), "0,2": frozenset()},
+            "adj": {},
+            "spawn_cells": {},
+            "zone_data": zone_data,
+            "wall_meta": wall_meta,
+        }
+
+        actor = self._make_player("red_scout", "red", 0, 0)
+        target = self._make_player("blue_scout", "blue", 0, 2)
+        assert _get_los_targets(actor, [target], ctx) == []
+
+    # ── Proximity-based zone detection ──────────────────────────────────────
+
+    def test_zone_from_cell_near_red_base(self):
+        spawn_cells = {"red": (0, 0), "blue": (10, 10)}
+        assert ResourceBasedSimulator._zone_from_cell(0, 1, spawn_cells) == 0
+
+    def test_zone_from_cell_near_blue_base(self):
+        spawn_cells = {"red": (0, 0), "blue": (10, 10)}
+        assert ResourceBasedSimulator._zone_from_cell(10, 9, spawn_cells) == 2
+
+    def test_zone_from_cell_equidistant_is_neutral(self):
+        spawn_cells = {"red": (0, 0), "blue": (10, 0)}
+        assert ResourceBasedSimulator._zone_from_cell(5, 0, spawn_cells) == 1
+
+    def test_zone_from_cell_near_neutral_base_is_neutral(self):
+        spawn_cells = {"red": (0, 0), "blue": (10, 0), "neutral_1": (3, 0)}
+        assert ResourceBasedSimulator._zone_from_cell(3, 1, spawn_cells) == 1
+
+    def test_zone_from_cell_no_bases_returns_neutral(self):
+        assert ResourceBasedSimulator._zone_from_cell(5, 5, {}) == 1
+
+    def test_windowed_wall_unknown_facing_blocks(self):
+        """Unknown/garbage facing value must block, not silently pass through."""
+        from matches.simulation import _can_tag_through_windowed_wall
+
+        zone_data = [[1, 5, 1]]
+        wall_meta = {"0,1": {"facing": "X"}}  # invalid facing
+        assert _can_tag_through_windowed_wall(0, 0, 0, 2, zone_data, wall_meta) is False
+
+
+@pytest.mark.django_db
+class TestMap07DBIntegration:
+    """DB-backed MAP-07 tests: wall_meta persisted and loaded by simulator."""
+
+    def _make_windowed_map(self, name: str):
+        from core.models import (
+            ArenaMap,
+            BaseSightLineConfig,
+            MapZoneConfig,
+            MapBaseConfig,
+            SightLineConfig,
+        )
+        from core.map_processing import compute_sight_lines
+
+        # 1×3 row: floor | windowed wall (E-facing) | floor
+        zone_data = [[1, 5, 1]]
+        wall_meta = {"0,1": {"facing": "E"}}
+        arena_map = ArenaMap.objects.create(name=name, img_width=300, img_height=100)
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=100,
+            zone_data={"zones": zone_data, "blocked_edges": {}, "wall_meta": wall_meta},
+            confirmed=True,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="red", x_px=50, y_px=50
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="blue", x_px=250, y_px=50
+        )
+        SightLineConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=100,
+            sight_data=compute_sight_lines(zone_data),
+        )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="red", zone_size=100, visible_cells=[]
+        )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="blue", zone_size=100, visible_cells=[]
+        )
+        return arena_map
+
+    def test_wall_meta_round_trip_through_resolve_map_data(self):
+        """wall_meta saved in zone_data JSON is returned as 8th element by _resolve_map_data."""
+        arena_map = self._make_windowed_map("WallMetaRoundTrip")
+        _, _, _, _, _, _, _, wall_meta = ResourceBasedSimulator._resolve_map_data(
+            arena_map
+        )
+        assert wall_meta == {"0,1": {"facing": "E"}}
+
+    def test_wall_meta_present_in_movement_ctx(self):
+        """_build_movement_ctx exposes wall_meta key from resolved map data."""
+        arena_map = self._make_windowed_map("WallMetaCtx")
+        (
+            _,
+            spawn_cells,
+            zone_data,
+            sight_data,
+            base_sight_data,
+            cell_ranking,
+            strong_spots,
+            wall_meta,
+        ) = ResourceBasedSimulator._resolve_map_data(arena_map)
+        ctx = ResourceBasedSimulator._build_movement_ctx(
+            zone_data,
+            spawn_cells,
+            sight_data,
+            base_sight_data,
+            cell_ranking,
+            strong_spots,
+            wall_meta,
+        )
+        assert ctx["wall_meta"] == {"0,1": {"facing": "E"}}

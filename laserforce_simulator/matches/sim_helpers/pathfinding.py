@@ -22,13 +22,19 @@ def _movement_cost(
     return 1.0
 
 
+# Cells passable for movement: floor (1) and legacy red/blue zones (2, 3 — backward compat).
+# High wall (0), low wall (4), and windowed wall (5) all block movement.
+_MOVEMENT_PASSABLE = {1, 2, 3}
+
+
 def build_movement_adjacency(
     zone_data: list[list[int]],
 ) -> dict[tuple[int, int], list[tuple[int, int]]]:
-    """Return 4-connected passable neighbors for every non-wall cell.
+    """Return 4-connected passable neighbors for every movement-passable cell.
 
-    Wall cells (value == 0) are excluded from the dict entirely so callers
-    can use `cell in adj` as a passability check.
+    Passable cell values: 1 (floor), 2/3 (legacy red/blue zone — backward compat).
+    Wall types 0 (high), 4 (low), and 5 (windowed) all block movement.
+    Cells excluded from the dict entirely so `cell in adj` is a passability check.
     """
     rows = len(zone_data)
     cols = len(zone_data[0]) if rows else 0
@@ -36,12 +42,16 @@ def build_movement_adjacency(
 
     for r in range(rows):
         for c in range(cols):
-            if zone_data[r][c] == 0:
+            if zone_data[r][c] not in _MOVEMENT_PASSABLE:
                 continue
             neighbors = []
             for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                 nr, nc = r + dr, c + dc
-                if 0 <= nr < rows and 0 <= nc < cols and zone_data[nr][nc] != 0:
+                if (
+                    0 <= nr < rows
+                    and 0 <= nc < cols
+                    and zone_data[nr][nc] in _MOVEMENT_PASSABLE
+                ):
                     neighbors.append((nr, nc))
             adj[(r, c)] = neighbors
 
