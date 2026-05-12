@@ -17,7 +17,7 @@ from .sim_helpers.weights import (
     _get_commander_weights,
 )
 from teams.models import Player, ROLE_STATS
-from core.models import MapBaseConfig, SightLineConfig
+from core.models import MapBaseConfig, SightLineConfig, BaseSightLineConfig
 
 # Module logger
 logger = logging.getLogger(__name__)
@@ -46,6 +46,40 @@ def _get_los_targets(actor, candidates: list, movement_ctx: dict | None) -> list
             if target_key in visible_cells:
                 result.append(p)
     return result
+
+
+# Neutral base_types in priority order for capture/reset checks
+_NEUTRAL_BASE_TYPES = ("neutral_1", "neutral_2", "neutral_3", "neutral_4")
+
+
+def _get_base_interaction(player, movement_ctx: dict | None) -> int | None:
+    """Return base_id of the first uncaptured base the player is in range of, or None.
+
+    Checks neutral bases first (priority), then the opposing base. Skips bases the player
+    has already captured — those are ignored for the remainder of the game.
+    base_id 15=neutral, 14=red player captures blue base, 13=blue player captures red base.
+    Returns None when no map is active, player has no cell position, or no capturable base
+    is in range.
+    """
+    if movement_ctx is None:
+        return None
+    base_sight_data = movement_ctx.get("base_sight_data")
+    if not base_sight_data or player.cell_row is None:
+        return None
+
+    cell_key = f"{player.cell_row},{player.cell_col}"
+
+    if not player.neutral_base_destroyed:
+        for neutral_type in _NEUTRAL_BASE_TYPES:
+            if cell_key in base_sight_data.get(neutral_type, frozenset()):
+                return 15
+
+    if not player.opposing_base_destroyed:
+        opposing_type = "blue" if player.team_color == "red" else "red"
+        if cell_key in base_sight_data.get(opposing_type, frozenset()):
+            return 14 if player.team_color == "red" else 13
+
+    return None
 
 
 class ResourceBasedSimulator:
@@ -119,8 +153,8 @@ class ResourceBasedSimulator:
         self, team_red, team_blue, match=None, round_number=1, *, arena_map=None
     ):
         """Simulate a round with full player resource tracking"""
-        zone_size, spawn_cells, zone_data, sight_data = self._resolve_map_data(
-            arena_map
+        zone_size, spawn_cells, zone_data, sight_data, base_sight_data = (
+            self._resolve_map_data(arena_map)
         )
 
         game_round = GameRound.objects.create(
@@ -142,7 +176,7 @@ class ResourceBasedSimulator:
 
         # Simulate the round (pass game_round so events can be recorded)
         movement_ctx = ResourceBasedSimulator._build_movement_ctx(
-            zone_data, spawn_cells, sight_data
+            zone_data, spawn_cells, sight_data, base_sight_data
         )
         round_result = self._simulate_round_combat(
             game_round, red_players, blue_players, movement_ctx=movement_ctx
@@ -162,15 +196,17 @@ class ResourceBasedSimulator:
 
     @staticmethod
     def _resolve_map_data(arena_map):
-        """Load zone_size, spawn cells, zone_data, and sight_data from a map.
+        """Load zone_size, spawn cells, zone_data, sight_data, and base_sight_data from a map.
 
-        Returns (zone_size, spawn_cells, zone_grid, sight_data) where:
+        Returns (zone_size, spawn_cells, zone_grid, sight_data, base_sight_data) where:
         - All values are None/{} when no map is provided.
         - sight_data is {"r,c": frozenset(["r,c", ...])} keyed by cell — O(1) lookup.
-        Raises ValueError if the map is missing its zone config, a base, or sight lines.
+        - base_sight_data is {"base_type": frozenset(["r,c", ...])} for O(1) cell lookup.
+        Raises ValueError if the map is missing its zone config, a base, sight lines, or
+        base sight line configs.
         """
         if arena_map is None:
-            return None, {}, None, None
+            return None, {}, None, None, {}
 
         config = arena_map.latest_confirmed_config()
         if config is None:
@@ -213,7 +249,20 @@ class ResourceBasedSimulator:
             )
         sight_data = {k: frozenset(v) for k, v in sight_config.sight_data.items()}
 
-        return zone_size, spawn_cells, zone_grid, sight_data
+        base_sight_configs = list(
+            BaseSightLineConfig.objects.filter(arena_map=arena_map, zone_size=zone_size)
+        )
+        if not base_sight_configs:
+            raise ValueError(
+                f"Map '{arena_map.name}' has no base sight lines computed for zone size "
+                f"{zone_size}px. Click 'Compute Sight Lines' in the map editor before simulating."
+            )
+        base_sight_data = {
+            bsc.base_type: frozenset(f"{r},{c}" for r, c in bsc.visible_cells)
+            for bsc in base_sight_configs
+        }
+
+        return zone_size, spawn_cells, zone_grid, sight_data, base_sight_data
 
     @staticmethod
     def _zone_from_cell(zone_data, row: int, col: int) -> int:
@@ -226,7 +275,7 @@ class ResourceBasedSimulator:
         return 1  # neutral_zone (floor or wall treated as neutral)
 
     @staticmethod
-    def _build_movement_ctx(zone_data, spawn_cells, sight_data=None):
+    def _build_movement_ctx(zone_data, spawn_cells, sight_data=None, base_sight_data=None):
         if zone_data is None:
             return None
         return {
@@ -234,6 +283,7 @@ class ResourceBasedSimulator:
             "spawn_cells": spawn_cells,
             "zone_data": zone_data,
             "sight_data": sight_data,
+            "base_sight_data": base_sight_data or {},
         }
 
     def _initialize_players(self, game_round, team, team_color, spawn_cells, zone_data):
@@ -749,7 +799,9 @@ class ResourceBasedSimulator:
                 actor.is_hiding = True
                 actor.save()
             elif ptype == "capture_base":
-                self._capture_base(actor, plan.get("base_id"), second)
+                self._capture_base(
+                    actor, plan.get("base_id"), second, movement_ctx=plan.get("movement_ctx")
+                )
             elif ptype == "missile":
                 scheduled = self._start_missile_lock(actor, plan.get("target"), second)
                 if scheduled:
@@ -905,13 +957,24 @@ class ResourceBasedSimulator:
                 zone = self._choose_zone_change(player, all_alive, second)
                 plans.append({"type": "change_zone", "actor": player, "zone": zone})
         elif choice == "capture_base":
-            # simple heuristic
-            base_id = (
-                15
-                if player.current_zone == 1
-                else (14 if player.team_color == "red" else 13)
-            )
-            plans.append({"type": "capture_base", "actor": player, "base_id": base_id})
+            if movement_ctx is not None and player.cell_row is not None:
+                base_id = _get_base_interaction(player, movement_ctx)
+                if base_id is not None:
+                    plans.append(
+                        {
+                            "type": "capture_base",
+                            "actor": player,
+                            "base_id": base_id,
+                            "movement_ctx": movement_ctx,
+                        }
+                    )
+            else:
+                base_id = (
+                    15
+                    if player.current_zone == 1
+                    else (14 if player.team_color == "red" else 13)
+                )
+                plans.append({"type": "capture_base", "actor": player, "base_id": base_id})
         elif choice == "use_special":
             if (
                 player.final_special >= player.special_cost
@@ -2044,15 +2107,25 @@ class ResourceBasedSimulator:
         # else: nuke was already tag-cancelled (special_active_until == 0); counters already updated
 
     def _reset_base(self, player_state, base_id, second):
-        """Simulate resetting off a base"""
-        # check if player can reset base (is alive, is in zone, hasn't already captured base)
-        # if so, expend 1 ammo and set last_tagged_id to base id
+        """Simulate resetting off a base — deferred to a later ticket."""
         return None
 
-    def _capture_base(self, player_state, base_id, second):
+    def _capture_base(self, player_state, base_id, second, movement_ctx=None):
         """Simulate capturing a base"""
-        # check if player can capture base (is alive, is in zone, hasn't already captured base)
-        # if so, expend 3 shots, set last_tagged_id to base id, and award 1001 points
+        # When a map is active, verify the player's cell is in the base's visible_cells.
+        if movement_ctx is not None and player_state.cell_row is not None:
+            base_sight_data = movement_ctx.get("base_sight_data", {})
+            cell_key = f"{player_state.cell_row},{player_state.cell_col}"
+            if base_id == 15:
+                in_range = any(
+                    cell_key in base_sight_data.get(bt, frozenset())
+                    for bt in _NEUTRAL_BASE_TYPES
+                )
+            else:
+                opp_type = "blue" if player_state.team_color == "red" else "red"
+                in_range = cell_key in base_sight_data.get(opp_type, frozenset())
+            if not in_range:
+                return False
         if player_state.final_shots >= 3 or player_state.role == "ammo":
             if player_state.role != "ammo":
                 player_state.final_shots -= 3
@@ -2216,11 +2289,11 @@ class BatchSimulator:
 
         movement_ctx = None
         if arena_map is not None:
-            _, spawn_cells, zone_data, sight_data = (
+            _, spawn_cells, zone_data, sight_data, base_sight_data = (
                 ResourceBasedSimulator._resolve_map_data(arena_map)
             )
             movement_ctx = ResourceBasedSimulator._build_movement_ctx(
-                zone_data, spawn_cells, sight_data
+                zone_data, spawn_cells, sight_data, base_sight_data
             )
 
         red_wins = blue_wins = ties = 0
@@ -2608,7 +2681,10 @@ class BatchSimulator:
                 elif ptype == "hide":
                     actor.is_hiding = True
                 elif ptype == "capture_base":
-                    self._capture_base(actor, plan["base_id"], event_log, second)
+                    self._capture_base(
+                        actor, plan["base_id"], event_log, second,
+                        movement_ctx=plan.get("movement_ctx"),
+                    )
                 elif ptype == "missile":
                     scheduled = self._start_missile_lock(actor, plan["target"], second)
                     if scheduled:
@@ -2752,12 +2828,24 @@ class BatchSimulator:
                 zone = self._choose_zone_change(player, all_alive)
                 plans.append({"type": "change_zone", "actor": player, "zone": zone})
         elif choice == "capture_base":
-            base_id = (
-                15
-                if player.current_zone == 1
-                else (14 if player.team_color == "red" else 13)
-            )
-            plans.append({"type": "capture_base", "actor": player, "base_id": base_id})
+            if movement_ctx is not None and player.cell_row is not None:
+                base_id = _get_base_interaction(player, movement_ctx)
+                if base_id is not None:
+                    plans.append(
+                        {
+                            "type": "capture_base",
+                            "actor": player,
+                            "base_id": base_id,
+                            "movement_ctx": movement_ctx,
+                        }
+                    )
+            else:
+                base_id = (
+                    15
+                    if player.current_zone == 1
+                    else (14 if player.team_color == "red" else 13)
+                )
+                plans.append({"type": "capture_base", "actor": player, "base_id": base_id})
         elif choice == "use_special":
             if (
                 player.can_use_special
@@ -3299,7 +3387,20 @@ class BatchSimulator:
         else:
             player.current_zone = 1
 
-    def _capture_base(self, player, base_id, event_log=None, second=0):
+    def _capture_base(self, player, base_id, event_log=None, second=0, movement_ctx=None):
+        if movement_ctx is not None and player.cell_row is not None:
+            base_sight_data = movement_ctx.get("base_sight_data", {})
+            cell_key = f"{player.cell_row},{player.cell_col}"
+            if base_id == 15:
+                in_range = any(
+                    cell_key in base_sight_data.get(bt, frozenset())
+                    for bt in _NEUTRAL_BASE_TYPES
+                )
+            else:
+                opp_type = "blue" if player.team_color == "red" else "red"
+                in_range = cell_key in base_sight_data.get(opp_type, frozenset())
+            if not in_range:
+                return
         if player.final_shots >= 3 or player.role == "ammo":
             if player.role != "ammo":
                 player.final_shots -= 3

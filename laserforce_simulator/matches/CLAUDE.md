@@ -24,12 +24,13 @@ Public methods accept an optional keyword-only `arena_map` parameter:
 - `simulate_detailed_round(team_red, team_blue, match=None, round_number=1, *, arena_map=None)`
 
 Static helpers:
-- `_resolve_map_data(arena_map)` — validates the map's confirmed zone config, unwraps `zone_data` dict format (`{"zones": [...], "blocked_edges": {...}}` in production; raw list in older/test data), batches base config queries, and loads `SightLineConfig`. Returns `(zone_size, spawn_cells, zone_grid, sight_data)` or `(None, {}, None, None)` when `arena_map` is `None`. Raises `ValueError` if the map has no confirmed config, a missing base, or no computed sight lines.
+- `_resolve_map_data(arena_map)` — validates the map's confirmed zone config, unwraps `zone_data` dict format (`{"zones": [...], "blocked_edges": {...}}` in production; raw list in older/test data), batches base config queries, and loads `SightLineConfig` and `BaseSightLineConfig`. Returns `(zone_size, spawn_cells, zone_grid, sight_data, base_sight_data)` or `(None, {}, None, None, {})` when `arena_map` is `None`. Raises `ValueError` if the map has no confirmed config, a missing base, no computed sight lines, or no computed base sight lines.
 - `_zone_from_cell(zone_data, row, col)` — maps cell type to zone index: 2→0 (red), 3→2 (blue), else 1 (neutral).
-- `_build_movement_ctx(zone_data, spawn_cells, sight_data=None)` — returns `{"adj": ..., "spawn_cells": ..., "zone_data": ..., "sight_data": ...}` or `None` when `zone_data` is `None`. The `adj` and `sight_data` dicts are built once per round and passed through the call chain to avoid rebuilding every tick.
+- `_build_movement_ctx(zone_data, spawn_cells, sight_data=None, base_sight_data=None)` — returns `{"adj": ..., "spawn_cells": ..., "zone_data": ..., "sight_data": ..., "base_sight_data": ...}` or `None` when `zone_data` is `None`. All dicts are built once per round and passed through the call chain.
 
-Module-level helper:
+Module-level helpers:
 - `_get_los_targets(actor, candidates, movement_ctx)` — returns the subset of `candidates` visible to `actor`. With a map, looks up the actor's cell key in `sight_data` (a `{"r,c": frozenset}` dict) and filters to candidates whose cell is in the visible set. Falls back to same-zone equality when `movement_ctx` is `None`, `sight_data` is absent, or the actor has no cell position. Used by both simulators' `_choose_tag_target` methods.
+- `_get_base_interaction(player, movement_ctx)` — returns the `base_id` of the first uncaptured base the player is in range of (`15`=neutral, `14`=red player at blue base, `13`=blue player at red base), or `None`. Checks neutral bases first (priority order `neutral_1`…`neutral_4`), then the opposing base. Skips bases already captured by that player. Returns `None` when no map is active, player has no cell position, or `base_sight_data` is absent. Used by both simulators' `_plan_action` methods to gate `capture_base` actions.
 
 Cell-aware movement (MAP-02, active when `movement_ctx is not None` and `player.cell_row is not None`):
 - `_choose_goal_cell(player, all_alive, movement_ctx)` — delegates to `pathfinding.choose_goal_cell`; default goal is the enemy base cell; overridden by medic's or ammo's cell when resources are critical.
@@ -146,7 +147,7 @@ All templates live in `laserforce_simulator/templates/`. The `game_round_events.
 `matches/tests/` package:
 - `test_sim_core.py` — `ResourceBasedSimulator` mechanics, game events, round outcomes
 - `test_batch_sim.py` — `BatchSimulator` mechanics
-- `test_map.py` — map-related tests: adjacency building, A* pathfinding, movement events, cell-aware movement, batch-sim with map (`TestMap02CellMovement`); LOS target filtering and wall-blocking acceptance tests (`TestMap03LOSTargeting`, `TestMap03DBIntegration`)
+- `test_map.py` — map-related tests: adjacency building, A* pathfinding, movement events, cell-aware movement, batch-sim with map (`TestMap02CellMovement`); LOS target filtering and wall-blocking acceptance tests (`TestMap03LOSTargeting`, `TestMap03DBIntegration`); base-sight gate unit tests and DB integration (`TestMap04BaseInteraction`, `TestMap04DBIntegration`)
 - `test_roster.py` — team/player roster validation
 - `test_mvp.py` — MVP scoring formulas
 - `test_weights.py` — weight function unit tests (`TestWeightFunctions`)

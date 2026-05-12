@@ -84,6 +84,7 @@ Hit-chance formula remains the same; only target eligibility changes.
 Replace the abstract base-capture zone check with `BaseSightLineConfig` lookups. A player can interact with a base 
 (capture, resupply trigger) only if their current cell appears in `visible_cells` for that base. 
 Load `BaseSightLineConfig` at round start alongside `SightLineConfig`.
+- completed: `_resolve_map_data` now returns a 5-tuple including `base_sight_data` (a `{"base_type": frozenset}` dict); raises `ValueError` if no `BaseSightLineConfig` exists for the map's zone size. `_build_movement_ctx` gains a `base_sight_data` kwarg that is stored in the ctx dict. Module-level `_get_base_interaction(player, movement_ctx)` checks neutral bases first, then the opposing base; returns `15`/`14`/`13` or `None`. Both `ResourceBasedSimulator._capture_base` and `BatchSimulator._capture_base` guard the capture with a `base_sight_data` range check before awarding points. All existing test fixtures updated to include `BaseSightLineConfig`; 15 new tests added in `TestMap04BaseInteraction` and `TestMap04DBIntegration`. 263 tests pass.
 
 ### MAP-05 · Role-aware goal selection
 Update the weight functions in `weights.py` to express goals in terms of target cells rather than abstract zones.
