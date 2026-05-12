@@ -26,4 +26,10 @@ urlpatterns = [
         name="save_sight_lines",
     ),
     path("<int:map_id>/save/", views.save_zone_config, name="save_zone_config"),
+    path("<int:map_id>/strong-spots/", views.get_strong_spots, name="get_strong_spots"),
+    path(
+        "<int:map_id>/strong-spots/save/",
+        views.save_strong_spots,
+        name="save_strong_spots",
+    ),
 ]

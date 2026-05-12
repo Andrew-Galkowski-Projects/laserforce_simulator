@@ -17,6 +17,7 @@ Helper modules used by both `ResourceBasedSimulator` and `BatchSimulator` in `ma
 | `was_eliminated_at` | Second of final elimination; 901 means survived the round |
 | `special_active_until` | Second until which the scout's rapid-fire (or commander's shield) special is active |
 | `last_shot_time` | Transient; set every time the player fires; used by `_shot_cooldown` to enforce shot-speed limits |
+| `last_chosen_action` | Action chosen on the previous tick (`"tag_player"`, `"hide"`, etc.); read by `choose_goal_cell` to make movement action-aware (MAP-05) |
 
 ### Uptime breakdown fields
 
@@ -80,7 +81,25 @@ Cell-aware movement helpers shared by both simulators. Used when `arena_map` is 
 
 **`astar_next_step(start, goal, adj, elevation_data=None)`** — returns the immediate next cell on the shortest path from `start` to `goal` using A* with a Manhattan heuristic. Returns `start` unchanged when `start == goal`, no path exists, or `start` is not in the adjacency graph.
 
-**`choose_goal_cell(player, all_alive, spawn_cells)`** — duck-typed goal selector shared by both simulators. Default goal: enemy base cell from `spawn_cells`. Overrides: allied medic's cell when lives ≤ 30% of max (non-medic only); allied ammo's cell when shots ≤ 30% of max.
+**`_find_role(all_alive, team_color, role) -> Any`** — returns the first alive player on `team_color` with the given `role`, or `None`. Return type is `Any` (not `object`) because callers access duck-typed attributes (`cell_row`, `cell_col`, etc.).
+
+**`_goal_from_action(player, all_alive, enemy_color, cell_row, cell_col, intended_action, movement_ctx) -> tuple[int,int] | None`** — returns a goal cell driven by the player's previously chosen action, or `None`:
+- `tag_player` / `missile_player`: nearest enemy (Commander → enemy medic first).
+- `resupply_ally`: Medic → neediest ally by lives ratio; Ammo → neediest ally by shots ratio.
+- `hide`: adjacent cell with lowest LOS count.
+
+**`_goal_from_role(player, all_alive, enemy_color, cell_row, cell_col, movement_ctx) -> tuple[int,int] | None`** — returns a role-specific positioning goal, or `None`:
+- Scout → nearest high-LOS cell (top 25% by LOS count).
+- Heavy (healthy >50% lives and shots) → nearest strong spot; otherwise → nearest allied Medic or Ammo.
+- Medic → lowest-LOS cell within the allied Heavy's visible set (sheltered position near Heavy).
+- Ammo → highest-LOS cell within the allied Heavy's visible set (exposed support position near Heavy).
+- Commander → enemy medic cell.
+
+**`choose_goal_cell(player, all_alive, spawn_cells, movement_ctx=None, intended_action="")`** — duck-typed goal selector shared by both simulators (MAP-05). Priority order:
+1. Critical-resource override (non-support): lives ≤ 30% → seek allied Medic; shots ≤ 30% → seek allied Ammo.
+2. Action-driven movement via `_goal_from_action` (uses `intended_action`, which is the action chosen on the previous tick).
+3. Role-specific positioning via `_goal_from_role`.
+4. Default: enemy base cell from `spawn_cells`.
 
 ### Elevation model (stub)
 

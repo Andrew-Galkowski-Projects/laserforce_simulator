@@ -430,3 +430,28 @@ def compute_single_cell_visibility(r1, c1, zone_data, blocked_edges_grid=None):
             visible.append(f"{r2},{c2}")
 
     return visible
+
+
+def compute_high_los_ranking(sight_data: dict) -> list[list[int]]:
+    """Return all cells sorted by LOS count descending (highest visibility first).
+
+    sight_data is {"r,c": ["r,c", ...]} as stored in SightLineConfig.
+    Returns [[row, col], ...] — cells with more visible neighbours come first.
+    """
+    counts = []
+    for key, visible in sight_data.items():
+        parts = key.split(",")
+        counts.append((int(parts[0]), int(parts[1]), len(visible)))
+    counts.sort(key=lambda x: x[2], reverse=True)
+    return [[r, c] for r, c, _ in counts]
+
+
+def compute_heavy_strong_spots(sight_data: dict) -> list[list[int]]:
+    """Return the top 25% of cells by LOS count as Heavy strong-spot candidates.
+
+    Auto-seeds HeavyStrongSpotsConfig when sight lines are first computed.
+    Returns [[row, col], ...] in LOS-count order (highest first).
+    """
+    ranked = compute_high_los_ranking(sight_data)
+    top_n = max(1, len(ranked) // 4)
+    return ranked[:top_n]

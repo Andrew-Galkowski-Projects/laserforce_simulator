@@ -61,7 +61,11 @@
       "Bash(python -m black --version)",
       "Bash(python -m black . --diff --quiet)",
       "Bash(python -m black .)",
-      "Bash(python -m pytest matches/tests/test_map.py -v -k \"Map04\")"
+      "Bash(python -m pytest matches/tests/test_map.py -v -k \"Map04\")",
+      "Bash(python -m pytest laserforce_simulator/matches/tests/test_map.py -x -q)",
+      "Bash(python -m pytest -x -q)",
+      "Bash(black *)",
+      "Bash(mypy *)"
     ]
   }
 }

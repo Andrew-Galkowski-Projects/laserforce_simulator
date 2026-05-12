@@ -10,12 +10,19 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 from PIL import Image as PILImage, UnidentifiedImageError
 
-from .map_processing import compute_sight_lines, create_processed_image, detect_zones
+from .map_processing import (
+    compute_high_los_ranking,
+    compute_sight_lines,
+    create_processed_image,
+    detect_zones,
+)
 from .models import (
     VALID_BASE_TYPES,
     ArenaMap,
     BaseSightLineConfig,
+    HeavyStrongSpotsConfig,
     MapBaseConfig,
+    MapCellRankingConfig,
     MapZoneConfig,
     SightLineConfig,
 )
@@ -273,6 +280,19 @@ def compute_sight_lines_view(request, map_id):
         defaults={"sight_data": sight_data},
     )
 
+    ranked = compute_high_los_ranking(sight_data)
+    top_n = max(1, len(ranked) // 4)
+    MapCellRankingConfig.objects.update_or_create(
+        arena_map=arena_map,
+        zone_size=zone_size,
+        defaults={"ranked_cells": ranked},
+    )
+    HeavyStrongSpotsConfig.objects.update_or_create(
+        arena_map=arena_map,
+        zone_size=zone_size,
+        defaults={"cells": ranked[:top_n]},
+    )
+
     return JsonResponse({"sight_data": sight_data, "zone_size": zone_size})
 
 
@@ -339,6 +359,19 @@ def save_sight_lines(request, map_id):
             zone_size=zone_size,
             defaults={"sight_data": sight_data},
         )
+        if sight_data:
+            ranked = compute_high_los_ranking(sight_data)
+            top_n = max(1, len(ranked) // 4)
+            MapCellRankingConfig.objects.update_or_create(
+                arena_map=arena_map,
+                zone_size=zone_size,
+                defaults={"ranked_cells": ranked},
+            )
+            HeavyStrongSpotsConfig.objects.update_or_create(
+                arena_map=arena_map,
+                zone_size=zone_size,
+                defaults={"cells": ranked[:top_n]},
+            )
     else:
         config, created = SightLineConfig.objects.get_or_create(
             arena_map=arena_map,
@@ -348,6 +381,13 @@ def save_sight_lines(request, map_id):
         if not created and sight_data:
             config.sight_data = {**config.sight_data, **sight_data}
             config.save(update_fields=["sight_data"])
+            # Keep cell ranking in sync with the full merged sight data.
+            ranked = compute_high_los_ranking(config.sight_data)
+            MapCellRankingConfig.objects.update_or_create(
+                arena_map=arena_map,
+                zone_size=zone_size,
+                defaults={"ranked_cells": ranked},
+            )
 
     for btype, cells in base_sights.items():
         if btype in VALID_BASE_TYPES:
@@ -358,4 +398,54 @@ def save_sight_lines(request, map_id):
                 defaults={"visible_cells": cells},
             )
 
+    return JsonResponse({"status": "ok"})
+
+
+def get_strong_spots(request, map_id):
+    """Return current HeavyStrongSpotsConfig cells for the given zone_size."""
+    arena_map = get_object_or_404(ArenaMap, pk=map_id)
+    try:
+        zone_size = int(request.GET.get("zone_size", 50))
+    except (ValueError, TypeError):
+        zone_size = 50
+    zone_size = max(10, min(zone_size, 200))
+
+    config = HeavyStrongSpotsConfig.objects.filter(
+        arena_map=arena_map, zone_size=zone_size
+    ).first()
+
+    return JsonResponse({"cells": config.cells if config else []})
+
+
+@require_POST
+def save_strong_spots(request, map_id):
+    """Persist user-edited Heavy strong spots."""
+    arena_map = get_object_or_404(ArenaMap, pk=map_id)
+    try:
+        body = json.loads(request.body)
+        zone_size = int(body.get("zone_size", 50))
+        cells = body.get("cells", [])
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return JsonResponse(
+            {"status": "error", "message": "Invalid payload"}, status=400
+        )
+
+    if not isinstance(cells, list) or not all(
+        isinstance(rc, (list, tuple))
+        and len(rc) == 2
+        and all(isinstance(v, int) for v in rc)
+        for rc in cells
+    ):
+        return JsonResponse(
+            {"status": "error", "message": "cells must be a list of [int, int] pairs"},
+            status=400,
+        )
+
+    zone_size = max(10, min(zone_size, 200))
+
+    HeavyStrongSpotsConfig.objects.update_or_create(
+        arena_map=arena_map,
+        zone_size=zone_size,
+        defaults={"cells": cells},
+    )
     return JsonResponse({"status": "ok"})

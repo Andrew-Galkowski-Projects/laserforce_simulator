@@ -9,6 +9,8 @@ The `core` app provides a 2D arena map importer and editor used to configure map
 - **`MapBaseConfig`**: pixel-coordinate (x_px, y_px) of each base (red, blue, neutral_1–4). Zone-size independent.
 - **`SightLineConfig`**: bidirectional adjacency dict `{"r,c": ["r,c", ...]}` for all non-wall cell pairs. Keyed per (map, zone_size).
 - **`BaseSightLineConfig`**: list of cells `[[row, col], ...]` that can tag each base. Keyed per (map, base_type, zone_size). User-defined (bases sit on raised platforms).
+- **`MapCellRankingConfig`**: `ranked_cells` — all passable cells sorted by LOS count descending (`[[row, col], ...]`). Auto-computed when sight lines are saved. Used by Scouts to navigate toward high-visibility positions and by Medic/Ammo to find sheltered vs exposed positions near the allied Heavy. Keyed per (map, zone_size).
+- **`HeavyStrongSpotsConfig`**: `cells` — top ~25% of cells by LOS count, representing strategically strong defensive positions for Heavies (`[[row, col], ...]`). Auto-seeded when sight lines are first computed; user-overridable via the map editor. Shared by both team colours (each Heavy picks the nearest spot). Keyed per (map, zone_size).
 
 ## Map Processing (`core/map_processing.py`)
 
@@ -26,6 +28,8 @@ The `core` app provides a 2D arena map importer and editor used to configure map
 **`compute_sight_lines(zone_data, use_quadtree=True)`** — all-pairs LOS. Uses a `QuadtreeNode` spatial index when >50 passable cells: each cell only tests neighbors within `max(rows,cols)//4` radius (50–100× speedup over brute force). Falls back to O(n²) for small maps. Accepts both list and dict `zone_data` formats.
 
 **`compute_single_cell_visibility(r, c, zone_data)`** — O(n) LOS from one cell. Used by the lazy editor endpoint for instant per-click feedback without precomputing all pairs.
+
+**`compute_high_los_ranking(sight_data)`** — returns all passable cells as `[[row, col], ...]` sorted by LOS count descending (most-visible cell first). Called automatically after sight line saves/computes to populate `MapCellRankingConfig`. The top 25% of this list seeds `HeavyStrongSpotsConfig`.
 
 ## Map Editor UI (`templates/maps/map_editor.html`)
 
@@ -52,6 +56,8 @@ Two modes toggled in the top bar:
 /maps/<id>/sight-lines/compute/     → POST: run full all-pairs LOS computation
 /maps/<id>/sight-lines/single-cell/ → GET: lazy single-cell LOS (?zone_size=&r=&c=)
 /maps/<id>/sight-lines/save/        → POST: save sight lines (batched)
+/maps/<id>/strong-spots/            → GET: current HeavyStrongSpotsConfig cells (?zone_size=)
+/maps/<id>/strong-spots/save/       → POST: persist user-edited heavy strong spots
 ```
 
 ## Storage Backend (`core/views.py`)
@@ -72,3 +78,7 @@ Two modes toggled in the top bar:
 - `GetImageLocalPathTests` — local storage path passthrough, remote download-to-cache, cache reuse (no duplicate downloads)
 - `SeedDefaultsTests` — skips seeding when non-`FileSystemStorage` is active
 - `UploadMapViewTests` — dimensions stored correctly after upload; corrupt uploads rejected and not persisted
+
+Map-processing tests for MAP-05 features live in `matches/tests/test_map.py` alongside the MAP-02–04 tests:
+- `TestMap05ComputeHighLosRanking` — sort correctness (highest-LOS cell first), all cells returned, empty input returns empty
+- `TestMap05StrongSpotsViews` — GET returns cells, returns `[]` when no config, POST persists cells, POST rejects non-list cells and non-int pairs, GET method not allowed on save endpoint
