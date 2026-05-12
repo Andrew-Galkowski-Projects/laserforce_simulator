@@ -1,4 +1,5 @@
 import heapq
+from typing import Any
 
 
 def _elevation_at(r: int, c: int, elevation_data: dict | None = None) -> float:
@@ -63,7 +64,6 @@ def astar_next_step(
         return start
 
     h = abs(goal[0] - start[0]) + abs(goal[1] - start[1])
-    # heap entry: (f_cost, g_cost, current_cell)
     heap: list[tuple[float, float, tuple[int, int]]] = [(h, 0.0, start)]
     g_score: dict[tuple[int, int], float] = {start: 0.0}
     came_from: dict[tuple[int, int], tuple[int, int]] = {}
@@ -72,10 +72,9 @@ def astar_next_step(
         _, g, current = heapq.heappop(heap)
 
         if g > g_score.get(current, float("inf")):
-            continue  # stale heap entry
+            continue
 
         if current == goal:
-            # Walk came_from back to the direct child of start
             node = goal
             while came_from.get(node) != start:
                 node = came_from[node]
@@ -92,49 +91,230 @@ def astar_next_step(
     return start
 
 
+def _nearest_cell(
+    from_row: int,
+    from_col: int,
+    cells: list,
+) -> tuple[int, int] | None:
+    """Return the cell from cells closest to (from_row, from_col) by Manhattan distance."""
+    if not cells:
+        return None
+    best = min(cells, key=lambda rc: abs(rc[0] - from_row) + abs(rc[1] - from_col))
+    return (int(best[0]), int(best[1]))
+
+
+def _find_role(all_alive: list, team_color: str, role: str) -> Any:
+    return next(
+        (
+            p
+            for p in all_alive
+            if p.team_color == team_color and p.role == role and p.final_lives > 0
+        ),
+        None,
+    )
+
+
+def _goal_from_action(
+    player,
+    all_alive: list,
+    enemy_color: str,
+    cell_row: int,
+    cell_col: int,
+    intended_action: str,
+    movement_ctx: dict,
+) -> tuple[int, int] | None:
+    """Return a goal cell driven by the player's last action, or None."""
+    cell_los_counts: dict[str, int] = movement_ctx.get("cell_los_counts", {})
+
+    if intended_action in ("tag_player", "missile_player"):
+        if player.role == "commander":
+            enemy_medic = _find_role(all_alive, enemy_color, "medic")
+            if enemy_medic and enemy_medic.cell_row is not None:
+                return (enemy_medic.cell_row, enemy_medic.cell_col)
+        enemies = [
+            p
+            for p in all_alive
+            if p.team_color == enemy_color
+            and p.final_lives > 0
+            and p.cell_row is not None
+        ]
+        if enemies:
+            goal = _nearest_cell(
+                cell_row, cell_col, [(p.cell_row, p.cell_col) for p in enemies]
+            )
+            if goal:
+                return goal
+
+    elif intended_action == "resupply_ally":
+        allies = [
+            p
+            for p in all_alive
+            if p.team_color == player.team_color
+            and p.final_lives > 0
+            and p.cell_row is not None
+            and p is not player
+        ]
+        if allies:
+            if player.role == "medic":
+                target = min(
+                    allies,
+                    key=lambda p: p.final_lives
+                    / max(1, getattr(p, "max_lives", p.starting_lives)),
+                )
+            else:
+                target = min(
+                    allies,
+                    key=lambda p: p.final_shots
+                    / max(1, getattr(p, "max_shots", p.starting_shots)),
+                )
+            return (target.cell_row, target.cell_col)
+
+    elif intended_action == "hide":
+        adj: dict = movement_ctx.get("adj", {})
+        neighbors = adj.get((cell_row, cell_col), [])
+        if neighbors and cell_los_counts:
+            safest = min(
+                neighbors, key=lambda rc: cell_los_counts.get(f"{rc[0]},{rc[1]}", 0)
+            )
+            return safest
+
+    return None
+
+
+def _goal_from_role(
+    player,
+    all_alive: list,
+    enemy_color: str,
+    cell_row: int,
+    cell_col: int,
+    movement_ctx: dict,
+) -> tuple[int, int] | None:
+    """Return a role-specific goal cell, or None."""
+    cell_los_counts: dict[str, int] = movement_ctx.get("cell_los_counts", {})
+    high_los_cells: list = movement_ctx.get("high_los_cells", [])
+    strong_spots: list = movement_ctx.get("strong_spots", [])
+    sight_data: dict = movement_ctx.get("sight_data") or {}
+
+    if player.role == "scout":
+        if high_los_cells:
+            goal = _nearest_cell(cell_row, cell_col, high_los_cells)
+            if goal:
+                return goal
+
+    elif player.role == "heavy":
+        max_lives = getattr(player, "max_lives", player.starting_lives)
+        max_shots = getattr(player, "max_shots", player.starting_shots)
+        healthy = (
+            player.final_lives > max_lives * 0.5
+            and player.final_shots > max_shots * 0.5
+        )
+        if healthy and strong_spots:
+            goal = _nearest_cell(cell_row, cell_col, strong_spots)
+            if goal:
+                return goal
+        for support_role in ("medic", "ammo"):
+            ally = _find_role(all_alive, player.team_color, support_role)
+            if ally and ally.cell_row is not None:
+                return (ally.cell_row, ally.cell_col)
+
+    elif player.role == "medic":
+        heavy = _find_role(all_alive, player.team_color, "heavy")
+        if heavy and heavy.cell_row is not None:
+            heavy_key = f"{heavy.cell_row},{heavy.cell_col}"
+            heavy_visible = sight_data.get(heavy_key, frozenset())
+            if heavy_visible and cell_los_counts:
+                best = min(heavy_visible, key=lambda k: cell_los_counts.get(k, 0))
+                r, c = best.split(",")
+                return (int(r), int(c))
+            return (heavy.cell_row, heavy.cell_col)
+
+    elif player.role == "ammo":
+        heavy = _find_role(all_alive, player.team_color, "heavy")
+        if heavy and heavy.cell_row is not None:
+            heavy_key = f"{heavy.cell_row},{heavy.cell_col}"
+            heavy_visible = sight_data.get(heavy_key, frozenset())
+            if heavy_visible and cell_los_counts:
+                best = max(heavy_visible, key=lambda k: cell_los_counts.get(k, 0))
+                r, c = best.split(",")
+                return (int(r), int(c))
+            return (heavy.cell_row, heavy.cell_col)
+
+    elif player.role == "commander":
+        enemy_medic = _find_role(all_alive, enemy_color, "medic")
+        if enemy_medic and enemy_medic.cell_row is not None:
+            return (enemy_medic.cell_row, enemy_medic.cell_col)
+
+    return None
+
+
 def choose_goal_cell(
     player,
     all_alive: list,
     spawn_cells: dict[str, tuple[int, int]],
+    movement_ctx: dict | None = None,
+    intended_action: str = "",
 ) -> tuple[int, int] | None:
-    """Return the cell a player should navigate toward.
+    """Return the cell a player should navigate toward (MAP-05).
 
-    Default: enemy base cell. When resources are critical, redirects toward
-    the closest allied support player who can help.
+    Goal selection is action-aware (uses the player's previous chosen action) and
+    role-aware. Priority order:
+    1. Critical-resource override: seek medic (low lives) or ammo (low shots) for
+       non-support roles — always trumps role/action logic.
+    2. Action-driven movement: based on the action chosen last tick (intended_action):
+       - tag_player / missile_player: move toward enemies (Commander → enemy medic first).
+       - resupply_ally: Medic → neediest ally by lives; Ammo → neediest ally by shots.
+       - hide: move to the safest adjacent cell (lowest LOS count).
+    3. Role-specific positioning (for change_zone, capture_base, use_special, or fallback):
+       - Scout: nearest high-LOS cell (top 25% of cells by sight-line count).
+       - Heavy: nearest strong-spot cell when healthy (>50% lives and shots); otherwise
+         seek nearest allied Medic or Ammo dynamically.
+       - Medic: nearest low-LOS cell within the allied Heavy's visible set.
+       - Ammo: nearest high-LOS cell within the allied Heavy's visible set.
+       - Commander: enemy medic cell (priority target), else enemy base.
+    4. Default: enemy base cell.
     """
     enemy_color = "blue" if player.team_color == "red" else "red"
-    goal: tuple[int, int] | None = spawn_cells.get(enemy_color)
+    default_goal: tuple[int, int] | None = spawn_cells.get(enemy_color)
 
-    lives_critical = player.max_lives * 0.3
-    shots_critical = player.max_shots * 0.3
+    cell_row: int | None = getattr(player, "cell_row", None)
+    cell_col: int | None = getattr(player, "cell_col", None)
 
-    if player.final_lives <= lives_critical and player.role != "medic":
-        medic = next(
-            (
-                p
-                for p in all_alive
-                if p.team_color == player.team_color
-                and p.role == "medic"
-                and p.final_lives > 0
-                and p.cell_row is not None
-            ),
-            None,
-        )
-        if medic:
-            return (medic.cell_row, medic.cell_col)
-    elif player.final_shots <= shots_critical:
-        ammo = next(
-            (
-                p
-                for p in all_alive
-                if p.team_color == player.team_color
-                and p.role == "ammo"
-                and p.final_lives > 0
-                and p.cell_row is not None
-            ),
-            None,
-        )
-        if ammo:
-            return (ammo.cell_row, ammo.cell_col)
+    max_lives = getattr(player, "max_lives", player.starting_lives)
+    max_shots = getattr(player, "max_shots", player.starting_shots)
 
-    return goal
+    # ── 1. Critical-resource overrides (non-support roles) ───────────────────
+    if player.role not in ("medic", "ammo"):
+        if player.final_lives <= max_lives * 0.3:
+            medic = _find_role(all_alive, player.team_color, "medic")
+            if medic and medic.cell_row is not None:
+                return (medic.cell_row, medic.cell_col)
+        elif player.final_shots <= max_shots * 0.3:
+            ammo = _find_role(all_alive, player.team_color, "ammo")
+            if ammo and ammo.cell_row is not None:
+                return (ammo.cell_row, ammo.cell_col)
+
+    if movement_ctx is None or cell_row is None or cell_col is None:
+        return default_goal
+
+    # ── 2. Action-driven movement ────────────────────────────────────────────
+    goal = _goal_from_action(
+        player,
+        all_alive,
+        enemy_color,
+        cell_row,
+        cell_col,
+        intended_action,
+        movement_ctx,
+    )
+    if goal is not None:
+        return goal
+
+    # ── 3. Role-specific positioning ─────────────────────────────────────────
+    goal = _goal_from_role(
+        player, all_alive, enemy_color, cell_row, cell_col, movement_ctx
+    )
+    if goal is not None:
+        return goal
+
+    # ── 4. Default: enemy base ───────────────────────────────────────────────
+    return default_goal

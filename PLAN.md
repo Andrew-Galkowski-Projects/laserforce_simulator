@@ -95,14 +95,17 @@ Each role picks a goal cell and the movement action moves one step toward it.
   and the allied base area, stored on the map at save time, user-overridable) OR dynamic per-tick goal
   computation tracking current allied Medic/Ammo positions. The Heavy switches between modes based on player
   stats (stat wiring in Phase 2).
-- **Medics/Ammos** follow the ally they intend to resupply.
+- **Medics/Ammos** stay withhin LoS of Heavy for ammo on High LoS squares.  medic stay within LoS of heavy or ammo on low LoS squares.
 
 High-LOS cells and Heavy strong spots are precomputed and stored when a map is saved. Heavy strong spots
 can be manually added or overridden by the map editor.
+- completed
+- note: goal selection is action-aware (uses `last_chosen_action` from the previous tick) with priority: (1) critical-resource override → seek allied Medic/Ammo, (2) action-driven movement via `_goal_from_action`, (3) role-specific positioning via `_goal_from_role`, (4) default enemy base. `_resolve_map_data` now returns a 7-tuple including `cell_ranking` and `strong_spots`; `_build_movement_ctx` gains `cell_los_counts`, `high_los_cells`, and `strong_spots` keys. `MapCellRankingConfig` and `HeavyStrongSpotsConfig` auto-seeded when sight lines are saved; user-editable via `/maps/<id>/strong-spots/save/` endpoint. 293 tests pass.
 
 ### MAP-06 · Fallback for rounds without a map
 When `GameRound.arena_map` is null (map not assigned), fall back to the existing 3-zone logic so that existing tests
 and simulations without maps continue to work. This is a compatibility shim — new matches should always have a map.
+- completed: implemented as part of MAP-02. `_resolve_map_data()` returns `(None, {}, None, None, {})` when `arena_map is None`; both `ResourceBasedSimulator` and `BatchSimulator` check `movement_ctx is not None` before cell-aware movement, falling back to `_change_zone`.
 
 ### MAP-07 · Map wall hazards
 Maps have three active wall types:

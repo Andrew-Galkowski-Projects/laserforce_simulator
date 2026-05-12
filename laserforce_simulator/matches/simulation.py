@@ -17,7 +17,13 @@ from .sim_helpers.weights import (
     _get_commander_weights,
 )
 from teams.models import Player, ROLE_STATS
-from core.models import MapBaseConfig, SightLineConfig, BaseSightLineConfig
+from core.models import (
+    BaseSightLineConfig,
+    HeavyStrongSpotsConfig,
+    MapBaseConfig,
+    MapCellRankingConfig,
+    SightLineConfig,
+)
 
 # Module logger
 logger = logging.getLogger(__name__)
@@ -153,9 +159,15 @@ class ResourceBasedSimulator:
         self, team_red, team_blue, match=None, round_number=1, *, arena_map=None
     ):
         """Simulate a round with full player resource tracking"""
-        zone_size, spawn_cells, zone_data, sight_data, base_sight_data = (
-            self._resolve_map_data(arena_map)
-        )
+        (
+            zone_size,
+            spawn_cells,
+            zone_data,
+            sight_data,
+            base_sight_data,
+            cell_ranking,
+            strong_spots,
+        ) = self._resolve_map_data(arena_map)
 
         game_round = GameRound.objects.create(
             match=match,
@@ -176,7 +188,12 @@ class ResourceBasedSimulator:
 
         # Simulate the round (pass game_round so events can be recorded)
         movement_ctx = ResourceBasedSimulator._build_movement_ctx(
-            zone_data, spawn_cells, sight_data, base_sight_data
+            zone_data,
+            spawn_cells,
+            sight_data,
+            base_sight_data,
+            cell_ranking,
+            strong_spots,
         )
         round_result = self._simulate_round_combat(
             game_round, red_players, blue_players, movement_ctx=movement_ctx
@@ -196,17 +213,21 @@ class ResourceBasedSimulator:
 
     @staticmethod
     def _resolve_map_data(arena_map):
-        """Load zone_size, spawn cells, zone_data, sight_data, and base_sight_data from a map.
+        """Load zone_size, spawn cells, zone_data, sight_data, base_sight_data,
+        cell_ranking, and strong_spots from a map.
 
-        Returns (zone_size, spawn_cells, zone_grid, sight_data, base_sight_data) where:
-        - All values are None/{} when no map is provided.
+        Returns (zone_size, spawn_cells, zone_grid, sight_data, base_sight_data,
+                 cell_ranking, strong_spots) where:
+        - All values are None/{}/[] when no map is provided.
         - sight_data is {"r,c": frozenset(["r,c", ...])} keyed by cell — O(1) lookup.
         - base_sight_data is {"base_type": frozenset(["r,c", ...])} for O(1) cell lookup.
+        - cell_ranking is [[r,c], ...] sorted highest-LOS first (empty if not yet computed).
+        - strong_spots is [[r,c], ...] of Heavy defensive positions (empty if not computed).
         Raises ValueError if the map is missing its zone config, a base, sight lines, or
         base sight line configs.
         """
         if arena_map is None:
-            return None, {}, None, None, {}
+            return None, {}, None, None, {}, [], []
 
         config = arena_map.latest_confirmed_config()
         if config is None:
@@ -262,7 +283,25 @@ class ResourceBasedSimulator:
             for bsc in base_sight_configs
         }
 
-        return zone_size, spawn_cells, zone_grid, sight_data, base_sight_data
+        ranking_config = MapCellRankingConfig.objects.filter(
+            arena_map=arena_map, zone_size=zone_size
+        ).first()
+        cell_ranking = ranking_config.ranked_cells if ranking_config else []
+
+        strong_spots_config = HeavyStrongSpotsConfig.objects.filter(
+            arena_map=arena_map, zone_size=zone_size
+        ).first()
+        strong_spots = strong_spots_config.cells if strong_spots_config else []
+
+        return (
+            zone_size,
+            spawn_cells,
+            zone_grid,
+            sight_data,
+            base_sight_data,
+            cell_ranking,
+            strong_spots,
+        )
 
     @staticmethod
     def _zone_from_cell(zone_data, row: int, col: int) -> int:
@@ -275,15 +314,32 @@ class ResourceBasedSimulator:
         return 1  # neutral_zone (floor or wall treated as neutral)
 
     @staticmethod
-    def _build_movement_ctx(zone_data, spawn_cells, sight_data=None, base_sight_data=None):
+    def _build_movement_ctx(
+        zone_data,
+        spawn_cells,
+        sight_data=None,
+        base_sight_data=None,
+        cell_ranking=None,
+        strong_spots=None,
+    ):
         if zone_data is None:
             return None
+        # Precompute per-cell LOS count and the top-25% high-LOS cell list once per round.
+        cell_los_counts: dict[str, int] = {}
+        if sight_data:
+            cell_los_counts = {k: len(v) for k, v in sight_data.items()}
+        ranking = cell_ranking or []
+        top_n = max(1, len(ranking) // 4) if ranking else 0
+        high_los_cells = [tuple(rc) for rc in ranking[:top_n]]
         return {
             "adj": build_movement_adjacency(zone_data),
             "spawn_cells": spawn_cells,
             "zone_data": zone_data,
             "sight_data": sight_data,
             "base_sight_data": base_sight_data or {},
+            "cell_los_counts": cell_los_counts,
+            "high_los_cells": high_los_cells,
+            "strong_spots": [tuple(rc) for rc in (strong_spots or [])],
         }
 
     def _initialize_players(self, game_round, team, team_color, spawn_cells, zone_data):
@@ -800,7 +856,10 @@ class ResourceBasedSimulator:
                 actor.save()
             elif ptype == "capture_base":
                 self._capture_base(
-                    actor, plan.get("base_id"), second, movement_ctx=plan.get("movement_ctx")
+                    actor,
+                    plan.get("base_id"),
+                    second,
+                    movement_ctx=plan.get("movement_ctx"),
                 )
             elif ptype == "missile":
                 scheduled = self._start_missile_lock(actor, plan.get("target"), second)
@@ -892,7 +951,9 @@ class ResourceBasedSimulator:
             if sum(weights) == 0:
                 weights[action_to_weight_index["hide"]] = 1
 
+        prev_action = getattr(player, "last_chosen_action", "")
         choice = random.choices(choices, weights)[0]
+        player.last_chosen_action = choice
 
         # only maintain hiding status if they are still hiding, moving, or resupplying
         if player.is_hiding and not (
@@ -944,7 +1005,9 @@ class ResourceBasedSimulator:
                     plans.append({"type": "missile", "actor": player, "target": tgt})
         elif choice == "change_zone":
             if movement_ctx is not None and player.cell_row is not None:
-                goal = self._choose_goal_cell(player, all_alive, movement_ctx)
+                goal = self._choose_goal_cell(
+                    player, all_alive, movement_ctx, prev_action
+                )
                 plans.append(
                     {
                         "type": "change_zone",
@@ -974,7 +1037,9 @@ class ResourceBasedSimulator:
                     if player.current_zone == 1
                     else (14 if player.team_color == "red" else 13)
                 )
-                plans.append({"type": "capture_base", "actor": player, "base_id": base_id})
+                plans.append(
+                    {"type": "capture_base", "actor": player, "base_id": base_id}
+                )
         elif choice == "use_special":
             if (
                 player.final_special >= player.special_cost
@@ -1285,8 +1350,16 @@ class ResourceBasedSimulator:
                     (second + cooldown, o["attacker"], o["defender"], 1)
                 )
 
-    def _choose_goal_cell(self, player, all_alive, movement_ctx):
-        return choose_goal_cell(player, all_alive, movement_ctx["spawn_cells"])
+    def _choose_goal_cell(
+        self, player, all_alive, movement_ctx, intended_action: str = ""
+    ):
+        return choose_goal_cell(
+            player,
+            all_alive,
+            movement_ctx["spawn_cells"],
+            movement_ctx,
+            intended_action,
+        )
 
     def _move_to_cell(self, player, second, goal_cell, movement_ctx):
         if goal_cell is None:
@@ -2289,11 +2362,22 @@ class BatchSimulator:
 
         movement_ctx = None
         if arena_map is not None:
-            _, spawn_cells, zone_data, sight_data, base_sight_data = (
-                ResourceBasedSimulator._resolve_map_data(arena_map)
-            )
+            (
+                _,
+                spawn_cells,
+                zone_data,
+                sight_data,
+                base_sight_data,
+                cell_ranking,
+                strong_spots,
+            ) = ResourceBasedSimulator._resolve_map_data(arena_map)
             movement_ctx = ResourceBasedSimulator._build_movement_ctx(
-                zone_data, spawn_cells, sight_data, base_sight_data
+                zone_data,
+                spawn_cells,
+                sight_data,
+                base_sight_data,
+                cell_ranking,
+                strong_spots,
             )
 
         red_wins = blue_wins = ties = 0
@@ -2682,7 +2766,10 @@ class BatchSimulator:
                     actor.is_hiding = True
                 elif ptype == "capture_base":
                     self._capture_base(
-                        actor, plan["base_id"], event_log, second,
+                        actor,
+                        plan["base_id"],
+                        event_log,
+                        second,
                         movement_ctx=plan.get("movement_ctx"),
                     )
                 elif ptype == "missile":
@@ -2770,7 +2857,9 @@ class BatchSimulator:
             if sum(weights) == 0:
                 weights[action_to_weight_index["hide"]] = 1
 
+        prev_action = player.last_chosen_action
         choice = random.choices(choices, weights)[0]
+        player.last_chosen_action = choice
 
         if player.is_hiding and choice not in ("hide", "change_zone", "resupply_ally"):
             player.is_hiding = False
@@ -2815,7 +2904,9 @@ class BatchSimulator:
                     )
         elif choice == "change_zone":
             if movement_ctx is not None and player.cell_row is not None:
-                goal = self._choose_goal_cell_batch(player, all_alive, movement_ctx)
+                goal = self._choose_goal_cell_batch(
+                    player, all_alive, movement_ctx, prev_action
+                )
                 plans.append(
                     {
                         "type": "change_zone",
@@ -2845,7 +2936,9 @@ class BatchSimulator:
                     if player.current_zone == 1
                     else (14 if player.team_color == "red" else 13)
                 )
-                plans.append({"type": "capture_base", "actor": player, "base_id": base_id})
+                plans.append(
+                    {"type": "capture_base", "actor": player, "base_id": base_id}
+                )
         elif choice == "use_special":
             if (
                 player.can_use_special
@@ -2941,8 +3034,16 @@ class BatchSimulator:
                 return ammos[0].current_zone
         return None
 
-    def _choose_goal_cell_batch(self, player, all_alive, movement_ctx):
-        return choose_goal_cell(player, all_alive, movement_ctx["spawn_cells"])
+    def _choose_goal_cell_batch(
+        self, player, all_alive, movement_ctx, intended_action: str = ""
+    ):
+        return choose_goal_cell(
+            player,
+            all_alive,
+            movement_ctx["spawn_cells"],
+            movement_ctx,
+            intended_action,
+        )
 
     def _move_player_in_memory(self, player, goal_cell, movement_ctx):
         if goal_cell is None or player.cell_row is None:
@@ -3387,7 +3488,9 @@ class BatchSimulator:
         else:
             player.current_zone = 1
 
-    def _capture_base(self, player, base_id, event_log=None, second=0, movement_ctx=None):
+    def _capture_base(
+        self, player, base_id, event_log=None, second=0, movement_ctx=None
+    ):
         if movement_ctx is not None and player.cell_row is not None:
             base_sight_data = movement_ctx.get("base_sight_data", {})
             cell_key = f"{player.cell_row},{player.cell_col}"

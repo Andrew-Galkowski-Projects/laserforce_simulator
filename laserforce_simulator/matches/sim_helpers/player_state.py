@@ -65,6 +65,7 @@ class PlayerState:
     follow_up_shots: int = 0
     reaction_shots: int = 0
     last_shot_time: float = -99.0  # transient; tracks shot cooldown enforcement
+    last_chosen_action: str = ""  # action chosen in previous tick; guides movement goal
 
     # uptime breakdown in seconds (accumulated each tick)
     seconds_active: int = 0

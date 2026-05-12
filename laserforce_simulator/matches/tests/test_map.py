@@ -157,16 +157,26 @@ class TestMap01CellGrid:
         )  # cell_type=0 (wall) → neutral zone
 
     def test_resolve_map_data_returns_spawn_cells_and_zone_data(self):
-        """_resolve_map_data returns zone_size, spawn cells, zone_data, sight_data, and base_sight_data."""
+        """_resolve_map_data returns zone_size, spawn cells, zone_data, sight_data, base_sight_data, cell_ranking, strong_spots."""
         arena_map = self._make_arena_map("ResolveTest")
         sim = ResourceBasedSimulator()
-        zone_size, spawn_cells, zone_grid, sight_data, base_sight_data = sim._resolve_map_data(arena_map)
+        (
+            zone_size,
+            spawn_cells,
+            zone_grid,
+            sight_data,
+            base_sight_data,
+            cell_ranking,
+            strong_spots,
+        ) = sim._resolve_map_data(arena_map)
 
         assert zone_size == 50
         assert spawn_cells["red"] == (1, 0)
         assert spawn_cells["blue"] == (2, 3)
         assert zone_grid[1][0] == 2  # red zone cell value
-        assert isinstance(sight_data, dict)  # sight_data returned as frozenset-valued dict
+        assert isinstance(
+            sight_data, dict
+        )  # sight_data returned as frozenset-valued dict
         assert isinstance(base_sight_data, dict)
 
     def test_resolve_map_data_unwraps_dict_zone_data(self):
@@ -205,7 +215,7 @@ class TestMap01CellGrid:
             arena_map=arena_map, base_type="red", zone_size=50, visible_cells=[]
         )
 
-        _, _, zone_grid, _, _ = ResourceBasedSimulator._resolve_map_data(arena_map)
+        _, _, zone_grid, *_ = ResourceBasedSimulator._resolve_map_data(arena_map)
         assert zone_grid == raw_zones
 
     def test_initial_spawn_zone_derived_from_zone_data(self):
@@ -254,7 +264,7 @@ class TestMap01CellGrid:
             zone_size=50,
         )
         sim = ResourceBasedSimulator()
-        _, spawn_cells, zone_data, _, _ = sim._resolve_map_data(arena_map)
+        _, spawn_cells, zone_data, *_ = sim._resolve_map_data(arena_map)
 
         red_states = sim._initialize_players(
             gr, team_red, "red", spawn_cells, zone_data
@@ -851,7 +861,7 @@ class TestMap03DBIntegration:
     def test_resolve_map_data_returns_sight_data(self):
         """_resolve_map_data 4th return value is a dict of frozensets."""
         arena_map = self._make_map_with_wall()
-        _, _, _, sight_data, _ = ResourceBasedSimulator._resolve_map_data(arena_map)
+        _, _, _, sight_data, *_ = ResourceBasedSimulator._resolve_map_data(arena_map)
 
         assert isinstance(sight_data, dict)
         # Each value should be a frozenset
@@ -992,7 +1002,9 @@ class TestMap04BaseInteraction:
         from matches.simulation import _get_base_interaction
 
         player = self._make_player("red_cmd", "red", cell_row=5, cell_col=5)
-        ctx = self._make_ctx({"neutral_1": frozenset({"0,0"}), "blue": frozenset({"9,9"})})
+        ctx = self._make_ctx(
+            {"neutral_1": frozenset({"0,0"}), "blue": frozenset({"9,9"})}
+        )
         assert _get_base_interaction(player, ctx) is None
 
     def test_batch_capture_base_guard_blocks_out_of_range(self):
@@ -1007,7 +1019,9 @@ class TestMap04BaseInteraction:
         )
         initial_points = player.points_scored
         BatchSimulator()._capture_base(player, 14, movement_ctx=ctx)
-        assert player.points_scored == initial_points, "Capture should be blocked when out of range"
+        assert (
+            player.points_scored == initial_points
+        ), "Capture should be blocked when out of range"
 
     def test_batch_capture_base_succeeds_when_in_range(self):
         """BatchSimulator._capture_base awards 1001 points when cell is in base visible_cells."""
@@ -1047,7 +1061,9 @@ class TestMap04DBIntegration:
         MapZoneConfig.objects.create(
             arena_map=arena_map, zone_size=100, zone_data=zone_data, confirmed=True
         )
-        MapBaseConfig.objects.create(arena_map=arena_map, base_type="red", x_px=50, y_px=50)
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="red", x_px=50, y_px=50
+        )
         MapBaseConfig.objects.create(
             arena_map=arena_map, base_type="blue", x_px=250, y_px=250
         )
@@ -1078,12 +1094,18 @@ class TestMap04DBIntegration:
         from core.map_processing import compute_sight_lines
 
         zone_data = [[1, 1], [1, 1]]
-        arena_map = ArenaMap.objects.create(name="NoBaseSight", img_width=200, img_height=200)
+        arena_map = ArenaMap.objects.create(
+            name="NoBaseSight", img_width=200, img_height=200
+        )
         MapZoneConfig.objects.create(
             arena_map=arena_map, zone_size=100, zone_data=zone_data, confirmed=True
         )
-        MapBaseConfig.objects.create(arena_map=arena_map, base_type="red", x_px=50, y_px=50)
-        MapBaseConfig.objects.create(arena_map=arena_map, base_type="blue", x_px=150, y_px=150)
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="red", x_px=50, y_px=50
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="blue", x_px=150, y_px=150
+        )
         SightLineConfig.objects.create(
             arena_map=arena_map,
             zone_size=100,
@@ -1101,7 +1123,9 @@ class TestMap04DBIntegration:
     def test_resolve_map_data_returns_base_sight_data(self):
         """_resolve_map_data 5th return value is a dict of frozensets keyed by base_type."""
         arena_map = self._make_base_map("ResolveBSD")
-        _, _, _, _, base_sight_data = ResourceBasedSimulator._resolve_map_data(arena_map)
+        _, _, _, _, base_sight_data, *_ = ResourceBasedSimulator._resolve_map_data(
+            arena_map
+        )
 
         assert isinstance(base_sight_data, dict)
         assert "red" in base_sight_data
@@ -1115,7 +1139,7 @@ class TestMap04DBIntegration:
     def test_base_sight_data_included_in_movement_ctx(self):
         """_build_movement_ctx includes base_sight_data from _resolve_map_data."""
         arena_map = self._make_base_map("CtxBSD")
-        _, spawn_cells, zone_data, sight_data, base_sight_data = (
+        _, spawn_cells, zone_data, sight_data, base_sight_data, *_ = (
             ResourceBasedSimulator._resolve_map_data(arena_map)
         )
         ctx = ResourceBasedSimulator._build_movement_ctx(
@@ -1123,3 +1147,108 @@ class TestMap04DBIntegration:
         )
         assert "base_sight_data" in ctx
         assert ctx["base_sight_data"] is base_sight_data
+
+
+# ---------------------------------------------------------------------------
+# MAP-05 — compute_high_los_ranking and strong-spots views
+# ---------------------------------------------------------------------------
+
+
+class TestMap05ComputeHighLosRanking:
+    """Unit tests for compute_high_los_ranking sort correctness."""
+
+    def test_sorted_highest_los_first(self):
+        from core.map_processing import compute_high_los_ranking
+
+        sight_data = {
+            "0,0": ["0,1"],
+            "0,1": ["0,0", "1,1", "1,0"],
+            "1,0": ["0,1"],
+            "1,1": ["0,1"],
+        }
+        result = compute_high_los_ranking(sight_data)
+        assert result[0] == [0, 1], "(0,1) has 3 visible cells and must rank first"
+        assert len(result) == 4
+
+    def test_returns_all_cells(self):
+        from core.map_processing import compute_high_los_ranking
+
+        sight_data = {"0,0": ["0,1"], "0,1": ["0,0"]}
+        result = compute_high_los_ranking(sight_data)
+        assert len(result) == 2
+        assert [0, 0] in result
+        assert [0, 1] in result
+
+    def test_empty_sight_data_returns_empty(self):
+        from core.map_processing import compute_high_los_ranking
+
+        assert compute_high_los_ranking({}) == []
+
+
+@pytest.mark.django_db
+class TestMap05StrongSpotsViews:
+    """View tests for the /strong-spots/ endpoints introduced in MAP-05."""
+
+    def _make_arena_map(self, name="SSViewMap"):
+        from core.models import ArenaMap
+
+        return ArenaMap.objects.create(name=name, img_width=100, img_height=100)
+
+    def test_get_strong_spots_returns_cells(self, client):
+        from core.models import HeavyStrongSpotsConfig
+
+        arena_map = self._make_arena_map("GetSSView")
+        HeavyStrongSpotsConfig.objects.create(
+            arena_map=arena_map, zone_size=50, cells=[[1, 1], [2, 2]]
+        )
+        response = client.get(f"/maps/{arena_map.pk}/strong-spots/?zone_size=50")
+        assert response.status_code == 200
+        assert response.json()["cells"] == [[1, 1], [2, 2]]
+
+    def test_get_strong_spots_returns_empty_when_no_config(self, client):
+        arena_map = self._make_arena_map("NoSSView")
+        response = client.get(f"/maps/{arena_map.pk}/strong-spots/?zone_size=50")
+        assert response.status_code == 200
+        assert response.json()["cells"] == []
+
+    def test_save_strong_spots_persists_cells(self, client):
+        import json
+
+        from core.models import HeavyStrongSpotsConfig
+
+        arena_map = self._make_arena_map("SaveSSView")
+        response = client.post(
+            f"/maps/{arena_map.pk}/strong-spots/save/",
+            data=json.dumps({"zone_size": 50, "cells": [[3, 3], [4, 4]]}),
+            content_type="application/json",
+        )
+        assert response.status_code == 200
+        config = HeavyStrongSpotsConfig.objects.get(arena_map=arena_map, zone_size=50)
+        assert config.cells == [[3, 3], [4, 4]]
+
+    def test_save_strong_spots_rejects_non_list_cells(self, client):
+        import json
+
+        arena_map = self._make_arena_map("BadSSView")
+        response = client.post(
+            f"/maps/{arena_map.pk}/strong-spots/save/",
+            data=json.dumps({"zone_size": 50, "cells": "not-a-list"}),
+            content_type="application/json",
+        )
+        assert response.status_code == 400
+
+    def test_save_strong_spots_rejects_non_int_pairs(self, client):
+        import json
+
+        arena_map = self._make_arena_map("BadSS2View")
+        response = client.post(
+            f"/maps/{arena_map.pk}/strong-spots/save/",
+            data=json.dumps({"zone_size": 50, "cells": [["a", "b"]]}),
+            content_type="application/json",
+        )
+        assert response.status_code == 400
+
+    def test_save_strong_spots_get_not_allowed(self, client):
+        arena_map = self._make_arena_map("MethodSSView")
+        response = client.get(f"/maps/{arena_map.pk}/strong-spots/save/")
+        assert response.status_code == 405
