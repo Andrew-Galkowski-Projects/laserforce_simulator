@@ -17,11 +17,35 @@ from .sim_helpers.weights import (
     _get_commander_weights,
 )
 from teams.models import Player, ROLE_STATS
-from core.models import MapBaseConfig
+from core.models import MapBaseConfig, SightLineConfig
 
 # Module logger
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
+
+
+def _get_los_targets(actor, candidates: list, movement_ctx: dict | None) -> list:
+    """Return subset of candidates visible to actor.
+
+    candidates is used as a filter for enemies, allies, targets or a combination.
+    With a map: looks up actor's cell in SightLineConfig and keeps only candidates
+    whose cell key appears in the visible set. Falls back to same-zone filtering when
+    no map is active, actor has no cell position, or sight_data is absent.
+    """
+    if movement_ctx is None:
+        return [p for p in candidates if p.current_zone == actor.current_zone]
+    sight_data = movement_ctx.get("sight_data")
+    if sight_data is None or actor.cell_row is None:
+        return [p for p in candidates if p.current_zone == actor.current_zone]
+    actor_key = f"{actor.cell_row},{actor.cell_col}"
+    visible_cells = sight_data.get(actor_key, frozenset())
+    result = []
+    for p in candidates:
+        if p.cell_row is not None:
+            target_key = f"{p.cell_row},{p.cell_col}"
+            if target_key in visible_cells:
+                result.append(p)
+    return result
 
 
 class ResourceBasedSimulator:
@@ -95,7 +119,9 @@ class ResourceBasedSimulator:
         self, team_red, team_blue, match=None, round_number=1, *, arena_map=None
     ):
         """Simulate a round with full player resource tracking"""
-        zone_size, spawn_cells, zone_data = self._resolve_map_data(arena_map)
+        zone_size, spawn_cells, zone_data, sight_data = self._resolve_map_data(
+            arena_map
+        )
 
         game_round = GameRound.objects.create(
             match=match,
@@ -116,7 +142,7 @@ class ResourceBasedSimulator:
 
         # Simulate the round (pass game_round so events can be recorded)
         movement_ctx = ResourceBasedSimulator._build_movement_ctx(
-            zone_data, spawn_cells
+            zone_data, spawn_cells, sight_data
         )
         round_result = self._simulate_round_combat(
             game_round, red_players, blue_players, movement_ctx=movement_ctx
@@ -136,15 +162,15 @@ class ResourceBasedSimulator:
 
     @staticmethod
     def _resolve_map_data(arena_map):
-        """Load zone_size, spawn cells, and zone_data from a map.
+        """Load zone_size, spawn cells, zone_data, and sight_data from a map.
 
-        Returns (zone_size, spawn_cells, zone_grid) where:
-        - zone_size is None when no map is provided
-        - spawn_cells is {"red": (row, col), "blue": (row, col)} or {} when no map
-        - zone_grid is the 2D list of cell types, or None when no map
+        Returns (zone_size, spawn_cells, zone_grid, sight_data) where:
+        - All values are None/{} when no map is provided.
+        - sight_data is {"r,c": frozenset(["r,c", ...])} keyed by cell — O(1) lookup.
+        Raises ValueError if the map is missing its zone config, a base, or sight lines.
         """
         if arena_map is None:
-            return None, {}, None
+            return None, {}, None, None
 
         config = arena_map.latest_confirmed_config()
         if config is None:
@@ -177,7 +203,17 @@ class ResourceBasedSimulator:
                 base_cfg.x_px // zone_size,
             )
 
-        return zone_size, spawn_cells, zone_grid
+        sight_config = SightLineConfig.objects.filter(
+            arena_map=arena_map, zone_size=zone_size
+        ).first()
+        if sight_config is None:
+            raise ValueError(
+                f"Map '{arena_map.name}' has no sight lines computed for zone size "
+                f"{zone_size}px. Click 'Compute Sight Lines' in the map editor before simulating."
+            )
+        sight_data = {k: frozenset(v) for k, v in sight_config.sight_data.items()}
+
+        return zone_size, spawn_cells, zone_grid, sight_data
 
     @staticmethod
     def _zone_from_cell(zone_data, row: int, col: int) -> int:
@@ -190,13 +226,14 @@ class ResourceBasedSimulator:
         return 1  # neutral_zone (floor or wall treated as neutral)
 
     @staticmethod
-    def _build_movement_ctx(zone_data, spawn_cells):
+    def _build_movement_ctx(zone_data, spawn_cells, sight_data=None):
         if zone_data is None:
             return None
         return {
             "adj": build_movement_adjacency(zone_data),
             "spawn_cells": spawn_cells,
             "zone_data": zone_data,
+            "sight_data": sight_data,
         }
 
     def _initialize_players(self, game_round, team, team_color, spawn_cells, zone_data):
@@ -814,12 +851,16 @@ class ResourceBasedSimulator:
 
         plans = []
         if choice == "tag_player":
-            target = self._choose_tag_target(player, all_alive, second)
+            target = self._choose_tag_target(
+                player, all_alive, second, movement_ctx=movement_ctx
+            )
             if target and player.final_shots > 0:
                 plans.append({"type": "tag", "actor": player, "target": target})
                 # scouts may attempt a second tag immediately if rapid fire active
                 if player.role == "scout" and player.special_active_until > second:
-                    second_target = self._choose_tag_target(player, all_alive, second)
+                    second_target = self._choose_tag_target(
+                        player, all_alive, second, movement_ctx=movement_ctx
+                    )
                     if second_target:
                         plans.append(
                             {"type": "tag", "actor": player, "target": second_target}
@@ -1240,21 +1281,19 @@ class ResourceBasedSimulator:
             },
         )
 
-    def _choose_tag_target(self, player, all_alive, second):
-        potential_targets = [
+    def _choose_tag_target(self, player, all_alive, second, movement_ctx=None):
+        enemies = [
             p
             for p in all_alive
             if p.team_color != player.team_color
-            and p.current_zone == player.current_zone
             and p.final_lives > 0
             and (
                 p.is_active_at(second)
-                or p.is_taggable_at(second)
-                and player.last_tagged_id != p.get_tag_id
+                or (p.is_taggable_at(second) and player.last_tagged_id != p.get_tag_id)
             )
         ]
+        potential_targets = _get_los_targets(player, enemies, movement_ctx)
         if potential_targets and player.final_shots > 0:
-            # set target weights based on role
             weights = {
                 "commander": 5,
                 "heavy": 8,
@@ -1264,14 +1303,10 @@ class ResourceBasedSimulator:
             }
             target_weights = []
             for target in potential_targets:
-                # prioritize active targets more
                 active_weighting = 10 if target.is_active_at(second) else 1
                 target_weights.append(weights.get(target.role, 1) + active_weighting)
-
-            target = random.choices(potential_targets, target_weights)[0]
-            return target
-        else:
-            return None
+            return random.choices(potential_targets, target_weights)[0]
+        return None
 
     def _choose_resupply_target(self, player, all_alive, second):
         potential_teammates = [
@@ -2181,11 +2216,11 @@ class BatchSimulator:
 
         movement_ctx = None
         if arena_map is not None:
-            _, spawn_cells, zone_data = ResourceBasedSimulator._resolve_map_data(
-                arena_map
+            _, spawn_cells, zone_data, sight_data = (
+                ResourceBasedSimulator._resolve_map_data(arena_map)
             )
             movement_ctx = ResourceBasedSimulator._build_movement_ctx(
-                zone_data, spawn_cells
+                zone_data, spawn_cells, sight_data
             )
 
         red_wins = blue_wins = ties = 0
@@ -2253,15 +2288,16 @@ class BatchSimulator:
         from teams.models import ROLE_STATS as _ROLE_STATS
 
         spawn = spawn_cells.get(team_color) if spawn_cells else None
-        cell_row = spawn[0] if spawn else None
-        cell_col = spawn[1] if spawn else None
-
         default_zone = 0 if team_color == "red" else 2
         if spawn is not None and zone_data is not None:
+            cell_row: int | None = spawn[0]
+            cell_col: int | None = spawn[1]
             starting_zone = ResourceBasedSimulator._zone_from_cell(
-                zone_data, cell_row, cell_col
+                zone_data, spawn[0], spawn[1]
             )
         else:
+            cell_row = None
+            cell_col = None
             starting_zone = default_zone
 
         scout_index = 0
@@ -2665,11 +2701,15 @@ class BatchSimulator:
 
         plans = []
         if choice == "tag_player":
-            target = self._choose_tag_target(player, all_alive, second)
+            target = self._choose_tag_target(
+                player, all_alive, second, movement_ctx=movement_ctx
+            )
             if target and player.final_shots > 0:
                 plans.append({"type": "tag", "actor": player, "target": target})
                 if player.role == "scout" and player.special_active_until > second:
-                    second_target = self._choose_tag_target(player, all_alive, second)
+                    second_target = self._choose_tag_target(
+                        player, all_alive, second, movement_ctx=movement_ctx
+                    )
                     if second_target:
                         plans.append(
                             {"type": "tag", "actor": player, "target": second_target}
@@ -2746,19 +2786,19 @@ class BatchSimulator:
     # Target selection
     # ------------------------------------------------------------------ #
 
-    def _choose_tag_target(self, player, all_alive, second):
+    def _choose_tag_target(self, player, all_alive, second, movement_ctx=None):
         role_weights = {"commander": 5, "heavy": 8, "scout": 3, "medic": 1, "ammo": 3}
-        targets = [
+        enemies = [
             p
             for p in all_alive
             if p.team_color != player.team_color
-            and p.current_zone == player.current_zone
             and p.final_lives > 0
             and (
                 p.is_active_at(second)
                 or (p.is_taggable_at(second) and player.last_tagged_id != p.tag_id)
             )
         ]
+        targets = _get_los_targets(player, enemies, movement_ctx)
         if not targets or player.final_shots <= 0:
             return None
         w = [

@@ -18,7 +18,8 @@ class TestMap01CellGrid:
     """Tests for MAP-01: player cell coordinates and map-aware spawning."""
 
     def _make_arena_map(self, name="TestArena"):
-        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig
+        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig, SightLineConfig
+        from core.map_processing import compute_sight_lines
 
         arena_map = ArenaMap.objects.create(name=name, img_width=200, img_height=200)
         # 4×4 grid: 0=wall, 1=floor, 2=red zone, 3=blue zone
@@ -36,6 +37,11 @@ class TestMap01CellGrid:
         )
         MapBaseConfig.objects.create(
             arena_map=arena_map, base_type="blue", x_px=175, y_px=125
+        )
+        SightLineConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=50,
+            sight_data=compute_sight_lines(zone_data),
         )
         return arena_map
 
@@ -139,19 +145,23 @@ class TestMap01CellGrid:
         )  # cell_type=0 (wall) → neutral zone
 
     def test_resolve_map_data_returns_spawn_cells_and_zone_data(self):
-        """_resolve_map_data returns zone_size, spawn cells and zone_data from a configured map."""
+        """_resolve_map_data returns zone_size, spawn cells, zone_data, and sight_data."""
         arena_map = self._make_arena_map("ResolveTest")
         sim = ResourceBasedSimulator()
-        zone_size, spawn_cells, zone_grid = sim._resolve_map_data(arena_map)
+        zone_size, spawn_cells, zone_grid, sight_data = sim._resolve_map_data(arena_map)
 
         assert zone_size == 50
         assert spawn_cells["red"] == (1, 0)
         assert spawn_cells["blue"] == (2, 3)
         assert zone_grid[1][0] == 2  # red zone cell value
+        assert isinstance(
+            sight_data, dict
+        )  # sight_data returned as frozenset-valued dict
 
     def test_resolve_map_data_unwraps_dict_zone_data(self):
         """_resolve_map_data unwraps the production dict format {"zones": [...], "blocked_edges": {...}}."""
-        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig
+        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig, SightLineConfig
+        from core.map_processing import compute_sight_lines
 
         arena_map = ArenaMap.objects.create(
             name="DictFmt", img_width=100, img_height=100
@@ -169,21 +179,28 @@ class TestMap01CellGrid:
         MapBaseConfig.objects.create(
             arena_map=arena_map, base_type="blue", x_px=75, y_px=75
         )
+        SightLineConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=50,
+            sight_data=compute_sight_lines(raw_zones),
+        )
 
-        _, _, zone_grid = ResourceBasedSimulator._resolve_map_data(arena_map)
+        _, _, zone_grid, _ = ResourceBasedSimulator._resolve_map_data(arena_map)
         assert zone_grid == raw_zones
 
     def test_initial_spawn_zone_derived_from_zone_data(self):
         """Players' starting zone_fallback is derived from zone_data at spawn — tested at init."""
-        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig
+        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig, SightLineConfig
+        from core.map_processing import compute_sight_lines
 
+        zone_layout = [[2, 1], [1, 3]]
         arena_map = ArenaMap.objects.create(
             name="ZoneDeriveTest", img_width=100, img_height=100
         )
         MapZoneConfig.objects.create(
             arena_map=arena_map,
             zone_size=50,
-            zone_data=[[2, 1], [1, 3]],
+            zone_data=zone_layout,
             confirmed=True,
         )
         MapBaseConfig.objects.create(
@@ -191,6 +208,11 @@ class TestMap01CellGrid:
         )
         MapBaseConfig.objects.create(
             arena_map=arena_map, base_type="blue", x_px=75, y_px=75
+        )
+        SightLineConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=50,
+            sight_data=compute_sight_lines(zone_layout),
         )
 
         team_red, _ = make_team_with_slots("ZoneR")
@@ -203,7 +225,7 @@ class TestMap01CellGrid:
             zone_size=50,
         )
         sim = ResourceBasedSimulator()
-        _, spawn_cells, zone_data = sim._resolve_map_data(arena_map)
+        _, spawn_cells, zone_data, _ = sim._resolve_map_data(arena_map)
 
         red_states = sim._initialize_players(
             gr, team_red, "red", spawn_cells, zone_data
@@ -280,7 +302,8 @@ class TestMap02CellMovement:
     """Tests for MAP-02: cell-aware pathfinding movement."""
 
     def _make_map(self, name, zone_data, zone_size=100):
-        from core.models import ArenaMap, MapBaseConfig, MapZoneConfig
+        from core.models import ArenaMap, MapBaseConfig, MapZoneConfig, SightLineConfig
+        from core.map_processing import compute_sight_lines
 
         rows, cols, px = len(zone_data), len(zone_data[0]), zone_size
         arena_map = ArenaMap.objects.create(
@@ -297,6 +320,11 @@ class TestMap02CellMovement:
             base_type="blue",
             x_px=cols * px - px // 2,
             y_px=rows * px - px // 2,
+        )
+        SightLineConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=px,
+            sight_data=compute_sight_lines(zone_data),
         )
         return arena_map
 
@@ -515,3 +543,265 @@ class TestMap02CellMovement:
         assert result["n"] == 3
         assert result["red_wins"] + result["blue_wins"] + result["ties"] == 3
         assert "avg_red_score" in result
+
+
+# ---------------------------------------------------------------------------
+# MAP-03 — line-of-sight based targeting
+# ---------------------------------------------------------------------------
+
+
+class TestMap03LOSTargeting:
+    """Unit tests for _get_los_targets and MAP-03 LOS targeting logic."""
+
+    _LIVES = {"commander": 30, "heavy": 20, "scout": 30, "medic": 20, "ammo": 20}
+    _SHOTS = {"commander": 60, "heavy": 40, "scout": 60, "medic": 30, "ammo": 15}
+
+    def _make_player(
+        self, tag_id, team_color, role, zone=0, cell_row=None, cell_col=None
+    ):
+        from matches.sim_helpers.player_state import PlayerState
+
+        return PlayerState(
+            tag_id=tag_id,
+            name=tag_id,
+            team_color=team_color,
+            role=role,
+            accuracy=50,
+            survival=50,
+            starting_lives=self._LIVES[role],
+            starting_shots=self._SHOTS[role],
+            final_lives=self._LIVES[role],
+            final_shots=self._SHOTS[role],
+            current_zone=zone,
+            cell_row=cell_row,
+            cell_col=cell_col,
+        )
+
+    def test_no_map_filters_by_zone(self):
+        from matches.simulation import _get_los_targets
+
+        actor = self._make_player("red_cmd", "red", "commander", zone=0)
+        same_zone = self._make_player("blue_cmd", "blue", "commander", zone=0)
+        diff_zone = self._make_player("blue_hvy", "blue", "heavy", zone=2)
+
+        result = _get_los_targets(actor, [same_zone, diff_zone], movement_ctx=None)
+        assert result == [same_zone]
+
+    def test_with_map_filters_by_sight_data(self):
+        from matches.simulation import _get_los_targets
+
+        sight_data = {
+            "0,0": frozenset(["0,1", "1,0"]),
+            "0,1": frozenset(["0,0", "0,2"]),
+        }
+        ctx = {
+            "sight_data": sight_data,
+            "adj": {},
+            "spawn_cells": {},
+            "zone_data": None,
+        }
+
+        actor = self._make_player("red_cmd", "red", "commander", cell_row=0, cell_col=0)
+        visible = self._make_player(
+            "blue_cmd", "blue", "commander", cell_row=0, cell_col=1
+        )
+        invisible = self._make_player(
+            "blue_hvy", "blue", "heavy", cell_row=5, cell_col=5
+        )
+
+        result = _get_los_targets(actor, [visible, invisible], ctx)
+        assert result == [visible]
+
+    def test_wall_blocks_los(self):
+        """A target whose cell key is not in actor's visible set is excluded."""
+        from matches.simulation import _get_los_targets
+
+        # (0,0) can only see (1,0) — (0,2) is on the other side of a wall
+        sight_data = {
+            "0,0": frozenset(["1,0"]),
+            "0,2": frozenset(["1,2"]),
+        }
+        ctx = {
+            "sight_data": sight_data,
+            "adj": {},
+            "spawn_cells": {},
+            "zone_data": None,
+        }
+
+        actor = self._make_player("red_cmd", "red", "commander", cell_row=0, cell_col=0)
+        behind_wall = self._make_player(
+            "blue_cmd", "blue", "commander", cell_row=0, cell_col=2
+        )
+
+        result = _get_los_targets(actor, [behind_wall], ctx)
+        assert result == []
+
+    def test_actor_with_no_cell_falls_back_to_zone(self):
+        """Actor without a cell position falls back to zone-based filtering."""
+        from matches.simulation import _get_los_targets
+
+        sight_data = {"0,0": frozenset(["0,1"])}
+        ctx = {
+            "sight_data": sight_data,
+            "adj": {},
+            "spawn_cells": {},
+            "zone_data": None,
+        }
+
+        actor = self._make_player(
+            "red_cmd", "red", "commander", zone=1, cell_row=None, cell_col=None
+        )
+        same_zone = self._make_player(
+            "blue_cmd", "blue", "commander", zone=1, cell_row=0, cell_col=1
+        )
+        diff_zone = self._make_player(
+            "blue_hvy", "blue", "heavy", zone=2, cell_row=5, cell_col=5
+        )
+
+        result = _get_los_targets(actor, [same_zone, diff_zone], ctx)
+        assert result == [same_zone]
+
+    def test_target_with_no_cell_excluded_when_map_active(self):
+        """A target without a cell position is excluded when sight_data is in use."""
+        from matches.simulation import _get_los_targets
+
+        sight_data = {"0,0": frozenset(["0,1"])}
+        ctx = {
+            "sight_data": sight_data,
+            "adj": {},
+            "spawn_cells": {},
+            "zone_data": None,
+        }
+
+        actor = self._make_player("red_cmd", "red", "commander", cell_row=0, cell_col=0)
+        no_cell_target = self._make_player(
+            "blue_cmd", "blue", "commander", cell_row=None, cell_col=None
+        )
+
+        result = _get_los_targets(actor, [no_cell_target], ctx)
+        assert result == []
+
+    def test_los_is_bidirectional(self):
+        """If A can see B, B can also see A (sight_data is bidirectional)."""
+        from matches.simulation import _get_los_targets
+
+        sight_data = {
+            "0,0": frozenset(["0,1"]),
+            "0,1": frozenset(["0,0"]),
+        }
+        ctx = {
+            "sight_data": sight_data,
+            "adj": {},
+            "spawn_cells": {},
+            "zone_data": None,
+        }
+
+        a = self._make_player("red_cmd", "red", "commander", cell_row=0, cell_col=0)
+        b = self._make_player("blue_cmd", "blue", "commander", cell_row=0, cell_col=1)
+
+        assert _get_los_targets(a, [b], ctx) == [b]
+        assert _get_los_targets(b, [a], ctx) == [a]
+
+
+@pytest.mark.django_db
+class TestMap03DBIntegration:
+    """DB-backed MAP-03 tests: missing sight config error and full-round LOS simulation."""
+
+    def _make_map_with_wall(self):
+        """3×3 map with a wall column in the middle blocking LOS between left and right."""
+        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig, SightLineConfig
+
+        # Columns: 0=passable, 1=wall, 2=passable
+        zone_data = [
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+        ]
+        arena_map = ArenaMap.objects.create(
+            name="WallMapLOS", img_width=300, img_height=300
+        )
+        MapZoneConfig.objects.create(
+            arena_map=arena_map, zone_size=100, zone_data=zone_data, confirmed=True
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="red", x_px=50, y_px=150
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="blue", x_px=250, y_px=150
+        )
+        # Sight lines: left column can see each other; right column can see each other;
+        # no cross-wall visibility.
+        from core.map_processing import compute_sight_lines
+
+        sight_data = compute_sight_lines(zone_data)
+        SightLineConfig.objects.create(
+            arena_map=arena_map, zone_size=100, sight_data=sight_data
+        )
+        return arena_map
+
+    def test_missing_sight_config_raises_valueerror(self):
+        """Simulating with a map that has no SightLineConfig raises ValueError."""
+        from core.models import ArenaMap, MapZoneConfig, MapBaseConfig
+        from matches.tests.conftest import make_team_with_slots
+
+        arena_map = ArenaMap.objects.create(
+            name="NoSight", img_width=100, img_height=100
+        )
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=50,
+            zone_data=[[1, 1], [1, 1]],
+            confirmed=True,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="red", x_px=25, y_px=25
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="blue", x_px=75, y_px=75
+        )
+
+        team_red, _ = make_team_with_slots("SightErrR")
+        team_blue, _ = make_team_with_slots("SightErrB")
+        with pytest.raises(ValueError, match="sight lines"):
+            ResourceBasedSimulator().simulate_single_round_detailed(
+                team_red, team_blue, arena_map=arena_map
+            )
+
+    def test_walled_map_produces_no_cross_wall_tags(self):
+        """With a wall separating both teams, no tags occur across the wall.
+
+        The 3×3 fixture has a full wall column in the middle (col 1 is all 0).
+        There is no path around the wall, so players are permanently confined to
+        their spawn column and sight_data contains no cross-wall entries.
+        """
+        import random
+        from matches.tests.conftest import make_team_with_slots
+
+        random.seed(42)
+
+        arena_map = self._make_map_with_wall()
+        team_red, _ = make_team_with_slots("WallR")
+        team_blue, _ = make_team_with_slots("WallB")
+
+        game_round = ResourceBasedSimulator().simulate_single_round_detailed(
+            team_red, team_blue, arena_map=arena_map
+        )
+
+        # With teams pinned to opposite sides of the wall, no enemy tags possible
+        tag_events = list(
+            GameEvent.objects.filter(game_round=game_round, event_type="tag")
+        )
+        assert (
+            len(tag_events) == 0
+        ), f"Expected no tags across the wall, but got {len(tag_events)}"
+
+    def test_resolve_map_data_returns_sight_data(self):
+        """_resolve_map_data 4th return value is a dict of frozensets."""
+        arena_map = self._make_map_with_wall()
+        _, _, _, sight_data = ResourceBasedSimulator._resolve_map_data(arena_map)
+
+        assert isinstance(sight_data, dict)
+        # Each value should be a frozenset
+        for visible in sight_data.values():
+            assert isinstance(visible, frozenset)
+            break  # just check first entry

@@ -77,6 +77,8 @@ Pull sight data from the precomputed `SightLineConfig` at round start and hold i
 
 **Acceptance:** Two players separated by a wall cannot tag each other. Players across a corridor can. 
 Hit-chance formula remains the same; only target eligibility changes.
+- completed
+- note: `_resolve_map_data` now returns a 4-tuple `(zone_size, spawn_cells, zone_grid, sight_data)`; raises `ValueError` if `SightLineConfig` is absent for the map's zone_size. `_build_movement_ctx` gains a `sight_data` kwarg; the dict gains a `"sight_data"` key (frozenset-valued for O(1) lookup). Module-level `_get_los_targets(actor, candidates, movement_ctx)` replaces the zone equality check in both `ResourceBasedSimulator._choose_tag_target` and `BatchSimulator._choose_tag_target`; falls back to zone-based when no map is active. Simulating with a map that has no sight lines computed raises `ValueError` with a clear editor prompt. All test map fixtures updated to include `SightLineConfig`; 9 new tests added in `TestMap03LOSTargeting` and `TestMap03DBIntegration`.
 
 ### MAP-04 · Base interaction via BaseSightLineConfig
 Replace the abstract base-capture zone check with `BaseSightLineConfig` lookups. A player can interact with a base 
