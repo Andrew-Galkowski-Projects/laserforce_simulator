@@ -31,6 +31,57 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
 
+def _elevation_hit_modifier(
+    attacker_row: int | None,
+    attacker_col: int | None,
+    defender_row: int | None,
+    defender_col: int | None,
+    movement_ctx: dict | None,
+) -> float:
+    """MAP-09: Return the uphill hit-chance multiplier for a shot from attacker to defender.
+
+    Formula: hit_chance *= max(0.5, 1 - 0.1 * elevation_diff)
+    where elevation_diff = max(0, target_elevation - attacker_elevation).
+    Only reduces hit chance when shooting uphill (target is higher than attacker).
+    Returns 1.0 (no modifier) when:
+    - movement_ctx is None (no map in play)
+    - elevation_grid is absent from movement_ctx
+    - either cell position is None
+    """
+    if movement_ctx is None:
+        return 1.0
+    elevation_grid = movement_ctx.get("elevation_grid")
+    if elevation_grid is None:
+        return 1.0
+    if attacker_row is None or attacker_col is None:
+        return 1.0
+    if defender_row is None or defender_col is None:
+        return 1.0
+    rows = len(elevation_grid)
+    cols = len(elevation_grid[0]) if rows else 0
+    attacker_elev = (
+        elevation_grid[attacker_row][attacker_col]
+        if 0 <= attacker_row < rows and 0 <= attacker_col < cols
+        else 0.0
+    )
+    defender_elev = (
+        elevation_grid[defender_row][defender_col]
+        if 0 <= defender_row < rows and 0 <= defender_col < cols
+        else 0.0
+    )
+    return elevation_hit_modifier(attacker_elev, defender_elev)
+
+
+def elevation_hit_modifier(attacker_elev: float, target_elev: float) -> float:
+    """Public pure formula for the uphill hit-chance penalty (MAP-09).
+
+    Formula: max(0.5, 1 - 0.1 * elevation_diff)
+    where elevation_diff = max(0, target_elev - attacker_elev).
+    """
+    elevation_diff = max(0.0, target_elev - attacker_elev)
+    return max(0.5, 1.0 - 0.1 * elevation_diff)
+
+
 def _can_tag_through_windowed_wall(
     r1: int, c1: int, r2: int, c2: int, zone_grid: list, wall_meta: dict
 ) -> bool:
@@ -235,6 +286,7 @@ class ResourceBasedSimulator:
             strong_spots,
             wall_meta,
             team_spawn_pools,
+            elevation_grid,
         ) = self._resolve_map_data(arena_map)
 
         game_round = GameRound.objects.create(
@@ -264,6 +316,7 @@ class ResourceBasedSimulator:
             strong_spots,
             wall_meta,
             team_spawn_pools,
+            elevation_grid,
         )
         round_result = self._simulate_round_combat(
             game_round, red_players, blue_players, movement_ctx=movement_ctx
@@ -284,22 +337,24 @@ class ResourceBasedSimulator:
     @staticmethod
     def _resolve_map_data(arena_map):
         """Load zone_size, spawn cells, zone_data, sight_data, base_sight_data,
-        cell_ranking, strong_spots, wall_meta, and spawn_pools from a map.
+        cell_ranking, strong_spots, wall_meta, spawn_pools, and elevation_grid from a map.
 
         Returns (zone_size, spawn_cells, zone_grid, sight_data, base_sight_data,
-                 cell_ranking, strong_spots, wall_meta, spawn_pools) where:
+                 cell_ranking, strong_spots, wall_meta, spawn_pools, elevation_grid) where:
         - All values are None/{}/[] when no map is provided.
         - sight_data is {"r,c": frozenset(["r,c", ...])} keyed by cell — O(1) lookup.
         - base_sight_data is {"base_type": frozenset(["r,c", ...])} for O(1) cell lookup.
         - cell_ranking is [[r,c], ...] sorted highest-LOS first (empty if not yet computed).
         - strong_spots is [[r,c], ...] of Heavy defensive positions (empty if not computed).
-        - wall_meta is {"r,c": {"facing": "N"|"S"|"E"|"W"}} for windowed wall apertures.
+        - wall_meta is {"r,c": {"facing": "N"|"S"|"E"|"W", "height": float}} for wall apertures/heights.
         - spawn_pools is {"red": [(r,c),...], "blue": [(r,c),...]} from stored spawn data.
+        - elevation_grid is a 2D list of floats from zone_data["elevation"]; None when absent
+          (all cells treated as elevation 0.0 during simulation).
         Raises ValueError if the map is missing its zone config, a base, sight lines, or
         base sight line configs.
         """
         if arena_map is None:
-            return None, {}, None, None, {}, [], [], {}, {}
+            return None, {}, None, None, {}, [], [], {}, {}, None
 
         config = arena_map.latest_confirmed_config()
         if config is None:
@@ -312,6 +367,7 @@ class ResourceBasedSimulator:
         raw = config.zone_data
         zone_grid = raw["zones"] if isinstance(raw, dict) else raw
         wall_meta: dict = raw.get("wall_meta", {}) if isinstance(raw, dict) else {}
+        elevation_grid = raw.get("elevation") if isinstance(raw, dict) else None
 
         base_cfgs = {
             bc.base_type: bc
@@ -383,6 +439,7 @@ class ResourceBasedSimulator:
             strong_spots,
             wall_meta,
             spawn_pools,
+            elevation_grid,
         )
 
     @staticmethod
@@ -427,6 +484,7 @@ class ResourceBasedSimulator:
         strong_spots=None,
         wall_meta=None,
         team_spawn_pools=None,
+        elevation_grid=None,
     ):
         if zone_data is None:
             return None
@@ -448,6 +506,7 @@ class ResourceBasedSimulator:
             "strong_spots": [tuple(rc) for rc in (strong_spots or [])],
             "wall_meta": wall_meta or {},
             "team_spawn_pools": team_spawn_pools or {},
+            "elevation_grid": elevation_grid,
         }
 
     @staticmethod
@@ -667,10 +726,25 @@ class ResourceBasedSimulator:
                     continue
                 r_attacker.reaction_shots += 1
                 last_shot_times[r_attacker.id] = second
+                _rx_elev_mod = _elevation_hit_modifier(
+                    r_attacker.cell_row,
+                    r_attacker.cell_col,
+                    r_defender.cell_row,
+                    r_defender.cell_col,
+                    movement_ctx,
+                )
                 hit_chance = max(
                     10,
                     min(
-                        95, 70 + r_attacker.player.accuracy - r_defender.player.survival
+                        95,
+                        int(
+                            (
+                                70
+                                + r_attacker.player.accuracy
+                                - r_defender.player.survival
+                            )
+                            * _rx_elev_mod
+                        ),
                     ),
                 )
                 react_hit = random.randint(1, 100) < hit_chance
@@ -767,11 +841,25 @@ class ResourceBasedSimulator:
                     continue
                 fu_attacker.follow_up_shots += 1
                 last_shot_times[fu_attacker.id] = second
+                _fu_elev_mod = _elevation_hit_modifier(
+                    fu_attacker.cell_row,
+                    fu_attacker.cell_col,
+                    fu_defender.cell_row,
+                    fu_defender.cell_col,
+                    movement_ctx,
+                )
                 hit_chance = max(
                     10,
                     min(
                         95,
-                        70 + fu_attacker.player.accuracy - fu_defender.player.survival,
+                        int(
+                            (
+                                70
+                                + fu_attacker.player.accuracy
+                                - fu_defender.player.survival
+                            )
+                            * _fu_elev_mod
+                        ),
                     ),
                 )
                 fu_hit = random.randint(1, 100) < hit_chance
@@ -1113,6 +1201,7 @@ class ResourceBasedSimulator:
                 last_shot_times,
                 pending_followups,
                 pending_reactions,
+                movement_ctx,
             )
 
     def _shot_cooldown(self, player, second: float) -> float:
@@ -1291,6 +1380,7 @@ class ResourceBasedSimulator:
         last_shot_times=None,
         pending_followups=None,
         pending_reactions=None,
+        movement_ctx=None,
     ):
         """Resolve multiple tag attempts simultaneously.
 
@@ -1323,7 +1413,16 @@ class ResourceBasedSimulator:
             base_accuracy = 70
             accuracy = attacker.player.accuracy
             evasion = defender.player.survival
-            hit_chance = max(10, min(95, base_accuracy + accuracy - evasion))
+            elev_mod = _elevation_hit_modifier(
+                attacker.cell_row,
+                attacker.cell_col,
+                defender.cell_row,
+                defender.cell_col,
+                movement_ctx,
+            )
+            hit_chance = max(
+                10, min(95, int((base_accuracy + accuracy - evasion) * elev_mod))
+            )
             rolled = random.randint(1, 100)
             hit = rolled < hit_chance
             outcomes.append(
@@ -2603,6 +2702,7 @@ class BatchSimulator:
                 strong_spots,
                 wall_meta,
                 team_spawn_pools,
+                elevation_grid,
             ) = ResourceBasedSimulator._resolve_map_data(arena_map)
             movement_ctx = ResourceBasedSimulator._build_movement_ctx(
                 zone_data,
@@ -2613,6 +2713,7 @@ class BatchSimulator:
                 strong_spots,
                 wall_meta,
                 team_spawn_pools,
+                elevation_grid,
             )
 
         red_wins = blue_wins = ties = 0
@@ -2814,8 +2915,22 @@ class BatchSimulator:
                     continue
                 r_attacker.reaction_shots += 1
                 r_attacker.last_shot_time = second
+                _rx_elev_mod = _elevation_hit_modifier(
+                    r_attacker.cell_row,
+                    r_attacker.cell_col,
+                    r_defender.cell_row,
+                    r_defender.cell_col,
+                    movement_ctx,
+                )
                 hit_chance = max(
-                    10, min(95, 70 + r_attacker.accuracy - r_defender.survival)
+                    10,
+                    min(
+                        95,
+                        int(
+                            (70 + r_attacker.accuracy - r_defender.survival)
+                            * _rx_elev_mod
+                        ),
+                    ),
                 )
                 react_hit = random.randint(1, 100) < hit_chance
                 if r_attacker.role != "ammo":
@@ -2896,8 +3011,22 @@ class BatchSimulator:
                     continue
                 fu_attacker.follow_up_shots += 1
                 fu_attacker.last_shot_time = second
+                _def_fu_elev_mod = _elevation_hit_modifier(
+                    fu_attacker.cell_row,
+                    fu_attacker.cell_col,
+                    fu_defender.cell_row,
+                    fu_defender.cell_col,
+                    movement_ctx,
+                )
                 hit_chance = max(
-                    10, min(95, 70 + fu_attacker.accuracy - fu_defender.survival)
+                    10,
+                    min(
+                        95,
+                        int(
+                            (70 + fu_attacker.accuracy - fu_defender.survival)
+                            * _def_fu_elev_mod
+                        ),
+                    ),
                 )
                 fu_hit = random.randint(1, 100) < hit_chance
                 if fu_attacker.role != "ammo":
@@ -3061,6 +3190,7 @@ class BatchSimulator:
                     event_log,
                     pending_followups,
                     pending_reactions,
+                    movement_ctx,
                 )
 
             # --- check for team elimination ---
@@ -3343,6 +3473,7 @@ class BatchSimulator:
         event_log=None,
         pending_followups=None,
         pending_reactions=None,
+        movement_ctx=None,
     ):
         outcomes = []
         for a in attempts:
@@ -3357,7 +3488,17 @@ class BatchSimulator:
                     {"attacker": attacker, "defender": defender, "result": "miss_hid"}
                 )
                 continue
-            hit_chance = max(10, min(95, 70 + attacker.accuracy - defender.survival))
+            elev_mod = _elevation_hit_modifier(
+                attacker.cell_row,
+                attacker.cell_col,
+                defender.cell_row,
+                defender.cell_col,
+                movement_ctx,
+            )
+            hit_chance = max(
+                10,
+                min(95, int((70 + attacker.accuracy - defender.survival) * elev_mod)),
+            )
             hit = random.randint(1, 100) < hit_chance
             outcomes.append(
                 {
@@ -3495,8 +3636,22 @@ class BatchSimulator:
             r_defender = ra["defender"]
             if r_defender.final_lives <= 0:
                 continue
+            _imm_rx_elev_mod = _elevation_hit_modifier(
+                r_attacker.cell_row,
+                r_attacker.cell_col,
+                r_defender.cell_row,
+                r_defender.cell_col,
+                movement_ctx,
+            )
             hit_chance = max(
-                10, min(95, 70 + r_attacker.accuracy - r_defender.survival)
+                10,
+                min(
+                    95,
+                    int(
+                        (70 + r_attacker.accuracy - r_defender.survival)
+                        * _imm_rx_elev_mod
+                    ),
+                ),
             )
             react_hit = random.randint(1, 100) < hit_chance
             r_attacker.reaction_shots += 1
@@ -3601,8 +3756,22 @@ class BatchSimulator:
                 continue
             if fu_attacker.final_shots <= 0 and fu_attacker.role != "ammo":
                 continue
+            _imm_fu_elev_mod = _elevation_hit_modifier(
+                fu_attacker.cell_row,
+                fu_attacker.cell_col,
+                fu_defender.cell_row,
+                fu_defender.cell_col,
+                movement_ctx,
+            )
             hit_chance = max(
-                10, min(95, 70 + fu_attacker.accuracy - fu_defender.survival)
+                10,
+                min(
+                    95,
+                    int(
+                        (70 + fu_attacker.accuracy - fu_defender.survival)
+                        * _imm_fu_elev_mod
+                    ),
+                ),
             )
             fu_hit = random.randint(1, 100) < hit_chance
             fu_attacker.follow_up_shots += 1

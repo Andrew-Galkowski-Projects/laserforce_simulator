@@ -12,8 +12,13 @@
     {% for arena_map in maps %}
     <div class="col">
         <div class="card h-100">
+            {% if arena_map.image %}
             <img src="{{ arena_map.image.url }}" class="card-img-top" alt="{{ arena_map.name }}"
                  style="height: 180px; object-fit: cover;">
+            {% else %}
+            <div class="card-img-top bg-secondary d-flex align-items-center justify-content-center"
+                 style="height: 180px;"><span class="text-white">No image</span></div>
+            {% endif %}
             <div class="card-body">
                 <h5 class="card-title">
                     {{ arena_map.name }}

@@ -26,6 +26,7 @@ urlpatterns = [
         name="save_sight_lines",
     ),
     path("<int:map_id>/save/", views.save_zone_config, name="save_zone_config"),
+    path("<int:map_id>/ranked-cells/", views.get_ranked_cells, name="get_ranked_cells"),
     path("<int:map_id>/strong-spots/", views.get_strong_spots, name="get_strong_spots"),
     path(
         "<int:map_id>/strong-spots/save/",

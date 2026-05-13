@@ -226,14 +226,70 @@ def _compute_blocked_edges(processed_bw, rows, cols, cell_size):
     return blocked_dict, blocked_grid
 
 
-def _has_los(zone_data, r1, c1, r2, c2, blocked_edges_grid=None):
+def can_shoot_over_wall(
+    attacker_elev: float, wall_base_elev: float, wall_height: float | None
+) -> bool:
+    """Return True if an attacker can shoot over a high wall.
+
+    Formula (MAP-09): attacker_elev - wall_base_elev > wall_height * 0.5
+    Returns False when wall_height is None (no explicit height → not shoot-overable).
+    """
+    if wall_height is None:
+        return False
+    return attacker_elev - wall_base_elev > wall_height * 0.5
+
+
+def _has_los(
+    zone_data,
+    r1,
+    c1,
+    r2,
+    c2,
+    blocked_edges_grid=None,
+    elevation_grid=None,
+    wall_meta=None,
+):
     """Bresenham's line — True if no wall cell lies on the path.
+
+    MAP-09: Elevation-aware. High walls (zone 0) may be shot over when the
+    attacker's elevation minus the wall cell's elevation exceeds half the
+    wall's height:  attacker_elev - wall_base_elev > wall_height * 0.5
+    Wall height is stored in wall_meta as {"r,c": {"height": float}};
+    blocks (not shoot-overable) when height key is absent. elevation_grid
+    is a 2-D list of floats (same shape as zone_data); defaults to 0.0
+    everywhere when absent.
+
+    Low wall (zone 4) is transparent when at ground level (elevation < 0.5).
+    When the wall's own elevation is >= 0.5, only attackers at or above the
+    wall's elevation can shoot through it; attackers below are blocked.
+    High-ground → low-ground shots are always permitted (asymmetric LOS).
 
     Optimizations:
     - Early termination: adjacent cells always visible (unless blocked edge)
     - Efficient edge lookup: uses 2D array instead of dict string keys
     - Caches direction values to avoid repeated comparisons
     """
+
+    # Helper: elevation at a cell (0.0 when grid absent)
+    def _elev(r, c):
+        if (
+            elevation_grid
+            and 0 <= r < len(elevation_grid)
+            and 0 <= c < len(elevation_grid[0])
+        ):
+            return elevation_grid[r][c]
+        return 0.0
+
+    attacker_elev = _elev(r1, c1)
+    target_elev   = _elev(r2, c2)
+    _wall_meta = wall_meta or {}
+
+    def _can_shoot_over_high_wall(wr, wc):
+        """True if the attacker at (r1,c1) can shoot over the high wall at (wr,wc)."""
+        wall_height = _wall_meta.get(f"{wr},{wc}", {}).get("height")
+        wall_base_elev = _elev(wr, wc)
+        return can_shoot_over_wall(attacker_elev, wall_base_elev, wall_height)
+
     # Early termination: adjacent cells
     if abs(r1 - r2) <= 1 and abs(c1 - c2) <= 1:
         if r1 == r2 and c1 == c2:
@@ -273,10 +329,17 @@ def _has_los(zone_data, r1, c1, r2, c2, blocked_edges_grid=None):
         if cx == x1 and cy == y1:
             return True
 
-        # High wall (0) blocks LOS.
-        # Low wall (4) and windowed wall (5) are transparent — sight passes through but movement does not.
+        # High wall (0) blocks LOS unless the attacker can shoot over it (MAP-09).
         if zone_data[cy][cx] == 0:
-            return False
+            if not _can_shoot_over_high_wall(cy, cx):
+                return False
+
+        # Low wall (4): transparent at ground level, directional when elevated (>= 0.5).
+        # Only attackers at or above the wall's own elevation can shoot through it.
+        if zone_data[cy][cx] == 4:
+            wall_elev = _elev(cy, cx)
+            if wall_elev >= 0.5 and attacker_elev < wall_elev:
+                return False
 
         # Check edge blocking (optimized with 2D grid lookup)
         if blocked_edges_grid and (moved_x or moved_y):
@@ -310,7 +373,8 @@ def compute_sight_lines(zone_data, blocked_edges_grid=None, use_quadtree=True):
     """Compute bidirectional adjacency dict for all non-wall cell pairs.
 
     Args:
-        zone_data: Either 2D list or dict with 'zones' and 'blocked_edges_grid'
+        zone_data: Either 2D list or dict with 'zones', 'blocked_edges_grid',
+                   and optionally 'elevation' (MAP-09) and 'wall_meta' (MAP-09).
         blocked_edges_grid: Optional 2D array of blocked edges (for optimization)
         use_quadtree: Use spatial acceleration (recommended for large maps)
 
@@ -322,11 +386,15 @@ def compute_sight_lines(zone_data, blocked_edges_grid=None, use_quadtree=True):
     - Early termination in raycasting
     """
     # Handle both old (2D list) and new (dict) formats
+    elevation_grid = None
+    wall_meta = None
     if isinstance(zone_data, dict):
         blocked_edges_grid = zone_data.get(
             "blocked_edges_grid", zone_data.get("blocked_edges", {})
         )
         zone_grid = zone_data["zones"]
+        elevation_grid = zone_data.get("elevation")
+        wall_meta = zone_data.get("wall_meta")
     else:
         zone_grid = zone_data
         if blocked_edges_grid is None:
@@ -352,15 +420,34 @@ def compute_sight_lines(zone_data, blocked_edges_grid=None, use_quadtree=True):
         for r, c in passable:
             quadtree.add_cell(r, c)
 
-        # Visibility radius: conservative estimate (diagonal / 4)
-        vis_radius = max(rows, cols) // 4
+        # Visibility radius: 2/3 of the true grid diagonal
+        vis_radius = int((rows**2 + cols**2) ** 0.5 * 2 / 3)
 
         for r1, c1 in passable:
             nearby = quadtree.nearby_cells(r1, c1, vis_radius)
             for r2, c2 in nearby:
                 if (r1, c1) < (r2, c2):  # Avoid duplicates
-                    if _has_los(zone_grid, r1, c1, r2, c2, blocked_edges_grid):
+                    if _has_los(
+                        zone_grid,
+                        r1,
+                        c1,
+                        r2,
+                        c2,
+                        blocked_edges_grid,
+                        elevation_grid,
+                        wall_meta,
+                    ):
                         sight.setdefault(f"{r1},{c1}", []).append(f"{r2},{c2}")
+                    if _has_los(
+                        zone_grid,
+                        r2,
+                        c2,
+                        r1,
+                        c1,
+                        blocked_edges_grid,
+                        elevation_grid,
+                        wall_meta,
+                    ):
                         sight.setdefault(f"{r2},{c2}", []).append(f"{r1},{c1}")
 
     # Option 2: Brute force (for small maps or fallback)
@@ -370,8 +457,27 @@ def compute_sight_lines(zone_data, blocked_edges_grid=None, use_quadtree=True):
             r1, c1 = passable[i]
             for j in range(i + 1, n):
                 r2, c2 = passable[j]
-                if _has_los(zone_grid, r1, c1, r2, c2, blocked_edges_grid):
+                if _has_los(
+                    zone_grid,
+                    r1,
+                    c1,
+                    r2,
+                    c2,
+                    blocked_edges_grid,
+                    elevation_grid,
+                    wall_meta,
+                ):
                     sight.setdefault(f"{r1},{c1}", []).append(f"{r2},{c2}")
+                if _has_los(
+                    zone_grid,
+                    r2,
+                    c2,
+                    r1,
+                    c1,
+                    blocked_edges_grid,
+                    elevation_grid,
+                    wall_meta,
+                ):
                     sight.setdefault(f"{r2},{c2}", []).append(f"{r1},{c1}")
 
     return sight
@@ -385,16 +491,21 @@ def compute_single_cell_visibility(r1, c1, zone_data, blocked_edges_grid=None):
 
     Args:
         r1, c1: Cell to compute visibility from
-        zone_data: Dict with 'zones' and optionally 'blocked_edges_grid'
+        zone_data: Dict with 'zones' and optionally 'blocked_edges_grid',
+                   'elevation' (MAP-09), and 'wall_meta' (MAP-09).
         blocked_edges_grid: Optional 2D array of blocked edges
 
     Returns: List of visible cell keys "r,c"
     """
+    elevation_grid = None
+    wall_meta = None
     if isinstance(zone_data, dict):
         blocked_edges_grid = zone_data.get(
             "blocked_edges_grid", zone_data.get("blocked_edges", {})
         )
         zone_grid = zone_data["zones"]
+        elevation_grid = zone_data.get("elevation")
+        wall_meta = zone_data.get("wall_meta")
     else:
         zone_grid = zone_data
         if blocked_edges_grid is None:
@@ -416,7 +527,7 @@ def compute_single_cell_visibility(r1, c1, zone_data, blocked_edges_grid=None):
 
     for r2, c2 in passable:
         if (r1, c1) != (r2, c2) and _has_los(
-            zone_grid, r1, c1, r2, c2, blocked_edges_grid
+            zone_grid, r1, c1, r2, c2, blocked_edges_grid, elevation_grid, wall_meta
         ):
             visible.append(f"{r2},{c2}")
 
