@@ -259,12 +259,10 @@ def _has_los(
     is a 2-D list of floats (same shape as zone_data); defaults to 0.0
     everywhere when absent.
 
-    Low wall (zone 4) is normally transparent to LOS, but blocks when the
-    target's elevation exceeds the attacker's elevation by more than 1.0
-    (i.e. a crouching high-ground player is protected from below by a half
-    wall).  The check is directional: shooting downward through a low wall
-    is always permitted, creating asymmetric LOS consistent with the high-
-    wall shoot-over logic.
+    Low wall (zone 4) is transparent when at ground level (elevation < 0.5).
+    When the wall's own elevation is >= 0.5, only attackers at or above the
+    wall's elevation can shoot through it; attackers below are blocked.
+    High-ground → low-ground shots are always permitted (asymmetric LOS).
 
     Optimizations:
     - Early termination: adjacent cells always visible (unless blocked edge)
@@ -336,10 +334,12 @@ def _has_los(
             if not _can_shoot_over_high_wall(cy, cx):
                 return False
 
-        # Low wall (4) blocks LOS when target is on significantly higher ground (MAP-09).
-        # A half-wall protects a high-ground defender from below but not from above.
-        if zone_data[cy][cx] == 4 and target_elev - attacker_elev > 1.0:
-            return False
+        # Low wall (4): transparent at ground level, directional when elevated (>= 0.5).
+        # Only attackers at or above the wall's own elevation can shoot through it.
+        if zone_data[cy][cx] == 4:
+            wall_elev = _elev(cy, cx)
+            if wall_elev >= 0.5 and attacker_elev < wall_elev:
+                return False
 
         # Check edge blocking (optimized with 2D grid lookup)
         if blocked_edges_grid and (moved_x or moved_y):
@@ -420,8 +420,8 @@ def compute_sight_lines(zone_data, blocked_edges_grid=None, use_quadtree=True):
         for r, c in passable:
             quadtree.add_cell(r, c)
 
-        # Visibility radius: conservative estimate (diagonal / 4)
-        vis_radius = max(rows, cols) // 4
+        # Visibility radius: 2/3 of the true grid diagonal
+        vis_radius = int((rows**2 + cols**2) ** 0.5 * 2 / 3)
 
         for r1, c1 in passable:
             nearby = quadtree.nearby_cells(r1, c1, vis_radius)

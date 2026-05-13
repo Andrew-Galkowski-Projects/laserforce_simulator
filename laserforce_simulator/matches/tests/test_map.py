@@ -1250,6 +1250,43 @@ class TestMap05StrongSpotsViews:
         response = client.get(f"/maps/{arena_map.pk}/strong-spots/save/")
         assert response.status_code == 405
 
+    def test_save_strong_spots_updates_existing_config(self, client):
+        import json
+
+        from core.models import HeavyStrongSpotsConfig
+
+        arena_map = self._make_arena_map("UpdateSSView")
+        HeavyStrongSpotsConfig.objects.create(
+            arena_map=arena_map, zone_size=50, cells=[[1, 1], [2, 2]]
+        )
+        client.post(
+            f"/maps/{arena_map.pk}/strong-spots/save/",
+            data=json.dumps({"zone_size": 50, "cells": [[5, 5]]}),
+            content_type="application/json",
+        )
+        assert HeavyStrongSpotsConfig.objects.filter(arena_map=arena_map, zone_size=50).count() == 1
+        config = HeavyStrongSpotsConfig.objects.get(arena_map=arena_map, zone_size=50)
+        assert config.cells == [[5, 5]]
+
+    def test_save_strong_spots_accepts_empty_cells(self, client):
+        import json
+
+        from core.models import HeavyStrongSpotsConfig
+
+        arena_map = self._make_arena_map("EmptySSView")
+        HeavyStrongSpotsConfig.objects.create(
+            arena_map=arena_map, zone_size=50, cells=[[1, 1]]
+        )
+        response = client.post(
+            f"/maps/{arena_map.pk}/strong-spots/save/",
+            data=json.dumps({"zone_size": 50, "cells": []}),
+            content_type="application/json",
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"
+        config = HeavyStrongSpotsConfig.objects.get(arena_map=arena_map, zone_size=50)
+        assert config.cells == []
+
 
 # ---------------------------------------------------------------------------
 # MAP-07 — Map wall hazards

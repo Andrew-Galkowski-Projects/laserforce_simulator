@@ -524,12 +524,13 @@ class TestMap09LOSWithElevation:
         elevation_grid = [[0.0, 0.0, 1.0]]
         assert _has_los(zone_data, 0, 0, 0, 2, elevation_grid=elevation_grid) is True
 
-    def test_low_wall_blocks_when_target_significantly_higher(self):
-        """Low wall blocks LOS when target is more than 1.0 above attacker."""
+    def test_low_wall_blocks_when_wall_elevated_and_attacker_below(self):
+        """Low wall blocks LOS when the wall cell itself is at elevation >= 0.5 and attacker is below it."""
         from core.map_processing import _has_los
 
         zone_data = [[1, 4, 1]]
-        elevation_grid = [[0.0, 0.0, 1.5]]
+        # Wall at elevation 1.0; attacker at 0.0 is below the wall → blocked.
+        elevation_grid = [[0.0, 1.0, 0.0]]
         assert _has_los(zone_data, 0, 0, 0, 2, elevation_grid=elevation_grid) is False
 
     def test_low_wall_does_not_block_downhill_shot(self):
@@ -542,18 +543,21 @@ class TestMap09LOSWithElevation:
         assert _has_los(zone_data, 0, 0, 0, 2, elevation_grid=elevation_grid) is True
 
     def test_low_wall_blocks_asymmetry_in_compute_sight_lines(self):
-        """compute_sight_lines reflects low-wall asymmetry: low→high blocked, high→low open."""
+        """compute_sight_lines reflects elevated low-wall asymmetry: below-wall blocked, at-wall-level open."""
         from core.map_processing import compute_sight_lines
 
+        # Wall at elev 1.0 (>= 0.5 threshold): cell 0 is low ground (0.0), cell 2 is high ground (1.0).
+        # Low ground → elevated wall → high ground: blocked.
+        # High ground → elevated wall → low ground: open (attacker_elev >= wall_elev).
         zone_data = {
             "zones": [[1, 4, 1]],
             "blocked_edges_grid": None,
-            "elevation": [[0.0, 0.0, 2.0]],
+            "elevation": [[0.0, 1.0, 1.0]],
         }
         sight = compute_sight_lines(zone_data, use_quadtree=False)
 
-        assert "0,2" not in sight.get("0,0", []), "Low-ground attacker must NOT see high-ground target through low wall"
-        assert "0,0" in sight.get("0,2", []), "High-ground attacker MUST see low-ground target through low wall"
+        assert "0,2" not in sight.get("0,0", []), "Below-wall attacker must NOT see through elevated low wall"
+        assert "0,0" in sight.get("0,2", []), "At-wall-elevation attacker MUST see low-ground target through elevated low wall"
 
     def test_low_wall_transparent_without_elevation_grid(self):
         """Low wall stays transparent when no elevation data is provided (backwards compat)."""

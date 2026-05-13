@@ -84,7 +84,9 @@
       "Bash(python -m pytest core/tests.py matches/tests/test_map09_high_ground.py matches/tests/test_map.py -q)",
       "Bash(python -m pytest matches/tests/test_map.py::TestMap08DBIntegration -v)",
       "Bash(python -m pytest matches/tests/test_map.py::TestMap08SpawnPoints matches/tests/test_map.py::TestMap08DBIntegration core/tests.py -v)",
-      "Bash(python -m pytest matches/tests/test_map.py::TestMap08DBIntegration::test_user_edited_spawn_not_overwritten_by_compute_sight_lines -v)"
+      "Bash(python -m pytest matches/tests/test_map.py::TestMap08DBIntegration::test_user_edited_spawn_not_overwritten_by_compute_sight_lines -v)",
+      "Bash(python -m pytest matches/tests/ -q)",
+      "Bash(python -m pytest matches/tests/test_map.py::TestMap05StrongSpotsViews -v)"
     ]
   }
 }

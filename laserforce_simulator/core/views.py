@@ -594,6 +594,22 @@ def _update_spawn_cells_in_zone_data(arena_map, zone_size: int) -> None:
     config.save(update_fields=["zone_data"])
 
 
+def get_ranked_cells(request, map_id):
+    """Return MapCellRankingConfig ranked_cells for the given zone_size."""
+    arena_map = get_object_or_404(ArenaMap, pk=map_id)
+    try:
+        zone_size = int(request.GET.get("zone_size", 50))
+    except (ValueError, TypeError):
+        zone_size = 50
+    zone_size = max(10, min(zone_size, 200))
+
+    config = MapCellRankingConfig.objects.filter(
+        arena_map=arena_map, zone_size=zone_size
+    ).first()
+
+    return JsonResponse({"ranked_cells": config.ranked_cells if config else []})
+
+
 def get_strong_spots(request, map_id):
     """Return current HeavyStrongSpotsConfig cells for the given zone_size."""
     arena_map = get_object_or_404(ArenaMap, pk=map_id)
