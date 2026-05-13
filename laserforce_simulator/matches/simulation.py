@@ -5,6 +5,12 @@ import uuid
 from collections import deque
 from django.db import transaction
 from .models import GameEvent, Match, GameRound, PlayerRoundState
+from .sim_helpers.mechanics import (
+    shot_cooldown,
+    choose_tag_target,
+    choose_resupply_target,
+    choose_zone_change,
+)
 from .sim_helpers.pathfinding import (
     build_movement_adjacency,
     astar_next_step,
@@ -936,7 +942,7 @@ class ResourceBasedSimulator:
                     fu_defender.save()
                     if not downed and chain < 2 and fu_defender.final_lives > 0:
                         if fu_defender.player.player_awareness < random.randint(0, 100):
-                            cooldown = self._shot_cooldown(fu_attacker, second)
+                            cooldown = shot_cooldown(fu_attacker, second)
                             pending_followups.append(
                                 (second + cooldown, fu_attacker, fu_defender, chain + 1)
                             )
@@ -1204,14 +1210,6 @@ class ResourceBasedSimulator:
                 movement_ctx,
             )
 
-    def _shot_cooldown(self, player, second: float) -> float:
-        """Seconds the player must wait between shots (mirrors BatchSimulator)."""
-        if player.role == "scout" and player.special_active_until > second:
-            return 0.0
-        if player.role == "heavy":
-            return 1.0
-        return 0.5
-
     def _plan_action(
         self, player, all_alive, second, last_shot_times=None, movement_ctx=None
     ):
@@ -1262,7 +1260,7 @@ class ResourceBasedSimulator:
             )
 
         # Enforce shot cooldown — zero tag weight if player fired too recently
-        cooldown = self._shot_cooldown(player, second)
+        cooldown = shot_cooldown(player, second)
         if (
             cooldown > 0.0
             and (second - last_shot_times.get(player.id, -99.0)) < cooldown
@@ -1284,22 +1282,26 @@ class ResourceBasedSimulator:
 
         plans = []
         if choice == "tag_player":
-            target = self._choose_tag_target(
-                player, all_alive, second, movement_ctx=movement_ctx
+            target = choose_tag_target(
+                player, all_alive, second, movement_ctx, los_filter=_get_los_targets
             )
             if target and player.final_shots > 0:
                 plans.append({"type": "tag", "actor": player, "target": target})
                 # scouts may attempt a second tag immediately if rapid fire active
                 if player.role == "scout" and player.special_active_until > second:
-                    second_target = self._choose_tag_target(
-                        player, all_alive, second, movement_ctx=movement_ctx
+                    second_target = choose_tag_target(
+                        player,
+                        all_alive,
+                        second,
+                        movement_ctx,
+                        los_filter=_get_los_targets,
                     )
                     if second_target:
                         plans.append(
                             {"type": "tag", "actor": player, "target": second_target}
                         )
         elif choice == "resupply_ally":
-            teammate = self._choose_resupply_target(player, all_alive, second)
+            teammate = choose_resupply_target(player, all_alive, second)
             if teammate:
                 # determine resupply type by role
                 if player.role == "ammo":
@@ -1325,8 +1327,12 @@ class ResourceBasedSimulator:
                     plans.append({"type": "missile", "actor": player, "target": tgt})
         elif choice == "change_zone":
             if movement_ctx is not None and player.cell_row is not None:
-                goal = self._choose_goal_cell(
-                    player, all_alive, movement_ctx, prev_action
+                goal = choose_goal_cell(
+                    player,
+                    all_alive,
+                    movement_ctx["spawn_cells"],
+                    movement_ctx,
+                    prev_action,
                 )
                 plans.append(
                     {
@@ -1337,7 +1343,7 @@ class ResourceBasedSimulator:
                     }
                 )
             else:
-                zone = self._choose_zone_change(player, all_alive, second)
+                zone = choose_zone_change(player, all_alive)
                 plans.append({"type": "change_zone", "actor": player, "zone": zone})
         elif choice == "capture_base":
             if movement_ctx is not None and player.cell_row is not None:
@@ -1662,7 +1668,7 @@ class ResourceBasedSimulator:
             if r_target.final_lives <= 0:
                 continue
             if r_reactor.player.player_awareness >= random.randint(0, 100):
-                cooldown = self._shot_cooldown(r_reactor, second)
+                cooldown = shot_cooldown(r_reactor, second)
                 pending_reactions.append((second + cooldown, r_reactor, r_target))
 
         # Follow-up tags: schedule via pending_followups so they fire after the shot cooldown.
@@ -1675,21 +1681,10 @@ class ResourceBasedSimulator:
             if o["attacker"].final_shots <= 0 and o["attacker"].role != "ammo":
                 continue
             if o["defender"].player.player_awareness < random.randint(0, 100):
-                cooldown = self._shot_cooldown(o["attacker"], second)
+                cooldown = shot_cooldown(o["attacker"], second)
                 pending_followups.append(
                     (second + cooldown, o["attacker"], o["defender"], 1)
                 )
-
-    def _choose_goal_cell(
-        self, player, all_alive, movement_ctx, intended_action: str = ""
-    ):
-        return choose_goal_cell(
-            player,
-            all_alive,
-            movement_ctx["spawn_cells"],
-            movement_ctx,
-            intended_action,
-        )
 
     def _move_to_cell(self, player, second, goal_cell, movement_ctx):
         if goal_cell is None:
@@ -1746,137 +1741,6 @@ class ResourceBasedSimulator:
                 "new_zone": player.current_zone,
             },
         )
-
-    def _choose_tag_target(self, player, all_alive, second, movement_ctx=None):
-        enemies = [
-            p
-            for p in all_alive
-            if p.team_color != player.team_color
-            and p.final_lives > 0
-            and (
-                p.is_active_at(second)
-                or (p.is_taggable_at(second) and player.last_tagged_id != p.get_tag_id)
-            )
-        ]
-        potential_targets = _get_los_targets(player, enemies, movement_ctx)
-        if potential_targets and player.final_shots > 0:
-            weights = {
-                "commander": 5,
-                "heavy": 8,
-                "scout": 3,
-                "medic": 1,
-                "ammo": 3,
-            }
-            target_weights = []
-            for target in potential_targets:
-                active_weighting = 10 if target.is_active_at(second) else 1
-                target_weights.append(weights.get(target.role, 1) + active_weighting)
-            return random.choices(potential_targets, target_weights)[0]
-        return None
-
-    def _choose_resupply_target(self, player, all_alive, second):
-        potential_teammates = [
-            p
-            for p in all_alive
-            if p.team_color == player.team_color
-            and p.current_zone == player.current_zone
-            and p != player
-            and p.final_lives > 0
-            and p.is_resupplyable_at(second)
-        ]
-        if potential_teammates:
-            # TODO: weight based on role and resources needed
-            resup_weights = {
-                "commander": 5,
-                "heavy": 8,
-                "scout": 3,
-                "medic": 1,
-                "ammo": 6,
-            }
-            teammate_weights = []
-            all_full = True
-            # prioritize based on a combination of role and % full
-            for teammate in potential_teammates:
-                # prioritize low allies
-                if player.role == "ammo":
-                    resource_weighting = (
-                        teammate.max_shots - teammate.final_shots
-                    ) * 10
-                    if resource_weighting > 0:
-                        all_full = False
-                else:
-                    resource_weighting = (
-                        teammate.max_lives - teammate.final_lives
-                    ) * 10
-                    if resource_weighting > 0:
-                        all_full = False
-                teammate_weights.append(
-                    resup_weights.get(teammate.role, 1) * resource_weighting
-                )
-            if not all_full:
-                teammate = random.choices(potential_teammates, teammate_weights)[0]
-                return teammate
-            else:
-                # all allies in area are full on resources do nothing for now
-                # TODO: if ammo they should request resup or go attack if full, if medic then hide or go attack depending on game time
-                return None
-        else:
-            return None
-
-    def _choose_zone_change(self, player, all_alive, second):
-        # TODO: change zones differently based on role,
-        # heavies want to be with medic or ammo,
-        # commanders want to be with enemies,
-        # scouts want to be with enemies,
-        # medics and ammos want to be with each other
-        # if lives low go find medic
-        lives_critical = player.max_lives * 0.3
-        shots_critical = player.max_shots * 0.3
-        if player.final_lives <= lives_critical and player.role != "medic":
-            medic = [
-                p
-                for p in all_alive
-                if p.team_color == player.team_color
-                and p != player
-                and p.role == "medic"
-            ]
-            # if medic alive go find them
-            if medic and player.current_zone != medic[0].current_zone:
-                return medic[0].current_zone
-            else:
-                return None
-        # if shots low go find ammo
-        elif player.final_shots <= shots_critical:
-            ammo = [
-                p
-                for p in all_alive
-                if p.team_color == player.team_color
-                and p != player
-                and p.role == "ammo"
-            ]
-            # if ammo alive go find them
-            if ammo and player.current_zone != ammo[0].current_zone:
-                return ammo[0].current_zone
-            else:
-                return None
-        if player.role == "heavy":
-            # if heavy and not with medic and medic alive go find medic
-            # if heavy and not with ammo and medic dead go find ammo
-            return None
-        elif player.role == "commander":
-            # if commander and no enemies in zone, go find enemies (specifically medic)
-            return None
-        elif player.role == "scout":
-            # if scout and no enemies in zone, go find enemies.  or go find commander
-            return None
-        elif player.role == "ammo":
-            # if medic alive go find medic
-            # if no 3 hit in zone, go find them
-            return None
-        # assume medic
-        else:
-            #
-            return None
 
     def _attempt_resupply(self, tagger, teammate, second):
         """Simulate a resupply action"""
@@ -3088,7 +2952,7 @@ class BatchSimulator:
                         )
                     if not downed and chain < 2 and fu_defender.final_lives > 0:
                         if fu_defender.player_awareness < random.randint(0, 100):
-                            cooldown = self._shot_cooldown(fu_attacker, second)
+                            cooldown = shot_cooldown(fu_attacker, second)
                             if cooldown == 0.0:
                                 due_fu.append(
                                     (second, fu_attacker, fu_defender, chain + 1)
@@ -3252,7 +3116,7 @@ class BatchSimulator:
             )
 
         # Enforce shot cooldown — zero tag weight if player fired too recently
-        cooldown = self._shot_cooldown(player, second)
+        cooldown = shot_cooldown(player, second)
         if cooldown > 0.0 and (second - player.last_shot_time) < cooldown:
             weights[action_to_weight_index["tag_player"]] = 0
             if sum(weights) == 0:
@@ -3267,21 +3131,25 @@ class BatchSimulator:
 
         plans = []
         if choice == "tag_player":
-            target = self._choose_tag_target(
-                player, all_alive, second, movement_ctx=movement_ctx
+            target = choose_tag_target(
+                player, all_alive, second, movement_ctx, los_filter=_get_los_targets
             )
             if target and player.final_shots > 0:
                 plans.append({"type": "tag", "actor": player, "target": target})
                 if player.role == "scout" and player.special_active_until > second:
-                    second_target = self._choose_tag_target(
-                        player, all_alive, second, movement_ctx=movement_ctx
+                    second_target = choose_tag_target(
+                        player,
+                        all_alive,
+                        second,
+                        movement_ctx,
+                        los_filter=_get_los_targets,
                     )
                     if second_target:
                         plans.append(
                             {"type": "tag", "actor": player, "target": second_target}
                         )
         elif choice == "resupply_ally":
-            teammate = self._choose_resupply_target(player, all_alive, second)
+            teammate = choose_resupply_target(player, all_alive, second)
             if teammate:
                 rtype = "resupply_ammo" if player.role == "ammo" else "resupply_lives"
                 plans.append({"type": rtype, "actor": player, "target": teammate})
@@ -3305,8 +3173,12 @@ class BatchSimulator:
                     )
         elif choice == "change_zone":
             if movement_ctx is not None and player.cell_row is not None:
-                goal = self._choose_goal_cell_batch(
-                    player, all_alive, movement_ctx, prev_action
+                goal = choose_goal_cell(
+                    player,
+                    all_alive,
+                    movement_ctx["spawn_cells"],
+                    movement_ctx,
+                    prev_action,
                 )
                 plans.append(
                     {
@@ -3317,7 +3189,7 @@ class BatchSimulator:
                     }
                 )
             else:
-                zone = self._choose_zone_change(player, all_alive)
+                zone = choose_zone_change(player, all_alive)
                 plans.append({"type": "change_zone", "actor": player, "zone": zone})
         elif choice == "capture_base":
             if movement_ctx is not None and player.cell_row is not None:
@@ -3351,100 +3223,6 @@ class BatchSimulator:
             plans.append({"type": "hide", "actor": player})
 
         return plans
-
-    def _shot_cooldown(self, player, second: float) -> float:
-        """Seconds the player must wait between shots.
-
-        Rapid-fire scouts (special active) have no restriction.
-        Heavies fire once per second. Everyone else twice per second.
-        """
-        if player.role == "scout" and player.special_active_until > second:
-            return 0.0
-        if player.role == "heavy":
-            return 1.0
-        return 0.5
-
-    # ------------------------------------------------------------------ #
-    # Target selection
-    # ------------------------------------------------------------------ #
-
-    def _choose_tag_target(self, player, all_alive, second, movement_ctx=None):
-        role_weights = {"commander": 5, "heavy": 8, "scout": 3, "medic": 1, "ammo": 3}
-        enemies = [
-            p
-            for p in all_alive
-            if p.team_color != player.team_color
-            and p.final_lives > 0
-            and (
-                p.is_active_at(second)
-                or (p.is_taggable_at(second) and player.last_tagged_id != p.tag_id)
-            )
-        ]
-        targets = _get_los_targets(player, enemies, movement_ctx)
-        if not targets or player.final_shots <= 0:
-            return None
-        w = [
-            (role_weights.get(t.role, 1) + (10 if t.is_active_at(second) else 1))
-            for t in targets
-        ]
-        return random.choices(targets, w)[0]
-
-    def _choose_resupply_target(self, player, all_alive, second):
-        role_weights = {"commander": 5, "heavy": 8, "scout": 3, "medic": 1, "ammo": 6}
-        teammates = [
-            p
-            for p in all_alive
-            if p.team_color == player.team_color
-            and p.current_zone == player.current_zone
-            and p is not player
-            and p.final_lives > 0
-            and p.is_resupplyable_at(second)
-        ]
-        if not teammates:
-            return None
-        all_full = True
-        tw = []
-        for t in teammates:
-            if player.role == "ammo":
-                deficit = (t.max_shots - t.final_shots) * 10
-            else:
-                deficit = (t.max_lives - t.final_lives) * 10
-            if deficit > 0:
-                all_full = False
-            tw.append(role_weights.get(t.role, 1) * deficit)
-        return None if all_full else random.choices(teammates, tw)[0]
-
-    def _choose_zone_change(self, player, all_alive):
-        lives_critical = player.max_lives * 0.3
-        shots_critical = player.max_shots * 0.3
-        if player.final_lives <= lives_critical and player.role != "medic":
-            medics = [
-                p
-                for p in all_alive
-                if p.team_color == player.team_color and p.role == "medic"
-            ]
-            if medics and player.current_zone != medics[0].current_zone:
-                return medics[0].current_zone
-        elif player.final_shots <= shots_critical:
-            ammos = [
-                p
-                for p in all_alive
-                if p.team_color == player.team_color and p.role == "ammo"
-            ]
-            if ammos and player.current_zone != ammos[0].current_zone:
-                return ammos[0].current_zone
-        return None
-
-    def _choose_goal_cell_batch(
-        self, player, all_alive, movement_ctx, intended_action: str = ""
-    ):
-        return choose_goal_cell(
-            player,
-            all_alive,
-            movement_ctx["spawn_cells"],
-            movement_ctx,
-            intended_action,
-        )
 
     def _move_player_in_memory(self, player, goal_cell, movement_ctx):
         if goal_cell is None or player.cell_row is None:
@@ -3623,7 +3401,7 @@ class BatchSimulator:
             if r_target.final_lives <= 0:
                 continue
             if r_reactor.player_awareness >= random.randint(0, 100):
-                cooldown = self._shot_cooldown(r_reactor, second)
+                cooldown = shot_cooldown(r_reactor, second)
                 if cooldown == 0.0:
                     immediate_reactions.append(
                         {"attacker": r_reactor, "defender": r_target}
@@ -3735,7 +3513,7 @@ class BatchSimulator:
             if o["attacker"].final_shots <= 0 and o["attacker"].role != "ammo":
                 continue
             if o["defender"].player_awareness < random.randint(0, 100):
-                cooldown = self._shot_cooldown(o["attacker"], second)
+                cooldown = shot_cooldown(o["attacker"], second)
                 if cooldown == 0.0:
                     immediate_follow_ups.append(
                         {

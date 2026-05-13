@@ -144,29 +144,10 @@ class TestBatchSimulatorSeedReproducibility:
 
 
 class TestBatchSimulatorShotCooldown:
-    """_shot_cooldown values and per-tick tag-weight suppression in _plan_action."""
+    """Per-tick tag-weight suppression in _plan_action (cooldown values tested in test_mechanics.py)."""
 
     def _sim(self):
         return BatchSimulator()
-
-    def test_regular_roles_return_half_second(self):
-        sim = self._sim()
-        for role in ("commander", "medic", "ammo"):
-            assert sim._shot_cooldown(_make_ps(role), 0.0) == 0.5
-
-    def test_heavy_returns_one_second(self):
-        sim = self._sim()
-        assert sim._shot_cooldown(_make_ps("heavy"), 0.0) == 1.0
-
-    def test_scout_without_special_returns_half_second(self):
-        sim = self._sim()
-        assert sim._shot_cooldown(_make_ps("scout", special_active_until=0), 1.0) == 0.5
-
-    def test_rapid_fire_scout_returns_zero(self):
-        sim = self._sim()
-        assert (
-            sim._shot_cooldown(_make_ps("scout", special_active_until=10), 2.0) == 0.0
-        )
 
     def test_plan_action_zeroes_tag_weight_when_fired_too_recently(self):
         sim = self._sim()

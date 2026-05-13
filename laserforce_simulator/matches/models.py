@@ -464,6 +464,11 @@ class PlayerRoundState(models.Model):
         return f"{minutes}:{secs:02d}"
 
     @property
+    def tag_id_key(self):
+        """Common tag-identity accessor used by choose_tag_target in mechanics.py."""
+        return self.get_tag_id
+
+    @property
     def get_tag_id(self):
         # Normalize role comparisons (role strings may be lowercase)
         role = str(self.role).lower() if self.role is not None else ""

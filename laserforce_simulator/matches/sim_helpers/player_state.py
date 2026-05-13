@@ -143,3 +143,8 @@ class PlayerState:
 
     def is_resupplyable_at(self, second: int) -> bool:
         return self.is_active_at(second)
+
+    @property
+    def tag_id_key(self) -> str:
+        """Common tag-identity accessor used by choose_tag_target in mechanics.py."""
+        return self.tag_id

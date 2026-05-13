@@ -86,7 +86,12 @@
       "Bash(python -m pytest matches/tests/test_map.py::TestMap08SpawnPoints matches/tests/test_map.py::TestMap08DBIntegration core/tests.py -v)",
       "Bash(python -m pytest matches/tests/test_map.py::TestMap08DBIntegration::test_user_edited_spawn_not_overwritten_by_compute_sight_lines -v)",
       "Bash(python -m pytest matches/tests/ -q)",
-      "Bash(python -m pytest matches/tests/test_map.py::TestMap05StrongSpotsViews -v)"
+      "Bash(python -m pytest matches/tests/test_map.py::TestMap05StrongSpotsViews -v)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Andrew Galkowski\\\\Desktop\\\\programming\\\\laserforce_simulator\\\\laserforce_simulator\" -Recurse -Filter \"*.py\")",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Sort-Object)",
+      "Bash(python -m pytest matches/tests/test_mechanics.py matches/tests/test_batch_sim.py matches/tests/test_sim_core.py -x -q)",
+      "Bash(python -m black matches/sim_helpers/mechanics.py matches/sim_helpers/player_state.py matches/models.py matches/simulation.py matches/tests/test_mechanics.py matches/tests/test_batch_sim.py)"
     ]
   }
 }
