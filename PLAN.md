@@ -123,6 +123,8 @@ Add a `wall_type` field to the map cell data and update movement and targeting l
 ### MAP-08 · Map-based spawn points
 Spawn cells are precomputed and stored on the map at save time (base zones are static). Players spawn within
 one of these precomputed spawn cells near their team's base at round start.
+- completed
+- note: `red_spawn`/`blue_spawn` lists stored inline in `MapZoneConfig.zone_data` JSON (no new DB column); auto-generated at sight-line save time as all passable cells within Manhattan dist ≤ 5 of each team's base cell. Each list is split into two sub-pools (closer vs farther from enemy base): Heavy/Commander draw from the closer pool; Medic/Ammo from the farther pool; Scout fills whichever pool still has room. Overflow and absent spawn data fall back to the base cell itself. User can override spawn cells in the map editor and save via the existing Save button.
 
 ### MAP-09 · High Ground
 Map cells have a continuous numeric `elevation` attribute. High walls also carry a numeric `height` value.

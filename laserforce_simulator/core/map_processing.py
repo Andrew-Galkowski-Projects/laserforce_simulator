@@ -446,3 +446,43 @@ def compute_heavy_strong_spots(sight_data: dict) -> list[list[int]]:
     ranked = compute_high_los_ranking(sight_data)
     top_n = max(1, len(ranked) // 4)
     return ranked[:top_n]
+
+
+def compute_spawn_cells(
+    zone_grid: list[list[int]],
+    base_cells: dict[str, tuple[int, int]],
+    max_distance: int = 5,
+) -> dict[str, list[list[int]]]:
+    """Compute spawn candidate cells for red and blue teams.
+
+    For each team colour, collects all passable floor cells (value 1) whose
+    Manhattan distance to that team's base cell is ≤ max_distance (default 5).
+    The base cell itself is always included if it is floor (value 1).
+
+    Args:
+        zone_grid: 2D list of cell values from zone_data["zones"].
+        base_cells: {"red": (row, col), "blue": (row, col)} — base cell coords.
+        max_distance: Manhattan-distance radius for candidate collection.
+
+    Returns:
+        {"red": [[r, c], ...], "blue": [[r, c], ...]}
+        Each list may be empty if the base is missing or surrounded by walls.
+    """
+    result: dict[str, list[list[int]]] = {"red": [], "blue": []}
+    rows = len(zone_grid)
+    cols = len(zone_grid[0]) if rows else 0
+
+    for color in ("red", "blue"):
+        base = base_cells.get(color)
+        if base is None:
+            continue
+        br, bc = base
+        candidates: list[list[int]] = []
+        for r in range(max(0, br - max_distance), min(rows, br + max_distance + 1)):
+            for c in range(max(0, bc - max_distance), min(cols, bc + max_distance + 1)):
+                if abs(r - br) + abs(c - bc) <= max_distance:
+                    if zone_grid[r][c] in (1, 2, 3):  # floor + legacy zone values
+                        candidates.append([r, c])
+        result[color] = candidates
+
+    return result

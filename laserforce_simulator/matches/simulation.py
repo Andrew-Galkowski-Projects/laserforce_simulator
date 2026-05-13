@@ -2,6 +2,7 @@ import random
 import logging
 import threading
 import uuid
+from collections import deque
 from django.db import transaction
 from .models import GameEvent, Match, GameRound, PlayerRoundState
 from .sim_helpers.pathfinding import (
@@ -233,6 +234,7 @@ class ResourceBasedSimulator:
             cell_ranking,
             strong_spots,
             wall_meta,
+            team_spawn_pools,
         ) = self._resolve_map_data(arena_map)
 
         game_round = GameRound.objects.create(
@@ -246,10 +248,10 @@ class ResourceBasedSimulator:
 
         # Initialize player states
         red_players = self._initialize_players(
-            game_round, team_red, "red", spawn_cells, zone_data
+            game_round, team_red, "red", spawn_cells, zone_data, team_spawn_pools
         )
         blue_players = self._initialize_players(
-            game_round, team_blue, "blue", spawn_cells, zone_data
+            game_round, team_blue, "blue", spawn_cells, zone_data, team_spawn_pools
         )
 
         # Simulate the round (pass game_round so events can be recorded)
@@ -261,6 +263,7 @@ class ResourceBasedSimulator:
             cell_ranking,
             strong_spots,
             wall_meta,
+            team_spawn_pools,
         )
         round_result = self._simulate_round_combat(
             game_round, red_players, blue_players, movement_ctx=movement_ctx
@@ -281,21 +284,22 @@ class ResourceBasedSimulator:
     @staticmethod
     def _resolve_map_data(arena_map):
         """Load zone_size, spawn cells, zone_data, sight_data, base_sight_data,
-        cell_ranking, strong_spots, and wall_meta from a map.
+        cell_ranking, strong_spots, wall_meta, and spawn_pools from a map.
 
         Returns (zone_size, spawn_cells, zone_grid, sight_data, base_sight_data,
-                 cell_ranking, strong_spots, wall_meta) where:
+                 cell_ranking, strong_spots, wall_meta, spawn_pools) where:
         - All values are None/{}/[] when no map is provided.
         - sight_data is {"r,c": frozenset(["r,c", ...])} keyed by cell — O(1) lookup.
         - base_sight_data is {"base_type": frozenset(["r,c", ...])} for O(1) cell lookup.
         - cell_ranking is [[r,c], ...] sorted highest-LOS first (empty if not yet computed).
         - strong_spots is [[r,c], ...] of Heavy defensive positions (empty if not computed).
         - wall_meta is {"r,c": {"facing": "N"|"S"|"E"|"W"}} for windowed wall apertures.
+        - spawn_pools is {"red": [(r,c),...], "blue": [(r,c),...]} from stored spawn data.
         Raises ValueError if the map is missing its zone config, a base, sight lines, or
         base sight line configs.
         """
         if arena_map is None:
-            return None, {}, None, None, {}, [], [], {}
+            return None, {}, None, None, {}, [], [], {}, {}
 
         config = arena_map.latest_confirmed_config()
         if config is None:
@@ -362,6 +366,13 @@ class ResourceBasedSimulator:
         ).first()
         strong_spots = strong_spots_config.cells if strong_spots_config else []
 
+        spawn_pools: dict[str, list[tuple[int, int]]] = {}
+        if isinstance(raw, dict):
+            for color in ("red", "blue"):
+                pool = raw.get(f"{color}_spawn", [])
+                if pool:
+                    spawn_pools[color] = [tuple(rc) for rc in pool]
+
         return (
             zone_size,
             spawn_cells,
@@ -371,6 +382,7 @@ class ResourceBasedSimulator:
             cell_ranking,
             strong_spots,
             wall_meta,
+            spawn_pools,
         )
 
     @staticmethod
@@ -414,6 +426,7 @@ class ResourceBasedSimulator:
         cell_ranking=None,
         strong_spots=None,
         wall_meta=None,
+        team_spawn_pools=None,
     ):
         if zone_data is None:
             return None
@@ -434,24 +447,148 @@ class ResourceBasedSimulator:
             "high_los_cells": high_los_cells,
             "strong_spots": [tuple(rc) for rc in (strong_spots or [])],
             "wall_meta": wall_meta or {},
+            "team_spawn_pools": team_spawn_pools or {},
         }
 
-    def _initialize_players(self, game_round, team, team_color, spawn_cells, zone_data):
+    @staticmethod
+    def _build_spawn_assignments(
+        roster_roles: list[str],
+        team_color: str,
+        spawn_cells: dict,
+        team_spawn_pools: dict,
+    ) -> dict[int, tuple[int, int] | None]:
+        """Pre-compute spawn cell assignments for all players in a team.
+
+        Uses role-aware, no-replacement drawing to ensure unique cells.
+        Processes roles in priority order (regardless of roster order):
+          1. Commander / Heavy → most-aggressive cells available
+          2. Medic / Ammo      → most-sheltered cells available
+          3. Scouts            → remaining cells
+
+        The pool is sorted by distance to the enemy base (ascending).
+        Overflow handling (pool exhausted):
+          - If the base cell was NOT drawn from pool: share it (multiple
+            overflow players may occupy it).
+          - If the base cell WAS drawn from pool: assign None (player falls
+            back to 3-zone).
+        """
+        pool = team_spawn_pools.get(team_color)
+        if not pool:
+            return {i: None for i in range(len(roster_roles))}
+
+        base_cell = spawn_cells.get(team_color)
+        enemy_color = "blue" if team_color == "red" else "red"
+        enemy_base = spawn_cells.get(enemy_color)
+
+        if base_cell is None or enemy_base is None:
+            return {i: None for i in range(len(roster_roles))}
+
+        # Sort pool ascending by distance to enemy (most-aggressive first).
+        sorted_pool: list[tuple[int, int]] = sorted(
+            pool,
+            key=lambda cell: (
+                abs(cell[0] - enemy_base[0]) + abs(cell[1] - enemy_base[1])
+            ),
+        )
+
+        # Group roster indices by role priority.
+        priority_groups: list[list[int]] = [[], [], []]
+        for i, role in enumerate(roster_roles):
+            if role in ("commander", "heavy"):
+                priority_groups[0].append(i)
+            elif role in ("medic", "ammo"):
+                priority_groups[1].append(i)
+            else:
+                priority_groups[2].append(i)
+
+        pool_deque: deque[tuple[int, int]] = deque(sorted_pool)
+        drawn_cells: set[tuple[int, int]] = set()
+
+        def _draw_front() -> tuple[int, int] | None:
+            if not pool_deque:
+                return None
+            cell = pool_deque.popleft()
+            drawn_cells.add(cell)
+            return cell
+
+        def _draw_back() -> tuple[int, int] | None:
+            if not pool_deque:
+                return None
+            cell = pool_deque.pop()
+            drawn_cells.add(cell)
+            return cell
+
+        def _overflow() -> tuple[int, int] | None:
+            if base_cell is None:
+                return None
+            # Base cell not drawn from pool: share as overflow slot.
+            # Base cell already drawn from pool: no cell (3-zone fallback).
+            if base_cell not in drawn_cells:
+                return base_cell
+            return None
+
+        assignments: dict[int, tuple[int, int] | None] = {}
+        for i in priority_groups[0]:
+            cell = _draw_front()
+            assignments[i] = cell if cell is not None else _overflow()
+        for i in priority_groups[1]:
+            cell = _draw_back()
+            assignments[i] = cell if cell is not None else _overflow()
+        for i in priority_groups[2]:
+            cell = _draw_front()
+            assignments[i] = cell if cell is not None else _overflow()
+
+        return assignments
+
+    def _initialize_players(
+        self,
+        game_round,
+        team,
+        team_color: str,
+        spawn_cells: dict,
+        zone_data,
+        team_spawn_pools: dict | None = None,
+    ):
         """Initialize player states from the team's active slot assignments."""
         player_states = []
         default_zone = 0 if team_color == "red" else 2
+        base_spawn = spawn_cells.get(team_color)
+        roster = list(team.active_roster)
 
-        spawn = spawn_cells.get(team_color)
-        cell_row = spawn[0] if spawn else None
-        cell_col = spawn[1] if spawn else None
-        starting_zone = (
-            self._zone_from_cell(cell_row, cell_col, spawn_cells)
-            if spawn is not None
-            else default_zone
-        )
+        # Pre-compute spawn assignments using role-priority ordering (MAP-08).
+        if team_spawn_pools and zone_data is not None:
+            roster_roles = [role for role, _ in roster]
+            cell_assignments = self._build_spawn_assignments(
+                roster_roles, team_color, spawn_cells, team_spawn_pools
+            )
+        else:
+            cell_assignments = {}
 
-        for role, player in team.active_roster:
+        for idx, (role, player) in enumerate(roster):
             resources = self.role_starting_resources[role]
+
+            # Determine cell position for this player.
+            if cell_assignments:
+                chosen = cell_assignments.get(idx)
+                if chosen is not None:
+                    cell_row: int | None = chosen[0]
+                    cell_col: int | None = chosen[1]
+                else:
+                    cell_row = None
+                    cell_col = None
+            elif base_spawn is not None and zone_data is not None:
+                cell_row = base_spawn[0]
+                cell_col = base_spawn[1]
+            else:
+                cell_row = None
+                cell_col = None
+
+            starting_zone = (
+                self._zone_from_cell(cell_row, cell_col, spawn_cells)
+                if cell_row is not None
+                else default_zone
+            )
+
             state = PlayerRoundState.objects.create(
                 game_round=game_round,
                 team_color=team_color,
@@ -2465,6 +2602,7 @@ class BatchSimulator:
                 cell_ranking,
                 strong_spots,
                 wall_meta,
+                team_spawn_pools,
             ) = ResourceBasedSimulator._resolve_map_data(arena_map)
             movement_ctx = ResourceBasedSimulator._build_movement_ctx(
                 zone_data,
@@ -2474,6 +2612,7 @@ class BatchSimulator:
                 cell_ranking,
                 strong_spots,
                 wall_meta,
+                team_spawn_pools,
             )
 
         red_wins = blue_wins = ties = 0
@@ -2536,32 +2675,57 @@ class BatchSimulator:
         team_color: str,
         spawn_cells: dict[str, tuple[int, int]] | None = None,
         zone_data: list[list[int]] | None = None,
+        team_spawn_pools: dict | None = None,
     ):
         from .sim_helpers.player_state import PlayerState
         from teams.models import ROLE_STATS as _ROLE_STATS
 
-        spawn = spawn_cells.get(team_color) if spawn_cells else None
         default_zone = 0 if team_color == "red" else 2
-        if spawn is not None and zone_data is not None:
-            cell_row: int | None = spawn[0]
-            cell_col: int | None = spawn[1]
-            starting_zone = ResourceBasedSimulator._zone_from_cell(
-                spawn[0], spawn[1], spawn_cells
+        base_spawn = spawn_cells.get(team_color) if spawn_cells else None
+
+        # Pre-compute role-priority spawn assignments for the whole team (MAP-08).
+        roster_list = list(roster)
+        if team_spawn_pools and spawn_cells and zone_data is not None:
+            roster_roles = [role for role, _ in roster_list]
+            cell_assignments = ResourceBasedSimulator._build_spawn_assignments(
+                roster_roles, team_color, spawn_cells, team_spawn_pools
             )
         else:
-            cell_row = None
-            cell_col = None
-            starting_zone = default_zone
+            cell_assignments = {}
 
         scout_index = 0
         players = []
-        for role, player_model in roster:
+        for idx, (role, player_model) in enumerate(roster_list):
             resources = self.ROLE_STARTING_RESOURCES[role]
             if role == "scout":
                 scout_index += 1
                 tag_id = f"{team_color}_scout_{scout_index}"
             else:
                 tag_id = f"{team_color}_{role}"
+
+            # Determine starting cell using pre-computed assignments (MAP-08).
+            if cell_assignments:
+                chosen = cell_assignments.get(idx)
+                if chosen is not None:
+                    cell_row: int | None = chosen[0]
+                    cell_col: int | None = chosen[1]
+                else:
+                    cell_row = None
+                    cell_col = None
+            elif base_spawn is not None and zone_data is not None:
+                cell_row = base_spawn[0]
+                cell_col = base_spawn[1]
+            else:
+                cell_row = None
+                cell_col = None
+
+            if cell_row is not None and spawn_cells:
+                starting_zone = ResourceBasedSimulator._zone_from_cell(
+                    cell_row, cell_col, spawn_cells
+                )
+            else:
+                starting_zone = default_zone
+
             state = PlayerState(
                 tag_id=tag_id,
                 player_id=player_model.id,
@@ -2595,11 +2759,22 @@ class BatchSimulator:
         """
         spawn_cells = movement_ctx["spawn_cells"] if movement_ctx else None
         zone_data = movement_ctx["zone_data"] if movement_ctx else None
+        team_spawn_pools = (
+            movement_ctx.get("team_spawn_pools") if movement_ctx else None
+        )
         red_players = self._make_players(
-            red_roster, "red", spawn_cells=spawn_cells, zone_data=zone_data
+            red_roster,
+            "red",
+            spawn_cells=spawn_cells,
+            zone_data=zone_data,
+            team_spawn_pools=team_spawn_pools,
         )
         blue_players = self._make_players(
-            blue_roster, "blue", spawn_cells=spawn_cells, zone_data=zone_data
+            blue_roster,
+            "blue",
+            spawn_cells=spawn_cells,
+            zone_data=zone_data,
+            team_spawn_pools=team_spawn_pools,
         )
 
         pending_missiles = []  # (complete_time, attacker, defender)

@@ -33,6 +33,8 @@
         <span class="badge" style="background:rgba(180,180,200,0.85);color:#333;border:1px solid #ccc;">Floor</span>
         <span class="badge" style="background:rgba(120,80,20,0.85);">Low Wall</span>
         <span class="badge" style="background:rgba(0,180,180,0.85);">Windowed Wall</span>
+        <span class="badge" style="background:rgba(220,53,69,0.55);border:1px solid #c00;">Red Spawn</span>
+        <span class="badge" style="background:rgba(13,110,253,0.55);border:1px solid #06c;">Blue Spawn</span>
     </div>
 </div>
 
@@ -66,7 +68,15 @@
             <option value="W">W</option>
         </select>
     </div>
-    <small class="text-muted">Select brush then click a cell. Low/windowed walls are user-drawn (not auto-detected).</small>
+    <span class="vr"></span>
+    <small class="text-muted text-nowrap fw-semibold">Spawn brush:</small>
+    <div class="btn-group btn-group-sm" role="group">
+        <button class="btn btn-outline-secondary spawn-brush-btn active" data-spawn="none">None</button>
+        <button class="btn btn-outline-danger  spawn-brush-btn" data-spawn="red">Red Spawn</button>
+        <button class="btn btn-outline-primary spawn-brush-btn" data-spawn="blue">Blue Spawn</button>
+        <button class="btn btn-outline-warning spawn-brush-btn" data-spawn="erase">Erase Spawn</button>
+    </div>
+    <small class="text-muted">Select spawn brush then click cells. Auto-generated on Compute Sight Lines; manual edits override.</small>
 </div>
 
 {# ── Sight Lines controls ─────────────────────────────────────────────────── #}
@@ -134,6 +144,7 @@ const SAVE_URL         = "{% url 'save_zone_config'    arena_map.pk %}";
 const GET_SIGHT_URL    = "{% url 'get_sight_lines'     arena_map.pk %}";
 const COMPUTE_SIGHT_URL= "{% url 'compute_sight_lines' arena_map.pk %}";
 const SAVE_SIGHT_URL   = "{% url 'save_sight_lines'    arena_map.pk %}";
+const GET_SPAWN_URL    = "{% url 'get_spawn_cells'     arena_map.pk %}";
 const CSRF_TOKEN       = "{{ csrf_token }}";
 const DEFAULT_ZONE_SIZE= {{ saved_zone_size }};
 
@@ -173,6 +184,12 @@ const BASE_LABELS = {
     neutral_1:"N1", neutral_2:"N2", neutral_3:"N3", neutral_4:"N4",
 };
 
+// ── Spawn cell colors ─────────────────────────────────────────────────────────
+const SPAWN_FILL = {
+    red:  "rgba(220,53,69,0.45)",
+    blue: "rgba(13,110,253,0.45)",
+};
+
 // ── Shared state ─────────────────────────────────────────────────────────────
 const bases = {};
 let currentZoneData  = null;
@@ -182,6 +199,10 @@ let currentMode      = "zones";  // "zones" | "sight"
 let selectedBaseType = null;
 let selectedWallBrush = "none";  // "none" | "0" | "1" | "4" | "5"
 let wallMeta = {};               // {"r,c": {facing: "N"|"S"|"E"|"W"}}
+let selectedSpawnBrush = "none"; // "none" | "red" | "blue" | "erase"
+let redSpawnCells  = new Set();  // Set of "r,c" strings for red spawn cells
+let blueSpawnCells = new Set();  // Set of "r,c" strings for blue spawn cells
+let spawnEdited = false;         // True if user has manually edited spawn cells
 
 // ── Sight Lines state ─────────────────────────────────────────────────────────
 let sightData        = {};
@@ -288,7 +309,26 @@ function renderZonesAndBases() {
         }
     }
     drawGrid(ctx, data);
+    drawSpawnCells(ctx, data);
     drawBases(ctx, data);
+}
+
+function drawSpawnCells(ctx, data) {
+    const cw = data.cell_size, ch = data.cell_size;
+    redSpawnCells.forEach(key => {
+        const [r, c] = key.split(",").map(Number);
+        if (r >= 0 && r < data.rows && c >= 0 && c < data.cols) {
+            ctx.fillStyle = SPAWN_FILL.red;
+            ctx.fillRect(c*cw+2, r*ch+2, cw-4, ch-4);
+        }
+    });
+    blueSpawnCells.forEach(key => {
+        const [r, c] = key.split(",").map(Number);
+        if (r >= 0 && r < data.rows && c >= 0 && c < data.cols) {
+            ctx.fillStyle = SPAWN_FILL.blue;
+            ctx.fillRect(c*cw+2, r*ch+2, cw-4, ch-4);
+        }
+    });
 }
 
 function renderSightLines() {
@@ -379,12 +419,31 @@ function fetchAndRenderZones(zoneSize) {
         console.warn("Zone size changed: unsaved windowed-wall placements discarded.");
     }
     wallMeta = {};
+    // Reset spawn cells on zone size change — cells are zone-size relative.
+    if (spawnEdited || redSpawnCells.size || blueSpawnCells.size) {
+        console.warn("Zone size changed: unsaved spawn cell placements discarded.");
+    }
+    redSpawnCells.clear();
+    blueSpawnCells.clear();
+    spawnEdited = false;
     fetch(`${ZONES_URL}?zone_size=${zoneSize}`)
         .then(r => r.json())
         .then(data => {
             currentZoneData = data;
             renderCanvas();
             loadingSpinner.classList.add("d-none");
+            // Load stored spawn cells for this zone size (non-blocking).
+            fetch(`${GET_SPAWN_URL}?zone_size=${zoneSize}`)
+                .then(r => r.json())
+                .then(spawnData => {
+                    redSpawnCells.clear();
+                    blueSpawnCells.clear();
+                    (spawnData.red_spawn || []).forEach(([r, c]) => redSpawnCells.add(`${r},${c}`));
+                    (spawnData.blue_spawn || []).forEach(([r, c]) => blueSpawnCells.add(`${r},${c}`));
+                    spawnEdited = false;  // loaded from server — not user-edited yet
+                    renderCanvas();
+                })
+                .catch(() => {});
         })
         .catch(() => loadingSpinner.classList.add("d-none"));
 }
@@ -567,6 +626,32 @@ canvas.addEventListener("click", e => {
 });
 
 function handleZonesModeClick(row, col) {
+    // Spawn brush takes priority over wall brush and base placement
+    if (selectedSpawnBrush !== "none") {
+        const key = `${row},${col}`;
+        if (selectedSpawnBrush === "erase") {
+            redSpawnCells.delete(key);
+            blueSpawnCells.delete(key);
+        } else if (selectedSpawnBrush === "red") {
+            blueSpawnCells.delete(key);
+            if (redSpawnCells.has(key)) {
+                redSpawnCells.delete(key);
+            } else {
+                redSpawnCells.add(key);
+            }
+        } else if (selectedSpawnBrush === "blue") {
+            redSpawnCells.delete(key);
+            if (blueSpawnCells.has(key)) {
+                blueSpawnCells.delete(key);
+            } else {
+                blueSpawnCells.add(key);
+            }
+        }
+        spawnEdited = true;
+        renderCanvas();
+        return;
+    }
+
     // Wall brush takes priority over base placement
     if (selectedWallBrush !== "none") {
         const newVal = parseInt(selectedWallBrush, 10);
@@ -739,21 +824,49 @@ document.querySelectorAll(".wall-brush-btn").forEach(btn => {
     });
 });
 
+// ── Spawn brush buttons ────────────────────────────────────────────────────────
+document.querySelectorAll(".spawn-brush-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+        document.querySelectorAll(".spawn-brush-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        selectedSpawnBrush = btn.dataset.spawn;
+        // Dearm wall brush and base selection when spawn brush is active.
+        if (selectedSpawnBrush !== "none") {
+            selectedWallBrush = "none";
+            document.querySelectorAll(".wall-brush-btn").forEach(b => b.classList.remove("active"));
+            document.querySelector('.wall-brush-btn[data-wall="none"]').classList.add("active");
+            document.getElementById("windowed-dir-picker").classList.add("d-none");
+            selectedBaseType = null;
+            document.querySelectorAll(".base-btn").forEach(b => b.classList.remove("active"));
+            canvas.style.cursor = "crosshair";
+        } else {
+            canvas.style.cursor = "default";
+        }
+    });
+});
+
 // ── Save Zone Config ───────────────────────────────────────────────────────────
 saveBtn.addEventListener("click", () => {
     const zoneSize = parseInt(select.value, 10);
     saveAlert.classList.add("d-none");
     saveBtn.disabled = true;
 
+    const saveBody = {
+        zone_size: zoneSize,
+        bases: Object.entries(bases).map(([type, pos]) => ({ type, ...pos })),
+        zones: currentZoneData ? currentZoneData.zones : undefined,
+        wall_meta: Object.keys(wallMeta).length ? wallMeta : undefined,
+    };
+    // Include spawn overrides only when the user has manually edited them.
+    if (spawnEdited) {
+        saveBody.red_spawn  = [...redSpawnCells].map(k => k.split(",").map(Number));
+        saveBody.blue_spawn = [...blueSpawnCells].map(k => k.split(",").map(Number));
+    }
+
     fetch(SAVE_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF_TOKEN },
-        body: JSON.stringify({
-            zone_size: zoneSize,
-            bases: Object.entries(bases).map(([type, pos]) => ({ type, ...pos })),
-            zones: currentZoneData ? currentZoneData.zones : undefined,
-            wall_meta: Object.keys(wallMeta).length ? wallMeta : undefined,
-        }),
+        body: JSON.stringify(saveBody),
     })
     .then(r => r.json())
     .then(data => {
