@@ -169,6 +169,13 @@ class ResourceBasedSimulator:
         game_round.is_completed = True
         game_round.save()
 
+        GameEvent.objects.bulk_create(
+            [
+                GameEvent(game_round=game_round, **ev)
+                for ev in round_result["event_buffer"]
+            ]
+        )
+
         return game_round
 
     @staticmethod
@@ -517,6 +524,7 @@ class ResourceBasedSimulator:
         pending_nukes = []  # (complete_time, player_state)
         pending_followups = []  # (fire_at, attacker, defender, chain)
         pending_reactions = []  # (fire_at, attacker, defender)
+        event_buffer = []  # accumulated event dicts; bulk-written after the loop
         last_shot_times = (
             {}
         )  # player.id → float last-shot second (survives refresh_from_db)
@@ -532,7 +540,7 @@ class ResourceBasedSimulator:
             for complete_time, attacker, defender in to_run:
                 ct = int(complete_time)
                 if attacker.is_active_at(ct) and defender.is_taggable_at(ct):
-                    self._complete_missile(attacker, defender, ct)
+                    self._complete_missile(attacker, defender, ct, event_buffer)
                 else:
                     logger.debug(
                         "%s - %s: missile cancelled or failed at %s",
@@ -545,7 +553,9 @@ class ResourceBasedSimulator:
             to_run_n = [n for n in pending_nukes if n[0] <= second]
             pending_nukes = [n for n in pending_nukes if n[0] > second]
             for complete_time, player_state in to_run_n:
-                self._resolve_pending_nuke(player_state, int(complete_time))
+                self._resolve_pending_nuke(
+                    player_state, int(complete_time), event_buffer
+                )
 
             # REFRESH player states from database after nukes/missiles
             for p in red_players + blue_players:
@@ -607,65 +617,72 @@ class ResourceBasedSimulator:
                         r_defender.final_lives = max(0, r_defender.final_lives - 1)
                         r_defender.last_downed_time = db_second
                         r_defender.shields = r_defender.max_shields
-                        GameEvent.objects.create(
-                            game_round=game_round,
-                            timestamp=db_second,
-                            event_type="player_downed",
-                            actor=r_attacker.player,
-                            target=r_defender.player,
-                            points_awarded=0,
-                            description=f"{r_defender.player.name} downed by {r_attacker.player.name} (reaction)",
-                            metadata={
-                                "cause": "reaction",
-                                "actor_role": r_attacker.role,
-                                "target_role": r_defender.role,
-                                "target_lives": r_defender.final_lives,
-                            },
+                        event_buffer.append(
+                            {
+                                "timestamp": db_second,
+                                "event_type": "player_downed",
+                                "actor_id": r_attacker.player_id,
+                                "target_id": r_defender.player_id,
+                                "points_awarded": 0,
+                                "description": f"{r_defender.player.name} downed by {r_attacker.player.name} (reaction)",
+                                "metadata": {
+                                    "cause": "reaction",
+                                    "actor_role": r_attacker.role,
+                                    "target_role": r_defender.role,
+                                    "target_lives": r_defender.final_lives,
+                                },
+                            }
                         )
                         if r_defender.final_lives <= 0:
                             r_defender.was_eliminated_at = db_second
-                            GameEvent.objects.create(
-                                game_round=game_round,
-                                timestamp=db_second,
-                                event_type="elimination",
-                                actor=r_attacker.player,
-                                target=r_defender.player,
-                                points_awarded=0,
-                                description=f"{r_defender.player.name} eliminated by {r_attacker.player.name} (reaction)",
-                                metadata={
-                                    "elimination_action": "reaction",
-                                    "actor_role": r_attacker.role,
-                                    "target_role": r_defender.role,
-                                },
+                            event_buffer.append(
+                                {
+                                    "timestamp": db_second,
+                                    "event_type": "elimination",
+                                    "actor_id": r_attacker.player_id,
+                                    "target_id": r_defender.player_id,
+                                    "points_awarded": 0,
+                                    "description": f"{r_defender.player.name} eliminated by {r_attacker.player.name} (reaction)",
+                                    "metadata": {
+                                        "elimination_action": "reaction",
+                                        "actor_role": r_attacker.role,
+                                        "target_role": r_defender.role,
+                                    },
+                                }
                             )
-                    GameEvent.objects.create(
-                        game_round=game_round,
-                        timestamp=db_second,
-                        event_type="tag",
-                        actor=r_attacker.player,
-                        target=r_defender.player,
-                        points_awarded=100,
-                        description=f"{r_attacker.player.name} reacts and zaps {r_defender.player.name}",
-                        metadata={
-                            "actor_role": r_attacker.role,
-                            "target_role": r_defender.role,
-                            "is_reaction": True,
-                        },
+                    event_buffer.append(
+                        {
+                            "timestamp": db_second,
+                            "event_type": "tag",
+                            "actor_id": r_attacker.player_id,
+                            "target_id": r_defender.player_id,
+                            "points_awarded": 100,
+                            "description": f"{r_attacker.player.name} reacts and zaps {r_defender.player.name}",
+                            "metadata": {
+                                "actor_role": r_attacker.role,
+                                "target_role": r_defender.role,
+                                "is_reaction": True,
+                            },
+                        }
                     )
                     r_attacker.save()
                     r_defender.save()
                 else:
                     r_attacker.shots_missed += 1
                     r_attacker.save()
-                    GameEvent.objects.create(
-                        game_round=game_round,
-                        timestamp=db_second,
-                        event_type="miss",
-                        actor=r_attacker.player,
-                        target=r_defender.player,
-                        points_awarded=0,
-                        description=f"{r_attacker.player.name} reaction miss on {r_defender.player.name}",
-                        metadata={"actor_role": r_attacker.role, "is_reaction": True},
+                    event_buffer.append(
+                        {
+                            "timestamp": db_second,
+                            "event_type": "miss",
+                            "actor_id": r_attacker.player_id,
+                            "target_id": r_defender.player_id,
+                            "points_awarded": 0,
+                            "description": f"{r_attacker.player.name} reaction miss on {r_defender.player.name}",
+                            "metadata": {
+                                "actor_role": r_attacker.role,
+                                "is_reaction": True,
+                            },
+                        }
                     )
 
             # --- process pending follow-ups (deferred by shot cooldown) ---
@@ -723,51 +740,54 @@ class ResourceBasedSimulator:
                         fu_defender.final_lives = max(0, fu_defender.final_lives - 1)
                         fu_defender.last_downed_time = db_second
                         fu_defender.shields = fu_defender.max_shields
-                        GameEvent.objects.create(
-                            game_round=game_round,
-                            timestamp=db_second,
-                            event_type="player_downed",
-                            actor=fu_attacker.player,
-                            target=fu_defender.player,
-                            points_awarded=0,
-                            description=f"{fu_defender.player.name} downed by {fu_attacker.player.name} (follow-up)",
-                            metadata={
-                                "cause": "follow_up_tag",
-                                "actor_role": fu_attacker.role,
-                                "target_role": fu_defender.role,
-                                "target_lives": fu_defender.final_lives,
-                            },
+                        event_buffer.append(
+                            {
+                                "timestamp": db_second,
+                                "event_type": "player_downed",
+                                "actor_id": fu_attacker.player_id,
+                                "target_id": fu_defender.player_id,
+                                "points_awarded": 0,
+                                "description": f"{fu_defender.player.name} downed by {fu_attacker.player.name} (follow-up)",
+                                "metadata": {
+                                    "cause": "follow_up_tag",
+                                    "actor_role": fu_attacker.role,
+                                    "target_role": fu_defender.role,
+                                    "target_lives": fu_defender.final_lives,
+                                },
+                            }
                         )
                         if fu_defender.final_lives <= 0:
                             fu_defender.was_eliminated_at = db_second
-                            GameEvent.objects.create(
-                                game_round=game_round,
-                                timestamp=db_second,
-                                event_type="elimination",
-                                actor=fu_attacker.player,
-                                target=fu_defender.player,
-                                points_awarded=0,
-                                description=f"{fu_defender.player.name} eliminated by {fu_attacker.player.name} (follow-up)",
-                                metadata={
-                                    "elimination_action": "follow_up_tag",
-                                    "actor_role": fu_attacker.role,
-                                    "target_role": fu_defender.role,
-                                },
+                            event_buffer.append(
+                                {
+                                    "timestamp": db_second,
+                                    "event_type": "elimination",
+                                    "actor_id": fu_attacker.player_id,
+                                    "target_id": fu_defender.player_id,
+                                    "points_awarded": 0,
+                                    "description": f"{fu_defender.player.name} eliminated by {fu_attacker.player.name} (follow-up)",
+                                    "metadata": {
+                                        "elimination_action": "follow_up_tag",
+                                        "actor_role": fu_attacker.role,
+                                        "target_role": fu_defender.role,
+                                    },
+                                }
                             )
-                    GameEvent.objects.create(
-                        game_round=game_round,
-                        timestamp=db_second,
-                        event_type="tag",
-                        actor=fu_attacker.player,
-                        target=fu_defender.player,
-                        points_awarded=100,
-                        description=f"{fu_attacker.player.name} follow-up tags {fu_defender.player.name}",
-                        metadata={
-                            "actor_role": fu_attacker.role,
-                            "target_role": fu_defender.role,
-                            "is_follow_up": True,
-                            "chain": chain,
-                        },
+                    event_buffer.append(
+                        {
+                            "timestamp": db_second,
+                            "event_type": "tag",
+                            "actor_id": fu_attacker.player_id,
+                            "target_id": fu_defender.player_id,
+                            "points_awarded": 100,
+                            "description": f"{fu_attacker.player.name} follow-up tags {fu_defender.player.name}",
+                            "metadata": {
+                                "actor_role": fu_attacker.role,
+                                "target_role": fu_defender.role,
+                                "is_follow_up": True,
+                                "chain": chain,
+                            },
+                        }
                     )
                     fu_attacker.save()
                     fu_defender.save()
@@ -780,15 +800,19 @@ class ResourceBasedSimulator:
                 else:
                     fu_attacker.shots_missed += 1
                     fu_attacker.save()
-                    GameEvent.objects.create(
-                        game_round=game_round,
-                        timestamp=db_second,
-                        event_type="miss",
-                        actor=fu_attacker.player,
-                        target=fu_defender.player,
-                        points_awarded=0,
-                        description=f"{fu_attacker.player.name} follow-up miss on {fu_defender.player.name}",
-                        metadata={"actor_role": fu_attacker.role, "is_follow_up": True},
+                    event_buffer.append(
+                        {
+                            "timestamp": db_second,
+                            "event_type": "miss",
+                            "actor_id": fu_attacker.player_id,
+                            "target_id": fu_defender.player_id,
+                            "points_awarded": 0,
+                            "description": f"{fu_attacker.player.name} follow-up miss on {fu_defender.player.name}",
+                            "metadata": {
+                                "actor_role": fu_attacker.role,
+                                "is_follow_up": True,
+                            },
+                        }
                     )
 
             # Plan and resolve simultaneous actions for this tick
@@ -803,6 +827,7 @@ class ResourceBasedSimulator:
                 pending_reactions,
                 last_shot_times,
                 movement_ctx=movement_ctx,
+                event_buffer=event_buffer,
             )
 
             # Check for team eliminations
@@ -824,10 +849,10 @@ class ResourceBasedSimulator:
                 # but only if eliminated with more than 1 minute remaining
                 if not red_alive and second < 840:
                     for blue_player in blue_alive:
-                        self._award_bases(blue_player, second)
+                        self._award_bases(blue_player, second, event_buffer)
                 if not blue_alive and second < 840:
                     for red_player in red_alive:
-                        self._award_bases(red_player, second)
+                        self._award_bases(red_player, second, event_buffer)
 
                 break  # Round ends on elimination
 
@@ -870,6 +895,7 @@ class ResourceBasedSimulator:
             "red_eliminated": red_eliminated,
             "blue_eliminated": blue_eliminated,
             "eliminated_at": eliminated_at,
+            "event_buffer": event_buffer,
         }
 
     # this simulates multiple hits between teams at random
@@ -894,6 +920,7 @@ class ResourceBasedSimulator:
         pending_reactions=None,
         last_shot_times=None,
         movement_ctx=None,
+        event_buffer=None,
     ):
         """Simulate a single combat exchange between teams"""
         # Get alive players
@@ -928,6 +955,8 @@ class ResourceBasedSimulator:
             pending_reactions = []
         if last_shot_times is None:
             last_shot_times = {}
+        if event_buffer is None:
+            event_buffer = []
 
         # TODO: eventually want to sort all_alive by player decision making or something
         random.shuffle(all_alive)
@@ -993,14 +1022,16 @@ class ResourceBasedSimulator:
             # )
             if ptype == "resupply_ammo" or ptype == "resupply_lives":
                 # use existing helper
-                self._attempt_resupply(actor, plan.get("target"), second)
+                self._attempt_resupply(actor, plan.get("target"), second, event_buffer)
             elif ptype == "change_zone":
                 goal_cell = plan.get("goal_cell")
                 ctx = plan.get("movement_ctx")
                 if goal_cell is not None and ctx is not None:
-                    self._move_to_cell(actor, second, goal_cell, ctx)
+                    self._move_to_cell(actor, second, goal_cell, ctx, event_buffer)
                 else:
-                    self._change_zone(actor, second, towards=plan.get("zone"))
+                    self._change_zone(
+                        actor, second, event_buffer, towards=plan.get("zone")
+                    )
             elif ptype == "hide":
                 actor.is_hiding = True
                 actor.save()
@@ -1010,14 +1041,17 @@ class ResourceBasedSimulator:
                     plan.get("base_id"),
                     second,
                     movement_ctx=plan.get("movement_ctx"),
+                    event_buffer=event_buffer,
                 )
             elif ptype == "missile":
-                scheduled = self._start_missile_lock(actor, plan.get("target"), second)
+                scheduled = self._start_missile_lock(
+                    actor, plan.get("target"), second, event_buffer
+                )
                 if scheduled:
                     pending_missiles.append(scheduled)
             elif ptype == "use_special":
                 # _use_special will apply resource costs / activation event and may return a scheduled nuke
-                scheduled = self._use_special(actor, second)
+                scheduled = self._use_special(actor, second, event_buffer)
                 if scheduled and scheduled[0] == "nuke":
                     pending_nukes.append((scheduled[1], scheduled[2]))
             elif ptype == "tag":
@@ -1033,6 +1067,7 @@ class ResourceBasedSimulator:
                 pending_followups,
                 pending_reactions,
                 movement_ctx,
+                event_buffer,
             )
 
     def _plan_action(self, player, all_alive, second, movement_ctx=None):
@@ -1049,6 +1084,7 @@ class ResourceBasedSimulator:
         pending_followups=None,
         pending_reactions=None,
         movement_ctx=None,
+        event_buffer=None,
     ):
         """Resolve multiple tag attempts simultaneously.
 
@@ -1060,6 +1096,8 @@ class ResourceBasedSimulator:
             pending_followups = []
         if pending_reactions is None:
             pending_reactions = []
+        if event_buffer is None:
+            event_buffer = []
         db_second = int(second)
         # First, determine outcomes without mutating shared state that would affect other attempts in this tick
         outcomes = []
@@ -1115,25 +1153,26 @@ class ResourceBasedSimulator:
                 last_shot_times[attacker.id] = second
                 attacker.last_shot_time = second
                 attacker.save()
-                GameEvent.objects.create(
-                    game_round=game_round,
-                    timestamp=db_second,
-                    event_type="miss",
-                    actor=attacker.player,
-                    target=defender.player,
-                    points_awarded=0,
-                    description=f"{attacker.player.name} misses {defender.player.name}",
-                    metadata={
-                        "actor_role": attacker.role,
-                        "actor_points": attacker.points_scored,
-                        "actor_lives": attacker.final_lives,
-                        "actor_shots": attacker.final_shots,
-                        "target_role": defender.role,
-                        "target_points": defender.points_scored,
-                        "target_lives": defender.final_lives,
-                        "target_shots": defender.final_shots,
-                        "rolled_hit_pct": o.get("rolled", 0),
-                    },
+                event_buffer.append(
+                    {
+                        "timestamp": db_second,
+                        "event_type": "miss",
+                        "actor_id": attacker.player_id,
+                        "target_id": defender.player_id,
+                        "points_awarded": 0,
+                        "description": f"{attacker.player.name} misses {defender.player.name}",
+                        "metadata": {
+                            "actor_role": attacker.role,
+                            "actor_points": attacker.points_scored,
+                            "actor_lives": attacker.final_lives,
+                            "actor_shots": attacker.final_shots,
+                            "target_role": defender.role,
+                            "target_points": defender.points_scored,
+                            "target_lives": defender.final_lives,
+                            "target_shots": defender.final_shots,
+                            "rolled_hit_pct": o.get("rolled", 0),
+                        },
+                    }
                 )
                 continue
 
@@ -1189,31 +1228,32 @@ class ResourceBasedSimulator:
                     defender.shields,
                     defender.final_lives,
                 )
-                GameEvent.objects.create(
-                    game_round=game_round,
-                    timestamp=db_second,
-                    event_type="tag",
-                    actor=attacker.player,
-                    target=defender.player,
-                    points_awarded=100,
-                    description=f"{attacker.player.name} zaps {defender.player.name}",
-                    metadata={
-                        "actor_role": attacker.role,
-                        "actor_points": attacker.points_scored,
-                        "actor_lives": attacker.final_lives,
-                        "actor_shots": attacker.final_shots,
-                        "actor_special": attacker.final_special,
-                        "actor_last_tag_id": attacker.last_tagged_id,
-                        "target_role": defender.role,
-                        "target_points": defender.points_scored,
-                        "target_active": defender.is_active_at(db_second),
-                        "target_taggable": defender.is_taggable_at(db_second),
-                        "target_id": defender.get_tag_id,
-                        "target_lives": defender.final_lives,
-                        "target_shields": defender.shields,
-                        "target_shots": defender.final_shots,
-                        "rolled_hit_pct": o.get("rolled", 0),
-                    },
+                event_buffer.append(
+                    {
+                        "timestamp": db_second,
+                        "event_type": "tag",
+                        "actor_id": attacker.player_id,
+                        "target_id": defender.player_id,
+                        "points_awarded": 100,
+                        "description": f"{attacker.player.name} zaps {defender.player.name}",
+                        "metadata": {
+                            "actor_role": attacker.role,
+                            "actor_points": attacker.points_scored,
+                            "actor_lives": attacker.final_lives,
+                            "actor_shots": attacker.final_shots,
+                            "actor_special": attacker.final_special,
+                            "actor_last_tag_id": attacker.last_tagged_id,
+                            "target_role": defender.role,
+                            "target_points": defender.points_scored,
+                            "target_active": defender.is_active_at(db_second),
+                            "target_taggable": defender.is_taggable_at(db_second),
+                            "target_id": defender.get_tag_id,
+                            "target_lives": defender.final_lives,
+                            "target_shields": defender.shields,
+                            "target_shots": defender.final_shots,
+                            "rolled_hit_pct": o.get("rolled", 0),
+                        },
+                    }
                 )
                 if not defender.is_active_at(db_second) and defender.is_taggable_at(
                     db_second
@@ -1234,58 +1274,61 @@ class ResourceBasedSimulator:
                         defender.own_specials_cancelled += 1
                         defender.special_active_until = 0
                         defender.save()
-                        GameEvent.objects.create(
-                            game_round=game_round,
-                            timestamp=db_second,
-                            event_type="special",
-                            actor=attacker.player,
-                            target=defender.player,
-                            points_awarded=0,
-                            description=f"{attacker.player.name} cancels {defender.player.name}'s nuke",
-                            metadata={
-                                "canceled_by": "tag",
-                                "actor_role": attacker.role,
-                                "actor_enemy_nuke_cancels": attacker.enemy_nuke_cancels,
-                                "actor_ally_nuke_cancels": attacker.ally_nuke_cancels,
-                                "target_role": defender.role,
-                                "target_own_specials_cancelled": defender.own_specials_cancelled,
-                            },
+                        event_buffer.append(
+                            {
+                                "timestamp": db_second,
+                                "event_type": "special",
+                                "actor_id": attacker.player_id,
+                                "target_id": defender.player_id,
+                                "points_awarded": 0,
+                                "description": f"{attacker.player.name} cancels {defender.player.name}'s nuke",
+                                "metadata": {
+                                    "canceled_by": "tag",
+                                    "actor_role": attacker.role,
+                                    "actor_enemy_nuke_cancels": attacker.enemy_nuke_cancels,
+                                    "actor_ally_nuke_cancels": attacker.ally_nuke_cancels,
+                                    "target_role": defender.role,
+                                    "target_own_specials_cancelled": defender.own_specials_cancelled,
+                                },
+                            }
                         )
                         attacker.save()
                     defender.final_lives -= min(1, defender.final_lives)
                     defender.last_downed_time = db_second
                     defender.shields = defender.max_shields
-                    GameEvent.objects.create(
-                        game_round=game_round,
-                        timestamp=db_second,
-                        event_type="player_downed",
-                        actor=attacker.player,
-                        target=defender.player,
-                        points_awarded=0,
-                        description=f"{defender.player.name} downed by {attacker.player.name} (tag)",
-                        metadata={
-                            "cause": "tag",
-                            "actor_role": attacker.role,
-                            "target_role": defender.role,
-                            "target_lives": defender.final_lives,
-                        },
-                    )
-                    if defender.final_lives <= 0:
-                        defender.was_eliminated_at = db_second
-                        GameEvent.objects.create(
-                            game_round=game_round,
-                            timestamp=db_second,
-                            event_type="elimination",
-                            actor=attacker.player,
-                            target=defender.player,
-                            points_awarded=0,
-                            description=f"{defender.player.name} is eliminated by {attacker.player.name}",
-                            metadata={
-                                "elimination_action": "tag",
+                    event_buffer.append(
+                        {
+                            "timestamp": db_second,
+                            "event_type": "player_downed",
+                            "actor_id": attacker.player_id,
+                            "target_id": defender.player_id,
+                            "points_awarded": 0,
+                            "description": f"{defender.player.name} downed by {attacker.player.name} (tag)",
+                            "metadata": {
+                                "cause": "tag",
                                 "actor_role": attacker.role,
                                 "target_role": defender.role,
                                 "target_lives": defender.final_lives,
                             },
+                        }
+                    )
+                    if defender.final_lives <= 0:
+                        defender.was_eliminated_at = db_second
+                        event_buffer.append(
+                            {
+                                "timestamp": db_second,
+                                "event_type": "elimination",
+                                "actor_id": attacker.player_id,
+                                "target_id": defender.player_id,
+                                "points_awarded": 0,
+                                "description": f"{defender.player.name} is eliminated by {attacker.player.name}",
+                                "metadata": {
+                                    "elimination_action": "tag",
+                                    "actor_role": attacker.role,
+                                    "target_role": defender.role,
+                                    "target_lives": defender.final_lives,
+                                },
+                            }
                         )
 
                 defender.times_tagged += 1
@@ -1299,25 +1342,26 @@ class ResourceBasedSimulator:
                 last_shot_times[attacker.id] = second
                 attacker.last_shot_time = second
                 attacker.save()
-                GameEvent.objects.create(
-                    game_round=game_round,
-                    timestamp=db_second,
-                    event_type="miss",
-                    actor=attacker.player,
-                    target=defender.player,
-                    points_awarded=0,
-                    description=f"{attacker.player.name} misses {defender.player.name}",
-                    metadata={
-                        "actor_role": attacker.role,
-                        "actor_points": attacker.points_scored,
-                        "actor_lives": attacker.final_lives,
-                        "actor_shots": attacker.final_shots,
-                        "target_role": defender.role,
-                        "target_points": defender.points_scored,
-                        "target_lives": defender.final_lives,
-                        "target_shots": defender.final_shots,
-                        "rolled_hit_pct": o.get("rolled", 0),
-                    },
+                event_buffer.append(
+                    {
+                        "timestamp": db_second,
+                        "event_type": "miss",
+                        "actor_id": attacker.player_id,
+                        "target_id": defender.player_id,
+                        "points_awarded": 0,
+                        "description": f"{attacker.player.name} misses {defender.player.name}",
+                        "metadata": {
+                            "actor_role": attacker.role,
+                            "actor_points": attacker.points_scored,
+                            "actor_lives": attacker.final_lives,
+                            "actor_shots": attacker.final_shots,
+                            "target_role": defender.role,
+                            "target_points": defender.points_scored,
+                            "target_lives": defender.final_lives,
+                            "target_shots": defender.final_shots,
+                            "rolled_hit_pct": o.get("rolled", 0),
+                        },
+                    }
                 )
 
         # Reactions: schedule via pending_reactions so they fire after the shot cooldown.
@@ -1351,7 +1395,9 @@ class ResourceBasedSimulator:
                     (second + cooldown, o["attacker"], o["defender"], 1)
                 )
 
-    def _move_to_cell(self, player, second, goal_cell, movement_ctx):
+    def _move_to_cell(self, player, second, goal_cell, movement_ctx, event_buffer=None):
+        if event_buffer is None:
+            event_buffer = []
         if goal_cell is None:
             return
         adj = movement_ctx["adj"]
@@ -1367,23 +1413,26 @@ class ResourceBasedSimulator:
             next_cell[0], next_cell[1], movement_ctx["spawn_cells"]
         )
         player.save(update_fields=["cell_row", "cell_col", "zone_fallback"])
-        GameEvent.objects.create(
-            game_round=player.game_round,
-            timestamp=second,
-            event_type="movement",
-            actor=player.player,
-            target=None,
-            points_awarded=0,
-            description=f"{player.player.name} moves to cell ({next_cell[0]}, {next_cell[1]})",
-            metadata={
-                "actor_role": player.role,
-                "cell_row": next_cell[0],
-                "cell_col": next_cell[1],
-                "new_zone": player.current_zone,
-            },
+        event_buffer.append(
+            {
+                "timestamp": second,
+                "event_type": "movement",
+                "actor_id": player.player_id,
+                "target_id": None,
+                "points_awarded": 0,
+                "description": f"{player.player.name} moves to cell ({next_cell[0]}, {next_cell[1]})",
+                "metadata": {
+                    "actor_role": player.role,
+                    "cell_row": next_cell[0],
+                    "cell_col": next_cell[1],
+                    "new_zone": player.current_zone,
+                },
+            }
         )
 
-    def _change_zone(self, player, second, towards=None):
+    def _change_zone(self, player, second, event_buffer=None, towards=None):
+        if event_buffer is None:
+            event_buffer = []
         if player.zone_fallback == 1:
             # 50/50 chance to go to either adjacent zone
             if towards in [0, 2]:
@@ -1393,88 +1442,74 @@ class ResourceBasedSimulator:
         else:
             player.zone_fallback = 1
         player.save()
-        GameEvent.objects.create(
-            game_round=player.game_round,
-            timestamp=second,
-            event_type="movement",
-            actor=player.player,
-            target=None,
-            points_awarded=0,
-            description=f"{player.player.name} moves to zone {player.current_zone}",
-            metadata={
-                "actor_role": player.role,
-                "new_zone": player.current_zone,
-            },
+        event_buffer.append(
+            {
+                "timestamp": second,
+                "event_type": "movement",
+                "actor_id": player.player_id,
+                "target_id": None,
+                "points_awarded": 0,
+                "description": f"{player.player.name} moves to zone {player.current_zone}",
+                "metadata": {
+                    "actor_role": player.role,
+                    "new_zone": player.current_zone,
+                },
+            }
         )
 
-    def _attempt_resupply(self, tagger, teammate, second):
+    def _attempt_resupply(self, tagger, teammate, second, event_buffer=None):
         """Simulate a resupply action (delegates core logic to shared attempt_resupply).
 
         RBS-specific additions: nuke-cancel stat tracking and immediate DB event creation.
         """
+        if event_buffer is None:
+            event_buffer = []
         was_active_nuke = (
             teammate.role == "commander"
             and teammate.special_active_until is not None
             and teammate.special_active_until > second
         )
-        game_round = tagger.game_round
 
-        def emit(d):
-            GameEvent.objects.create(
-                game_round=game_round,
-                timestamp=int(d["timestamp"]),
-                event_type=d["event_type"],
-                actor_id=d.get("actor_id"),
-                target_id=d.get("target_id"),
-                points_awarded=d.get("points_awarded", 0),
-                description=d.get("description", ""),
-                metadata=d.get("metadata", {}),
-            )
-
-        _attempt_resupply_shared(tagger, teammate, second, emit_event=emit)
+        _attempt_resupply_shared(
+            tagger, teammate, second, emit_event=event_buffer.append
+        )
 
         # Nuke cancel tracking is RBS-only (PlayerState has no ally_nuke_cancels field)
         if was_active_nuke and (
-            teammate.special_active_until is None or teammate.special_active_until <= second
+            teammate.special_active_until is None
+            or teammate.special_active_until <= second
         ):
             tagger.ally_nuke_cancels += 1
             teammate.own_specials_cancelled += 1
-            GameEvent.objects.create(
-                game_round=game_round,
-                timestamp=int(second),
-                event_type="special",
-                actor_id=tagger.player_id,
-                target_id=teammate.player_id,
-                points_awarded=0,
-                description=f"{tagger.name} cancels {teammate.name}'s nuke",
-                metadata={
-                    "canceled_by": "resupply",
-                    "actor_role": tagger.role,
-                    "target_role": teammate.role,
-                },
+            event_buffer.append(
+                {
+                    "timestamp": int(second),
+                    "event_type": "special",
+                    "actor_id": tagger.player_id,
+                    "target_id": teammate.player_id,
+                    "points_awarded": 0,
+                    "description": f"{tagger.name} cancels {teammate.name}'s nuke",
+                    "metadata": {
+                        "canceled_by": "resupply",
+                        "actor_role": tagger.role,
+                        "target_role": teammate.role,
+                    },
+                }
             )
         tagger.save()
         teammate.save()
 
-    def _start_missile_lock(self, attacker, defender, second):
-        game_round = attacker.game_round
+    def _start_missile_lock(self, attacker, defender, second, event_buffer=None):
+        if event_buffer is None:
+            event_buffer = []
+        return _start_missile_lock_shared(
+            attacker, defender, second, emit_event=event_buffer.append
+        )
 
-        def emit(d):
-            GameEvent.objects.create(
-                game_round=game_round,
-                timestamp=int(d["timestamp"]),
-                event_type=d["event_type"],
-                actor_id=d.get("actor_id"),
-                target_id=d.get("target_id"),
-                points_awarded=d.get("points_awarded", 0),
-                description=d.get("description", ""),
-                metadata=d.get("metadata", {}),
-            )
-
-        return _start_missile_lock_shared(attacker, defender, second, emit_event=emit)
-
-    def _complete_missile(self, attacker, defender, second):
+    def _complete_missile(self, attacker, defender, second, event_buffer=None):
         """Simulate finishing missle on opponent"""
+        if event_buffer is None:
+            event_buffer = []
         if attacker.is_active_at(second) and defender.is_taggable_at(second):
             # normalize role checks (roles are stored lowercase elsewhere)
             if not defender.is_active_at(second) and defender.is_taggable_at(second):
@@ -1492,35 +1527,37 @@ class ResourceBasedSimulator:
                     defender.player.name,
                     attacker.player.name,
                 )
-                GameEvent.objects.create(
-                    game_round=attacker.game_round,
-                    timestamp=second,
-                    event_type="elimination",
-                    actor=attacker.player,
-                    target=defender.player,
-                    points_awarded=0,
-                    description=f"{defender.player.name} is eliminated by {attacker.player.name}",
-                    metadata={
-                        "elimination_action": "missile",
-                        "target_role:": defender.role,
-                        "target_lives": defender.final_lives,
-                    },
+                event_buffer.append(
+                    {
+                        "timestamp": second,
+                        "event_type": "elimination",
+                        "actor_id": attacker.player_id,
+                        "target_id": defender.player_id,
+                        "points_awarded": 0,
+                        "description": f"{defender.player.name} is eliminated by {attacker.player.name}",
+                        "metadata": {
+                            "elimination_action": "missile",
+                            "target_role:": defender.role,
+                            "target_lives": defender.final_lives,
+                        },
+                    }
                 )
             defender.last_downed_time = second  # set downed time for respawn logic
-            GameEvent.objects.create(
-                game_round=attacker.game_round,
-                timestamp=second,
-                event_type="player_downed",
-                actor=attacker.player,
-                target=defender.player,
-                points_awarded=0,
-                description=f"{defender.player.name} downed by {attacker.player.name} (missile)",
-                metadata={
-                    "cause": "missile",
-                    "actor_role": attacker.role,
-                    "target_role": defender.role,
-                    "target_lives": defender.final_lives,
-                },
+            event_buffer.append(
+                {
+                    "timestamp": second,
+                    "event_type": "player_downed",
+                    "actor_id": attacker.player_id,
+                    "target_id": defender.player_id,
+                    "points_awarded": 0,
+                    "description": f"{defender.player.name} downed by {attacker.player.name} (missile)",
+                    "metadata": {
+                        "cause": "missile",
+                        "actor_role": attacker.role,
+                        "target_role": defender.role,
+                        "target_lives": defender.final_lives,
+                    },
+                }
             )
             defender.times_missiled += 1
             # Ensure keys exist for missile bookkeeping
@@ -1561,28 +1598,28 @@ class ResourceBasedSimulator:
             defender.save()
             attacker.save()
 
-            # create game event for attacker missiling defender
-            GameEvent.objects.create(
-                game_round=attacker.game_round,
-                timestamp=second,
-                event_type="missile_hit",
-                actor=attacker.player,
-                target=defender.player,
-                points_awarded=500,
-                description=f"{attacker.player.name} hits {defender.player.name} with a missile",
-                metadata={
-                    "actor_role": attacker.role,
-                    "actor_points": attacker.points_scored,
-                    "actor_lives": attacker.final_lives,
-                    "actor_shots": attacker.final_shots,
-                    "actor_missiles": attacker.final_missiles,
-                    "actor_special": attacker.final_special,
-                    "target_role": defender.role,
-                    "target_points": defender.points_scored,
-                    "target_lives": defender.final_lives,
-                    "target_shots": defender.final_shots,
-                    "target_shields": defender.shields,
-                },
+            event_buffer.append(
+                {
+                    "timestamp": second,
+                    "event_type": "missile_hit",
+                    "actor_id": attacker.player_id,
+                    "target_id": defender.player_id,
+                    "points_awarded": 500,
+                    "description": f"{attacker.player.name} hits {defender.player.name} with a missile",
+                    "metadata": {
+                        "actor_role": attacker.role,
+                        "actor_points": attacker.points_scored,
+                        "actor_lives": attacker.final_lives,
+                        "actor_shots": attacker.final_shots,
+                        "actor_missiles": attacker.final_missiles,
+                        "actor_special": attacker.final_special,
+                        "target_role": defender.role,
+                        "target_points": defender.points_scored,
+                        "target_lives": defender.final_lives,
+                        "target_shots": defender.final_shots,
+                        "target_shields": defender.shields,
+                    },
+                }
             )
             logger.debug(
                 "%s - %s: missile hit completed a: %s d: %s",
@@ -1592,8 +1629,10 @@ class ResourceBasedSimulator:
                 defender.role,
             )
 
-    def _use_special(self, player_state, second):
+    def _use_special(self, player_state, second, event_buffer=None):
         """Simulate using a special ability"""
+        if event_buffer is None:
+            event_buffer = []
         # if player has enough special points, is alive and is active, expend special points and apply effect
         logger.debug(
             "%s - %s: %s at %s, %s/%s special, active until %s, succeds: %s",
@@ -1619,19 +1658,21 @@ class ResourceBasedSimulator:
                 countdown = random.randint(4, 7)
                 player_state.special_active_until = second + countdown
                 player_state.save()
-                GameEvent.objects.create(
-                    game_round=player_state.game_round,
-                    timestamp=second,
-                    event_type="special",
-                    actor=player_state.player,
-                    points_awarded=0,
-                    description=f"{player_state.player.name} activates Nuke special",
-                    metadata={
-                        "actor_role": player_state.role,
-                        "special_active_until": player_state.special_active_until,
-                        "special_points": player_state.final_special,
-                        "event_subtype": "nuke_armed",
-                    },
+                event_buffer.append(
+                    {
+                        "timestamp": second,
+                        "event_type": "special",
+                        "actor_id": player_state.player_id,
+                        "target_id": None,
+                        "points_awarded": 0,
+                        "description": f"{player_state.player.name} activates Nuke special",
+                        "metadata": {
+                            "actor_role": player_state.role,
+                            "special_active_until": player_state.special_active_until,
+                            "special_points": player_state.final_special,
+                            "event_subtype": "nuke_armed",
+                        },
+                    }
                 )
                 return ("nuke", second + countdown, player_state)
             elif player_state.role == "scout":
@@ -1640,18 +1681,20 @@ class ResourceBasedSimulator:
                 player_state.specials_used += 1
                 player_state.special_active_until = 900
                 player_state.save()
-                GameEvent.objects.create(
-                    game_round=player_state.game_round,
-                    timestamp=second,
-                    event_type="special",
-                    actor=player_state.player,
-                    points_awarded=0,
-                    description=f"{player_state.player.name} activates rapid fire special",
-                    metadata={
-                        "actor_role": player_state.role,
-                        "special_active_until": player_state.special_active_until,
-                        "special_points": player_state.final_special,
-                    },
+                event_buffer.append(
+                    {
+                        "timestamp": second,
+                        "event_type": "special",
+                        "actor_id": player_state.player_id,
+                        "target_id": None,
+                        "points_awarded": 0,
+                        "description": f"{player_state.player.name} activates rapid fire special",
+                        "metadata": {
+                            "actor_role": player_state.role,
+                            "special_active_until": player_state.special_active_until,
+                            "special_points": player_state.final_special,
+                        },
+                    }
                 )
             elif player_state.role == "medic":
                 # remove special points
@@ -1682,19 +1725,21 @@ class ResourceBasedSimulator:
                         total_healed += heal_amount
                         mate.final_lives += heal_amount
                     mate.save()
-                GameEvent.objects.create(
-                    game_round=player_state.game_round,
-                    timestamp=second,
-                    event_type="special",
-                    actor=player_state.player,
-                    points_awarded=0,
-                    description=f"{player_state.player.name} resupplies team",
-                    metadata={
-                        "actor_role": player_state.role,
-                        "special_points": player_state.final_special,
-                        "teammates_resupplied": len(teammates),
-                        "lives_resupplied": total_healed,
-                    },
+                event_buffer.append(
+                    {
+                        "timestamp": second,
+                        "event_type": "special",
+                        "actor_id": player_state.player_id,
+                        "target_id": None,
+                        "points_awarded": 0,
+                        "description": f"{player_state.player.name} resupplies team",
+                        "metadata": {
+                            "actor_role": player_state.role,
+                            "special_points": player_state.final_special,
+                            "teammates_resupplied": len(teammates),
+                            "lives_resupplied": total_healed,
+                        },
+                    }
                 )
             elif player_state.role == "ammo":
                 # remove special points
@@ -1725,23 +1770,27 @@ class ResourceBasedSimulator:
                         total_ammo += resupply_amount
                         mate.final_shots += resupply_amount
                     mate.save()
-                GameEvent.objects.create(
-                    game_round=player_state.game_round,
-                    timestamp=second,
-                    event_type="special",
-                    actor=player_state.player,
-                    points_awarded=0,
-                    description=f"{player_state.player.name} resupplies team",
-                    metadata={
-                        "actor_role": player_state.role,
-                        "special_points": player_state.final_special,
-                        "teammates_resupplied": len(teammates),
-                        "shots_resupplied": total_ammo,
-                    },
+                event_buffer.append(
+                    {
+                        "timestamp": second,
+                        "event_type": "special",
+                        "actor_id": player_state.player_id,
+                        "target_id": None,
+                        "points_awarded": 0,
+                        "description": f"{player_state.player.name} resupplies team",
+                        "metadata": {
+                            "actor_role": player_state.role,
+                            "special_points": player_state.final_special,
+                            "teammates_resupplied": len(teammates),
+                            "shots_resupplied": total_ammo,
+                        },
+                    }
                 )
 
-    def _complete_nuke(self, player_state, second):
+    def _complete_nuke(self, player_state, second, event_buffer=None):
         """Simulate completing a nuke special ability"""
+        if event_buffer is None:
+            event_buffer = []
         # check if player is active and alive
         # find all opposing players, subtract 3 lives from each and set their last_downed_time to second
         # award 500 points to player_state
@@ -1771,37 +1820,40 @@ class ResourceBasedSimulator:
                     player_state.enemy_nuke_cancels += 1
                     opponent.own_specials_cancelled += 1
                     opponent.save()
-                    GameEvent.objects.create(
-                        game_round=player_state.game_round,
-                        timestamp=second,
-                        event_type="special",
-                        actor=player_state.player,
-                        target=opponent.player,
-                        points_awarded=0,
-                        description=f"{player_state.player.name} cancels {opponent.player.name}'s nuke",
-                        metadata={
-                            "canceled by": "nuke",
-                            "actor_role": player_state.role,
-                            "actor_enemy_nuke_cancels": player_state.enemy_nuke_cancels,
-                            "actor_ally_nuke_cancels": player_state.ally_nuke_cancels,
-                            "target_role": opponent.role,
-                            "target_own_specials_cancelled": opponent.own_specials_cancelled,
-                        },
+                    event_buffer.append(
+                        {
+                            "timestamp": second,
+                            "event_type": "special",
+                            "actor_id": player_state.player_id,
+                            "target_id": opponent.player_id,
+                            "points_awarded": 0,
+                            "description": f"{player_state.player.name} cancels {opponent.player.name}'s nuke",
+                            "metadata": {
+                                "canceled by": "nuke",
+                                "actor_role": player_state.role,
+                                "actor_enemy_nuke_cancels": player_state.enemy_nuke_cancels,
+                                "actor_ally_nuke_cancels": player_state.ally_nuke_cancels,
+                                "target_role": opponent.role,
+                                "target_own_specials_cancelled": opponent.own_specials_cancelled,
+                            },
+                        }
                     )
                 player_state.save()
-            GameEvent.objects.create(
-                game_round=player_state.game_round,
-                timestamp=second,
-                event_type="special",
-                actor=player_state.player,
-                points_awarded=500,
-                description=f"{player_state.player.name} detonates Nuke",
-                metadata={
-                    "actor_role": player_state.role,
-                    "special_points": player_state.final_special,
-                    "opponents_affected": opposing_players.count(),
-                    "lives_taken": lives_removed_from_nuke,
-                },
+            event_buffer.append(
+                {
+                    "timestamp": second,
+                    "event_type": "special",
+                    "actor_id": player_state.player_id,
+                    "target_id": None,
+                    "points_awarded": 500,
+                    "description": f"{player_state.player.name} detonates Nuke",
+                    "metadata": {
+                        "actor_role": player_state.role,
+                        "special_points": player_state.final_special,
+                        "opponents_affected": opposing_players.count(),
+                        "lives_taken": lives_removed_from_nuke,
+                    },
+                }
             )
 
             # Apply damage to each opponent
@@ -1815,20 +1867,21 @@ class ResourceBasedSimulator:
                 opponent.final_lives -= lives_taken
                 opponent.last_downed_time = second
                 opponent.shields = opponent.max_shields
-                GameEvent.objects.create(
-                    game_round=player_state.game_round,
-                    timestamp=second,
-                    event_type="player_downed",
-                    actor=player_state.player,
-                    target=opponent.player,
-                    points_awarded=0,
-                    description=f"{opponent.player.name} downed by {player_state.player.name} (nuke)",
-                    metadata={
-                        "cause": "nuke",
-                        "actor_role": player_state.role,
-                        "target_role": opponent.role,
-                        "target_lives": opponent.final_lives,
-                    },
+                event_buffer.append(
+                    {
+                        "timestamp": second,
+                        "event_type": "player_downed",
+                        "actor_id": player_state.player_id,
+                        "target_id": opponent.player_id,
+                        "points_awarded": 0,
+                        "description": f"{opponent.player.name} downed by {player_state.player.name} (nuke)",
+                        "metadata": {
+                            "cause": "nuke",
+                            "actor_role": player_state.role,
+                            "target_role": opponent.role,
+                            "target_lives": opponent.final_lives,
+                        },
+                    }
                 )
 
                 # Check for elimination and set was_eliminated_at
@@ -1841,26 +1894,27 @@ class ResourceBasedSimulator:
                         opponent.player.name,
                         player_state.player.name,
                     )
-                    GameEvent.objects.create(
-                        game_round=player_state.game_round,
-                        timestamp=second,
-                        event_type="elimination",
-                        actor=player_state.player,
-                        target=opponent.player,
-                        points_awarded=0,
-                        description=f"{opponent.player.name} is eliminated by {player_state.player.name}",
-                        metadata={
-                            "elimination_action": "nuke",
-                            "actor_role": player_state.role,
-                            "target_role": opponent.role,
-                            "target_lives": opponent.final_lives,
-                        },
+                    event_buffer.append(
+                        {
+                            "timestamp": second,
+                            "event_type": "elimination",
+                            "actor_id": player_state.player_id,
+                            "target_id": opponent.player_id,
+                            "points_awarded": 0,
+                            "description": f"{opponent.player.name} is eliminated by {player_state.player.name}",
+                            "metadata": {
+                                "elimination_action": "nuke",
+                                "actor_role": player_state.role,
+                                "target_role": opponent.role,
+                                "target_lives": opponent.final_lives,
+                            },
+                        }
                     )
 
                 # Save once with all changes
                 opponent.save()
 
-    def _resolve_pending_nuke(self, player_state, complete_time):
+    def _resolve_pending_nuke(self, player_state, complete_time, event_buffer=None):
         """Detonate or cancel a pending nuke at its scheduled completion time.
 
         Nuke fires only if the commander is alive AND the fuse was not disarmed by a
@@ -1868,34 +1922,43 @@ class ResourceBasedSimulator:
         A downed-but-alive commander's nuke still fires — being temporarily down does
         not cancel the nuke per SM5 rules; only elimination or a tag-cancel does.
         """
+        if event_buffer is None:
+            event_buffer = []
         nuke_armed = player_state.special_active_until >= complete_time
         if player_state.final_lives > 0 and nuke_armed:
-            self._complete_nuke(player_state, complete_time)
-            GameEvent.objects.create(
-                game_round=player_state.game_round,
-                timestamp=complete_time,
-                event_type="special",
-                actor=player_state.player,
-                points_awarded=0,
-                description=f"{player_state.player.name}'s nuke detonated",
-                metadata={"event_subtype": "nuke_detonated", "actor_role": "commander"},
+            self._complete_nuke(player_state, complete_time, event_buffer)
+            event_buffer.append(
+                {
+                    "timestamp": complete_time,
+                    "event_type": "special",
+                    "actor_id": player_state.player_id,
+                    "target_id": None,
+                    "points_awarded": 0,
+                    "description": f"{player_state.player.name}'s nuke detonated",
+                    "metadata": {
+                        "event_subtype": "nuke_detonated",
+                        "actor_role": "commander",
+                    },
+                }
             )
         elif nuke_armed:
             # Commander was eliminated during the fuse window — nuke cancelled
             player_state.own_specials_cancelled += 1
             player_state.save()
-            GameEvent.objects.create(
-                game_round=player_state.game_round,
-                timestamp=complete_time,
-                event_type="special",
-                actor=player_state.player,
-                points_awarded=0,
-                description=f"{player_state.player.name}'s nuke cancelled — eliminated during fuse",
-                metadata={
-                    "event_subtype": "nuke_cancelled",
-                    "cancelled_by": "elimination",
-                    "actor_role": "commander",
-                },
+            event_buffer.append(
+                {
+                    "timestamp": complete_time,
+                    "event_type": "special",
+                    "actor_id": player_state.player_id,
+                    "target_id": None,
+                    "points_awarded": 0,
+                    "description": f"{player_state.player.name}'s nuke cancelled — eliminated during fuse",
+                    "metadata": {
+                        "event_subtype": "nuke_cancelled",
+                        "cancelled_by": "elimination",
+                        "actor_role": "commander",
+                    },
+                }
             )
         # else: nuke was already tag-cancelled (special_active_until == 0); counters already updated
 
@@ -1903,47 +1966,29 @@ class ResourceBasedSimulator:
         """Simulate resetting off a base — deferred to a later ticket."""
         return None
 
-    def _capture_base(self, player_state, base_id, second, movement_ctx=None):
-        game_round = player_state.game_round
-
-        def emit(d):
-            GameEvent.objects.create(
-                game_round=game_round,
-                timestamp=int(d["timestamp"]),
-                event_type=d["event_type"],
-                actor_id=d.get("actor_id"),
-                target_id=d.get("target_id"),
-                points_awarded=d.get("points_awarded", 0),
-                description=d.get("description", ""),
-                metadata=d.get("metadata", {}),
-            )
-
-        captured = _capture_base_shared(player_state, base_id, second, movement_ctx, emit_event=emit)
+    def _capture_base(
+        self, player_state, base_id, second, movement_ctx=None, event_buffer=None
+    ):
+        if event_buffer is None:
+            event_buffer = []
+        captured = _capture_base_shared(
+            player_state, base_id, second, movement_ctx, emit_event=event_buffer.append
+        )
         if captured:
             player_state.save()
         return captured
 
-    def _award_bases(self, player_state, second):
-        game_round = player_state.game_round
-
-        def emit(d):
-            GameEvent.objects.create(
-                game_round=game_round,
-                timestamp=int(d["timestamp"]),
-                event_type=d["event_type"],
-                actor_id=d.get("actor_id"),
-                target_id=d.get("target_id"),
-                points_awarded=d.get("points_awarded", 0),
-                description=d.get("description", ""),
-                metadata=d.get("metadata", {}),
-            )
-
-        _award_bases_shared(player_state, second, emit_event=emit)
+    def _award_bases(self, player_state, second, event_buffer=None):
+        if event_buffer is None:
+            event_buffer = []
+        _award_bases_shared(player_state, second, emit_event=event_buffer.append)
         if player_state.final_lives > 0:
             player_state.save()
 
-    def _missile_base(self, player_state, base_id, second):
+    def _missile_base(self, player_state, base_id, second, event_buffer=None):
         """Simulate using a missile on a base target"""
+        if event_buffer is None:
+            event_buffer = []
         player_state.missiles_fired += 1
         player_state.final_missiles -= 1
         if base_id == "neutral":
@@ -1953,20 +1998,22 @@ class ResourceBasedSimulator:
         player_state.points_scored += 1001  # base destroy score
         player_state.final_special += 5
         player_state.save()
-        GameEvent.objects.create(
-            game_round=player_state.game_round,
-            timestamp=second,
-            event_type="base_missile",
-            actor=player_state.player,
-            points_awarded=1001,
-            description=f"{player_state.player.name} missiles base {'neutral' if base_id == 'neutral' else 'opposing'}",
-            metadata={
-                "actor_role": player_state.role,
-                "base_id": base_id,
-                "missiles_remaining": player_state.final_missiles,
-                "special_points": player_state.final_special,
-                "points_scored": player_state.points_scored,
-            },
+        event_buffer.append(
+            {
+                "timestamp": second,
+                "event_type": "base_missile",
+                "actor_id": player_state.player_id,
+                "target_id": None,
+                "points_awarded": 1001,
+                "description": f"{player_state.player.name} missiles base {'neutral' if base_id == 'neutral' else 'opposing'}",
+                "metadata": {
+                    "actor_role": player_state.role,
+                    "base_id": base_id,
+                    "missiles_remaining": player_state.final_missiles,
+                    "special_points": player_state.final_special,
+                    "points_scored": player_state.points_scored,
+                },
+            }
         )
 
     # TODO: need to determine if we are choosing who to reset off of first or in method
