@@ -863,7 +863,7 @@ class TestSimulationChangesWithWeights:
         team_b2, _ = make_team_with_slots("WS_B2")
         random.seed(42)
         with patch(
-            "matches.simulation._get_medic_weights", side_effect=all_tag_weights
+            "matches.sim_helpers.combat._get_medic_weights", side_effect=all_tag_weights
         ):
             round_patched = simulator.simulate_single_round_detailed(team_r2, team_b2)
         patched_resupply = GameEvent.objects.filter(

@@ -91,7 +91,8 @@
       "Bash(Select-Object -ExpandProperty FullName)",
       "Bash(Sort-Object)",
       "Bash(python -m pytest matches/tests/test_mechanics.py matches/tests/test_batch_sim.py matches/tests/test_sim_core.py -x -q)",
-      "Bash(python -m black matches/sim_helpers/mechanics.py matches/sim_helpers/player_state.py matches/models.py matches/simulation.py matches/tests/test_mechanics.py matches/tests/test_batch_sim.py)"
+      "Bash(python -m black matches/sim_helpers/mechanics.py matches/sim_helpers/player_state.py matches/models.py matches/simulation.py matches/tests/test_mechanics.py matches/tests/test_batch_sim.py)",
+      "Bash(python *)"
     ]
   }
 }

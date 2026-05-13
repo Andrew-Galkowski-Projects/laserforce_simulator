@@ -463,6 +463,41 @@ class PlayerRoundState(models.Model):
         secs = self.was_eliminated_at % 60
         return f"{minutes}:{secs:02d}"
 
+    # ------------------------------------------------------------------ #
+    # Forwarding properties matching the PlayerState duck type so shared
+    # combat functions in sim_helpers/combat.py work with both state types.
+    # These are pure Python (no DB fields) — no migration required.
+    # ------------------------------------------------------------------ #
+
+    @property
+    def accuracy(self) -> int:
+        return self.player.accuracy
+
+    @property
+    def survival(self) -> int:
+        return self.player.survival
+
+    @property
+    def name(self) -> str:
+        return self.player.name
+
+    @property
+    def player_awareness(self) -> int:
+        return self.player.player_awareness
+
+    @property
+    def last_shot_time(self) -> float:
+        return getattr(self, "_last_shot_time", -99.0)
+
+    @last_shot_time.setter
+    def last_shot_time(self, value: float) -> None:
+        self._last_shot_time = value
+
+    def refresh_from_db(self, using=None, fields=None, **kwargs):
+        saved = getattr(self, "_last_shot_time", -99.0)
+        super().refresh_from_db(using=using, fields=fields, **kwargs)
+        self._last_shot_time = saved
+
     @property
     def tag_id_key(self):
         """Common tag-identity accessor used by choose_tag_target in mechanics.py."""
