@@ -151,7 +151,7 @@ class TestMap01CellGrid:
         assert ResourceBasedSimulator._zone_from_cell(1, 2, spawn_cells) == 1
 
     def test_resolve_map_data_returns_spawn_cells_and_zone_data(self):
-        """_resolve_map_data returns 9-tuple including wall_meta and spawn_pools."""
+        """_resolve_map_data returns 10-tuple including wall_meta, spawn_pools, and elevation_grid."""
         arena_map = self._make_arena_map("ResolveTest")
         sim = ResourceBasedSimulator()
         (
@@ -164,6 +164,7 @@ class TestMap01CellGrid:
             strong_spots,
             wall_meta,
             spawn_pools,
+            elevation_grid,
         ) = sim._resolve_map_data(arena_map)
 
         assert zone_size == 50
@@ -1515,7 +1516,7 @@ class TestMap07DBIntegration:
     def test_wall_meta_round_trip_through_resolve_map_data(self):
         """wall_meta saved in zone_data JSON is returned as 8th element by _resolve_map_data."""
         arena_map = self._make_windowed_map("WallMetaRoundTrip")
-        _, _, _, _, _, _, _, wall_meta, _ = ResourceBasedSimulator._resolve_map_data(
+        _, _, _, _, _, _, _, wall_meta, _, _ = ResourceBasedSimulator._resolve_map_data(
             arena_map
         )
         assert wall_meta == {"0,1": {"facing": "E"}}
@@ -1533,6 +1534,7 @@ class TestMap07DBIntegration:
             strong_spots,
             wall_meta,
             _spawn_pools,
+            _elevation_grid,
         ) = ResourceBasedSimulator._resolve_map_data(arena_map)
         ctx = ResourceBasedSimulator._build_movement_ctx(
             zone_data,
@@ -1998,3 +2000,300 @@ class TestMap08DBIntegration:
         data = response.json()
         assert data["red_spawn"] == []
         assert data["blue_spawn"] == []
+
+    def test_user_edited_spawn_not_overwritten_by_sight_line_save(self, client):
+        """save_zone_config with explicit spawn data sets spawn_user_edited=True;
+        subsequent save_sight_lines must NOT overwrite those user-edited cells."""
+        import json
+
+        from core.models import ArenaMap, MapBaseConfig, MapZoneConfig
+        from core.map_processing import compute_sight_lines
+
+        zone_size = 50
+        rows, cols = 4, 4
+        zone_data = [[1] * cols for _ in range(rows)]
+        arena_map = ArenaMap.objects.create(
+            name="UserSpawnLock",
+            img_width=cols * zone_size,
+            img_height=rows * zone_size,
+        )
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=zone_size,
+            zone_data={"zones": zone_data, "blocked_edges": {}},
+            confirmed=True,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map,
+            base_type="red",
+            x_px=zone_size // 2,
+            y_px=zone_size // 2,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map,
+            base_type="blue",
+            x_px=cols * zone_size - zone_size // 2,
+            y_px=rows * zone_size - zone_size // 2,
+        )
+
+        # User explicitly saves hand-painted spawn cells via save_zone_config.
+        user_red_spawn = [[0, 0]]
+        user_blue_spawn = [[3, 3]]
+        resp = client.post(
+            f"/maps/{arena_map.pk}/save/",
+            data=json.dumps({
+                "zone_size": zone_size,
+                "zones": zone_data,
+                "bases": [
+                    {"type": "red",  "x_px": zone_size // 2, "y_px": zone_size // 2},
+                    {"type": "blue", "x_px": cols * zone_size - zone_size // 2,
+                     "y_px": rows * zone_size - zone_size // 2},
+                ],
+                "red_spawn": user_red_spawn,
+                "blue_spawn": user_blue_spawn,
+            }),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        # Confirm the flag was set.
+        config = arena_map.latest_confirmed_config()
+        assert config.zone_data.get("spawn_user_edited") is True
+
+        # Now trigger auto-regeneration via save_sight_lines.
+        sight_data = compute_sight_lines(zone_data)
+        resp2 = client.post(
+            f"/maps/{arena_map.pk}/sight-lines/save/",
+            data=json.dumps({
+                "zone_size": zone_size,
+                "sight_data": sight_data,
+                "base_sights": {"red": [], "blue": []},
+                "replace": True,
+            }),
+            content_type="application/json",
+        )
+        assert resp2.status_code == 200, resp2.content
+
+        # User spawn cells must survive — auto-generation must not override them.
+        config = MapZoneConfig.objects.get(
+            arena_map=arena_map, zone_size=zone_size, confirmed=True
+        )
+        stored = config.zone_data
+        assert stored["red_spawn"] == user_red_spawn, (
+            f"User-edited red_spawn was overwritten: got {stored['red_spawn']}"
+        )
+        assert stored["blue_spawn"] == user_blue_spawn, (
+            f"User-edited blue_spawn was overwritten: got {stored['blue_spawn']}"
+        )
+
+    def test_clearing_user_spawn_re_enables_auto_generation(self, client):
+        """Saving empty red_spawn/blue_spawn clears spawn_user_edited, allowing
+        the next sight-line save to auto-generate fresh spawn cells."""
+        import json
+
+        from core.models import ArenaMap, MapBaseConfig, MapZoneConfig
+        from core.map_processing import compute_sight_lines
+
+        zone_size = 50
+        rows, cols = 4, 4
+        zone_data = [[1] * cols for _ in range(rows)]
+        arena_map = ArenaMap.objects.create(
+            name="UserSpawnClear",
+            img_width=cols * zone_size,
+            img_height=rows * zone_size,
+        )
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=zone_size,
+            zone_data={
+                "zones": zone_data,
+                "blocked_edges": {},
+                "red_spawn": [[0, 0]],
+                "blue_spawn": [[3, 3]],
+                "spawn_user_edited": True,
+            },
+            confirmed=True,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map,
+            base_type="red",
+            x_px=zone_size // 2,
+            y_px=zone_size // 2,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map,
+            base_type="blue",
+            x_px=cols * zone_size - zone_size // 2,
+            y_px=rows * zone_size - zone_size // 2,
+        )
+
+        # User explicitly erases all spawn cells — sends empty lists.
+        resp = client.post(
+            f"/maps/{arena_map.pk}/save/",
+            data=json.dumps({
+                "zone_size": zone_size,
+                "zones": zone_data,
+                "bases": [
+                    {"type": "red",  "x_px": zone_size // 2, "y_px": zone_size // 2},
+                    {"type": "blue", "x_px": cols * zone_size - zone_size // 2,
+                     "y_px": rows * zone_size - zone_size // 2},
+                ],
+                "red_spawn": [],
+                "blue_spawn": [],
+            }),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        config = arena_map.latest_confirmed_config()
+        assert not config.zone_data.get("spawn_user_edited"), (
+            "spawn_user_edited should be cleared after user saves empty spawn lists"
+        )
+
+        # Now auto-generation should run and populate spawn cells.
+        sight_data = compute_sight_lines(zone_data)
+        resp2 = client.post(
+            f"/maps/{arena_map.pk}/sight-lines/save/",
+            data=json.dumps({
+                "zone_size": zone_size,
+                "sight_data": sight_data,
+                "base_sights": {"red": [], "blue": []},
+                "replace": True,
+            }),
+            content_type="application/json",
+        )
+        assert resp2.status_code == 200, resp2.content
+
+        config = MapZoneConfig.objects.get(
+            arena_map=arena_map, zone_size=zone_size, confirmed=True
+        )
+        stored = config.zone_data
+        assert len(stored.get("red_spawn", [])) >= 1, (
+            "Auto-generation should have populated red_spawn after lock was cleared"
+        )
+        assert len(stored.get("blue_spawn", [])) >= 1, (
+            "Auto-generation should have populated blue_spawn after lock was cleared"
+        )
+
+    def test_user_edited_spawn_not_overwritten_by_compute_sight_lines(self, client):
+        """compute_sight_lines view must NOT overwrite user-edited spawn cells."""
+        import json
+
+        from core.models import ArenaMap, MapBaseConfig, MapZoneConfig
+
+        zone_size = 50
+        rows, cols = 4, 4
+        zone_data = [[1] * cols for _ in range(rows)]
+        arena_map = ArenaMap.objects.create(
+            name="ComputeSpawnLock",
+            img_width=cols * zone_size,
+            img_height=rows * zone_size,
+        )
+        user_red_spawn = [[0, 0]]
+        user_blue_spawn = [[3, 3]]
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=zone_size,
+            zone_data={
+                "zones": zone_data,
+                "blocked_edges": {},
+                "red_spawn": user_red_spawn,
+                "blue_spawn": user_blue_spawn,
+                "spawn_user_edited": True,
+            },
+            confirmed=True,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map,
+            base_type="red",
+            x_px=zone_size // 2,
+            y_px=zone_size // 2,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map,
+            base_type="blue",
+            x_px=cols * zone_size - zone_size // 2,
+            y_px=rows * zone_size - zone_size // 2,
+        )
+
+        resp = client.post(
+            f"/maps/{arena_map.pk}/sight-lines/compute/",
+            data=json.dumps({"zone_size": zone_size}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        config = MapZoneConfig.objects.get(
+            arena_map=arena_map, zone_size=zone_size, confirmed=True
+        )
+        stored = config.zone_data
+        assert stored["red_spawn"] == user_red_spawn, (
+            f"compute_sight_lines overwrote user red_spawn: got {stored['red_spawn']}"
+        )
+        assert stored["blue_spawn"] == user_blue_spawn, (
+            f"compute_sight_lines overwrote user blue_spawn: got {stored['blue_spawn']}"
+        )
+
+    def test_unsaved_spawn_edits_survive_compute(self, client):
+        """Spawn cells sent in the compute POST body (spawnEdited=true on client)
+        are persisted and protected even when the user hasn't clicked Save first."""
+        import json
+
+        from core.models import ArenaMap, MapBaseConfig, MapZoneConfig
+
+        zone_size = 50
+        rows, cols = 4, 4
+        zone_data = [[1] * cols for _ in range(rows)]
+        arena_map = ArenaMap.objects.create(
+            name="UnsavedSpawnCompute",
+            img_width=cols * zone_size,
+            img_height=rows * zone_size,
+        )
+        # Confirmed config has NO spawn cells and NO user-edited flag — simulates
+        # a fresh map where the user painted spawn in the editor but never saved.
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=zone_size,
+            zone_data={"zones": zone_data, "blocked_edges": {}},
+            confirmed=True,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map,
+            base_type="red",
+            x_px=zone_size // 2,
+            y_px=zone_size // 2,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map,
+            base_type="blue",
+            x_px=cols * zone_size - zone_size // 2,
+            y_px=rows * zone_size - zone_size // 2,
+        )
+
+        # Client includes unsaved spawn edits alongside the compute request.
+        user_red_spawn = [[0, 0]]
+        user_blue_spawn = [[3, 3]]
+        resp = client.post(
+            f"/maps/{arena_map.pk}/sight-lines/compute/",
+            data=json.dumps({
+                "zone_size": zone_size,
+                "red_spawn": user_red_spawn,
+                "blue_spawn": user_blue_spawn,
+            }),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        config = MapZoneConfig.objects.get(
+            arena_map=arena_map, zone_size=zone_size, confirmed=True
+        )
+        stored = config.zone_data
+        assert stored["red_spawn"] == user_red_spawn, (
+            f"Unsaved spawn edits were not persisted: red_spawn={stored.get('red_spawn')}"
+        )
+        assert stored["blue_spawn"] == user_blue_spawn, (
+            f"Unsaved spawn edits were not persisted: blue_spawn={stored.get('blue_spawn')}"
+        )
+        assert stored.get("spawn_user_edited") is True, (
+            "spawn_user_edited flag must be set when client sends spawn with compute"
+        )

@@ -35,6 +35,7 @@
         <span class="badge" style="background:rgba(0,180,180,0.85);">Windowed Wall</span>
         <span class="badge" style="background:rgba(220,53,69,0.55);border:1px solid #c00;">Red Spawn</span>
         <span class="badge" style="background:rgba(13,110,253,0.55);border:1px solid #06c;">Blue Spawn</span>
+        <span class="badge" style="background:rgba(255,200,0,0.75);color:#333;border:1px solid #aa0;">Elevation</span>
     </div>
 </div>
 
@@ -69,6 +70,29 @@
         </select>
     </div>
     <span class="vr"></span>
+    <small class="text-muted text-nowrap fw-semibold">Elevation:</small>
+    <div class="btn-group btn-group-sm" role="group">
+        <button class="btn btn-outline-secondary elev-brush-btn active" data-elev="none">None</button>
+        <button class="btn btn-warning elev-brush-btn" data-elev="paint" style="color:#333;">Paint</button>
+        <button class="btn btn-outline-warning elev-brush-btn" data-elev="ramp" style="color:#333;">Ramp</button>
+    </div>
+    <div id="elev-paint-controls" class="d-none d-flex align-items-center gap-1 ms-1">
+        <small class="text-muted">Value:</small>
+        <select id="elev-value-select" class="form-select form-select-sm" style="width:auto;">
+            <option value="0">0.0</option>
+            <option value="0.5">0.5</option>
+            <option value="1">1.0</option>
+            <option value="1.5">1.5</option>
+            <option value="2">2.0</option>
+            <option value="2.5">2.5</option>
+            <option value="3">3.0</option>
+        </select>
+        <small class="text-muted fst-italic">Drag to paint elevation. Wall height: add <code>height</code> to wall_meta via JSON.</small>
+    </div>
+    <div id="elev-ramp-hint" class="d-none">
+        <small class="text-muted fst-italic ms-1">Paint elevation on two cells first, then click each to fill the rectangle between them using those elevations as the ramp endpoints.</small>
+    </div>
+    <span class="vr"></span>
     <small class="text-muted text-nowrap fw-semibold">Spawn brush:</small>
     <div class="btn-group btn-group-sm" role="group">
         <button class="btn btn-outline-secondary spawn-brush-btn active" data-spawn="none">None</button>
@@ -77,6 +101,8 @@
         <button class="btn btn-outline-warning spawn-brush-btn" data-spawn="erase">Erase Spawn</button>
     </div>
     <small class="text-muted">Select spawn brush then click cells. Auto-generated on Compute Sight Lines; manual edits override.</small>
+    <span class="vr"></span>
+    <button id="zones-bulk-edit-btn" class="btn btn-sm btn-outline-secondary">Bulk Edit: Off</button>
 </div>
 
 {# ── Sight Lines controls ─────────────────────────────────────────────────── #}
@@ -198,11 +224,28 @@ let currentMode      = "zones";  // "zones" | "sight"
 // ── Zones & Bases state ──────────────────────────────────────────────────────
 let selectedBaseType = null;
 let selectedWallBrush = "none";  // "none" | "0" | "1" | "4" | "5"
-let wallMeta = {};               // {"r,c": {facing: "N"|"S"|"E"|"W"}}
+let wallMeta = {};               // {"r,c": {facing: "N"|"S"|"E"|"W", height?: float}}
 let selectedSpawnBrush = "none"; // "none" | "red" | "blue" | "erase"
 let redSpawnCells  = new Set();  // Set of "r,c" strings for red spawn cells
 let blueSpawnCells = new Set();  // Set of "r,c" strings for blue spawn cells
 let spawnEdited = false;         // True if user has manually edited spawn cells
+
+// ── Elevation state (MAP-09) ──────────────────────────────────────────────────
+let elevationGrid = null;        // 2D array of floats (same shape as zones), or null
+let selectedElevBrush = "none"; // "none" | "paint" | "ramp"
+let rampFirstCell = null;        // {row, col} — first cell clicked for ramp tool
+// Drag state for wall brush bulk-select (reuses similar pattern to sight-line drag)
+let wallDragStart = null;        // {row, col} start of wall drag
+let wallDragging  = false;       // Is wall drag in progress?
+let wallDragMoved = false;       // Did drag cross a cell boundary?
+let wallJustDragged = false;     // Suppress click after drag release
+
+// ── Zones bulk edit state ─────────────────────────────────────────────────────
+let zonesBulkEditMode = false;
+let zonesBulkSelected = new Set(); // Set of "r,c" strings for bulk zone operations
+let zonesBulkDragStart = null;     // {row, col} where zone bulk drag started
+let zonesBulkDragMoved = false;    // Did bulk drag cross a cell boundary?
+let zonesJustDragged = false;      // Suppress click after zone bulk drag release
 
 // ── Sight Lines state ─────────────────────────────────────────────────────────
 let sightData        = {};
@@ -231,8 +274,9 @@ const saveSightAlert  = document.getElementById("save-sight-alert");
 const sightHint       = document.getElementById("sight-hint");
 const computeBtn      = document.getElementById("compute-btn");
 const computeSpinner  = document.getElementById("compute-spinner");
-const bulkEditBtn     = document.getElementById("bulk-edit-btn");
-const sightViewSelect = document.getElementById("sight-view-select");
+const bulkEditBtn      = document.getElementById("bulk-edit-btn");
+const zonesBulkEditBtn = document.getElementById("zones-bulk-edit-btn");
+const sightViewSelect  = document.getElementById("sight-view-select");
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function getCellFromClick(e) {
@@ -308,6 +352,26 @@ function renderZonesAndBases() {
             }
         }
     }
+    drawElevationOverlay(ctx, data);
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    // Highlight ramp first-cell selection
+    if (rampFirstCell && selectedElevBrush === "ramp") {
+        const { row: fr, col: fc } = rampFirstCell;
+        if (fr >= 0 && fr < data.rows && fc >= 0 && fc < data.cols) {
+            ctx.strokeStyle = "rgba(255,140,0,0.95)";
+            ctx.lineWidth = 3;
+            ctx.strokeRect(fc*cw+1, fr*ch+1, cw-2, ch-2);
+        }
+    }
+    // Highlight bulk-selected zone cells
+    if (zonesBulkEditMode && zonesBulkSelected.size > 0) {
+        ctx.fillStyle = "rgba(200,0,200,0.35)";
+        zonesBulkSelected.forEach(key => {
+            const [r, c] = key.split(",").map(Number);
+            if (r >= 0 && r < data.rows && c >= 0 && c < data.cols)
+                ctx.fillRect(c*cw, r*ch, cw, ch);
+        });
+    }
     drawGrid(ctx, data);
     drawSpawnCells(ctx, data);
     drawBases(ctx, data);
@@ -329,6 +393,27 @@ function drawSpawnCells(ctx, data) {
             ctx.fillRect(c*cw+2, r*ch+2, cw-4, ch-4);
         }
     });
+}
+
+function drawElevationOverlay(ctx, data) {
+    if (!elevationGrid) return;
+    const cw = data.cell_size, ch = data.cell_size;
+    const elevFontSize = Math.max(6, Math.floor(cw * 0.22));
+    for (let r = 0; r < data.rows; r++) {
+        if (!elevationGrid[r]) continue;
+        for (let c = 0; c < data.cols; c++) {
+            const elev = elevationGrid[r][c];
+            if (!elev || elev <= 0) continue;
+            const alpha = Math.min(0.7, elev / 3.0 * 0.65 + 0.05);
+            ctx.fillStyle = `rgba(255,200,0,${alpha.toFixed(2)})`;
+            ctx.fillRect(c*cw, r*ch, cw, ch);
+            ctx.font = `${elevFontSize}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillStyle = "rgba(80,50,0,0.90)";
+            ctx.fillText(elev % 1 === 0 ? elev.toFixed(0) : elev.toFixed(1), (c+0.5)*cw, (r+0.5)*ch);
+        }
+    }
 }
 
 function renderSightLines() {
@@ -395,6 +480,20 @@ function renderSightLines() {
             }
         }
 
+        // Draw spawn cells for the matching team
+        const spawnCells = btype === "red"  ? redSpawnCells
+                         : btype === "blue" ? blueSpawnCells
+                         : null;
+        if (spawnCells && spawnCells.size > 0) {
+            spawnCells.forEach(key => {
+                const [sr, sc] = key.split(",").map(Number);
+                if (sr >= 0 && sr < data.rows && sc >= 0 && sc < data.cols) {
+                    ctx.fillStyle = SPAWN_FILL[btype] ?? "rgba(128,128,128,0.45)";
+                    ctx.fillRect(sc*cw+2, sr*ch+2, cw-4, ch-4);
+                }
+            });
+        }
+
         // Outline the base's own cell for reference
         if (bpos) {
             const bc = Math.floor(bpos.x_px / cw);
@@ -407,6 +506,7 @@ function renderSightLines() {
         }
     }
 
+    drawElevationOverlay(ctx, data);
     drawGrid(ctx, data);
     drawBases(ctx, data);
 }
@@ -426,10 +526,17 @@ function fetchAndRenderZones(zoneSize) {
     redSpawnCells.clear();
     blueSpawnCells.clear();
     spawnEdited = false;
+    // Reset elevation on zone size change — elevation grid is zone-size relative.
+    elevationGrid = null;
+    rampFirstCell = null;
     fetch(`${ZONES_URL}?zone_size=${zoneSize}`)
         .then(r => r.json())
         .then(data => {
             currentZoneData = data;
+            // Restore saved wall_meta and elevation from the server response so
+            // user edits survive page reloads and zone-size round-trips.
+            wallMeta = data.wall_meta || {};
+            elevationGrid = Array.isArray(data.elevation) ? data.elevation : null;
             renderCanvas();
             loadingSpinner.classList.add("d-none");
             // Load stored spawn cells for this zone size (non-blocking).
@@ -473,10 +580,17 @@ computeBtn.addEventListener("click", () => {
     computeBtn.disabled = true;
     sightHint.textContent = "Computing… this may take a moment for large maps.";
 
+    const computeBody = { zone_size: parseInt(zs, 10) };
+    // Include unsaved spawn edits so the server can protect them from auto-generation.
+    if (spawnEdited) {
+        computeBody.red_spawn  = [...redSpawnCells].map(k => k.split(",").map(Number));
+        computeBody.blue_spawn = [...blueSpawnCells].map(k => k.split(",").map(Number));
+    }
+
     fetch(COMPUTE_SIGHT_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF_TOKEN },
-        body: JSON.stringify({ zone_size: parseInt(zs, 10) }),
+        body: JSON.stringify(computeBody),
     })
     .then(r => r.json())
     .then(data => {
@@ -524,6 +638,13 @@ document.getElementById("mode-sight").addEventListener("click", () => {
     // Dearm any base type
     selectedBaseType = null;
     document.querySelectorAll(".base-btn").forEach(b => b.classList.remove("active"));
+    // Reset zones bulk edit
+    zonesBulkEditMode = false;
+    zonesBulkEditBtn.textContent = "Bulk Edit: Off";
+    zonesBulkEditBtn.classList.remove("btn-warning");
+    zonesBulkEditBtn.classList.add("btn-outline-secondary");
+    zonesBulkSelected.clear();
+    zonesBulkDragStart = null;
     canvas.style.cursor = "pointer";
     loadSightLines();
 });
@@ -558,11 +679,47 @@ sightViewSelect.addEventListener("change", () => {
 
 // ── Canvas interaction (drag select + click) ────────────────────────────────
 canvas.addEventListener("mousedown", e => {
-    if (!currentZoneData || currentMode !== "sight" || !selectedCell || !bulkEditMode || sightViewMode !== "zone") return;
+    if (!currentZoneData) return;
 
     const { row, col } = getCellFromClick(e);
     if (row < 0 || col < 0 || row >= currentZoneData.rows || col >= currentZoneData.cols) return;
 
+    // Zones mode: bulk-edit drag-select or normal paint drag
+    if (currentMode === "zones") {
+        const hasBrush = selectedWallBrush !== "none" || selectedElevBrush === "paint" || selectedSpawnBrush !== "none";
+        if (zonesBulkEditMode && hasBrush) {
+            zonesBulkDragStart = { row, col };
+            zonesBulkDragMoved = false;
+            zonesBulkSelected.clear();
+            zonesBulkSelected.add(`${row},${col}`);
+            renderCanvas();
+            return;
+        }
+        if (selectedWallBrush !== "none" || selectedElevBrush === "paint") {
+            wallDragStart = { row, col };
+            wallDragging = true;
+            wallDragMoved = false;
+            // Apply to the starting cell immediately
+            if (selectedWallBrush !== "none") {
+                const newVal = parseInt(selectedWallBrush, 10);
+                currentZoneData.zones[row][col] = newVal;
+                const key = `${row},${col}`;
+                if (newVal === 5) {
+                    const facing = document.getElementById("windowed-facing").value;
+                    wallMeta[key] = { facing };
+                } else {
+                    delete wallMeta[key];
+                }
+            } else if (selectedElevBrush === "paint") {
+                applyElevationPaint(row, col);
+            }
+            renderCanvas();
+        }
+        return;
+    }
+
+    // Sight mode: start bulk drag select
+    if (currentMode !== "sight" || !selectedCell || !bulkEditMode || sightViewMode !== "zone") return;
     dragStart = { row, col };
     dragSelecting = true;
     dragMoved = false;
@@ -572,11 +729,48 @@ canvas.addEventListener("mousedown", e => {
 });
 
 canvas.addEventListener("mousemove", e => {
-    if (!dragSelecting || !dragStart || !currentZoneData) return;
+    if (!currentZoneData) return;
 
     const { row, col } = getCellFromClick(e);
     if (row < 0 || col < 0 || row >= currentZoneData.rows || col >= currentZoneData.cols) return;
 
+    // Zones mode: bulk drag select
+    if (currentMode === "zones" && zonesBulkEditMode && zonesBulkDragStart) {
+        if (row !== zonesBulkDragStart.row || col !== zonesBulkDragStart.col) zonesBulkDragMoved = true;
+        const r_min = Math.min(zonesBulkDragStart.row, row);
+        const r_max = Math.max(zonesBulkDragStart.row, row);
+        const c_min = Math.min(zonesBulkDragStart.col, col);
+        const c_max = Math.max(zonesBulkDragStart.col, col);
+        zonesBulkSelected.clear();
+        for (let r = r_min; r <= r_max; r++)
+            for (let c = c_min; c <= c_max; c++)
+                zonesBulkSelected.add(`${r},${c}`);
+        renderCanvas();
+        return;
+    }
+
+    // Zones mode drag: paint wall or elevation across cells
+    if (currentMode === "zones" && wallDragging && wallDragStart) {
+        if (row !== wallDragStart.row || col !== wallDragStart.col) wallDragMoved = true;
+        if (selectedWallBrush !== "none") {
+            const newVal = parseInt(selectedWallBrush, 10);
+            currentZoneData.zones[row][col] = newVal;
+            const key = `${row},${col}`;
+            if (newVal === 5) {
+                const facing = document.getElementById("windowed-facing").value;
+                wallMeta[key] = { facing };
+            } else {
+                delete wallMeta[key];
+            }
+        } else if (selectedElevBrush === "paint") {
+            applyElevationPaint(row, col);
+        }
+        renderCanvas();
+        return;
+    }
+
+    // Sight mode drag
+    if (!dragSelecting || !dragStart) return;
     if (row !== dragStart.row || col !== dragStart.col) dragMoved = true;
 
     // Select all cells in the bounding rectangle from dragStart to current
@@ -598,6 +792,32 @@ canvas.addEventListener("mousemove", e => {
 });
 
 canvas.addEventListener("mouseup", e => {
+    // Zones mode bulk drag end
+    if (currentMode === "zones" && zonesBulkEditMode && zonesBulkDragStart) {
+        const moved = zonesBulkDragMoved;
+        zonesBulkDragStart = null;
+        zonesBulkDragMoved = false;
+        if (moved && zonesBulkSelected.size > 0) {
+            applyBrushToZoneSelection();
+            zonesJustDragged = true;
+        }
+        zonesBulkSelected.clear();
+        if (currentZoneData) renderCanvas();
+        return;
+    }
+
+    // Zones mode drag end
+    if (currentMode === "zones" && wallDragging) {
+        const moved = wallDragMoved;
+        wallDragging = false;
+        wallDragMoved = false;
+        wallDragStart = null;
+        if (moved) wallJustDragged = true;
+        if (currentZoneData) renderCanvas();
+        return;
+    }
+
+    // Sight mode drag end
     if (!dragSelecting) return;
     const moved = dragMoved;
     dragSelecting = false;
@@ -614,7 +834,9 @@ canvas.addEventListener("mouseup", e => {
 
 canvas.addEventListener("click", e => {
     if (!currentZoneData || dragSelecting) return;
-    if (wasJustDragging) { wasJustDragging = false; return; }
+    if (wasJustDragging)  { wasJustDragging = false; return; }
+    if (wallJustDragged)  { wallJustDragged = false; return; }
+    if (zonesJustDragged) { zonesJustDragged = false; return; }
     const { row, col } = getCellFromClick(e);
     if (row < 0 || col < 0 || row >= currentZoneData.rows || col >= currentZoneData.cols) return;
 
@@ -625,7 +847,89 @@ canvas.addEventListener("click", e => {
     }
 });
 
+// ── Elevation helpers (MAP-09) ────────────────────────────────────────────────
+function ensureElevationGrid() {
+    if (!currentZoneData) return;
+    if (!elevationGrid || elevationGrid.length !== currentZoneData.rows ||
+            (elevationGrid[0] && elevationGrid[0].length !== currentZoneData.cols)) {
+        elevationGrid = Array.from({length: currentZoneData.rows}, () =>
+            new Array(currentZoneData.cols).fill(0));
+    }
+}
+
+function applyElevationPaint(row, col) {
+    if (!currentZoneData) return;
+    ensureElevationGrid();
+    const val = parseFloat(document.getElementById("elev-value-select").value) || 0;
+    elevationGrid[row][col] = val;
+}
+
+function applyElevationRamp(r1, c1, r2, c2) {
+    if (!currentZoneData) return;
+    ensureElevationGrid();
+    const startVal = elevationGrid[r1][c1] ?? 0;
+    const endVal   = elevationGrid[r2][c2] ?? 0;
+    const r_min = Math.min(r1, r2), r_max = Math.max(r1, r2);
+    const c_min = Math.min(c1, c2), c_max = Math.max(c1, c2);
+    const dr = r2 - r1, dc = c2 - c1;
+    const distSq = dr * dr + dc * dc;
+    for (let r = r_min; r <= r_max; r++) {
+        for (let c = c_min; c <= c_max; c++) {
+            if (r < 0 || r >= currentZoneData.rows || c < 0 || c >= currentZoneData.cols) continue;
+            const t = distSq === 0 ? 1 : Math.max(0, Math.min(1, ((r - r1) * dr + (c - c1) * dc) / distSq));
+            elevationGrid[r][c] = parseFloat((startVal + (endVal - startVal) * t).toFixed(2));
+        }
+    }
+}
+
+function applyBrushToZoneSelection() {
+    if (!currentZoneData) return;
+    for (const key of zonesBulkSelected) {
+        const [row, col] = key.split(",").map(Number);
+        if (selectedWallBrush !== "none") {
+            const newVal = parseInt(selectedWallBrush, 10);
+            currentZoneData.zones[row][col] = newVal;
+            if (newVal === 5) {
+                wallMeta[key] = { facing: document.getElementById("windowed-facing").value };
+            } else {
+                delete wallMeta[key];
+            }
+        } else if (selectedElevBrush === "paint") {
+            applyElevationPaint(row, col);
+        } else if (selectedSpawnBrush !== "none") {
+            if (selectedSpawnBrush === "erase") {
+                redSpawnCells.delete(key);
+                blueSpawnCells.delete(key);
+            } else if (selectedSpawnBrush === "red" && currentZoneData.zones[row][col] !== 0) {
+                blueSpawnCells.delete(key);
+                redSpawnCells.add(key);
+            } else if (selectedSpawnBrush === "blue" && currentZoneData.zones[row][col] !== 0) {
+                redSpawnCells.delete(key);
+                blueSpawnCells.add(key);
+            }
+            spawnEdited = true;
+        }
+    }
+}
+
 function handleZonesModeClick(row, col) {
+    // Elevation brush takes priority (MAP-09)
+    if (selectedElevBrush === "paint") {
+        applyElevationPaint(row, col);
+        renderCanvas();
+        return;
+    }
+    if (selectedElevBrush === "ramp") {
+        if (!rampFirstCell) {
+            rampFirstCell = { row, col };
+        } else {
+            applyElevationRamp(rampFirstCell.row, rampFirstCell.col, row, col);
+            rampFirstCell = null;
+        }
+        renderCanvas();
+        return;
+    }
+
     // Spawn brush takes priority over wall brush and base placement
     if (selectedSpawnBrush !== "none") {
         const key = `${row},${col}`;
@@ -652,7 +956,7 @@ function handleZonesModeClick(row, col) {
         return;
     }
 
-    // Wall brush takes priority over base placement
+    // Wall brush: single-click handled here; drag is handled by mousedown/mouseup
     if (selectedWallBrush !== "none") {
         const newVal = parseInt(selectedWallBrush, 10);
         currentZoneData.zones[row][col] = newVal;
@@ -731,6 +1035,19 @@ function handleBaseSightClick(row, col, btype) {
     else        baseSights[btype].push([row, col]);
     renderCanvas();
 }
+
+// ── Zones Bulk Edit toggle ────────────────────────────────────────────────────
+zonesBulkEditBtn.addEventListener("click", () => {
+    zonesBulkEditMode = !zonesBulkEditMode;
+    zonesBulkEditBtn.textContent = zonesBulkEditMode ? "Bulk Edit: On" : "Bulk Edit: Off";
+    zonesBulkEditBtn.classList.toggle("btn-warning", zonesBulkEditMode);
+    zonesBulkEditBtn.classList.toggle("btn-outline-secondary", !zonesBulkEditMode);
+    if (!zonesBulkEditMode) {
+        zonesBulkSelected.clear();
+        zonesBulkDragStart = null;
+        if (currentZoneData) renderCanvas();
+    }
+});
 
 // ── Bulk Edit toggle ──────────────────────────────────────────────────────────
 bulkEditBtn.addEventListener("click", () => {
@@ -813,8 +1130,47 @@ document.querySelectorAll(".wall-brush-btn").forEach(btn => {
         } else {
             picker.classList.add("d-none");
         }
-        // Dearm base selection when a wall brush is active
+        // Dearm base selection, elevation brush, and spawn brush when a wall brush is active
         if (selectedWallBrush !== "none") {
+            selectedBaseType = null;
+            document.querySelectorAll(".base-btn").forEach(b => b.classList.remove("active"));
+            selectedElevBrush = "none";
+            document.querySelectorAll(".elev-brush-btn").forEach(b => b.classList.remove("active"));
+            document.querySelector('.elev-brush-btn[data-elev="none"]').classList.add("active");
+            document.getElementById("elev-paint-controls").classList.add("d-none");
+            document.getElementById("elev-ramp-hint").classList.add("d-none");
+            rampFirstCell = null;
+            selectedSpawnBrush = "none";
+            document.querySelectorAll(".spawn-brush-btn").forEach(b => b.classList.remove("active"));
+            document.querySelector('.spawn-brush-btn[data-spawn="none"]').classList.add("active");
+            canvas.style.cursor = "crosshair";
+        } else {
+            canvas.style.cursor = "default";
+        }
+    });
+});
+
+// ── Elevation brush buttons (MAP-09) ──────────────────────────────────────────
+document.querySelectorAll(".elev-brush-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+        document.querySelectorAll(".elev-brush-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        selectedElevBrush = btn.dataset.elev;
+        const paintControls = document.getElementById("elev-paint-controls");
+        const rampHint = document.getElementById("elev-ramp-hint");
+        paintControls.classList.toggle("d-none", selectedElevBrush !== "paint");
+        rampHint.classList.toggle("d-none", selectedElevBrush !== "ramp");
+        // Reset ramp state when switching modes
+        rampFirstCell = null;
+        // Dearm other brushes when elevation brush is active
+        if (selectedElevBrush !== "none") {
+            selectedWallBrush = "none";
+            document.querySelectorAll(".wall-brush-btn").forEach(b => b.classList.remove("active"));
+            document.querySelector('.wall-brush-btn[data-wall="none"]').classList.add("active");
+            document.getElementById("windowed-dir-picker").classList.add("d-none");
+            selectedSpawnBrush = "none";
+            document.querySelectorAll(".spawn-brush-btn").forEach(b => b.classList.remove("active"));
+            document.querySelector('.spawn-brush-btn[data-spawn="none"]').classList.add("active");
             selectedBaseType = null;
             document.querySelectorAll(".base-btn").forEach(b => b.classList.remove("active"));
             canvas.style.cursor = "crosshair";
@@ -830,12 +1186,18 @@ document.querySelectorAll(".spawn-brush-btn").forEach(btn => {
         document.querySelectorAll(".spawn-brush-btn").forEach(b => b.classList.remove("active"));
         btn.classList.add("active");
         selectedSpawnBrush = btn.dataset.spawn;
-        // Dearm wall brush and base selection when spawn brush is active.
+        // Dearm wall brush, elevation brush, and base selection when spawn brush is active.
         if (selectedSpawnBrush !== "none") {
             selectedWallBrush = "none";
             document.querySelectorAll(".wall-brush-btn").forEach(b => b.classList.remove("active"));
             document.querySelector('.wall-brush-btn[data-wall="none"]').classList.add("active");
             document.getElementById("windowed-dir-picker").classList.add("d-none");
+            selectedElevBrush = "none";
+            document.querySelectorAll(".elev-brush-btn").forEach(b => b.classList.remove("active"));
+            document.querySelector('.elev-brush-btn[data-elev="none"]').classList.add("active");
+            document.getElementById("elev-paint-controls").classList.add("d-none");
+            document.getElementById("elev-ramp-hint").classList.add("d-none");
+            rampFirstCell = null;
             selectedBaseType = null;
             document.querySelectorAll(".base-btn").forEach(b => b.classList.remove("active"));
             canvas.style.cursor = "crosshair";
@@ -857,6 +1219,10 @@ saveBtn.addEventListener("click", () => {
         zones: currentZoneData ? currentZoneData.zones : undefined,
         wall_meta: Object.keys(wallMeta).length ? wallMeta : undefined,
     };
+    // Include elevation data when it has been painted (MAP-09).
+    if (elevationGrid) {
+        saveBody.elevation = elevationGrid;
+    }
     // Include spawn overrides only when the user has manually edited them.
     if (spawnEdited) {
         saveBody.red_spawn  = [...redSpawnCells].map(k => k.split(",").map(Number));

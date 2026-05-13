@@ -155,6 +155,20 @@ def process_zones(request, map_id):
         cell_size = 50
     cell_size = max(10, min(cell_size, 200))
     data = detect_zones(_get_image_local_path(arena_map.image), cell_size)
+
+    # Overlay stored zones, wall_meta, and elevation from the confirmed config so
+    # user edits survive page reloads.  Only apply when the stored config's zone_size
+    # matches the requested one — different sizes are incompatible.
+    confirmed = arena_map.latest_confirmed_config()
+    if confirmed and confirmed.zone_size == cell_size and isinstance(confirmed.zone_data, dict):
+        stored = confirmed.zone_data
+        if "zones" in stored:
+            data["zones"] = stored["zones"]
+        if "wall_meta" in stored:
+            data["wall_meta"] = stored["wall_meta"]
+        if "elevation" in stored:
+            data["elevation"] = stored["elevation"]
+
     return JsonResponse(data)
 
 
@@ -195,7 +209,7 @@ def save_zone_config(request, map_id):
         zones = data["zones"]
         blocked_edges = data.get("blocked_edges", {})
 
-    # Carry forward any existing confirmed spawn cells, then apply client overrides.
+    # Carry forward any existing confirmed spawn cells and elevation data, then apply client overrides.
     existing_config = arena_map.latest_confirmed_config()
     existing_zone_data = existing_config.zone_data if existing_config else {}
     red_spawn_existing = (
@@ -208,9 +222,40 @@ def save_zone_config(request, map_id):
         if isinstance(existing_zone_data, dict)
         else []
     )
+    # Carry forward elevation data from existing config (or accept client-sent elevation).
+    elevation_existing = (
+        existing_zone_data.get("elevation")
+        if isinstance(existing_zone_data, dict)
+        else None
+    )
+    client_elevation = body.get("elevation")
+    if isinstance(client_elevation, list):
+        for row in client_elevation:
+            if not isinstance(row, list):
+                return JsonResponse(
+                    {
+                        "status": "error",
+                        "message": "Invalid elevation: each row must be a list",
+                    },
+                    status=400,
+                )
+            for val in row:
+                if not isinstance(val, (int, float)) or not (0.0 <= float(val) <= 10.0):
+                    return JsonResponse(
+                        {
+                            "status": "error",
+                            "message": f"Elevation value out of range [0.0, 10.0]: {val}",
+                        },
+                        status=400,
+                    )
+    elevation = (
+        client_elevation if isinstance(client_elevation, list) else elevation_existing
+    )
+
     # Client may send user-edited spawn overrides (list of [r, c] pairs).
     client_red_spawn = body.get("red_spawn")
     client_blue_spawn = body.get("blue_spawn")
+    client_sent_spawn = isinstance(client_red_spawn, list) or isinstance(client_blue_spawn, list)
     red_spawn = (
         client_red_spawn if isinstance(client_red_spawn, list) else red_spawn_existing
     )
@@ -219,6 +264,19 @@ def save_zone_config(request, map_id):
         if isinstance(client_blue_spawn, list)
         else blue_spawn_existing
     )
+    # Determine whether to protect these spawn cells from future auto-regeneration.
+    # The flag is set when the user explicitly paints cells (non-empty client payload),
+    # cleared when the user explicitly erases everything (empty client payload),
+    # and carried forward unchanged when the user didn't touch spawn at all.
+    spawn_user_edited_existing = (
+        existing_zone_data.get("spawn_user_edited", False)
+        if isinstance(existing_zone_data, dict)
+        else False
+    )
+    if client_sent_spawn:
+        spawn_user_edited = bool(red_spawn) or bool(blue_spawn)
+    else:
+        spawn_user_edited = spawn_user_edited_existing
 
     MapZoneConfig.objects.filter(arena_map=arena_map, confirmed=True).update(
         confirmed=False
@@ -229,10 +287,14 @@ def save_zone_config(request, map_id):
     }
     if wall_meta:
         zone_data_payload["wall_meta"] = wall_meta
+    if elevation is not None:
+        zone_data_payload["elevation"] = elevation
     if red_spawn:
         zone_data_payload["red_spawn"] = red_spawn
     if blue_spawn:
         zone_data_payload["blue_spawn"] = blue_spawn
+    if spawn_user_edited:
+        zone_data_payload["spawn_user_edited"] = True
     MapZoneConfig.objects.create(
         arena_map=arena_map,
         zone_size=zone_size,
@@ -336,6 +398,22 @@ def compute_sight_lines_view(request, map_id):
         zone_size=zone_size,
         defaults={"cells": ranked[:top_n]},
     )
+
+    # If the client sent unsaved spawn edits, write them to the confirmed config
+    # with the user-edited lock so _update_spawn_cells_in_zone_data won't overwrite.
+    client_red_spawn = body.get("red_spawn")
+    client_blue_spawn = body.get("blue_spawn")
+    if isinstance(client_red_spawn, list) or isinstance(client_blue_spawn, list):
+        confirmed = arena_map.latest_confirmed_config()
+        if confirmed:
+            raw = dict(confirmed.zone_data) if isinstance(confirmed.zone_data, dict) else {"zones": confirmed.zone_data}
+            if isinstance(client_red_spawn, list):
+                raw["red_spawn"] = client_red_spawn
+            if isinstance(client_blue_spawn, list):
+                raw["blue_spawn"] = client_blue_spawn
+            raw["spawn_user_edited"] = bool(client_red_spawn) or bool(client_blue_spawn)
+            confirmed.zone_data = raw
+            confirmed.save(update_fields=["zone_data"])
 
     _update_spawn_cells_in_zone_data(arena_map, zone_size)
 
@@ -471,14 +549,18 @@ def get_spawn_cells(request, map_id):
 def _update_spawn_cells_in_zone_data(arena_map, zone_size: int) -> None:
     """Auto-compute spawn cells and persist them into the confirmed MapZoneConfig.
 
-    Called after sight lines are computed or saved. Overwrites red_spawn and
-    blue_spawn in zone_data with the freshly computed candidates. User-painted
-    spawn overrides survive only until the next Compute/Save Sight Lines action.
+    Called after sight lines are computed or saved. Skipped entirely when the user
+    has explicitly painted spawn cells (zone_data["spawn_user_edited"] is True).
+    To reset to auto-generation, erase all spawn cells in the editor and save.
 
     If base positions are not set, or no confirmed config exists, does nothing.
     """
     config = arena_map.latest_confirmed_config()
     if config is None:
+        return
+
+    raw = config.zone_data
+    if isinstance(raw, dict) and raw.get("spawn_user_edited"):
         return
 
     base_cfgs = {
@@ -490,7 +572,6 @@ def _update_spawn_cells_in_zone_data(arena_map, zone_size: int) -> None:
     if "red" not in base_cfgs or "blue" not in base_cfgs:
         return
 
-    raw = config.zone_data
     zone_grid = raw["zones"] if isinstance(raw, dict) else raw
     base_cells = {
         color: (
@@ -503,8 +584,6 @@ def _update_spawn_cells_in_zone_data(arena_map, zone_size: int) -> None:
     new_spawns = compute_spawn_cells(zone_grid, base_cells)
 
     updated = dict(raw) if isinstance(raw, dict) else {"zones": raw}
-    # Only overwrite a side's spawn list when auto-generation produces results
-    # AND that side doesn't already have a user-supplied non-empty list.
     for color in ("red", "blue"):
         key = f"{color}_spawn"
         candidates = new_spawns.get(color, [])

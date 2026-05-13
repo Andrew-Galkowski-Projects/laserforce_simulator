@@ -73,7 +73,18 @@
       "Bash(pytest matches/tests/test_map.py -q)",
       "mcp__chrome-devtools__take_snapshot",
       "mcp__chrome-devtools__click",
-      "mcp__chrome-devtools__evaluate_script"
+      "mcp__chrome-devtools__evaluate_script",
+      "Bash(python -m pytest matches/tests/test_map09_high_ground.py -x -q)",
+      "Bash(python -m pytest matches/tests/test_map09_high_ground.py -q)",
+      "Bash(python -m black core/map_processing.py core/views.py matches/simulation.py matches/tests/test_map09_high_ground.py --check)",
+      "Bash(python -m black core/map_processing.py core/views.py matches/simulation.py matches/tests/test_map09_high_ground.py)",
+      "Bash(python manage.py runserver 8001)",
+      "Bash(python manage.py shell -c \"from core.models import ArenaMap; maps = ArenaMap.objects.all\\(\\); ids = list\\(maps.values_list\\('pk', flat=True\\)\\); print\\('Map IDs:', ids\\)\")",
+      "Bash(python -m pytest matches/tests/test_map09_high_ground.py -v)",
+      "Bash(python -m pytest core/tests.py matches/tests/test_map09_high_ground.py matches/tests/test_map.py -q)",
+      "Bash(python -m pytest matches/tests/test_map.py::TestMap08DBIntegration -v)",
+      "Bash(python -m pytest matches/tests/test_map.py::TestMap08SpawnPoints matches/tests/test_map.py::TestMap08DBIntegration core/tests.py -v)",
+      "Bash(python -m pytest matches/tests/test_map.py::TestMap08DBIntegration::test_user_edited_spawn_not_overwritten_by_compute_sight_lines -v)"
     ]
   }
 }
