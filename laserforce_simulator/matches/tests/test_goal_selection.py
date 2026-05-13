@@ -441,11 +441,9 @@ class TestMap05DBIntegration:
         return arena_map
 
     def test_resolve_map_data_returns_cell_ranking(self):
-        """_resolve_map_data 6th element is the ranked cell list."""
+        """_resolve_map_data cell_ranking field is the ranked cell list."""
         arena_map = self._make_full_map("ResolveCellRank")
-        _, _, _, _, _, cell_ranking, _, _, _, _ = (
-            ResourceBasedSimulator._resolve_map_data(arena_map)
-        )
+        cell_ranking = ResourceBasedSimulator._resolve_map_data(arena_map).cell_ranking
 
         assert isinstance(cell_ranking, list)
         assert len(cell_ranking) > 0
@@ -453,11 +451,9 @@ class TestMap05DBIntegration:
         assert len(cell_ranking[0]) == 2
 
     def test_resolve_map_data_returns_strong_spots(self):
-        """_resolve_map_data 7th element is the heavy strong spots list."""
+        """_resolve_map_data strong_spots field is the heavy strong spots list."""
         arena_map = self._make_full_map("ResolveStrongSpots")
-        _, _, _, _, _, _, strong_spots, _, _, _ = (
-            ResourceBasedSimulator._resolve_map_data(arena_map)
-        )
+        strong_spots = ResourceBasedSimulator._resolve_map_data(arena_map).strong_spots
 
         assert isinstance(strong_spots, list)
         assert len(strong_spots) > 0
@@ -465,35 +461,22 @@ class TestMap05DBIntegration:
     def test_resolve_map_data_returns_empty_lists_when_configs_absent(self):
         """_resolve_map_data returns [] for cell_ranking and strong_spots when configs missing."""
         arena_map = self._make_map_without_map05_configs("AbsentConfigs")
-        _, _, _, _, _, cell_ranking, strong_spots, _, _, _ = (
-            ResourceBasedSimulator._resolve_map_data(arena_map)
-        )
+        md = ResourceBasedSimulator._resolve_map_data(arena_map)
 
-        assert cell_ranking == []
-        assert strong_spots == []
+        assert md.cell_ranking == []
+        assert md.strong_spots == []
 
     def test_build_movement_ctx_populates_map05_keys(self):
         """_build_movement_ctx includes cell_los_counts, high_los_cells, and strong_spots."""
         arena_map = self._make_full_map("BuildCtxMAP05")
-        (
-            _,
-            spawn_cells,
-            zone_data,
-            sight_data,
-            base_sight_data,
-            cell_ranking,
-            strong_spots,
-            wall_meta,
-            _spawn_pools,
-            _elevation_grid,
-        ) = ResourceBasedSimulator._resolve_map_data(arena_map)
+        md = ResourceBasedSimulator._resolve_map_data(arena_map)
         ctx = ResourceBasedSimulator._build_movement_ctx(
-            zone_data,
-            spawn_cells,
-            sight_data,
-            base_sight_data,
-            cell_ranking,
-            strong_spots,
+            md.zone_data,
+            md.spawn_cells,
+            md.sight_data,
+            md.base_sight_data,
+            md.cell_ranking,
+            md.strong_spots,
         )
 
         assert "cell_los_counts" in ctx

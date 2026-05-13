@@ -3,6 +3,7 @@ import logging
 import threading
 import uuid
 from collections import deque
+from dataclasses import dataclass, field
 from django.db import transaction
 from .models import GameEvent, Match, GameRound, PlayerRoundState
 from .sim_helpers.mechanics import shot_cooldown
@@ -40,6 +41,22 @@ logging.basicConfig(level=logging.DEBUG)
 # _elevation_hit_modifier, elevation_hit_modifier, _can_tag_through_windowed_wall,
 # _get_los_targets, _get_base_interaction, and _NEUTRAL_BASE_TYPES are imported
 # from sim_helpers/combat.py above and re-exported here for backward compatibility.
+
+
+@dataclass
+class MapData:
+    """All map-derived data needed for one simulation round."""
+
+    zone_size: int | None
+    spawn_cells: dict
+    zone_data: list | None
+    sight_data: dict | None
+    base_sight_data: dict
+    cell_ranking: list = field(default_factory=list)
+    strong_spots: list = field(default_factory=list)
+    wall_meta: dict = field(default_factory=dict)
+    spawn_pools: dict = field(default_factory=dict)
+    elevation_grid: list | None = None
 
 
 class ResourceBasedSimulator:
@@ -113,18 +130,7 @@ class ResourceBasedSimulator:
         self, team_red, team_blue, match=None, round_number=1, *, arena_map=None
     ):
         """Simulate a round with full player resource tracking"""
-        (
-            zone_size,
-            spawn_cells,
-            zone_data,
-            sight_data,
-            base_sight_data,
-            cell_ranking,
-            strong_spots,
-            wall_meta,
-            team_spawn_pools,
-            elevation_grid,
-        ) = self._resolve_map_data(arena_map)
+        md = self._resolve_map_data(arena_map)
 
         game_round = GameRound.objects.create(
             match=match,
@@ -132,28 +138,28 @@ class ResourceBasedSimulator:
             team_red=team_red,
             team_blue=team_blue,
             arena_map=arena_map,
-            zone_size=zone_size,
+            zone_size=md.zone_size,
         )
 
         # Initialize player states
         red_players = self._initialize_players(
-            game_round, team_red, "red", spawn_cells, zone_data, team_spawn_pools
+            game_round, team_red, "red", md.spawn_cells, md.zone_data, md.spawn_pools
         )
         blue_players = self._initialize_players(
-            game_round, team_blue, "blue", spawn_cells, zone_data, team_spawn_pools
+            game_round, team_blue, "blue", md.spawn_cells, md.zone_data, md.spawn_pools
         )
 
         # Simulate the round (pass game_round so events can be recorded)
         movement_ctx = ResourceBasedSimulator._build_movement_ctx(
-            zone_data,
-            spawn_cells,
-            sight_data,
-            base_sight_data,
-            cell_ranking,
-            strong_spots,
-            wall_meta,
-            team_spawn_pools,
-            elevation_grid,
+            md.zone_data,
+            md.spawn_cells,
+            md.sight_data,
+            md.base_sight_data,
+            md.cell_ranking,
+            md.strong_spots,
+            md.wall_meta,
+            md.spawn_pools,
+            md.elevation_grid,
         )
         round_result = self._simulate_round_combat(
             game_round, red_players, blue_players, movement_ctx=movement_ctx
@@ -198,7 +204,13 @@ class ResourceBasedSimulator:
         base sight line configs.
         """
         if arena_map is None:
-            return None, {}, None, None, {}, [], [], {}, {}, None
+            return MapData(
+                zone_size=None,
+                spawn_cells={},
+                zone_data=None,
+                sight_data=None,
+                base_sight_data={},
+            )
 
         config = arena_map.latest_confirmed_config()
         if config is None:
@@ -273,17 +285,17 @@ class ResourceBasedSimulator:
                 if pool:
                     spawn_pools[color] = [tuple(rc) for rc in pool]
 
-        return (
-            zone_size,
-            spawn_cells,
-            zone_grid,
-            sight_data,
-            base_sight_data,
-            cell_ranking,
-            strong_spots,
-            wall_meta,
-            spawn_pools,
-            elevation_grid,
+        return MapData(
+            zone_size=zone_size,
+            spawn_cells=spawn_cells,
+            zone_data=zone_grid,
+            sight_data=sight_data,
+            base_sight_data=base_sight_data,
+            cell_ranking=cell_ranking,
+            strong_spots=strong_spots,
+            wall_meta=wall_meta,
+            spawn_pools=spawn_pools,
+            elevation_grid=elevation_grid,
         )
 
     @staticmethod
@@ -2057,28 +2069,17 @@ class BatchSimulator:
 
         movement_ctx = None
         if arena_map is not None:
-            (
-                _,
-                spawn_cells,
-                zone_data,
-                sight_data,
-                base_sight_data,
-                cell_ranking,
-                strong_spots,
-                wall_meta,
-                team_spawn_pools,
-                elevation_grid,
-            ) = ResourceBasedSimulator._resolve_map_data(arena_map)
+            md = ResourceBasedSimulator._resolve_map_data(arena_map)
             movement_ctx = ResourceBasedSimulator._build_movement_ctx(
-                zone_data,
-                spawn_cells,
-                sight_data,
-                base_sight_data,
-                cell_ranking,
-                strong_spots,
-                wall_meta,
-                team_spawn_pools,
-                elevation_grid,
+                md.zone_data,
+                md.spawn_cells,
+                md.sight_data,
+                md.base_sight_data,
+                md.cell_ranking,
+                md.strong_spots,
+                md.wall_meta,
+                md.spawn_pools,
+                md.elevation_grid,
             )
 
         red_wins = blue_wins = ties = 0

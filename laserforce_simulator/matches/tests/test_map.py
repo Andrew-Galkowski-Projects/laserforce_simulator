@@ -151,30 +151,17 @@ class TestMap01CellGrid:
         assert ResourceBasedSimulator._zone_from_cell(1, 2, spawn_cells) == 1
 
     def test_resolve_map_data_returns_spawn_cells_and_zone_data(self):
-        """_resolve_map_data returns 10-tuple including wall_meta, spawn_pools, and elevation_grid."""
+        """_resolve_map_data returns MapData with named fields."""
         arena_map = self._make_arena_map("ResolveTest")
         sim = ResourceBasedSimulator()
-        (
-            zone_size,
-            spawn_cells,
-            zone_grid,
-            sight_data,
-            base_sight_data,
-            cell_ranking,
-            strong_spots,
-            wall_meta,
-            spawn_pools,
-            elevation_grid,
-        ) = sim._resolve_map_data(arena_map)
+        md = sim._resolve_map_data(arena_map)
 
-        assert zone_size == 50
-        assert spawn_cells["red"] == (1, 0)
-        assert spawn_cells["blue"] == (2, 3)
-        assert zone_grid[1][0] == 2  # red zone cell value
-        assert isinstance(
-            sight_data, dict
-        )  # sight_data returned as frozenset-valued dict
-        assert isinstance(base_sight_data, dict)
+        assert md.zone_size == 50
+        assert md.spawn_cells["red"] == (1, 0)
+        assert md.spawn_cells["blue"] == (2, 3)
+        assert md.zone_data[1][0] == 2  # red zone cell value
+        assert isinstance(md.sight_data, dict)
+        assert isinstance(md.base_sight_data, dict)
 
     def test_resolve_map_data_unwraps_dict_zone_data(self):
         """_resolve_map_data unwraps the production dict format {"zones": [...], "blocked_edges": {...}}."""
@@ -212,8 +199,7 @@ class TestMap01CellGrid:
             arena_map=arena_map, base_type="red", zone_size=50, visible_cells=[]
         )
 
-        _, _, zone_grid, *_ = ResourceBasedSimulator._resolve_map_data(arena_map)
-        assert zone_grid == raw_zones
+        assert ResourceBasedSimulator._resolve_map_data(arena_map).zone_data == raw_zones
 
     def test_initial_spawn_zone_derived_from_zone_data(self):
         """Players' starting zone_fallback is derived from zone_data at spawn — tested at init."""
@@ -261,13 +247,13 @@ class TestMap01CellGrid:
             zone_size=50,
         )
         sim = ResourceBasedSimulator()
-        _, spawn_cells, zone_data, *_ = sim._resolve_map_data(arena_map)
+        md = sim._resolve_map_data(arena_map)
 
         red_states = sim._initialize_players(
-            gr, team_red, "red", spawn_cells, zone_data
+            gr, team_red, "red", md.spawn_cells, md.zone_data
         )
         blue_states = sim._initialize_players(
-            gr, team_blue, "blue", spawn_cells, zone_data
+            gr, team_blue, "blue", md.spawn_cells, md.zone_data
         )
 
         # Red spawn cell (0,0): zone_data[0][0]=2 → zone 0 (red_zone)
@@ -856,9 +842,9 @@ class TestMap03DBIntegration:
         ), f"Expected no tags across the wall, but got {len(tag_events)}"
 
     def test_resolve_map_data_returns_sight_data(self):
-        """_resolve_map_data 4th return value is a dict of frozensets."""
+        """_resolve_map_data sight_data field is a dict of frozensets."""
         arena_map = self._make_map_with_wall()
-        _, _, _, sight_data, *_ = ResourceBasedSimulator._resolve_map_data(arena_map)
+        sight_data = ResourceBasedSimulator._resolve_map_data(arena_map).sight_data
 
         assert isinstance(sight_data, dict)
         # Each value should be a frozenset
@@ -1118,11 +1104,9 @@ class TestMap04DBIntegration:
             )
 
     def test_resolve_map_data_returns_base_sight_data(self):
-        """_resolve_map_data 5th return value is a dict of frozensets keyed by base_type."""
+        """_resolve_map_data base_sight_data field is a dict of frozensets keyed by base_type."""
         arena_map = self._make_base_map("ResolveBSD")
-        _, _, _, _, base_sight_data, *_ = ResourceBasedSimulator._resolve_map_data(
-            arena_map
-        )
+        base_sight_data = ResourceBasedSimulator._resolve_map_data(arena_map).base_sight_data
 
         assert isinstance(base_sight_data, dict)
         assert "red" in base_sight_data
@@ -1136,14 +1120,12 @@ class TestMap04DBIntegration:
     def test_base_sight_data_included_in_movement_ctx(self):
         """_build_movement_ctx includes base_sight_data from _resolve_map_data."""
         arena_map = self._make_base_map("CtxBSD")
-        _, spawn_cells, zone_data, sight_data, base_sight_data, *_ = (
-            ResourceBasedSimulator._resolve_map_data(arena_map)
-        )
+        md = ResourceBasedSimulator._resolve_map_data(arena_map)
         ctx = ResourceBasedSimulator._build_movement_ctx(
-            zone_data, spawn_cells, sight_data, base_sight_data
+            md.zone_data, md.spawn_cells, md.sight_data, md.base_sight_data
         )
         assert "base_sight_data" in ctx
-        assert ctx["base_sight_data"] is base_sight_data
+        assert ctx["base_sight_data"] is md.base_sight_data
 
 
 # ---------------------------------------------------------------------------
@@ -1551,36 +1533,22 @@ class TestMap07DBIntegration:
         return arena_map
 
     def test_wall_meta_round_trip_through_resolve_map_data(self):
-        """wall_meta saved in zone_data JSON is returned as 8th element by _resolve_map_data."""
+        """wall_meta field from _resolve_map_data reflects zone_data JSON."""
         arena_map = self._make_windowed_map("WallMetaRoundTrip")
-        _, _, _, _, _, _, _, wall_meta, _, _ = ResourceBasedSimulator._resolve_map_data(
-            arena_map
-        )
-        assert wall_meta == {"0,1": {"facing": "E"}}
+        assert ResourceBasedSimulator._resolve_map_data(arena_map).wall_meta == {"0,1": {"facing": "E"}}
 
     def test_wall_meta_present_in_movement_ctx(self):
         """_build_movement_ctx exposes wall_meta key from resolved map data."""
         arena_map = self._make_windowed_map("WallMetaCtx")
-        (
-            _,
-            spawn_cells,
-            zone_data,
-            sight_data,
-            base_sight_data,
-            cell_ranking,
-            strong_spots,
-            wall_meta,
-            _spawn_pools,
-            _elevation_grid,
-        ) = ResourceBasedSimulator._resolve_map_data(arena_map)
+        md = ResourceBasedSimulator._resolve_map_data(arena_map)
         ctx = ResourceBasedSimulator._build_movement_ctx(
-            zone_data,
-            spawn_cells,
-            sight_data,
-            base_sight_data,
-            cell_ranking,
-            strong_spots,
-            wall_meta,
+            md.zone_data,
+            md.spawn_cells,
+            md.sight_data,
+            md.base_sight_data,
+            md.cell_ranking,
+            md.strong_spots,
+            md.wall_meta,
         )
         assert ctx["wall_meta"] == {"0,1": {"facing": "E"}}
 
