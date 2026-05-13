@@ -12,6 +12,8 @@ The `core` app provides a 2D arena map importer and editor used to configure map
 - **`MapCellRankingConfig`**: `ranked_cells` — all passable cells sorted by LOS count descending (`[[row, col], ...]`). Auto-computed when sight lines are saved. Used by Scouts to navigate toward high-visibility positions and by Medic/Ammo to find sheltered vs exposed positions near the allied Heavy. Keyed per (map, zone_size).
 - **`HeavyStrongSpotsConfig`**: `cells` — top ~25% of cells by LOS count, representing strategically strong defensive positions for Heavies (`[[row, col], ...]`). Auto-seeded when sight lines are first computed; user-overridable via the map editor. Shared by both team colours (each Heavy picks the nearest spot). Keyed per (map, zone_size).
 
+**Spawn points (MAP-08):** `MapZoneConfig.zone_data` also stores `red_spawn` and `blue_spawn` keys — each a list of `[row, col]` cells representing valid player spawn locations near the respective team's base. Auto-generated when sight lines are saved: all passable cells within Manhattan distance ≤ 5 of the base cell are collected and split into two sub-pools (closer vs farther from the enemy base) for role-aware assignment. The user can override spawn cells in the map editor (painting cells onto a spawn overlay) and save via the existing Save button; manual overrides replace the auto-generated list for the affected team side. No migration is required — spawn data is stored inline in the existing `zone_data` JSON field.
+
 ## Map Processing (`core/map_processing.py`)
 
 **`detect_zones(image_path, cell_size)`** — classifies each grid cell:
@@ -33,11 +35,13 @@ The `core` app provides a 2D arena map importer and editor used to configure map
 
 **`compute_high_los_ranking(sight_data)`** — returns all passable cells as `[[row, col], ...]` sorted by LOS count descending (most-visible cell first). Called automatically after sight line saves/computes to populate `MapCellRankingConfig`. The top 25% of this list seeds `HeavyStrongSpotsConfig`.
 
+**`compute_spawn_cells(zone_grid, base_cells, max_distance=5)`** — MAP-08. Returns `{"red": [[r,c],...], "blue": [[r,c],...]}` — all passable floor cells (value 1) within Manhattan distance ≤ `max_distance` of each team's base cell. Called by `_update_spawn_cells_in_zone_data` after every sight-line save or compute; results are stored inline in `MapZoneConfig.zone_data` as `red_spawn`/`blue_spawn`.
+
 ## Map Editor UI (`templates/maps/map_editor.html`)
 
 Two modes toggled in the top bar:
 
-**Zones & Bases mode**: zone grid overlay on B&W processed image. Click base-type buttons (Red/Blue/Neutral 1–4) then click a cell to place. Clicking the same cell again removes it. Wall brush buttons (None, Low Wall, Windowed Wall, High Wall, Floor) let the user paint cell types 4/5/0/1 directly onto the grid. When Windowed Wall is selected, a direction picker (N/S/E/W) sets the aperture facing stored in `wall_meta`. "Save Configuration" POSTs `zone_size`, base pixel positions, the full `zones` grid, and (when non-empty) `wall_meta`. On zone-size change, `wallMeta` is reset and a console warning is emitted if unsaved windowed-wall placements would be discarded.
+**Zones & Bases mode**: zone grid overlay on B&W processed image. Click base-type buttons (Red/Blue/Neutral 1–4) then click a cell to place. Clicking the same cell again removes it. Wall brush buttons (None, Low Wall, Windowed Wall, High Wall, Floor) let the user paint cell types 4/5/0/1 directly onto the grid. When Windowed Wall is selected, a direction picker (N/S/E/W) sets the aperture facing stored in `wall_meta`. Spawn brush buttons (None, Red Spawn, Blue Spawn, Erase Spawn) overlay semi-transparent colored squares on spawn cells; activating a spawn brush dearms the wall and base brushes. Spawn cells auto-load from the server on zone-size selection and are included in the Save payload only when the user has manually edited them (`spawnEdited` flag). "Save Configuration" POSTs `zone_size`, base pixel positions, the full `zones` grid, and (when non-empty) `wall_meta`; additionally sends `red_spawn`/`blue_spawn` arrays when user-edited. On zone-size change, `wallMeta` and spawn cell sets are both reset with a console warning if unsaved placements are discarded.
 
 **Sight Lines mode**:
 - *Zone view*: click a cell (highlights yellow) to see its visible cells (green) and blocked cells (faint red). Click any cell to toggle its LOS link with the selected cell.
@@ -60,6 +64,7 @@ Two modes toggled in the top bar:
 /maps/<id>/sight-lines/save/        → POST: save sight lines (batched)
 /maps/<id>/strong-spots/            → GET: current HeavyStrongSpotsConfig cells (?zone_size=)
 /maps/<id>/strong-spots/save/       → POST: persist user-edited heavy strong spots
+/maps/<id>/spawn-cells/             → GET: red_spawn/blue_spawn lists from confirmed zone_data (no zone_size param — data is per-config)
 ```
 
 ## Storage Backend (`core/views.py`)

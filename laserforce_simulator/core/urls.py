@@ -32,4 +32,5 @@ urlpatterns = [
         views.save_strong_spots,
         name="save_strong_spots",
     ),
+    path("<int:map_id>/spawn-cells/", views.get_spawn_cells, name="get_spawn_cells"),
 ]

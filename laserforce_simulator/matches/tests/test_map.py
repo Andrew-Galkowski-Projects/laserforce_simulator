@@ -151,7 +151,7 @@ class TestMap01CellGrid:
         assert ResourceBasedSimulator._zone_from_cell(1, 2, spawn_cells) == 1
 
     def test_resolve_map_data_returns_spawn_cells_and_zone_data(self):
-        """_resolve_map_data returns 8-tuple including wall_meta."""
+        """_resolve_map_data returns 9-tuple including wall_meta and spawn_pools."""
         arena_map = self._make_arena_map("ResolveTest")
         sim = ResourceBasedSimulator()
         (
@@ -163,6 +163,7 @@ class TestMap01CellGrid:
             cell_ranking,
             strong_spots,
             wall_meta,
+            spawn_pools,
         ) = sim._resolve_map_data(arena_map)
 
         assert zone_size == 50
@@ -1514,7 +1515,7 @@ class TestMap07DBIntegration:
     def test_wall_meta_round_trip_through_resolve_map_data(self):
         """wall_meta saved in zone_data JSON is returned as 8th element by _resolve_map_data."""
         arena_map = self._make_windowed_map("WallMetaRoundTrip")
-        _, _, _, _, _, _, _, wall_meta = ResourceBasedSimulator._resolve_map_data(
+        _, _, _, _, _, _, _, wall_meta, _ = ResourceBasedSimulator._resolve_map_data(
             arena_map
         )
         assert wall_meta == {"0,1": {"facing": "E"}}
@@ -1531,6 +1532,7 @@ class TestMap07DBIntegration:
             cell_ranking,
             strong_spots,
             wall_meta,
+            _spawn_pools,
         ) = ResourceBasedSimulator._resolve_map_data(arena_map)
         ctx = ResourceBasedSimulator._build_movement_ctx(
             zone_data,
@@ -1542,3 +1544,457 @@ class TestMap07DBIntegration:
             wall_meta,
         )
         assert ctx["wall_meta"] == {"0,1": {"facing": "E"}}
+
+
+# ---------------------------------------------------------------------------
+# MAP-08 — Map-based spawn points
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestMap08SpawnPoints:
+    """Unit + integration tests for MAP-08: role-aware spawn cell assignment."""
+
+    # ------------------------------------------------------------------
+    # Shared map factory helpers
+    # ------------------------------------------------------------------
+
+    def _make_spawn_map(self, name: str, zone_size: int = 50):
+        """5×5 all-floor map with confirmed zone config, base configs, and
+        sight lines.  After this helper returns, the map does NOT yet have
+        red_spawn/blue_spawn in zone_data — those are added by the
+        save_sight_lines view / auto-generation logic under test.
+        """
+        from core.models import (
+            ArenaMap,
+            BaseSightLineConfig,
+            MapBaseConfig,
+            MapZoneConfig,
+            SightLineConfig,
+        )
+        from core.map_processing import compute_sight_lines
+
+        rows, cols = 5, 5
+        zone_data = [[1] * cols for _ in range(rows)]
+        arena_map = ArenaMap.objects.create(
+            name=name, img_width=cols * zone_size, img_height=rows * zone_size
+        )
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=zone_size,
+            zone_data=zone_data,
+            confirmed=True,
+        )
+        # Red base at top-left corner cell (0,0), blue base at bottom-right (4,4)
+        MapBaseConfig.objects.create(
+            arena_map=arena_map,
+            base_type="red",
+            x_px=zone_size // 2,
+            y_px=zone_size // 2,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map,
+            base_type="blue",
+            x_px=cols * zone_size - zone_size // 2,
+            y_px=rows * zone_size - zone_size // 2,
+        )
+        sight_data = compute_sight_lines(zone_data)
+        SightLineConfig.objects.create(
+            arena_map=arena_map, zone_size=zone_size, sight_data=sight_data
+        )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="red", zone_size=zone_size, visible_cells=[]
+        )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="blue", zone_size=zone_size, visible_cells=[]
+        )
+        return arena_map
+
+    def _make_spawn_map_with_spawn_data(self, name: str, zone_size: int = 50):
+        """Same as _make_spawn_map but also injects red_spawn/blue_spawn into
+        zone_data so tests that need pre-existing spawn lists can use it.
+
+        Red spawn cells: (0,0), (0,1), (1,0), (0,2), (1,1)  [Manhattan ≤5 of (0,0)]
+        Blue spawn cells: (4,4), (4,3), (3,4), (4,2), (3,3)  [Manhattan ≤5 of (4,4)]
+        """
+        from core.models import MapZoneConfig
+
+        arena_map = self._make_spawn_map(name, zone_size)
+        config = arena_map.latest_confirmed_config()
+        raw = config.zone_data
+        zone_grid = raw["zones"] if isinstance(raw, dict) else raw
+
+        red_spawn = [[0, 0], [0, 1], [1, 0], [0, 2], [1, 1]]
+        blue_spawn = [[4, 4], [4, 3], [3, 4], [4, 2], [3, 3]]
+
+        new_data = {
+            "zones": zone_grid,
+            "blocked_edges": {},
+            "red_spawn": red_spawn,
+            "blue_spawn": blue_spawn,
+        }
+        config.zone_data = new_data
+        config.save(update_fields=["zone_data"])
+        return arena_map
+
+    # ------------------------------------------------------------------
+    # Test 1 — auto-generation writes red_spawn/blue_spawn to zone_data
+    # ------------------------------------------------------------------
+
+    def test_spawn_auto_generated(self, client):
+        """After save_sight_lines is POSTed, zone_data contains red_spawn and
+        blue_spawn with ≥1 cell each, all within Manhattan dist ≤5 of the
+        respective base cell."""
+        import json
+
+        from core.models import ArenaMap, MapBaseConfig, MapZoneConfig
+        from core.map_processing import compute_sight_lines
+
+        zone_size = 50
+        rows, cols = 5, 5
+        zone_data = [[1] * cols for _ in range(rows)]
+        arena_map = ArenaMap.objects.create(
+            name="AutoSpawnMap", img_width=cols * zone_size, img_height=rows * zone_size
+        )
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=zone_size,
+            zone_data=zone_data,
+            confirmed=True,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map,
+            base_type="red",
+            x_px=zone_size // 2,
+            y_px=zone_size // 2,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map,
+            base_type="blue",
+            x_px=cols * zone_size - zone_size // 2,
+            y_px=rows * zone_size - zone_size // 2,
+        )
+        sight_data = compute_sight_lines(zone_data)
+
+        response = client.post(
+            f"/maps/{arena_map.pk}/sight-lines/save/",
+            data=json.dumps(
+                {
+                    "zone_size": zone_size,
+                    "sight_data": sight_data,
+                    "base_sights": {"red": [], "blue": []},
+                    "replace": True,
+                }
+            ),
+            content_type="application/json",
+        )
+        assert response.status_code == 200, response.content
+
+        config = arena_map.latest_confirmed_config()
+        stored = config.zone_data
+        # Production code must update zone_data with spawn lists
+        assert isinstance(
+            stored, dict
+        ), "zone_data should be a dict after sight-line save"
+        assert (
+            "red_spawn" in stored
+        ), "zone_data must contain 'red_spawn' after sight-line save"
+        assert (
+            "blue_spawn" in stored
+        ), "zone_data must contain 'blue_spawn' after sight-line save"
+        assert len(stored["red_spawn"]) >= 1, "red_spawn must have at least one cell"
+        assert len(stored["blue_spawn"]) >= 1, "blue_spawn must have at least one cell"
+
+        # Red base cell is (0,0); blue base cell is (4,4)
+        red_base = (0, 0)
+        blue_base = (4, 4)
+        for r, c in stored["red_spawn"]:
+            dist = abs(r - red_base[0]) + abs(c - red_base[1])
+            assert (
+                dist <= 5
+            ), f"red_spawn cell ({r},{c}) is dist {dist} from base — must be ≤5"
+        for r, c in stored["blue_spawn"]:
+            dist = abs(r - blue_base[0]) + abs(c - blue_base[1])
+            assert (
+                dist <= 5
+            ), f"blue_spawn cell ({r},{c}) is dist {dist} from base — must be ≤5"
+
+    # ------------------------------------------------------------------
+    # Test 2 — all auto-generated spawn cells are passable (value 1)
+    # ------------------------------------------------------------------
+
+    def test_spawn_cells_are_passable(self):
+        """All cells in red_spawn/blue_spawn have value 1 in the zone grid
+        (no walls or impassable terrain)."""
+        arena_map = self._make_spawn_map_with_spawn_data("PassableSpawn")
+        config = arena_map.latest_confirmed_config()
+        stored = config.zone_data
+        assert isinstance(stored, dict)
+        zone_grid = stored.get("zones") or stored
+
+        for r, c in stored["red_spawn"]:
+            assert (
+                zone_grid[r][c] == 1
+            ), f"red_spawn cell ({r},{c}) has zone value {zone_grid[r][c]} — must be passable (1)"
+        for r, c in stored["blue_spawn"]:
+            assert (
+                zone_grid[r][c] == 1
+            ), f"blue_spawn cell ({r},{c}) has zone value {zone_grid[r][c]} — must be passable (1)"
+
+    # ------------------------------------------------------------------
+    # Test 3 — role-aware spawn assignment (commander/heavy closer to enemy)
+    # ------------------------------------------------------------------
+
+    def test_spawn_assignment_role_split(self):  # no DB — pure assignment logic
+        """Commander and Heavy are assigned cells closer to the enemy base than
+        Medic and Ammo players at spawn time (checked via _build_spawn_assignments
+        directly — final cell positions change during simulation)."""
+        # Roster order from active_roster: commander(0), heavy(1), scout(2),
+        # scout(3), medic(4), ammo(5)
+        roster_roles = ["commander", "heavy", "scout", "scout", "medic", "ammo"]
+
+        # Spawn pool from _make_spawn_map_with_spawn_data: red base (0,0), blue base (4,4)
+        team_spawn_pools = {
+            "red": [(0, 0), (0, 1), (1, 0), (0, 2), (1, 1)],
+        }
+        spawn_cells = {"red": (0, 0), "blue": (4, 4)}
+        enemy_base = (4, 4)
+
+        assignments = ResourceBasedSimulator._build_spawn_assignments(
+            roster_roles, "red", spawn_cells, team_spawn_pools
+        )
+
+        def dist(cell):
+            return abs(cell[0] - enemy_base[0]) + abs(cell[1] - enemy_base[1])
+
+        cmd_cell = assignments[0]
+        hvy_cell = assignments[1]
+        med_cell = assignments[4]
+        ammo_cell = assignments[5]
+
+        assert cmd_cell is not None and med_cell is not None and ammo_cell is not None
+        assert hvy_cell is not None
+
+        cmd_dist = dist(cmd_cell)
+        hvy_dist = dist(hvy_cell)
+        med_dist = dist(med_cell)
+        ammo_dist = dist(ammo_cell)
+
+        assert cmd_dist < med_dist or cmd_dist < ammo_dist, (
+            f"Commander ({cmd_dist}) should be closer to enemy base than Medic ({med_dist}) "
+            f"or Ammo ({ammo_dist})"
+        )
+        assert hvy_dist < med_dist or hvy_dist < ammo_dist, (
+            f"Heavy ({hvy_dist}) should be closer to enemy base than Medic ({med_dist}) "
+            f"or Ammo ({ammo_dist})"
+        )
+
+    # ------------------------------------------------------------------
+    # Test 4 — no replacement (no two players share a cell at start)
+    # ------------------------------------------------------------------
+
+    def test_spawn_no_replacement(self):  # no DB — pure assignment logic
+        """No two players on the same team are assigned the same spawn cell when
+        enough distinct cells are available (checked at assignment time, not after
+        simulation — final positions diverge during movement)."""
+        # 5 distinct cells for 6 players: scout2 overflows to base (0,0) which
+        # commander already drew from the pool, so scout2 gets None (3-zone).
+        roster_roles = ["commander", "heavy", "scout", "scout", "medic", "ammo"]
+        team_spawn_pools = {
+            "red": [(0, 0), (0, 1), (1, 0), (0, 2), (1, 1)],
+            "blue": [(4, 4), (4, 3), (3, 4), (4, 2), (3, 3)],
+        }
+        spawn_cells = {"red": (0, 0), "blue": (4, 4)}
+
+        for color in ("red", "blue"):
+            assignments = ResourceBasedSimulator._build_spawn_assignments(
+                roster_roles, color, spawn_cells, team_spawn_pools
+            )
+            cells = [cell for cell in assignments.values() if cell is not None]
+            assert len(cells) == len(
+                set(cells)
+            ), f"{color} team has duplicate spawn assignments: {cells}"
+
+    # ------------------------------------------------------------------
+    # Test 5 — overflow players fall back to the base cell
+    # ------------------------------------------------------------------
+
+    def test_spawn_overflow_uses_base_cell(self):
+        """When there are fewer spawn cells than players, overflow players are
+        assigned the base cell (checked at assignment time via _build_spawn_assignments
+        — final positions change during simulation)."""
+        # 1 spawn cell per team (non-base), 6 players → 5 overflow each.
+        # Pool cell (0,1) is not the base (0,0), so overflow → base (0,0).
+        roster_roles = ["commander", "heavy", "scout", "scout", "medic", "ammo"]
+        team_spawn_pools = {
+            "red": [(0, 1)],  # one non-base cell near red base (0,0)
+            "blue": [(4, 3)],  # one non-base cell near blue base (4,4)
+        }
+        spawn_cells = {"red": (0, 0), "blue": (4, 4)}
+
+        for color in ("red", "blue"):
+            base_cell = spawn_cells[color]
+            assignments = ResourceBasedSimulator._build_spawn_assignments(
+                roster_roles, color, spawn_cells, team_spawn_pools
+            )
+            at_base = sum(1 for cell in assignments.values() if cell == base_cell)
+            assert at_base >= 4, (
+                f"Expected ≥4 {color} players assigned to base cell {base_cell}, got {at_base}. "
+                f"assignments={assignments}"
+            )
+
+    # ------------------------------------------------------------------
+    # Test 6 — no map → cell_row/cell_col remain None (existing fallback)
+    # ------------------------------------------------------------------
+
+    def test_spawn_fallback_no_map(self):
+        """When GameRound.arena_map is None, players have cell_row=None and
+        cell_col=None (existing MAP-01 fallback behavior is preserved)."""
+        team_red, _ = make_team_with_slots("FbSpR")
+        team_blue, _ = make_team_with_slots("FbSpB")
+
+        game_round = ResourceBasedSimulator().simulate_single_round_detailed(
+            team_red, team_blue
+        )
+
+        assert game_round.arena_map is None
+        for state in game_round.player_states.all():
+            assert (
+                state.cell_row is None
+            ), f"Expected cell_row=None for no-map round, got {state.cell_row}"
+            assert (
+                state.cell_col is None
+            ), f"Expected cell_col=None for no-map round, got {state.cell_col}"
+
+
+# ---------------------------------------------------------------------------
+# MAP-08 — DB integration: zone_data round-trip with spawn cells
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestMap08DBIntegration:
+    """DB-backed MAP-08 test: save_sight_lines persists spawn lists in zone_data."""
+
+    def test_zone_data_roundtrip(self, client):
+        """Save sight lines via the view; read back MapZoneConfig.zone_data and
+        confirm red_spawn and blue_spawn are present and non-empty."""
+        import json
+
+        from core.models import ArenaMap, MapBaseConfig, MapZoneConfig
+        from core.map_processing import compute_sight_lines
+
+        zone_size = 50
+        rows, cols = 4, 4
+        # Small 4×4 floor grid — enough cells within dist ≤5 of each corner base
+        zone_data = [[1] * cols for _ in range(rows)]
+        arena_map = ArenaMap.objects.create(
+            name="SpawnRoundTrip",
+            img_width=cols * zone_size,
+            img_height=rows * zone_size,
+        )
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=zone_size,
+            zone_data=zone_data,
+            confirmed=True,
+        )
+        # Red base at (0,0), blue base at (3,3)
+        MapBaseConfig.objects.create(
+            arena_map=arena_map,
+            base_type="red",
+            x_px=zone_size // 2,
+            y_px=zone_size // 2,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map,
+            base_type="blue",
+            x_px=cols * zone_size - zone_size // 2,
+            y_px=rows * zone_size - zone_size // 2,
+        )
+        sight_data = compute_sight_lines(zone_data)
+
+        response = client.post(
+            f"/maps/{arena_map.pk}/sight-lines/save/",
+            data=json.dumps(
+                {
+                    "zone_size": zone_size,
+                    "sight_data": sight_data,
+                    "base_sights": {"red": [], "blue": []},
+                    "replace": True,
+                }
+            ),
+            content_type="application/json",
+        )
+        assert response.status_code == 200, response.content
+
+        # Re-fetch config from DB (not cached ORM instance)
+        config = MapZoneConfig.objects.get(
+            arena_map=arena_map, zone_size=zone_size, confirmed=True
+        )
+        stored = config.zone_data
+
+        assert isinstance(
+            stored, dict
+        ), f"zone_data should be a dict after sight-line save, got {type(stored)}"
+        assert (
+            "red_spawn" in stored
+        ), "red_spawn key must be present after sight-line save"
+        assert (
+            "blue_spawn" in stored
+        ), "blue_spawn key must be present after sight-line save"
+        assert len(stored["red_spawn"]) >= 1, "red_spawn must be non-empty"
+        assert len(stored["blue_spawn"]) >= 1, "blue_spawn must be non-empty"
+
+    def test_get_spawn_cells_view(self, client):
+        """GET /maps/<id>/spawn-cells/ returns stored spawn lists from zone_data."""
+        from core.models import ArenaMap, MapBaseConfig, MapZoneConfig
+
+        zone_size = 50
+        rows, cols = 4, 4
+        zone_data = [[1] * cols for _ in range(rows)]
+        arena_map = ArenaMap.objects.create(
+            name="SpawnViewTest",
+            img_width=cols * zone_size,
+            img_height=rows * zone_size,
+        )
+        red_spawn = [[0, 0], [0, 1]]
+        blue_spawn = [[3, 3], [3, 2]]
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=zone_size,
+            zone_data={
+                "zones": zone_data,
+                "blocked_edges": {},
+                "red_spawn": red_spawn,
+                "blue_spawn": blue_spawn,
+            },
+            confirmed=True,
+        )
+
+        response = client.get(f"/maps/{arena_map.pk}/spawn-cells/")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["red_spawn"] == red_spawn
+        assert data["blue_spawn"] == blue_spawn
+
+    def test_get_spawn_cells_view_empty_when_no_spawn_data(self, client):
+        """GET /maps/<id>/spawn-cells/ returns empty lists when zone_data has none."""
+        from core.models import ArenaMap, MapZoneConfig
+
+        zone_size = 50
+        arena_map = ArenaMap.objects.create(
+            name="SpawnViewEmpty", img_width=200, img_height=200
+        )
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=zone_size,
+            zone_data={"zones": [[1, 1], [1, 1]], "blocked_edges": {}},
+            confirmed=True,
+        )
+
+        response = client.get(f"/maps/{arena_map.pk}/spawn-cells/")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["red_spawn"] == []
+        assert data["blue_spawn"] == []

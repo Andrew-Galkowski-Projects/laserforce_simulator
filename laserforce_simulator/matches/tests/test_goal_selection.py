@@ -443,7 +443,7 @@ class TestMap05DBIntegration:
     def test_resolve_map_data_returns_cell_ranking(self):
         """_resolve_map_data 6th element is the ranked cell list."""
         arena_map = self._make_full_map("ResolveCellRank")
-        _, _, _, _, _, cell_ranking, _, _ = ResourceBasedSimulator._resolve_map_data(
+        _, _, _, _, _, cell_ranking, _, _, _ = ResourceBasedSimulator._resolve_map_data(
             arena_map
         )
 
@@ -455,7 +455,7 @@ class TestMap05DBIntegration:
     def test_resolve_map_data_returns_strong_spots(self):
         """_resolve_map_data 7th element is the heavy strong spots list."""
         arena_map = self._make_full_map("ResolveStrongSpots")
-        _, _, _, _, _, _, strong_spots, _ = ResourceBasedSimulator._resolve_map_data(
+        _, _, _, _, _, _, strong_spots, _, _ = ResourceBasedSimulator._resolve_map_data(
             arena_map
         )
 
@@ -465,7 +465,7 @@ class TestMap05DBIntegration:
     def test_resolve_map_data_returns_empty_lists_when_configs_absent(self):
         """_resolve_map_data returns [] for cell_ranking and strong_spots when configs missing."""
         arena_map = self._make_map_without_map05_configs("AbsentConfigs")
-        _, _, _, _, _, cell_ranking, strong_spots, _ = (
+        _, _, _, _, _, cell_ranking, strong_spots, _, _ = (
             ResourceBasedSimulator._resolve_map_data(arena_map)
         )
 
@@ -484,6 +484,7 @@ class TestMap05DBIntegration:
             cell_ranking,
             strong_spots,
             wall_meta,
+            _spawn_pools,
         ) = ResourceBasedSimulator._resolve_map_data(arena_map)
         ctx = ResourceBasedSimulator._build_movement_ctx(
             zone_data,

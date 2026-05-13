@@ -13,6 +13,7 @@ from PIL import Image as PILImage, UnidentifiedImageError
 from .map_processing import (
     compute_high_los_ranking,
     compute_sight_lines,
+    compute_spawn_cells,
     create_processed_image,
     detect_zones,
 )
@@ -194,6 +195,31 @@ def save_zone_config(request, map_id):
         zones = data["zones"]
         blocked_edges = data.get("blocked_edges", {})
 
+    # Carry forward any existing confirmed spawn cells, then apply client overrides.
+    existing_config = arena_map.latest_confirmed_config()
+    existing_zone_data = existing_config.zone_data if existing_config else {}
+    red_spawn_existing = (
+        existing_zone_data.get("red_spawn", [])
+        if isinstance(existing_zone_data, dict)
+        else []
+    )
+    blue_spawn_existing = (
+        existing_zone_data.get("blue_spawn", [])
+        if isinstance(existing_zone_data, dict)
+        else []
+    )
+    # Client may send user-edited spawn overrides (list of [r, c] pairs).
+    client_red_spawn = body.get("red_spawn")
+    client_blue_spawn = body.get("blue_spawn")
+    red_spawn = (
+        client_red_spawn if isinstance(client_red_spawn, list) else red_spawn_existing
+    )
+    blue_spawn = (
+        client_blue_spawn
+        if isinstance(client_blue_spawn, list)
+        else blue_spawn_existing
+    )
+
     MapZoneConfig.objects.filter(arena_map=arena_map, confirmed=True).update(
         confirmed=False
     )
@@ -203,6 +229,10 @@ def save_zone_config(request, map_id):
     }
     if wall_meta:
         zone_data_payload["wall_meta"] = wall_meta
+    if red_spawn:
+        zone_data_payload["red_spawn"] = red_spawn
+    if blue_spawn:
+        zone_data_payload["blue_spawn"] = blue_spawn
     MapZoneConfig.objects.create(
         arena_map=arena_map,
         zone_size=zone_size,
@@ -306,6 +336,8 @@ def compute_sight_lines_view(request, map_id):
         zone_size=zone_size,
         defaults={"cells": ranked[:top_n]},
     )
+
+    _update_spawn_cells_in_zone_data(arena_map, zone_size)
 
     return JsonResponse({"sight_data": sight_data, "zone_size": zone_size})
 
@@ -412,7 +444,75 @@ def save_sight_lines(request, map_id):
                 defaults={"visible_cells": cells},
             )
 
+    # Auto-compute spawn cells whenever sight lines are (re)saved.
+    _update_spawn_cells_in_zone_data(arena_map, zone_size)
+
     return JsonResponse({"status": "ok"})
+
+
+def get_spawn_cells(request, map_id):
+    """Return stored red_spawn / blue_spawn lists for the confirmed zone config.
+
+    Response: {"red_spawn": [[r,c],...], "blue_spawn": [[r,c],...]}
+    Spawn data is stored once per confirmed config (not per zone_size).
+    """
+    arena_map = get_object_or_404(ArenaMap, pk=map_id)
+    config = arena_map.latest_confirmed_config()
+    red_spawn: list = []
+    blue_spawn: list = []
+    if config and isinstance(config.zone_data, dict):
+        raw = config.zone_data
+        red_spawn = raw.get("red_spawn", [])
+        blue_spawn = raw.get("blue_spawn", [])
+
+    return JsonResponse({"red_spawn": red_spawn, "blue_spawn": blue_spawn})
+
+
+def _update_spawn_cells_in_zone_data(arena_map, zone_size: int) -> None:
+    """Auto-compute spawn cells and persist them into the confirmed MapZoneConfig.
+
+    Called after sight lines are computed or saved. Overwrites red_spawn and
+    blue_spawn in zone_data with the freshly computed candidates. User-painted
+    spawn overrides survive only until the next Compute/Save Sight Lines action.
+
+    If base positions are not set, or no confirmed config exists, does nothing.
+    """
+    config = arena_map.latest_confirmed_config()
+    if config is None:
+        return
+
+    base_cfgs = {
+        bc.base_type: bc
+        for bc in MapBaseConfig.objects.filter(
+            arena_map=arena_map, base_type__in=["red", "blue"]
+        )
+    }
+    if "red" not in base_cfgs or "blue" not in base_cfgs:
+        return
+
+    raw = config.zone_data
+    zone_grid = raw["zones"] if isinstance(raw, dict) else raw
+    base_cells = {
+        color: (
+            base_cfgs[color].y_px // zone_size,
+            base_cfgs[color].x_px // zone_size,
+        )
+        for color in ("red", "blue")
+    }
+
+    new_spawns = compute_spawn_cells(zone_grid, base_cells)
+
+    updated = dict(raw) if isinstance(raw, dict) else {"zones": raw}
+    # Only overwrite a side's spawn list when auto-generation produces results
+    # AND that side doesn't already have a user-supplied non-empty list.
+    for color in ("red", "blue"):
+        key = f"{color}_spawn"
+        candidates = new_spawns.get(color, [])
+        if candidates:
+            updated[key] = candidates
+
+    config.zone_data = updated
+    config.save(update_fields=["zone_data"])
 
 
 def get_strong_spots(request, map_id):
