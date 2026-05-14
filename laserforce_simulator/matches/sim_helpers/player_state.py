@@ -25,6 +25,13 @@ class PlayerState:
     final_lives: int
     final_shots: int
     final_special: int = 0
+    decision_making: int = 50
+    stamina: int = 50
+    special_usage: int = 50
+    resupply_efficiency: int = 50
+    resupply_synergy: int = 50
+    teamwork: int = 50
+    communication: int = 50
     final_missiles: int = 0
     shields: int = 1
     player_awareness: int = 50  # 0-100, from Player model
@@ -62,6 +69,10 @@ class PlayerState:
     reaction_shots: int = 0
     last_shot_time: float = -99.0  # transient; tracks shot cooldown enforcement
     last_chosen_action: str = ""  # action chosen in previous tick; guides movement goal
+
+    # stamina tracking (transient — not persisted to DB)
+    stamina_penalty_count: int = 0
+    stamina_next_check_pct: int = 10  # next 10% checkpoint to evaluate
 
     # uptime breakdown in seconds (accumulated each tick)
     seconds_active: int = 0
@@ -141,6 +152,17 @@ class PlayerState:
         return self.is_active_at(second)
 
     @property
+    def stamina_hit_modifier(self) -> float:
+        return max(0.5, 1.0 - 0.05 * self.stamina_penalty_count)
+
+    @property
     def tag_id_key(self) -> str:
         """Common tag-identity accessor used by choose_tag_target in mechanics.py."""
         return self.tag_id
+
+    # ------ Deferred stats (wired in MECH-01) ------
+    # resupply_efficiency: affects request_resupply action weight; doubles speed for Medic/Ammo
+    # resupply_synergy: keeps support pairs together; scales double-resupply chance
+    # teamwork: scales ally-cover behavior weight
+    # communication: % chance to broadcast spotted info to nearby allies
+    # Global broadcasts: nuke activation, score delta every 3 min, medic-under-fire alert

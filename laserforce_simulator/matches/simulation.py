@@ -671,6 +671,7 @@ class ResourceBasedSimulator:
                                 - r_defender.player.survival
                             )
                             * _rx_elev_mod
+                            * r_attacker.stamina_hit_modifier
                         ),
                     ),
                 )
@@ -797,6 +798,7 @@ class ResourceBasedSimulator:
                                 - fu_defender.player.survival
                             )
                             * _fu_elev_mod
+                            * fu_attacker.stamina_hit_modifier
                         ),
                     ),
                 )
@@ -1218,7 +1220,15 @@ class ResourceBasedSimulator:
                 movement_ctx,
             )
             hit_chance = max(
-                10, min(95, int((base_accuracy + accuracy - evasion) * elev_mod))
+                10,
+                min(
+                    95,
+                    int(
+                        (base_accuracy + accuracy - evasion)
+                        * elev_mod
+                        * attacker.stamina_hit_modifier
+                    ),
+                ),
             )
             rolled = random.randint(1, 100)
             hit = rolled < hit_chance
@@ -2270,6 +2280,19 @@ class BatchSimulator:
                 player_awareness=player_model.stat_for_simulation(
                     "player_awareness", role
                 ),
+                decision_making=player_model.stat_for_simulation(
+                    "decision_making", role
+                ),
+                stamina=player_model.stat_for_simulation("stamina", role),
+                special_usage=player_model.stat_for_simulation("special_usage", role),
+                resupply_efficiency=player_model.stat_for_simulation(
+                    "resupply_efficiency", role
+                ),
+                resupply_synergy=player_model.stat_for_simulation(
+                    "resupply_synergy", role
+                ),
+                teamwork=player_model.stat_for_simulation("teamwork", role),
+                communication=player_model.stat_for_simulation("communication", role),
                 starting_lives=resources["lives"],
                 starting_shots=resources["shots"],
                 final_lives=resources["lives"],
@@ -2365,6 +2388,7 @@ class BatchSimulator:
                         int(
                             (70 + r_attacker.accuracy - r_defender.survival)
                             * _rx_elev_mod
+                            * r_attacker.stamina_hit_modifier
                         ),
                     ),
                 )
@@ -2465,6 +2489,7 @@ class BatchSimulator:
                         int(
                             (70 + fu_attacker.accuracy - fu_defender.survival)
                             * _def_fu_elev_mod
+                            * fu_attacker.stamina_hit_modifier
                         ),
                     ),
                 )
@@ -2723,7 +2748,14 @@ class BatchSimulator:
             )
             hit_chance = max(
                 10,
-                min(95, int((70 + attacker.accuracy - defender.survival) * elev_mod)),
+                min(
+                    95,
+                    int(
+                        (70 + attacker.accuracy - defender.survival)
+                        * elev_mod
+                        * attacker.stamina_hit_modifier
+                    ),
+                ),
             )
             hit = random.randint(1, 100) < hit_chance
             outcomes.append(
@@ -2878,6 +2910,7 @@ class BatchSimulator:
                     int(
                         (70 + r_attacker.accuracy - r_defender.survival)
                         * _imm_rx_elev_mod
+                        * r_attacker.stamina_hit_modifier
                     ),
                 ),
             )
@@ -3000,6 +3033,7 @@ class BatchSimulator:
                     int(
                         (70 + fu_attacker.accuracy - fu_defender.survival)
                         * _imm_fu_elev_mod
+                        * fu_attacker.stamina_hit_modifier
                     ),
                 ),
             )

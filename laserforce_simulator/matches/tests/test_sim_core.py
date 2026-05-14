@@ -119,7 +119,9 @@ class TestSimulation:
             "resupply_ally",
             "missile_player",
         ]
-        assert captured["weights"] == [5, 0, 30, 0, 0, 65, 0]
+        # dm=50 (player default) → factor=1.5; max weight 65 (resupply_ally) × 1.5 = 97;
+        # others ÷ 1.5: tag_player 5→3, hide 30→20.
+        assert captured["weights"] == [3, 0, 20, 0, 0, 97, 0]
 
     def test_tag_event_created_when_hit(self):
         simulator = ResourceBasedSimulator()
