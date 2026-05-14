@@ -180,23 +180,40 @@ Map each relevant stat to a weight modifier in `weights.py`. Stats are wired in 
 **Phase 3 (nuke-mechanic-dependent):**
 - `game_awareness` / `player_awareness` — scale reaction to enemy nuke (see MECH-04)
 
+- completed
+- note: `decision_making` applies a linear spread multiplier (`factor = 1 + dm/100`) on the weight vector after role weights are computed — best action × factor, others ÷ factor. `stamina` is evaluated every 10% of round; when `stamina < elapsed_%`, `stamina_penalty_count` increments (stacking −10% movement weight, −5% hit_chance via `stamina_hit_modifier`). `special_usage` scales `use_special` weight delta by `special_usage/50` for all roles. `accuracy`/`survival` confirmed correct (no change). `resupply_efficiency`, `resupply_synergy`, `teamwork`, `communication` have skeleton TODO blocks deferred to MECH-01. New `PlayerState` fields: `decision_making`, `stamina`, `special_usage`, `resupply_efficiency`, `resupply_synergy`, `teamwork`, `communication` (default 50) + `stamina_penalty_count`/`stamina_next_check_pct` transient tracking fields.
+
 ---
 
 ## Phase 3 — Simulation Mechanics
 
 New and corrected mechanics that make the simulator more faithful to SM5 rules and more interesting strategically.
 
-### MECH-01 · Medic/Ammo follow-up combo resupply
-When an ally requests resupply and both a Medic and an Ammo are within LOS of that ally simultaneously,
-the ally receives both a life restore (Medic) and a shot resupply (Ammo) in one interaction.
-This is ally-initiated — the ally moves toward support players and requests resupply; if both are in LOS,
-both resupply simultaneously.
+### MECH-01 · Resupply request action + combo resupply + resupply stat wiring
 
-The weight for seeking resupply is higher when the ally is below threshold on lives OR ammo.
+**request_resupply action (new):** Any non-support player (Scout, Heavy, Commander) can take a
+`request_resupply` action when at least one Medic or Ammo is within LOS. The action's weight
+scales with `resupply_efficiency` (higher stat → stronger pull toward requesting resupply when
+below threshold). Add `request_resupply` to `_CHOICES` / `_ACTION_IDX` in `combat.py`.
 
-Implement as a new action type `combo_resupply`. No bonus points beyond the sum of a standard medic
-resupply + ammo resupply. Track `combo_resupply_count` on `PlayerRoundState`. Create a `GameEvent` of
-type `combo_resupply` with both resource grants logged in `metadata`.
+**Double resupply:** when a player takes `request_resupply` and both a Medic AND an Ammo are in
+LOS simultaneously, both resupply in a single interaction (ally receives lives + shots). Chance of
+a double (when both are present) scales with `resupply_efficiency` of the requestor and
+`resupply_synergy` of the support players. No bonus points beyond the sum of a standard
+medic-resupply + ammo-resupply.
+
+**resupply_efficiency** (requestor stat): scales `request_resupply` action weight; also increases
+the speed at which a Medic/Ammo player resupplies allies who are requesting (priority queue
+re-sorting). When on a Medic/Ammo player, `resupply_efficiency` also scales the double-chance
+when both support types are present.
+
+**resupply_synergy** (Medic/Ammo stat): keeps Medic and Ammo players within LOS of each other
+(scales the movement-goal weight toward the allied support player's cell). Also scales the
+double-resupply chance multiplicatively with the requestor's `resupply_efficiency`.
+
+**GameEvent:** track `combo_resupply_count` on `PlayerRoundState`. Log a `GameEvent` of type
+`combo_resupply` with both resource grants in `metadata`. Single resupply-request outcomes
+log as normal `resupply_ammo` / `resupply_lives` events.
 
 ### MECH-02 · Tag of any entity resets same-target restriction
 After scoring a life against an enemy, the attacker must wait 8 seconds before tagging the same target again.
@@ -223,6 +240,39 @@ check each tick for all active players on the target team:
 Verify and correct the nuke cancellation logic: a nuke must be cancelled if the firing Commander is eliminated 
 during the fuse window (not just at exact timestamps). Write a regression test: Commander fires nuke at T=100, 
 gets tagged at T=103 (within fuse), nuke must not detonate.
+
+### MECH-06 · Player memory system + teamwork/communication stat wiring
+Players have imperfect knowledge of the arena. Replace the current perfect-information model with a
+per-player memory dict that is updated from observable events and degrades when not refreshed.
+
+**Memory sources (what updates a player's memory):**
+- **Direct LOS:** each tick, the player "sees" all enemies and allies in their current LOS and updates
+  their memory entry for each (last known cell + timestamp).
+- **Global broadcasts (all players on both teams hear these):**
+  - Nuke activation: which team fired, fuse duration.
+  - Score update: every 3 minutes, which team is winning and by how many points.
+  - Medic-under-fire alert: when a Medic is hit 2 times within 12 seconds (team-only broadcast).
+- **Ally communication (within ~half the map radius):** when a nearby ally communicates, the player
+  receives that ally's LOS snapshot for visible enemies: e.g. "enemy Commander nuking at cell (r,c)",
+  "enemy Heavy at (r,c) with N shields remaining", "enemy Medic at (r,c)".
+
+**`communication` stat:** probability (0–100 → 0–100%) that a player broadcasts their current LOS
+snapshot to allies within range when taking any action. High `communication` = frequent intel sharing.
+
+**`teamwork` stat:** scales the weight for movement goals that keep the player within LOS of allies
+(not necessarily adjacent — LOS range is sufficient). Specifically:
+- During an active enemy nuke fuse window, high-`teamwork` players bias movement toward staying in
+  LOS of a nuke-threatened ally rather than purely offensive goals.
+- Non-critical ticks: `teamwork` adds a gentle bias toward a high-LOS cell that is also within LOS
+  of at least one ally (overlapping coverage), scaled by the stat.
+
+**Data model:** store memory as a transient dict `{player_tag_id: {"cell": (r,c), "timestamp": s}}`
+on each `PlayerState` / `PlayerRoundState`. No DB columns — memory is never persisted. Memory entries
+older than 30 seconds are treated as stale (player acts on best-guess or last-known position).
+
+**Scope note:** global broadcasts and memory reads replace the current perfect-knowledge ally/enemy
+lookups in `_goal_from_action`, `_goal_from_role`, and the nuke-reaction logic in MECH-04.
+Perfect knowledge is retained only for: same-zone melee (tag/missile resolution), resupply resolution.
 
 ---
 

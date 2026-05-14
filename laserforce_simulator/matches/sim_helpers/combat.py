@@ -28,6 +28,8 @@ from .weights import (
     _get_scout_weights,
     _get_heavy_weights,
     _get_commander_weights,
+    apply_decision_making_spread,
+    check_stamina_penalty,
 )
 
 # Neutral base_types in priority order for capture/reset checks
@@ -239,6 +241,19 @@ def plan_action(
     """
     weights = [70, 30, 0, 0, 0, 0, 0]
 
+    # TODO(MECH-01): request_resupply action — player requests resupply from nearby Medic/Ammo.
+    # resupply_efficiency: scales request_resupply weight and doubles speed for Medic/Ammo.
+    # resupply_synergy: keeps Medic+Ammo together; scales double-resupply chance.
+    # Not wired until MECH-01.
+
+    # TODO(MECH-06): Player memory system — players have imperfect knowledge of enemy positions.
+    # teamwork: scales ally-covering behavior (defend allies during nukes, stay in LOS).
+    # communication: % chance to broadcast spotted enemy positions to nearby teammates.
+    # Memory is updated from: LOS events, global broadcasts (nuke/score/medic alerts).
+    # Not wired until MECH-06.
+
+    check_stamina_penalty(player, second)
+
     if player.role == "medic":
         weights = _get_medic_weights(player, _ACTION_IDX, weights, all_alive, second)
     elif player.role == "ammo":
@@ -252,11 +267,23 @@ def plan_action(
             player, _ACTION_IDX, weights, all_alive, second
         )
 
+    penalty_count = getattr(player, "stamina_penalty_count", 0)
+    if penalty_count > 0:
+        cz_idx = _ACTION_IDX["change_zone"]
+        if weights[cz_idx] > 0:
+            weights[cz_idx] = max(
+                0, int(weights[cz_idx] * max(0.1, 1.0 - 0.10 * penalty_count))
+            )
+
     cooldown = shot_cooldown(player, second)
     if cooldown > 0.0 and (second - player.last_shot_time) < cooldown:
         weights[_ACTION_IDX["tag_player"]] = 0
         if sum(weights) == 0:
             weights[_ACTION_IDX["hide"]] = 1
+
+    weights = apply_decision_making_spread(
+        weights, getattr(player, "decision_making", 50)
+    )
 
     prev_action = getattr(player, "last_chosen_action", "")
     choice = random.choices(_CHOICES, weights)[0]

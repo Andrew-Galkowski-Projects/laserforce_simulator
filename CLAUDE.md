@@ -44,7 +44,7 @@ python manage.py score_averages --rounds 50
 python manage.py score_averages --rounds 100 --team-red "Team A" --team-blue "Team B"
 
 # Analyse events from a completed DB round
-python manage.py game_analysis --round-id <id>
+python manage.py game_analysis --round <id>
 ```
 
 CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci.yml`). Python version is 3.11.

@@ -59,6 +59,8 @@ Both simulators follow the same per-tick loop:
 
 Action weights are in `matches/sim_helpers/weights.py`. See [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) for details.
 
+**STAT-03 stat wiring** (weights.py / combat.py): `decision_making` applies a post-role spread multiplier (`factor = 1 + dm/100`) — best-weight action × factor, all others ÷ factor (clamped ≥ 0). `stamina` is checked every 10% of round elapsed; when `stamina < elapsed_%`, `stamina_penalty_count` increments, stacking −10% on `change_zone` weight and −5% on hit-chance (`stamina_hit_modifier = max(0.5, 1 − 0.05 × count)`). `special_usage` multiplies the `use_special` weight delta by `special_usage / 50` across all roles. `accuracy` / `survival` feed hit-chance as `70 + accuracy − survival` (confirmed, no change). `resupply_efficiency`, `resupply_synergy`, `teamwork`, `communication` have skeleton TODO blocks in weights.py deferred to MECH-01.
+
 ## Shot Speed & Follow-up Mechanics (BatchSimulator)
 
 Real Laserforce shot speeds are modelled in `BatchSimulator`:

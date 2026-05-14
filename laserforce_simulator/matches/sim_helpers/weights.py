@@ -158,7 +158,9 @@ def _apply_support_special(w, c, i, player, all_alive, second):
             and p.final_lives > 0
             and p.is_active_at(second)
         ]
-        w[i["use_special"]] += c["special_per_ally"] * len(active_allies)
+        w[i["use_special"]] += int(
+            c["special_per_ally"] * len(active_allies) * (player.special_usage / 50)
+        )
 
 
 def _apply_seek_ally(
@@ -365,7 +367,9 @@ def _get_scout_weights(player, action_to_weight_index, weights, all_alive, secon
         player.final_special >= player.special_cost
         and player.special_active_until <= second
     ):
-        w[i["use_special"]] += 100 * (player.final_shots / player.max_shots)
+        w[i["use_special"]] += int(
+            100 * (player.final_shots / player.max_shots) * (player.special_usage / 50)
+        )
 
     # Not active: redistribute tag weight — 20% to change_zone (capped), 80% to hide
     if not player.is_active_at(second):
@@ -451,12 +455,62 @@ def _get_commander_weights(player, action_to_weight_index, weights, all_alive, s
             and p.current_zone == player.current_zone
             and p.is_active_at(second)
         ]
-        w[i["use_special"]] = c["special_base"] - c["special_per_enemy"] * len(
-            enemies_in_zone
-        )
+        raw = c["special_base"] - c["special_per_enemy"] * len(enemies_in_zone)
+        w[i["use_special"]] = int(raw * (player.special_usage / 50))
 
     enemy_color = "blue" if player.team_color == "red" else "red"
     _apply_not_active(w, c, i, player, all_alive, second, "medic", enemy_color)
     _apply_endgame_rush(w, c, i, player, second, "tag_player")
 
     return weights
+
+
+# ---------------------------------------------------------------------------
+# STAT-03 post-processing helpers (public so tests can import them directly)
+# ---------------------------------------------------------------------------
+
+_ROUND_DURATION = 900
+
+
+def check_stamina_penalty(player, second: float, round_duration: int = 900) -> None:
+    """Evaluate 10%-checkpoint stamina penalties for *player* at *second*.
+
+    Increments ``player.stamina_penalty_count`` once for every 10% checkpoint
+    that has elapsed where ``player.stamina < checkpoint_percent``.  Penalties
+    stack; each one later reduces ``change_zone`` weight (in ``combat.py``) and
+    ``stamina_hit_modifier`` on the player object.
+
+    Idempotent across repeated calls within the same 10% window — the
+    ``stamina_next_check_pct`` cursor only advances forward.
+    """
+    elapsed_pct = int(second / round_duration * 100)
+    next_check_pct = getattr(player, "stamina_next_check_pct", 10)
+    penalty_count = getattr(player, "stamina_penalty_count", 0)
+    while next_check_pct <= elapsed_pct and next_check_pct <= 100:
+        if player.stamina < next_check_pct:
+            penalty_count += 1
+        next_check_pct += 10
+    player.stamina_penalty_count = penalty_count
+    player.stamina_next_check_pct = next_check_pct
+
+
+def apply_decision_making_spread(weights: list, dm: int) -> list:
+    """Apply a linear spread multiplier to *weights* based on *dm* (0-100).
+
+    factor = 1 + dm / 100.  The highest-weight action is multiplied by
+    *factor*; all other weights are divided by *factor* (floored at 0).
+    dm=0 → factor=1.0 → weights unchanged.  dm=100 → factor=2.0.
+
+    Returns a new list; does not mutate the input.
+    """
+    if dm <= 0:
+        return list(weights)
+    factor = 1.0 + dm / 100.0
+    max_w = max(weights)
+    if max_w <= 0:
+        return list(weights)
+    max_idx = weights.index(max_w)
+    return [
+        int(w * factor) if idx == max_idx else max(0, int(w / factor))
+        for idx, w in enumerate(weights)
+    ]

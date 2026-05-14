@@ -13,7 +13,14 @@ class RandomPlayerProfileTest(TestCase):
         profile = _random_player_profile()
         self.assertEqual(
             set(profile.keys()),
-            {"name", "age", "started_playing_age", "total_games", "home_site", "height"},
+            {
+                "name",
+                "age",
+                "started_playing_age",
+                "total_games",
+                "home_site",
+                "height",
+            },
         )
 
     def test_name_drawn_from_player_names(self):
@@ -54,7 +61,9 @@ class RandomPlayerProfileTest(TestCase):
         for _ in range(50):
             profile = _random_player_profile()
             height = profile["height"]
-            self.assertRegex(height, r"^\d+'\d+\"$", f"Unexpected height format: {height}")
+            self.assertRegex(
+                height, r"^\d+'\d+\"$", f"Unexpected height format: {height}"
+            )
 
     def test_height_in_valid_range(self):
         random.seed(6)

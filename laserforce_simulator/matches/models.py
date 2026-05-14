@@ -471,6 +471,39 @@ class PlayerRoundState(models.Model):
         return self.player.stat_for_simulation("player_awareness", self.role)
 
     @property
+    def decision_making(self) -> int:
+        return self.player.stat_for_simulation("decision_making", self.role)
+
+    @property
+    def stamina(self) -> int:
+        return self.player.stat_for_simulation("stamina", self.role)
+
+    @property
+    def special_usage(self) -> int:
+        return self.player.stat_for_simulation("special_usage", self.role)
+
+    @property
+    def resupply_efficiency(self) -> int:
+        return self.player.stat_for_simulation("resupply_efficiency", self.role)
+
+    @property
+    def resupply_synergy(self) -> int:
+        return self.player.stat_for_simulation("resupply_synergy", self.role)
+
+    @property
+    def teamwork(self) -> int:
+        return self.player.stat_for_simulation("teamwork", self.role)
+
+    @property
+    def communication(self) -> int:
+        return self.player.stat_for_simulation("communication", self.role)
+
+    @property
+    def stamina_hit_modifier(self) -> float:
+        penalty_count = getattr(self, "stamina_penalty_count", 0)
+        return max(0.5, 1.0 - 0.05 * penalty_count)
+
+    @property
     def last_shot_time(self) -> float:
         return getattr(self, "_last_shot_time", -99.0)
 
@@ -479,9 +512,13 @@ class PlayerRoundState(models.Model):
         self._last_shot_time = value
 
     def refresh_from_db(self, using=None, fields=None, **kwargs):
-        saved = getattr(self, "_last_shot_time", -99.0)
+        saved_shot_time = getattr(self, "_last_shot_time", -99.0)
+        saved_stamina_penalty = getattr(self, "stamina_penalty_count", 0)
+        saved_stamina_next_check = getattr(self, "stamina_next_check_pct", 10)
         super().refresh_from_db(using=using, fields=fields, **kwargs)
-        self._last_shot_time = saved
+        self._last_shot_time = saved_shot_time
+        self.stamina_penalty_count = saved_stamina_penalty
+        self.stamina_next_check_pct = saved_stamina_next_check
 
     @property
     def tag_id_key(self):
