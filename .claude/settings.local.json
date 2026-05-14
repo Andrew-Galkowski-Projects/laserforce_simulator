@@ -95,7 +95,9 @@
       "Bash(python *)",
       "Bash(git -C \"/mnt/c/Users/Andrew Galkowski/Desktop/programming/laserforce_simulator/.claude/worktrees/agent-a5586d5a1f10de557\" log --oneline -5)",
       "Bash(git -C \"/mnt/c/Users/Andrew Galkowski/Desktop/programming/laserforce_simulator/.claude/worktrees/agent-a5586d5a1f10de557\" diff HEAD --stat)",
-      "PowerShell(Copy-Item *)"
+      "PowerShell(Copy-Item *)",
+      "Bash(git fetch *)",
+      "Bash(git merge *)"
     ]
   }
 }

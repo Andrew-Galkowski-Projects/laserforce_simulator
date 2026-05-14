@@ -18,6 +18,9 @@ Manages teams, players, and rosters. Serves as the homepage (`/`).
 
 `overall_rating` is a `@property` returning the unweighted mean of all 19 stats.
 
+`stat_for_simulation(stat_name, role)` returns `min(int(raw_value * 1.2), 100)` when `role in self.preferred_roles`, otherwise the raw stat value. Invalid `stat_name` values raise `AttributeError` naturally (no explicit guard). Used by `PlayerRoundState` forwarding properties and `BatchSimulator._make_players` to apply the preferred-role boost at simulation time without affecting stored values or `overall_rating`.
+
+
 `PlayerForm` exposes all 19 stat fields (default 50) with "Set All to Average (50)" and "Set All to Elite (90)" preset buttons.
 
 `ROLE_STATS` is imported from `matches.sim_helpers.role_constants` — the canonical source for all role-level constants (`ROLE_STATS`, `MAX_LIVES`, `MAX_SHOTS`, `SPECIAL_COST`). Both `teams/models.py` and `sim_helpers/player_state.py` import from there; the duplicate definition that previously lived in `player_state.py` has been removed.

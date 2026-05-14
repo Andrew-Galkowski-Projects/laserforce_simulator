@@ -155,7 +155,6 @@ class Team(models.Model):
 class Player(models.Model):
     team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="players")
     name = models.CharField(max_length=100)
-    # TODO: Apply stat boost when player is assigned to a preferred role
     preferred_roles = models.JSONField(default=list, blank=True)
 
     _STAT_VALIDATORS = [MinValueValidator(0), MaxValueValidator(100)]
@@ -180,6 +179,12 @@ class Player(models.Model):
     accuracy = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
     survival = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
     special_usage = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+
+    def stat_for_simulation(self, stat_name: str, role: str) -> int:
+        value = getattr(self, stat_name)
+        if role in self.preferred_roles:
+            return min(int(value * 1.2), 100)
+        return value
 
     @property
     def overall_rating(self):

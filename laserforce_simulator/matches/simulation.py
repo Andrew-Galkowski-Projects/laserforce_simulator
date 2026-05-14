@@ -2263,9 +2263,11 @@ class BatchSimulator:
                 name=player_model.name,
                 team_color=team_color,
                 role=role,
-                accuracy=player_model.accuracy,
-                survival=player_model.survival,
-                player_awareness=player_model.player_awareness,
+                accuracy=player_model.stat_for_simulation("accuracy", role),
+                survival=player_model.stat_for_simulation("survival", role),
+                player_awareness=player_model.stat_for_simulation(
+                    "player_awareness", role
+                ),
                 starting_lives=resources["lives"],
                 starting_shots=resources["shots"],
                 final_lives=resources["lives"],
