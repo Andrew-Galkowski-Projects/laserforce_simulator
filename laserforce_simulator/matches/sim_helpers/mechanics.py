@@ -30,7 +30,7 @@ def choose_tag_target(player, all_alive, second, movement_ctx=None, *, los_filte
         los_filter = lambda actor, candidates, ctx: [
             c for c in candidates if c.current_zone == actor.current_zone
         ]
-    role_weights = {"commander": 5, "heavy": 8, "scout": 3, "medic": 1, "ammo": 3}
+    role_weights = {"commander": 5, "heavy": 5, "scout": 3, "medic": 1, "ammo": 3}
     enemies = [
         p
         for p in all_alive

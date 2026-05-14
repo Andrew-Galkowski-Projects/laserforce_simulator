@@ -1,6 +1,6 @@
-"""Typed dataclasses for the four pending-event queues used by both simulators.
+"""Typed dataclasses for the pending-event queues used by both simulators.
 
-Both ``ResourceBasedSimulator`` and ``BatchSimulator`` maintain four lists of
+Both ``ResourceBasedSimulator`` and ``BatchSimulator`` maintain lists of
 scheduled future actions.  Historically these were raw tuples whose fields were
 accessed by position, which made adding new fields error-prone.
 
@@ -13,19 +13,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-
-
-@dataclass
-class PendingMissile:
-    """A missile lock that has been initiated and will complete at *complete_time*.
-
-    Matches ``(complete_time, attacker, defender)`` tuples previously used by
-    both simulators.
-    """
-
-    complete_time: float
-    attacker: Any
-    defender: Any
 
 
 @dataclass
@@ -65,3 +52,19 @@ class PendingReaction:
     fire_at: float
     attacker: Any
     defender: Any
+
+
+@dataclass
+class PendingMissileLock:
+    """A missile lock in progress requiring 3 consecutive ticks of LOS.
+
+    Missile is consumed at lock initiation.  Each tick ``tick_missile_lock``
+    checks LOS; if broken without a special_usage save the lock fails and the
+    missile misses.  When all 3 ticks succeed a survival-based dodge roll is
+    applied before the missile lands.
+    """
+
+    attacker: Any
+    defender: Any
+    ticks_remaining: int = 3
+    los_broken: bool = False

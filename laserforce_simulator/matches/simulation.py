@@ -24,15 +24,15 @@ from .sim_helpers.combat import (
     capture_base as _capture_base_shared,
     award_bases as _award_bases_shared,
     start_missile_lock as _start_missile_lock_shared,
+    tick_missile_lock as _tick_missile_lock_shared,
 )
 from .sim_helpers.tick_engine import (
-    drain_missiles,
     drain_nukes,
     drain_reactions,
     drain_followups,
 )
 from .sim_helpers.pending_events import (
-    PendingMissile,
+    PendingMissileLock,
     PendingNuke,
     PendingFollowup,
     PendingReaction,
@@ -639,7 +639,7 @@ class ResourceBasedSimulator:
         """Simulate combat between two teams"""
         round_duration = self._round_duration
 
-        pending_missiles: list[PendingMissile] = []
+        pending_missile_locks: list[PendingMissileLock] = []
         pending_nukes: list[PendingNuke] = []
         pending_followups: list[PendingFollowup] = []
         pending_reactions: list[PendingReaction] = []
@@ -653,19 +653,29 @@ class ResourceBasedSimulator:
         while second < round_duration:
             db_second = int(second)
 
-            # --- process pending missiles ---
-            to_run, pending_missiles = drain_missiles(pending_missiles, second)
-            for m in to_run:
-                ct = int(m.complete_time)
-                if m.attacker.is_active_at(ct) and m.defender.is_taggable_at(ct):
-                    self._complete_missile(m.attacker, m.defender, ct, event_buffer)
-                else:
-                    logger.debug(
-                        "%s - %s: missile cancelled or failed at %s",
-                        ct,
-                        "missile completion",
-                        ct,
-                    )
+            # --- process missile locks (LOS-check per tick for 3 ticks) ---
+            still_locking: list[PendingMissileLock] = []
+            for lock in pending_missile_locks:
+                result = _tick_missile_lock_shared(lock, second, movement_ctx)
+                if result == "pending":
+                    still_locking.append(lock)
+                elif result == "hit":
+                    survival = getattr(lock.defender, "survival", 50)
+                    dodge_pct = min(20.0, survival / 5.0)
+                    if random.random() * 100 < dodge_pct:
+                        event_buffer.append({
+                            "event_type": "missile_dodge",
+                            "actor_id": lock.defender.player_id,
+                            "target_id": lock.attacker.player_id,
+                            "timestamp": db_second,
+                            "points_awarded": 0,
+                            "description": f"{lock.defender.player.name} dodges missile from {lock.attacker.player.name}",
+                            "metadata": {"actor_role": lock.attacker.role, "target_role": lock.defender.role},
+                        })
+                    else:
+                        self._complete_missile(lock.attacker, lock.defender, db_second, event_buffer)
+                # "miss": missile already consumed, no further action
+            pending_missile_locks = still_locking
 
             # --- process pending nukes ---
             to_run_n, pending_nukes = drain_nukes(pending_nukes, second)
@@ -947,13 +957,13 @@ class ResourceBasedSimulator:
                 red_players,
                 blue_players,
                 second,
-                pending_missiles,
                 pending_nukes,
                 pending_followups,
                 pending_reactions,
                 last_shot_times,
                 movement_ctx=movement_ctx,
                 event_buffer=event_buffer,
+                pending_missile_locks=pending_missile_locks,
             )
 
             # Check for team eliminations
@@ -1040,13 +1050,13 @@ class ResourceBasedSimulator:
         red_players,
         blue_players,
         second,
-        pending_missiles=None,
         pending_nukes=None,
         pending_followups=None,
         pending_reactions=None,
         last_shot_times=None,
         movement_ctx=None,
         event_buffer=None,
+        pending_missile_locks=None,
     ):
         """Simulate a single combat exchange between teams"""
         # Get alive players
@@ -1071,8 +1081,8 @@ class ResourceBasedSimulator:
         determine if follow up action
         """
         # Plan phase: decide all player actions this tick (no side-effects yet)
-        if pending_missiles is None:
-            pending_missiles = []
+        if pending_missile_locks is None:
+            pending_missile_locks = []
         if pending_nukes is None:
             pending_nukes = []
         if pending_followups is None:
@@ -1174,10 +1184,10 @@ class ResourceBasedSimulator:
                 )
             elif ptype == "missile":
                 scheduled = self._start_missile_lock(
-                    actor, plan.get("target"), second, event_buffer
+                    actor, plan.get("target"), second, event_buffer, movement_ctx
                 )
                 if scheduled:
-                    pending_missiles.append(scheduled)
+                    pending_missile_locks.append(scheduled)
             elif ptype == "use_special":
                 # _use_special will apply resource costs / activation event and may return a scheduled nuke
                 scheduled = self._use_special(actor, second, event_buffer)
@@ -1663,11 +1673,11 @@ class ResourceBasedSimulator:
         tagger.save()
         teammate.save()
 
-    def _start_missile_lock(self, attacker, defender, second, event_buffer=None):
+    def _start_missile_lock(self, attacker, defender, second, event_buffer=None, movement_ctx=None):
         if event_buffer is None:
             event_buffer = []
         return _start_missile_lock_shared(
-            attacker, defender, second, emit_event=event_buffer.append
+            attacker, defender, second, movement_ctx, emit_event=event_buffer.append
         )
 
     def _complete_missile(self, attacker, defender, second, event_buffer=None):
@@ -1751,7 +1761,6 @@ class ResourceBasedSimulator:
             attacker.last_tagged_id = defender.get_tag_id
             attacker.specific_tags[def_key]["missiled"] += 1
             attacker.points_scored += 500
-            attacker.final_missiles -= 1
             attacker.missiles_landed += 1
             # heavies don't get specials
             if attacker.role != "heavy":
@@ -2396,7 +2405,7 @@ class BatchSimulator:
             team_spawn_pools=team_spawn_pools,
         )
 
-        pending_missiles: list[PendingMissile] = []
+        pending_missile_locks: list[PendingMissileLock] = []
         pending_nukes: list[PendingNuke] = []
         pending_followups: list[PendingFollowup] = []
         pending_reactions: list[PendingReaction] = []
@@ -2404,15 +2413,30 @@ class BatchSimulator:
 
         for _tick in range(int(900 / self.TICK)):
             second = _tick * self.TICK
-            # --- process pending missiles ---
-            fired, pending_missiles = drain_missiles(pending_missiles, second)
-            for m in fired:
-                if m.attacker.is_active_at(
-                    m.complete_time
-                ) and m.defender.is_taggable_at(m.complete_time):
-                    self._complete_missile(
-                        m.attacker, m.defender, m.complete_time, event_log
-                    )
+            # --- process missile locks (LOS-check per tick for 3 ticks) ---
+            still_locking_b: list[PendingMissileLock] = []
+            for lock in pending_missile_locks:
+                result = _tick_missile_lock_shared(lock, second, movement_ctx)
+                if result == "pending":
+                    still_locking_b.append(lock)
+                elif result == "hit":
+                    survival = getattr(lock.defender, "survival", 50)
+                    dodge_pct = min(20.0, survival / 5.0)
+                    if random.random() * 100 < dodge_pct:
+                        if event_log is not None:
+                            event_log.append({
+                                "event_type": "missile_dodge",
+                                "actor_id": lock.defender.player_id,
+                                "target_id": lock.attacker.player_id,
+                                "timestamp": second,
+                                "points_awarded": 0,
+                                "description": f"{lock.defender.name} dodges missile from {lock.attacker.name}",
+                                "metadata": {"actor_role": lock.attacker.role, "target_role": lock.defender.role},
+                            })
+                    else:
+                        self._complete_missile(lock.attacker, lock.defender, second, event_log)
+                # "miss": missile already consumed, no further action
+            pending_missile_locks = still_locking_b
 
             # --- process pending nukes ---
             fired_n, pending_nukes = drain_nukes(pending_nukes, second)
@@ -2704,9 +2728,11 @@ class BatchSimulator:
                         movement_ctx=plan.get("movement_ctx"),
                     )
                 elif ptype == "missile":
-                    scheduled = self._start_missile_lock(actor, plan["target"], second)
+                    scheduled = self._start_missile_lock(
+                        actor, plan["target"], second, movement_ctx
+                    )
                     if scheduled:
-                        pending_missiles.append(scheduled)
+                        pending_missile_locks.append(scheduled)
                 elif ptype == "use_special":
                     scheduled = self._use_special(actor, second, all_alive, event_log)
                     if scheduled and scheduled[0] == "nuke":
@@ -3222,8 +3248,8 @@ class BatchSimulator:
         emit = event_log.append if event_log is not None else None
         _award_bases_shared(player, second, emit_event=emit)
 
-    def _start_missile_lock(self, attacker, defender, second):
-        return _start_missile_lock_shared(attacker, defender, second)
+    def _start_missile_lock(self, attacker, defender, second, movement_ctx=None):
+        return _start_missile_lock_shared(attacker, defender, second, movement_ctx)
 
     def _complete_missile(self, attacker, defender, second, event_log=None):
         if attacker.is_active_at(second) and defender.is_taggable_at(second):
