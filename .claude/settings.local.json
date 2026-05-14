@@ -103,7 +103,8 @@
       "Bash(git rebase *)",
       "PowerShell(python -m pytest --tb=no --durations=30 -q 2>&1 | Select-Object -Last 50)",
       "PowerShell(pip show *)",
-      "Skill(code-review)"
+      "Skill(code-review)",
+      "Bash(Get-ChildItem \"C:\\\\Users\\\\Andrew Galkowski\\\\Desktop\\\\programming\\\\laserforce_simulator\\\\laserforce_simulator\\\\matches\\\\sim_helpers\\\\\" -Name *)"
     ]
   }
 }

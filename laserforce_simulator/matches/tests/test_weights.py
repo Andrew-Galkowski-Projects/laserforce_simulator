@@ -336,8 +336,8 @@ class TestWeightFunctions:
         w = _get_heavy_weights(heavy, _ACTION_IDX, self._fresh(), [heavy, medic], 0)
         assert w == [40, 55, 5, 0, 0, 0, 0]
 
-    def test_heavy_not_active_medic_in_zone_hides(self):
-        """Downed heavy hides when its medic is in the same zone."""
+    def test_heavy_not_active_always_escapes(self):
+        """Downed heavy always moves zone regardless of medic presence (reduces reset window exposure)."""
         medic = self._state(
             self.gr,
             self.players["medic"],
@@ -356,24 +356,24 @@ class TestWeightFunctions:
             missiles_landed=5,
         )
         w = _get_heavy_weights(heavy, _ACTION_IDX, self._fresh(), [heavy, medic], 0)
-        assert w == [0, 25, 75, 0, 0, 0, 0]
+        assert w == [0, 95, 5, 0, 0, 0, 0]
 
     # --- Commander ---
 
     def test_commander_baseline_no_missiles(self):
-        """Commander with all missiles used holds base weights."""
+        """Commander with all missiles used holds base weights (tag reduced ~5% from original)."""
         s = self._state(
             self.gr, self.players["commander"], "commander", missiles_landed=5
         )
         w = _get_commander_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [85, 15, 0, 0, 0, 0, 0]
+        assert w == [80, 15, 0, 0, 0, 0, 0]
 
     def test_commander_baseline_no_missiles_sum(self):
         s = self._state(
             self.gr, self.players["commander"], "commander", missiles_landed=5
         )
         w = _get_commander_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert sum(w) == 100
+        assert sum(w) == 95
 
     def test_commander_with_missiles(self):
         """Commander prioritises launching available missiles."""
@@ -381,8 +381,8 @@ class TestWeightFunctions:
             self.gr, self.players["commander"], "commander", missiles_landed=0
         )
         w = _get_commander_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [85, 0, 0, 0, 0, 0, 15]
-        assert sum(w) == 100
+        assert w == [80, 0, 0, 0, 0, 0, 15]
+        assert sum(w) == 95
 
     def test_commander_special_no_enemies_fires_nuke(self):
         """Commander with nuke charged and no enemies in zone fires immediately."""
@@ -419,13 +419,13 @@ class TestWeightFunctions:
         w = _get_commander_weights(cmd, _ACTION_IDX, self._fresh(), [cmd, enemy], 0)
         assert w[_ACTION_IDX["use_special"]] == 80
 
-    def test_commander_not_active_enemy_medic_in_zone_hides(self):
-        """Downed commander waits in zone to eliminate the enemy medic on respawn."""
-        enemy_medic = self._state(
+    def test_commander_not_active_allied_medic_in_zone_hides(self):
+        """Downed commander hides when allied medic is in the same zone."""
+        allied_medic = self._state(
             self.gr,
-            self.players2["medic"],
+            self.players["medic"],
             "medic",
-            team_color="blue",
+            team_color="red",
             final_lives=5,
             zone_fallback=0,
         )
@@ -437,14 +437,15 @@ class TestWeightFunctions:
             last_downed_time=0,
             missiles_landed=5,
             zone_fallback=0,
+            team_color="red",
         )
         w = _get_commander_weights(
-            cmd, _ACTION_IDX, self._fresh(), [cmd, enemy_medic], 0
+            cmd, _ACTION_IDX, self._fresh(), [cmd, allied_medic], 0
         )
-        assert w == [15, 15, 70, 0, 0, 0, 0]
+        assert w == [10, 15, 70, 0, 0, 0, 0]
 
-    def test_commander_not_active_no_enemy_medic_changes_zone(self):
-        """Downed commander moves zone to hunt the enemy medic."""
+    def test_commander_not_active_no_allied_medic_changes_zone(self):
+        """Downed commander moves zone to find allied medic."""
         cmd = self._state(
             self.gr,
             self.players["commander"],
@@ -454,7 +455,7 @@ class TestWeightFunctions:
             missiles_landed=5,
         )
         w = _get_commander_weights(cmd, _ACTION_IDX, self._fresh(), [cmd], 0)
-        assert w == [15, 85, 0, 0, 0, 0, 0]
+        assert w == [10, 85, 0, 0, 0, 0, 0]
 
     def test_medic_can_capture_base_prioritises_capture(self):
         """Known pre-existing failure: weight code only adds +5, not +50."""

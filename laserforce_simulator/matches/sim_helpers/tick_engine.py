@@ -10,39 +10,19 @@ simulators can share the structural logic without duplicating it.
 
 Queue entry types (typed dataclasses from pending_events.py):
 
-    pending_missiles  — PendingMissile(complete_time, attacker, defender)
-    pending_nukes     — PendingNuke(complete_time, player)
-    pending_reactions — PendingReaction(fire_at, attacker, defender)
-    pending_followups — PendingFollowup(fire_at, attacker, defender, chain_depth)
+    pending_missile_locks — PendingMissileLock(attacker, defender, ticks_remaining, los_broken)
+    pending_nukes         — PendingNuke(complete_time, player)
+    pending_reactions     — PendingReaction(fire_at, attacker, defender)
+    pending_followups     — PendingFollowup(fire_at, attacker, defender, chain_depth)
 """
 
 from __future__ import annotations
 
 from .pending_events import (
-    PendingMissile,
     PendingNuke,
     PendingFollowup,
     PendingReaction,
 )
-
-
-def drain_missiles(
-    pending: list[PendingMissile],
-    second: float,
-) -> tuple[list[PendingMissile], list[PendingMissile]]:
-    """Split pending_missiles into (ready_now, still_pending).
-
-    Each entry is a ``PendingMissile`` with a ``complete_time`` attribute.
-    Returns (ready_now, still_pending).
-    """
-    ready: list[PendingMissile] = []
-    still: list[PendingMissile] = []
-    for item in pending:
-        if item.complete_time <= second:
-            ready.append(item)
-        else:
-            still.append(item)
-    return ready, still
 
 
 def drain_nukes(

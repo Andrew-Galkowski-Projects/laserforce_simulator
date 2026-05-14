@@ -89,7 +89,7 @@ _HEAVY = dict(
 )
 
 _COMMANDER = dict(
-    baseline_tag=+15,
+    baseline_tag=+10,
     baseline_cz=-15,
     critical_pct=0.3,
     missile_cz_cost=15,
@@ -217,6 +217,7 @@ def _apply_not_active(
     watch_team_color,
     drain_key="tag_player",
     also_drain_resupply=False,
+    always_escape=False,
 ):
     """
     When downed, redistribute idle weight to hide or change_zone based on a nearby ally.
@@ -224,6 +225,8 @@ def _apply_not_active(
     - watch_role / watch_team_color: the ally to look for in the current zone.
     - drain_key: the weight index to drain from (tag_player or resupply_ally).
     - also_drain_resupply: if True (ammo), pool tag_player + resupply_ally and zero both.
+    - always_escape: if True, always redirect to change_zone regardless of ally presence
+      (used for heavy to force movement out of line of fire during reset window).
     """
     if not player.is_active_at(second):
         ally_in_zone = next(
@@ -248,7 +251,7 @@ def _apply_not_active(
             idle = cost
             w[i[drain_key]] -= cost
 
-        if ally_in_zone:
+        if not always_escape and ally_in_zone:
             w[i["hide"]] += idle
         else:
             w[i["change_zone"]] += idle
@@ -451,7 +454,9 @@ def _get_heavy_weights(player, action_to_weight_index, weights, all_alive, secon
         ammo = _find_ally(all_alive, player.team_color, "ammo")
         _apply_seek_ally(w, c, i, player, ammo, no_resource=True)
 
-    _apply_not_active(w, c, i, player, all_alive, second, "medic", player.team_color)
+    _apply_not_active(
+        w, c, i, player, all_alive, second, "medic", player.team_color, always_escape=True
+    )
     _apply_endgame_rush(w, c, i, player, second, "tag_player")
 
     _apply_request_resupply_weight(w, i, player)
@@ -499,8 +504,7 @@ def _get_commander_weights(player, action_to_weight_index, weights, all_alive, s
         raw = c["special_base"] - c["special_per_enemy"] * len(enemies_in_zone)
         w[i["use_special"]] = int(raw * (player.special_usage / 50))
 
-    enemy_color = "blue" if player.team_color == "red" else "red"
-    _apply_not_active(w, c, i, player, all_alive, second, "medic", enemy_color)
+    _apply_not_active(w, c, i, player, all_alive, second, "medic", player.team_color)
     _apply_endgame_rush(w, c, i, player, second, "tag_player")
 
     _apply_request_resupply_weight(w, i, player)

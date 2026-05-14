@@ -21,7 +21,7 @@ from .mechanics import (
     choose_zone_change,
 )
 from .pathfinding import choose_goal_cell
-from .pending_events import PendingMissile
+from .pending_events import PendingMissileLock
 from .weights import (
     _get_medic_weights,
     _get_ammo_weights,
@@ -317,14 +317,14 @@ def plan_action(
             plans.append({"type": rtype, "actor": player, "target": teammate})
     elif choice == "missile_player":
         if player.final_missiles > 0:
-            targets = [
+            candidates = [
                 p
                 for p in all_alive
                 if p.team_color != player.team_color
-                and p.current_zone == player.current_zone
                 and p.final_lives > 0
                 and p.is_taggable_at(second)
             ]
+            targets = _get_los_targets(player, candidates, movement_ctx)
             if targets:
                 plans.append(
                     {
@@ -569,16 +569,19 @@ def start_missile_lock(
     attacker,
     defender,
     second: float,
+    movement_ctx: "MapContext | None" = None,
     *,
     emit_event=None,
-):
-    """Attempt to initiate a missile lock on defender.
+) -> "PendingMissileLock | None":
+    """Initiate a 3-tick missile lock on defender.
 
-    Returns a ``PendingMissile`` if the missile is launched, or ``None`` if
-    the attempt fails (invalid state) or the defender dodges.
+    Validates state and requires initial LOS.  Consumes one missile immediately.
+    Returns a ``PendingMissileLock`` on success, or ``None`` if the attempt is
+    invalid (bad state or no initial LOS).
 
-    emit_event: optional callable(event_dict) — called on a successful dodge
-    so callers can log the event.
+    The lock is resolved by calling ``tick_missile_lock`` once per simulation
+    tick.  The old 45% instant-dodge is replaced by per-tick LOS checks and a
+    survival-based dodge roll at the moment of impact.
     """
     if not (
         attacker.is_active_at(second)
@@ -588,25 +591,69 @@ def start_missile_lock(
     ):
         return None
 
-    if random.random() < 0.45:
-        if emit_event is not None:
-            emit_event(
-                {
-                    "event_type": "missile_dodge",
-                    "actor_id": defender.player_id,
-                    "target_id": attacker.player_id,
-                    "timestamp": second,
-                    "points_awarded": 0,
-                    "description": f"{defender.name} dodges missile from {attacker.name}",
-                    "metadata": {
-                        "actor_role": attacker.role,
-                        "target_role": defender.role,
-                    },
-                }
-            )
+    # Require LOS at lock initiation
+    if movement_ctx is not None and attacker.cell_row is not None and defender.cell_row is not None:
+        sight_data = movement_ctx.sight_data
+        actor_key = f"{attacker.cell_row},{attacker.cell_col}"
+        def_key = f"{defender.cell_row},{defender.cell_col}"
+        has_los = sight_data is not None and def_key in sight_data.get(actor_key, frozenset())
+    else:
+        has_los = attacker.current_zone == defender.current_zone
+
+    if not has_los:
         return None
 
-    delay = random.randint(1, 2)
-    return PendingMissile(
-        complete_time=second + delay, attacker=attacker, defender=defender
+    # Consume the missile immediately; if the lock breaks the shot is still used
+    attacker.final_missiles -= 1
+
+    return PendingMissileLock(
+        attacker=attacker,
+        defender=defender,
+        ticks_remaining=3,
+        los_broken=False,
     )
+
+
+def tick_missile_lock(
+    lock: "PendingMissileLock",
+    second: float,
+    movement_ctx: "MapContext | None",
+) -> str:
+    """Advance a missile lock by one tick and return its status.
+
+    Returns one of:
+      ``"pending"`` — lock still in progress; keep in the queue.
+      ``"hit"``     — all 3 ticks completed with LOS; caller should apply
+                      survival-based dodge then call ``_complete_missile``.
+      ``"miss"``    — lock failed (LOS broken without special_usage save, or a
+                      participant died); missile already consumed, no damage.
+    """
+    if lock.attacker.final_lives <= 0 or lock.defender.final_lives <= 0:
+        return "miss"
+
+    # LOS check for this tick
+    if (
+        movement_ctx is not None
+        and lock.attacker.cell_row is not None
+        and lock.defender.cell_row is not None
+    ):
+        sight_data = movement_ctx.sight_data
+        actor_key = f"{lock.attacker.cell_row},{lock.attacker.cell_col}"
+        def_key = f"{lock.defender.cell_row},{lock.defender.cell_col}"
+        has_los = sight_data is not None and def_key in sight_data.get(actor_key, frozenset())
+    else:
+        has_los = lock.attacker.current_zone == lock.defender.current_zone
+
+    if not has_los:
+        # special_usage gives a chance to hold lock through broken LOS
+        special_usage = getattr(lock.attacker, "special_usage", 50)
+        if random.random() * 100 >= special_usage:
+            lock.los_broken = True
+
+    lock.ticks_remaining -= 1
+
+    if lock.los_broken:
+        return "miss"
+    if lock.ticks_remaining > 0:
+        return "pending"
+    return "hit"

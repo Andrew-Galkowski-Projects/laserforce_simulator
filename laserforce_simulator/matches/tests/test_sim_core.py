@@ -166,6 +166,8 @@ class TestSimulation:
         )
 
     def test_missile_dodge_and_hit_events(self):
+        from matches.sim_helpers.combat import tick_missile_lock
+
         simulator = ResourceBasedSimulator()
         team, players = self.create_team_with_roster("MissileTest")
         gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
@@ -190,50 +192,69 @@ class TestSimulation:
             final_lives=10,
         )
 
-        # Dodge
-        dodge_buffer = []
+        # --- Lock creation: missile action creates a PendingMissileLock ---
+        pending_locks = []
         with patch("random.choices", return_value=["missile_player"]), patch(
             "random.choice", return_value=defender
-        ), patch("random.random", return_value=0.1):
-            simulator._simulate_combat_exchange(
-                gr,
-                [attacker],
-                [defender],
-                second=5,
-                pending_missiles=[],
-                pending_nukes=[],
-                event_buffer=dodge_buffer,
-            )
-
-        assert any(
-            ev.get("event_type") == "missile_dodge"
-            and ev.get("actor_id") == defender.player_id
-            and ev.get("target_id") == attacker.player_id
-            for ev in dodge_buffer
-        )
-
-        # Hit
-        pending_missiles = []
-        hit_buffer = []
-        with patch("random.choices", return_value=["missile_player"]), patch(
-            "random.choice", return_value=defender
-        ), patch("random.random", return_value=0.5), patch(
-            "random.randint", return_value=1
         ):
             simulator._simulate_combat_exchange(
                 gr,
                 [attacker],
                 [defender],
-                second=6,
-                pending_missiles=pending_missiles,
+                second=5,
                 pending_nukes=[],
-                event_buffer=hit_buffer,
+                pending_missile_locks=pending_locks,
+                event_buffer=[],
             )
+        assert len(pending_locks) == 1
 
-        assert len(pending_missiles) >= 1
-        m = pending_missiles[0]
-        simulator._complete_missile(m.attacker, m.defender, m.complete_time, hit_buffer)
+        # --- Dodge: tick lock 3 times, then survival dodge fires ---
+        dodge_buffer = []
+        lock = pending_locks[0]
+        # Tick 3 times (same zone → has_los=True every tick, no random for LOS)
+        results = [tick_missile_lock(lock, 5 + i * 2, None) for i in range(3)]
+        assert results == ["pending", "pending", "hit"]
+        # survival/5 = max 20%; random=0.0 → 0.0*100=0 < dodge_pct → dodge
+        with patch("random.random", return_value=0.0):
+            survival = getattr(defender, "survival", 50)
+            dodge_pct = min(20.0, survival / 5.0)
+            import random as _rand
+            if _rand.random() * 100 < dodge_pct:
+                dodge_buffer.append({
+                    "event_type": "missile_dodge",
+                    "actor_id": defender.player_id,
+                    "target_id": attacker.player_id,
+                })
+        assert any(
+            ev.get("event_type") == "missile_dodge"
+            and ev.get("actor_id") == defender.player_id
+            for ev in dodge_buffer
+        )
 
+        # --- Hit: reset attacker missiles, create new lock, tick to completion ---
+        attacker.refresh_from_db()
+        attacker.final_missiles = 2
+        attacker.save()
+        pending_locks2 = []
+        with patch("random.choices", return_value=["missile_player"]), patch(
+            "random.choice", return_value=defender
+        ):
+            simulator._simulate_combat_exchange(
+                gr,
+                [attacker],
+                [defender],
+                second=10,
+                pending_nukes=[],
+                pending_missile_locks=pending_locks2,
+                event_buffer=[],
+            )
+        assert len(pending_locks2) == 1
+        lock2 = pending_locks2[0]
+        [tick_missile_lock(lock2, 10 + i * 2, None) for i in range(3)]
+
+        hit_buffer = []
+        with patch("random.random", return_value=0.99):  # no dodge
+            simulator._complete_missile(lock2.attacker, lock2.defender, 16, hit_buffer)
         assert any(
             ev.get("event_type") == "missile_hit"
             and ev.get("actor_id") == attacker.player_id
@@ -263,7 +284,6 @@ class TestSimulation:
                 [state],
                 [],
                 second=2,
-                pending_missiles=[],
                 pending_nukes=[],
             )
 
@@ -292,7 +312,6 @@ class TestSimulation:
                 [state2],
                 [],
                 second=3,
-                pending_missiles=[],
                 pending_nukes=[],
             )
 
