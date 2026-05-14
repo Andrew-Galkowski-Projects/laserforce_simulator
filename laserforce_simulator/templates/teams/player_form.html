@@ -26,6 +26,23 @@
         <div class="form-text">{{ form.preferred_roles.help_text }}</div>
     </div>
 
+    <div class="mb-3">
+        <h5>Player Stats</h5>
+        <div class="mb-2">
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-preset-avg">Set All to Average (50)</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-preset-elite">Set All to Elite (90)</button>
+        </div>
+        {% for field in form %}
+        {% if field.name != "name" and field.name != "preferred_roles" %}
+        <div class="mb-3 row">
+            <label for="{{ field.id_for_label }}" class="col-sm-4 col-form-label">{{ field.label }}</label>
+            <div class="col-sm-2">{{ field }}</div>
+        </div>
+        {% endif %}
+        {% endfor %}
+        {% if player %}<p>Overall Rating: <strong>{{ player.overall_rating|floatformat:1 }}</strong></p>{% endif %}
+    </div>
+
     <button type="submit" class="btn btn-primary">Save Player</button>
     <a href="{% url 'team_detail' team.id %}" class="btn btn-secondary">Cancel</a>
 </form>
@@ -34,4 +51,27 @@
     <h5>Current Team Composition</h5>
     <p class="text-muted">{{ team.name }} currently has {{ team.player_count }} player(s)</p>
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+    var statIds = [
+        "id_player_awareness", "id_game_awareness", "id_resource_awareness",
+        "id_decision_making", "id_positioning", "id_stamina", "id_speed",
+        "id_flexibility", "id_adaptability", "id_communication", "id_teamwork",
+        "id_Offensive_synergy", "id_defensive_synergy", "id_midfield_synergy",
+        "id_resupply_synergy", "id_resupply_efficiency", "id_accuracy",
+        "id_survival", "id_special_usage"
+    ];
+    function setAll(value) {
+        statIds.forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.value = value;
+        });
+    }
+    document.getElementById("btn-preset-avg").addEventListener("click", function () { setAll(50); });
+    document.getElementById("btn-preset-elite").addEventListener("click", function () { setAll(90); });
+}());
+</script>
 {% endblock %}

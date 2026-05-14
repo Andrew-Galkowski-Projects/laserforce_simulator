@@ -18,7 +18,12 @@ Queue entry types (typed dataclasses from pending_events.py):
 
 from __future__ import annotations
 
-from .pending_events import PendingMissile, PendingNuke, PendingFollowup, PendingReaction
+from .pending_events import (
+    PendingMissile,
+    PendingNuke,
+    PendingFollowup,
+    PendingReaction,
+)
 
 
 def drain_missiles(

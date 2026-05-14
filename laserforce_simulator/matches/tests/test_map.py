@@ -200,7 +200,9 @@ class TestMap01CellGrid:
             arena_map=arena_map, base_type="red", zone_size=50, visible_cells=[]
         )
 
-        assert ResourceBasedSimulator._resolve_map_data(arena_map).zone_data == raw_zones
+        assert (
+            ResourceBasedSimulator._resolve_map_data(arena_map).zone_data == raw_zones
+        )
 
     def test_initial_spawn_zone_derived_from_zone_data(self):
         """Players' starting zone_fallback is derived from zone_data at spawn — tested at init."""
@@ -629,12 +631,14 @@ class TestMap03LOSTargeting:
             "0,0": frozenset(["0,1", "1,0"]),
             "0,1": frozenset(["0,0", "0,2"]),
         }
-        ctx = MapContext.from_dict({
-            "sight_data": sight_data,
-            "adj": {},
-            "spawn_cells": {},
-            "zone_data": None,
-        })
+        ctx = MapContext.from_dict(
+            {
+                "sight_data": sight_data,
+                "adj": {},
+                "spawn_cells": {},
+                "zone_data": None,
+            }
+        )
 
         actor = self._make_player("red_cmd", "red", "commander", cell_row=0, cell_col=0)
         visible = self._make_player(
@@ -656,12 +660,14 @@ class TestMap03LOSTargeting:
             "0,0": frozenset(["1,0"]),
             "0,2": frozenset(["1,2"]),
         }
-        ctx = MapContext.from_dict({
-            "sight_data": sight_data,
-            "adj": {},
-            "spawn_cells": {},
-            "zone_data": None,
-        })
+        ctx = MapContext.from_dict(
+            {
+                "sight_data": sight_data,
+                "adj": {},
+                "spawn_cells": {},
+                "zone_data": None,
+            }
+        )
 
         actor = self._make_player("red_cmd", "red", "commander", cell_row=0, cell_col=0)
         behind_wall = self._make_player(
@@ -701,12 +707,14 @@ class TestMap03LOSTargeting:
         from matches.simulation import _get_los_targets
 
         sight_data = {"0,0": frozenset(["0,1"])}
-        ctx = MapContext.from_dict({
-            "sight_data": sight_data,
-            "adj": {},
-            "spawn_cells": {},
-            "zone_data": None,
-        })
+        ctx = MapContext.from_dict(
+            {
+                "sight_data": sight_data,
+                "adj": {},
+                "spawn_cells": {},
+                "zone_data": None,
+            }
+        )
 
         actor = self._make_player("red_cmd", "red", "commander", cell_row=0, cell_col=0)
         no_cell_target = self._make_player(
@@ -724,12 +732,14 @@ class TestMap03LOSTargeting:
             "0,0": frozenset(["0,1"]),
             "0,1": frozenset(["0,0"]),
         }
-        ctx = MapContext.from_dict({
-            "sight_data": sight_data,
-            "adj": {},
-            "spawn_cells": {},
-            "zone_data": None,
-        })
+        ctx = MapContext.from_dict(
+            {
+                "sight_data": sight_data,
+                "adj": {},
+                "spawn_cells": {},
+                "zone_data": None,
+            }
+        )
 
         a = self._make_player("red_cmd", "red", "commander", cell_row=0, cell_col=0)
         b = self._make_player("blue_cmd", "blue", "commander", cell_row=0, cell_col=1)
@@ -895,13 +905,15 @@ class TestMap04BaseInteraction:
         )
 
     def _make_ctx(self, base_sight_data):
-        return MapContext.from_dict({
-            "adj": {},
-            "spawn_cells": {},
-            "zone_data": None,
-            "sight_data": None,
-            "base_sight_data": base_sight_data,
-        })
+        return MapContext.from_dict(
+            {
+                "adj": {},
+                "spawn_cells": {},
+                "zone_data": None,
+                "sight_data": None,
+                "base_sight_data": base_sight_data,
+            }
+        )
 
     def test_no_map_returns_none(self):
         from matches.simulation import _get_base_interaction
@@ -913,7 +925,9 @@ class TestMap04BaseInteraction:
         from matches.simulation import _get_base_interaction
 
         player = self._make_player("red_cmd", "red", cell_row=0, cell_col=0)
-        ctx = MapContext.from_dict({"adj": {}, "spawn_cells": {}, "zone_data": None, "sight_data": None})
+        ctx = MapContext.from_dict(
+            {"adj": {}, "spawn_cells": {}, "zone_data": None, "sight_data": None}
+        )
         assert _get_base_interaction(player, ctx) is None
 
     def test_no_cell_position_returns_none(self):
@@ -1107,7 +1121,9 @@ class TestMap04DBIntegration:
     def test_resolve_map_data_returns_base_sight_data(self):
         """_resolve_map_data base_sight_data field is a dict of frozensets keyed by base_type."""
         arena_map = self._make_base_map("ResolveBSD")
-        base_sight_data = ResourceBasedSimulator._resolve_map_data(arena_map).base_sight_data
+        base_sight_data = ResourceBasedSimulator._resolve_map_data(
+            arena_map
+        ).base_sight_data
 
         assert isinstance(base_sight_data, dict)
         assert "red" in base_sight_data
@@ -1247,7 +1263,12 @@ class TestMap05StrongSpotsViews:
             data=json.dumps({"zone_size": 50, "cells": [[5, 5]]}),
             content_type="application/json",
         )
-        assert HeavyStrongSpotsConfig.objects.filter(arena_map=arena_map, zone_size=50).count() == 1
+        assert (
+            HeavyStrongSpotsConfig.objects.filter(
+                arena_map=arena_map, zone_size=50
+            ).count()
+            == 1
+        )
         config = HeavyStrongSpotsConfig.objects.get(arena_map=arena_map, zone_size=50)
         assert config.cells == [[5, 5]]
 
@@ -1430,13 +1451,15 @@ class TestMap07WallTypes:
 
         zone_data = [[1, 5, 1]]
         wall_meta = {"0,1": {"facing": "E"}}
-        ctx = MapContext.from_dict({
-            "sight_data": {"0,0": frozenset(), "0,2": frozenset()},
-            "adj": {},
-            "spawn_cells": {},
-            "zone_data": zone_data,
-            "wall_meta": wall_meta,
-        })
+        ctx = MapContext.from_dict(
+            {
+                "sight_data": {"0,0": frozenset(), "0,2": frozenset()},
+                "adj": {},
+                "spawn_cells": {},
+                "zone_data": zone_data,
+                "wall_meta": wall_meta,
+            }
+        )
 
         actor = self._make_player("red_scout", "red", 0, 0)
         target = self._make_player("blue_scout", "blue", 0, 2)
@@ -1448,13 +1471,15 @@ class TestMap07WallTypes:
 
         zone_data = [[1, 5, 1]]
         wall_meta = {"0,1": {"facing": "N"}}  # N/S aperture, attack is E-W
-        ctx = MapContext.from_dict({
-            "sight_data": {"0,0": frozenset(), "0,2": frozenset()},
-            "adj": {},
-            "spawn_cells": {},
-            "zone_data": zone_data,
-            "wall_meta": wall_meta,
-        })
+        ctx = MapContext.from_dict(
+            {
+                "sight_data": {"0,0": frozenset(), "0,2": frozenset()},
+                "adj": {},
+                "spawn_cells": {},
+                "zone_data": zone_data,
+                "wall_meta": wall_meta,
+            }
+        )
 
         actor = self._make_player("red_scout", "red", 0, 0)
         target = self._make_player("blue_scout", "blue", 0, 2)
@@ -1536,7 +1561,9 @@ class TestMap07DBIntegration:
     def test_wall_meta_round_trip_through_resolve_map_data(self):
         """wall_meta field from _resolve_map_data reflects zone_data JSON."""
         arena_map = self._make_windowed_map("WallMetaRoundTrip")
-        assert ResourceBasedSimulator._resolve_map_data(arena_map).wall_meta == {"0,1": {"facing": "E"}}
+        assert ResourceBasedSimulator._resolve_map_data(arena_map).wall_meta == {
+            "0,1": {"facing": "E"}
+        }
 
     def test_wall_meta_present_in_movement_ctx(self):
         """_build_movement_ctx exposes wall_meta key from resolved map data."""
@@ -2047,17 +2074,22 @@ class TestMap08DBIntegration:
         user_blue_spawn = [[3, 3]]
         resp = client.post(
             f"/maps/{arena_map.pk}/save/",
-            data=json.dumps({
-                "zone_size": zone_size,
-                "zones": zone_data,
-                "bases": [
-                    {"type": "red",  "x_px": zone_size // 2, "y_px": zone_size // 2},
-                    {"type": "blue", "x_px": cols * zone_size - zone_size // 2,
-                     "y_px": rows * zone_size - zone_size // 2},
-                ],
-                "red_spawn": user_red_spawn,
-                "blue_spawn": user_blue_spawn,
-            }),
+            data=json.dumps(
+                {
+                    "zone_size": zone_size,
+                    "zones": zone_data,
+                    "bases": [
+                        {"type": "red", "x_px": zone_size // 2, "y_px": zone_size // 2},
+                        {
+                            "type": "blue",
+                            "x_px": cols * zone_size - zone_size // 2,
+                            "y_px": rows * zone_size - zone_size // 2,
+                        },
+                    ],
+                    "red_spawn": user_red_spawn,
+                    "blue_spawn": user_blue_spawn,
+                }
+            ),
             content_type="application/json",
         )
         assert resp.status_code == 200, resp.content
@@ -2070,12 +2102,14 @@ class TestMap08DBIntegration:
         sight_data = compute_sight_lines(zone_data)
         resp2 = client.post(
             f"/maps/{arena_map.pk}/sight-lines/save/",
-            data=json.dumps({
-                "zone_size": zone_size,
-                "sight_data": sight_data,
-                "base_sights": {"red": [], "blue": []},
-                "replace": True,
-            }),
+            data=json.dumps(
+                {
+                    "zone_size": zone_size,
+                    "sight_data": sight_data,
+                    "base_sights": {"red": [], "blue": []},
+                    "replace": True,
+                }
+            ),
             content_type="application/json",
         )
         assert resp2.status_code == 200, resp2.content
@@ -2085,12 +2119,12 @@ class TestMap08DBIntegration:
             arena_map=arena_map, zone_size=zone_size, confirmed=True
         )
         stored = config.zone_data
-        assert stored["red_spawn"] == user_red_spawn, (
-            f"User-edited red_spawn was overwritten: got {stored['red_spawn']}"
-        )
-        assert stored["blue_spawn"] == user_blue_spawn, (
-            f"User-edited blue_spawn was overwritten: got {stored['blue_spawn']}"
-        )
+        assert (
+            stored["red_spawn"] == user_red_spawn
+        ), f"User-edited red_spawn was overwritten: got {stored['red_spawn']}"
+        assert (
+            stored["blue_spawn"] == user_blue_spawn
+        ), f"User-edited blue_spawn was overwritten: got {stored['blue_spawn']}"
 
     def test_clearing_user_spawn_re_enables_auto_generation(self, client):
         """Saving empty red_spawn/blue_spawn clears spawn_user_edited, allowing
@@ -2136,36 +2170,43 @@ class TestMap08DBIntegration:
         # User explicitly erases all spawn cells — sends empty lists.
         resp = client.post(
             f"/maps/{arena_map.pk}/save/",
-            data=json.dumps({
-                "zone_size": zone_size,
-                "zones": zone_data,
-                "bases": [
-                    {"type": "red",  "x_px": zone_size // 2, "y_px": zone_size // 2},
-                    {"type": "blue", "x_px": cols * zone_size - zone_size // 2,
-                     "y_px": rows * zone_size - zone_size // 2},
-                ],
-                "red_spawn": [],
-                "blue_spawn": [],
-            }),
+            data=json.dumps(
+                {
+                    "zone_size": zone_size,
+                    "zones": zone_data,
+                    "bases": [
+                        {"type": "red", "x_px": zone_size // 2, "y_px": zone_size // 2},
+                        {
+                            "type": "blue",
+                            "x_px": cols * zone_size - zone_size // 2,
+                            "y_px": rows * zone_size - zone_size // 2,
+                        },
+                    ],
+                    "red_spawn": [],
+                    "blue_spawn": [],
+                }
+            ),
             content_type="application/json",
         )
         assert resp.status_code == 200, resp.content
 
         config = arena_map.latest_confirmed_config()
-        assert not config.zone_data.get("spawn_user_edited"), (
-            "spawn_user_edited should be cleared after user saves empty spawn lists"
-        )
+        assert not config.zone_data.get(
+            "spawn_user_edited"
+        ), "spawn_user_edited should be cleared after user saves empty spawn lists"
 
         # Now auto-generation should run and populate spawn cells.
         sight_data = compute_sight_lines(zone_data)
         resp2 = client.post(
             f"/maps/{arena_map.pk}/sight-lines/save/",
-            data=json.dumps({
-                "zone_size": zone_size,
-                "sight_data": sight_data,
-                "base_sights": {"red": [], "blue": []},
-                "replace": True,
-            }),
+            data=json.dumps(
+                {
+                    "zone_size": zone_size,
+                    "sight_data": sight_data,
+                    "base_sights": {"red": [], "blue": []},
+                    "replace": True,
+                }
+            ),
             content_type="application/json",
         )
         assert resp2.status_code == 200, resp2.content
@@ -2174,12 +2215,12 @@ class TestMap08DBIntegration:
             arena_map=arena_map, zone_size=zone_size, confirmed=True
         )
         stored = config.zone_data
-        assert len(stored.get("red_spawn", [])) >= 1, (
-            "Auto-generation should have populated red_spawn after lock was cleared"
-        )
-        assert len(stored.get("blue_spawn", [])) >= 1, (
-            "Auto-generation should have populated blue_spawn after lock was cleared"
-        )
+        assert (
+            len(stored.get("red_spawn", [])) >= 1
+        ), "Auto-generation should have populated red_spawn after lock was cleared"
+        assert (
+            len(stored.get("blue_spawn", [])) >= 1
+        ), "Auto-generation should have populated blue_spawn after lock was cleared"
 
     def test_user_edited_spawn_not_overwritten_by_compute_sight_lines(self, client):
         """compute_sight_lines view must NOT overwrite user-edited spawn cells."""
@@ -2233,12 +2274,12 @@ class TestMap08DBIntegration:
             arena_map=arena_map, zone_size=zone_size, confirmed=True
         )
         stored = config.zone_data
-        assert stored["red_spawn"] == user_red_spawn, (
-            f"compute_sight_lines overwrote user red_spawn: got {stored['red_spawn']}"
-        )
-        assert stored["blue_spawn"] == user_blue_spawn, (
-            f"compute_sight_lines overwrote user blue_spawn: got {stored['blue_spawn']}"
-        )
+        assert (
+            stored["red_spawn"] == user_red_spawn
+        ), f"compute_sight_lines overwrote user red_spawn: got {stored['red_spawn']}"
+        assert (
+            stored["blue_spawn"] == user_blue_spawn
+        ), f"compute_sight_lines overwrote user blue_spawn: got {stored['blue_spawn']}"
 
     def test_unsaved_spawn_edits_survive_compute(self, client):
         """Spawn cells sent in the compute POST body (spawnEdited=true on client)
@@ -2281,11 +2322,13 @@ class TestMap08DBIntegration:
         user_blue_spawn = [[3, 3]]
         resp = client.post(
             f"/maps/{arena_map.pk}/sight-lines/compute/",
-            data=json.dumps({
-                "zone_size": zone_size,
-                "red_spawn": user_red_spawn,
-                "blue_spawn": user_blue_spawn,
-            }),
+            data=json.dumps(
+                {
+                    "zone_size": zone_size,
+                    "red_spawn": user_red_spawn,
+                    "blue_spawn": user_blue_spawn,
+                }
+            ),
             content_type="application/json",
         )
         assert resp.status_code == 200, resp.content
@@ -2294,12 +2337,12 @@ class TestMap08DBIntegration:
             arena_map=arena_map, zone_size=zone_size, confirmed=True
         )
         stored = config.zone_data
-        assert stored["red_spawn"] == user_red_spawn, (
-            f"Unsaved spawn edits were not persisted: red_spawn={stored.get('red_spawn')}"
-        )
-        assert stored["blue_spawn"] == user_blue_spawn, (
-            f"Unsaved spawn edits were not persisted: blue_spawn={stored.get('blue_spawn')}"
-        )
-        assert stored.get("spawn_user_edited") is True, (
-            "spawn_user_edited flag must be set when client sends spawn with compute"
-        )
+        assert (
+            stored["red_spawn"] == user_red_spawn
+        ), f"Unsaved spawn edits were not persisted: red_spawn={stored.get('red_spawn')}"
+        assert (
+            stored["blue_spawn"] == user_blue_spawn
+        ), f"Unsaved spawn edits were not persisted: blue_spawn={stored.get('blue_spawn')}"
+        assert (
+            stored.get("spawn_user_edited") is True
+        ), "spawn_user_edited flag must be set when client sends spawn with compute"

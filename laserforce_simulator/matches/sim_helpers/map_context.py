@@ -8,6 +8,7 @@ Backward-compatibility helpers:
     ``MapContext.from_dict(d)`` — construct from the legacy dict.
     ``MapContext.to_dict()`` — serialize back to the legacy dict format.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

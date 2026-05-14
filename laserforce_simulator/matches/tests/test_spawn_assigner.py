@@ -8,7 +8,6 @@ import pytest
 
 from matches.sim_helpers.spawn_assigner import assign_spawn_cells
 
-
 # ---------------------------------------------------------------------------
 # Shared fixtures / helpers
 # ---------------------------------------------------------------------------

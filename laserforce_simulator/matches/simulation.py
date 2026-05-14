@@ -521,7 +521,9 @@ class ResourceBasedSimulator:
         can reach it via ``ResourceBasedSimulator._build_spawn_assignments(...)``
         or directly via ``assign_spawn_cells(...)``.
         """
-        return assign_spawn_cells(roster_roles, team_color, spawn_cells, team_spawn_pools)
+        return assign_spawn_cells(
+            roster_roles, team_color, spawn_cells, team_spawn_pools
+        )
 
     def _initialize_players(
         self,
@@ -631,9 +633,7 @@ class ResourceBasedSimulator:
             # --- process pending nukes ---
             to_run_n, pending_nukes = drain_nukes(pending_nukes, second)
             for n in to_run_n:
-                self._resolve_pending_nuke(
-                    n.player, int(n.complete_time), event_buffer
-                )
+                self._resolve_pending_nuke(n.player, int(n.complete_time), event_buffer)
 
             # REFRESH player states from database after nukes/missiles
             for p in red_players + blue_players:
@@ -766,7 +766,11 @@ class ResourceBasedSimulator:
             # --- process pending follow-ups (deferred by shot cooldown) ---
             due_fu, pending_followups = drain_followups(pending_followups, second)
             for fu in due_fu:
-                fu_attacker, fu_defender, chain = fu.attacker, fu.defender, fu.chain_depth
+                fu_attacker, fu_defender, chain = (
+                    fu.attacker,
+                    fu.defender,
+                    fu.chain_depth,
+                )
                 if fu_attacker.final_lives <= 0 or fu_defender.final_lives <= 0:
                     continue
                 if fu_attacker.final_shots <= 0 and fu_attacker.role != "ammo":
@@ -873,7 +877,12 @@ class ResourceBasedSimulator:
                         if fu_defender.player.player_awareness < random.randint(0, 100):
                             cooldown = shot_cooldown(fu_attacker, second)
                             pending_followups.append(
-                                PendingFollowup(second + cooldown, fu_attacker, fu_defender, chain + 1)
+                                PendingFollowup(
+                                    second + cooldown,
+                                    fu_attacker,
+                                    fu_defender,
+                                    chain + 1,
+                                )
                             )
                 else:
                     fu_attacker.shots_missed += 1
@@ -1131,7 +1140,9 @@ class ResourceBasedSimulator:
                 # _use_special will apply resource costs / activation event and may return a scheduled nuke
                 scheduled = self._use_special(actor, second, event_buffer)
                 if scheduled and scheduled[0] == "nuke":
-                    pending_nukes.append(PendingNuke(complete_time=scheduled[1], player=scheduled[2]))
+                    pending_nukes.append(
+                        PendingNuke(complete_time=scheduled[1], player=scheduled[2])
+                    )
             elif ptype == "tag":
                 tag_attempts.append({"attacker": actor, "defender": plan.get("target")})
 
@@ -1456,7 +1467,9 @@ class ResourceBasedSimulator:
                 continue
             if r_reactor.player.player_awareness >= random.randint(0, 100):
                 cooldown = shot_cooldown(r_reactor, second)
-                pending_reactions.append(PendingReaction(second + cooldown, r_reactor, r_target))
+                pending_reactions.append(
+                    PendingReaction(second + cooldown, r_reactor, r_target)
+                )
 
         # Follow-up tags: schedule via pending_followups so they fire after the shot cooldown.
         # A hit that downs the defender (shields → 0) never generates a follow-up.
@@ -2306,16 +2319,20 @@ class BatchSimulator:
             # --- process pending missiles ---
             fired, pending_missiles = drain_missiles(pending_missiles, second)
             for m in fired:
-                if m.attacker.is_active_at(m.complete_time) and m.defender.is_taggable_at(
+                if m.attacker.is_active_at(
                     m.complete_time
-                ):
-                    self._complete_missile(m.attacker, m.defender, m.complete_time, event_log)
+                ) and m.defender.is_taggable_at(m.complete_time):
+                    self._complete_missile(
+                        m.attacker, m.defender, m.complete_time, event_log
+                    )
 
             # --- process pending nukes ---
             fired_n, pending_nukes = drain_nukes(pending_nukes, second)
             for n in fired_n:
                 if n.player.is_active_at(n.complete_time) and n.player.final_lives > 0:
-                    opposing = blue_players if n.player.team_color == "red" else red_players
+                    opposing = (
+                        blue_players if n.player.team_color == "red" else red_players
+                    )
                     self._complete_nuke(n.player, n.complete_time, opposing, event_log)
 
             # --- process pending reactions (deferred by shot cooldown) ---
@@ -2419,7 +2436,11 @@ class BatchSimulator:
             # --- process pending follow-ups (deferred by shot cooldown) ---
             due_fu, pending_followups = drain_followups(pending_followups, second)
             for fu in due_fu:
-                fu_attacker, fu_defender, chain = fu.attacker, fu.defender, fu.chain_depth
+                fu_attacker, fu_defender, chain = (
+                    fu.attacker,
+                    fu.defender,
+                    fu.chain_depth,
+                )
                 if fu_attacker.final_lives <= 0 or fu_defender.final_lives <= 0:
                     continue
                 if fu_attacker.final_shots <= 0 and fu_attacker.role != "ammo":
@@ -2506,7 +2527,9 @@ class BatchSimulator:
                             cooldown = shot_cooldown(fu_attacker, second)
                             if cooldown == 0.0:
                                 due_fu.append(
-                                    PendingFollowup(second, fu_attacker, fu_defender, chain + 1)
+                                    PendingFollowup(
+                                        second, fu_attacker, fu_defender, chain + 1
+                                    )
                                 )
                             else:
                                 pending_followups.append(
@@ -2594,7 +2617,9 @@ class BatchSimulator:
                 elif ptype == "use_special":
                     scheduled = self._use_special(actor, second, all_alive, event_log)
                     if scheduled and scheduled[0] == "nuke":
-                        pending_nukes.append(PendingNuke(complete_time=scheduled[1], player=scheduled[2]))
+                        pending_nukes.append(
+                            PendingNuke(complete_time=scheduled[1], player=scheduled[2])
+                        )
                 elif ptype == "tag":
                     tag_attempts.append({"attacker": actor, "defender": plan["target"]})
 
@@ -2826,7 +2851,9 @@ class BatchSimulator:
                         {"attacker": r_reactor, "defender": r_target}
                     )
                 elif pending_reactions is not None:
-                    pending_reactions.append(PendingReaction(second + cooldown, r_reactor, r_target))
+                    pending_reactions.append(
+                        PendingReaction(second + cooldown, r_reactor, r_target)
+                    )
 
         for ra in immediate_reactions:
             r_attacker = ra["attacker"]
@@ -2943,7 +2970,9 @@ class BatchSimulator:
                     )
                 elif pending_followups is not None:
                     pending_followups.append(
-                        PendingFollowup(second + cooldown, o["attacker"], o["defender"], 1)
+                        PendingFollowup(
+                            second + cooldown, o["attacker"], o["defender"], 1
+                        )
                     )
 
         for fu in immediate_follow_ups:

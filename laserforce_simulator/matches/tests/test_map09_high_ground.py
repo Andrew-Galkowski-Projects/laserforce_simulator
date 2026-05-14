@@ -556,8 +556,12 @@ class TestMap09LOSWithElevation:
         }
         sight = compute_sight_lines(zone_data, use_quadtree=False)
 
-        assert "0,2" not in sight.get("0,0", []), "Below-wall attacker must NOT see through elevated low wall"
-        assert "0,0" in sight.get("0,2", []), "At-wall-elevation attacker MUST see low-ground target through elevated low wall"
+        assert "0,2" not in sight.get(
+            "0,0", []
+        ), "Below-wall attacker must NOT see through elevated low wall"
+        assert "0,0" in sight.get(
+            "0,2", []
+        ), "At-wall-elevation attacker MUST see low-ground target through elevated low wall"
 
     def test_low_wall_transparent_without_elevation_grid(self):
         """Low wall stays transparent when no elevation data is provided (backwards compat)."""
@@ -794,12 +798,18 @@ class TestMap09ResolvesElevationFromZoneData:
         from matches.simulation import ResourceBasedSimulator
 
         arena_map = self._make_elevated_map("ElevResolve")
-        elevation_grid = ResourceBasedSimulator._resolve_map_data(arena_map).elevation_grid
+        elevation_grid = ResourceBasedSimulator._resolve_map_data(
+            arena_map
+        ).elevation_grid
 
-        assert elevation_grid is not None, "elevation_grid must not be None when zone_data has 'elevation'"
+        assert (
+            elevation_grid is not None
+        ), "elevation_grid must not be None when zone_data has 'elevation'"
         # elevation_grid is a 2D list of floats matching the zones grid shape
         # Cell (0,1) has elevation 2.0 in the fixture
-        assert elevation_grid[0][1] == 2.0, "elevation_grid[row][col] must return the float elevation for that cell"
+        assert (
+            elevation_grid[0][1] == 2.0
+        ), "elevation_grid[row][col] must return the float elevation for that cell"
         assert elevation_grid[0][0] == 0.0
 
     def test_resolve_map_data_elevation_none_when_absent(self):
@@ -842,7 +852,9 @@ class TestMap09ResolvesElevationFromZoneData:
             arena_map=arena_map, base_type="blue", zone_size=100, visible_cells=[]
         )
 
-        elevation_grid = ResourceBasedSimulator._resolve_map_data(arena_map).elevation_grid
+        elevation_grid = ResourceBasedSimulator._resolve_map_data(
+            arena_map
+        ).elevation_grid
         assert (
             elevation_grid is None or elevation_grid == {}
         ), "elevation_grid should be None or empty when zone_data has no 'elevation' key"

@@ -160,7 +160,11 @@ def process_zones(request, map_id):
     # user edits survive page reloads.  Only apply when the stored config's zone_size
     # matches the requested one — different sizes are incompatible.
     confirmed = arena_map.latest_confirmed_config()
-    if confirmed and confirmed.zone_size == cell_size and isinstance(confirmed.zone_data, dict):
+    if (
+        confirmed
+        and confirmed.zone_size == cell_size
+        and isinstance(confirmed.zone_data, dict)
+    ):
         stored = confirmed.zone_data
         if "zones" in stored:
             data["zones"] = stored["zones"]
@@ -255,7 +259,9 @@ def save_zone_config(request, map_id):
     # Client may send user-edited spawn overrides (list of [r, c] pairs).
     client_red_spawn = body.get("red_spawn")
     client_blue_spawn = body.get("blue_spawn")
-    client_sent_spawn = isinstance(client_red_spawn, list) or isinstance(client_blue_spawn, list)
+    client_sent_spawn = isinstance(client_red_spawn, list) or isinstance(
+        client_blue_spawn, list
+    )
     red_spawn = (
         client_red_spawn if isinstance(client_red_spawn, list) else red_spawn_existing
     )
@@ -406,7 +412,11 @@ def compute_sight_lines_view(request, map_id):
     if isinstance(client_red_spawn, list) or isinstance(client_blue_spawn, list):
         confirmed = arena_map.latest_confirmed_config()
         if confirmed:
-            raw = dict(confirmed.zone_data) if isinstance(confirmed.zone_data, dict) else {"zones": confirmed.zone_data}
+            raw = (
+                dict(confirmed.zone_data)
+                if isinstance(confirmed.zone_data, dict)
+                else {"zones": confirmed.zone_data}
+            )
             if isinstance(client_red_spawn, list):
                 raw["red_spawn"] = client_red_spawn
             if isinstance(client_blue_spawn, list):
