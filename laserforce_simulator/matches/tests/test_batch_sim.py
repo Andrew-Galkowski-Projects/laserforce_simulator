@@ -420,3 +420,38 @@ class TestBatchSimulatorReactions:
             )
 
         assert len(pending_rx) == 1
+
+
+# ---------------------------------------------------------------------------
+# role_constants spot-checks
+# ---------------------------------------------------------------------------
+
+
+class TestRoleConstants:
+    def test_heavy_starting_lives(self):
+        from matches.sim_helpers.role_constants import MAX_LIVES
+
+        assert MAX_LIVES["heavy"] == 20
+
+    def test_commander_starting_shots(self):
+        from matches.sim_helpers.role_constants import MAX_SHOTS
+
+        assert MAX_SHOTS["commander"] == 60
+
+    def test_heavy_shot_power(self):
+        from matches.sim_helpers.role_constants import ROLE_STATS
+
+        assert ROLE_STATS["heavy"]["shot_power"] == 3
+
+    def test_scout_shield(self):
+        from matches.sim_helpers.role_constants import ROLE_STATS
+
+        assert ROLE_STATS["scout"]["shield"] == 1
+
+    def test_all_roles_present(self):
+        from matches.sim_helpers.role_constants import MAX_LIVES, MAX_SHOTS, ROLE_STATS
+
+        roles = {"commander", "heavy", "scout", "medic", "ammo"}
+        assert set(ROLE_STATS) == roles
+        assert set(MAX_LIVES) == roles
+        assert set(MAX_SHOTS) == roles

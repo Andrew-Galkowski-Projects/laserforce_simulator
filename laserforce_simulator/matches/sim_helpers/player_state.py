@@ -1,16 +1,12 @@
 from dataclasses import dataclass
 from typing import Optional
 
-_ROLE_STATS = {
-    "commander": {"shot_power": 2, "shield": 3},
-    "heavy": {"shot_power": 3, "shield": 3},
-    "scout": {"shot_power": 1, "shield": 1},
-    "medic": {"shot_power": 1, "shield": 1},
-    "ammo": {"shot_power": 1, "shield": 1},
-}
-_MAX_LIVES = {"commander": 30, "heavy": 20, "scout": 30, "medic": 20, "ammo": 20}
-_MAX_SHOTS = {"commander": 60, "heavy": 40, "scout": 60, "medic": 30, "ammo": 15}
-_SPECIAL_COST = {"commander": 20, "scout": 10, "medic": 10, "ammo": 15}
+from matches.sim_helpers.role_constants import (
+    MAX_LIVES as _MAX_LIVES,
+    MAX_SHOTS as _MAX_SHOTS,
+    ROLE_STATS as _ROLE_STATS,
+    SPECIAL_COST as _SPECIAL_COST,
+)
 
 
 @dataclass

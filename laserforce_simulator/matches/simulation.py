@@ -24,7 +24,8 @@ from .sim_helpers.combat import (
     award_bases as _award_bases_shared,
     start_missile_lock as _start_missile_lock_shared,
 )
-from teams.models import Player, ROLE_STATS
+from teams.models import Player
+from matches.sim_helpers.role_constants import ROLE_STATS
 from core.models import (
     BaseSightLineConfig,
     HeavyStrongSpotsConfig,
@@ -2061,7 +2062,6 @@ class BatchSimulator:
         cell-aware pathfinding movement; omit for the 3-zone fallback.
         """
         from .sim_helpers.player_state import PlayerState
-        from teams.models import ROLE_STATS as _ROLE_STATS
 
         # Read rosters once — list of (role, Player) tuples
         red_roster = list(team_red.active_roster)
@@ -2145,7 +2145,6 @@ class BatchSimulator:
         team_spawn_pools: dict | None = None,
     ):
         from .sim_helpers.player_state import PlayerState
-        from teams.models import ROLE_STATS as _ROLE_STATS
 
         default_zone = 0 if team_color == "red" else 2
         base_spawn = spawn_cells.get(team_color) if spawn_cells else None
@@ -2208,7 +2207,7 @@ class BatchSimulator:
                 final_shots=resources["shots"],
                 final_special=resources["special"],
                 final_missiles=resources["missiles"],
-                shields=_ROLE_STATS[role]["shield"],
+                shields=ROLE_STATS[role]["shield"],
                 current_zone=starting_zone,
                 cell_row=cell_row,
                 cell_col=cell_col,
