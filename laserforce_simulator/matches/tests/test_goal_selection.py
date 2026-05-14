@@ -57,16 +57,18 @@ def _base_ctx(
     strong_spots=None,
     spawn_cells=None,
 ):
-    return MapContext.from_dict({
-        "adj": adj or {},
-        "spawn_cells": spawn_cells or {"red": (0, 0), "blue": (9, 9)},
-        "zone_data": None,
-        "sight_data": sight_data or {},
-        "base_sight_data": {},
-        "cell_los_counts": cell_los_counts or {},
-        "high_los_cells": high_los_cells or [],
-        "strong_spots": strong_spots or [],
-    })
+    return MapContext.from_dict(
+        {
+            "adj": adj or {},
+            "spawn_cells": spawn_cells or {"red": (0, 0), "blue": (9, 9)},
+            "zone_data": None,
+            "sight_data": sight_data or {},
+            "base_sight_data": {},
+            "cell_los_counts": cell_los_counts or {},
+            "high_los_cells": high_los_cells or [],
+            "strong_spots": strong_spots or [],
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

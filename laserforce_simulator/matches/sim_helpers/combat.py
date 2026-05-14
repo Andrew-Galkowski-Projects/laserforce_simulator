@@ -5,6 +5,7 @@ PlayerState) and emit events through an optional callable rather than writing
 to a specific storage backend.  No Django imports — this module must stay
 importable without the ORM.
 """
+
 from __future__ import annotations
 
 import random
@@ -13,7 +14,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .map_context import MapContext
 
-from .mechanics import shot_cooldown, choose_tag_target, choose_resupply_target, choose_zone_change
+from .mechanics import (
+    shot_cooldown,
+    choose_tag_target,
+    choose_resupply_target,
+    choose_zone_change,
+)
 from .pathfinding import choose_goal_cell
 from .pending_events import PendingMissile
 from .weights import (
@@ -102,7 +108,9 @@ def _can_tag_through_windowed_wall(
                 return False
 
 
-def _get_los_targets(actor, candidates: list, movement_ctx: "MapContext | None") -> list:
+def _get_los_targets(
+    actor, candidates: list, movement_ctx: "MapContext | None"
+) -> list:
     """Return subset of candidates visible to actor.
 
     With a map: looks up actor's cell in SightLineConfig (normal LOS), then
@@ -240,7 +248,9 @@ def plan_action(
     elif player.role == "heavy":
         weights = _get_heavy_weights(player, _ACTION_IDX, weights, all_alive, second)
     elif player.role == "commander":
-        weights = _get_commander_weights(player, _ACTION_IDX, weights, all_alive, second)
+        weights = _get_commander_weights(
+            player, _ACTION_IDX, weights, all_alive, second
+        )
 
     cooldown = shot_cooldown(player, second)
     if cooldown > 0.0 and (second - player.last_shot_time) < cooldown:
@@ -273,7 +283,9 @@ def plan_action(
                     los_filter=_get_los_targets,
                 )
                 if second_target:
-                    plans.append({"type": "tag", "actor": player, "target": second_target})
+                    plans.append(
+                        {"type": "tag", "actor": player, "target": second_target}
+                    )
     elif choice == "resupply_ally":
         teammate = choose_resupply_target(player, all_alive, second)
         if teammate:
@@ -291,7 +303,11 @@ def plan_action(
             ]
             if targets:
                 plans.append(
-                    {"type": "missile", "actor": player, "target": random.choice(targets)}
+                    {
+                        "type": "missile",
+                        "actor": player,
+                        "target": random.choice(targets),
+                    }
                 )
     elif choice == "change_zone":
         if movement_ctx is not None and player.cell_row is not None:
@@ -565,4 +581,6 @@ def start_missile_lock(
         return None
 
     delay = random.randint(1, 2)
-    return PendingMissile(complete_time=second + delay, attacker=attacker, defender=defender)
+    return PendingMissile(
+        complete_time=second + delay, attacker=attacker, defender=defender
+    )

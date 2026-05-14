@@ -1,5 +1,6 @@
-from django.db import models
 from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator, MinValueValidator
+from django.db import models
 
 from matches.sim_helpers.role_constants import ROLE_STATS
 
@@ -157,26 +158,28 @@ class Player(models.Model):
     # TODO: Apply stat boost when player is assigned to a preferred role
     preferred_roles = models.JSONField(default=list, blank=True)
 
-    # Base stats that affect gameplay
-    player_awareness = models.IntegerField(default=50)  # 0-100
-    game_awareness = models.IntegerField(default=50)  # 0-100
-    resource_awareness = models.IntegerField(default=50)  # 0-100
-    decision_making = models.IntegerField(default=50)  # 0-100
-    positioning = models.IntegerField(default=50)  # 0-100
-    stamina = models.IntegerField(default=50)  # 0-100
-    speed = models.IntegerField(default=50)  # 0-100
-    flexibility = models.IntegerField(default=50)  # 0-100
-    adaptability = models.IntegerField(default=50)  # 0-100
-    communication = models.IntegerField(default=50)  # 0-100
-    teamwork = models.IntegerField(default=50)  # 0-100
-    Offensive_synergy = models.IntegerField(default=50)  # 0-100
-    defensive_synergy = models.IntegerField(default=50)  # 0-100
-    midfield_synergy = models.IntegerField(default=50)  # 0-100
-    resupply_synergy = models.IntegerField(default=50)  # 0-100
-    resupply_efficiency = models.IntegerField(default=50)  # 0-100
-    accuracy = models.IntegerField(default=50)  # 0-100
-    survival = models.IntegerField(default=50)  # how well they avoid tags
-    special_usage = models.IntegerField(default=50)  # tactical ability
+    _STAT_VALIDATORS = [MinValueValidator(0), MaxValueValidator(100)]
+
+    # Base stats that affect gameplay (0–100)
+    player_awareness = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    game_awareness = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    resource_awareness = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    decision_making = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    positioning = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    stamina = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    speed = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    flexibility = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    adaptability = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    communication = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    teamwork = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    Offensive_synergy = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    defensive_synergy = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    midfield_synergy = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    resupply_synergy = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    resupply_efficiency = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    accuracy = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    survival = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
+    special_usage = models.IntegerField(default=50, validators=_STAT_VALIDATORS)
 
     @property
     def overall_rating(self):

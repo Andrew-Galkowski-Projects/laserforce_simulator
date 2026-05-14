@@ -149,6 +149,8 @@ Most of the 19 player stats exist on the model but are not used in simulation. T
 (Awareness, Decision-making, Physical, Team, Role). New players default to 50 for all stats.
 Existing player data is disposable — no backfill migration required.
 Show `overall_rating` as a live-updating summary. Add a convenience "Set to Average / Elite" bulk preset.
+- completed
+- note: `PlayerForm` exposes all 19 stat fields (defaulting to 50) with "Set All to Average (50)" and "Set All to Elite (90)" preset buttons; `overall_rating` is shown as the saved computed value (mean of all 19 stats).
 
 ### STAT-02 · Role-preference stat multiplier
 `Player` has a multi-valued `preferred_roles` field. Add `Player.stat_for_simulation(stat_name)` which returns

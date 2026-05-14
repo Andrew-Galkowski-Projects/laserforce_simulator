@@ -6,7 +6,19 @@ Manages teams, players, and rosters. Serves as the homepage (`/`).
 
 **`Team`**: Has exactly 6 `Player` slots — one each of Commander, Heavy, Scout, Medic, Ammo, plus one duplicate role.
 
-**`Player`**: Belongs to a team and has an assigned role. Carries ~20 numeric stats (0–100) used as weights by the simulator. Key stats include `accuracy`, `aggressiveness`, `awareness`, `missile_use`, `special_use`, and role-specific proficiency fields.
+**`Player`**: Belongs to a team and has an assigned role. Carries 19 numeric stats (0–100) used as weights by the simulator:
+
+| Category | Fields |
+|----------|--------|
+| Awareness | `player_awareness`, `game_awareness`, `resource_awareness` |
+| Decision-making | `decision_making` |
+| Physical | `positioning`, `stamina`, `speed`, `flexibility`, `adaptability` |
+| Team | `communication`, `teamwork` |
+| Role | `Offensive_synergy`, `defensive_synergy`, `midfield_synergy`, `resupply_synergy`, `resupply_efficiency`, `accuracy`, `survival`, `special_usage` |
+
+`overall_rating` is a `@property` returning the unweighted mean of all 19 stats.
+
+`PlayerForm` exposes all 19 stat fields (default 50) with "Set All to Average (50)" and "Set All to Elite (90)" preset buttons.
 
 `ROLE_STATS` is imported from `matches.sim_helpers.role_constants` — the canonical source for all role-level constants (`ROLE_STATS`, `MAX_LIVES`, `MAX_SHOTS`, `SPECIAL_COST`). Both `teams/models.py` and `sim_helpers/player_state.py` import from there; the duplicate definition that previously lived in `player_state.py` has been removed.
 
@@ -43,3 +55,4 @@ Read-only DRF endpoints registered under `/api/`:
 - `test_models.py` — roster validation (FIX-01 coverage)
 - `test_serializers.py` — PlayerSerializer, PlayerInlineSerializer, TeamSerializer, TeamListSerializer
 - `test_apis.py` — HTTP-level tests for `/api/teams/` and `/api/players/`
+- `test_forms.py` — `PlayerForm` stat field completeness (all 19 fields present, defaults to 50) and save behavior

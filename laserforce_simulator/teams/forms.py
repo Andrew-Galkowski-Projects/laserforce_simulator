@@ -1,6 +1,8 @@
 from django import forms
 from .models import Team, Player, ROLE_CHOICES
 
+_STAT_WIDGET_ATTRS = {"class": "form-control", "min": "0", "max": "100"}
+
 
 class TeamForm(forms.ModelForm):
     class Meta:
@@ -24,11 +26,52 @@ class PlayerForm(forms.ModelForm):
 
     class Meta:
         model = Player
-        fields = ["name", "preferred_roles"]
+        fields = [
+            "name",
+            "preferred_roles",
+            "player_awareness",
+            "game_awareness",
+            "resource_awareness",
+            "decision_making",
+            "positioning",
+            "stamina",
+            "speed",
+            "flexibility",
+            "adaptability",
+            "communication",
+            "teamwork",
+            "Offensive_synergy",
+            "defensive_synergy",
+            "midfield_synergy",
+            "resupply_synergy",
+            "resupply_efficiency",
+            "accuracy",
+            "survival",
+            "special_usage",
+        ]
         widgets = {
             "name": forms.TextInput(
                 attrs={"class": "form-control", "placeholder": "Enter player name"}
             ),
+            "player_awareness": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "game_awareness": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "resource_awareness": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "decision_making": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "positioning": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "stamina": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "speed": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "flexibility": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "adaptability": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "communication": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "teamwork": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "Offensive_synergy": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "defensive_synergy": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "midfield_synergy": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "resupply_synergy": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "resupply_efficiency": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "accuracy": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "survival": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
+            "special_usage": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
         }
 
     def __init__(self, *args, **kwargs):

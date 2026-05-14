@@ -281,7 +281,7 @@ def _has_los(
         return 0.0
 
     attacker_elev = _elev(r1, c1)
-    target_elev   = _elev(r2, c2)
+    target_elev = _elev(r2, c2)
     _wall_meta = wall_meta or {}
 
     def _can_shoot_over_high_wall(wr, wc):

@@ -100,9 +100,7 @@ def assign_spawn_cells(
     # Sort pool ascending by distance to enemy (most-aggressive first).
     sorted_pool: list[tuple[int, int]] = sorted(
         pool,
-        key=lambda cell: (
-            abs(cell[0] - enemy_base[0]) + abs(cell[1] - enemy_base[1])
-        ),
+        key=lambda cell: (abs(cell[0] - enemy_base[0]) + abs(cell[1] - enemy_base[1])),
     )
 
     # Group roster indices by role priority.
