@@ -157,6 +157,13 @@ class Player(models.Model):
     name = models.CharField(max_length=100)
     preferred_roles = models.JSONField(default=list, blank=True)
 
+    # Profile fields
+    age = models.IntegerField(null=True, blank=True)
+    started_playing_age = models.IntegerField(null=True, blank=True)
+    total_games = models.IntegerField(default=0)
+    home_site = models.CharField(max_length=100, blank=True, default="")
+    height = models.CharField(max_length=20, blank=True, default="")
+
     _STAT_VALIDATORS = [MinValueValidator(0), MaxValueValidator(100)]
 
     # Base stats that affect gameplay (0–100)

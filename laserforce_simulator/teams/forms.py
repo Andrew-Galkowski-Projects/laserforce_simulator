@@ -29,6 +29,11 @@ class PlayerForm(forms.ModelForm):
         fields = [
             "name",
             "preferred_roles",
+            "age",
+            "started_playing_age",
+            "total_games",
+            "home_site",
+            "height",
             "player_awareness",
             "game_awareness",
             "resource_awareness",
@@ -52,6 +57,19 @@ class PlayerForm(forms.ModelForm):
         widgets = {
             "name": forms.TextInput(
                 attrs={"class": "form-control", "placeholder": "Enter player name"}
+            ),
+            "age": forms.NumberInput(attrs={"class": "form-control", "min": "0"}),
+            "started_playing_age": forms.NumberInput(
+                attrs={"class": "form-control", "min": "0"}
+            ),
+            "total_games": forms.NumberInput(
+                attrs={"class": "form-control", "min": "0"}
+            ),
+            "home_site": forms.TextInput(
+                attrs={"class": "form-control", "placeholder": "e.g. Ultrazone Chicago"}
+            ),
+            "height": forms.TextInput(
+                attrs={"class": "form-control", "placeholder": "e.g. 5'11\""}
             ),
             "player_awareness": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
             "game_awareness": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),

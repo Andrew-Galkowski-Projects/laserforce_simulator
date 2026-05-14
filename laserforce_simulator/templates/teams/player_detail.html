@@ -1,0 +1,97 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ player.name }} - {{ team.name }}{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    <a href="{% url 'team_detail' team.id %}" class="text-muted text-decoration-none">← {{ team.name }}</a>
+</div>
+
+<div class="row g-4">
+
+    <!-- Left: identity card -->
+    <div class="col-md-3">
+        <div class="card h-100">
+            <div class="card-body">
+                <h3 class="card-title mb-1">{{ player.name }}</h3>
+                <p class="text-muted mb-3">{{ team.name }}</p>
+
+                <!-- avatar placeholder -->
+                <div class="bg-secondary rounded d-flex align-items-center justify-content-center mb-3"
+                     style="width:90px;height:90px;font-size:2.5rem;color:#fff;">
+                    {{ player.name|first|upper }}
+                </div>
+
+                <table class="table table-sm table-borderless mb-0">
+                    {% if player.height %}
+                    <tr><th class="text-muted fw-normal ps-0">Height</th><td>{{ player.height }}</td></tr>
+                    {% endif %}
+                    {% if player.age %}
+                    <tr><th class="text-muted fw-normal ps-0">Age</th><td>{{ player.age }}</td></tr>
+                    {% endif %}
+                    {% if player.started_playing_age %}
+                    <tr><th class="text-muted fw-normal ps-0">Started playing</th><td>age {{ player.started_playing_age }}</td></tr>
+                    {% endif %}
+                    {% if player.home_site %}
+                    <tr><th class="text-muted fw-normal ps-0">Home site</th><td>{{ player.home_site }}</td></tr>
+                    {% endif %}
+                    <tr><th class="text-muted fw-normal ps-0">Total games</th><td>{{ player.total_games }}</td></tr>
+                </table>
+
+                {% if player.preferred_roles %}
+                <div class="mt-3">
+                    <small class="text-muted d-block mb-1">Preferred roles</small>
+                    {% for r in player.preferred_roles %}
+                    <span class="badge bg-primary me-1">{{ r|capfirst }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
+
+                <div class="mt-3 d-flex gap-2">
+                    <a href="{% url 'player_edit' team.id player.id %}" class="btn btn-sm btn-outline-primary">Edit</a>
+                    <a href="{% url 'player_delete' team.id player.id %}" class="btn btn-sm btn-outline-danger">Delete</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Center: overall + stat groups -->
+    <div class="col-md-9">
+        <div class="row g-3 mb-4">
+            <div class="col-auto">
+                <div class="card text-center px-4 py-3">
+                    <div class="text-muted small mb-1">Overall</div>
+                    <div class="fw-bold" style="font-size:2rem;">{{ player.overall_rating|floatformat:0 }}</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3">
+            {% for group_name, stats in stat_groups %}
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-header fw-semibold py-2">{{ group_name }}</div>
+                    <div class="card-body py-2">
+                        {% for label, value in stats %}
+                        <div class="d-flex align-items-center mb-2">
+                            <span class="text-muted me-2" style="width:160px;font-size:.875rem;">{{ label }}</span>
+                            <div class="progress flex-grow-1 me-2" style="height:8px;">
+                                <div class="progress-bar
+                                    {% if value >= 80 %}bg-success
+                                    {% elif value >= 60 %}bg-primary
+                                    {% elif value >= 40 %}bg-warning
+                                    {% else %}bg-danger{% endif %}"
+                                     style="width:{{ value }}%"></div>
+                            </div>
+                            <span class="fw-semibold" style="width:28px;text-align:right;font-size:.875rem;">{{ value }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+</div>
+{% endblock %}

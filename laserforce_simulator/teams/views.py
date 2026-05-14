@@ -85,6 +85,63 @@ def team_slots_edit(request, team_id):
     )
 
 
+_STAT_GROUPS = [
+    (
+        "Awareness",
+        [
+            ("player_awareness", "Player Awareness"),
+            ("game_awareness", "Game Awareness"),
+            ("resource_awareness", "Resource Awareness"),
+        ],
+    ),
+    (
+        "Decision Making",
+        [
+            ("decision_making", "Decision Making"),
+            ("positioning", "Positioning"),
+            ("adaptability", "Adaptability"),
+            ("special_usage", "Special Usage"),
+            ("survival", "Survival"),
+        ],
+    ),
+    (
+        "Team",
+        [
+            ("teamwork", "Teamwork"),
+            ("Offensive_synergy", "Offensive Synergy"),
+            ("defensive_synergy", "Defensive Synergy"),
+            ("midfield_synergy", "Midfield Synergy"),
+            ("resupply_synergy", "Resupply Synergy"),
+        ],
+    ),
+    (
+        "Physical",
+        [
+            ("stamina", "Stamina"),
+            ("speed", "Speed"),
+            ("flexibility", "Flexibility"),
+            ("communication", "Communication"),
+            ("accuracy", "Accuracy"),
+            ("resupply_efficiency", "Resupply Efficiency"),
+        ],
+    ),
+]
+
+
+def player_detail(request, team_id: int, player_id: int):
+    team = get_object_or_404(Team, id=team_id)
+    player = get_object_or_404(Player, id=player_id, team=team)
+    stat_groups = [
+        (group_name, [(label, getattr(player, field)) for field, label in fields])
+        for group_name, fields in _STAT_GROUPS
+    ]
+    return render(
+        request,
+        "teams/player_detail.html",
+        {"player": player, "team": team, "stat_groups": stat_groups},
+    )
+
+
 def player_add(request, team_id):
     """Add a player to a team"""
     team = get_object_or_404(Team, id=team_id)
