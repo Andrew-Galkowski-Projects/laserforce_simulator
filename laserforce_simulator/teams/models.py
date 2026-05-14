@@ -5,12 +5,11 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 from matches.sim_helpers.role_constants import ROLE_STATS
-
-# Populate with real venue names; used by _random_player_profile().
-LASERFORCE_SITES: list[str] = []
+from teams.constants import LASERFORCE_SITES, PLAYER_NAMES  # noqa: F401
 
 
 def _random_player_profile() -> dict:
+    name = random.choice(PLAYER_NAMES) if PLAYER_NAMES else ""
     age = random.randint(16, 50)
     started_playing_age = random.randint(16, age)
     total_inches = random.randint(48, 82)  # 4'0" – 6'10"
@@ -18,6 +17,7 @@ def _random_player_profile() -> dict:
     height = f"{feet}'{inches}\""
     home_site = random.choice(LASERFORCE_SITES) if LASERFORCE_SITES else ""
     return {
+        "name": name,
         "age": age,
         "started_playing_age": started_playing_age,
         "total_games": random.randint(0, 5000),

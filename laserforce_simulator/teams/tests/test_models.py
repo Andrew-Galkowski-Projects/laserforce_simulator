@@ -1,6 +1,69 @@
+import random
+
 from django.test import TestCase
 
-from teams.models import Player, Team
+from teams.constants import LASERFORCE_SITES, PLAYER_NAMES
+from teams.models import Player, Team, _random_player_profile
+
+
+class RandomPlayerProfileTest(TestCase):
+    """Verify _random_player_profile() returns a valid, fully-populated profile dict."""
+
+    def test_returns_all_required_keys(self):
+        profile = _random_player_profile()
+        self.assertEqual(
+            set(profile.keys()),
+            {"name", "age", "started_playing_age", "total_games", "home_site", "height"},
+        )
+
+    def test_name_drawn_from_player_names(self):
+        random.seed(0)
+        for _ in range(20):
+            profile = _random_player_profile()
+            self.assertIn(profile["name"], PLAYER_NAMES)
+
+    def test_age_in_valid_range(self):
+        random.seed(1)
+        for _ in range(50):
+            profile = _random_player_profile()
+            self.assertGreaterEqual(profile["age"], 16)
+            self.assertLessEqual(profile["age"], 50)
+
+    def test_started_playing_age_at_most_current_age(self):
+        random.seed(2)
+        for _ in range(50):
+            profile = _random_player_profile()
+            self.assertGreaterEqual(profile["started_playing_age"], 16)
+            self.assertLessEqual(profile["started_playing_age"], profile["age"])
+
+    def test_total_games_in_valid_range(self):
+        random.seed(3)
+        for _ in range(50):
+            profile = _random_player_profile()
+            self.assertGreaterEqual(profile["total_games"], 0)
+            self.assertLessEqual(profile["total_games"], 5000)
+
+    def test_home_site_drawn_from_laserforce_sites(self):
+        random.seed(4)
+        for _ in range(20):
+            profile = _random_player_profile()
+            self.assertIn(profile["home_site"], LASERFORCE_SITES)
+
+    def test_height_format_is_feet_and_inches(self):
+        random.seed(5)
+        for _ in range(50):
+            profile = _random_player_profile()
+            height = profile["height"]
+            self.assertRegex(height, r"^\d+'\d+\"$", f"Unexpected height format: {height}")
+
+    def test_height_in_valid_range(self):
+        random.seed(6)
+        for _ in range(100):
+            profile = _random_player_profile()
+            feet, inches_str = profile["height"].split("'")
+            total_inches = int(feet) * 12 + int(inches_str.rstrip('"'))
+            self.assertGreaterEqual(total_inches, 48, "Height below 4'0\"")
+            self.assertLessEqual(total_inches, 82, "Height above 6'10\"")
 
 
 class PlayerStatForSimulationTest(TestCase):
