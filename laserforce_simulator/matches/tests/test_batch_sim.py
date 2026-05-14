@@ -144,29 +144,10 @@ class TestBatchSimulatorSeedReproducibility:
 
 
 class TestBatchSimulatorShotCooldown:
-    """_shot_cooldown values and per-tick tag-weight suppression in _plan_action."""
+    """Per-tick tag-weight suppression in _plan_action (cooldown values tested in test_mechanics.py)."""
 
     def _sim(self):
         return BatchSimulator()
-
-    def test_regular_roles_return_half_second(self):
-        sim = self._sim()
-        for role in ("commander", "medic", "ammo"):
-            assert sim._shot_cooldown(_make_ps(role), 0.0) == 0.5
-
-    def test_heavy_returns_one_second(self):
-        sim = self._sim()
-        assert sim._shot_cooldown(_make_ps("heavy"), 0.0) == 1.0
-
-    def test_scout_without_special_returns_half_second(self):
-        sim = self._sim()
-        assert sim._shot_cooldown(_make_ps("scout", special_active_until=0), 1.0) == 0.5
-
-    def test_rapid_fire_scout_returns_zero(self):
-        sim = self._sim()
-        assert (
-            sim._shot_cooldown(_make_ps("scout", special_active_until=10), 2.0) == 0.0
-        )
 
     def test_plan_action_zeroes_tag_weight_when_fired_too_recently(self):
         sim = self._sim()
@@ -439,3 +420,38 @@ class TestBatchSimulatorReactions:
             )
 
         assert len(pending_rx) == 1
+
+
+# ---------------------------------------------------------------------------
+# role_constants spot-checks
+# ---------------------------------------------------------------------------
+
+
+class TestRoleConstants:
+    def test_heavy_starting_lives(self):
+        from matches.sim_helpers.role_constants import MAX_LIVES
+
+        assert MAX_LIVES["heavy"] == 20
+
+    def test_commander_starting_shots(self):
+        from matches.sim_helpers.role_constants import MAX_SHOTS
+
+        assert MAX_SHOTS["commander"] == 60
+
+    def test_heavy_shot_power(self):
+        from matches.sim_helpers.role_constants import ROLE_STATS
+
+        assert ROLE_STATS["heavy"]["shot_power"] == 3
+
+    def test_scout_shield(self):
+        from matches.sim_helpers.role_constants import ROLE_STATS
+
+        assert ROLE_STATS["scout"]["shield"] == 1
+
+    def test_all_roles_present(self):
+        from matches.sim_helpers.role_constants import MAX_LIVES, MAX_SHOTS, ROLE_STATS
+
+        roles = {"commander", "heavy", "scout", "medic", "ammo"}
+        assert set(ROLE_STATS) == roles
+        assert set(MAX_LIVES) == roles
+        assert set(MAX_SHOTS) == roles

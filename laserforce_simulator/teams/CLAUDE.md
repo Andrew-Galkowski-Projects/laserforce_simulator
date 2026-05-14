@@ -8,7 +8,7 @@ Manages teams, players, and rosters. Serves as the homepage (`/`).
 
 **`Player`**: Belongs to a team and has an assigned role. Carries ~20 numeric stats (0–100) used as weights by the simulator. Key stats include `accuracy`, `aggressiveness`, `awareness`, `missile_use`, `special_use`, and role-specific proficiency fields.
 
-`ROLE_STATS` is a module-level dict that maps each role to its starting resources (lives, shots, special charges, missiles) and combat stats (shields, shot_power). The `BatchSimulator` mirrors this in `sim_helpers/player_state.py` to avoid Django imports.
+`ROLE_STATS` is imported from `matches.sim_helpers.role_constants` — the canonical source for all role-level constants (`ROLE_STATS`, `MAX_LIVES`, `MAX_SHOTS`, `SPECIAL_COST`). Both `teams/models.py` and `sim_helpers/player_state.py` import from there; the duplicate definition that previously lived in `player_state.py` has been removed.
 
 ## REST API (`teams/serializers.py`, `teams/api_views.py`)
 

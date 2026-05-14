@@ -790,32 +790,17 @@ class TestMap09ResolvesElevationFromZoneData:
         return arena_map
 
     def test_resolve_map_data_returns_elevation_data(self):
-        """_resolve_map_data's return tuple includes elevation_data when present.
-
-        MAP-09 will add elevation_data as the 10th return value. This test
-        specifies that contract so production code knows what to implement.
-        """
+        """_resolve_map_data elevation_grid field is present when zone_data has elevation."""
         from matches.simulation import ResourceBasedSimulator
 
         arena_map = self._make_elevated_map("ElevResolve")
-        result = ResourceBasedSimulator._resolve_map_data(arena_map)
+        elevation_grid = ResourceBasedSimulator._resolve_map_data(arena_map).elevation_grid
 
-        # The 10th element (index 9) should be the elevation_data dict.
-        # Until implemented, this position may not exist — the test will fail
-        # as designed (TDD red phase).
-        assert (
-            len(result) >= 10
-        ), "_resolve_map_data must return at least 10 elements (index 9 = elevation_data)"
-        elevation_data = result[9]
-        assert (
-            elevation_data is not None
-        ), "elevation_data must not be None when zone_data has 'elevation'"
-        # elevation_data is a 2D list of floats matching the zones grid shape
+        assert elevation_grid is not None, "elevation_grid must not be None when zone_data has 'elevation'"
+        # elevation_grid is a 2D list of floats matching the zones grid shape
         # Cell (0,1) has elevation 2.0 in the fixture
-        assert (
-            elevation_data[0][1] == 2.0
-        ), "elevation_data[row][col] must return the float elevation for that cell"
-        assert elevation_data[0][0] == 0.0
+        assert elevation_grid[0][1] == 2.0, "elevation_grid[row][col] must return the float elevation for that cell"
+        assert elevation_grid[0][0] == 0.0
 
     def test_resolve_map_data_elevation_none_when_absent(self):
         """_resolve_map_data returns None (or empty) elevation_data when zone_data has no elevation key."""
@@ -857,10 +842,7 @@ class TestMap09ResolvesElevationFromZoneData:
             arena_map=arena_map, base_type="blue", zone_size=100, visible_cells=[]
         )
 
-        result = ResourceBasedSimulator._resolve_map_data(arena_map)
-        assert len(result) >= 10, "_resolve_map_data must return at least 10 elements"
-        elevation_data = result[9]
-        # When absent, elevation_data should be None or an empty dict — either is acceptable
+        elevation_grid = ResourceBasedSimulator._resolve_map_data(arena_map).elevation_grid
         assert (
-            elevation_data is None or elevation_data == {}
-        ), "elevation_data should be None or empty dict when zone_data has no 'elevation' key"
+            elevation_grid is None or elevation_grid == {}
+        ), "elevation_grid should be None or empty when zone_data has no 'elevation' key"

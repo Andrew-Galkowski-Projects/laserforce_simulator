@@ -59,16 +59,19 @@ class TestSimulation:
         teammate.final_shots = 1
         teammate.save()
 
-        simulator._attempt_resupply(tagger, teammate, second=10)
+        event_buffer = []
+        simulator._attempt_resupply(
+            tagger, teammate, second=10, event_buffer=event_buffer
+        )
         teammate.refresh_from_db()
 
         assert teammate.final_shots >= 1
         assert teammate.final_shots <= teammate.max_shots
-        assert GameEvent.objects.filter(
-            actor=tagger.player, target=teammate.player
-        ).exists(), (
-            "Resupply action should create a GameEvent with actor and target set"
-        )
+        assert any(
+            ev.get("actor_id") == tagger.player_id
+            and ev.get("target_id") == teammate.player_id
+            for ev in event_buffer
+        ), "Resupply action should produce a buffered event with actor and target set"
 
     def test_simulate_single_round_detailed_creates_completed_round(self):
         simulator = ResourceBasedSimulator()
@@ -142,14 +145,21 @@ class TestSimulation:
             final_lives=10,
         )
 
+        event_buffer = []
         with patch("random.randint", return_value=0):
             simulator._resolve_tag_attempts(
-                gr, [{"attacker": attacker, "defender": defender}], 0
+                gr,
+                [{"attacker": attacker, "defender": defender}],
+                0,
+                event_buffer=event_buffer,
             )
 
-        assert GameEvent.objects.filter(
-            event_type="tag", actor=attacker.player, target=defender.player
-        ).exists()
+        assert any(
+            ev.get("event_type") == "tag"
+            and ev.get("actor_id") == attacker.player_id
+            and ev.get("target_id") == defender.player_id
+            for ev in event_buffer
+        )
 
     def test_missile_dodge_and_hit_events(self):
         simulator = ResourceBasedSimulator()
@@ -177,6 +187,7 @@ class TestSimulation:
         )
 
         # Dodge
+        dodge_buffer = []
         with patch("random.choices", return_value=["missile_player"]), patch(
             "random.choice", return_value=defender
         ), patch("random.random", return_value=0.1):
@@ -187,16 +198,19 @@ class TestSimulation:
                 second=5,
                 pending_missiles=[],
                 pending_nukes=[],
+                event_buffer=dodge_buffer,
             )
 
-        assert GameEvent.objects.filter(
-            event_type="missile_dodge",
-            actor=defender.player,
-            target=attacker.player,
-        ).exists()
+        assert any(
+            ev.get("event_type") == "missile_dodge"
+            and ev.get("actor_id") == defender.player_id
+            and ev.get("target_id") == attacker.player_id
+            for ev in dodge_buffer
+        )
 
         # Hit
         pending_missiles = []
+        hit_buffer = []
         with patch("random.choices", return_value=["missile_player"]), patch(
             "random.choice", return_value=defender
         ), patch("random.random", return_value=0.5), patch(
@@ -209,15 +223,19 @@ class TestSimulation:
                 second=6,
                 pending_missiles=pending_missiles,
                 pending_nukes=[],
+                event_buffer=hit_buffer,
             )
 
         assert len(pending_missiles) >= 1
         complete_time, att, defn = pending_missiles[0]
-        simulator._complete_missile(att, defn, complete_time)
+        simulator._complete_missile(att, defn, complete_time, hit_buffer)
 
-        assert GameEvent.objects.filter(
-            event_type="missile_hit", actor=attacker.player, target=defender.player
-        ).exists()
+        assert any(
+            ev.get("event_type") == "missile_hit"
+            and ev.get("actor_id") == attacker.player_id
+            and ev.get("target_id") == defender.player_id
+            for ev in hit_buffer
+        )
 
     def test_capture_base_and_change_zone(self):
         simulator = ResourceBasedSimulator()
@@ -863,7 +881,7 @@ class TestSimulationChangesWithWeights:
         team_b2, _ = make_team_with_slots("WS_B2")
         random.seed(42)
         with patch(
-            "matches.simulation._get_medic_weights", side_effect=all_tag_weights
+            "matches.sim_helpers.combat._get_medic_weights", side_effect=all_tag_weights
         ):
             round_patched = simulator.simulate_single_round_detailed(team_r2, team_b2)
         patched_resupply = GameEvent.objects.filter(

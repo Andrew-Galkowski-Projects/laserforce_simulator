@@ -1,13 +1,7 @@
 from django.db import models
 from django.core.exceptions import ValidationError
 
-ROLE_STATS = {
-    "commander": {"shot_power": 2, "shield": 3},
-    "heavy": {"shot_power": 3, "shield": 3},
-    "scout": {"shot_power": 1, "shield": 1},
-    "medic": {"shot_power": 1, "shield": 1},
-    "ammo": {"shot_power": 1, "shield": 1},
-}
+from matches.sim_helpers.role_constants import ROLE_STATS
 
 ROLE_CHOICES = [
     ("commander", "Commander"),
