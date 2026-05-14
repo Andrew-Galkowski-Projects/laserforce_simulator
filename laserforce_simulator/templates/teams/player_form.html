@@ -59,7 +59,7 @@
             <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-preset-elite">Set All to Elite (90)</button>
         </div>
         {% for field in form %}
-        {% if field.name != "name" and field.name != "preferred_roles" %}
+        {% if field.name != "name" and field.name != "preferred_roles" and field.name != "age" and field.name != "started_playing_age" and field.name != "total_games" and field.name != "home_site" and field.name != "height" %}
         <div class="mb-3 row">
             <label for="{{ field.id_for_label }}" class="col-sm-4 col-form-label">{{ field.label }}</label>
             <div class="col-sm-2">{{ field }}</div>
