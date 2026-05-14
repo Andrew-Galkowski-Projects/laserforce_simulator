@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from matches.sim_helpers.role_constants import (
@@ -80,34 +80,30 @@ class PlayerState:
     seconds_not_targetable: int = 0
     seconds_reset_window: int = 0
 
+    # Role-derived constants — cached once in __post_init__, never change per instance.
+    # Storing as plain fields avoids repeated dict lookups inside the hot tick loop.
+    max_lives: int = field(init=False)
+    max_shots: int = field(init=False)
+    max_shields: int = field(init=False)
+    shot_power: int = field(init=False)
+    special_cost: int = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.max_lives = _MAX_LIVES.get(self.role, 15)
+        self.max_shots = _MAX_SHOTS.get(self.role, 30)
+        role_stats = _ROLE_STATS.get(self.role, {})
+        self.max_shields = role_stats.get("shield", 1)
+        self.shot_power = role_stats.get("shot_power", 1)
+        self.special_cost = _SPECIAL_COST.get(self.role, 100)
+
     # ------------------------------------------------------------------ #
     # Properties matching PlayerRoundState interface used by weights.py
     # and battle resolution so the weight functions work unchanged.
     # ------------------------------------------------------------------ #
 
     @property
-    def max_lives(self) -> int:
-        return _MAX_LIVES.get(self.role, 15)
-
-    @property
-    def max_shots(self) -> int:
-        return _MAX_SHOTS.get(self.role, 30)
-
-    @property
     def max_special(self) -> int:
         return 99
-
-    @property
-    def max_shields(self) -> int:
-        return _ROLE_STATS.get(self.role, {}).get("shield", 1)
-
-    @property
-    def shot_power(self) -> int:
-        return _ROLE_STATS.get(self.role, {}).get("shot_power", 1)
-
-    @property
-    def special_cost(self) -> int:
-        return _SPECIAL_COST.get(self.role, 100)
 
     @property
     def missiles_used(self) -> int:

@@ -2195,6 +2195,51 @@ class ResourceBasedSimulator:
         return None
 
 
+class _PlayerData:
+    """Lightweight picklable stand-in for a Player ORM object.
+
+    Holds pre-computed stat_for_simulation() values so worker processes
+    can call _make_players() without touching the Django ORM.
+    """
+
+    def __init__(self, player_id: int, name: str, stats: dict) -> None:
+        self.id = player_id
+        self.name = name
+        self._stats = stats
+
+    def stat_for_simulation(self, stat_name: str, role: str) -> int:
+        return self._stats[stat_name]
+
+
+_SIMULATION_STATS = (
+    "accuracy",
+    "survival",
+    "player_awareness",
+    "decision_making",
+    "stamina",
+    "special_usage",
+    "resupply_efficiency",
+    "resupply_synergy",
+    "teamwork",
+    "communication",
+)
+
+
+def _precompute_roster(roster) -> list:
+    """Convert a roster of (role, Player) tuples into picklable (role, _PlayerData) pairs.
+
+    Pre-computes all stat_for_simulation() values so worker processes never
+    touch the Django ORM.
+    """
+    result = []
+    for role, player_model in roster:
+        stats = {
+            s: player_model.stat_for_simulation(s, role) for s in _SIMULATION_STATS
+        }
+        result.append((role, _PlayerData(player_model.id, player_model.name, stats)))
+    return result
+
+
 class BatchSimulator:
     """Pure in-memory simulator for running N rounds without DB writes.
 
@@ -2214,20 +2259,27 @@ class BatchSimulator:
     # 0.5-second tick: models real shot speeds (regular=2/s, heavy=1/s).
     TICK = 0.5
 
-    def run(self, team_red, team_blue, n=100, *, arena_map=None):
+    def run(
+        self, team_red, team_blue, n=100, *, arena_map=None, workers: int | None = None
+    ):
         """Simulate n rounds and return aggregate statistics.
 
         Loads team rosters from the DB once upfront, then runs n purely
         in-memory rounds and aggregates the outcomes. Pass arena_map to enable
         cell-aware pathfinding movement; omit for the 3-zone fallback.
-        """
-        from .sim_helpers.player_state import PlayerState
 
+        workers: number of parallel worker processes.  None / 1 = serial.
+        Values > 1 dispatch rounds to a ProcessPoolExecutor; set to
+        os.cpu_count() for full parallelism.
+        """
         # Read rosters once — list of (role, Player) tuples
         red_roster = list(team_red.active_roster)
         blue_roster = list(team_blue.active_roster)
 
         movement_ctx, _ = ResourceBasedSimulator._load_map_context(arena_map)
+
+        if workers and workers > 1:
+            return self._run_parallel(red_roster, blue_roster, n, movement_ctx, workers)
 
         red_wins = blue_wins = ties = 0
         red_scores, blue_scores = [], []
@@ -2253,6 +2305,90 @@ class BatchSimulator:
             blue_survivors_list.append(result["blue_survivors"])
 
         # Pick the 10 most average and 10 most outlier rounds by score diff
+        if round_seeds:
+            mean_diff = sum(d for d, _ in round_seeds) / n
+            ranked = sorted(round_seeds, key=lambda x: abs(x[0] - mean_diff))
+            avg_seeds = [s for _, s in ranked[:10]]
+            outlier_seeds = [s for _, s in ranked[-10:]]
+        else:
+            avg_seeds = outlier_seeds = []
+
+        avg = lambda lst: sum(lst) / len(lst) if lst else 0
+        return {
+            "n": n,
+            "red_wins": red_wins,
+            "blue_wins": blue_wins,
+            "ties": ties,
+            "red_win_pct": red_wins / n * 100,
+            "blue_win_pct": blue_wins / n * 100,
+            "avg_red_score": avg(red_scores),
+            "avg_blue_score": avg(blue_scores),
+            "avg_red_survivors": avg(red_survivors_list),
+            "avg_blue_survivors": avg(blue_survivors_list),
+            "red_scores": red_scores,
+            "blue_scores": blue_scores,
+            "avg_seeds": avg_seeds,
+            "outlier_seeds": outlier_seeds,
+        }
+
+    def _run_parallel(
+        self,
+        red_roster,
+        blue_roster,
+        n: int,
+        movement_ctx,
+        workers: int,
+    ) -> dict:
+        """Simulate n rounds using a multiprocessing worker pool.
+
+        Pre-serializes all player data in the parent so workers never touch
+        the ORM.  Returns the same aggregate dict as run().
+        """
+        from concurrent.futures import ProcessPoolExecutor
+
+        red_data = _precompute_roster(red_roster)
+        blue_data = _precompute_roster(blue_roster)
+
+        # Generate n distinct random seeds in the parent before spawning.
+        seed_states = []
+        for _ in range(n):
+            seed_states.append(random.getstate())
+            random.random()
+
+        args_list = [(red_data, blue_data, movement_ctx, s) for s in seed_states]
+        chunksize = max(1, n // (workers * 4))
+
+        from matches.sim_helpers.parallel_worker import (
+            batch_round_worker,
+            worker_django_init,
+        )
+
+        with ProcessPoolExecutor(
+            max_workers=workers, initializer=worker_django_init
+        ) as executor:
+            results = list(
+                executor.map(batch_round_worker, args_list, chunksize=chunksize)
+            )
+
+        red_wins = blue_wins = ties = 0
+        red_scores, blue_scores = [], []
+        red_survivors_list, blue_survivors_list = [], []
+        round_seeds = []
+
+        for result, seed_state in zip(results, seed_states):
+            rp, bp = result["red_points"], result["blue_points"]
+            round_seeds.append((rp - bp, seed_state))
+            if rp > bp:
+                red_wins += 1
+            elif bp > rp:
+                blue_wins += 1
+            else:
+                ties += 1
+            red_scores.append(rp)
+            blue_scores.append(bp)
+            red_survivors_list.append(result["red_survivors"])
+            blue_survivors_list.append(result["blue_survivors"])
+
         if round_seeds:
             mean_diff = sum(d for d, _ in round_seeds) / n
             ranked = sorted(round_seeds, key=lambda x: abs(x[0] - mean_diff))
@@ -3537,3 +3673,16 @@ class BatchSimulator:
             )
 
         return game_round
+
+
+# ---------------------------------------------------------------------------
+# Parallel worker helpers live in matches.sim_helpers.parallel_worker, which
+# has no top-level Django imports so it is safe to import inside a spawned
+# worker process before django.setup() has been called.
+#
+# Re-exported here for backward-compat with any external callers.
+# ---------------------------------------------------------------------------
+from matches.sim_helpers.parallel_worker import (  # noqa: E402
+    batch_round_worker as _batch_worker,
+    worker_django_init as _worker_django_init,
+)

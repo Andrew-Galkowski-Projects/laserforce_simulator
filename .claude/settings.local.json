@@ -104,7 +104,10 @@
       "PowerShell(python -m pytest --tb=no --durations=30 -q 2>&1 | Select-Object -Last 50)",
       "PowerShell(pip show *)",
       "Skill(code-review)",
-      "Bash(Get-ChildItem \"C:\\\\Users\\\\Andrew Galkowski\\\\Desktop\\\\programming\\\\laserforce_simulator\\\\laserforce_simulator\\\\matches\\\\sim_helpers\\\\\" -Name *)"
+      "Bash(Get-ChildItem *)",
+      "Bash(Measure-Command { python manage.py score_averages --rounds 500 --seed 42)",
+      "Bash(Out-Null })",
+      "Bash(Select-Object TotalSeconds)"
     ]
   }
 }
