@@ -310,6 +310,7 @@ class PlayerRoundState(models.Model):
     missiles_landed = models.IntegerField(default=0)
     times_missiled = models.IntegerField(default=0)
     resupplies_given = models.IntegerField(default=0)
+    combo_resupply_count = models.IntegerField(default=0)
     times_tagged_in_reset_window = models.IntegerField(
         default=0
     )  # tagged while taggable but not yet active (4-7s after downed)

@@ -62,6 +62,7 @@ class PlayerState:
     shots_missed: int = 0
     times_missiled: int = 0
     resupplies_given: int = 0
+    combo_resupply_count: int = 0
     specials_used: int = 0
     times_tagged_in_reset_window: int = 0
     missile_points: int = 0

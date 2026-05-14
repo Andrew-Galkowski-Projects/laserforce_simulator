@@ -38,6 +38,41 @@ from .sim_helpers.pending_events import (
     PendingReaction,
 )
 from .sim_helpers.spawn_assigner import assign_spawn_cells
+from .sim_helpers.resupply_queue import resolve_resupply_requests
+
+# Fields mutated by resupply resolution — saved once per touched player after the batch.
+_RESUPPLY_SAVE_FIELDS = [
+    "final_lives",
+    "final_shots",
+    "last_downed_time",
+    "shields",
+    "special_active_until",
+    "combo_resupply_count",
+    "resupplies_given",
+]
+
+
+def _resupply_event_dict(event_type: str, kwargs: dict, tick_second: float) -> dict:
+    """Convert kwargs-style resupply emit into the standard event buffer dict.
+
+    For single resupply events (resupply_lives/ammo) the adapter in _do_resupply
+    passes actor=support, target=requestor.  For combo_resupply only requestor is
+    passed (no actor kwarg); actor_id is resolved from the requestor kwarg instead.
+    """
+    actor = kwargs.get("actor") or kwargs.get("requestor")
+    target = kwargs.get("target")
+    ts = kwargs.get("second", tick_second)
+    return {
+        "event_type": event_type,
+        "actor_id": actor.player_id if actor is not None else None,
+        "target_id": target.player_id if target is not None else None,
+        "timestamp": int(ts),
+        "points_awarded": 0,
+        "description": f"resupply request: {event_type}",
+        "metadata": kwargs.get("metadata", {}),
+    }
+
+
 from teams.models import Player
 from matches.sim_helpers.role_constants import ROLE_STATS
 from core.models import (
@@ -1100,6 +1135,7 @@ class ResourceBasedSimulator:
 
         # Apply non-combat actions immediately (resupplies, zone changes, hides, base captures)
         tag_attempts = []  # collect tag attempts for simultaneous resolution
+        resupply_requestors = []  # collect request_resupply actors for batch processing
         for plan in plans:
             ptype = plan.get("type")
             actor = plan.get("actor")
@@ -1114,6 +1150,8 @@ class ResourceBasedSimulator:
             if ptype == "resupply_ammo" or ptype == "resupply_lives":
                 # use existing helper
                 self._attempt_resupply(actor, plan.get("target"), second, event_buffer)
+            elif ptype == "request_resupply":
+                resupply_requestors.append(actor)
             elif ptype == "change_zone":
                 goal_cell = plan.get("goal_cell")
                 ctx = plan.get("movement_ctx")
@@ -1149,6 +1187,29 @@ class ResourceBasedSimulator:
                     )
             elif ptype == "tag":
                 tag_attempts.append({"attacker": actor, "defender": plan.get("target")})
+
+        # Resupply request phase: resolve all request_resupply actions as a batch
+        if resupply_requestors:
+            _rbs_touched: set = set()
+
+            def _rbs_emit(event_type: str, **kwargs) -> None:
+                event_buffer.append(_resupply_event_dict(event_type, kwargs, second))
+                actor = kwargs.get("actor") or kwargs.get("requestor")
+                target = kwargs.get("target")
+                if actor is not None:
+                    _rbs_touched.add(actor)
+                if target is not None:
+                    _rbs_touched.add(target)
+
+            resolve_resupply_requests(
+                resupply_requestors,
+                all_alive,
+                second,
+                movement_ctx,
+                emit_event=_rbs_emit,
+            )
+            for _p in _rbs_touched:
+                _p.save(update_fields=_RESUPPLY_SAVE_FIELDS)
 
         # Combat phase: resolve all tag attempts simultaneously
         if tag_attempts:
@@ -2617,11 +2678,14 @@ class BatchSimulator:
                 )
 
             tag_attempts = []
+            batch_resupply_requestors = []
             for plan in plans:
                 ptype = plan["type"]
                 actor = plan["actor"]
                 if ptype in ("resupply_ammo", "resupply_lives"):
                     self._attempt_resupply(actor, plan["target"], second, event_log)
+                elif ptype == "request_resupply":
+                    batch_resupply_requestors.append(actor)
                 elif ptype == "change_zone":
                     goal_cell = plan.get("goal_cell")
                     ctx = plan.get("movement_ctx")
@@ -2651,6 +2715,22 @@ class BatchSimulator:
                         )
                 elif ptype == "tag":
                     tag_attempts.append({"attacker": actor, "defender": plan["target"]})
+
+            if batch_resupply_requestors:
+
+                def _batch_emit(event_type: str, **kwargs) -> None:
+                    if event_log is not None:
+                        event_log.append(
+                            _resupply_event_dict(event_type, kwargs, second)
+                        )
+
+                resolve_resupply_requests(
+                    batch_resupply_requestors,
+                    all_alive,
+                    second,
+                    movement_ctx,
+                    emit_event=_batch_emit,
+                )
 
             if tag_attempts:
                 self._resolve_tag_attempts(

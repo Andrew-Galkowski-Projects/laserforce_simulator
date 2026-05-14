@@ -46,6 +46,7 @@ _ACTION_IDX = {
     "use_special": 4,
     "resupply_ally": 5,
     "missile_player": 6,
+    "request_resupply": 7,
 }
 _CHOICES = [
     "tag_player",
@@ -55,6 +56,7 @@ _CHOICES = [
     "use_special",
     "resupply_ally",
     "missile_player",
+    "request_resupply",
 ]
 
 
@@ -239,12 +241,7 @@ def plan_action(
     ResourceBasedSimulator passes ``lambda p: p.save()`` so the ORM state is
     persisted before the next refresh_from_db call in the game loop.
     """
-    weights = [70, 30, 0, 0, 0, 0, 0]
-
-    # TODO(MECH-01): request_resupply action — player requests resupply from nearby Medic/Ammo.
-    # resupply_efficiency: scales request_resupply weight and doubles speed for Medic/Ammo.
-    # resupply_synergy: keeps Medic+Ammo together; scales double-resupply chance.
-    # Not wired until MECH-01.
+    weights = [70, 30, 0, 0, 0, 0, 0, 0]
 
     # TODO(MECH-06): Player memory system — players have imperfect knowledge of enemy positions.
     # teamwork: scales ally-covering behavior (defend allies during nukes, stay in LOS).
@@ -384,6 +381,8 @@ def plan_action(
             plans.append({"type": "use_special", "actor": player})
     elif choice == "hide":
         plans.append({"type": "hide", "actor": player})
+    elif choice == "request_resupply":
+        plans.append({"type": "request_resupply", "actor": player})
 
     return plans
 

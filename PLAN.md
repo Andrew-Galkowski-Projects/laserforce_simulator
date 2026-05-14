@@ -181,7 +181,7 @@ Map each relevant stat to a weight modifier in `weights.py`. Stats are wired in 
 - `game_awareness` / `player_awareness` — scale reaction to enemy nuke (see MECH-04)
 
 - completed
-- note: `decision_making` applies a linear spread multiplier (`factor = 1 + dm/100`) on the weight vector after role weights are computed — best action × factor, others ÷ factor. `stamina` is evaluated every 10% of round; when `stamina < elapsed_%`, `stamina_penalty_count` increments (stacking −10% movement weight, −5% hit_chance via `stamina_hit_modifier`). `special_usage` scales `use_special` weight delta by `special_usage/50` for all roles. `accuracy`/`survival` confirmed correct (no change). `resupply_efficiency`, `resupply_synergy`, `teamwork`, `communication` have skeleton TODO blocks deferred to MECH-01. New `PlayerState` fields: `decision_making`, `stamina`, `special_usage`, `resupply_efficiency`, `resupply_synergy`, `teamwork`, `communication` (default 50) + `stamina_penalty_count`/`stamina_next_check_pct` transient tracking fields.
+- note: `decision_making` applies a linear spread multiplier (`factor = 1 + dm/100`) on the weight vector after role weights are computed — best action × factor, others ÷ factor. `stamina` is evaluated every 10% of round; when `stamina < elapsed_%`, `stamina_penalty_count` increments (stacking −10% movement weight, −5% hit_chance via `stamina_hit_modifier`). `special_usage` scales `use_special` weight delta by `special_usage/50` for all roles. `accuracy`/`survival` confirmed correct (no change). `resupply_efficiency` and `resupply_synergy` wired in MECH-01 (skeleton TODO blocks removed). `teamwork` and `communication` have skeleton TODO blocks deferred to MECH-06. New `PlayerState` fields: `decision_making`, `stamina`, `special_usage`, `resupply_efficiency`, `resupply_synergy`, `teamwork`, `communication` (default 50) + `stamina_penalty_count`/`stamina_next_check_pct` transient tracking fields.
 
 ---
 
@@ -190,30 +190,8 @@ Map each relevant stat to a weight modifier in `weights.py`. Stats are wired in 
 New and corrected mechanics that make the simulator more faithful to SM5 rules and more interesting strategically.
 
 ### MECH-01 · Resupply request action + combo resupply + resupply stat wiring
-
-**request_resupply action (new):** Any non-support player (Scout, Heavy, Commander) can take a
-`request_resupply` action when at least one Medic or Ammo is within LOS. The action's weight
-scales with `resupply_efficiency` (higher stat → stronger pull toward requesting resupply when
-below threshold). Add `request_resupply` to `_CHOICES` / `_ACTION_IDX` in `combat.py`.
-
-**Double resupply:** when a player takes `request_resupply` and both a Medic AND an Ammo are in
-LOS simultaneously, both resupply in a single interaction (ally receives lives + shots). Chance of
-a double (when both are present) scales with `resupply_efficiency` of the requestor and
-`resupply_synergy` of the support players. No bonus points beyond the sum of a standard
-medic-resupply + ammo-resupply.
-
-**resupply_efficiency** (requestor stat): scales `request_resupply` action weight; also increases
-the speed at which a Medic/Ammo player resupplies allies who are requesting (priority queue
-re-sorting). When on a Medic/Ammo player, `resupply_efficiency` also scales the double-chance
-when both support types are present.
-
-**resupply_synergy** (Medic/Ammo stat): keeps Medic and Ammo players within LOS of each other
-(scales the movement-goal weight toward the allied support player's cell). Also scales the
-double-resupply chance multiplicatively with the requestor's `resupply_efficiency`.
-
-**GameEvent:** track `combo_resupply_count` on `PlayerRoundState`. Log a `GameEvent` of type
-`combo_resupply` with both resource grants in `metadata`. Single resupply-request outcomes
-log as normal `resupply_ammo` / `resupply_lives` events.
+- completed
+- note: `request_resupply` added as action index 7 in `_ACTION_IDX`/`_CHOICES` in `combat.py`; available to all 5 roles (Ammo is locked to requesting lives, Medic to requesting shots). Weight scales with `resupply_efficiency`; action is inactive when the player does not need resources. `resupply_efficiency` and `resupply_synergy` stats are now fully wired — TODO/skeleton blocks in `weights.py` removed. `resupply_efficiency` scales the `request_resupply` weight; `resupply_synergy` scales the `resupply_ally` weight for Medic/Ammo players. New module `matches/sim_helpers/resupply_queue.py` exposes `resolve_resupply_requests(requestors, all_alive, second, movement_ctx, *, emit_event=None)` called at the end of each tick in both simulators. Resolution uses a priority queue (Heavy > Commander > Scout > Ammo > Medic); support must be in LOS, not deactivated, have shots > 0, and not be on cooldown. Stress failure formula: `failure_pct = min(100, (dm + teamwork) / 10 × prior_count)`. Combo chance formula: `min(0.95, 0.20 + ammo_syn/100 × medic_syn/100 + ammo_eff/100 × medic_eff/100)`; combo fail fallback gives 75% priority resupply / 25% other. `combo_resupply_count` DB column added to `PlayerRoundState` (IntegerField default=0, migration added) and as `combo_resupply_count: int = 0` field on `PlayerState`. `GameEvent(event_type="combo_resupply")` metadata includes `medic_tag` and `ammo_tag`; single resupply events continue to use `resupply_lives`/`resupply_ammo`.
 
 ### MECH-02 · Tag of any entity resets same-target restriction
 After scoring a life against an enemy, the attacker must wait 8 seconds before tagging the same target again.
