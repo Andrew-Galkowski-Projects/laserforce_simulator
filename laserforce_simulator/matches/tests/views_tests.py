@@ -1,8 +1,10 @@
 import pytest
+from unittest.mock import patch
 from django.test import Client
 from django.urls import reverse, NoReverseMatch
 
 from matches.models import GameRound, Match
+from matches.simulation import ResourceBasedSimulator
 from matches.tests.conftest import make_team_with_slots
 
 
@@ -19,10 +21,11 @@ class TestSingleRoundRemoval:
         blue, _ = make_team_with_slots("Blue")
         client = Client()
         before = GameRound.objects.count()
-        response = client.post(
-            reverse("create_single_round"),
-            {"team_red": red.id, "team_blue": blue.id},
-        )
+        with patch.object(ResourceBasedSimulator, "ROUND_SECONDS", 20):
+            response = client.post(
+                reverse("create_single_round"),
+                {"team_red": red.id, "team_blue": blue.id},
+            )
         assert GameRound.objects.count() == before + 1
         assert response.status_code == 302
 

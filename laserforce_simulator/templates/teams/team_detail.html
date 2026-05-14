@@ -47,13 +47,14 @@
                     {% for role, player in active_roster %}
                     <tr>
                         <td><span class="badge bg-secondary">{{ role|capfirst }}</span></td>
-                        <td>{{ player.name }}</td>
+                        <td><a href="{% url 'player_detail' team.id player.id %}">{{ player.name }}</a></td>
                         <td>
                             {% if player.preferred_roles %}
                             {% for r in player.preferred_roles %}<span class="badge bg-light text-dark me-1">{{ r }}</span>{% endfor %}
                             {% else %}<span class="text-muted">—</span>{% endif %}
                         </td>
                         <td>
+                            <a href="{% url 'player_detail' team.id player.id %}" class="btn btn-sm btn-outline-secondary">View</a>
                             <a href="{% url 'player_edit' team.id player.id %}" class="btn btn-sm btn-outline-primary">Edit</a>
                             <a href="{% url 'player_delete' team.id player.id %}" class="btn btn-sm btn-outline-danger">Remove</a>
                         </td>
@@ -76,13 +77,14 @@
                 <tbody>
                     {% for player in bench_players %}
                     <tr>
-                        <td>{{ player.name }}</td>
+                        <td><a href="{% url 'player_detail' team.id player.id %}">{{ player.name }}</a></td>
                         <td>
                             {% if player.preferred_roles %}
                             {% for r in player.preferred_roles %}<span class="badge bg-light text-dark me-1">{{ r }}</span>{% endfor %}
                             {% else %}<span class="text-muted">—</span>{% endif %}
                         </td>
                         <td>
+                            <a href="{% url 'player_detail' team.id player.id %}" class="btn btn-sm btn-outline-secondary">View</a>
                             <a href="{% url 'player_edit' team.id player.id %}" class="btn btn-sm btn-outline-primary">Edit</a>
                             <a href="{% url 'player_delete' team.id player.id %}" class="btn btn-sm btn-outline-danger">Remove</a>
                         </td>

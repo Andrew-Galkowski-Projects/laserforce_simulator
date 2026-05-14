@@ -16,6 +16,32 @@
     </div>
 
     <div class="mb-3">
+        <h5>Profile</h5>
+        <div class="row g-2">
+            <div class="col-sm-3">
+                <label for="{{ form.age.id_for_label }}" class="form-label">Age</label>
+                {{ form.age }}
+            </div>
+            <div class="col-sm-3">
+                <label for="{{ form.started_playing_age.id_for_label }}" class="form-label">Started playing age</label>
+                {{ form.started_playing_age }}
+            </div>
+            <div class="col-sm-3">
+                <label for="{{ form.total_games.id_for_label }}" class="form-label">Total games</label>
+                {{ form.total_games }}
+            </div>
+            <div class="col-sm-3">
+                <label for="{{ form.height.id_for_label }}" class="form-label">Height</label>
+                {{ form.height }}
+            </div>
+            <div class="col-sm-6 mt-2">
+                <label for="{{ form.home_site.id_for_label }}" class="form-label">Home site</label>
+                {{ form.home_site }}
+            </div>
+        </div>
+    </div>
+
+    <div class="mb-3">
         <label class="form-label">{{ form.preferred_roles.label }}</label>
         <div class="d-flex flex-wrap gap-3">
             {{ form.preferred_roles }}
@@ -33,7 +59,7 @@
             <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-preset-elite">Set All to Elite (90)</button>
         </div>
         {% for field in form %}
-        {% if field.name != "name" and field.name != "preferred_roles" %}
+        {% if field.name != "name" and field.name != "preferred_roles" and field.name != "age" and field.name != "started_playing_age" and field.name != "total_games" and field.name != "home_site" and field.name != "height" %}
         <div class="mb-3 row">
             <label for="{{ field.id_for_label }}" class="col-sm-4 col-form-label">{{ field.label }}</label>
             <div class="col-sm-2">{{ field }}</div>
@@ -44,7 +70,11 @@
     </div>
 
     <button type="submit" class="btn btn-primary">Save Player</button>
+    {% if player %}
+    <a href="{% url 'player_detail' team.id player.id %}" class="btn btn-secondary">Cancel</a>
+    {% else %}
     <a href="{% url 'team_detail' team.id %}" class="btn btn-secondary">Cancel</a>
+    {% endif %}
 </form>
 
 <div class="mt-4">

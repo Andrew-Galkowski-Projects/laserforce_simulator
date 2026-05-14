@@ -100,7 +100,7 @@ class TestMap01CellGrid:
         """Without a map, red starts zone 0 and blue starts zone 2."""
         team_red, _ = make_team_with_slots("NoMapR")
         team_blue, _ = make_team_with_slots("NoMapB")
-        sim = ResourceBasedSimulator()
+        sim = ResourceBasedSimulator(duration=20)
         game_round = sim.simulate_single_round_detailed(team_red, team_blue)
 
         assert game_round.arena_map is None
@@ -116,7 +116,7 @@ class TestMap01CellGrid:
         team_red, _ = make_team_with_slots("MapR")
         team_blue, _ = make_team_with_slots("MapB")
         arena_map = self._make_arena_map("StoreMapTest")
-        sim = ResourceBasedSimulator()
+        sim = ResourceBasedSimulator(duration=20)
         game_round = sim.simulate_single_round_detailed(
             team_red, team_blue, arena_map=arena_map
         )
@@ -129,7 +129,7 @@ class TestMap01CellGrid:
         team_red, _ = make_team_with_slots("CellR")
         team_blue, _ = make_team_with_slots("CellB")
         arena_map = self._make_arena_map("CellCoordTest")
-        sim = ResourceBasedSimulator()
+        sim = ResourceBasedSimulator(duration=20)
         game_round = sim.simulate_single_round_detailed(
             team_red, team_blue, arena_map=arena_map
         )
@@ -500,7 +500,7 @@ class TestMap02CellMovement:
         team_red, _ = make_team_with_slots("MovR")
         team_blue, _ = make_team_with_slots("MovB")
 
-        game_round = ResourceBasedSimulator().simulate_single_round_detailed(
+        game_round = ResourceBasedSimulator(duration=20).simulate_single_round_detailed(
             team_red, team_blue, arena_map=arena_map
         )
 
@@ -529,7 +529,7 @@ class TestMap02CellMovement:
         team_red, _ = make_team_with_slots("FbR")
         team_blue, _ = make_team_with_slots("FbB")
 
-        game_round = ResourceBasedSimulator().simulate_single_round_detailed(
+        game_round = ResourceBasedSimulator(duration=20).simulate_single_round_detailed(
             team_red, team_blue
         )
 
@@ -549,7 +549,7 @@ class TestMap02CellMovement:
         team_red, _ = make_team_with_slots("ReachR")
         team_blue, _ = make_team_with_slots("ReachB")
 
-        game_round = ResourceBasedSimulator().simulate_single_round_detailed(
+        game_round = ResourceBasedSimulator(duration=20).simulate_single_round_detailed(
             team_red, team_blue, arena_map=arena_map
         )
 
@@ -840,7 +840,7 @@ class TestMap03DBIntegration:
         team_red, _ = make_team_with_slots("WallR")
         team_blue, _ = make_team_with_slots("WallB")
 
-        game_round = ResourceBasedSimulator().simulate_single_round_detailed(
+        game_round = ResourceBasedSimulator(duration=20).simulate_single_round_detailed(
             team_red, team_blue, arena_map=arena_map
         )
 
@@ -1888,7 +1888,7 @@ class TestMap08SpawnPoints:
         team_red, _ = make_team_with_slots("FbSpR")
         team_blue, _ = make_team_with_slots("FbSpB")
 
-        game_round = ResourceBasedSimulator().simulate_single_round_detailed(
+        game_round = ResourceBasedSimulator(duration=20).simulate_single_round_detailed(
             team_red, team_blue
         )
 

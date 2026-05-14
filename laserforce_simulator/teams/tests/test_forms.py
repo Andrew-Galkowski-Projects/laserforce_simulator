@@ -29,10 +29,11 @@ ALL_STAT_FIELDS = [
 
 
 def _minimal_stat_payload(**overrides):
-    """Return a POST-data dict with all 19 stats set to 50, plus name."""
+    """Return a POST-data dict with all 19 stats set to 50, plus required profile fields."""
     data = {stat: 50 for stat in ALL_STAT_FIELDS}
     data["name"] = "Test Player"
     data["preferred_roles"] = []
+    data["total_games"] = 0
     data.update(overrides)
     return data
 

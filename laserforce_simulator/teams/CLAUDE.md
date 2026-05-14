@@ -20,10 +20,20 @@ Manages teams, players, and rosters. Serves as the homepage (`/`).
 
 `stat_for_simulation(stat_name, role)` returns `min(int(raw_value * 1.2), 100)` when `role in self.preferred_roles`, otherwise the raw stat value. Invalid `stat_name` values raise `AttributeError` naturally (no explicit guard). Used by `PlayerRoundState` forwarding properties and `BatchSimulator._make_players` to apply the preferred-role boost at simulation time without affecting stored values or `overall_rating`.
 
+`PlayerForm` exposes all 19 stat fields (default 50) with "Set All to Average (50)" and "Set All to Elite (90)" preset buttons. Profile fields (age, started_playing_age, total_games, home_site, height) are also on the form; when adding a new player, the view pre-fills them via `_random_player_profile()`.
 
-`PlayerForm` exposes all 19 stat fields (default 50) with "Set All to Average (50)" and "Set All to Elite (90)" preset buttons.
+`_random_player_profile()` (in `models.py`) returns a dict of randomised profile values drawn from `teams/constants.py`. Age is 16–50; started_playing_age is 16–age; total_games is 0–5000; height is 4'0"–6'10"; home_site is drawn from `LASERFORCE_SITES`; name is drawn from `PLAYER_NAMES`.
 
 `ROLE_STATS` is imported from `matches.sim_helpers.role_constants` — the canonical source for all role-level constants (`ROLE_STATS`, `MAX_LIVES`, `MAX_SHOTS`, `SPECIAL_COST`). Both `teams/models.py` and `sim_helpers/player_state.py` import from there; the duplicate definition that previously lived in `player_state.py` has been removed.
+
+## Constants (`teams/constants.py`)
+
+Static name pools used by `_random_player_profile()`:
+
+- `PLAYER_NAMES` — ~386 laser-tag codenames drawn from real venue scorecards.
+- `LASERFORCE_SITES` — 12 real Laserforce venue locations.
+
+These are imported into `models.py` and re-exported so existing code that does `from teams.models import PLAYER_NAMES` continues to work.
 
 ## REST API (`teams/serializers.py`, `teams/api_views.py`)
 
@@ -59,3 +69,4 @@ Read-only DRF endpoints registered under `/api/`:
 - `test_serializers.py` — PlayerSerializer, PlayerInlineSerializer, TeamSerializer, TeamListSerializer
 - `test_apis.py` — HTTP-level tests for `/api/teams/` and `/api/players/`
 - `test_forms.py` — `PlayerForm` stat field completeness (all 19 fields present, defaults to 50) and save behavior
+- `test_models.py` — `_random_player_profile()` output validation (keys, value ranges, source lists); `stat_for_simulation` boost logic; roster validation

@@ -74,7 +74,7 @@ class TestSimulation:
         ), "Resupply action should produce a buffered event with actor and target set"
 
     def test_simulate_single_round_detailed_creates_completed_round(self):
-        simulator = ResourceBasedSimulator()
+        simulator = ResourceBasedSimulator(duration=20)
         team_red, _ = self.create_team_with_roster("RedSim")
         team_blue, _ = self.create_team_with_roster("BlueSim")
 
@@ -866,7 +866,7 @@ class TestSimulationChangesWithWeights:
         def all_tag_weights(player, action_to_weight_index, weights, all_alive, second):
             return [100, 0, 0, 0, 0, 0, 0]
 
-        simulator = ResourceBasedSimulator()
+        simulator = ResourceBasedSimulator(duration=60)
 
         team_r1, _ = make_team_with_slots("WS_R1")
         team_b1, _ = make_team_with_slots("WS_B1")
