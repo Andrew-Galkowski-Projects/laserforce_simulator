@@ -227,8 +227,8 @@ class TestSimulation:
             )
 
         assert len(pending_missiles) >= 1
-        complete_time, att, defn = pending_missiles[0]
-        simulator._complete_missile(att, defn, complete_time, hit_buffer)
+        m = pending_missiles[0]
+        simulator._complete_missile(m.attacker, m.defender, m.complete_time, hit_buffer)
 
         assert any(
             ev.get("event_type") == "missile_hit"

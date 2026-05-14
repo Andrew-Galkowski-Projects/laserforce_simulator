@@ -6,6 +6,7 @@ import pytest
 
 from matches.models import GameRound, PlayerRoundState, GameEvent
 from matches.simulation import ResourceBasedSimulator
+from matches.sim_helpers.map_context import MapContext
 from matches.tests.conftest import make_team_with_slots
 
 # ---------------------------------------------------------------------------
@@ -628,12 +629,12 @@ class TestMap03LOSTargeting:
             "0,0": frozenset(["0,1", "1,0"]),
             "0,1": frozenset(["0,0", "0,2"]),
         }
-        ctx = {
+        ctx = MapContext.from_dict({
             "sight_data": sight_data,
             "adj": {},
             "spawn_cells": {},
             "zone_data": None,
-        }
+        })
 
         actor = self._make_player("red_cmd", "red", "commander", cell_row=0, cell_col=0)
         visible = self._make_player(
@@ -655,12 +656,12 @@ class TestMap03LOSTargeting:
             "0,0": frozenset(["1,0"]),
             "0,2": frozenset(["1,2"]),
         }
-        ctx = {
+        ctx = MapContext.from_dict({
             "sight_data": sight_data,
             "adj": {},
             "spawn_cells": {},
             "zone_data": None,
-        }
+        })
 
         actor = self._make_player("red_cmd", "red", "commander", cell_row=0, cell_col=0)
         behind_wall = self._make_player(
@@ -700,12 +701,12 @@ class TestMap03LOSTargeting:
         from matches.simulation import _get_los_targets
 
         sight_data = {"0,0": frozenset(["0,1"])}
-        ctx = {
+        ctx = MapContext.from_dict({
             "sight_data": sight_data,
             "adj": {},
             "spawn_cells": {},
             "zone_data": None,
-        }
+        })
 
         actor = self._make_player("red_cmd", "red", "commander", cell_row=0, cell_col=0)
         no_cell_target = self._make_player(
@@ -723,12 +724,12 @@ class TestMap03LOSTargeting:
             "0,0": frozenset(["0,1"]),
             "0,1": frozenset(["0,0"]),
         }
-        ctx = {
+        ctx = MapContext.from_dict({
             "sight_data": sight_data,
             "adj": {},
             "spawn_cells": {},
             "zone_data": None,
-        }
+        })
 
         a = self._make_player("red_cmd", "red", "commander", cell_row=0, cell_col=0)
         b = self._make_player("blue_cmd", "blue", "commander", cell_row=0, cell_col=1)
@@ -894,13 +895,13 @@ class TestMap04BaseInteraction:
         )
 
     def _make_ctx(self, base_sight_data):
-        return {
+        return MapContext.from_dict({
             "adj": {},
             "spawn_cells": {},
             "zone_data": None,
             "sight_data": None,
             "base_sight_data": base_sight_data,
-        }
+        })
 
     def test_no_map_returns_none(self):
         from matches.simulation import _get_base_interaction
@@ -912,7 +913,7 @@ class TestMap04BaseInteraction:
         from matches.simulation import _get_base_interaction
 
         player = self._make_player("red_cmd", "red", cell_row=0, cell_col=0)
-        ctx = {"adj": {}, "spawn_cells": {}, "zone_data": None, "sight_data": None}
+        ctx = MapContext.from_dict({"adj": {}, "spawn_cells": {}, "zone_data": None, "sight_data": None})
         assert _get_base_interaction(player, ctx) is None
 
     def test_no_cell_position_returns_none(self):
@@ -1429,13 +1430,13 @@ class TestMap07WallTypes:
 
         zone_data = [[1, 5, 1]]
         wall_meta = {"0,1": {"facing": "E"}}
-        ctx = {
+        ctx = MapContext.from_dict({
             "sight_data": {"0,0": frozenset(), "0,2": frozenset()},
             "adj": {},
             "spawn_cells": {},
             "zone_data": zone_data,
             "wall_meta": wall_meta,
-        }
+        })
 
         actor = self._make_player("red_scout", "red", 0, 0)
         target = self._make_player("blue_scout", "blue", 0, 2)
@@ -1447,13 +1448,13 @@ class TestMap07WallTypes:
 
         zone_data = [[1, 5, 1]]
         wall_meta = {"0,1": {"facing": "N"}}  # N/S aperture, attack is E-W
-        ctx = {
+        ctx = MapContext.from_dict({
             "sight_data": {"0,0": frozenset(), "0,2": frozenset()},
             "adj": {},
             "spawn_cells": {},
             "zone_data": zone_data,
             "wall_meta": wall_meta,
-        }
+        })
 
         actor = self._make_player("red_scout", "red", 0, 0)
         target = self._make_player("blue_scout", "blue", 0, 2)

@@ -5,10 +5,17 @@ PlayerState) and emit events through an optional callable rather than writing
 to a specific storage backend.  No Django imports — this module must stay
 importable without the ORM.
 """
+from __future__ import annotations
+
 import random
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .map_context import MapContext
 
 from .mechanics import shot_cooldown, choose_tag_target, choose_resupply_target, choose_zone_change
 from .pathfinding import choose_goal_cell
+from .pending_events import PendingMissile
 from .weights import (
     _get_medic_weights,
     _get_ammo_weights,
@@ -95,17 +102,17 @@ def _can_tag_through_windowed_wall(
                 return False
 
 
-def _get_los_targets(actor, candidates: list, movement_ctx: dict | None) -> list:
+def _get_los_targets(actor, candidates: list, movement_ctx: "MapContext | None") -> list:
     """Return subset of candidates visible to actor.
 
     With a map: looks up actor's cell in SightLineConfig (normal LOS), then
     additionally checks windowed-wall aperture targeting for candidates not in
     normal sight. Falls back to same-zone filtering when no map is active.
     """
-    if movement_ctx is None:
+    if movement_ctx is None or actor.cell_row is None:
         return [p for p in candidates if p.current_zone == actor.current_zone]
-    sight_data = movement_ctx.get("sight_data")
-    if sight_data is None or actor.cell_row is None:
+    sight_data = movement_ctx.sight_data
+    if sight_data is None:
         return [p for p in candidates if p.current_zone == actor.current_zone]
     actor_key = f"{actor.cell_row},{actor.cell_col}"
     visible_cells = sight_data.get(actor_key, frozenset())
@@ -119,8 +126,8 @@ def _get_los_targets(actor, candidates: list, movement_ctx: dict | None) -> list
             else:
                 windowed_candidates.append(p)
 
-    zone_grid = movement_ctx.get("zone_data")
-    wall_meta: dict = movement_ctx.get("wall_meta", {})
+    zone_grid = movement_ctx.get_zone_data()
+    wall_meta: dict = movement_ctx.get_wall_meta()
     if zone_grid is not None and wall_meta and windowed_candidates:
         for p in windowed_candidates:
             if _can_tag_through_windowed_wall(
@@ -136,7 +143,7 @@ def _get_los_targets(actor, candidates: list, movement_ctx: dict | None) -> list
     return result
 
 
-def _get_base_interaction(player, movement_ctx: dict | None) -> int | None:
+def _get_base_interaction(player, movement_ctx: "MapContext | None") -> int | None:
     """Return base_id of the first uncaptured base the player is in range of, or None.
 
     base_id 15=neutral, 14=red player captures blue base, 13=blue player captures red base.
@@ -145,7 +152,7 @@ def _get_base_interaction(player, movement_ctx: dict | None) -> int | None:
     """
     if movement_ctx is None:
         return None
-    base_sight_data = movement_ctx.get("base_sight_data")
+    base_sight_data = movement_ctx.base_sight_data
     if not base_sight_data or player.cell_row is None:
         return None
 
@@ -179,7 +186,7 @@ def _elevation_hit_modifier(
     attacker_col: int | None,
     defender_row: int | None,
     defender_col: int | None,
-    movement_ctx: dict | None,
+    movement_ctx: "MapContext | None",
 ) -> float:
     """MAP-09: Return the uphill hit-chance multiplier for a shot from attacker to defender.
 
@@ -188,25 +195,14 @@ def _elevation_hit_modifier(
     """
     if movement_ctx is None:
         return 1.0
-    elevation_grid = movement_ctx.get("elevation_grid")
-    if elevation_grid is None:
+    if movement_ctx.elevation_grid is None:
         return 1.0
     if attacker_row is None or attacker_col is None:
         return 1.0
     if defender_row is None or defender_col is None:
         return 1.0
-    rows = len(elevation_grid)
-    cols = len(elevation_grid[0]) if rows else 0
-    attacker_elev = (
-        elevation_grid[attacker_row][attacker_col]
-        if 0 <= attacker_row < rows and 0 <= attacker_col < cols
-        else 0.0
-    )
-    defender_elev = (
-        elevation_grid[defender_row][defender_col]
-        if 0 <= defender_row < rows and 0 <= defender_col < cols
-        else 0.0
-    )
+    attacker_elev = movement_ctx.elevation_at(attacker_row, attacker_col)
+    defender_elev = movement_ctx.elevation_at(defender_row, defender_col)
     return elevation_hit_modifier(attacker_elev, defender_elev)
 
 
@@ -219,7 +215,7 @@ def plan_action(
     player,
     all_alive: list,
     second: float,
-    movement_ctx: dict | None = None,
+    movement_ctx: "MapContext | None" = None,
     *,
     save_player=None,
 ) -> list:
@@ -302,7 +298,7 @@ def plan_action(
             goal = choose_goal_cell(
                 player,
                 all_alive,
-                movement_ctx["spawn_cells"],
+                movement_ctx.get_spawn_cells(),
                 movement_ctx,
                 prev_action,
             )
@@ -427,7 +423,7 @@ def capture_base(
     player,
     base_id: int,
     second: float,
-    movement_ctx: dict | None = None,
+    movement_ctx: "MapContext | None" = None,
     *,
     emit_event=None,
 ) -> bool:
@@ -437,7 +433,7 @@ def capture_base(
     emit_event: optional callable(event_dict) for event recording.
     """
     if movement_ctx is not None and player.cell_row is not None:
-        base_sight_data = movement_ctx.get("base_sight_data", {})
+        base_sight_data = movement_ctx.base_sight_data
         cell_key = f"{player.cell_row},{player.cell_col}"
         if base_id == 15:
             in_range = any(
@@ -536,9 +532,8 @@ def start_missile_lock(
 ):
     """Attempt to initiate a missile lock on defender.
 
-    Returns a (complete_time, attacker, defender) tuple if the missile is
-    launched, or None if the attempt fails (invalid state) or the defender
-    dodges.
+    Returns a ``PendingMissile`` if the missile is launched, or ``None`` if
+    the attempt fails (invalid state) or the defender dodges.
 
     emit_event: optional callable(event_dict) — called on a successful dodge
     so callers can log the event.
@@ -570,4 +565,4 @@ def start_missile_lock(
         return None
 
     delay = random.randint(1, 2)
-    return (second + delay, attacker, defender)
+    return PendingMissile(complete_time=second + delay, attacker=attacker, defender=defender)

@@ -1,5 +1,10 @@
+from __future__ import annotations
+
 import heapq
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .map_context import MapContext
 
 
 def _elevation_at(r: int, c: int, elevation_data: dict | None = None) -> float:
@@ -131,10 +136,10 @@ def _goal_from_action(
     cell_row: int,
     cell_col: int,
     intended_action: str,
-    movement_ctx: dict,
+    movement_ctx: "MapContext",
 ) -> tuple[int, int] | None:
     """Return a goal cell driven by the player's last action, or None."""
-    cell_los_counts: dict[str, int] = movement_ctx.get("cell_los_counts", {})
+    cell_los_counts: dict[str, int] = movement_ctx.cell_los_counts
 
     if intended_action in ("tag_player", "missile_player"):
         if player.role == "commander":
@@ -180,7 +185,7 @@ def _goal_from_action(
             return (target.cell_row, target.cell_col)
 
     elif intended_action == "hide":
-        adj: dict = movement_ctx.get("adj", {})
+        adj: dict = movement_ctx.get_adjacency()
         neighbors = adj.get((cell_row, cell_col), [])
         if neighbors and cell_los_counts:
             safest = min(
@@ -197,13 +202,13 @@ def _goal_from_role(
     enemy_color: str,
     cell_row: int,
     cell_col: int,
-    movement_ctx: dict,
+    movement_ctx: "MapContext",
 ) -> tuple[int, int] | None:
     """Return a role-specific goal cell, or None."""
-    cell_los_counts: dict[str, int] = movement_ctx.get("cell_los_counts", {})
-    high_los_cells: list = movement_ctx.get("high_los_cells", [])
-    strong_spots: list = movement_ctx.get("strong_spots", [])
-    sight_data: dict = movement_ctx.get("sight_data") or {}
+    cell_los_counts: dict[str, int] = movement_ctx.cell_los_counts
+    high_los_cells: list = movement_ctx.get_high_los_cells()
+    strong_spots: list = movement_ctx.get_strong_spots()
+    sight_data: dict = movement_ctx.sight_data or {}
 
     if player.role == "scout":
         if high_los_cells:
@@ -261,7 +266,7 @@ def choose_goal_cell(
     player,
     all_alive: list,
     spawn_cells: dict[str, tuple[int, int]],
-    movement_ctx: dict | None = None,
+    movement_ctx: "MapContext | None" = None,
     intended_action: str = "",
 ) -> tuple[int, int] | None:
     """Return the cell a player should navigate toward (MAP-05).

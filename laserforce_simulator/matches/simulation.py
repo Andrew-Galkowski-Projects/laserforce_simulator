@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from django.db import transaction
 from .models import GameEvent, Match, GameRound, PlayerRoundState
 from .sim_helpers.mechanics import shot_cooldown
+from .sim_helpers.map_context import MapContext
 from .sim_helpers.pathfinding import (
     build_movement_adjacency,
     astar_next_step,
@@ -24,6 +25,19 @@ from .sim_helpers.combat import (
     award_bases as _award_bases_shared,
     start_missile_lock as _start_missile_lock_shared,
 )
+from .sim_helpers.tick_engine import (
+    drain_missiles,
+    drain_nukes,
+    drain_reactions,
+    drain_followups,
+)
+from .sim_helpers.pending_events import (
+    PendingMissile,
+    PendingNuke,
+    PendingFollowup,
+    PendingReaction,
+)
+from .sim_helpers.spawn_assigner import assign_spawn_cells
 from teams.models import Player
 from matches.sim_helpers.role_constants import ROLE_STATS
 from core.models import (
@@ -131,7 +145,18 @@ class ResourceBasedSimulator:
         self, team_red, team_blue, match=None, round_number=1, *, arena_map=None
     ):
         """Simulate a round with full player resource tracking"""
-        md = self._resolve_map_data(arena_map)
+        movement_ctx, zone_size = ResourceBasedSimulator._load_map_context(arena_map)
+
+        # Extract per-player init data from the movement context (or fall back to
+        # empty dicts when no map is active).
+        if movement_ctx is not None:
+            spawn_cells = movement_ctx.spawn_cells
+            zone_data = movement_ctx.zone_data
+            spawn_pools = movement_ctx.team_spawn_pools
+        else:
+            spawn_cells = {}
+            zone_data = None
+            spawn_pools = {}
 
         game_round = GameRound.objects.create(
             match=match,
@@ -139,29 +164,17 @@ class ResourceBasedSimulator:
             team_red=team_red,
             team_blue=team_blue,
             arena_map=arena_map,
-            zone_size=md.zone_size,
+            zone_size=zone_size,
         )
 
         # Initialize player states
         red_players = self._initialize_players(
-            game_round, team_red, "red", md.spawn_cells, md.zone_data, md.spawn_pools
+            game_round, team_red, "red", spawn_cells, zone_data, spawn_pools
         )
         blue_players = self._initialize_players(
-            game_round, team_blue, "blue", md.spawn_cells, md.zone_data, md.spawn_pools
+            game_round, team_blue, "blue", spawn_cells, zone_data, spawn_pools
         )
 
-        # Simulate the round (pass game_round so events can be recorded)
-        movement_ctx = ResourceBasedSimulator._build_movement_ctx(
-            md.zone_data,
-            md.spawn_cells,
-            md.sight_data,
-            md.base_sight_data,
-            md.cell_ranking,
-            md.strong_spots,
-            md.wall_meta,
-            md.spawn_pools,
-            md.elevation_grid,
-        )
         round_result = self._simulate_round_combat(
             game_round, red_players, blue_players, movement_ctx=movement_ctx
         )
@@ -352,19 +365,146 @@ class ResourceBasedSimulator:
         ranking = cell_ranking or []
         top_n = max(1, len(ranking) // 4) if ranking else 0
         high_los_cells = [tuple(rc) for rc in ranking[:top_n]]
-        return {
-            "adj": build_movement_adjacency(zone_data),
-            "spawn_cells": spawn_cells,
-            "zone_data": zone_data,
-            "sight_data": sight_data,
-            "base_sight_data": base_sight_data or {},
-            "cell_los_counts": cell_los_counts,
-            "high_los_cells": high_los_cells,
-            "strong_spots": [tuple(rc) for rc in (strong_spots or [])],
-            "wall_meta": wall_meta or {},
-            "team_spawn_pools": team_spawn_pools or {},
-            "elevation_grid": elevation_grid,
+        return MapContext(
+            adj=build_movement_adjacency(zone_data),
+            spawn_cells=spawn_cells,
+            zone_data=zone_data,
+            sight_data=sight_data,
+            base_sight_data=base_sight_data or {},
+            cell_los_counts=cell_los_counts,
+            high_los_cells=high_los_cells,
+            strong_spots=[tuple(rc) for rc in (strong_spots or [])],
+            wall_meta=wall_meta or {},
+            team_spawn_pools=team_spawn_pools or {},
+            elevation_grid=elevation_grid,
+        )
+
+    @staticmethod
+    def _load_map_context(
+        arena_map,
+    ) -> "tuple[MapContext | None, int | None]":
+        """Load all map data from DB and build the movement context in one step.
+
+        Merges the two-step ``_resolve_map_data`` -> ``_build_movement_ctx``
+        pipeline into a single static method that performs all ORM queries and
+        immediately constructs the :class:`MapContext` object.
+
+        Returns:
+            ``(movement_ctx, zone_size)`` where:
+
+            - ``movement_ctx`` is a :class:`MapContext` ready for use in the
+              simulation tick loop, or ``None`` when ``arena_map`` is ``None``
+              (3-zone fallback).
+            - ``zone_size`` is the integer pixel size of one cell, or ``None``
+              when ``arena_map`` is ``None``.
+
+        Raises:
+            ValueError: if the map is missing its confirmed zone config, a
+                base placement, computed sight lines, or computed base sight
+                lines.
+        """
+        if arena_map is None:
+            return None, None
+
+        config = arena_map.latest_confirmed_config()
+        if config is None:
+            raise ValueError(
+                f"Map '{arena_map.name}' has no confirmed zone configuration. "
+                "Please confirm a zone config in the map editor before simulating."
+            )
+
+        zone_size: int = config.zone_size
+        raw = config.zone_data
+        zone_grid = raw["zones"] if isinstance(raw, dict) else raw
+        wall_meta_lm: dict = raw.get("wall_meta", {}) if isinstance(raw, dict) else {}
+        elevation_grid_lm = raw.get("elevation") if isinstance(raw, dict) else None
+
+        base_cfgs = {
+            bc.base_type: bc
+            for bc in MapBaseConfig.objects.filter(
+                arena_map=arena_map, base_type__in=["red", "blue"]
+            )
         }
+
+        spawn_cells_lm: dict = {}
+        for color in ("red", "blue"):
+            base_cfg = base_cfgs.get(color)
+            if base_cfg is None:
+                raise ValueError(
+                    f"Map '{arena_map.name}' has no {color} base placed. "
+                    "Place a red and blue base in the map editor before simulating."
+                )
+            spawn_cells_lm[color] = (
+                base_cfg.y_px // zone_size,
+                base_cfg.x_px // zone_size,
+            )
+
+        sight_config = SightLineConfig.objects.filter(
+            arena_map=arena_map, zone_size=zone_size
+        ).first()
+        if sight_config is None:
+            raise ValueError(
+                f"Map '{arena_map.name}' has no sight lines computed for zone size "
+                f"{zone_size}px. Click 'Compute Sight Lines' in the map editor before simulating."
+            )
+        sight_data_lm: dict = {
+            k: frozenset(v) for k, v in sight_config.sight_data.items()
+        }
+
+        base_sight_configs = list(
+            BaseSightLineConfig.objects.filter(arena_map=arena_map, zone_size=zone_size)
+        )
+        if not base_sight_configs:
+            raise ValueError(
+                f"Map '{arena_map.name}' has no base sight lines computed for zone size "
+                f"{zone_size}px. Click 'Compute Sight Lines' in the map editor before simulating."
+            )
+        base_sight_data_lm: dict = {
+            bsc.base_type: frozenset(f"{r},{c}" for r, c in bsc.visible_cells)
+            for bsc in base_sight_configs
+        }
+
+        ranking_config = MapCellRankingConfig.objects.filter(
+            arena_map=arena_map, zone_size=zone_size
+        ).first()
+        cell_ranking_lm: list = ranking_config.ranked_cells if ranking_config else []
+
+        strong_spots_config = HeavyStrongSpotsConfig.objects.filter(
+            arena_map=arena_map, zone_size=zone_size
+        ).first()
+        strong_spots_lm: list = strong_spots_config.cells if strong_spots_config else []
+
+        team_spawn_pools_lm: dict[str, list[tuple[int, int]]] = {}
+        if isinstance(raw, dict):
+            for color in ("red", "blue"):
+                pool = raw.get(f"{color}_spawn", [])
+                if pool:
+                    team_spawn_pools_lm[color] = [tuple(rc) for rc in pool]
+
+        # Build the movement context (formerly _build_movement_ctx).
+        cell_los_counts_lm: dict[str, int] = {
+            k: len(v) for k, v in sight_data_lm.items()
+        }
+        top_n = max(1, len(cell_ranking_lm) // 4) if cell_ranking_lm else 0
+        high_los_cells_lm: list[tuple[int, int]] = [
+            tuple(rc) for rc in cell_ranking_lm[:top_n]
+        ]
+
+        movement_ctx = MapContext(
+            adj=build_movement_adjacency(zone_grid),
+            spawn_cells=spawn_cells_lm,
+            zone_data=zone_grid,
+            sight_data=sight_data_lm,
+            base_sight_data=base_sight_data_lm,
+            cell_los_counts=cell_los_counts_lm,
+            high_los_cells=high_los_cells_lm,
+            strong_spots=[tuple(rc) for rc in strong_spots_lm],
+            wall_meta=wall_meta_lm,
+            team_spawn_pools=team_spawn_pools_lm,
+            elevation_grid=elevation_grid_lm,
+        )
+
+        return movement_ctx, zone_size
 
     @staticmethod
     def _build_spawn_assignments(
@@ -375,86 +515,13 @@ class ResourceBasedSimulator:
     ) -> dict[int, tuple[int, int] | None]:
         """Pre-compute spawn cell assignments for all players in a team.
 
-        Uses role-aware, no-replacement drawing to ensure unique cells.
-        Processes roles in priority order (regardless of roster order):
-          1. Commander / Heavy → most-aggressive cells available
-          2. Medic / Ammo      → most-sheltered cells available
-          3. Scouts            → remaining cells
-
-        The pool is sorted by distance to the enemy base (ascending).
-        Overflow handling (pool exhausted):
-          - If the base cell was NOT drawn from pool: share it (multiple
-            overflow players may occupy it).
-          - If the base cell WAS drawn from pool: assign None (player falls
-            back to 3-zone).
+        Delegates to :func:`matches.sim_helpers.spawn_assigner.assign_spawn_cells`
+        which is the single source of truth for MAP-08 role-priority spawn logic.
+        Kept here for backward compatibility — both simulators and external callers
+        can reach it via ``ResourceBasedSimulator._build_spawn_assignments(...)``
+        or directly via ``assign_spawn_cells(...)``.
         """
-        pool = team_spawn_pools.get(team_color)
-        if not pool:
-            return {i: None for i in range(len(roster_roles))}
-
-        base_cell = spawn_cells.get(team_color)
-        enemy_color = "blue" if team_color == "red" else "red"
-        enemy_base = spawn_cells.get(enemy_color)
-
-        if base_cell is None or enemy_base is None:
-            return {i: None for i in range(len(roster_roles))}
-
-        # Sort pool ascending by distance to enemy (most-aggressive first).
-        sorted_pool: list[tuple[int, int]] = sorted(
-            pool,
-            key=lambda cell: (
-                abs(cell[0] - enemy_base[0]) + abs(cell[1] - enemy_base[1])
-            ),
-        )
-
-        # Group roster indices by role priority.
-        priority_groups: list[list[int]] = [[], [], []]
-        for i, role in enumerate(roster_roles):
-            if role in ("commander", "heavy"):
-                priority_groups[0].append(i)
-            elif role in ("medic", "ammo"):
-                priority_groups[1].append(i)
-            else:
-                priority_groups[2].append(i)
-
-        pool_deque: deque[tuple[int, int]] = deque(sorted_pool)
-        drawn_cells: set[tuple[int, int]] = set()
-
-        def _draw_front() -> tuple[int, int] | None:
-            if not pool_deque:
-                return None
-            cell = pool_deque.popleft()
-            drawn_cells.add(cell)
-            return cell
-
-        def _draw_back() -> tuple[int, int] | None:
-            if not pool_deque:
-                return None
-            cell = pool_deque.pop()
-            drawn_cells.add(cell)
-            return cell
-
-        def _overflow() -> tuple[int, int] | None:
-            if base_cell is None:
-                return None
-            # Base cell not drawn from pool: share as overflow slot.
-            # Base cell already drawn from pool: no cell (3-zone fallback).
-            if base_cell not in drawn_cells:
-                return base_cell
-            return None
-
-        assignments: dict[int, tuple[int, int] | None] = {}
-        for i in priority_groups[0]:
-            cell = _draw_front()
-            assignments[i] = cell if cell is not None else _overflow()
-        for i in priority_groups[1]:
-            cell = _draw_back()
-            assignments[i] = cell if cell is not None else _overflow()
-        for i in priority_groups[2]:
-            cell = _draw_front()
-            assignments[i] = cell if cell is not None else _overflow()
-
-        return assignments
+        return assign_spawn_cells(roster_roles, team_color, spawn_cells, team_spawn_pools)
 
     def _initialize_players(
         self,
@@ -474,7 +541,7 @@ class ResourceBasedSimulator:
         # Pre-compute spawn assignments using role-priority ordering (MAP-08).
         if team_spawn_pools and zone_data is not None:
             roster_roles = [role for role, _ in roster]
-            cell_assignments = self._build_spawn_assignments(
+            cell_assignments = assign_spawn_cells(
                 roster_roles, team_color, spawn_cells, team_spawn_pools
             )
         else:
@@ -533,10 +600,10 @@ class ResourceBasedSimulator:
         """Simulate combat between two teams"""
         round_duration = 15 * 60  # 15 minutes in seconds
 
-        pending_missiles = []  # (complete_time, attacker, defender)
-        pending_nukes = []  # (complete_time, player_state)
-        pending_followups = []  # (fire_at, attacker, defender, chain)
-        pending_reactions = []  # (fire_at, attacker, defender)
+        pending_missiles: list[PendingMissile] = []
+        pending_nukes: list[PendingNuke] = []
+        pending_followups: list[PendingFollowup] = []
+        pending_reactions: list[PendingReaction] = []
         event_buffer = []  # accumulated event dicts; bulk-written after the loop
         last_shot_times = (
             {}
@@ -548,12 +615,11 @@ class ResourceBasedSimulator:
             db_second = int(second)
 
             # --- process pending missiles ---
-            to_run = [m for m in pending_missiles if m[0] <= second]
-            pending_missiles = [m for m in pending_missiles if m[0] > second]
-            for complete_time, attacker, defender in to_run:
-                ct = int(complete_time)
-                if attacker.is_active_at(ct) and defender.is_taggable_at(ct):
-                    self._complete_missile(attacker, defender, ct, event_buffer)
+            to_run, pending_missiles = drain_missiles(pending_missiles, second)
+            for m in to_run:
+                ct = int(m.complete_time)
+                if m.attacker.is_active_at(ct) and m.defender.is_taggable_at(ct):
+                    self._complete_missile(m.attacker, m.defender, ct, event_buffer)
                 else:
                     logger.debug(
                         "%s - %s: missile cancelled or failed at %s",
@@ -563,11 +629,10 @@ class ResourceBasedSimulator:
                     )
 
             # --- process pending nukes ---
-            to_run_n = [n for n in pending_nukes if n[0] <= second]
-            pending_nukes = [n for n in pending_nukes if n[0] > second]
-            for complete_time, player_state in to_run_n:
+            to_run_n, pending_nukes = drain_nukes(pending_nukes, second)
+            for n in to_run_n:
                 self._resolve_pending_nuke(
-                    player_state, int(complete_time), event_buffer
+                    n.player, int(n.complete_time), event_buffer
                 )
 
             # REFRESH player states from database after nukes/missiles
@@ -575,9 +640,9 @@ class ResourceBasedSimulator:
                 p.refresh_from_db()
 
             # --- process pending reactions (deferred by shot cooldown) ---
-            due_rx = [item for item in pending_reactions if item[0] <= second]
-            pending_reactions = [item for item in pending_reactions if item[0] > second]
-            for _, r_attacker, r_defender in due_rx:
+            due_rx, pending_reactions = drain_reactions(pending_reactions, second)
+            for rx in due_rx:
+                r_attacker, r_defender = rx.attacker, rx.defender
                 if r_attacker.final_lives <= 0 or r_defender.final_lives <= 0:
                     continue
                 if not r_attacker.is_active_at(db_second):
@@ -699,9 +764,9 @@ class ResourceBasedSimulator:
                     )
 
             # --- process pending follow-ups (deferred by shot cooldown) ---
-            due_fu = [item for item in pending_followups if item[0] <= second]
-            pending_followups = [item for item in pending_followups if item[0] > second]
-            for _, fu_attacker, fu_defender, chain in due_fu:
+            due_fu, pending_followups = drain_followups(pending_followups, second)
+            for fu in due_fu:
+                fu_attacker, fu_defender, chain = fu.attacker, fu.defender, fu.chain_depth
                 if fu_attacker.final_lives <= 0 or fu_defender.final_lives <= 0:
                     continue
                 if fu_attacker.final_shots <= 0 and fu_attacker.role != "ammo":
@@ -808,7 +873,7 @@ class ResourceBasedSimulator:
                         if fu_defender.player.player_awareness < random.randint(0, 100):
                             cooldown = shot_cooldown(fu_attacker, second)
                             pending_followups.append(
-                                (second + cooldown, fu_attacker, fu_defender, chain + 1)
+                                PendingFollowup(second + cooldown, fu_attacker, fu_defender, chain + 1)
                             )
                 else:
                     fu_attacker.shots_missed += 1
@@ -1066,7 +1131,7 @@ class ResourceBasedSimulator:
                 # _use_special will apply resource costs / activation event and may return a scheduled nuke
                 scheduled = self._use_special(actor, second, event_buffer)
                 if scheduled and scheduled[0] == "nuke":
-                    pending_nukes.append((scheduled[1], scheduled[2]))
+                    pending_nukes.append(PendingNuke(complete_time=scheduled[1], player=scheduled[2]))
             elif ptype == "tag":
                 tag_attempts.append({"attacker": actor, "defender": plan.get("target")})
 
@@ -1391,7 +1456,7 @@ class ResourceBasedSimulator:
                 continue
             if r_reactor.player.player_awareness >= random.randint(0, 100):
                 cooldown = shot_cooldown(r_reactor, second)
-                pending_reactions.append((second + cooldown, r_reactor, r_target))
+                pending_reactions.append(PendingReaction(second + cooldown, r_reactor, r_target))
 
         # Follow-up tags: schedule via pending_followups so they fire after the shot cooldown.
         # A hit that downs the defender (shields → 0) never generates a follow-up.
@@ -1405,7 +1470,7 @@ class ResourceBasedSimulator:
             if o["defender"].player.player_awareness < random.randint(0, 100):
                 cooldown = shot_cooldown(o["attacker"], second)
                 pending_followups.append(
-                    (second + cooldown, o["attacker"], o["defender"], 1)
+                    PendingFollowup(second + cooldown, o["attacker"], o["defender"], 1)
                 )
 
     def _move_to_cell(self, player, second, goal_cell, movement_ctx, event_buffer=None):
@@ -2067,20 +2132,7 @@ class BatchSimulator:
         red_roster = list(team_red.active_roster)
         blue_roster = list(team_blue.active_roster)
 
-        movement_ctx = None
-        if arena_map is not None:
-            md = ResourceBasedSimulator._resolve_map_data(arena_map)
-            movement_ctx = ResourceBasedSimulator._build_movement_ctx(
-                md.zone_data,
-                md.spawn_cells,
-                md.sight_data,
-                md.base_sight_data,
-                md.cell_ranking,
-                md.strong_spots,
-                md.wall_meta,
-                md.spawn_pools,
-                md.elevation_grid,
-            )
+        movement_ctx, _ = ResourceBasedSimulator._load_map_context(arena_map)
 
         red_wins = blue_wins = ties = 0
         red_scores, blue_scores = [], []
@@ -2153,7 +2205,7 @@ class BatchSimulator:
         roster_list = list(roster)
         if team_spawn_pools and spawn_cells and zone_data is not None:
             roster_roles = [role for role, _ in roster_list]
-            cell_assignments = ResourceBasedSimulator._build_spawn_assignments(
+            cell_assignments = assign_spawn_cells(
                 roster_roles, team_color, spawn_cells, team_spawn_pools
             )
         else:
@@ -2243,35 +2295,33 @@ class BatchSimulator:
             team_spawn_pools=team_spawn_pools,
         )
 
-        pending_missiles = []  # (complete_time, attacker, defender)
-        pending_nukes = []  # (complete_time, player_state)
-        pending_followups = []  # (fire_at, attacker, defender, chain)
-        pending_reactions = []  # (fire_at, attacker, defender)
+        pending_missiles: list[PendingMissile] = []
+        pending_nukes: list[PendingNuke] = []
+        pending_followups: list[PendingFollowup] = []
+        pending_reactions: list[PendingReaction] = []
         eliminated_at = 901
 
         for _tick in range(int(900 / self.TICK)):
             second = _tick * self.TICK
             # --- process pending missiles ---
-            fired = [m for m in pending_missiles if m[0] <= second]
-            pending_missiles = [m for m in pending_missiles if m[0] > second]
-            for complete_time, attacker, defender in fired:
-                if attacker.is_active_at(complete_time) and defender.is_taggable_at(
-                    complete_time
+            fired, pending_missiles = drain_missiles(pending_missiles, second)
+            for m in fired:
+                if m.attacker.is_active_at(m.complete_time) and m.defender.is_taggable_at(
+                    m.complete_time
                 ):
-                    self._complete_missile(attacker, defender, complete_time, event_log)
+                    self._complete_missile(m.attacker, m.defender, m.complete_time, event_log)
 
             # --- process pending nukes ---
-            fired_n = [n for n in pending_nukes if n[0] <= second]
-            pending_nukes = [n for n in pending_nukes if n[0] > second]
-            for complete_time, ps in fired_n:
-                if ps.is_active_at(complete_time) and ps.final_lives > 0:
-                    opposing = blue_players if ps.team_color == "red" else red_players
-                    self._complete_nuke(ps, complete_time, opposing, event_log)
+            fired_n, pending_nukes = drain_nukes(pending_nukes, second)
+            for n in fired_n:
+                if n.player.is_active_at(n.complete_time) and n.player.final_lives > 0:
+                    opposing = blue_players if n.player.team_color == "red" else red_players
+                    self._complete_nuke(n.player, n.complete_time, opposing, event_log)
 
             # --- process pending reactions (deferred by shot cooldown) ---
-            due_rx = [item for item in pending_reactions if item[0] <= second]
-            pending_reactions = [item for item in pending_reactions if item[0] > second]
-            for _, r_attacker, r_defender in due_rx:
+            due_rx, pending_reactions = drain_reactions(pending_reactions, second)
+            for rx in due_rx:
+                r_attacker, r_defender = rx.attacker, rx.defender
                 if r_attacker.final_lives <= 0 or r_defender.final_lives <= 0:
                     continue
                 if not r_attacker.is_active_at(second):
@@ -2367,9 +2417,9 @@ class BatchSimulator:
                         )
 
             # --- process pending follow-ups (deferred by shot cooldown) ---
-            due_fu = [item for item in pending_followups if item[0] <= second]
-            pending_followups = [item for item in pending_followups if item[0] > second]
-            for _, fu_attacker, fu_defender, chain in due_fu:
+            due_fu, pending_followups = drain_followups(pending_followups, second)
+            for fu in due_fu:
+                fu_attacker, fu_defender, chain = fu.attacker, fu.defender, fu.chain_depth
                 if fu_attacker.final_lives <= 0 or fu_defender.final_lives <= 0:
                     continue
                 if fu_attacker.final_shots <= 0 and fu_attacker.role != "ammo":
@@ -2456,11 +2506,11 @@ class BatchSimulator:
                             cooldown = shot_cooldown(fu_attacker, second)
                             if cooldown == 0.0:
                                 due_fu.append(
-                                    (second, fu_attacker, fu_defender, chain + 1)
+                                    PendingFollowup(second, fu_attacker, fu_defender, chain + 1)
                                 )
                             else:
                                 pending_followups.append(
-                                    (
+                                    PendingFollowup(
                                         second + cooldown,
                                         fu_attacker,
                                         fu_defender,
@@ -2544,7 +2594,7 @@ class BatchSimulator:
                 elif ptype == "use_special":
                     scheduled = self._use_special(actor, second, all_alive, event_log)
                     if scheduled and scheduled[0] == "nuke":
-                        pending_nukes.append((scheduled[1], scheduled[2]))
+                        pending_nukes.append(PendingNuke(complete_time=scheduled[1], player=scheduled[2]))
                 elif ptype == "tag":
                     tag_attempts.append({"attacker": actor, "defender": plan["target"]})
 
@@ -2776,7 +2826,7 @@ class BatchSimulator:
                         {"attacker": r_reactor, "defender": r_target}
                     )
                 elif pending_reactions is not None:
-                    pending_reactions.append((second + cooldown, r_reactor, r_target))
+                    pending_reactions.append(PendingReaction(second + cooldown, r_reactor, r_target))
 
         for ra in immediate_reactions:
             r_attacker = ra["attacker"]
@@ -2893,7 +2943,7 @@ class BatchSimulator:
                     )
                 elif pending_followups is not None:
                     pending_followups.append(
-                        (second + cooldown, o["attacker"], o["defender"], 1)
+                        PendingFollowup(second + cooldown, o["attacker"], o["defender"], 1)
                     )
 
         for fu in immediate_follow_ups:
