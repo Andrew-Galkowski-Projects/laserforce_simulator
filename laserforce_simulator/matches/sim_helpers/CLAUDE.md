@@ -35,7 +35,11 @@ Dead time (after elimination) is derived at report time as `900 - was_eliminated
 
 ### Role stat lookups
 
-`_ROLE_STATS`, `_MAX_LIVES`, `_MAX_SHOTS`, `_SPECIAL_COST` are local dicts that mirror `teams.models.ROLE_STATS`. They are kept here so `PlayerState` has zero Django imports.
+`_ROLE_STATS`, `_MAX_LIVES`, `_MAX_SHOTS`, `_SPECIAL_COST` are imported from `matches.sim_helpers.role_constants` (with `_`-prefixed aliases to preserve existing callsites). `role_constants` has no Django imports so the zero-dependency guarantee is maintained.
+
+### Duck-type interface helpers
+
+`tag_id_key` — `@property` returning `self.tag_id` (the string tag identity). Exists so `choose_tag_target` in `mechanics.py` can access this attribute the same way on both `PlayerState` and `PlayerRoundState`.
 
 ---
 
@@ -110,3 +114,72 @@ Cell-aware movement helpers shared by both simulators. Used when `arena_map` is 
 ### Tests
 
 `matches/tests/test_map.py::TestMap02CellMovement` covers adjacency building, A* correctness, elevation stubs, movement cost, goal-cell selection, and the batch-simulator code path.
+
+---
+
+## mechanics.py
+
+Pure game-mechanic functions shared by both simulators. No Django imports. Both player types satisfy the duck-typed interface.
+
+**`shot_cooldown(player, second) -> float`** — returns the minimum gap between shots: 0.0 for rapid-fire scouts (special active), 1.0 for heavies, 0.5 for everyone else.
+
+**`choose_tag_target(player, all_alive, second, movement_ctx=None, *, los_filter=None) -> player | None`** — returns a random weighted enemy target. `los_filter` is a callable `(actor, candidates, movement_ctx) -> list`; falls back to same-zone filtering when not provided. Role weights: Heavy=8, Commander=5, Ammo=Scout=3, Medic=1.
+
+**`choose_resupply_target(player, all_alive, second) -> player | None`** — returns the neediest same-zone teammate to resupply weighted by resource deficit × role. Returns `None` when all teammates are at full resources.
+
+**`choose_zone_change(player, all_alive) -> int | None`** — returns a target zone index when the player is critically low (≤ 30%) on lives (seek Medic) or shots (seek Ammo). Returns `None` when no reactive movement is warranted.
+
+### Tests
+
+`matches/tests/test_mechanics.py` covers all four public functions.
+
+---
+
+## combat.py
+
+Shared combat resolution used by both simulators. No Django imports — operates on duck-typed player state objects and emits events through an optional `emit_event` callable rather than writing to a specific storage backend.
+
+### Visibility helpers (moved from `simulation.py`)
+
+**`_can_tag_through_windowed_wall(r1, c1, r2, c2, zone_grid, wall_meta) -> bool`** — Bresenham line walk. High wall (0) → always False. Windowed wall (5): checks facing vs attack axis.
+
+**`_get_los_targets(actor, candidates, movement_ctx) -> list`** — Returns candidates visible to actor. Uses `sight_data` frozenset lookup, extended by windowed-wall aperture check. Falls back to same-zone when no map is active.
+
+**`_get_base_interaction(player, movement_ctx) -> int | None`** — Returns `base_id` (15=neutral, 14/13=opposing) of the first capturable base in range, or `None`.
+
+**`elevation_hit_modifier(attacker_elev, target_elev) -> float`** — public pure formula: `max(0.5, 1 - 0.1 * max(0, target_elev - attacker_elev))`. Importable for testing.
+
+**`_elevation_hit_modifier(attacker_row, attacker_col, defender_row, defender_col, movement_ctx) -> float`** — MAP-09 wrapper; returns 1.0 when no map or either cell is None.
+
+### Combat actions
+
+**`plan_action(player, all_alive, second, movement_ctx=None, *, save_player=None) -> list`** — Returns a list of planned action dicts for the player at this tick. Updates `player.last_chosen_action`; clears `is_hiding` (calling `save_player(player)` when provided). Used by both simulators' per-tick loop.
+
+**`attempt_resupply(tagger, teammate, second, *, emit_event=None) -> None`** — Applies a resupply: Ammo restores shots, Medic restores lives (per `_AMMO_CHART`/`_MEDIC_CHART`). Cancels any active special on the teammate. Nuke-cancel stat tracking is the caller's responsibility.
+
+**`capture_base(player, base_id, second, movement_ctx=None, *, emit_event=None) -> bool`** — Range-checks the player's cell against `base_sight_data`, deducts 3 shots, awards 1001 pts, and updates `neutral_base_destroyed` / `opposing_base_destroyed`. Returns `True` on success.
+
+**`award_bases(player, second, *, emit_event=None) -> None`** — Awards any uncaptured bases to a surviving player at round end.
+
+**`start_missile_lock(attacker, defender, second, *, emit_event=None) -> tuple | None`** — Rolls dodge (45% chance); returns `(complete_time, attacker, defender)` tuple on success, `None` on dodge or invalid state.
+
+---
+
+## role_constants.py
+
+Pure Python, no imports. Single source of truth for all role-level constants.
+
+| Constant | Type | Purpose |
+|----------|------|---------|
+| `ROLE_STATS` | `dict[str, dict[str, int]]` | `shot_power` and `shield` per role |
+| `MAX_LIVES` | `dict[str, int]` | Maximum life count per role |
+| `MAX_SHOTS` | `dict[str, int]` | Maximum shot count per role |
+| `SPECIAL_COST` | `dict[str, int]` | Special-charge cost to fire a nuke/power-boost per role |
+
+Imported by `teams/models.py`, `matches/models.py`, and `matches/sim_helpers/player_state.py`. Changing a role's stats here propagates everywhere automatically.
+
+---
+
+## score_calculator.py
+
+**`calculate_mvp(player_state) -> float`** — SM5 MVP formula extracted from `PlayerRoundState.get_mvp`. Accepts any duck-typed object exposing the standard `PlayerRoundState` attributes (works with both ORM instances and `PlayerState` dataclasses). `PlayerRoundState.get_mvp` now delegates here. Test with `matches/tests/test_mvp.py::TestCalculateMvp` — no Django ORM or test DB required for pure formula tests.

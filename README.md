@@ -95,10 +95,14 @@ pytest matches/tests/test_map.py::TestMap02CellMovement
 ```
 laserforce_simulator/
 ├── matches/               # Match, GameRound, PlayerRoundState, GameEvent models
-│   ├── simulation.py      # ResourceBasedSimulator + BatchSimulator
+│   ├── simulation.py      # ResourceBasedSimulator + BatchSimulator + MapData
 │   ├── sim_helpers/
+│   │   ├── combat.py      # Shared combat resolution (LOS, action planning, resupply, missiles)
+│   │   ├── mechanics.py   # Pure game mechanics (shot cooldown, target selection, zone change)
 │   │   ├── pathfinding.py # A* movement, adjacency building, goal selection
 │   │   ├── player_state.py# In-memory PlayerState dataclass for BatchSimulator
+│   │   ├── role_constants.py # Canonical ROLE_STATS, MAX_LIVES, MAX_SHOTS, SPECIAL_COST
+│   │   ├── score_calculator.py # calculate_mvp() pure function (extracted from PlayerRoundState)
 │   │   └── weights.py     # Per-role action weight functions
 │   ├── models.py
 │   ├── views.py
