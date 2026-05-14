@@ -31,7 +31,7 @@ Dead time (after elimination) is derived at report time as `900 - was_eliminated
 
 ### Aggregate stat fields
 
-`points_scored`, `tags_made`, `times_tagged`, `shots_missed`, `times_missiled`, `resupplies_given`, `specials_used`, `times_tagged_in_reset_window`, `missile_points`, `follow_up_shots`, `reaction_shots`.
+`points_scored`, `tags_made`, `times_tagged`, `shots_missed`, `times_missiled`, `resupplies_given`, `specials_used`, `times_tagged_in_reset_window`, `missile_points`, `follow_up_shots`, `reaction_shots`, `combo_resupply_count` (number of times this player received a combo resupply — both lives and shots in the same tick; default 0).
 
 ### Role stat lookups
 
@@ -49,9 +49,9 @@ One function per role: `_get_medic_weights`, `_get_ammo_weights`, `_get_scout_we
 
 ### Weight array layout
 
-Index 0–6 map to: `tag_player`, `change_zone`, `hide`, `capture_base`, `use_special`, `resupply_ally`, `missile_player`.
+Index 0–7 map to: `tag_player`, `change_zone`, `hide`, `capture_base`, `use_special`, `resupply_ally`, `missile_player`, `request_resupply`.
 
-The caller (`BatchSimulator._plan_action`) passes a baseline of `[70, 30, 0, 0, 0, 0, 0]`. Role functions apply deltas from there. **All weights must remain ≥ 0** — `random.choices` raises `ValueError` on negative weights.
+The caller (`BatchSimulator._plan_action`) passes a baseline of `[70, 30, 0, 0, 0, 0, 0, 0]`. Role functions apply deltas from there. **All weights must remain ≥ 0** — `random.choices` raises `ValueError` on negative weights.
 
 ### Critical weight-safety rules
 
@@ -68,6 +68,12 @@ The caller (`BatchSimulator._plan_action`) passes a baseline of `[70, 30, 0, 0, 
 | Scout | 50 | 50 | 0 |
 | Heavy | 70 | 25 | 0 |
 | Commander | 70 | 30 | 0 |
+
+### Stat wiring in weights.py
+
+`resupply_efficiency` scales the `request_resupply` weight (index 7) for all roles — the weight is only non-zero when the player needs resources (has room to receive lives or shots). `resupply_synergy` scales the `resupply_ally` weight (index 5) for Medic and Ammo players — higher synergy pushes support players toward fulfilling requests. Both stats are fully wired as of MECH-01; the former TODO/skeleton blocks have been removed.
+
+`teamwork` and `communication` retain skeleton TODO blocks in the weight functions, deferred to MECH-06.
 
 ### Known pre-existing test failure
 
@@ -150,6 +156,10 @@ Shared combat resolution used by both simulators. No Django imports — operates
 **`elevation_hit_modifier(attacker_elev, target_elev) -> float`** — public pure formula: `max(0.5, 1 - 0.1 * max(0, target_elev - attacker_elev))`. Importable for testing.
 
 **`_elevation_hit_modifier(attacker_row, attacker_col, defender_row, defender_col, movement_ctx) -> float`** — MAP-09 wrapper; returns 1.0 when no map or either cell is None.
+
+### Action index constants
+
+`_ACTION_IDX` and `_CHOICES` define the 8-slot action array (indices 0–7): `tag_player`, `change_zone`, `hide`, `capture_base`, `use_special`, `resupply_ally`, `missile_player`, `request_resupply`. `request_resupply` (index 7) is available to all 5 roles; weight is non-zero only when the player needs resources (Ammo players are locked to requesting lives; Medic players to requesting shots). Fulfilled asynchronously by `resolve_resupply_requests` in `resupply_queue.py` at end of tick.
 
 ### Combat actions
 
@@ -255,3 +265,59 @@ Private helpers `_draw_front`, `_draw_back`, `_overflow` replace the inner closu
 `ResourceBasedSimulator._build_spawn_assignments` is now a one-line delegation shim that calls `assign_spawn_cells`.
 
 Tests: `matches/tests/test_spawn_assigner.py` — 15 unit tests, no DB required.
+
+---
+
+## resupply_queue.py
+
+End-of-tick resupply fulfillment. Called by both simulators after all players have chosen their action for the tick. No Django imports — operates on duck-typed player state objects.
+
+### Public function
+
+**`resolve_resupply_requests(requestors, all_alive, second, movement_ctx, *, emit_event=None) -> None`** — Processes all players whose `last_chosen_action == "request_resupply"` for the current tick. Mutates player state in-place; emits `GameEvent`-compatible dicts via the optional `emit_event` callable.
+
+Parameters:
+- `requestors` — iterable of players whose action this tick was `request_resupply`.
+- `all_alive` — all currently alive players (both teams); used to find candidate supporters.
+- `second` — current simulation timestamp; used for cooldown checks and event timestamps.
+- `movement_ctx` — `MapContext | None`; LOS checks use `movement_ctx.can_see` when a map is active, fall back to same-zone when `None`.
+- `emit_event` — optional callable `(event_dict) -> None`; when provided, a `GameEvent`-compatible dict is emitted for every resupply resolved.
+
+### Private helpers
+
+**`_priority_param(player) -> int`** — returns a numeric priority score for a requestor based on role: Heavy=4, Commander=3, Scout=2, Ammo=1, Medic=0. Used to build the priority queue.
+
+**`_queue_priority(player) -> tuple`** — returns a sort key `(-_priority_param(player), player.tag_id)` for stable ordering in the queue.
+
+### Fulfillment rules (same-tick)
+
+A support player (Medic or Ammo) can fulfill a request in the current tick only when all of the following hold:
+1. The supporter is alive and not currently deactivated (not in the reset window or respawning).
+2. The supporter is in LOS of the requestor (via `movement_ctx.can_see` or same-zone fallback).
+3. The supporter has `final_shots > 0` (has resources to give).
+4. The supporter is not on a resupply cooldown for this tick.
+
+### Stress failure formula
+
+When a supporter has already fulfilled at least one request this tick (`prior_count ≥ 1`), each additional request has a chance of failing:
+
+```
+failure_pct = min(100, (dm + teamwork) / 10 × prior_count)
+```
+
+where `dm` and `teamwork` are the supporter's stats. A `random.random() * 100 < failure_pct` check determines failure. On failure the requestor receives nothing this tick.
+
+### Combo resupply
+
+A combo resupply occurs when both an Ammo and a Medic are available for the same requestor in the same tick. The chance of a combo (rather than fulfilling each independently) is:
+
+```
+combo_chance = min(0.95, 0.20 + ammo_syn/100 × medic_syn/100 + ammo_eff/100 × medic_eff/100)
+```
+
+where `ammo_syn`/`medic_syn` are the respective `resupply_synergy` stats and `ammo_eff`/`medic_eff` are the `resupply_efficiency` stats of the two supporters. When the combo fires:
+- Both supporters fulfill the request simultaneously; the requestor receives lives and shots.
+- `player.combo_resupply_count` is incremented on the requestor.
+- A `GameEvent(event_type="combo_resupply", metadata={"medic_tag": ..., "ammo_tag": ...})` is emitted.
+
+When the combo roll fails, a fallback gives a 75% chance of fulfillment by the priority-ranked supporter and a 25% chance by the other. Standard `resupply_lives`/`resupply_ammo` events are emitted as normal.

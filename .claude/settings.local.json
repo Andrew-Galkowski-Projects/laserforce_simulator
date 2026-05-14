@@ -102,7 +102,8 @@
       "PowerShell(Get-ChildItem \"C:\\\\Users\\\\Andrew Galkowski\\\\Desktop\\\\programming\\\\laserforce_simulator\\\\laserforce_simulator\\\\teams\\\\tests\" | ForEach-Object { $_.Name })",
       "Bash(git rebase *)",
       "PowerShell(python -m pytest --tb=no --durations=30 -q 2>&1 | Select-Object -Last 50)",
-      "PowerShell(pip show *)"
+      "PowerShell(pip show *)",
+      "Skill(code-review)"
     ]
   }
 }

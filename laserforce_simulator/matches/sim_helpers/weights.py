@@ -1,3 +1,5 @@
+from typing import Any
+
 # ---------------------------------------------------------------------------
 # Per-role constants — all tuning numbers in one place per role
 # ---------------------------------------------------------------------------
@@ -252,6 +254,29 @@ def _apply_not_active(
             w[i["change_zone"]] += idle
 
 
+def _apply_request_resupply_weight(
+    w: list,
+    i: dict,
+    player: Any,
+    *,
+    lives_only: bool = False,
+    shots_only: bool = False,
+) -> None:
+    """Set request_resupply weight based on resupply_efficiency and resource need.
+
+    lives_only / shots_only: restrict the trigger condition for Ammo (lives) and
+    Medic (shots) respectively.  Neither flag set means either resource below max.
+    """
+    rr_idx = i.get("request_resupply")
+    if rr_idx is None or len(w) <= rr_idx:
+        return
+    needs = (player.final_lives < player.max_lives and not shots_only) or (
+        player.final_shots < player.max_shots and not lives_only
+    )
+    if needs:
+        w[rr_idx] = int(getattr(player, "resupply_efficiency", 50) / 2)
+
+
 def _apply_endgame_rush(w, c, i, player, second, offset_key):
     """End-game base rush: shift weight from offset_key to capture_base when time is low."""
     if second >= 840 and player.can_capture_base_in_current_zone:
@@ -292,6 +317,12 @@ def _get_medic_weights(player, action_to_weight_index, weights, all_alive, secon
         drain_key="resupply_ally",
     )
     _apply_endgame_rush(w, c, i, player, second, "resupply_ally")
+
+    # resupply_synergy: scales resupply_ally weight
+    resupply_synergy = getattr(player, "resupply_synergy", 50)
+    w[i["resupply_ally"]] = max(0, int(w[i["resupply_ally"]] * (resupply_synergy / 50)))
+
+    _apply_request_resupply_weight(w, i, player, shots_only=True)
 
     return weights
 
@@ -340,6 +371,12 @@ def _get_ammo_weights(player, action_to_weight_index, weights, all_alive, second
     )
     _apply_endgame_rush(w, c, i, player, second, "resupply_ally")
 
+    # resupply_synergy: scales resupply_ally weight
+    resupply_synergy = getattr(player, "resupply_synergy", 50)
+    w[i["resupply_ally"]] = max(0, int(w[i["resupply_ally"]] * (resupply_synergy / 50)))
+
+    _apply_request_resupply_weight(w, i, player, lives_only=True)
+
     return weights
 
 
@@ -381,6 +418,8 @@ def _get_scout_weights(player, action_to_weight_index, weights, all_alive, secon
 
     _apply_endgame_rush(w, c, i, player, second, "tag_player")
 
+    _apply_request_resupply_weight(w, i, player)
+
     return weights
 
 
@@ -414,6 +453,8 @@ def _get_heavy_weights(player, action_to_weight_index, weights, all_alive, secon
 
     _apply_not_active(w, c, i, player, all_alive, second, "medic", player.team_color)
     _apply_endgame_rush(w, c, i, player, second, "tag_player")
+
+    _apply_request_resupply_weight(w, i, player)
 
     return weights
 
@@ -461,6 +502,8 @@ def _get_commander_weights(player, action_to_weight_index, weights, all_alive, s
     enemy_color = "blue" if player.team_color == "red" else "red"
     _apply_not_active(w, c, i, player, all_alive, second, "medic", enemy_color)
     _apply_endgame_rush(w, c, i, player, second, "tag_player")
+
+    _apply_request_resupply_weight(w, i, player)
 
     return weights
 
