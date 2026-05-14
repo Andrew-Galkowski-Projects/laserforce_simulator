@@ -3,6 +3,81 @@ from django.test import TestCase
 from teams.models import Player, Team
 
 
+class PlayerStatForSimulationTest(TestCase):
+    """STAT-02: Player.stat_for_simulation returns boosted or raw stat values."""
+
+    def setUp(self):
+        self.team = Team.objects.create(name="Stat Test Team")
+
+    def _player(
+        self, name, preferred_roles=None, accuracy=50, survival=50, player_awareness=50
+    ):
+        return Player.objects.create(
+            team=self.team,
+            name=name,
+            preferred_roles=preferred_roles or [],
+            accuracy=accuracy,
+            survival=survival,
+            player_awareness=player_awareness,
+        )
+
+    # 1. Preferred role → returns min(int(raw * 1.2), 100)
+    def test_preferred_role_returns_boosted_value(self):
+        player = self._player("Boosted", preferred_roles=["scout"], accuracy=50)
+        result = player.stat_for_simulation("accuracy", "scout")
+        self.assertEqual(result, 60)  # int(50 * 1.2) = 60, min(60, 100) = 60
+
+    # 2. Non-preferred role → returns raw value unchanged
+    def test_non_preferred_role_returns_raw_value(self):
+        player = self._player("Unboosted", preferred_roles=["scout"], accuracy=50)
+        result = player.stat_for_simulation("accuracy", "commander")
+        self.assertEqual(result, 50)
+
+    # 3. Multiple preferred roles — boost applies when current role is any of them
+    def test_multiple_preferred_roles_boost_applies_for_any_match(self):
+        player = self._player(
+            "MultiRole",
+            preferred_roles=["scout", "medic"],
+            accuracy=50,
+        )
+        # Both roles in the list should get the boost
+        self.assertEqual(player.stat_for_simulation("accuracy", "scout"), 60)
+        self.assertEqual(player.stat_for_simulation("accuracy", "medic"), 60)
+        # A role not in the list should not
+        self.assertEqual(player.stat_for_simulation("accuracy", "heavy"), 50)
+
+    # 4. No preferred roles (empty list) → returns raw value
+    def test_empty_preferred_roles_returns_raw_value(self):
+        player = self._player("NoPref", preferred_roles=[], accuracy=70)
+        result = player.stat_for_simulation("accuracy", "scout")
+        self.assertEqual(result, 70)
+
+    # 5. Stat already at 100 → capped at 100 (not 120)
+    def test_stat_at_100_is_capped_at_100(self):
+        player = self._player("Capped", preferred_roles=["commander"], accuracy=100)
+        result = player.stat_for_simulation("accuracy", "commander")
+        self.assertEqual(result, 100)  # min(int(100 * 1.2), 100) = min(120, 100) = 100
+
+    # 6. Stat at 84 → min(100, int(84*1.2)) = min(100, 100) = 100  (boundary test)
+    def test_stat_at_84_hits_cap_exactly(self):
+        player = self._player("Boundary", preferred_roles=["heavy"], accuracy=84)
+        result = player.stat_for_simulation("accuracy", "heavy")
+        # int(84 * 1.2) == 100, so the result should be 100
+        self.assertEqual(result, 100)
+
+    # 7. Invalid stat name → raises AttributeError
+    def test_invalid_stat_name_raises_attribute_error(self):
+        player = self._player("BadStat", preferred_roles=["scout"])
+        with self.assertRaises(AttributeError):
+            player.stat_for_simulation("nonexistent_stat", "scout")
+
+    # Extra: verify a different stat field works too (survival)
+    def test_survival_stat_is_boosted_for_preferred_role(self):
+        player = self._player("SurvivalBoost", preferred_roles=["ammo"], survival=75)
+        result = player.stat_for_simulation("survival", "ammo")
+        self.assertEqual(result, 90)  # int(75 * 1.2) = 90
+
+
 class RosterValidationTests(TestCase):
     """Test FIX-01: Enforce Scout-only role doubling in rosters."""
 

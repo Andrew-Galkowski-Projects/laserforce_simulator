@@ -159,6 +159,8 @@ Show `overall_rating` as a live-updating summary. Add a convenience "Set to Aver
 
 Per-stat-per-role weight tuning (e.g. Scout `accuracy` weight = 1.5, Medic `resupply_efficiency` weight = 2.0)
 is **deferred** — see Deferred Items section. Keep `overall_rating` as the unweighted display average.
+- completed
+- note: `Player.stat_for_simulation(stat_name, role)` returns `min(int(raw_value * 1.2), 100)` when `role in self.preferred_roles`, raw value otherwise; invalid stat names raise `AttributeError` naturally. `PlayerRoundState.accuracy/survival/player_awareness` forwarding properties now call `stat_for_simulation` instead of reading raw fields. `BatchSimulator._make_players` bakes boosted values into `PlayerState` at construction.
 
 ### STAT-03 · Wire stats into action weight functions
 Map each relevant stat to a weight modifier in `weights.py`. Stats are wired in their respective phases:

@@ -900,3 +900,109 @@ class TestSimulatorTicks:
 
     def test_resource_based_simulator_tick_is_half_second(self):
         assert ResourceBasedSimulator.TICK == 0.5
+
+
+@pytest.mark.django_db
+class TestStat02PreferredRoleBoost:
+    """STAT-02: PlayerRoundState stat forwarding and BatchSimulator._make_players apply
+    the preferred-role boost (20%, capped at 100) via Player.stat_for_simulation."""
+
+    # 8. PlayerRoundState.accuracy uses boost when preferred_roles includes round role
+    def test_player_round_state_accuracy_boosted_for_preferred_role(self):
+        team, _ = make_team_with_slots("Stat02a")
+        player = team.slot_commander
+        player.preferred_roles = ["commander"]
+        player.accuracy = 50
+        player.save()
+
+        gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
+        state = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=player,
+            team_color="red",
+            role="commander",
+            final_lives=10,
+            final_shots=10,
+        )
+
+        assert state.accuracy == 60  # int(50 * 1.2) = 60
+
+    # 9. PlayerRoundState.accuracy returns raw value when role not in preferred_roles
+    def test_player_round_state_accuracy_raw_for_non_preferred_role(self):
+        team, _ = make_team_with_slots("Stat02b")
+        player = team.slot_scout_1
+        player.preferred_roles = ["scout"]  # prefers scout
+        player.accuracy = 50
+        player.save()
+
+        gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
+        state = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=player,
+            team_color="red",
+            role="medic",  # assigned a different role
+            final_lives=10,
+            final_shots=10,
+        )
+
+        assert state.accuracy == 50  # no boost — role not in preferred_roles
+
+    # 10. BatchSimulator._make_players bakes boosted accuracy into PlayerState
+    def test_batch_simulator_make_players_bakes_boost(self):
+        from matches.simulation import BatchSimulator
+
+        team, _ = make_team_with_slots("Stat02c")
+        # Give the commander a known accuracy and set scout as preferred role
+        player = team.slot_commander
+        player.preferred_roles = ["commander"]
+        player.accuracy = 50
+        player.save()
+
+        sim = BatchSimulator()
+        # _make_players expects an iterable of (role, player_model) pairs
+        roster = [("commander", player)]
+        player_states = sim._make_players(roster, "red")
+
+        assert len(player_states) == 1
+        ps = player_states[0]
+        # Boost should be baked in: int(50 * 1.2) = 60
+        assert ps.accuracy == 60
+
+    def test_batch_simulator_make_players_no_boost_when_role_not_preferred(self):
+        from matches.simulation import BatchSimulator
+
+        team, _ = make_team_with_slots("Stat02d")
+        player = team.slot_scout_1
+        player.preferred_roles = ["scout"]  # prefers scout
+        player.accuracy = 70
+        player.save()
+
+        sim = BatchSimulator()
+        # Player is assigned the "medic" role — not in preferred_roles
+        roster = [("medic", player)]
+        player_states = sim._make_players(roster, "red")
+
+        assert len(player_states) == 1
+        ps = player_states[0]
+        # No boost — role not in preferred_roles
+        assert ps.accuracy == 70
+
+    def test_player_round_state_survival_boosted_for_preferred_role(self):
+        """survival property also delegates to stat_for_simulation."""
+        team, _ = make_team_with_slots("Stat02e")
+        player = team.slot_heavy
+        player.preferred_roles = ["heavy"]
+        player.survival = 60
+        player.save()
+
+        gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
+        state = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=player,
+            team_color="red",
+            role="heavy",
+            final_lives=10,
+            final_shots=10,
+        )
+
+        assert state.survival == 72  # int(60 * 1.2) = 72

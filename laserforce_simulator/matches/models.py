@@ -456,11 +456,11 @@ class PlayerRoundState(models.Model):
 
     @property
     def accuracy(self) -> int:
-        return self.player.accuracy
+        return self.player.stat_for_simulation("accuracy", self.role)
 
     @property
     def survival(self) -> int:
-        return self.player.survival
+        return self.player.stat_for_simulation("survival", self.role)
 
     @property
     def name(self) -> str:
@@ -468,7 +468,7 @@ class PlayerRoundState(models.Model):
 
     @property
     def player_awareness(self) -> int:
-        return self.player.player_awareness
+        return self.player.stat_for_simulation("player_awareness", self.role)
 
     @property
     def last_shot_time(self) -> float:
