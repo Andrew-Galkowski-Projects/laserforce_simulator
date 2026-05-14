@@ -167,7 +167,7 @@ Map each relevant stat to a weight modifier in `weights.py`. Stats are wired in 
 
 **Phase 1 (map-dependent):**
 - `positioning` — biases movement toward high-value cells (pairs with MAP-05)
-- `speed` — allows more cells traversed per tick (pairs with MAP-02)
+- `speed` — allows more cells traversed per tick (pairs with MAP-02), formula for cells moved should be celing of speed/100 * max movement where max movement is 5-10 cells per tick depending on map size
 
 **Phase 2 (this phase):**
 - `accuracy` / `survival` — already used in hit-chance formula; confirm they feed in correctly
