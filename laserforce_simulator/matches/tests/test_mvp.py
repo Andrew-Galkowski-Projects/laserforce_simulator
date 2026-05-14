@@ -5,6 +5,7 @@ MVP score formula tests for all five roles.
 import pytest
 
 from matches.models import GameRound, PlayerRoundState
+from matches.sim_helpers.score_calculator import calculate_mvp
 from matches.tests.conftest import make_team_with_slots
 
 
@@ -372,3 +373,81 @@ class TestMVP:
             shots_missed=0,
         )
         assert s.get_mvp == 4.0
+
+
+@pytest.mark.django_db
+class TestCalculateMvp:
+    """Tests for the pure calculate_mvp function extracted from PlayerRoundState."""
+
+    def setup_method(self):
+        self.team_red, self.players_red = make_team_with_slots("CalcMVPRed")
+        self.team_blue, self.players_blue = make_team_with_slots("CalcMVPBlue")
+        self.gr = GameRound.objects.create(
+            team_red=self.team_red,
+            team_blue=self.team_blue,
+            round_number=1,
+        )
+
+    def _state(self, player, team_color, role, **kwargs):
+        kwargs.setdefault("final_lives", 3)
+        kwargs.setdefault("final_shots", 10)
+        return PlayerRoundState.objects.create(
+            game_round=self.gr,
+            player=player,
+            team_color=team_color,
+            role=role,
+            **kwargs,
+        )
+
+    def test_commander_nuke_cancel_bonus_via_calculate_mvp(self):
+        # Commander fires 3 nukes; opponent cancels 2 of them → enemy_nuke_cancels=2 → +6
+        # specials_used=3, own_specials_cancelled=0 → successful nukes=3 → +3
+        # total = 9.0
+        s = self._state(
+            self.players_red["commander"],
+            "red",
+            "commander",
+            specials_used=3,
+            own_specials_cancelled=0,
+            enemy_nuke_cancels=2,
+            missiles_landed=0,
+            points_scored=0,
+            tags_made=0,
+            shots_missed=0,
+        )
+        result = calculate_mvp(s)
+        assert result == s.get_mvp
+        assert result == 9.0
+
+    def test_calculate_mvp_matches_get_mvp_for_medic_survival(self):
+        # Medic alive at end: survival bonus +2; specials_used=2 → +6; total = 8.0
+        s = self._state(
+            self.players_red["medic"],
+            "red",
+            "medic",
+            final_lives=5,
+            specials_used=2,
+            points_scored=0,
+            tags_made=0,
+            shots_missed=0,
+        )
+        result = calculate_mvp(s)
+        assert result == s.get_mvp
+        assert result == 8.0
+
+    def test_calculate_mvp_own_nuke_cancelled_reduces_commander_score(self):
+        # specials_used=2, own_specials_cancelled=2 → successful_nukes=0 (+0), -2 penalty → -2
+        s = self._state(
+            self.players_red["commander"],
+            "red",
+            "commander",
+            specials_used=2,
+            own_specials_cancelled=2,
+            missiles_landed=0,
+            points_scored=0,
+            tags_made=0,
+            shots_missed=0,
+        )
+        result = calculate_mvp(s)
+        assert result == s.get_mvp
+        assert result == -2.0
