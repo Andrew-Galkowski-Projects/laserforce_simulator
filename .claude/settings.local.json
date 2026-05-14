@@ -92,7 +92,10 @@
       "Bash(Sort-Object)",
       "Bash(python -m pytest matches/tests/test_mechanics.py matches/tests/test_batch_sim.py matches/tests/test_sim_core.py -x -q)",
       "Bash(python -m black matches/sim_helpers/mechanics.py matches/sim_helpers/player_state.py matches/models.py matches/simulation.py matches/tests/test_mechanics.py matches/tests/test_batch_sim.py)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(git -C \"/mnt/c/Users/Andrew Galkowski/Desktop/programming/laserforce_simulator/.claude/worktrees/agent-a5586d5a1f10de557\" log --oneline -5)",
+      "Bash(git -C \"/mnt/c/Users/Andrew Galkowski/Desktop/programming/laserforce_simulator/.claude/worktrees/agent-a5586d5a1f10de557\" diff HEAD --stat)",
+      "PowerShell(Copy-Item *)"
     ]
   }
 }
