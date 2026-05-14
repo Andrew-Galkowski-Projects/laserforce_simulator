@@ -1,7 +1,7 @@
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.core.exceptions import ValidationError
-from .models import Team, Player, ROLE_CHOICES
+from .models import Team, Player, ROLE_CHOICES, _random_player_profile
 from .forms import TeamForm, PlayerForm, TeamSlotForm
 
 
@@ -162,7 +162,7 @@ def player_add(request, team_id):
                 for error in e.messages:
                     messages.error(request, error)
     else:
-        form = PlayerForm()
+        form = PlayerForm(initial=_random_player_profile())
 
     return render(
         request,
