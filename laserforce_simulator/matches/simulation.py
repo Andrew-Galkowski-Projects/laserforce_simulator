@@ -78,8 +78,10 @@ class ResourceBasedSimulator:
     """Enhanced simulator that tracks individual player resources"""
 
     TICK = 0.5  # seconds per simulation tick (matches BatchSimulator)
+    ROUND_SECONDS = 900  # full 15-minute round
 
-    def __init__(self):
+    def __init__(self, duration: int | None = None):
+        self._round_duration = duration if duration is not None else self.ROUND_SECONDS
         self.elimination_bonus = 10000  # Bonus points for eliminating entire team
         # Role-based starting resources
         self.role_starting_resources = {
@@ -600,7 +602,7 @@ class ResourceBasedSimulator:
         self, game_round, red_players, blue_players, movement_ctx=None
     ):
         """Simulate combat between two teams"""
-        round_duration = 15 * 60  # 15 minutes in seconds
+        round_duration = self._round_duration
 
         pending_missiles: list[PendingMissile] = []
         pending_nukes: list[PendingNuke] = []

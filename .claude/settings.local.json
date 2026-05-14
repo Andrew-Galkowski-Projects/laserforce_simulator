@@ -100,7 +100,9 @@
       "Bash(git merge *)",
       "PowerShell(Get-ChildItem \"C:\\\\Users\\\\Andrew Galkowski\\\\Desktop\\\\programming\\\\laserforce_simulator\\\\laserforce_simulator\\\\teams\" | ForEach-Object { $_.Name })",
       "PowerShell(Get-ChildItem \"C:\\\\Users\\\\Andrew Galkowski\\\\Desktop\\\\programming\\\\laserforce_simulator\\\\laserforce_simulator\\\\teams\\\\tests\" | ForEach-Object { $_.Name })",
-      "Bash(git rebase *)"
+      "Bash(git rebase *)",
+      "PowerShell(python -m pytest --tb=no --durations=30 -q 2>&1 | Select-Object -Last 50)",
+      "PowerShell(pip show *)"
     ]
   }
 }
