@@ -1,8 +1,12 @@
 import random
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
+
 from django.core.management.base import BaseCommand, CommandError
+
+from matches.sim_helpers.parallel_worker import score_round_worker, worker_django_init
+from matches.simulation import BatchSimulator, _precompute_roster
 from teams.models import Team
-from matches.simulation import BatchSimulator
 
 ROLE_ORDER = ["commander", "heavy", "scout", "ammo", "medic"]
 TARGETS = {
@@ -42,6 +46,12 @@ class Command(BaseCommand):
             default=None,
             help="Optional RNG seed for reproducible results",
         )
+        parser.add_argument(
+            "--workers",
+            type=int,
+            default=1,
+            help="Number of parallel worker processes (default: 1 = serial)",
+        )
 
     def _team_with_roster(self, exclude_pk):
         qs = Team.objects.all()
@@ -54,6 +64,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         n = options["rounds"]
+        workers = options.get("workers", 1) or 1
 
         if options["team_red"]:
             try:
@@ -86,11 +97,12 @@ class Command(BaseCommand):
         if options["seed"] is not None:
             random.seed(options["seed"])
 
+        parallel_note = f" ({workers} workers)" if workers > 1 else ""
         self.stdout.write(
-            f"\nSimulating {n} rounds: {team_red.name} (red) vs {team_blue.name} (blue)\n"
+            f"\nSimulating {n} rounds{parallel_note}: "
+            f"{team_red.name} (red) vs {team_blue.name} (blue)\n"
         )
 
-        sim = BatchSimulator()
         role_scores = defaultdict(list)
         role_tags = defaultdict(list)
         role_tagged = defaultdict(list)
@@ -103,21 +115,57 @@ class Command(BaseCommand):
         role_follow_up_shots = defaultdict(list)
         role_reaction_shots = defaultdict(list)
 
-        for i in range(n):
-            _, red_players, blue_players = sim._simulate_round(red_roster, blue_roster)
-            for p in red_players + blue_players:
-                role_scores[p.role].append(p.points_scored)
-                role_tags[p.role].append(p.tags_made)
-                role_tagged[p.role].append(p.times_tagged)
-                role_missile_pts[p.role].append(p.missile_points)
-                role_reset_window_tags[p.role].append(p.times_tagged_in_reset_window)
-                role_seconds_active[p.role].append(p.seconds_active)
-                role_seconds_not_targetable[p.role].append(p.seconds_not_targetable)
-                role_seconds_reset_window[p.role].append(p.seconds_reset_window)
-                dead = 900 - p.was_eliminated_at if p.was_eliminated_at < 901 else 0
-                role_seconds_dead[p.role].append(dead)
-                role_follow_up_shots[p.role].append(p.follow_up_shots)
-                role_reaction_shots[p.role].append(p.reaction_shots)
+        if workers > 1:
+            red_data = _precompute_roster(red_roster)
+            blue_data = _precompute_roster(blue_roster)
+
+            seed_states = []
+            for _ in range(n):
+                seed_states.append(random.getstate())
+                random.random()
+
+            args_list = [(red_data, blue_data, s) for s in seed_states]
+            chunksize = max(1, n // (workers * 4))
+
+            with ProcessPoolExecutor(
+                max_workers=workers, initializer=worker_django_init
+            ) as executor:
+                all_player_stats = list(
+                    executor.map(score_round_worker, args_list, chunksize=chunksize)
+                )
+
+            for player_stats_list in all_player_stats:
+                for p in player_stats_list:
+                    role = p["role"]
+                    role_scores[role].append(p["points_scored"])
+                    role_tags[role].append(p["tags_made"])
+                    role_tagged[role].append(p["times_tagged"])
+                    role_missile_pts[role].append(p["missile_points"])
+                    role_reset_window_tags[role].append(p["times_tagged_in_reset_window"])
+                    role_seconds_active[role].append(p["seconds_active"])
+                    role_seconds_not_targetable[role].append(p["seconds_not_targetable"])
+                    role_seconds_reset_window[role].append(p["seconds_reset_window"])
+                    dead = 900 - p["was_eliminated_at"] if p["was_eliminated_at"] < 901 else 0
+                    role_seconds_dead[role].append(dead)
+                    role_follow_up_shots[role].append(p["follow_up_shots"])
+                    role_reaction_shots[role].append(p["reaction_shots"])
+        else:
+            sim = BatchSimulator()
+            for _ in range(n):
+                _, red_players, blue_players = sim._simulate_round(red_roster, blue_roster)
+                for p in red_players + blue_players:
+                    role_scores[p.role].append(p.points_scored)
+                    role_tags[p.role].append(p.tags_made)
+                    role_tagged[p.role].append(p.times_tagged)
+                    role_missile_pts[p.role].append(p.missile_points)
+                    role_reset_window_tags[p.role].append(p.times_tagged_in_reset_window)
+                    role_seconds_active[p.role].append(p.seconds_active)
+                    role_seconds_not_targetable[p.role].append(p.seconds_not_targetable)
+                    role_seconds_reset_window[p.role].append(p.seconds_reset_window)
+                    dead = 900 - p.was_eliminated_at if p.was_eliminated_at < 901 else 0
+                    role_seconds_dead[p.role].append(dead)
+                    role_follow_up_shots[p.role].append(p.follow_up_shots)
+                    role_reaction_shots[p.role].append(p.reaction_shots)
 
         # ── Score summary ────────────────────────────────────────────────────
         self.stdout.write(

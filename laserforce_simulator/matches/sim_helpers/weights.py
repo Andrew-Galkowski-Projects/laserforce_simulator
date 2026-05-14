@@ -542,22 +542,26 @@ def check_stamina_penalty(player, second: float, round_duration: int = 900) -> N
 
 
 def apply_decision_making_spread(weights: list, dm: int) -> list:
-    """Apply a linear spread multiplier to *weights* based on *dm* (0-100).
+    """Apply a linear spread multiplier to *weights* in-place based on *dm* (0-100).
 
     factor = 1 + dm / 100.  The highest-weight action is multiplied by
     *factor*; all other weights are divided by *factor* (floored at 0).
     dm=0 → factor=1.0 → weights unchanged.  dm=100 → factor=2.0.
 
-    Returns a new list; does not mutate the input.
+    Mutates and returns *weights*; callers must not rely on the original values.
     """
     if dm <= 0:
-        return list(weights)
+        return weights
     factor = 1.0 + dm / 100.0
     max_w = max(weights)
     if max_w <= 0:
-        return list(weights)
+        return weights
     max_idx = weights.index(max_w)
-    return [
-        int(w * factor) if idx == max_idx else max(0, int(w / factor))
-        for idx, w in enumerate(weights)
-    ]
+    inv = 1.0 / factor
+    for idx in range(len(weights)):
+        w = weights[idx]
+        if idx == max_idx:
+            weights[idx] = int(w * factor)
+        elif w > 0:
+            weights[idx] = int(w * inv)
+    return weights
