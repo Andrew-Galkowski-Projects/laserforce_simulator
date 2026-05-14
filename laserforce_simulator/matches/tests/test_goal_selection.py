@@ -8,6 +8,7 @@ _resolve_map_data / _build_movement_ctx returning MAP-05 config.
 import pytest
 
 from matches.simulation import ResourceBasedSimulator
+from matches.sim_helpers.map_context import MapContext
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -56,7 +57,7 @@ def _base_ctx(
     strong_spots=None,
     spawn_cells=None,
 ):
-    return {
+    return MapContext.from_dict({
         "adj": adj or {},
         "spawn_cells": spawn_cells or {"red": (0, 0), "blue": (9, 9)},
         "zone_data": None,
@@ -65,7 +66,7 @@ def _base_ctx(
         "cell_los_counts": cell_los_counts or {},
         "high_los_cells": high_los_cells or [],
         "strong_spots": strong_spots or [],
-    }
+    })
 
 
 # ---------------------------------------------------------------------------

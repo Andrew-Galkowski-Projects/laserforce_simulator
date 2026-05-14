@@ -231,11 +231,11 @@ class TestBatchSimulatorFollowUps:
             )
 
         assert len(pending_fu) == 1
-        fire_at, fu_atk, fu_def, chain = pending_fu[0]
-        assert fire_at == pytest.approx(10.5)
-        assert fu_atk is attacker
-        assert fu_def is defender
-        assert chain == 1
+        fu = pending_fu[0]
+        assert fu.fire_at == pytest.approx(10.5)
+        assert fu.attacker is attacker
+        assert fu.defender is defender
+        assert fu.chain_depth == 1
 
     def test_downed_hit_no_follow_up(self):
         sim = BatchSimulator()
@@ -338,10 +338,10 @@ class TestBatchSimulatorReactions:
             )
 
         assert len(pending_rx) == 1
-        fire_at, r_atk, r_def = pending_rx[0]
-        assert fire_at == pytest.approx(10.5)
-        assert r_atk is defender
-        assert r_def is attacker
+        rx = pending_rx[0]
+        assert rx.fire_at == pytest.approx(10.5)
+        assert rx.attacker is defender
+        assert rx.defender is attacker
 
     def test_no_reaction_when_awareness_roll_fails(self):
         sim = BatchSimulator()
@@ -378,7 +378,7 @@ class TestBatchSimulatorReactions:
             )
 
         assert len(pending_rx) == 1
-        assert pending_rx[0][0] == pytest.approx(11.0)
+        assert pending_rx[0].fire_at == pytest.approx(11.0)
 
     def test_inactive_defender_does_not_react(self):
         sim = BatchSimulator()

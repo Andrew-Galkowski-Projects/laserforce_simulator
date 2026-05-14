@@ -161,7 +161,7 @@ Shared combat resolution used by both simulators. No Django imports — operates
 
 **`award_bases(player, second, *, emit_event=None) -> None`** — Awards any uncaptured bases to a surviving player at round end.
 
-**`start_missile_lock(attacker, defender, second, *, emit_event=None) -> tuple | None`** — Rolls dodge (45% chance); returns `(complete_time, attacker, defender)` tuple on success, `None` on dodge or invalid state.
+**`start_missile_lock(attacker, defender, second, *, emit_event=None) -> PendingMissile | None`** — Rolls dodge (45% chance); returns a `PendingMissile(complete_time, attacker, defender)` on success, `None` on dodge or invalid state.
 
 ---
 
@@ -183,3 +183,75 @@ Imported by `teams/models.py`, `matches/models.py`, and `matches/sim_helpers/pla
 ## score_calculator.py
 
 **`calculate_mvp(player_state) -> float`** — SM5 MVP formula extracted from `PlayerRoundState.get_mvp`. Accepts any duck-typed object exposing the standard `PlayerRoundState` attributes (works with both ORM instances and `PlayerState` dataclasses). `PlayerRoundState.get_mvp` now delegates here. Test with `matches/tests/test_mvp.py::TestCalculateMvp` — no Django ORM or test DB required for pure formula tests.
+
+---
+
+## map_context.py
+
+`MapContext` is a typed `@dataclass` that replaces the former 11-key `movement_ctx` plain dict. It is constructed once per round by `ResourceBasedSimulator._build_movement_ctx` (or the unified `_load_map_context`) and passed through the simulation call chain. All callers access it via domain-level methods rather than dict key lookups.
+
+### Fields (mirror the old dict keys)
+
+`adj`, `spawn_cells`, `zone_data`, `sight_data`, `base_sight_data`, `cell_los_counts`, `high_los_cells`, `strong_spots`, `wall_meta`, `team_spawn_pools`, `elevation_grid`.
+
+### Domain-level accessors
+
+- `can_see(from_cell, to_cell) -> bool` — frozenset lookup in `sight_data`.
+- `elevation_at(r, c) -> float` — safe `elevation_grid` access, returns 0.0 on None/OOB.
+- `base_in_range(cell) -> int | None` — checks `base_sight_data`; returns 15/14/None.
+- `get_adjacency()`, `get_spawn_cells()`, `get_zone_data()`, `get_wall_meta()`, `get_los_count(cell)`, `get_high_los_cells()`, `get_strong_spots()`, `get_team_spawn_pools()`.
+
+### Backward-compat bridges
+
+- `MapContext.from_dict(d)` — construct from the legacy 11-key dict (used in tests).
+- `to_dict()` — serialize back to dict format.
+- `.get(key, default)`, `.__getitem__(key)`, `.__contains__(key)` — dict-style shims so old `movement_ctx.get("sight_data")` call sites still work without migration.
+
+When `arena_map` is `None` (3-zone fallback), `movement_ctx` remains `None` — `MapContext` is only constructed when a map is active.
+
+---
+
+## pending_events.py
+
+Typed `@dataclass` classes for the four pending-event queues used by both simulators. Replacing raw positional tuples with named fields so new attributes (e.g. a nuke ID for MECH-05 cancellation tracking) can be added in one place.
+
+| Class | Fields | Replaces |
+|-------|--------|---------|
+| `PendingMissile` | `complete_time`, `attacker`, `defender` | `(float, player, player)` |
+| `PendingNuke` | `complete_time`, `player` | `(float, player)` |
+| `PendingFollowup` | `fire_at`, `attacker`, `defender`, `chain_depth` | `(float, player, player, int)` |
+| `PendingReaction` | `fire_at`, `attacker`, `defender` | `(float, player, player)` |
+
+`combat.py::start_missile_lock` returns a `PendingMissile` (was a raw 3-tuple).
+
+---
+
+## tick_engine.py
+
+Shared drain/split helpers for the four pending-event queues. Both simulators call these at the start of each tick instead of duplicating the filter pattern inline.
+
+- `drain_missiles(pending, second) -> (ready, still)` — splits by `PendingMissile.complete_time`.
+- `drain_nukes(pending, second) -> (ready, still)` — splits by `PendingNuke.complete_time`.
+- `drain_reactions(pending, second) -> (ready, still)` — splits by `PendingReaction.fire_at`.
+- `drain_followups(pending, second) -> (ready, still)` — splits by `PendingFollowup.fire_at`.
+
+All return `(ready_now, still_pending)` typed lists. Resolution logic (what to do with ready items) stays in each simulator.
+
+---
+
+## spawn_assigner.py
+
+Spawn cell assignment logic shared by `ResourceBasedSimulator._initialize_players` and `BatchSimulator._make_players`. Extracted from `_build_spawn_assignments` so the implementation lives in one place.
+
+**`assign_spawn_cells(roster_roles, team_color, spawn_cells, team_spawn_pools) -> dict[int, tuple[int,int] | None]`** — role-priority, no-replacement drawing from the team's spawn pool. Returns `{roster_index: (row, col) | None}`. `None` means fall back to 3-zone placement.
+
+Role priority:
+1. Commander / Heavy → front of pool (closest to enemy base)
+2. Medic / Ammo → back of pool (farthest from enemy base)
+3. Scout → remaining cells
+
+Private helpers `_draw_front`, `_draw_back`, `_overflow` replace the inner closures that previously captured outer-scope state.
+
+`ResourceBasedSimulator._build_spawn_assignments` is now a one-line delegation shim that calls `assign_spawn_cells`.
+
+Tests: `matches/tests/test_spawn_assigner.py` — 15 unit tests, no DB required.
