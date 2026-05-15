@@ -218,7 +218,7 @@ check each tick for all active players on the target team:
 - High `survival`: player moves to a different cell to reduce the nuke's impact (hide weight increases)
 - Low awareness stats: player ignores the nuke and continues their normal action
 - completed
-- note: each tick, for every active player on the nuke-targeted team, `reaction_probability = (game_awareness + player_awareness) / 200`. If reacting: lives ≤ 30% of max → movement goal overrides to allied Medic cell (survival mode); lives > 30% → `# TODO MECH-06` placeholder hook (no action override yet). `reacting_to_nuke` is a transient bool set per-tick on `PlayerState` (no DB column). Implemented in `choose_goal_cell` in `matches/sim_helpers/pathfinding.py` and both simulator tick loops.
+- note: `_apply_nuke_reaction_flags` helper (module-level in `simulation.py`) resets then sets `reacting_to_nuke` each tick for every active player on the nuke-targeted team. `reaction_probability = (game_awareness + player_awareness) / 200`. If reacting: Medic/Ammo seek the neediest ally (by lives ratio for Medic, shots ratio for Ammo) and transfer `tag_player` weight into `resupply_ally + 20`; non-support with lives ≤ 30% → allied Medic cell (survival mode); non-support with lives > 30% → `# TODO MECH-06` placeholder hook. `reacting_to_nuke` is a transient bool on `PlayerState` (no DB column). Read in `choose_goal_cell` (`pathfinding.py`) and weight boost applied in `weights.py`.
 
 ### MECH-05 · Nuke cancellation fuse window fix (SIM-03)
 Verify and correct the nuke cancellation logic: a nuke must be cancelled if the firing Commander is eliminated 
