@@ -230,6 +230,7 @@ def plan_action(
     movement_ctx: "MapContext | None" = None,
     *,
     save_player=None,
+    time_domain: str = "seconds",
 ) -> list:
     """Return a list of planned action dicts for player at this tick.
 
@@ -240,25 +241,45 @@ def plan_action(
     save_player: optional callable(player) invoked when is_hiding is cleared.
     ResourceBasedSimulator passes ``lambda p: p.save()`` so the ORM state is
     persisted before the next refresh_from_db call in the game loop.
+
+    time_domain (TIME-01): ``"seconds"`` (default) keeps the proportional
+    stamina schedule and the memory-staleness / score-remaining heuristics in
+    the seconds domain — used by ResourceBasedSimulator (which stays
+    second-internal and byte-identical) and by existing unit tests that pass
+    seconds. ``"ticks"`` selects the tick-native thresholds from
+    ``time_constants`` — used by the fully tick-native BatchSimulator.
     """
     weights = [70, 30, 0, 0, 0, 0, 0, 0]
 
     # MECH-06 wired: teamwork bias in pathfinding._goal_from_role; communication
     # broadcast in simulation.py tick loop; memory updated from LOS + global broadcasts.
 
-    check_stamina_penalty(player, second)
+    if time_domain == "ticks":
+        from .time_constants import TICKS_PER_ROUND
+
+        check_stamina_penalty(player, second, round_duration=TICKS_PER_ROUND)
+    else:
+        check_stamina_penalty(player, second)
 
     if player.role == "medic":
-        weights = _get_medic_weights(player, _ACTION_IDX, weights, all_alive, second)
+        weights = _get_medic_weights(
+            player, _ACTION_IDX, weights, all_alive, second, time_domain
+        )
     elif player.role == "ammo":
-        weights = _get_ammo_weights(player, _ACTION_IDX, weights, all_alive, second)
+        weights = _get_ammo_weights(
+            player, _ACTION_IDX, weights, all_alive, second, time_domain
+        )
     elif player.role == "scout":
-        weights = _get_scout_weights(player, _ACTION_IDX, weights, all_alive, second)
+        weights = _get_scout_weights(
+            player, _ACTION_IDX, weights, all_alive, second, time_domain
+        )
     elif player.role == "heavy":
-        weights = _get_heavy_weights(player, _ACTION_IDX, weights, all_alive, second)
+        weights = _get_heavy_weights(
+            player, _ACTION_IDX, weights, all_alive, second, time_domain
+        )
     elif player.role == "commander":
         weights = _get_commander_weights(
-            player, _ACTION_IDX, weights, all_alive, second
+            player, _ACTION_IDX, weights, all_alive, second, time_domain
         )
 
     penalty_count = getattr(player, "stamina_penalty_count", 0)
@@ -339,6 +360,7 @@ def plan_action(
                 movement_ctx,
                 prev_action,
                 second,
+                time_domain=time_domain,
             )
             plans.append(
                 {

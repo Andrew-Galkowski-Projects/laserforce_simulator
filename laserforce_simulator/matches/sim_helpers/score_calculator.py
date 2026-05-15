@@ -10,6 +10,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+from matches.sim_helpers.time_constants import TICK_SECONDS, TICKS_PER_ROUND
+
 if TYPE_CHECKING:
     from matches.models import PlayerRoundState
 
@@ -42,9 +44,15 @@ def calculate_mvp(player_state: "PlayerRoundState") -> float:
         else gr.red_team_eliminated
     )
     if team_eliminated_opponent:
-        time_remaining = 900 - gr.eliminated_at
-        extra_seconds_above_3_min = max(0, time_remaining - 180)
-        score += 4 + extra_seconds_above_3_min / 60
+        # TIME-01: gr.eliminated_at is now in ticks. 4 base points for an
+        # opponent wipe, +1 point per full minute the round ended early
+        # beyond the first 3 minutes.  Constants converted to ticks:
+        # 3 min = 360 ticks, 1 min = 120 ticks (1 tick = 0.5 s).
+        ticks_per_minute = int(60 / TICK_SECONDS)  # 120
+        three_min_ticks = 3 * ticks_per_minute  # 360
+        time_remaining = TICKS_PER_ROUND - gr.eliminated_at
+        extra_ticks_above_3_min = max(0, time_remaining - three_min_ticks)
+        score += 4 + extra_ticks_above_3_min / ticks_per_minute
 
     if player_state.role == "commander":
         score += player_state.missiles_landed * 1

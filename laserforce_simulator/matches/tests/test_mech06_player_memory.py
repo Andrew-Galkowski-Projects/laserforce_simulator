@@ -700,17 +700,19 @@ class TestMedicUnderFireAlert(unittest.TestCase):
         entry = ally.player_memory.get("red_medic", {})
         self.assertEqual(entry.get("cell"), (3, 3))
 
-    def test_hits_older_than_12s_trimmed_no_alert(self):
-        """Two hits 15 s apart: first is trimmed before second is evaluated → no alert."""
+    def test_hits_older_than_window_trimmed_no_alert(self):
+        """Two hits 30 ticks apart: first is trimmed before second is
+        evaluated → no alert (TIME-01: window is 24 ticks = 12 s; times
+        doubled from the old 100/115 s to 200/230 ticks)."""
         medic = _ps("medic", "red", cell_row=3, cell_col=3)
         ally = _ps("heavy", "red")
 
-        _check_medic_under_fire(medic, [medic, ally], 100.0)  # hit 1 at t=100
+        _check_medic_under_fire(medic, [medic, ally], 200.0)  # hit 1 at tick=200
         _check_medic_under_fire(
-            medic, [medic, ally], 115.0
-        )  # hit 2 at t=115 (15 s later)
+            medic, [medic, ally], 230.0
+        )  # hit 2 at tick=230 (30 ticks later)
 
-        # At t=115, hit at t=100 is 15 s old → age=15 > 12 → trimmed.
+        # At tick=230, hit at tick=200 is 30 ticks old → age=30 > 24 → trimmed.
         # Only 1 hit remains, so no alert.
         self.assertEqual(
             ally.player_memory, {}, "Hits > 12 s apart must not trigger alert"
@@ -1080,9 +1082,11 @@ class TestPlayerStateMemoryFields(unittest.TestCase):
         player = _ps("scout", "red")
         self.assertEqual(player.score_broadcast_state, {})
 
-    def test_score_broadcast_next_defaults_to_180(self):
+    def test_score_broadcast_next_defaults_to_first_period(self):
+        # TIME-01: first score broadcast at SCORE_BROADCAST_PERIOD_TICKS = 360
+        # ticks (was 180 s).
         player = _ps("scout", "red")
-        self.assertEqual(player.score_broadcast_next, 180)
+        self.assertEqual(player.score_broadcast_next, 360)
 
 
 # ---------------------------------------------------------------------------
@@ -1109,9 +1113,10 @@ class TestUpdatePlayerMemory(unittest.TestCase):
     def _reset_window_player(
         self, role: str, team: str, row: int, col: int, second: float
     ) -> PlayerState:
-        """Player downed 5 s ago — taggable but not active."""
+        """Player downed 10 ticks ago — in the reset window [8, 16): taggable
+        but not active (TIME-01: was `second - 5`, doubled to ticks)."""
         p = _ps(role, team, cell_row=row, cell_col=col)
-        p.last_downed_time = second - 5
+        p.last_downed_time = second - 10
         return p
 
     # ------------------------------------------------------------------

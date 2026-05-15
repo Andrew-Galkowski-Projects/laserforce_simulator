@@ -91,7 +91,7 @@
                     <tr {% if perf|is_eliminated %}class="table-danger" {% endif %}>
                         <td>{{ perf.player.name }}</td>
                         <td>
-                            {% if perf.was_eliminated_at and perf.was_eliminated_at < 900 %} 
+                            {% if perf.was_eliminated_at and perf.was_eliminated_at < 1801 %}
                             {{ perf.eliminated_timestamp }} {% else %} <span class="text-success">●</span>
                                 {% endif %}
                         </td>
@@ -183,7 +183,7 @@
                     <tr {% if perf|is_eliminated %}class="table-danger" {% endif %}>
                         <td>{{ perf.player.name }}</td>
                         <td>
-                            {% if perf.was_eliminated_at and perf.was_eliminated_at < 900 %} 
+                            {% if perf.was_eliminated_at and perf.was_eliminated_at < 1801 %}
                             {{ perf.eliminated_timestamp }} {% else %} <span class="text-success">●</span>
                                 {% endif %}
                         </td>

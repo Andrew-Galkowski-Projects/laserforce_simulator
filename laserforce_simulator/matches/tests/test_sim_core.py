@@ -74,7 +74,8 @@ class TestSimulation:
         ), "Resupply action should produce a buffered event with actor and target set"
 
     def test_simulate_single_round_detailed_creates_completed_round(self):
-        simulator = ResourceBasedSimulator(duration=20)
+        # TIME-01: duration is now ticks; 20 s → 40 ticks (RBS behaviour unchanged).
+        simulator = ResourceBasedSimulator(duration_ticks=40)
         team_red, _ = self.create_team_with_roster("RedSim")
         team_blue, _ = self.create_team_with_roster("BlueSim")
 
@@ -711,7 +712,8 @@ class TestSimulation:
 
         assert commander.points_scored == 500
         assert blue_commander.final_lives == 1
-        assert blue_commander.was_eliminated_at == 901
+        # TIME-01: survived sentinel 901 → 1801.
+        assert blue_commander.was_eliminated_at == 1801
         assert heavy.final_lives == 0
         assert heavy.was_eliminated_at == 25
         assert scout.final_lives == 0
@@ -889,10 +891,14 @@ class TestSimulationChangesWithWeights:
         """Forcing medic to always tag eliminates resupply events that normally occur."""
         import random
 
-        def all_tag_weights(player, action_to_weight_index, weights, all_alive, second):
+        # TIME-01: weight fns gained a trailing `time_domain` arg.
+        def all_tag_weights(
+            player, action_to_weight_index, weights, all_alive, second, time_domain
+        ):
             return [100, 0, 0, 0, 0, 0, 0, 0]
 
-        simulator = ResourceBasedSimulator(duration=60)
+        # TIME-01: duration is now ticks; 60 s → 120 ticks (RBS behaviour unchanged).
+        simulator = ResourceBasedSimulator(duration_ticks=120)
 
         team_r1, _ = make_team_with_slots("WS_R1")
         team_b1, _ = make_team_with_slots("WS_B1")

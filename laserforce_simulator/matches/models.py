@@ -2,6 +2,11 @@ from datetime import datetime
 from django.db import models
 from teams.models import Team, Player
 from matches.sim_helpers.role_constants import MAX_LIVES, MAX_SHOTS, ROLE_STATS
+from matches.sim_helpers.time_constants import (
+    SURVIVED_SENTINEL,
+    TICK_SECONDS,
+    TICKS_PER_ROUND,
+)
 
 
 class Match(models.Model):
@@ -26,14 +31,14 @@ class Match(models.Model):
     blue_round1_points = models.IntegerField(default=0)
     red_round1_eliminated = models.BooleanField(default=False)
     blue_round1_eliminated = models.BooleanField(default=False)
-    round1_eliminated_at = models.IntegerField(default=901)
+    round1_eliminated_at = models.IntegerField(default=SURVIVED_SENTINEL)
 
     # Round 2 scores (teams switch colors)
     red_round2_points = models.IntegerField(default=0)
     blue_round2_points = models.IntegerField(default=0)
     red_round2_eliminated = models.BooleanField(default=False)
     blue_round2_eliminated = models.BooleanField(default=False)
-    round2_eliminated_at = models.IntegerField(default=901)
+    round2_eliminated_at = models.IntegerField(default=SURVIVED_SENTINEL)
 
     # Bonus points for eliminations
     red_bonus_points = models.IntegerField(default=0)
@@ -155,7 +160,7 @@ class GameRound(models.Model):
     blue_points = models.IntegerField(default=0)
     red_team_eliminated = models.BooleanField(default=False)
     blue_team_eliminated = models.BooleanField(default=False)
-    eliminated_at = models.IntegerField(default=901)
+    eliminated_at = models.IntegerField(default=SURVIVED_SENTINEL)
 
     winner = models.ForeignKey(
         Team,
@@ -320,11 +325,11 @@ class PlayerRoundState(models.Model):
     reaction_shots = models.IntegerField(
         default=0
     )  # shots fired as reactions to being tagged/missed
-    seconds_active = models.IntegerField(default=0)  # ticks player was fully active
-    seconds_not_targetable = models.IntegerField(
+    ticks_active = models.IntegerField(default=0)  # ticks player was fully active
+    ticks_not_targetable = models.IntegerField(
         default=0
     )  # ticks player was in the 0-3s post-down untargetable window
-    seconds_reset_window = models.IntegerField(
+    ticks_reset_window = models.IntegerField(
         default=0
     )  # ticks player was in the 4-7s taggable-but-not-active reset window
     missile_points = models.IntegerField(default=0)  # points awarded from missiles
@@ -351,8 +356,8 @@ class PlayerRoundState(models.Model):
     }
     """
 
-    # Status
-    was_eliminated_at = models.IntegerField(default=901)  # Ran out of lives
+    # Status — tick of final elimination; SURVIVED_SENTINEL (1801) = survived
+    was_eliminated_at = models.IntegerField(default=SURVIVED_SENTINEL)
 
     def __str__(self):
         return f"n:{self.player.name} id:{self.player.id} tclr:{self.team_color} rl:{self.role}"
@@ -434,7 +439,15 @@ class PlayerRoundState(models.Model):
         return self.is_active_at(seconds_into_round)
 
     def is_active_at(self, seconds_into_round):
-        """Check if player is active at a given time (not in downed cooldown)."""
+        """Check if player is active at a given time (not in downed cooldown).
+
+        TIME-01: this method operates in the **seconds** domain. It is only
+        reached by ``ResourceBasedSimulator``, which keeps its existing
+        second-internal loop (``db_second = int(second)``) for byte-identical
+        behaviour. ``BatchSimulator`` is fully tick-native and routes through
+        ``PlayerState.is_active_at`` instead (which uses tick thresholds), so
+        the 8 s / 4 s respawn literals here must stay in seconds.
+        """
         if self.final_lives == 0:
             return False
         if getattr(self, "last_downed_time", None) is not None:
@@ -443,7 +456,10 @@ class PlayerRoundState(models.Model):
         return True
 
     def is_taggable_at(self, seconds_into_round):
-        """Return True if the player can be tagged at the given second (not in respawn resettime)."""
+        """Return True if the player can be tagged at the given second (not in respawn resettime).
+
+        TIME-01: seconds-domain; RBS-only (see ``is_active_at`` note).
+        """
         if self.final_lives == 0:
             return False
         if getattr(self, "last_downed_time", None) is not None:
@@ -452,9 +468,14 @@ class PlayerRoundState(models.Model):
         return True
 
     def eliminated_timestamp(self):
-        """Take the eliminated at time (0-900) and turn it into a minute/second time and return"""
-        minutes = self.was_eliminated_at // 60
-        secs = self.was_eliminated_at % 60
+        """Render the elimination tick as a MM:SS string (DISPLAY boundary).
+
+        TIME-01: ``was_eliminated_at`` is stored in ticks; convert to seconds
+        (÷2) before formatting into minutes/seconds.
+        """
+        total_seconds = int(self.was_eliminated_at * TICK_SECONDS)
+        minutes = total_seconds // 60
+        secs = total_seconds % 60
         return f"{minutes}:{secs:02d}"
 
     # ------------------------------------------------------------------ #
@@ -656,7 +677,7 @@ class GameEvent(models.Model):
         "GameRound", related_name="events", on_delete=models.CASCADE
     )
     timestamp = models.IntegerField(
-        help_text="Seconds into the round (0-900 for 15 min game)"
+        help_text="Ticks into the round (0-1800 for a 15 min game; 1 tick = 0.5 s)"
     )
     event_type = models.CharField(max_length=20, choices=EVENT_TYPES)
 
@@ -699,15 +720,20 @@ class GameEvent(models.Model):
 
     def __str__(self):
         if self.target:
-            return f"[{self.timestamp}s] {self.actor.name} -> {self.get_event_type_display()} -> {self.target.name}"
+            return f"[{self.timestamp}t] {self.actor.name} -> {self.get_event_type_display()} -> {self.target.name}"
         else:
-            return f"[{self.timestamp}s] {self.actor.name} -> {self.get_event_type_display()}"
+            return f"[{self.timestamp}t] {self.actor.name} -> {self.get_event_type_display()}"
 
     @property
     def formatted_timestamp(self):
-        """Convert seconds to MM:SS format"""
-        minutes = self.timestamp // 60
-        seconds = self.timestamp % 60
+        """Convert the tick timestamp to MM:SS format (DISPLAY boundary).
+
+        TIME-01: ``timestamp`` is stored in ticks; convert to seconds (÷2)
+        before formatting into minutes/seconds.
+        """
+        total_seconds = int(self.timestamp * TICK_SECONDS)
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
         return f"{minutes:02d}:{seconds:02d}"
 
     def get_event_icon(self):

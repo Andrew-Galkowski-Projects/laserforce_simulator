@@ -280,9 +280,19 @@ def _apply_request_resupply_weight(
         w[rr_idx] = int(getattr(player, "resupply_efficiency", 50) / 2)
 
 
-def _apply_endgame_rush(w, c, i, player, second, offset_key):
-    """End-game base rush: shift weight from offset_key to capture_base when time is low."""
-    if second >= 840 and player.can_capture_base_in_current_zone:
+def _apply_endgame_rush(w, c, i, player, second, offset_key, time_domain="seconds"):
+    """End-game base rush: shift weight from offset_key to capture_base when time is low.
+
+    TIME-01: the end-game threshold is 840 in the seconds domain (RBS / tests)
+    and ENDGAME_RUSH_TICKS (1680) in the tick domain (BatchSimulator).
+    """
+    if time_domain == "ticks":
+        from .time_constants import ENDGAME_RUSH_TICKS
+
+        endgame_threshold = ENDGAME_RUSH_TICKS
+    else:
+        endgame_threshold = 840
+    if second >= endgame_threshold and player.can_capture_base_in_current_zone:
         gain_key = "endgame_capture_gain"
         cost_key = f"endgame_{'tag' if offset_key == 'tag_player' else 'resupply'}_cost"
         w[i["capture_base"]] += c[gain_key]
@@ -353,6 +363,7 @@ def _get_medic_weights(
     weights: list[int],
     all_alive: list[Any],
     second: float,
+    time_domain: str = "seconds",
 ) -> list[int]:
     w, c, i = weights, _MEDIC, action_to_weight_index
 
@@ -378,7 +389,7 @@ def _get_medic_weights(
         player.team_color,
         drain_key="resupply_ally",
     )
-    _apply_endgame_rush(w, c, i, player, second, "resupply_ally")
+    _apply_endgame_rush(w, c, i, player, second, "resupply_ally", time_domain)
 
     # resupply_synergy: scales resupply_ally weight
     resupply_synergy = getattr(player, "resupply_synergy", 50)
@@ -403,6 +414,7 @@ def _get_ammo_weights(
     weights: list[int],
     all_alive: list[Any],
     second: float,
+    time_domain: str = "seconds",
 ) -> list[int]:
     w, c, i = weights, _AMMO, action_to_weight_index
 
@@ -445,7 +457,7 @@ def _get_ammo_weights(
         player.team_color,
         also_drain_resupply=True,
     )
-    _apply_endgame_rush(w, c, i, player, second, "resupply_ally")
+    _apply_endgame_rush(w, c, i, player, second, "resupply_ally", time_domain)
 
     # resupply_synergy: scales resupply_ally weight
     resupply_synergy = getattr(player, "resupply_synergy", 50)
@@ -470,6 +482,7 @@ def _get_scout_weights(
     weights: list[int],
     all_alive: list[Any],
     second: float,
+    time_domain: str = "seconds",
 ) -> list[int]:
     w, c, i = weights, _SCOUT, action_to_weight_index
 
@@ -506,7 +519,7 @@ def _get_scout_weights(
         w[i["change_zone"]] += cz_bonus
         w[i["hide"]] += tag_weight - cz_bonus
 
-    _apply_endgame_rush(w, c, i, player, second, "tag_player")
+    _apply_endgame_rush(w, c, i, player, second, "tag_player", time_domain)
 
     _apply_request_resupply_weight(w, i, player)
 
@@ -522,6 +535,7 @@ def _get_heavy_weights(
     weights: list[int],
     all_alive: list[Any],
     second: float,
+    time_domain: str = "seconds",
 ) -> list[int]:
     w, c, i = weights, _HEAVY, action_to_weight_index
 
@@ -561,7 +575,7 @@ def _get_heavy_weights(
         player.team_color,
         always_escape=True,
     )
-    _apply_endgame_rush(w, c, i, player, second, "tag_player")
+    _apply_endgame_rush(w, c, i, player, second, "tag_player", time_domain)
 
     _apply_request_resupply_weight(w, i, player)
 
@@ -599,6 +613,7 @@ def _get_commander_weights(
     weights: list[int],
     all_alive: list[Any],
     second: float,
+    time_domain: str = "seconds",
 ) -> list[int]:
     w, c, i = weights, _COMMANDER, action_to_weight_index
 
@@ -609,7 +624,16 @@ def _get_commander_weights(
         w[i["missile_player"]] += c["missile_gain"]
 
     if player.can_capture_base_in_current_zone:
-        early_bonus = c["base_early_bonus"] if second < c["base_early_threshold"] else 0
+        # TIME-01: base-early threshold is 300 in the seconds domain (RBS /
+        # tests, _COMMANDER["base_early_threshold"]) and
+        # COMMANDER_BASE_EARLY_TICKS (600) in the tick domain (BatchSimulator).
+        if time_domain == "ticks":
+            from .time_constants import COMMANDER_BASE_EARLY_TICKS
+
+            base_early_threshold = COMMANDER_BASE_EARLY_TICKS
+        else:
+            base_early_threshold = c["base_early_threshold"]
+        early_bonus = c["base_early_bonus"] if second < base_early_threshold else 0
         w[i["change_zone"]] -= c["base_capture_cz_cost"]
         w[i["tag_player"]] -= c["base_capture_tag_cost"] + early_bonus
         w[i["capture_base"]] += c["base_capture_gain"] + early_bonus
@@ -647,7 +671,7 @@ def _get_commander_weights(
         # justify firing earlier or suppressing the nuke entirely.
 
     _apply_not_active(w, c, i, player, all_alive, second, "medic", player.team_color)
-    _apply_endgame_rush(w, c, i, player, second, "tag_player")
+    _apply_endgame_rush(w, c, i, player, second, "tag_player", time_domain)
 
     _apply_request_resupply_weight(w, i, player)
 
@@ -661,6 +685,8 @@ def _get_commander_weights(
 # STAT-03 post-processing helpers (public so tests can import them directly)
 # ---------------------------------------------------------------------------
 
+# Seconds in a full round — the seconds-domain round duration used by the
+# byte-identical ResourceBasedSimulator and all existing seconds-domain tests.
 _ROUND_DURATION = 900
 
 
@@ -674,6 +700,14 @@ def check_stamina_penalty(player, second: float, round_duration: int = 900) -> N
 
     Idempotent across repeated calls within the same 10% window — the
     ``stamina_next_check_pct`` cursor only advances forward.
+
+    TIME-01: the schedule is purely proportional (``second / round_duration``)
+    and therefore unit-agnostic. The two simulators feed a matched
+    (time, round_duration) pair: ResourceBasedSimulator stays second-internal
+    and uses the seconds default (900) so it remains byte-identical; the
+    tick-native BatchSimulator passes ``round_duration=TICKS_PER_ROUND`` (1800)
+    together with a tick-valued ``second``. No checkpoint-constant conversion
+    is needed — only a consistent domain on both arguments.
     """
     elapsed_pct = int(second / round_duration * 100)
     next_check_pct = getattr(player, "stamina_next_check_pct", 10)

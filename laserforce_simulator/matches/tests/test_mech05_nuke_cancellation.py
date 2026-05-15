@@ -218,27 +218,23 @@ class TestMech05NukeCancellation(unittest.TestCase):
     def test_old_guard_flaw_demonstration(self):
         """Show that the old guard (is_active_at) returns True after a tag during fuse.
 
-        This test documents the bug MECH-05 fixes:
-        - Commander tagged at T=103 → last_downed_time=103, special_active_until=0
-        - At T=107 (8s after downed? No — 4s later): is_active_at(107) checks
-          107 - 103 = 4, which is < 8, so is_active_at returns False at T=107.
-        - But if tagged at T=100 (downed 7s ago at T=107): is_active_at(107) is
-          True (107-100=7 < 8 is False when the calc is >=8 away — let's check).
-
-        The real flaw: if tagged just before the detonation tick (e.g. T=106),
-        is_active_at(107) returns False and the old guard already stops the nuke.
-        But if tagged at T=99 (8s before detonation), is_active_at(107) = True
-        even though special_active_until was reset to 0. The new guard catches this.
+        This test documents the bug MECH-05 fixes (TIME-01: ticks; respawn is
+        RESPAWN_TICKS = 16, the pre-TIME-01 8 s doubled):
+        - Commander tagged at tick T=198, nuke resolves at tick T=214.
+        - is_active_at(214) checks 214 - 198 = 16 >= RESPAWN_TICKS(16) → True,
+          so the old guard (is_active_at + final_lives) would still fire the
+          nuke even though special_active_until was reset to 0 by the
+          tag-cancel. The new guard (special_active_until) catches this.
         """
-        # Commander tagged at T=99, nuke resolves at T=107
+        # Commander tagged at tick T=198, nuke resolves at tick T=214
         commander = _commander(
             final_lives=28,
-            last_downed_time=99,
-            special_active_until=0,  # reset by tag-cancel at T=99
+            last_downed_time=198,
+            special_active_until=0,  # reset by tag-cancel at T=198
         )
-        nuke = PendingNuke(complete_time=107.0, player=commander)
+        nuke = PendingNuke(complete_time=214.0, player=commander)
 
-        # Old guard behaviour: is_active_at(107) checks 107 - 99 = 8 >= 8 → True
+        # Old guard: is_active_at(214) checks 214 - 198 = 16 >= 16 → True
         # Combined with final_lives > 0: old guard would incorrectly fire the nuke
         old_guard_fires = (
             commander.is_active_at(nuke.complete_time) and commander.final_lives > 0

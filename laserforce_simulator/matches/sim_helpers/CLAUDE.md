@@ -13,9 +13,9 @@ Helper modules used by both `ResourceBasedSimulator` and `BatchSimulator` in `ma
 | `tag_id` | Unique string per player per round (`"red_commander"`, `"blue_scout_1"`) |
 | `final_lives / final_shots / final_special / final_missiles` | Current resource levels (decremented during simulation) |
 | `shields` | Current shield count; hits decrement this; reaching 0 costs a life and resets to `max_shields` |
-| `last_downed_time` | Second at which the player last lost a life; drives the 8-second respawn cooldown |
-| `was_eliminated_at` | Second of final elimination; 901 means survived the round |
-| `special_active_until` | Second until which the scout's rapid-fire (or commander's shield) special is active |
+| `last_downed_time` | Tick at which the player last lost a life; drives the `RESPAWN_TICKS=16` respawn cooldown |
+| `was_eliminated_at` | Tick of final elimination; `1801` (`SURVIVED_SENTINEL`) means survived the round (was `901` pre-TIME-01) |
+| `special_active_until` | Tick until which the scout's rapid-fire (or commander's shield) special is active |
 | `last_shot_time` | Transient; set every time the player fires; used by `_shot_cooldown` to enforce shot-speed limits |
 | `last_chosen_action` | Action chosen on the previous tick (`"tag_player"`, `"hide"`, etc.); read by `choose_goal_cell` to make movement action-aware (MAP-05) |
 
@@ -23,11 +23,11 @@ Helper modules used by both `ResourceBasedSimulator` and `BatchSimulator` in `ma
 
 Accumulated each tick by the simulation loop (not stored in the DB):
 
-- `seconds_active` — player is alive and fully active
-- `seconds_reset_window` — 4–7 s after a life loss (taggable but not "active")
-- `seconds_not_targetable` — 0–3 s after a life loss (in transit, untargetable)
+- `ticks_active` — player is alive and fully active
+- `ticks_reset_window` — taggable-but-not-"active" portion of the respawn cooldown after a life loss
+- `ticks_not_targetable` — untargetable (in-transit) portion immediately after a life loss
 
-Dead time (after elimination) is derived at report time as `900 - was_eliminated_at`.
+(TIME-01 rename from `seconds_*`; values are now ticks.) Dead time (after elimination) is derived at report time as `1800 - was_eliminated_at`. The four together (`ticks_active + ticks_reset_window + ticks_not_targetable + dead-time`) reconcile to exactly 1800 ticks per player.
 
 ### Aggregate stat fields
 
@@ -38,9 +38,9 @@ Dead time (after elimination) is derived at report time as `900 - was_eliminated
 | Field | Type | Purpose |
 |-------|------|---------|
 | `player_memory` | `dict[str, dict]` | `{tag_id: {"cell": (r,c), "timestamp": s, "role": role}}` — last-known cell per player from LOS observations and broadcasts |
-| `medic_hit_times` | `list[float]` | Timestamps of the two most recent hits received (for medic-under-fire alert — 2 hits within 12 s) |
+| `medic_hit_times` | `list[float]` | Tick timestamps of the two most recent hits received (medic-under-fire alert — 2 hits within `MEDIC_ALERT_WINDOW_TICKS`, 12 s) |
 | `score_broadcast_state` | `str \| None` | Outcome of the last score broadcast: `"losing"`, `"hide"`, `"seek_medic"`, or `None` |
-| `score_broadcast_next` | `float` | Simulation second at which the next score broadcast fires (initialised to 180.0) |
+| `score_broadcast_next` | `float` | Simulation tick at which the next score broadcast fires (first at `SCORE_BROADCAST_PERIOD_TICKS = 360`, i.e. 180 s) |
 
 ### Role stat lookups
 
@@ -86,6 +86,8 @@ The caller (`BatchSimulator._plan_action`) passes a baseline of `[70, 30, 0, 0, 
 
 **`_apply_score_broadcast_weights(player, weights)`** (MECH-06) — adjusts the weight vector based on the player's current `score_broadcast_state`: `"losing"` → `tag_player` weight +10; `"hide"` → `hide` weight +20; `"seek_medic"` → movement override handled in `pathfinding.choose_goal_cell` (no weight change here). Called from each role's weight function when `score_broadcast_state` is set.
 
+**TIME-01:** the endgame-rush trigger (`ENDGAME_RUSH_TICKS`, was `second >= 840`) and the score-broadcast period (`SCORE_BROADCAST_PERIOD_TICKS`) are imported from `time_constants.py` and compared against the tick cursor — no inline second literals remain in `weights.py`.
+
 `_commander_nuke_gate(sp, ga)` gates the Commander `use_special` weight based on the awareness-tier stacking table (MECH-03): ga<30→fire at sp>20; ga<50→fire at sp>40; ga<70→fire at sp>60; always fire at sp>80. When the gate is closed, weight stays 0 and the Commander stacks SP toward the next threshold. The `# MECH-06:` situational-override hook inside `_get_commander_weights` is now populated — MECH-06 memory checks can cause the gate to open early when conditions are favourable.
 
 ### Known pre-existing test failure
@@ -118,7 +120,7 @@ Cell-aware movement helpers shared by both simulators. Used when `arena_map` is 
 - Ammo → highest-LOS cell within the allied Heavy's visible set (exposed support position near Heavy).
 - Commander → enemy medic cell.
 
-**`_STALE_THRESHOLD`** — module-level dict mapping role strings to their memory staleness thresholds in seconds: `Heavy/Medic/Ammo → 60`, `Scout/Commander → 15`.
+**`_STALE_THRESHOLD`** — module-level dict mapping role strings to their memory staleness thresholds in **ticks** (TIME-01; sourced from `time_constants.py`): `Heavy/Medic/Ammo → 120` (60 s), `Scout/Commander → 30` (15 s).
 
 **`_cell_from_memory(player, tag_id, movement_ctx) -> tuple[int,int] | None`** — looks up `tag_id` in `player.player_memory`; returns the stored cell if the entry is fresh (within the role's staleness threshold), `None` if stale or absent. Stale slow-role entries (Heavy/Medic/Ammo) return the last-known cell anyway; stale fast-role entries return `None` to let callers fall through to role defaults.
 
@@ -217,6 +219,24 @@ Imported by `teams/models.py`, `matches/models.py`, and `matches/sim_helpers/pla
 
 ---
 
+## time_constants.py
+
+Pure Python, **zero imports** (no Django, no other `sim_helpers` modules). The single source of truth for every absolute time constant in the simulator, introduced by TIME-01 so the constant-by-constant audit is one reviewable file and future raw-seconds regressions are blocked at import.
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `TICKS_PER_ROUND` | `1800` | Round duration (15 min at 0.5 s/tick) |
+| `SURVIVED_SENTINEL` | `1801` | `was_eliminated_at` value meaning "never eliminated" (ticks + 1) |
+| `RESPAWN_TICKS` | `16` | Full respawn cooldown after a life loss (8 s) |
+| `NOT_TARGETABLE_TICKS` | `8` | Not-targetable (cannot-be-Tagged) front portion of the cooldown (4 s); gates `is_taggable_at`. The Reset window is the derived `[NOT_TARGETABLE_TICKS, RESPAWN_TICKS)` span. |
+| `ENDGAME_RUSH_TICKS` | `1680` | Tick at which `weights.py` triggers the endgame rush (was `second >= 840`) |
+| `SCORE_BROADCAST_PERIOD_TICKS` | `360` | MECH-06 score-broadcast period (180 s) |
+| staleness | `120` / `30` | MECH-06 memory staleness — Heavy/Medic/Ammo `120`, Scout/Commander `30` (60 s / 15 s) |
+
+(Other constants follow the same pattern, e.g. the medic-under-fire alert window.) Imported by `weights.py` (endgame rush, score broadcast), `tick_engine.py`, `pathfinding.py` (`_STALE_THRESHOLD`), `player_state.py`, and both simulators — all now consume tick-valued constants from here rather than inline numeric literals.
+
+---
+
 ## score_calculator.py
 
 **`calculate_mvp(player_state) -> float`** — SM5 MVP formula extracted from `PlayerRoundState.get_mvp`. Accepts any duck-typed object exposing the standard `PlayerRoundState` attributes (works with both ORM instances and `PlayerState` dataclasses). `PlayerRoundState.get_mvp` now delegates here. Test with `matches/tests/test_mvp.py::TestCalculateMvp` — no Django ORM or test DB required for pure formula tests.
@@ -272,7 +292,7 @@ Shared drain/split helpers for the four pending-event queues. Both simulators ca
 - `drain_reactions(pending, second) -> (ready, still)` — splits by `PendingReaction.fire_at`.
 - `drain_followups(pending, second) -> (ready, still)` — splits by `PendingFollowup.fire_at`.
 
-All return `(ready_now, still_pending)` typed lists. Resolution logic (what to do with ready items) stays in each simulator.
+All return `(ready_now, still_pending)` typed lists. Resolution logic (what to do with ready items) stays in each simulator. Post-TIME-01 the `second` cursor argument and the `complete_time`/`fire_at` fields it splits on are tick-valued for BatchSim (RBS converts at its persist boundary); the split arithmetic is unit-agnostic.
 
 ---
 

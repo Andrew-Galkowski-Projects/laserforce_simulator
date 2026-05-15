@@ -21,7 +21,9 @@ class TestSingleRoundRemoval:
         blue, _ = make_team_with_slots("Blue")
         client = Client()
         before = GameRound.objects.count()
-        with patch.object(ResourceBasedSimulator, "ROUND_SECONDS", 20):
+        # TIME-01: ROUND_SECONDS → ROUND_TICKS; 20 s → 40 ticks (short round
+        # for test speed).
+        with patch.object(ResourceBasedSimulator, "ROUND_TICKS", 40):
             response = client.post(
                 reverse("create_single_round"),
                 {"team_red": red.id, "team_blue": blue.id},

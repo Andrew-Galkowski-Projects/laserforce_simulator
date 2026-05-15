@@ -21,6 +21,12 @@ The restriction clears automatically when any of the following happen:
 The restriction also becomes moot the moment the enemy becomes fully active
 (is_active_at returns True) — active enemies are always valid targets.
 
+TIME-01: time values here are TICKS (1 tick = 0.5 s). A player downed at
+tick T is taggable from T + NOT_TARGETABLE_TICKS (8) and fully active from
+T + RESPAWN_TICKS (16); the reset window is ticks [T+8, T+16).  These are
+exactly the pre-TIME-01 second values (4 / 8) doubled — every test's intent
+is preserved verbatim.
+
 Production code lives in:
   matches/sim_helpers/mechanics.py    (choose_tag_target + _aware_of_target)
   matches/sim_helpers/player_state.py (game_awareness field)
@@ -109,20 +115,20 @@ class TestMech02TagCooldown(unittest.TestCase):
     def test_locked_enemy_in_reset_excluded_by_smart_attacker(self):
         """Smart attacker (game_awareness >= 35) never re-tags last target in reset.
 
-        Scenario:
-          second=0: A hits B (sets last_tagged_id = B)
-          second=5: B is in reset window (taggable but not active)
+        Scenario (TIME-01 ticks):
+          tick=0:  A hits B (sets last_tagged_id = B)
+          tick=10: B is in reset window (taggable but not active)
           Result: B is excluded from choose_tag_target candidates for A.
         """
         attacker = _ps("scout", game_awareness=50)
-        # B downed at second=0; at second=5: is_taggable_at(5)=True, is_active_at(5)=False
+        # B downed at tick=0; at tick=10: is_taggable_at(10)=True, is_active_at(10)=False
         enemy_b = _ps("scout", team_color="blue", last_downed_time=0)
         _lock(attacker, enemy_b)
 
-        self.assertTrue(enemy_b.is_taggable_at(5))
-        self.assertFalse(enemy_b.is_active_at(5))
+        self.assertTrue(enemy_b.is_taggable_at(10))
+        self.assertFalse(enemy_b.is_active_at(10))
 
-        result = choose_tag_target(attacker, [attacker, enemy_b], second=5)
+        result = choose_tag_target(attacker, [attacker, enemy_b], second=10)
         self.assertIsNone(result, "Smart attacker should not target locked reset enemy")
 
     def test_locked_enemy_in_reset_excluded_at_boundary_awareness_35(self):
@@ -131,7 +137,7 @@ class TestMech02TagCooldown(unittest.TestCase):
         enemy_b = _ps("heavy", team_color="blue", last_downed_time=0)
         _lock(attacker, enemy_b)
 
-        result = choose_tag_target(attacker, [attacker, enemy_b], second=5)
+        result = choose_tag_target(attacker, [attacker, enemy_b], second=10)
         self.assertIsNone(result, "game_awareness=35 should be treated as smart")
 
     # ------------------------------------------------------------------ #
@@ -144,22 +150,22 @@ class TestMech02TagCooldown(unittest.TestCase):
         enemy_b = _ps("scout", team_color="blue", last_downed_time=0)
         _lock(attacker, enemy_b)
 
-        # At second=9: B is fully active (9 - 0 = 9 >= 8)
-        self.assertTrue(enemy_b.is_active_at(9))
+        # At tick=18: B is fully active (18 - 0 = 18 >= RESPAWN_TICKS 16)
+        self.assertTrue(enemy_b.is_active_at(18))
 
         with patch("random.choices", return_value=[enemy_b]):
-            result = choose_tag_target(attacker, [attacker, enemy_b], second=9)
+            result = choose_tag_target(attacker, [attacker, enemy_b], second=18)
         self.assertIs(result, enemy_b, "Enemy should be targetable once fully active")
 
-    def test_enemy_active_at_8_seconds_is_targetable(self):
-        """Enemy becomes active at exactly second=8 and is a valid target again."""
+    def test_enemy_active_at_16_ticks_is_targetable(self):
+        """Enemy becomes active at exactly tick=16 (RESPAWN_TICKS) and is valid again."""
         attacker = _ps("scout", game_awareness=50)
         enemy_b = _ps("scout", team_color="blue", last_downed_time=0)
         _lock(attacker, enemy_b)
 
-        self.assertTrue(enemy_b.is_active_at(8))
+        self.assertTrue(enemy_b.is_active_at(16))
         with patch("random.choices", return_value=[enemy_b]):
-            result = choose_tag_target(attacker, [attacker, enemy_b], second=8)
+            result = choose_tag_target(attacker, [attacker, enemy_b], second=16)
         self.assertIs(result, enemy_b)
 
     # ------------------------------------------------------------------ #
@@ -169,20 +175,22 @@ class TestMech02TagCooldown(unittest.TestCase):
     def test_tagging_different_enemy_clears_lock(self):
         """After A hits C, A's last_tagged_id changes → B becomes targetable again."""
         attacker = _ps("commander", game_awareness=50)
-        # B downed at second=0; at second=5: in reset window
+        # B downed at tick=0; at tick=10: in reset window
         enemy_b = _ps("scout", team_color="blue", last_downed_time=0)
         enemy_c = _ps("heavy", team_color="blue", tag_id="blue_heavy")
 
         _lock(attacker, enemy_b)
 
-        # A hits C at second=5: last_tagged_id changes to C
+        # A hits C at tick=10: last_tagged_id changes to C
         attacker.last_tagged_id = enemy_c.tag_id
 
-        self.assertTrue(enemy_b.is_taggable_at(5))
-        self.assertFalse(enemy_b.is_active_at(5))
+        self.assertTrue(enemy_b.is_taggable_at(10))
+        self.assertFalse(enemy_b.is_active_at(10))
 
         with patch("random.choices", return_value=[enemy_b]):
-            result = choose_tag_target(attacker, [attacker, enemy_b, enemy_c], second=5)
+            result = choose_tag_target(
+                attacker, [attacker, enemy_b, enemy_c], second=10
+            )
         self.assertIs(result, enemy_b, "Different enemy hit should unlock B")
 
     # ------------------------------------------------------------------ #
@@ -199,7 +207,7 @@ class TestMech02TagCooldown(unittest.TestCase):
         attacker.last_tagged_id = 15  # neutral base id
 
         with patch("random.choices", return_value=[enemy_b]):
-            result = choose_tag_target(attacker, [attacker, enemy_b], second=5)
+            result = choose_tag_target(attacker, [attacker, enemy_b], second=10)
         self.assertIs(result, enemy_b, "Base capture should clear the enemy lock")
 
     def test_resupply_ally_clears_lock(self):
@@ -213,7 +221,7 @@ class TestMech02TagCooldown(unittest.TestCase):
         attacker.last_tagged_id = ally.tag_id
 
         with patch("random.choices", return_value=[enemy_b]):
-            result = choose_tag_target(attacker, [attacker, enemy_b], second=5)
+            result = choose_tag_target(attacker, [attacker, enemy_b], second=10)
         self.assertIs(result, enemy_b, "Ally resupply should clear the enemy lock")
 
     # ------------------------------------------------------------------ #
@@ -226,11 +234,11 @@ class TestMech02TagCooldown(unittest.TestCase):
         enemy_b = _ps("scout", team_color="blue", last_downed_time=0)
         _lock(attacker, enemy_b)
 
-        self.assertTrue(enemy_b.is_taggable_at(5))
-        self.assertFalse(enemy_b.is_active_at(5))
+        self.assertTrue(enemy_b.is_taggable_at(10))
+        self.assertFalse(enemy_b.is_active_at(10))
 
         with patch("random.choices", return_value=[enemy_b]):
-            result = choose_tag_target(attacker, [attacker, enemy_b], second=5)
+            result = choose_tag_target(attacker, [attacker, enemy_b], second=10)
         self.assertIs(
             result,
             enemy_b,
@@ -244,7 +252,7 @@ class TestMech02TagCooldown(unittest.TestCase):
         _lock(attacker, enemy_b)
 
         with patch("random.choices", return_value=[enemy_b]):
-            result = choose_tag_target(attacker, [attacker, enemy_b], second=5)
+            result = choose_tag_target(attacker, [attacker, enemy_b], second=10)
         self.assertIs(result, enemy_b)
 
     def test_below_threshold_awareness_can_include_locked_target(self):
@@ -260,7 +268,7 @@ class TestMech02TagCooldown(unittest.TestCase):
         # random.random() returns 1.0 → 1.0 < 0.34 is False → does NOT filter → includes B
         with patch("random.random", return_value=1.0):
             with patch("random.choices", return_value=[enemy_b]):
-                result = choose_tag_target(attacker, [attacker, enemy_b], second=5)
+                result = choose_tag_target(attacker, [attacker, enemy_b], second=10)
         self.assertIs(result, enemy_b, "game_awareness=34 can include locked target")
 
     def test_below_threshold_awareness_can_filter_locked_target(self):
@@ -275,7 +283,7 @@ class TestMech02TagCooldown(unittest.TestCase):
 
         # random.random() returns 0.0 → 0.0 < 0.34 is True → filters B
         with patch("random.random", return_value=0.0):
-            result = choose_tag_target(attacker, [attacker, enemy_b], second=5)
+            result = choose_tag_target(attacker, [attacker, enemy_b], second=10)
         self.assertIsNone(result, "game_awareness=34 can filter locked target")
 
     # ------------------------------------------------------------------ #
@@ -299,7 +307,9 @@ class TestMech02TagCooldown(unittest.TestCase):
 
         # B still excluded (lock active, smart attacker), C still eligible
         with patch("random.choices", return_value=[enemy_c]):
-            result = choose_tag_target(attacker, [attacker, enemy_b, enemy_c], second=5)
+            result = choose_tag_target(
+                attacker, [attacker, enemy_b, enemy_c], second=10
+            )
         self.assertIs(result, enemy_c)
 
     # ------------------------------------------------------------------ #
@@ -322,12 +332,12 @@ class TestMech02TagCooldown(unittest.TestCase):
         """Without a lock, an enemy in the reset window (taggable) is a valid target."""
         attacker = _ps("scout")
         enemy_b = _ps("scout", team_color="blue", last_downed_time=0)
-        self.assertTrue(enemy_b.is_taggable_at(5))
-        self.assertFalse(enemy_b.is_active_at(5))
+        self.assertTrue(enemy_b.is_taggable_at(10))
+        self.assertFalse(enemy_b.is_active_at(10))
         self.assertIsNone(attacker.last_tagged_id)
 
         with patch("random.choices", return_value=[enemy_b]):
-            result = choose_tag_target(attacker, [attacker, enemy_b], second=5)
+            result = choose_tag_target(attacker, [attacker, enemy_b], second=10)
         self.assertIs(result, enemy_b)
 
     # ------------------------------------------------------------------ #
@@ -335,22 +345,22 @@ class TestMech02TagCooldown(unittest.TestCase):
     # ------------------------------------------------------------------ #
 
     def test_lock_active_across_multiple_ticks_before_enemy_active(self):
-        """Smart attacker excludes locked enemy across ticks 4–7 (reset window).
+        """Smart attacker excludes locked enemy across the reset window.
 
-        B downed at second=0: taggable from second=4, active from second=8.
-        Lock is last_tagged_id = B. At each of seconds 4-7 B is in the
-        reset window and must be excluded.
+        B downed at tick=0: taggable from tick=8, active from tick=16.
+        Lock is last_tagged_id = B. At each of ticks 8,10,12,14 B is in
+        the reset window and must be excluded.
         """
         attacker = _ps("commander", game_awareness=60)
         enemy_b = _ps("scout", team_color="blue", last_downed_time=0)
         _lock(attacker, enemy_b)
 
-        for tick in (4, 5, 6, 7):
+        for tick in (8, 10, 12, 14):
             with self.subTest(second=tick):
                 self.assertTrue(enemy_b.is_taggable_at(tick))
                 self.assertFalse(enemy_b.is_active_at(tick))
                 result = choose_tag_target(attacker, [attacker, enemy_b], second=tick)
-                self.assertIsNone(result, f"B should be excluded at second={tick}")
+                self.assertIsNone(result, f"B should be excluded at tick={tick}")
 
     # ------------------------------------------------------------------ #
     # 10. Lock only excludes the specific locked target
@@ -364,7 +374,9 @@ class TestMech02TagCooldown(unittest.TestCase):
         _lock(attacker, enemy_b)
 
         with patch("random.choices", return_value=[enemy_c]):
-            result = choose_tag_target(attacker, [attacker, enemy_b, enemy_c], second=5)
+            result = choose_tag_target(
+                attacker, [attacker, enemy_b, enemy_c], second=10
+            )
         self.assertIs(result, enemy_c, "Lock on B should not exclude C")
 
     # ------------------------------------------------------------------ #
@@ -400,7 +412,7 @@ class TestMech02TagCooldown(unittest.TestCase):
                 enemy_b = _ps("scout", team_color="blue", last_downed_time=0)
                 _lock(attacker, enemy_b)
 
-                result = choose_tag_target(attacker, [attacker, enemy_b], second=5)
+                result = choose_tag_target(attacker, [attacker, enemy_b], second=10)
                 self.assertIsNone(
                     result, f"Role '{role}' should filter locked reset enemy"
                 )
@@ -417,14 +429,14 @@ class TestMech02TagCooldown(unittest.TestCase):
 
         _lock(attacker, enemy_b)
 
-        result_before = choose_tag_target(attacker, [attacker, enemy_b], second=5)
+        result_before = choose_tag_target(attacker, [attacker, enemy_b], second=10)
         self.assertIsNone(result_before, "B should be excluded while lock active")
 
         # Hit C: clears lock
         attacker.last_tagged_id = enemy_c.tag_id
 
         with patch("random.choices", return_value=[enemy_b]):
-            result_after = choose_tag_target(attacker, [attacker, enemy_b], second=5)
+            result_after = choose_tag_target(attacker, [attacker, enemy_b], second=10)
         self.assertIs(
             result_after, enemy_b, "B should be targetable after lock is cleared"
         )
@@ -439,11 +451,11 @@ class TestMech02TagCooldown(unittest.TestCase):
         enemy_b = _ps("scout", team_color="blue", last_downed_time=0)
         _lock(attacker, enemy_b)
 
-        # At second=8: B is active (8 - 0 = 8 >= 8)
-        self.assertTrue(enemy_b.is_active_at(8))
+        # At tick=16: B is active (16 - 0 = 16 >= RESPAWN_TICKS 16)
+        self.assertTrue(enemy_b.is_active_at(16))
 
         with patch("random.choices", return_value=[enemy_b]):
-            result = choose_tag_target(attacker, [attacker, enemy_b], second=8)
+            result = choose_tag_target(attacker, [attacker, enemy_b], second=16)
         self.assertIs(
             result, enemy_b, "Active enemy always targetable regardless of lock"
         )

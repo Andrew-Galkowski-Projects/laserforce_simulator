@@ -8,8 +8,12 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from .map_context import MapContext
 
-# Staleness thresholds (seconds) by role of the REMEMBERED player.
+# Staleness thresholds (SECONDS) by role of the REMEMBERED player.
 # Stationary support roles stay valid longer; mobile roles go stale quickly.
+# This is the DEFAULT (seconds) table: ResourceBasedSimulator stays
+# second-internal and byte-identical, and all existing unit tests pass
+# seconds, so they keep using these. The tick-native BatchSimulator passes
+# time_domain="ticks" to select _STALE_THRESHOLD_TICKS instead (TIME-01).
 _STALE_THRESHOLD = {
     "heavy": 60,
     "medic": 60,
@@ -17,6 +21,24 @@ _STALE_THRESHOLD = {
     "scout": 15,
     "commander": 15,
 }
+
+# TIME-01: tick-domain staleness thresholds (STALENESS_SLOW_TICKS=120 for
+# slow/stationary roles, STALENESS_FAST_TICKS=30 for mobile roles). Used only
+# when time_domain == "ticks" (BatchSimulator).
+from .time_constants import STALENESS_FAST_TICKS, STALENESS_SLOW_TICKS
+
+_STALE_THRESHOLD_TICKS = {
+    "heavy": STALENESS_SLOW_TICKS,
+    "medic": STALENESS_SLOW_TICKS,
+    "ammo": STALENESS_SLOW_TICKS,
+    "scout": STALENESS_FAST_TICKS,
+    "commander": STALENESS_FAST_TICKS,
+}
+
+
+def _stale_table(time_domain: str) -> dict:
+    """Return the staleness threshold table for the caller's time domain."""
+    return _STALE_THRESHOLD_TICKS if time_domain == "ticks" else _STALE_THRESHOLD
 
 
 def _elevation_at(r: int, c: int, elevation_data: dict | None = None) -> float:
@@ -145,12 +167,14 @@ def _cell_from_memory(
     player,
     target_tag_id: str,
     second: float,
+    time_domain: str = "seconds",
 ) -> "tuple[int, int] | None":
     """Return the last-known cell for target_tag_id from player's memory, or None.
 
-    Applies role-specific freshness windows:
-      - heavy / medic / ammo: fresh for up to 60 s (slow-moving support roles)
-      - scout / commander:    fresh for up to 15 s (fast-moving roles go stale quickly)
+    Applies role-specific freshness windows (seconds-domain defaults; tick
+    constants when time_domain == "ticks"):
+      - heavy / medic / ammo: slow-moving support roles stay fresh longer
+      - scout / commander:    fast-moving roles go stale quickly
     Returns None when the entry is absent, the cell is None, or the entry is stale.
     """
     memory = getattr(player, "player_memory", None)
@@ -160,7 +184,8 @@ def _cell_from_memory(
     if entry is None:
         return None
     role = entry.get("role", "scout")  # default to stale-quickly if unknown
-    threshold = _STALE_THRESHOLD.get(role, 15)
+    table = _stale_table(time_domain)
+    threshold = table.get(role, table["scout"])
     age = second - entry.get("timestamp", 0)
     if age > threshold:
         return None
@@ -174,18 +199,20 @@ def _known_enemies_from_memory(
     player,
     enemy_color: str,
     second: float,
+    time_domain: str = "seconds",
 ) -> "list[tuple[int, int]]":
     """Return a list of (row, col) cells for non-stale enemy entries in player's memory."""
     memory = getattr(player, "player_memory", None)
     if not memory:
         return []
+    table = _stale_table(time_domain)
     cells = []
     for tag_id, entry in memory.items():
         # Only enemies
         if not tag_id.startswith(enemy_color):
             continue
         role = entry.get("role", "scout")
-        threshold = _STALE_THRESHOLD.get(role, 15)
+        threshold = table.get(role, table["scout"])
         age = second - entry.get("timestamp", 0)
         if age > threshold:
             continue
@@ -199,10 +226,11 @@ def _find_enemy_commander_in_memory(
     player,
     enemy_color: str,
     second: float,
+    time_domain: str = "seconds",
 ) -> "tuple[int, int] | None":
     """Return last-known cell for enemy commander if in memory and not stale."""
     commander_tag = f"{enemy_color}_commander"
-    return _cell_from_memory(player, commander_tag, second)
+    return _cell_from_memory(player, commander_tag, second, time_domain)
 
 
 def _apply_teamwork_bias(
@@ -281,6 +309,7 @@ def _goal_from_action(
     intended_action: str,
     movement_ctx: "MapContext",
     second: float = 0.0,
+    time_domain: str = "seconds",
 ) -> tuple[int, int] | None:
     """Return a goal cell driven by the player's last action, or None."""
     cell_los_counts: dict[str, int] = movement_ctx.cell_los_counts
@@ -288,7 +317,9 @@ def _goal_from_action(
     if intended_action in ("tag_player", "missile_player"):
         if player.role == "commander":
             # MECH-06: prefer memory; fall back to perfect knowledge when memory is empty
-            enemy_medic_cell = _cell_from_memory(player, f"{enemy_color}_medic", second)
+            enemy_medic_cell = _cell_from_memory(
+                player, f"{enemy_color}_medic", second, time_domain
+            )
             if enemy_medic_cell:
                 return enemy_medic_cell
             # Perfect-knowledge fallback
@@ -296,7 +327,9 @@ def _goal_from_action(
             if enemy_medic and enemy_medic.cell_row is not None:
                 return (enemy_medic.cell_row, enemy_medic.cell_col)
         # MECH-06: use memory when entries exist; fall back to perfect knowledge otherwise
-        known_cells = _known_enemies_from_memory(player, enemy_color, second)
+        known_cells = _known_enemies_from_memory(
+            player, enemy_color, second, time_domain
+        )
         if known_cells:
             goal = _nearest_cell(cell_row, cell_col, known_cells)
             if goal:
@@ -361,6 +394,7 @@ def _goal_from_role(
     movement_ctx: "MapContext",
     second: float = 0.0,
     nuke_active: bool = False,
+    time_domain: str = "seconds",
 ) -> tuple[int, int] | None:
     """Return a role-specific goal cell, or None.
 
@@ -420,7 +454,9 @@ def _goal_from_role(
 
     elif player.role == "commander":
         # MECH-06: try memory first, then perfect knowledge fallback
-        memory_cell = _cell_from_memory(player, f"{enemy_color}_medic", second)
+        memory_cell = _cell_from_memory(
+            player, f"{enemy_color}_medic", second, time_domain
+        )
         if memory_cell:
             goal = memory_cell
         else:
@@ -444,6 +480,7 @@ def choose_goal_cell(
     movement_ctx: "MapContext | None" = None,
     intended_action: str = "",
     second: float = 0.0,
+    time_domain: str = "seconds",
 ) -> tuple[int, int] | None:
     """Return the cell a player should navigate toward (MAP-05).
 
@@ -515,7 +552,7 @@ def choose_goal_cell(
             # MECH-06: if player knows enemy commander location (memory system),
             # set movement goal to enemy commander cell to attempt tag-cancel.
             enemy_cmd_cell = _find_enemy_commander_in_memory(
-                player, enemy_color, second
+                player, enemy_color, second, time_domain
             )
             if enemy_cmd_cell is not None:
                 return enemy_cmd_cell
@@ -535,12 +572,20 @@ def choose_goal_cell(
         return default_goal
 
     # ── 1b. MECH-06: score broadcast movement override ────────────────────────
-    # Winning + low lives + medic alive + second >= 360 → seek allied medic
-    # Support roles skip this — a Medic seeking "the medic" is a no-op.
+    # Winning + low lives + medic alive + enough time still remaining → seek
+    # allied medic. Support roles skip this — a Medic seeking "the medic" is a
+    # no-op. TIME-01: threshold is 360 in the seconds domain (RBS / tests) and
+    # SCORE_BROADCAST_MIN_REMAINING_TICKS (720) in the tick domain (BatchSim).
+    if time_domain == "ticks":
+        from .time_constants import SCORE_BROADCAST_MIN_REMAINING_TICKS
+
+        score_min_remaining = SCORE_BROADCAST_MIN_REMAINING_TICKS
+    else:
+        score_min_remaining = 360
     score_state = getattr(player, "score_broadcast_state", None)
     if score_state and player.role not in ("medic", "ammo"):
         winning_team = score_state.get("winning_team", "")
-        if winning_team == player.team_color and second >= 360:
+        if winning_team == player.team_color and second >= score_min_remaining:
             low_lives = player.final_lives <= max_lives * 0.3
             if low_lives:
                 allied_medic = _find_role(all_alive, player.team_color, "medic")
@@ -557,6 +602,7 @@ def choose_goal_cell(
         intended_action,
         movement_ctx,
         second,
+        time_domain,
     )
     if goal is not None:
         return goal
@@ -571,6 +617,7 @@ def choose_goal_cell(
         movement_ctx,
         second,
         nuke_active=nuke_active,
+        time_domain=time_domain,
     )
     if goal is not None:
         return goal

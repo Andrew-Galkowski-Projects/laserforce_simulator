@@ -5,6 +5,11 @@ from concurrent.futures import ProcessPoolExecutor
 from django.core.management.base import BaseCommand, CommandError
 
 from matches.sim_helpers.parallel_worker import score_round_worker, worker_django_init
+from matches.sim_helpers.time_constants import (
+    SURVIVED_SENTINEL,
+    TICK_SECONDS,
+    TICKS_PER_ROUND,
+)
 from matches.simulation import BatchSimulator, _precompute_roster
 from teams.models import Team
 
@@ -108,10 +113,10 @@ class Command(BaseCommand):
         role_tagged = defaultdict(list)
         role_missile_pts = defaultdict(list)
         role_reset_window_tags = defaultdict(list)
-        role_seconds_active = defaultdict(list)
-        role_seconds_not_targetable = defaultdict(list)
-        role_seconds_reset_window = defaultdict(list)
-        role_seconds_dead = defaultdict(list)
+        role_ticks_active = defaultdict(list)
+        role_ticks_not_targetable = defaultdict(list)
+        role_ticks_reset_window = defaultdict(list)
+        role_ticks_dead = defaultdict(list)
         role_follow_up_shots = defaultdict(list)
         role_reaction_shots = defaultdict(list)
 
@@ -144,17 +149,17 @@ class Command(BaseCommand):
                     role_reset_window_tags[role].append(
                         p["times_tagged_in_reset_window"]
                     )
-                    role_seconds_active[role].append(p["seconds_active"])
-                    role_seconds_not_targetable[role].append(
-                        p["seconds_not_targetable"]
-                    )
-                    role_seconds_reset_window[role].append(p["seconds_reset_window"])
+                    # TIME-01: workers return tick-valued uptime; aggregate in
+                    # ticks here, divide by 2 at the display boundary below.
+                    role_ticks_active[role].append(p["ticks_active"])
+                    role_ticks_not_targetable[role].append(p["ticks_not_targetable"])
+                    role_ticks_reset_window[role].append(p["ticks_reset_window"])
                     dead = (
-                        900 - p["was_eliminated_at"]
-                        if p["was_eliminated_at"] < 901
+                        TICKS_PER_ROUND - p["was_eliminated_at"]
+                        if p["was_eliminated_at"] < SURVIVED_SENTINEL
                         else 0
                     )
-                    role_seconds_dead[role].append(dead)
+                    role_ticks_dead[role].append(dead)
                     role_follow_up_shots[role].append(p["follow_up_shots"])
                     role_reaction_shots[role].append(p["reaction_shots"])
         else:
@@ -171,11 +176,17 @@ class Command(BaseCommand):
                     role_reset_window_tags[p.role].append(
                         p.times_tagged_in_reset_window
                     )
-                    role_seconds_active[p.role].append(p.seconds_active)
-                    role_seconds_not_targetable[p.role].append(p.seconds_not_targetable)
-                    role_seconds_reset_window[p.role].append(p.seconds_reset_window)
-                    dead = 900 - p.was_eliminated_at if p.was_eliminated_at < 901 else 0
-                    role_seconds_dead[p.role].append(dead)
+                    # TIME-01: PlayerState now accumulates tick-valued uptime;
+                    # aggregate in ticks, divide by 2 at the display boundary.
+                    role_ticks_active[p.role].append(p.ticks_active)
+                    role_ticks_not_targetable[p.role].append(p.ticks_not_targetable)
+                    role_ticks_reset_window[p.role].append(p.ticks_reset_window)
+                    dead = (
+                        TICKS_PER_ROUND - p.was_eliminated_at
+                        if p.was_eliminated_at < SURVIVED_SENTINEL
+                        else 0
+                    )
+                    role_ticks_dead[p.role].append(dead)
                     role_follow_up_shots[p.role].append(p.follow_up_shots)
                     role_reaction_shots[p.role].append(p.reaction_shots)
 
@@ -247,10 +258,10 @@ class Command(BaseCommand):
         self.stdout.write("-" * 88 + "\n")
 
         for role in ROLE_ORDER:
-            sa = role_seconds_active.get(role, [])
-            sn = role_seconds_not_targetable.get(role, [])
-            sr = role_seconds_reset_window.get(role, [])
-            sd = role_seconds_dead.get(role, [])
+            sa = role_ticks_active.get(role, [])
+            sn = role_ticks_not_targetable.get(role, [])
+            sr = role_ticks_reset_window.get(role, [])
+            sd = role_ticks_dead.get(role, [])
             if not sa:
                 continue
             avg_a = sum(sa) / len(sa)
@@ -258,8 +269,11 @@ class Command(BaseCommand):
             avg_r = sum(sr) / len(sr)
             avg_d = sum(sd) / len(sd)
             total = avg_a + avg_n + avg_r + avg_d or 1
+            # TIME-01 DISPLAY boundary: averages are tick-valued; show seconds
+            # (÷2). Percentages are domain-invariant ratios, computed on ticks.
             self.stdout.write(
-                f"{role:<12} {avg_a:>12.0f} {avg_r:>12.0f} {avg_d:>12.0f} {avg_n:>8.0f}  "
+                f"{role:<12} {avg_a * TICK_SECONDS:>12.0f} {avg_r * TICK_SECONDS:>12.0f} "
+                f"{avg_d * TICK_SECONDS:>12.0f} {avg_n * TICK_SECONDS:>8.0f}  "
                 f"{avg_a/total*100:>7.1f}% {avg_r/total*100:>7.1f}% "
                 f"{avg_d/total*100:>7.1f}% {avg_n/total*100:>7.1f}%\n"
             )

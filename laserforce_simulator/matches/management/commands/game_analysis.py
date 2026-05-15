@@ -1,5 +1,12 @@
 from django.core.management.base import BaseCommand, CommandError
 from matches.models import GameRound, PlayerRoundState, GameEvent
+from matches.sim_helpers.time_constants import (
+    NOT_TARGETABLE_TICKS,
+    RESPAWN_TICKS,
+    SURVIVED_SENTINEL,
+    TICK_SECONDS,
+    TICKS_PER_ROUND,
+)
 
 ROLE_ORDER = ["commander", "heavy", "scout", "ammo", "medic"]
 
@@ -8,13 +15,19 @@ def _format_time(seconds):
     return f"{seconds // 60}:{seconds % 60:02d}"
 
 
-def _uptime_breakdown(player: PlayerRoundState, events, round_duration: int = 900):
+def _uptime_breakdown(
+    player: PlayerRoundState, events, round_duration: int = TICKS_PER_ROUND
+):
     """
     Reconstruct per-player uptime using player_downed, resupply events, and the
-    is_active_at / is_taggable_at rules:
-      - not_targetable:  0–3s after downed
-      - reset_window:    4–7s after downed
-      - active:          8s+ after downed, or never downed
+    is_active_at / is_taggable_at rules. TIME-01: GameEvent.timestamp and
+    was_eliminated_at are now in TICKS, so the reconstruction runs entirely in
+    the tick domain (respawn thresholds NOT_TARGETABLE_TICKS / RESPAWN_TICKS).
+    Tick tallies are converted to seconds (÷2) only at the display boundary in
+    handle().
+      - not_targetable:  0 .. NOT_TARGETABLE_TICKS ticks after downed
+      - reset_window:    NOT_TARGETABLE_TICKS .. RESPAWN_TICKS ticks after downed
+      - active:          RESPAWN_TICKS+ ticks after downed, or never downed
       - resupplied:      tracked separately as a sub-state (player was resupplied)
     """
     # Collect downed timestamps and resupply timestamps for this player
@@ -30,20 +43,24 @@ def _uptime_breakdown(player: PlayerRoundState, events, round_duration: int = 90
         and e.target_id == player.player_id
     )
 
-    end = player.was_eliminated_at if player.was_eliminated_at < 901 else round_duration
+    end = (
+        player.was_eliminated_at
+        if player.was_eliminated_at < SURVIVED_SENTINEL
+        else round_duration
+    )
 
     active = 0
     not_targetable = 0
     reset_window = 0
     dead = 0
 
-    def state_at(second, last_downed):
+    def state_at(now_tick, last_downed):
         if last_downed is None:
             return "active"
-        delta = second - last_downed
-        if delta < 4:
+        delta = now_tick - last_downed
+        if delta < NOT_TARGETABLE_TICKS:
             return "not_targetable"
-        if delta < 8:
+        if delta < RESPAWN_TICKS:
             return "reset_window"
         return "active"
 
@@ -51,13 +68,13 @@ def _uptime_breakdown(player: PlayerRoundState, events, round_duration: int = 90
     next_downed = next(downed_iter, None)
     last_downed = None
 
-    for second in range(0, end):
-        # Advance last_downed if a downed event happened at or before this second
-        while next_downed is not None and next_downed <= second:
+    for t in range(0, end):
+        # Advance last_downed if a downed event happened at or before this tick
+        while next_downed is not None and next_downed <= t:
             last_downed = next_downed
             next_downed = next(downed_iter, None)
 
-        st = state_at(second, last_downed)
+        st = state_at(t, last_downed)
         if st == "active":
             active += 1
         elif st == "not_targetable":
@@ -65,7 +82,7 @@ def _uptime_breakdown(player: PlayerRoundState, events, round_duration: int = 90
         else:
             reset_window += 1
 
-    if player.was_eliminated_at < 901:
+    if player.was_eliminated_at < SURVIVED_SENTINEL:
         dead = round_duration - player.was_eliminated_at
 
     return {
@@ -135,6 +152,8 @@ class Command(BaseCommand):
                 )
 
         # ── Uptime breakdown ───────────────────────────────────────────────────
+        # TIME-01 DISPLAY boundary: _uptime_breakdown reconstructs in ticks;
+        # convert each tally to seconds (÷2) for the human-readable report.
         self.stdout.write("\n--- Uptime Breakdown (seconds over 900s round) ---\n")
         self.stdout.write(
             f"{'Player':<20} {'Role':<12} {'Active':>8} {'No-Tgt':>8} "
@@ -148,8 +167,10 @@ class Command(BaseCommand):
                 ut = _uptime_breakdown(p, events)
                 self.stdout.write(
                     f"{p.player.name:<20} {p.role:<12} "
-                    f"{ut['active']:>8} {ut['not_targetable']:>8} "
-                    f"{ut['reset_window']:>8} {ut['dead']:>8} "
+                    f"{int(ut['active'] * TICK_SECONDS):>8} "
+                    f"{int(ut['not_targetable'] * TICK_SECONDS):>8} "
+                    f"{int(ut['reset_window'] * TICK_SECONDS):>8} "
+                    f"{int(ut['dead'] * TICK_SECONDS):>8} "
                     f"{ut['resupply_received']:>8}\n"
                 )
 
