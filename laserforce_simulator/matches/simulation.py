@@ -52,6 +52,28 @@ _RESUPPLY_SAVE_FIELDS = [
 ]
 
 
+def _apply_nuke_reaction_flags(all_alive: list, pending_nukes: list) -> None:
+    """MECH-04: reset then set reacting_to_nuke for all alive players each tick.
+
+    Caches game_awareness and player_awareness once per player so repeated
+    @property calls (which hit stat_for_simulation) don't multiply with the
+    number of pending nukes.
+    """
+    for p in all_alive:
+        setattr(p, "reacting_to_nuke", False)
+    if not pending_nukes:
+        return
+    awareness = {id(p): (p.game_awareness, p.player_awareness) for p in all_alive}
+    for pending_nuke in pending_nukes:
+        target_color = "blue" if pending_nuke.player.team_color == "red" else "red"
+        for p in all_alive:
+            if p.team_color != target_color:
+                continue
+            ga, pa = awareness[id(p)]
+            if random.random() < (ga + pa) / 200.0:
+                setattr(p, "reacting_to_nuke", True)
+
+
 def _resupply_event_dict(event_type: str, kwargs: dict, tick_second: float) -> dict:
     """Convert kwargs-style resupply emit into the standard event buffer dict.
 
@@ -684,12 +706,7 @@ class ResourceBasedSimulator:
                 # "miss": missile already consumed, no further action
             pending_missile_locks = still_locking
 
-            # --- process pending nukes ---
-            to_run_n, pending_nukes = drain_nukes(pending_nukes, second)
-            for n in to_run_n:
-                self._resolve_pending_nuke(n.player, int(n.complete_time), event_buffer)
-
-            # REFRESH player states from database after nukes/missiles
+            # REFRESH player states from database after missiles
             for p in red_players + blue_players:
                 p.refresh_from_db()
 
@@ -958,6 +975,14 @@ class ResourceBasedSimulator:
                         }
                     )
 
+            # --- process pending nukes (MECH-05: after reactions/followups so tag-cancels land first) ---
+            # Note: nukes still resolve before _simulate_combat_exchange, so a tag
+            # issued in THIS tick's action phase cannot cancel a same-tick detonation.
+            # That narrower edge is left for MECH-06's memory system.
+            to_run_n, pending_nukes = drain_nukes(pending_nukes, second)
+            for n in to_run_n:
+                self._resolve_pending_nuke(n.player, int(n.complete_time), event_buffer)
+
             # Plan and resolve simultaneous actions for this tick
             self._simulate_combat_exchange(
                 game_round,
@@ -1100,6 +1125,9 @@ class ResourceBasedSimulator:
             last_shot_times = {}
         if event_buffer is None:
             event_buffer = []
+
+        # MECH-04: mark players reacting to incoming nukes (uses setattr — no DB column)
+        _apply_nuke_reaction_flags(all_alive, pending_nukes)
 
         # TODO: eventually want to sort all_alive by player decision making or something
         random.shuffle(all_alive)
@@ -2591,15 +2619,6 @@ class BatchSimulator:
                 # "miss": missile already consumed, no further action
             pending_missile_locks = still_locking_b
 
-            # --- process pending nukes ---
-            fired_n, pending_nukes = drain_nukes(pending_nukes, second)
-            for n in fired_n:
-                if n.player.is_active_at(n.complete_time) and n.player.final_lives > 0:
-                    opposing = (
-                        blue_players if n.player.team_color == "red" else red_players
-                    )
-                    self._complete_nuke(n.player, n.complete_time, opposing, event_log)
-
             # --- process pending reactions (deferred by shot cooldown) ---
             due_rx, pending_reactions = drain_reactions(pending_reactions, second)
             for rx in due_rx:
@@ -2822,6 +2841,17 @@ class BatchSimulator:
                             }
                         )
 
+            # --- process pending nukes (MECH-05: after reactions/followups so tag-cancels land first) ---
+            fired_n, pending_nukes = drain_nukes(pending_nukes, second)
+            for n in fired_n:
+                # MECH-05: check both liveness AND that the fuse was not disarmed via tag-cancel
+                nuke_armed = n.player.special_active_until >= n.complete_time
+                if n.player.final_lives > 0 and nuke_armed:
+                    opposing = (
+                        blue_players if n.player.team_color == "red" else red_players
+                    )
+                    self._complete_nuke(n.player, n.complete_time, opposing, event_log)
+
             # --- alive players this tick ---
             red_alive = [
                 p
@@ -2843,6 +2873,11 @@ class BatchSimulator:
                     p.seconds_reset_window += self.TICK
                 else:
                     p.seconds_active += self.TICK
+
+            # MECH-04: mark players reacting to incoming nukes.
+            # Runs after drain_nukes so flags apply to still-pending (future) nukes only;
+            # a nuke that detonated this tick has already done its damage.
+            _apply_nuke_reaction_flags(all_alive, pending_nukes)
 
             random.shuffle(all_alive)
 

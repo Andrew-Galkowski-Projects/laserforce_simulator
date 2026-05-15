@@ -72,6 +72,9 @@ class PlayerState:
     last_shot_time: float = -99.0  # transient; tracks shot cooldown enforcement
     last_chosen_action: str = ""  # action chosen in previous tick; guides movement goal
 
+    # MECH-04: transient nuke-reaction flag — reset each tick, never persisted to DB
+    reacting_to_nuke: bool = False
+
     # stamina tracking (transient — not persisted to DB)
     stamina_penalty_count: int = 0
     stamina_next_check_pct: int = 10  # next 10% checkpoint to evaluate
