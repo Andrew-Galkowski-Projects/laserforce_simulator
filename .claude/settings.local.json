@@ -108,7 +108,9 @@
       "Bash(Measure-Command { python manage.py score_averages --rounds 500 --seed 42)",
       "Bash(Out-Null })",
       "Bash(Select-Object TotalSeconds)",
-      "Skill(grill-with-docs)"
+      "Skill(grill-with-docs)",
+      "PowerShell(python manage.py makemigrations matches)",
+      "Bash(git -C \"C:/Users/Andrew Galkowski/Desktop/programming/laserforce_simulator/.claude/worktrees/agent-a51005228c668c6e5\" check-ignore laserforce_simulator/.env)"
     ]
   }
 }

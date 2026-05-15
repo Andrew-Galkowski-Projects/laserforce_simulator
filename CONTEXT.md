@@ -215,6 +215,27 @@ A team- or arena-wide event (nuke activation, score update, medic-under-fire) th
 **Staleness**:
 The age past which a **Player memory** entry is no longer trusted; threshold depends on the remembered player's **Role**.
 
+### Reproducibility
+
+**RNG seed**:
+A single integer used to initialise the random number generator before one **Round** is simulated, persisted on that round. Reseeding from it reproduces that round's event log exactly, *provided the rosters and map are unchanged*. Distinct from an **RNG state**.
+_Avoid_: calling the stored `random.getstate()` snapshot a "seed" — that is an **RNG state**
+
+**RNG state**:
+The full internal generator snapshot (`random.getstate()` — a version + Mersenne-Twister vector + Gaussian cache). Not what is persisted; the project stores an **RNG seed** instead.
+
+**Master seed**:
+The root integer of a **Batch run** from which every per-round **RNG seed** is derived in a fixed order. Random per batch run by default; may be supplied explicitly to make an entire batch reproducible. Not persisted.
+
+**Seed chain**:
+The deterministic sequence of per-round **RNG seeds** produced from a **Master seed** — "same master seed ⇒ same chain ⇒ same games."
+
+**Replay**:
+Re-running a single persisted **Round** from its stored **RNG seed** to reproduce its exact event log. Faithful only while that round's rosters and map are unchanged; the seed captures randomness only, not world state.
+
+**Batch run**:
+Simulating the same two **Teams** N times to sample the outcome distribution (win %, score variance); remains a variance sampler — a fresh random **Master seed** per run unless one is supplied.
+
 ## Relationships
 
 - A **Match** has exactly two **Rounds**; a **Round** belongs to one **Match** (or stands alone).
@@ -240,4 +261,5 @@ The age past which a **Player memory** entry is no longer trusted; threshold dep
 - **"down" vs "eliminate" / "kill"** — resolved: a **Down** costs one **Life** (shields to zero); **Elimination** is losing the last life. "Kill" is not domain language.
 - **"special"** — resolved: **Special** = the role ability (Nuke / Rapid Fire); **Special points (SP)** = the charge resource; "use_special" / activating the special = spending SP to trigger the ability.
 - **"round" vs "match" vs "game"** — resolved: a **Match** is the two-round contest; a **Round** is one 15-minute simulation; "game" is informal and should be avoided in favour of **Round**.
+- **"seed" vs "state"** — resolved 2026-05-15 by SIM-07: the project persists an **RNG seed** (a small integer passed to `random.seed()`), *not* an **RNG state** (`random.getstate()` snapshot). `GameRound.rng_seed` is genuinely a seed. Do not call a getstate() tuple a "seed"; do not try `random.seed()` on a state tuple. Decision and rejected alternatives recorded in [docs/adr/0005-rng-seed-not-state-for-replay.md](docs/adr/0005-rng-seed-not-state-for-replay.md).
 - **"seconds_active stores ticks vs seconds"** — re-resolved 2026-05-15 by TIME-01 (supersedes the earlier "stores seconds" resolution): the uptime fields are renamed `ticks_*` and store **ticks**; the survived sentinel is `1801`; `GameEvent.timestamp`, constructor args, and the REST API are all ticks. Seconds are a display-only `÷2` at HTML/CLI output. Decision and the API-returns-ticks consequence recorded in [docs/adr/0001-time-unit-seconds-now-tick-native-later.md](docs/adr/0001-time-unit-seconds-now-tick-native-later.md).

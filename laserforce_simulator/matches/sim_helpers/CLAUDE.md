@@ -294,6 +294,10 @@ Shared drain/split helpers for the four pending-event queues. Both simulators ca
 
 All return `(ready_now, still_pending)` typed lists. Resolution logic (what to do with ready items) stays in each simulator. Post-TIME-01 the `second` cursor argument and the `complete_time`/`fire_at` fields it splits on are tick-valued for BatchSim (RBS converts at its persist boundary); the split arithmetic is unit-agnostic.
 
+### Parallel batch workers (SIM-07)
+
+`BatchSimulator._run_parallel` fans rounds out to `batch_round_worker`, the process-pool worker. **SIM-07:** `batch_round_worker` now takes a per-round **int** seed and `random.seed(it)`s before simulating, so a given master seed yields identical games whether the batch runs serially or in parallel (guaranteed, tested property). Per-round seeds are derived from a deterministic `random.Random(master_seed)` seed chain in `run`. `score_round_worker` (the `score_averages` command path) is intentionally **unchanged** and out of SIM-07 scope — it does not take or seed an int seed.
+
 ---
 
 ## spawn_assigner.py

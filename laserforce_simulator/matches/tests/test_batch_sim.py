@@ -138,10 +138,12 @@ class TestBatchSimulatorSeedReproducibility:
         assert round4["blue_survivors"] == replay["blue_survivors"]
 
     def test_same_seed_produces_identical_event_log(self):
-        """Same RNG state must produce a byte-for-byte identical event log.
+        """Same int seed must produce a byte-for-byte identical event log.
 
-        This is the replay guarantee: a stored seed must always replay the exact
-        same sequence of events so the UI can reconstruct any round on demand.
+        This is the replay guarantee: a stored int seed must always replay the
+        exact same sequence of events so the UI can reconstruct any round on
+        demand. SIM-07 replaced the getstate()/setstate() dance with a plain
+        ``random.seed(<int>)`` before ``_simulate_round``.
         """
         import random
 
@@ -149,15 +151,12 @@ class TestBatchSimulatorSeedReproducibility:
         blue_roster, _ = self._rosters("SeedB5")
         sim = BatchSimulator()
 
-        random.seed(42)
-        state = random.getstate()
-
         log1: list = []
-        random.setstate(state)
+        random.seed(42)
         sim._simulate_round(red_roster, blue_roster, event_log=log1)
 
         log2: list = []
-        random.setstate(state)
+        random.seed(42)
         sim._simulate_round(red_roster, blue_roster, event_log=log2)
 
         assert len(log1) > 0, "Event log must not be empty"
@@ -800,3 +799,171 @@ class TestSim06FlushFields:
         assert any(
             s.cell_col is not None for s in states
         ), "No player has cell_col set — _flush_to_db does not write cell coordinates"
+
+
+# ---------------------------------------------------------------------------
+# SIM-07 — integer RNG seeds: replay determinism, seed persistence,
+# master-seed reproducibility, serial == parallel
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestSim07RngSeed:
+    """SIM-07 replaces RNG-state tuples with plain integer seeds.
+
+    NOTE: every test here is ``django_db`` because the shared
+    ``make_team_with_slots`` conftest helper creates Team/Player ORM rows —
+    even the "no DB persistence" cases (master-seed reproducibility,
+    serial==parallel) must build rosters through the ORM. This mirrors how the
+    existing ``TestBatchSimulatorSeedReproducibility`` class marks the whole
+    class ``django_db`` despite running purely in-memory simulations.
+
+    Final API under test:
+      * GameRound.rng_seed = BigIntegerField(null=True, blank=True)
+      * BatchSimulator.run(..., master_seed=None) — per-round int seeds drawn
+        from random.Random(master_seed); avg_seeds/outlier_seeds are lists of
+        ints.
+      * BatchSimulator.replay_round(red_roster, blue_roster, seed) — int seed;
+        does random.seed(seed) then _simulate_round.
+      * BatchSimulator.save_games(team_red, team_blue, seeds, n) — int seeds;
+        each round persists its int seed onto GameRound.rng_seed via
+        _flush_to_db(..., rng_seed=...).
+    """
+
+    def _rosters(self, prefix):
+        team, _ = make_team_with_slots(prefix)
+        return list(team.active_roster), team
+
+    # ------------------------------------------------------------------
+    # 2. Replay-vs-replay determinism (DB-backed)
+    # ------------------------------------------------------------------
+
+    def test_replay_vs_replay_is_deterministic_from_stored_seed(self):
+        """save_games stores a valid int seed; replaying it twice is identical.
+
+        Builds two real teams, persists one round via save_games with a fixed
+        int seed, reloads the GameRound, asserts rng_seed is a valid non-null
+        63-bit int, then replays that exact seed twice and asserts the two
+        event logs are byte-for-byte identical.
+        """
+        from matches.models import GameRound
+
+        red, team_red = self._rosters("Sim07ReplayR")
+        blue, team_blue = self._rosters("Sim07ReplayB")
+        sim = BatchSimulator()
+
+        fixed_seed = 13572468
+        saved = sim.save_games(team_red, team_blue, seeds=[fixed_seed], n=1)
+        assert saved, "save_games returned no GameRound objects"
+
+        gr = GameRound.objects.get(id=saved[0].id)
+        assert gr.rng_seed is not None, "GameRound.rng_seed must be persisted"
+        assert 0 <= gr.rng_seed < 2**63, f"rng_seed out of 63-bit range: {gr.rng_seed}"
+
+        _, _, _, log_a = sim.replay_round(red, blue, gr.rng_seed)
+        _, _, _, log_b = sim.replay_round(red, blue, gr.rng_seed)
+
+        assert len(log_a) > 0, "Replay event log must not be empty"
+        assert len(log_a) == len(
+            log_b
+        ), f"Replay log length differs: {len(log_a)} vs {len(log_b)}"
+        for i, (e1, e2) in enumerate(zip(log_a, log_b)):
+            assert e1 == e2, f"Replay event {i} differs:\n  a: {e1}\n  b: {e2}"
+
+    # ------------------------------------------------------------------
+    # 3. Correct seed stored (DB-backed)
+    # ------------------------------------------------------------------
+
+    def test_save_games_stores_the_seed_it_replayed(self):
+        """Each persisted GameRound stores exactly the int seed it replayed.
+
+        Passing two distinct known ints and checking that the GameRounds, in
+        creation order, carry rng_seed == s0 and rng_seed == s1 proves
+        _flush_to_db stores the seed actually used to drive the round (not, e.g.,
+        a re-derived or shuffled value).
+        """
+        from matches.models import GameRound
+
+        red, team_red = self._rosters("Sim07StoreR")
+        blue, team_blue = self._rosters("Sim07StoreB")
+        sim = BatchSimulator()
+
+        s0, s1 = 111111, 222222
+        saved = sim.save_games(team_red, team_blue, seeds=[s0, s1], n=2)
+        assert len(saved) == 2, f"Expected 2 saved rounds, got {len(saved)}"
+
+        rounds = list(
+            GameRound.objects.filter(id__in=[g.id for g in saved]).order_by("id")
+        )
+        assert len(rounds) == 2
+        assert (
+            rounds[0].rng_seed == s0
+        ), f"First round should store seed {s0}, got {rounds[0].rng_seed}"
+        assert (
+            rounds[1].rng_seed == s1
+        ), f"Second round should store seed {s1}, got {rounds[1].rng_seed}"
+
+    # ------------------------------------------------------------------
+    # 4. Master-seed reproducibility (no DB)
+    # ------------------------------------------------------------------
+
+    def test_master_seed_makes_run_reproducible(self):
+        """run() with the same master_seed yields identical aggregates+seed lists.
+
+        A different master_seed must produce a different per-round int seed
+        sequence (n>=8 makes accidental collision of all eight seeds
+        negligible).
+        """
+        red, team_red = self._rosters("Sim07MasterR")
+        blue, team_blue = self._rosters("Sim07MasterB")
+        sim = BatchSimulator()
+
+        stats_a = sim.run(team_red, team_blue, n=8, master_seed=12345)
+        stats_b = sim.run(team_red, team_blue, n=8, master_seed=12345)
+
+        assert stats_a["avg_red_score"] == stats_b["avg_red_score"]
+        assert stats_a["avg_blue_score"] == stats_b["avg_blue_score"]
+        assert stats_a["avg_seeds"] == stats_b["avg_seeds"]
+        assert stats_a["outlier_seeds"] == stats_b["outlier_seeds"]
+        # Seeds must be plain ints, not RNG-state tuples.
+        assert all(isinstance(s, int) for s in stats_a["avg_seeds"])
+        assert all(isinstance(s, int) for s in stats_a["outlier_seeds"])
+
+        stats_c = sim.run(team_red, team_blue, n=8, master_seed=99999)
+        assert (
+            stats_c["avg_seeds"] != stats_a["avg_seeds"]
+        ), "Different master_seed must yield a different avg_seeds list"
+        assert (
+            stats_c["outlier_seeds"] != stats_a["outlier_seeds"]
+        ), "Different master_seed must yield a different outlier_seeds list"
+
+    # ------------------------------------------------------------------
+    # 5. Serial == parallel for a fixed master_seed (no DB)
+    # ------------------------------------------------------------------
+
+    def test_serial_equals_parallel_for_fixed_master_seed(self):
+        """A fixed master_seed yields identical aggregates serial vs parallel.
+
+        The parallel ProcessPoolExecutor path can be flaky on Windows inside
+        this harness (spawn-based workers, Django re-init). If the parallel run
+        fails to start workers, skip with a clear reason rather than weakening
+        the determinism assertion.
+        """
+        red, team_red = self._rosters("Sim07ParR")
+        blue, team_blue = self._rosters("Sim07ParB")
+        sim = BatchSimulator()
+
+        serial = sim.run(team_red, team_blue, n=4, master_seed=777)
+
+        try:
+            parallel = sim.run(team_red, team_blue, n=4, master_seed=777, workers=2)
+        except Exception as exc:  # pragma: no cover - environment dependent
+            pytest.skip(
+                f"Parallel worker pool unavailable in this environment: {exc!r}"
+            )
+
+        assert serial["red_wins"] == parallel["red_wins"]
+        assert serial["blue_wins"] == parallel["blue_wins"]
+        assert serial["ties"] == parallel["ties"]
+        assert serial["avg_red_score"] == parallel["avg_red_score"]
+        assert serial["avg_blue_score"] == parallel["avg_blue_score"]

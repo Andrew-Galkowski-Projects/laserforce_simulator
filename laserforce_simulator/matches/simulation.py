@@ -2671,7 +2671,14 @@ class BatchSimulator:
     TICK = 0.5
 
     def run(
-        self, team_red, team_blue, n=100, *, arena_map=None, workers: int | None = None
+        self,
+        team_red,
+        team_blue,
+        n=100,
+        *,
+        arena_map=None,
+        workers: int | None = None,
+        master_seed: int | None = None,
     ):
         """Simulate n rounds and return aggregate statistics.
 
@@ -2682,6 +2689,12 @@ class BatchSimulator:
         workers: number of parallel worker processes.  None / 1 = serial.
         Values > 1 dispatch rounds to a ProcessPoolExecutor; set to
         os.cpu_count() for full parallelism.
+
+        master_seed: 63-bit integer seeding the per-round seed generator.
+        When None, a fresh OS-entropy generator picks one (independent of the
+        global RNG). Serial and parallel paths derive identical per-round
+        seeds from the same master_seed, so a given master_seed always
+        reproduces the same batch of games.
         """
         # Read rosters once — list of (role, Player) tuples
         red_roster = list(team_red.active_roster)
@@ -2689,21 +2702,28 @@ class BatchSimulator:
 
         movement_ctx, _ = ResourceBasedSimulator._load_map_context(arena_map)
 
+        if master_seed is None:
+            master_seed = random.Random().getrandbits(63)
+        gen = random.Random(master_seed)
+
         if workers and workers > 1:
-            return self._run_parallel(red_roster, blue_roster, n, movement_ctx, workers)
+            return self._run_parallel(
+                red_roster, blue_roster, n, movement_ctx, workers, gen
+            )
 
         red_wins = blue_wins = ties = 0
         red_scores, blue_scores = [], []
         red_survivors_list, blue_survivors_list = [], []
-        round_seeds = []  # (score_diff, random_state)
+        round_seeds = []  # (score_diff, seed_int)
 
         for _ in range(n):
-            seed_state = random.getstate()
+            s = gen.getrandbits(63)
+            random.seed(s)
             result, _, _ = self._simulate_round(
                 red_roster, blue_roster, movement_ctx=movement_ctx
             )
             rp, bp = result["red_points"], result["blue_points"]
-            round_seeds.append((rp - bp, seed_state))
+            round_seeds.append((rp - bp, s))
             if rp > bp:
                 red_wins += 1
             elif bp > rp:
@@ -2749,24 +2769,26 @@ class BatchSimulator:
         n: int,
         movement_ctx,
         workers: int,
+        gen: random.Random,
     ) -> dict:
         """Simulate n rounds using a multiprocessing worker pool.
 
         Pre-serializes all player data in the parent so workers never touch
         the ORM.  Returns the same aggregate dict as run().
+
+        Per-round seeds are drawn from the same master generator the serial
+        path uses, so a given master_seed produces identical games whether
+        run serially or in parallel.
         """
         from concurrent.futures import ProcessPoolExecutor
 
         red_data = _precompute_roster(red_roster)
         blue_data = _precompute_roster(blue_roster)
 
-        # Generate n distinct random seeds in the parent before spawning.
-        seed_states = []
-        for _ in range(n):
-            seed_states.append(random.getstate())
-            random.random()
+        # Generate n distinct integer seeds in the parent before spawning.
+        seeds = [gen.getrandbits(63) for _ in range(n)]
 
-        args_list = [(red_data, blue_data, movement_ctx, s) for s in seed_states]
+        args_list = [(red_data, blue_data, movement_ctx, s) for s in seeds]
         chunksize = max(1, n // (workers * 4))
 
         from matches.sim_helpers.parallel_worker import (
@@ -2786,9 +2808,9 @@ class BatchSimulator:
         red_survivors_list, blue_survivors_list = [], []
         round_seeds = []
 
-        for result, seed_state in zip(results, seed_states):
+        for result, s in zip(results, seeds):
             rp, bp = result["red_points"], result["blue_points"]
-            round_seeds.append((rp - bp, seed_state))
+            round_seeds.append((rp - bp, s))
             if rp > bp:
                 red_wins += 1
             elif bp > rp:
@@ -4069,34 +4091,48 @@ class BatchSimulator:
     # Seed-based exact replay and DB persistence
     # ------------------------------------------------------------------ #
 
-    def replay_round(self, red_roster, blue_roster, seed_state, movement_ctx=None):
-        """Replay one round from a saved random state, collecting full event log."""
+    def replay_round(self, red_roster, blue_roster, seed: int, movement_ctx=None):
+        """Replay one round from a stored integer seed, collecting full event log."""
         events = []
-        random.setstate(seed_state)
+        random.seed(seed)
         result, red_players, blue_players = self._simulate_round(
             red_roster, blue_roster, event_log=events, movement_ctx=movement_ctx
         )
         return result, red_players, blue_players, events
 
-    def save_games(self, team_red, team_blue, seeds, n, *, arena_map=None):
-        """Replay and persist n games using the provided seed states."""
+    def save_games(self, team_red, team_blue, seeds: list[int], n, *, arena_map=None):
+        """Replay and persist n games using the provided integer seeds."""
         red_roster = list(team_red.active_roster)
         blue_roster = list(team_blue.active_roster)
         movement_ctx, _ = ResourceBasedSimulator._load_map_context(arena_map)
         saved = []
-        for seed_state in seeds[:n]:
+        for seed in seeds[:n]:
             result, red_players, blue_players, events = self.replay_round(
-                red_roster, blue_roster, seed_state, movement_ctx=movement_ctx
+                red_roster, blue_roster, seed, movement_ctx=movement_ctx
             )
             gr = self._flush_to_db(
-                team_red, team_blue, result, red_players, blue_players, events
+                team_red,
+                team_blue,
+                result,
+                red_players,
+                blue_players,
+                events,
+                rng_seed=seed,
             )
             saved.append(gr)
         return saved
 
     @transaction.atomic
     def _flush_to_db(
-        self, team_red, team_blue, result, red_players, blue_players, events
+        self,
+        team_red,
+        team_blue,
+        result,
+        red_players,
+        blue_players,
+        events,
+        *,
+        rng_seed: int | None = None,
     ):
         """Write a replayed in-memory round to DB as a standalone GameRound."""
         from teams.models import Player as PlayerModel
@@ -4112,6 +4148,7 @@ class BatchSimulator:
             blue_team_eliminated=result["blue_eliminated"],
             eliminated_at=result["eliminated_at"],
             is_completed=True,
+            rng_seed=rng_seed,
         )
         # Trigger winner calculation
         game_round.save()

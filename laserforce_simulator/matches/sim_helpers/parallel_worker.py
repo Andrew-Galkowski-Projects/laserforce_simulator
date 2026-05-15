@@ -53,8 +53,8 @@ def batch_round_worker(args: tuple) -> dict:
     """
     from matches.simulation import BatchSimulator  # noqa: PLC0415
 
-    red_data, blue_data, movement_ctx, seed_state = args
-    random.setstate(seed_state)
+    red_data, blue_data, movement_ctx, seed = args
+    random.seed(seed)
     result, _, _ = BatchSimulator()._simulate_round(
         red_data, blue_data, movement_ctx=movement_ctx
     )

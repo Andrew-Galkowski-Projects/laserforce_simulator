@@ -16,24 +16,6 @@ _SAVE_JOBS: dict = {}
 _JOBS_LOCK = threading.Lock()
 
 
-def _serialize_seeds(seeds):
-    """Convert random state tuples to JSON-serialisable lists."""
-    result = []
-    for state in seeds:
-        v, internal, gauss = state
-        result.append([v, list(internal), gauss])
-    return result
-
-
-def _deserialize_seeds(data):
-    """Restore random state tuples from serialised lists."""
-    result = []
-    for item in data:
-        v, internal, gauss = item
-        result.append((v, tuple(internal), gauss))
-    return result
-
-
 def _run_save_job(job_id, team_red_id, team_blue_id, seeds, n):
     """Background thread: replay and persist n games, then update job status."""
     import django.db
@@ -382,8 +364,8 @@ def simulate_batch(request):
         request.session["batch_seeds"] = {
             "team_red_id": team_red.id,
             "team_blue_id": team_blue.id,
-            "avg_seeds": _serialize_seeds(avg_seeds),
-            "outlier_seeds": _serialize_seeds(outlier_seeds),
+            "avg_seeds": avg_seeds,
+            "outlier_seeds": outlier_seeds,
         }
 
         # Build histogram bins (5 000-point buckets)
@@ -436,7 +418,7 @@ def save_batch_games(request):
     n = max(1, min(10, int(request.POST.get("n", 1))))
 
     raw = seeds_data.get("avg_seeds" if game_type == "avg" else "outlier_seeds", [])
-    seeds = _deserialize_seeds(raw[:n])
+    seeds = raw[:n]
     if not seeds:
         return JsonResponse({"error": "No saved seeds for this category."}, status=400)
 
