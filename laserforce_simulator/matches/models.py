@@ -155,6 +155,16 @@ class GameRound(models.Model):
 
     date_played = models.DateTimeField(auto_now_add=True)
 
+    rng_seed = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text=(
+            "63-bit integer seed passed to random.seed() before simulating "
+            "this round; null = round predates SIM-07 / not replayable. "
+            "Replay is exact only if rosters and map config are unchanged."
+        ),
+    )
+
     # Round results
     red_points = models.IntegerField(default=0)
     blue_points = models.IntegerField(default=0)
