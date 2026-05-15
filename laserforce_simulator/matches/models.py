@@ -476,6 +476,10 @@ class PlayerRoundState(models.Model):
         return self.player.stat_for_simulation("game_awareness", self.role)
 
     @property
+    def resource_awareness(self) -> int:
+        return self.player.stat_for_simulation("resource_awareness", self.role)
+
+    @property
     def decision_making(self) -> int:
         return self.player.stat_for_simulation("decision_making", self.role)
 
@@ -520,10 +524,21 @@ class PlayerRoundState(models.Model):
         saved_shot_time = getattr(self, "_last_shot_time", -99.0)
         saved_stamina_penalty = getattr(self, "stamina_penalty_count", 0)
         saved_stamina_next_check = getattr(self, "stamina_next_check_pct", 10)
+        # MECH-06: preserve transient memory fields across DB refresh
+        saved_player_memory = getattr(self, "player_memory", {})
+        saved_medic_hit_times = getattr(self, "medic_hit_times", [])
+        saved_score_broadcast_state = getattr(self, "score_broadcast_state", {})
+        saved_score_broadcast_next = getattr(self, "score_broadcast_next", 180)
+        saved_scout_index = getattr(self, "_scout_index", 1)
         super().refresh_from_db(using=using, fields=fields, **kwargs)
         self._last_shot_time = saved_shot_time
         self.stamina_penalty_count = saved_stamina_penalty
         self.stamina_next_check_pct = saved_stamina_next_check
+        self.player_memory = saved_player_memory
+        self.medic_hit_times = saved_medic_hit_times
+        self.score_broadcast_state = saved_score_broadcast_state
+        self.score_broadcast_next = saved_score_broadcast_next
+        self._scout_index = saved_scout_index
 
     @property
     def tag_id_key(self):
@@ -570,6 +585,22 @@ class PlayerRoundState(models.Model):
             elif role == "medic":
                 return self.tag_id.blue_medic
         return self.tag_id.none
+
+    @property
+    def string_tag_id(self) -> str:
+        """MECH-06: string tag identifier matching PlayerState.tag_id format.
+
+        Returns strings like "red_commander", "blue_scout_1", etc. so that the
+        player memory system (which uses string tag IDs) works uniformly across
+        both PlayerRoundState and PlayerState objects.
+        """
+        role = str(self.role).lower() if self.role is not None else ""
+        color = self.team_color or ""
+        if role == "scout":
+            # Use a transient scout index if set (by _initialize_players), else default to 1.
+            idx = getattr(self, "_scout_index", 1)
+            return f"{color}_scout_{idx}"
+        return f"{color}_{role}"
 
     @property
     def get_accuracy(self):

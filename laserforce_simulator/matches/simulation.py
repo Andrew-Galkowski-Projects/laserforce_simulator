@@ -1,3 +1,4 @@
+import math as _math
 import random
 import logging
 import threading
@@ -50,6 +51,251 @@ _RESUPPLY_SAVE_FIELDS = [
     "combo_resupply_count",
     "resupplies_given",
 ]
+
+
+def _str_tag_id(player) -> str:
+    """Return a consistent string tag ID for memory system usage.
+
+    PlayerState objects have a string ``tag_id`` field directly.
+    PlayerRoundState objects use ``string_tag_id`` property (added in MECH-06).
+    """
+    string_tag = getattr(player, "string_tag_id", None)
+    if string_tag is not None:
+        return string_tag
+    return str(getattr(player, "tag_id", f"{player.team_color}_{player.role}"))
+
+
+def _observe_lives(observer, seen) -> int | None:
+    """Roll to observe seen player's current lives based on observer's resource_awareness.
+
+    Chance = min(75, resource_awareness/4 + (resource_awareness/100) * (1-lives_ratio) * 50).
+    At ra=100, lives_ratio=0.05 the chance is ~72.5%; at lives_ratio=0 it caps at 75%.
+    Returns current lives on success, None on failure.
+    """
+    ra = getattr(observer, "resource_awareness", 50)
+    max_lives = getattr(seen, "max_lives", getattr(seen, "starting_lives", 1))
+    lives_ratio = seen.final_lives / max(1, max_lives)
+    base_pct = ra / 4.0
+    enemy_low_factor = max(0.0, 1.0 - lives_ratio) * (ra / 100.0)
+    chance = min(75.0, base_pct + enemy_low_factor * 50.0)
+    if random.random() * 100 < chance:
+        return seen.final_lives
+    return None
+
+
+def _update_player_memory(observer, seen_players: list, second: float) -> bool:
+    """MECH-06: update observer's memory with directly observed players.
+
+    Cell, role, and status are always recorded. Current lives are added when the
+    observer wins a resource_awareness roll (see _observe_lives).
+
+    Returns True if any entry was new or had a changed cell or status — i.e. the
+    memory actually gained information worth broadcasting to teammates.
+    """
+    observer_memory = getattr(observer, "player_memory", None)
+    if observer_memory is None:
+        observer.player_memory = {}
+        observer_memory = observer.player_memory
+    changed = False
+    for seen in seen_players:
+        if seen.cell_row is not None:
+            tag_id = _str_tag_id(seen)
+            new_cell = (seen.cell_row, seen.cell_col)
+            if not seen.is_taggable_at(second):
+                status = "downed"
+            elif not seen.is_active_at(second):
+                status = "reset_window"
+            else:
+                status = "active"
+            existing = observer_memory.get(tag_id)
+            if (
+                existing is None
+                or existing.get("cell") != new_cell
+                or existing.get("status") != status
+            ):
+                changed = True
+            entry: dict = {
+                "cell": new_cell,
+                "timestamp": second,
+                "role": seen.role,
+                "status": status,
+            }
+            observed_lives = _observe_lives(observer, seen)
+            if observed_lives is not None:
+                entry["lives"] = observed_lives
+            observer_memory[tag_id] = entry
+    return changed
+
+
+def _broadcast_communication(
+    actor,
+    all_alive: list,
+    movement_ctx,
+    second: float,
+) -> None:
+    """MECH-06: per-tick communication broadcast.
+
+    Rolls actor.communication / 100 probability. On success, shares actor's memory
+    entries for enemy players with all living allies within the communication range
+    (Euclidean half-diagonal of the map).
+    """
+    communication = getattr(actor, "communication", 0)
+    if communication <= 0:
+        return
+    if random.random() * 100 >= communication:
+        return
+
+    # Compute communication range from map dimensions
+    if movement_ctx is not None:
+        zone_data = (
+            movement_ctx.get_zone_data()
+            if hasattr(movement_ctx, "get_zone_data")
+            else movement_ctx.get("zone_data")
+        )
+        if zone_data:
+            rows = len(zone_data)
+            cols = len(zone_data[0]) if rows else 0
+            comm_range = _math.sqrt(rows**2 + cols**2) / 2.0
+        else:
+            comm_range = float("inf")
+    else:
+        comm_range = float("inf")
+
+    actor_r = actor.cell_row
+    actor_c = actor.cell_col
+    actor_team = actor.team_color
+    actor_memory = getattr(actor, "player_memory", None)
+    if not actor_memory:
+        return
+
+    # Filter to enemy-only memory entries, then pick the single highest-priority one.
+    # Priority order (most tactically important first): heavy → commander → medic → ammo → scout
+    _COMM_ROLE_PRIORITY = {
+        "heavy": 0,
+        "commander": 1,
+        "medic": 2,
+        "ammo": 3,
+        "scout": 4,
+    }
+    enemy_color = "blue" if actor_team == "red" else "red"
+    best_tag_id = None
+    best_entry = None
+    best_priority = len(_COMM_ROLE_PRIORITY)
+    for tag_id, entry in actor_memory.items():
+        if not (isinstance(tag_id, str) and tag_id.startswith(enemy_color)):
+            continue
+        priority = _COMM_ROLE_PRIORITY.get(entry.get("role", ""), len(_COMM_ROLE_PRIORITY))
+        if priority < best_priority:
+            best_priority = priority
+            best_tag_id = tag_id
+            best_entry = entry
+    if best_entry is None:
+        return
+
+    for ally in all_alive:
+        if ally.team_color != actor_team or ally is actor:
+            continue
+        if ally.cell_row is None or ally.cell_col is None:
+            continue
+        # Check distance
+        if actor_r is not None and actor_c is not None:
+            dist = _math.sqrt(
+                (ally.cell_row - actor_r) ** 2 + (ally.cell_col - actor_c) ** 2
+            )
+            if dist > comm_range:
+                continue
+        ally_memory = getattr(ally, "player_memory", None)
+        if ally_memory is None:
+            ally.player_memory = {}
+            ally_memory = ally.player_memory
+        existing = ally_memory.get(best_tag_id)
+        if existing is None or best_entry["timestamp"] > existing["timestamp"]:
+            ally_memory[best_tag_id] = dict(best_entry)
+
+
+def _apply_score_broadcast(all_alive: list, second: float) -> None:
+    """MECH-06: every 180 s, compute which team is winning and update score_broadcast_state.
+
+    Stores {"winning_team": "red"|"blue"|"tied", "timestamp": second} on each player.
+    Players whose score_broadcast_next <= second get the update.
+    """
+    red_pts = sum(p.points_scored for p in all_alive if p.team_color == "red")
+    blue_pts = sum(p.points_scored for p in all_alive if p.team_color == "blue")
+    if red_pts > blue_pts:
+        winning_team = "red"
+    elif blue_pts > red_pts:
+        winning_team = "blue"
+    else:
+        winning_team = "tied"
+
+    for player in all_alive:
+        next_broadcast = getattr(player, "score_broadcast_next", 180)
+        if second >= next_broadcast:
+            player.score_broadcast_state = {
+                "winning_team": winning_team,
+                "timestamp": second,
+            }
+            player.score_broadcast_next = next_broadcast + 180
+
+
+def _apply_nuke_activation_broadcast(
+    commander,
+    target_team_players: list,
+    second: float,
+) -> None:
+    """MECH-06: when a nuke is activated, all alive enemy-team players learn the
+    Commander's current cell via memory update.
+    """
+    if commander.cell_row is None:
+        return
+    cmd_tag = _str_tag_id(commander)
+    for p in target_team_players:
+        if p.final_lives <= 0:
+            continue
+        p_memory = getattr(p, "player_memory", None)
+        if p_memory is None:
+            p.player_memory = {}
+            p_memory = p.player_memory
+        p_memory[cmd_tag] = {
+            "cell": (commander.cell_row, commander.cell_col),
+            "timestamp": second,
+            "role": "commander",
+        }
+
+
+def _check_medic_under_fire(
+    medic,
+    all_alive: list,
+    second: float,
+) -> None:
+    """MECH-06: when a Medic is hit 2× within 12 s, alert all living teammates.
+
+    Appends current second to medic.medic_hit_times, trims entries older than 12 s,
+    and if ≥ 2 hits remain, updates all alive teammates' memory with the medic's cell.
+    """
+    hit_times = getattr(medic, "medic_hit_times", None)
+    if hit_times is None:
+        medic.medic_hit_times = []
+        hit_times = medic.medic_hit_times
+    hit_times.append(second)
+    # Trim entries older than 12 s
+    medic.medic_hit_times = [t for t in hit_times if second - t <= 12]
+    if len(medic.medic_hit_times) >= 2 and medic.cell_row is not None:
+        medic_tag = _str_tag_id(medic)
+        for p in all_alive:
+            if p.team_color != medic.team_color or p is medic:
+                continue
+            if p.final_lives <= 0:
+                continue
+            p_memory = getattr(p, "player_memory", None)
+            if p_memory is None:
+                p.player_memory = {}
+                p_memory = p.player_memory
+            p_memory[medic_tag] = {
+                "cell": (medic.cell_row, medic.cell_col),
+                "timestamp": second,
+                "role": "medic",
+            }
 
 
 def _apply_nuke_reaction_flags(all_alive: list, pending_nukes: list) -> None:
@@ -651,6 +897,17 @@ class ResourceBasedSimulator:
                 final_special=resources["special"],
                 final_missiles=resources["missiles"],
             )
+
+            # MECH-06: initialize transient memory fields (no DB columns)
+            state.player_memory = {}
+            state.medic_hit_times = []
+            state.score_broadcast_state = {}
+            state.score_broadcast_next = 180
+            # Set scout index for string_tag_id property
+            if role == "scout":
+                scout_count = sum(1 for s in player_states if s.role == "scout") + 1
+                state._scout_index = scout_count
+
             player_states.append(state)
 
         return player_states
@@ -1129,6 +1386,27 @@ class ResourceBasedSimulator:
         # MECH-04: mark players reacting to incoming nukes (uses setattr — no DB column)
         _apply_nuke_reaction_flags(all_alive, pending_nukes)
 
+        # MECH-06: per-tick LOS-based memory update + communication broadcast
+        if movement_ctx is not None:
+            sight_data_rbs = movement_ctx.sight_data or {}
+            for actor in all_alive:
+                if actor.cell_row is None:
+                    continue
+                actor_key = f"{actor.cell_row},{actor.cell_col}"
+                visible_cells_rbs = sight_data_rbs.get(actor_key, frozenset())
+                seen_rbs = [
+                    p
+                    for p in all_alive
+                    if p is not actor
+                    and p.cell_row is not None
+                    and f"{p.cell_row},{p.cell_col}" in visible_cells_rbs
+                ]
+                if seen_rbs and _update_player_memory(actor, seen_rbs, second):
+                    _broadcast_communication(actor, all_alive, movement_ctx, second)
+
+        # MECH-06: score broadcast every 180 s
+        _apply_score_broadcast(all_alive, second)
+
         # TODO: eventually want to sort all_alive by player decision making or something
         random.shuffle(all_alive)
         plans = []
@@ -1230,6 +1508,12 @@ class ResourceBasedSimulator:
                     pending_nukes.append(
                         PendingNuke(complete_time=scheduled[1], player=scheduled[2])
                     )
+                    # MECH-06: nuke activation broadcast — enemy team learns commander's cell
+                    enemy_color_rbs = "blue" if actor.team_color == "red" else "red"
+                    nuke_targets_rbs = [
+                        p for p in all_alive if p.team_color == enemy_color_rbs
+                    ]
+                    _apply_nuke_activation_broadcast(actor, nuke_targets_rbs, second)
             elif ptype == "tag":
                 tag_attempts.append({"attacker": actor, "defender": plan.get("target")})
 
@@ -1267,6 +1551,7 @@ class ResourceBasedSimulator:
                 pending_reactions,
                 movement_ctx,
                 event_buffer,
+                all_alive=all_alive,
             )
 
     def _plan_action(self, player, all_alive, second, movement_ctx=None):
@@ -1284,6 +1569,7 @@ class ResourceBasedSimulator:
         pending_reactions=None,
         movement_ctx=None,
         event_buffer=None,
+        all_alive=None,
     ):
         """Resolve multiple tag attempts simultaneously.
 
@@ -1420,6 +1706,9 @@ class ResourceBasedSimulator:
                 attacker.last_shot_time = second
                 if defender.role == "medic":
                     attacker.final_medic_hits += 1
+                    # MECH-06: medic-under-fire alert
+                    if all_alive is not None:
+                        _check_medic_under_fire(defender, all_alive, second)
 
                 defender.specific_tags[atk_key]["tagged_by"] += 1
 
@@ -1540,6 +1829,11 @@ class ResourceBasedSimulator:
 
                 defender.times_tagged += 1
                 defender.points_scored -= 20
+
+                # MECH-06: tag confirms enemy position and status — update memory and broadcast
+                if movement_ctx is not None and all_alive is not None:
+                    _update_player_memory(attacker, [defender], db_second)
+                    _broadcast_communication(attacker, all_alive, movement_ctx, db_second)
 
                 attacker.save()
                 defender.save()
@@ -2537,6 +2831,9 @@ class BatchSimulator:
                 ),
                 teamwork=player_model.stat_for_simulation("teamwork", role),
                 communication=player_model.stat_for_simulation("communication", role),
+                resource_awareness=player_model.stat_for_simulation(
+                    "resource_awareness", role
+                ),
                 starting_lives=resources["lives"],
                 starting_shots=resources["shots"],
                 final_lives=resources["lives"],
@@ -2879,6 +3176,28 @@ class BatchSimulator:
             # a nuke that detonated this tick has already done its damage.
             _apply_nuke_reaction_flags(all_alive, pending_nukes)
 
+            # MECH-06: per-tick LOS-based memory update + communication broadcast
+            if movement_ctx is not None:
+                sight_data = movement_ctx.sight_data or {}
+                for actor in all_alive:
+                    if actor.cell_row is None:
+                        continue
+                    actor_key = f"{actor.cell_row},{actor.cell_col}"
+                    visible_cells = sight_data.get(actor_key, frozenset())
+                    # Build list of players visible to this actor
+                    seen = [
+                        p
+                        for p in all_alive
+                        if p is not actor
+                        and p.cell_row is not None
+                        and f"{p.cell_row},{p.cell_col}" in visible_cells
+                    ]
+                    if seen and _update_player_memory(actor, seen, second):
+                        _broadcast_communication(actor, all_alive, movement_ctx, second)
+
+            # MECH-06: score broadcast every 180 s
+            _apply_score_broadcast(all_alive, second)
+
             random.shuffle(all_alive)
 
             plans = []
@@ -2927,6 +3246,14 @@ class BatchSimulator:
                         pending_nukes.append(
                             PendingNuke(complete_time=scheduled[1], player=scheduled[2])
                         )
+                        # MECH-06: nuke activation broadcast — enemy team learns commander's cell
+                        enemy_color_nuke = (
+                            "blue" if actor.team_color == "red" else "red"
+                        )
+                        nuke_targets = [
+                            p for p in all_alive if p.team_color == enemy_color_nuke
+                        ]
+                        _apply_nuke_activation_broadcast(actor, nuke_targets, second)
                 elif ptype == "tag":
                     tag_attempts.append({"attacker": actor, "defender": plan["target"]})
 
@@ -2954,6 +3281,7 @@ class BatchSimulator:
                     pending_followups,
                     pending_reactions,
                     movement_ctx,
+                    all_alive=all_alive,
                 )
 
             # --- check for team elimination ---
@@ -3019,6 +3347,7 @@ class BatchSimulator:
         pending_followups=None,
         pending_reactions=None,
         movement_ctx=None,
+        all_alive=None,
     ):
         outcomes = []
         for a in attempts:
@@ -3099,6 +3428,10 @@ class BatchSimulator:
                 defender.shields = max(0, defender.shields - attacker.shot_power)
                 o["downed"] = defender.shields == 0
 
+                # MECH-06: medic-under-fire alert
+                if defender.role == "medic" and all_alive is not None:
+                    _check_medic_under_fire(defender, all_alive, second)
+
                 if event_log is not None:
                     event_log.append(
                         {
@@ -3143,6 +3476,10 @@ class BatchSimulator:
                                     "metadata": {"elimination_action": "tag"},
                                 }
                             )
+                # MECH-06: tag confirms enemy position and status — update memory and broadcast
+                if movement_ctx is not None and all_alive is not None:
+                    _update_player_memory(attacker, [defender], second)
+                    _broadcast_communication(attacker, all_alive, movement_ctx, second)
             else:
                 attacker.final_shots = max(0, attacker.final_shots - 1)
                 attacker.shots_missed += 1

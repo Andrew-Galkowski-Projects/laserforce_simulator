@@ -228,6 +228,9 @@ gets tagged at T=103 (within fuse), nuke must not detonate.
 - note: `BatchSimulator` nuke resolution now checks `n.player.special_active_until >= n.complete_time` (matching `ResourceBasedSimulator`) instead of only `is_active_at`. Tick ordering fix: nuke resolution moved to after reaction/followup/tag processing so same-tick cancellations work correctly.
 
 ### MECH-06 · Player memory system + teamwork/communication stat wiring
+- completed
+- note: player_memory dict added to PlayerState (transient, no DB columns); staleness thresholds: Heavy/Medic/Ammo=60s, Scout/Commander=15s; stale slow-roles use last-known cell, stale fast-roles fall through to role defaults; `communication` stat = per-tick broadcast probability (0-100%) to allies within sqrt(rows²+cols²)/2 Euclidean range; `teamwork` stat (>50) biases goal toward high-LOS cells in ally LOS on non-nuke ticks; score broadcast every 180s: losing→+10 aggression, winning+low-lives+medic-dead→+20 hide, winning+low-lives+medic-alive+6min→seek-medic-cell; nuke activation broadcast updates enemy memory with Commander cell; medic-under-fire alert (2 hits in 12s) updates ally memory with medic cell; MECH-04 TODO hook filled — nuke-reacting players with fresh Commander memory seek that cell for tag-cancel. 75 new unit tests in test_mech06_player_memory.py.
+
 Players have imperfect knowledge of the arena. Replace the current perfect-information model with a
 per-player memory dict that is updated from observable events and degrades when not refreshed.
 
@@ -258,7 +261,6 @@ older than 30 seconds are treated as stale (player acts on best-guess or last-kn
 
 **Scope note:** global broadcasts and memory reads replace the current perfect-knowledge ally/enemy
 lookups in `_goal_from_action`, `_goal_from_role`, and the nuke-reaction logic in MECH-04.
-Perfect knowledge is retained only for: same-zone melee (tag/missile resolution), resupply resolution.
 
 ---
 

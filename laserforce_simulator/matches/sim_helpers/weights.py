@@ -289,6 +289,59 @@ def _apply_endgame_rush(w, c, i, player, second, offset_key):
         w[i[offset_key]] -= c[cost_key]
 
 
+def _apply_score_broadcast_weights(
+    w: list,
+    i: dict,
+    player: Any,
+    all_alive: list,
+    second: float,
+) -> None:
+    """MECH-06: apply score-broadcast behavioral weight biases.
+
+    Called at the end of every role weight function.  Reads the transient
+    ``score_broadcast_state`` attribute set by the simulator's per-tick score
+    broadcast logic (every 180 s).
+
+    Losing team:
+      - tag_player += 10
+      - change_zone -= 10  (clamped ≥ 0)
+      - hide -= 10         (clamped ≥ 0)
+
+    Winning team + low lives (≤ 30%) + allied medic dead:
+      - hide += 20
+      - tag_player -= 20   (clamped ≥ 0)
+
+    Winning team + low lives + medic alive + second ≥ 360:
+      - movement goal override is handled in pathfinding.choose_goal_cell;
+        no weight change needed here.
+    """
+    state = getattr(player, "score_broadcast_state", None)
+    if not state:
+        return
+    winning_team = state.get("winning_team", "")
+    player_team = player.team_color
+    max_lives = getattr(player, "max_lives", player.starting_lives)
+    low_lives = player.final_lives <= max_lives * 0.3
+
+    if winning_team and winning_team != player_team and winning_team != "tied":
+        # Losing: be more aggressive
+        if i.get("tag_player") is not None:
+            w[i["tag_player"]] = max(0, w[i["tag_player"]] + 10)
+        if i.get("change_zone") is not None:
+            w[i["change_zone"]] = max(0, w[i["change_zone"]] - 10)
+        if i.get("hide") is not None:
+            w[i["hide"]] = max(0, w[i["hide"]] - 10)
+    elif winning_team == player_team and low_lives:
+        medic = _find_ally(all_alive, player_team, "medic")
+        if medic is None:
+            # Winning, low lives, medic dead → hide
+            if i.get("hide") is not None:
+                w[i["hide"]] = max(0, w[i["hide"]] + 20)
+            if i.get("tag_player") is not None:
+                w[i["tag_player"]] = max(0, w[i["tag_player"]] - 20)
+        # Winning + low lives + medic alive + second >= 360 → handled in pathfinding
+
+
 # ---------------------------------------------------------------------------
 # Role weight functions (public API — signatures unchanged)
 # ---------------------------------------------------------------------------
@@ -337,6 +390,9 @@ def _get_medic_weights(
     if getattr(player, "reacting_to_nuke", False):
         w[i["resupply_ally"]] += w[i["tag_player"]] + 20
         w[i["tag_player"]] = 0
+
+    # MECH-06: score broadcast behavioral bias
+    _apply_score_broadcast_weights(w, i, player, all_alive, second)
 
     return weights
 
@@ -402,6 +458,9 @@ def _get_ammo_weights(
         w[i["resupply_ally"]] += w[i["tag_player"]] + 20
         w[i["tag_player"]] = 0
 
+    # MECH-06: score broadcast behavioral bias
+    _apply_score_broadcast_weights(w, i, player, all_alive, second)
+
     return weights
 
 
@@ -450,6 +509,9 @@ def _get_scout_weights(
     _apply_endgame_rush(w, c, i, player, second, "tag_player")
 
     _apply_request_resupply_weight(w, i, player)
+
+    # MECH-06: score broadcast behavioral bias
+    _apply_score_broadcast_weights(w, i, player, all_alive, second)
 
     return weights
 
@@ -502,6 +564,9 @@ def _get_heavy_weights(
     _apply_endgame_rush(w, c, i, player, second, "tag_player")
 
     _apply_request_resupply_weight(w, i, player)
+
+    # MECH-06: score broadcast behavioral bias
+    _apply_score_broadcast_weights(w, i, player, all_alive, second)
 
     return weights
 
@@ -585,6 +650,9 @@ def _get_commander_weights(
     _apply_endgame_rush(w, c, i, player, second, "tag_player")
 
     _apply_request_resupply_weight(w, i, player)
+
+    # MECH-06: score broadcast behavioral bias
+    _apply_score_broadcast_weights(w, i, player, all_alive, second)
 
     return weights
 
