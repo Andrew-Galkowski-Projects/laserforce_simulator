@@ -198,11 +198,17 @@ New and corrected mechanics that make the simulator more faithful to SM5 rules a
 - note: `last_tagged_id` is set on every successful hit — enemy tag, missile hit, base capture, and resupply (resupply was the missing case; added to both branches of `attempt_resupply` in `combat.py`). `choose_tag_target` in `mechanics.py` enforces the restriction with a `game_awareness` gate: `>= 35` always filters the locked reset target; `< 35` filters with `game_awareness / 100` probability so unaware players occasionally waste a shot. `game_awareness` stat added to `PlayerState` dataclass, forwarded as a `@property` on `PlayerRoundState`, and wired into `BatchSimulator._make_players`. Tests in `matches/tests/test_mech02_tag_cooldown.py` (23 tests, 0 DB required).
 
 ### MECH-03 · Commander nuke stacking behavior
-Currently Commanders almost never queue a second nuke during the first nuke's fuse window. 
-Add a `nuke_aggression` derived value from `special_usage` and `game_awareness` stats. 
-High `nuke_aggression` players will attempt to nuke stack (fire a second nuke before the first resolves). 
-The weight for `use_special` during an active nuke fuse window should scale with this value rather
-than being near-zero for all Commanders.
+Currently Commanders almost never stack more than the required 20 special points for a nuke. 
+High game-awareness Commanders should be more likely to continue stacking beyond the nuke threshold then drop more than 1 back to back
+when we get to MECH-06 with the memory system adaptability should be able to change this behavour if the situation arises that would be
+good to capitalize on (ie. player below 3-4 life threshold, enemy team low on lives/shots, enemy medic/ammo separated)
+The weight of Use-special should scale with `game_awareness` and current special points.  for now implement: 
+special_points > 20 and game_awareness < 30 then normal use-special weight applies (otherwise weight is 0)
+special_points > 40 and game awareness < 50 then normal use-special weight appliees (otherwise weight is 0)
+special_points > 60 and game awareness < 70 then normal use-special weight applies (otherwise weight is 0)
+special_points > 80 then use-special weight applies regardless of game awareness
+- completed
+- note: `_commander_nuke_gate(sp, ga)` added to `weights.py`; gates the `use_special` weight in `_get_commander_weights` so high-awareness Commanders stack SP before firing. Thresholds: ga<30→sp>20, ga<50→sp>40, ga<70→sp>60, ga>=70→sp>80. When sp>80 the gate always opens regardless of awareness. A `# MECH-06:` hook comment marks where situational overrides (memory system) will plug in. 15 pure-unit tests in `matches/tests/test_mech03_nuke_stacking.py`.
 
 ### MECH-04 · Player reaction to incoming nukes
 When a pending nuke is in flight (fuse window active), players should react based on stats. Add a nuke-awareness 

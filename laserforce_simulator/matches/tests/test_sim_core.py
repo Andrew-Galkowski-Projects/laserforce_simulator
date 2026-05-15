@@ -219,12 +219,15 @@ class TestSimulation:
             survival = getattr(defender, "survival", 50)
             dodge_pct = min(20.0, survival / 5.0)
             import random as _rand
+
             if _rand.random() * 100 < dodge_pct:
-                dodge_buffer.append({
-                    "event_type": "missile_dodge",
-                    "actor_id": defender.player_id,
-                    "target_id": attacker.player_id,
-                })
+                dodge_buffer.append(
+                    {
+                        "event_type": "missile_dodge",
+                        "actor_id": defender.player_id,
+                        "target_id": attacker.player_id,
+                    }
+                )
         assert any(
             ev.get("event_type") == "missile_dodge"
             and ev.get("actor_id") == defender.player_id

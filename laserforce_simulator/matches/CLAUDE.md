@@ -167,6 +167,8 @@ All templates live in `laserforce_simulator/templates/`. The `game_round_events.
 - `views_tests.py` — view behaviour: URL routing, form submissions, context keys
 - `test_serializers.py` — unit tests for all five serializer classes (including list vs detail split)
 - `test_apis.py` — HTTP-level tests for `/api/matches/` and `/api/rounds/` (including `/events/` action)
+- `test_mech02_tag_cooldown.py` — 23 pure-unit tests for MECH-02 same-target restriction and `game_awareness` gate; no DB required
+- `test_mech03_nuke_stacking.py` — 15 pure-unit tests for MECH-03 Commander nuke-stacking: `_commander_nuke_gate` threshold table, `_get_commander_weights` gating, edge cases at each SP/awareness boundary; no DB required
 - `conftest.py` — shared `make_team_with_slots(prefix)` helper
 
 ## Sub-packages
