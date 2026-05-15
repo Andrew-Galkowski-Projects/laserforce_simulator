@@ -217,11 +217,15 @@ check each tick for all active players on the target team:
   (raises `tag_player` weight toward the Commander specifically, overriding normal role behavior)
 - High `survival`: player moves to a different cell to reduce the nuke's impact (hide weight increases)
 - Low awareness stats: player ignores the nuke and continues their normal action
+- completed
+- note: each tick, for every active player on the nuke-targeted team, `reaction_probability = (game_awareness + player_awareness) / 200`. If reacting: lives ≤ 30% of max → movement goal overrides to allied Medic cell (survival mode); lives > 30% → `# TODO MECH-06` placeholder hook (no action override yet). `reacting_to_nuke` is a transient bool set per-tick on `PlayerState` (no DB column). Implemented in `choose_goal_cell` in `matches/sim_helpers/pathfinding.py` and both simulator tick loops.
 
 ### MECH-05 · Nuke cancellation fuse window fix (SIM-03)
 Verify and correct the nuke cancellation logic: a nuke must be cancelled if the firing Commander is eliminated 
 during the fuse window (not just at exact timestamps). Write a regression test: Commander fires nuke at T=100, 
 gets tagged at T=103 (within fuse), nuke must not detonate.
+- completed
+- note: `BatchSimulator` nuke resolution now checks `n.player.special_active_until >= n.complete_time` (matching `ResourceBasedSimulator`) instead of only `is_active_at`. Tick ordering fix: nuke resolution moved to after reaction/followup/tag processing so same-tick cancellations work correctly.
 
 ### MECH-06 · Player memory system + teamwork/communication stat wiring
 Players have imperfect knowledge of the arena. Replace the current perfect-information model with a

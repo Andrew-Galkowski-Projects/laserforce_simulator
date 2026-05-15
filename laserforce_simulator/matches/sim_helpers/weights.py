@@ -333,6 +333,11 @@ def _get_medic_weights(
 
     _apply_request_resupply_weight(w, i, player, shots_only=True)
 
+    # MECH-04: nuke incoming — transfer tag weight into resupply to maximise output
+    if getattr(player, "reacting_to_nuke", False):
+        w[i["resupply_ally"]] += w[i["tag_player"]] + 20
+        w[i["tag_player"]] = 0
+
     return weights
 
 
@@ -391,6 +396,11 @@ def _get_ammo_weights(
     w[i["resupply_ally"]] = max(0, int(w[i["resupply_ally"]] * (resupply_synergy / 50)))
 
     _apply_request_resupply_weight(w, i, player, lives_only=True)
+
+    # MECH-04: nuke incoming — transfer tag weight into resupply to maximise output
+    if getattr(player, "reacting_to_nuke", False):
+        w[i["resupply_ally"]] += w[i["tag_player"]] + 20
+        w[i["tag_player"]] = 0
 
     return weights
 

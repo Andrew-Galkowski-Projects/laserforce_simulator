@@ -61,6 +61,10 @@ Action weights are in `matches/sim_helpers/weights.py`. See [`sim_helpers/CLAUDE
 
 **STAT-03 stat wiring** (weights.py / combat.py): `decision_making` applies a post-role spread multiplier (`factor = 1 + dm/100`) — best-weight action × factor, all others ÷ factor (clamped ≥ 0). `stamina` is checked every 10% of round elapsed; when `stamina < elapsed_%`, `stamina_penalty_count` increments, stacking −10% on `change_zone` weight and −5% on hit-chance (`stamina_hit_modifier = max(0.5, 1 − 0.05 × count)`). `special_usage` multiplies the `use_special` weight delta by `special_usage / 50` across all roles. `accuracy` / `survival` feed hit-chance as `70 + accuracy − survival` (confirmed, no change). `resupply_efficiency` scales the `request_resupply` action weight (index 7) for all roles; `resupply_synergy` scales the `resupply_ally` weight for Medic/Ammo players — both wired in MECH-01 (former TODO blocks removed). `teamwork` and `communication` retain skeleton TODO blocks deferred to MECH-06. `request_resupply` (action index 7) is available to all roles; at end of each tick `resolve_resupply_requests` from `sim_helpers/resupply_queue.py` is called to fulfill pending requests — see [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) for full resolution logic.
 
+**MECH-04 nuke reaction** (both simulators): each tick, every active player on the nuke-targeted team rolls `reaction_probability = (game_awareness + player_awareness) / 200`. A reacting player with lives ≤ 30% of max overrides their movement goal to the allied Medic cell (survival mode); lives > 30% hits a `# TODO MECH-06` hook. `reacting_to_nuke` is a transient bool on `PlayerState` (no DB column); set in `pathfinding.choose_goal_cell` and the tick loops.
+
+**MECH-05 nuke cancellation fix**: `BatchSimulator` nuke resolution now checks `n.player.special_active_until >= n.complete_time` (consistent with `ResourceBasedSimulator`) instead of the former `is_active_at`-only check. Nuke resolution is ordered after reaction/followup/tag processing so same-tick cancellations are applied before detonation.
+
 ## Shot Speed & Follow-up Mechanics (BatchSimulator)
 
 Real Laserforce shot speeds are modelled in `BatchSimulator`:
@@ -169,6 +173,8 @@ All templates live in `laserforce_simulator/templates/`. The `game_round_events.
 - `test_apis.py` — HTTP-level tests for `/api/matches/` and `/api/rounds/` (including `/events/` action)
 - `test_mech02_tag_cooldown.py` — 23 pure-unit tests for MECH-02 same-target restriction and `game_awareness` gate; no DB required
 - `test_mech03_nuke_stacking.py` — 15 pure-unit tests for MECH-03 Commander nuke-stacking: `_commander_nuke_gate` threshold table, `_get_commander_weights` gating, edge cases at each SP/awareness boundary; no DB required
+- `test_mech05_nuke_cancellation.py` — N regression tests for MECH-05: same-tick and within-fuse cancellation, `BatchSimulator` consistency with `ResourceBasedSimulator`, tick-ordering guarantee; no DB required
+- `test_mech04_nuke_reaction.py` — N pure-unit tests for MECH-04: reaction probability formula, survival-mode goal override, MECH-06 placeholder path, no-reaction for low-awareness players; no DB required
 - `conftest.py` — shared `make_team_with_slots(prefix)` helper
 
 ## Sub-packages

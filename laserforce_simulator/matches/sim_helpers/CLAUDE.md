@@ -108,10 +108,11 @@ Cell-aware movement helpers shared by both simulators. Used when `arena_map` is 
 - Commander → enemy medic cell.
 
 **`choose_goal_cell(player, all_alive, spawn_cells, movement_ctx=None, intended_action="")`** — duck-typed goal selector shared by both simulators (MAP-05). Priority order:
-1. Critical-resource override (non-support): lives ≤ 30% → seek allied Medic; shots ≤ 30% → seek allied Ammo.
-2. Action-driven movement via `_goal_from_action` (uses `intended_action`, which is the action chosen on the previous tick).
-3. Role-specific positioning via `_goal_from_role`.
-4. Default: enemy base cell from `spawn_cells`.
+1. **MECH-04 nuke-reaction override** (highest priority): when `player.reacting_to_nuke` is `True` and lives ≤ 30% of max, goal is forced to the allied Medic cell (survival mode). Lives > 30% hits the `# TODO MECH-06` hook and falls through.
+2. Critical-resource override (non-support): lives ≤ 30% → seek allied Medic; shots ≤ 30% → seek allied Ammo.
+3. Action-driven movement via `_goal_from_action` (uses `intended_action`, which is the action chosen on the previous tick).
+4. Role-specific positioning via `_goal_from_role`.
+5. Default: enemy base cell from `spawn_cells`.
 
 ### Elevation model (stub)
 

@@ -297,6 +297,43 @@ def choose_goal_cell(
     max_lives = getattr(player, "max_lives", player.starting_lives)
     max_shots = getattr(player, "max_shots", player.starting_shots)
 
+    # ── 0. MECH-04: nuke-reaction override (highest priority when active) ────
+    if getattr(player, "reacting_to_nuke", False):
+        if player.role in ("medic", "ammo"):
+            # Support roles: rush toward the neediest ally to maximise resupply
+            # output in the ticks before the nuke lands.
+            allies = [
+                p
+                for p in all_alive
+                if p.team_color == player.team_color
+                and p is not player
+                and p.cell_row is not None
+            ]
+            if allies:
+                if player.role == "medic":
+                    target = min(
+                        allies,
+                        key=lambda p: p.final_lives
+                        / max(1, getattr(p, "max_lives", p.starting_lives)),
+                    )
+                else:
+                    target = min(
+                        allies,
+                        key=lambda p: p.final_shots
+                        / max(1, getattr(p, "max_shots", p.starting_shots)),
+                    )
+                return (target.cell_row, target.cell_col)
+        elif player.final_lives <= max_lives * 0.3:
+            # Non-support, lives critical: seek allied medic for safety
+            medic = _find_role(all_alive, player.team_color, "medic")
+            if medic and medic.cell_row is not None:
+                return (medic.cell_row, medic.cell_col)
+        else:
+            # TODO MECH-06: if player knows enemy commander location (memory system),
+            #     set movement goal to enemy commander cell to attempt tag-cancel.
+            #     For now: no action override — hook wired but left empty.
+            pass
+
     # ── 1. Critical-resource overrides (non-support roles) ───────────────────
     if player.role not in ("medic", "ammo"):
         if player.final_lives <= max_lives * 0.3:
