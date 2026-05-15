@@ -141,24 +141,36 @@ class Command(BaseCommand):
                     role_tags[role].append(p["tags_made"])
                     role_tagged[role].append(p["times_tagged"])
                     role_missile_pts[role].append(p["missile_points"])
-                    role_reset_window_tags[role].append(p["times_tagged_in_reset_window"])
+                    role_reset_window_tags[role].append(
+                        p["times_tagged_in_reset_window"]
+                    )
                     role_seconds_active[role].append(p["seconds_active"])
-                    role_seconds_not_targetable[role].append(p["seconds_not_targetable"])
+                    role_seconds_not_targetable[role].append(
+                        p["seconds_not_targetable"]
+                    )
                     role_seconds_reset_window[role].append(p["seconds_reset_window"])
-                    dead = 900 - p["was_eliminated_at"] if p["was_eliminated_at"] < 901 else 0
+                    dead = (
+                        900 - p["was_eliminated_at"]
+                        if p["was_eliminated_at"] < 901
+                        else 0
+                    )
                     role_seconds_dead[role].append(dead)
                     role_follow_up_shots[role].append(p["follow_up_shots"])
                     role_reaction_shots[role].append(p["reaction_shots"])
         else:
             sim = BatchSimulator()
             for _ in range(n):
-                _, red_players, blue_players = sim._simulate_round(red_roster, blue_roster)
+                _, red_players, blue_players = sim._simulate_round(
+                    red_roster, blue_roster
+                )
                 for p in red_players + blue_players:
                     role_scores[p.role].append(p.points_scored)
                     role_tags[p.role].append(p.tags_made)
                     role_tagged[p.role].append(p.times_tagged)
                     role_missile_pts[p.role].append(p.missile_points)
-                    role_reset_window_tags[p.role].append(p.times_tagged_in_reset_window)
+                    role_reset_window_tags[p.role].append(
+                        p.times_tagged_in_reset_window
+                    )
                     role_seconds_active[p.role].append(p.seconds_active)
                     role_seconds_not_targetable[p.role].append(p.seconds_not_targetable)
                     role_seconds_reset_window[p.role].append(p.seconds_reset_window)

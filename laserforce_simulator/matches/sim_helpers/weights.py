@@ -294,7 +294,13 @@ def _apply_endgame_rush(w, c, i, player, second, offset_key):
 # ---------------------------------------------------------------------------
 
 
-def _get_medic_weights(player, action_to_weight_index, weights, all_alive, second):
+def _get_medic_weights(
+    player: Any,
+    action_to_weight_index: dict[str, int],
+    weights: list[int],
+    all_alive: list[Any],
+    second: float,
+) -> list[int]:
     w, c, i = weights, _MEDIC, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
@@ -330,7 +336,13 @@ def _get_medic_weights(player, action_to_weight_index, weights, all_alive, secon
     return weights
 
 
-def _get_ammo_weights(player, action_to_weight_index, weights, all_alive, second):
+def _get_ammo_weights(
+    player: Any,
+    action_to_weight_index: dict[str, int],
+    weights: list[int],
+    all_alive: list[Any],
+    second: float,
+) -> list[int]:
     w, c, i = weights, _AMMO, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
@@ -383,7 +395,13 @@ def _get_ammo_weights(player, action_to_weight_index, weights, all_alive, second
     return weights
 
 
-def _get_scout_weights(player, action_to_weight_index, weights, all_alive, second):
+def _get_scout_weights(
+    player: Any,
+    action_to_weight_index: dict[str, int],
+    weights: list[int],
+    all_alive: list[Any],
+    second: float,
+) -> list[int]:
     w, c, i = weights, _SCOUT, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
@@ -426,7 +444,13 @@ def _get_scout_weights(player, action_to_weight_index, weights, all_alive, secon
     return weights
 
 
-def _get_heavy_weights(player, action_to_weight_index, weights, all_alive, second):
+def _get_heavy_weights(
+    player: Any,
+    action_to_weight_index: dict[str, int],
+    weights: list[int],
+    all_alive: list[Any],
+    second: float,
+) -> list[int]:
     w, c, i = weights, _HEAVY, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
@@ -455,7 +479,15 @@ def _get_heavy_weights(player, action_to_weight_index, weights, all_alive, secon
         _apply_seek_ally(w, c, i, player, ammo, no_resource=True)
 
     _apply_not_active(
-        w, c, i, player, all_alive, second, "medic", player.team_color, always_escape=True
+        w,
+        c,
+        i,
+        player,
+        all_alive,
+        second,
+        "medic",
+        player.team_color,
+        always_escape=True,
     )
     _apply_endgame_rush(w, c, i, player, second, "tag_player")
 
@@ -464,7 +496,35 @@ def _get_heavy_weights(player, action_to_weight_index, weights, all_alive, secon
     return weights
 
 
-def _get_commander_weights(player, action_to_weight_index, weights, all_alive, second):
+def _commander_nuke_gate(sp: int, ga: int) -> bool:
+    """Return True when a Commander should consider firing a nuke.
+
+    Low-awareness Commanders fire at the minimum 20-SP threshold.
+    High-awareness Commanders stack until a higher threshold, enabling
+    back-to-back nukes. Thresholds:
+      ga < 30  → fire at sp > 20
+      ga < 50  → fire at sp > 40
+      ga < 70  → fire at sp > 60
+      ga >= 70 → fire at sp > 80 (regardless of ga)
+    """
+    if sp > 80:
+        return True
+    if sp > 60 and ga < 70:
+        return True
+    if sp > 40 and ga < 50:
+        return True
+    if sp > 20 and ga < 30:
+        return True
+    return False
+
+
+def _get_commander_weights(
+    player: Any,
+    action_to_weight_index: dict[str, int],
+    weights: list[int],
+    all_alive: list[Any],
+    second: float,
+) -> list[int]:
     w, c, i = weights, _COMMANDER, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
@@ -494,15 +554,22 @@ def _get_commander_weights(player, action_to_weight_index, weights, all_alive, s
         _apply_seek_ally(w, c, i, player, ammo, no_resource=True)
 
     if player.final_special >= player.special_cost:
-        enemies_in_zone = [
-            p
-            for p in all_alive
-            if p.team_color != player.team_color
-            and p.current_zone == player.current_zone
-            and p.is_active_at(second)
-        ]
-        raw = c["special_base"] - c["special_per_enemy"] * len(enemies_in_zone)
-        w[i["use_special"]] = int(raw * (player.special_usage / 50))
+        # Default 50 = mid-awareness tier (fires at sp > 40). Players should always
+        # have game_awareness set; this fallback guards legacy/test objects only.
+        game_awareness = getattr(player, "game_awareness", 50)
+        if _commander_nuke_gate(player.final_special, game_awareness):
+            enemies_in_zone = [
+                p
+                for p in all_alive
+                if p.team_color != player.team_color
+                and p.current_zone == player.current_zone
+                and p.is_active_at(second)
+            ]
+            raw = c["special_base"] - c["special_per_enemy"] * len(enemies_in_zone)
+            w[i["use_special"]] = int(raw * (player.special_usage / 50))
+        # MECH-06: memory system can override the gate here when situational factors
+        # (enemy nuke incoming, allied medic/ammo separated, or multi-nuke window open)
+        # justify firing earlier or suppressing the nuke entirely.
 
     _apply_not_active(w, c, i, player, all_alive, second, "medic", player.team_color)
     _apply_endgame_rush(w, c, i, player, second, "tag_player")

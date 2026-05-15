@@ -385,12 +385,12 @@ class TestWeightFunctions:
         assert sum(w) == 95
 
     def test_commander_special_no_enemies_fires_nuke(self):
-        """Commander with nuke charged and no enemies in zone fires immediately."""
+        """Commander with max-stacked SP fires regardless of game_awareness."""
         s = self._state(
             self.gr,
             self.players["commander"],
             "commander",
-            final_special=20,
+            final_special=81,
             missiles_landed=5,
             zone_fallback=0,
         )
@@ -403,7 +403,7 @@ class TestWeightFunctions:
             self.gr,
             self.players["commander"],
             "commander",
-            final_special=20,
+            final_special=81,
             missiles_landed=5,
             zone_fallback=0,
             team_color="red",

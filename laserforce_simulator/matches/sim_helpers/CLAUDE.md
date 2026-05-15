@@ -75,6 +75,8 @@ The caller (`BatchSimulator._plan_action`) passes a baseline of `[70, 30, 0, 0, 
 
 `teamwork` and `communication` retain skeleton TODO blocks in the weight functions, deferred to MECH-06.
 
+`_commander_nuke_gate(sp, ga)` gates the Commander `use_special` weight based on the awareness-tier stacking table (MECH-03): ga<30→fire at sp>20; ga<50→fire at sp>40; ga<70→fire at sp>60; always fire at sp>80. When the gate is closed, weight stays 0 and the Commander stacks SP toward the next threshold. A `# MECH-06:` hook comment inside `_get_commander_weights` marks where situational overrides will plug in.
+
 ### Known pre-existing test failure
 
 `test_medic_can_capture_base_prioritises_capture` expects `capture_base == 50` but the medic weight code only adds +5. This predates current work and is not a regression.

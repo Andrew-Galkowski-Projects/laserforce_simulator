@@ -5,6 +5,7 @@ processes on Windows before django.setup() has been called.  Django is
 initialised by worker_django_init(), which is registered as the
 ProcessPoolExecutor initializer and runs before any task function executes.
 """
+
 import random
 
 
