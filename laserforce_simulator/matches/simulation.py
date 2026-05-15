@@ -663,17 +663,24 @@ class ResourceBasedSimulator:
                     survival = getattr(lock.defender, "survival", 50)
                     dodge_pct = min(20.0, survival / 5.0)
                     if random.random() * 100 < dodge_pct:
-                        event_buffer.append({
-                            "event_type": "missile_dodge",
-                            "actor_id": lock.defender.player_id,
-                            "target_id": lock.attacker.player_id,
-                            "timestamp": db_second,
-                            "points_awarded": 0,
-                            "description": f"{lock.defender.player.name} dodges missile from {lock.attacker.player.name}",
-                            "metadata": {"actor_role": lock.attacker.role, "target_role": lock.defender.role},
-                        })
+                        event_buffer.append(
+                            {
+                                "event_type": "missile_dodge",
+                                "actor_id": lock.defender.player_id,
+                                "target_id": lock.attacker.player_id,
+                                "timestamp": db_second,
+                                "points_awarded": 0,
+                                "description": f"{lock.defender.player.name} dodges missile from {lock.attacker.player.name}",
+                                "metadata": {
+                                    "actor_role": lock.attacker.role,
+                                    "target_role": lock.defender.role,
+                                },
+                            }
+                        )
                     else:
-                        self._complete_missile(lock.attacker, lock.defender, db_second, event_buffer)
+                        self._complete_missile(
+                            lock.attacker, lock.defender, db_second, event_buffer
+                        )
                 # "miss": missile already consumed, no further action
             pending_missile_locks = still_locking
 
@@ -1673,7 +1680,9 @@ class ResourceBasedSimulator:
         tagger.save()
         teammate.save()
 
-    def _start_missile_lock(self, attacker, defender, second, event_buffer=None, movement_ctx=None):
+    def _start_missile_lock(
+        self, attacker, defender, second, event_buffer=None, movement_ctx=None
+    ):
         if event_buffer is None:
             event_buffer = []
         return _start_missile_lock_shared(
@@ -2486,6 +2495,7 @@ class BatchSimulator:
                 player_awareness=player_model.stat_for_simulation(
                     "player_awareness", role
                 ),
+                game_awareness=player_model.stat_for_simulation("game_awareness", role),
                 decision_making=player_model.stat_for_simulation(
                     "decision_making", role
                 ),
@@ -2560,17 +2570,24 @@ class BatchSimulator:
                     dodge_pct = min(20.0, survival / 5.0)
                     if random.random() * 100 < dodge_pct:
                         if event_log is not None:
-                            event_log.append({
-                                "event_type": "missile_dodge",
-                                "actor_id": lock.defender.player_id,
-                                "target_id": lock.attacker.player_id,
-                                "timestamp": second,
-                                "points_awarded": 0,
-                                "description": f"{lock.defender.name} dodges missile from {lock.attacker.name}",
-                                "metadata": {"actor_role": lock.attacker.role, "target_role": lock.defender.role},
-                            })
+                            event_log.append(
+                                {
+                                    "event_type": "missile_dodge",
+                                    "actor_id": lock.defender.player_id,
+                                    "target_id": lock.attacker.player_id,
+                                    "timestamp": second,
+                                    "points_awarded": 0,
+                                    "description": f"{lock.defender.name} dodges missile from {lock.attacker.name}",
+                                    "metadata": {
+                                        "actor_role": lock.attacker.role,
+                                        "target_role": lock.defender.role,
+                                    },
+                                }
+                            )
                     else:
-                        self._complete_missile(lock.attacker, lock.defender, second, event_log)
+                        self._complete_missile(
+                            lock.attacker, lock.defender, second, event_log
+                        )
                 # "miss": missile already consumed, no further action
             pending_missile_locks = still_locking_b
 

@@ -35,6 +35,7 @@ class PlayerState:
     final_missiles: int = 0
     shields: int = 1
     player_awareness: int = 50  # 0-100, from Player model
+    game_awareness: int = 50  # 0-100, from Player model
 
     current_zone: int = 0
     cell_row: Optional[int] = None
