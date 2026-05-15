@@ -1,0 +1,7 @@
+# Simulation data is disposable — schema changes do not migrate data
+
+**Status:** accepted
+
+Matches, rounds, `PlayerRoundState`, `GameEvent`, and existing player stat values are treated as disposable: schema changes ship without data migrations and existing simulated records may be wiped rather than backfilled. This is a deliberate project-wide constraint (stated explicitly throughout PLAN.md: "existing match/round data is disposable — no data migration required", "existing player data is disposable — no backfill"). It holds because all of this data is *regenerable* — any round can be re-simulated and players can be regenerated — so the velocity gained by skipping backfill migrations outweighs preserving historical simulation output the project does not treat as ground truth.
+
+**Consequence:** a plan that assumes historical rounds, events, or stat values survive a schema change is wrong by default — call this out. The constraint will stop holding once real (non-simulated) data exists that users care about (e.g. a deployed league with manually entered results); revisit then. Note this is the *opposite* stance to source-of-truth schema changes elsewhere — e.g. the time-unit migration ([ADR-0001](0001-time-unit-seconds-now-tick-native-later.md)) is careful precisely because it touches the meaning of persisted values that downstream analytics depend on.

@@ -1,0 +1,7 @@
+# Map configuration stored as a JSON blob, not normalized columns
+
+**Status:** accepted
+
+All per-map spatial configuration — the cell/zone grid, blocked edges, wall metadata, per-cell elevation, and per-team spawn cells — is stored together in the single `MapZoneConfig.zone_data` JSON field rather than as dedicated columns or related tables. This was chosen repeatedly and deliberately (every MAP-0x story notes "no new DB column required"): map config is bulk, hierarchical, written wholesale by the editor, and read wholesale at round start, so a JSON document matches the access pattern and lets new spatial attributes ship without a migration. The trade-off accepted is that this data is **not queryable in SQL** — you cannot filter or aggregate maps by elevation, wall type, or spawn layout in the database.
+
+This is sustainable only because map config is editor-managed and effectively disposable (see [ADR-0004](0004-simulation-data-is-disposable.md)); if maps ever needed to be queried or partially updated transactionally, this decision would need revisiting. Sight-line-derived data that *is* queried independently (`SightLineConfig`, `BaseSightLineConfig`, `MapCellRankingConfig`, `HeavyStrongSpotsConfig`) is kept in its own models — the blob is for the raw editor payload, not for everything map-related.

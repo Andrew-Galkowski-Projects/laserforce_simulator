@@ -7,6 +7,12 @@ from matches.sim_helpers.role_constants import (
     ROLE_STATS as _ROLE_STATS,
     SPECIAL_COST as _SPECIAL_COST,
 )
+from matches.sim_helpers.time_constants import (
+    NOT_TARGETABLE_TICKS,
+    RESPAWN_TICKS,
+    SCORE_BROADCAST_PERIOD_TICKS,
+    SURVIVED_SENTINEL,
+)
 
 
 @dataclass
@@ -41,7 +47,7 @@ class PlayerState:
     current_zone: int = 0
     cell_row: Optional[int] = None
     cell_col: Optional[int] = None
-    was_eliminated_at: int = 901
+    was_eliminated_at: int = SURVIVED_SENTINEL
     last_downed_time: Optional[int] = None
     special_active_until: int = 0
     is_hiding: bool = False
@@ -84,21 +90,22 @@ class PlayerState:
     # Only meaningful for the medic role.
     medic_hit_times: list = field(default_factory=list)
 
-    # MECH-06: score broadcast state — set every 180 s by the simulator tick loop.
-    # {"winning_team": "red"|"blue"|"tied", "timestamp": s}  or None if not yet broadcast.
+    # MECH-06: score broadcast state — set every SCORE_BROADCAST_PERIOD_TICKS
+    # by the simulator tick loop.
+    # {"winning_team": "red"|"blue"|"tied", "timestamp": tick}  or None if not yet broadcast.
     score_broadcast_state: dict = field(default_factory=dict)
 
-    # MECH-06: next second at which the score broadcast should fire for this player.
-    score_broadcast_next: int = 180
+    # MECH-06: next tick at which the score broadcast should fire for this player.
+    score_broadcast_next: int = SCORE_BROADCAST_PERIOD_TICKS
 
     # stamina tracking (transient — not persisted to DB)
     stamina_penalty_count: int = 0
     stamina_next_check_pct: int = 10  # next 10% checkpoint to evaluate
 
-    # uptime breakdown in seconds (accumulated each tick)
-    seconds_active: int = 0
-    seconds_not_targetable: int = 0
-    seconds_reset_window: int = 0
+    # uptime breakdown in ticks (accumulated +1 each tick)
+    ticks_active: int = 0
+    ticks_not_targetable: int = 0
+    ticks_reset_window: int = 0
 
     # Role-derived constants — cached once in __post_init__, never change per instance.
     # Storing as plain fields avoids repeated dict lookups inside the hot tick loop.
@@ -151,22 +158,31 @@ class PlayerState:
             return True
         return False
 
-    def is_active_at(self, second: int) -> bool:
+    def is_active_at(self, tick: int) -> bool:
+        """TIME-01: BatchSimulator is fully tick-native; ``tick`` is an integer
+        tick index and the respawn cooldown is compared in ticks."""
         if self.final_lives == 0:
             return False
-        if self.last_downed_time is not None and second - self.last_downed_time < 8:
+        if (
+            self.last_downed_time is not None
+            and tick - self.last_downed_time < RESPAWN_TICKS
+        ):
             return False
         return True
 
-    def is_taggable_at(self, second: int) -> bool:
+    def is_taggable_at(self, tick: int) -> bool:
+        """TIME-01: tick-domain not-targetable window (was < 4 s)."""
         if self.final_lives == 0:
             return False
-        if self.last_downed_time is not None and second - self.last_downed_time < 4:
+        if (
+            self.last_downed_time is not None
+            and tick - self.last_downed_time < NOT_TARGETABLE_TICKS
+        ):
             return False
         return True
 
-    def is_resupplyable_at(self, second: int) -> bool:
-        return self.is_active_at(second)
+    def is_resupplyable_at(self, tick: int) -> bool:
+        return self.is_active_at(tick)
 
     @property
     def stamina_hit_modifier(self) -> float:

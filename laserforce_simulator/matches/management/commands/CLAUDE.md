@@ -13,12 +13,14 @@ python manage.py score_averages --rounds 100 --team-red "Team A" --team-blue "Te
 
 Defaults to the first two teams in the DB with active rosters. Use `--seed` for reproducible runs.
 
+**Time unit (TIME-01):** `BatchSimulator` accumulates uptime in **ticks** (`ticks_active` / `ticks_not_targetable` / `ticks_reset_window`); dead-time is derived as `1800 - was_eliminated_at`. `score_averages` divides ticks by 2 at the **display boundary only** — this command and `game_analysis` are the sole `÷2` sites besides HTML templates. The uptime aggregation reads the renamed `ticks_*` fields and reports the seconds figures for human readability.
+
 ### Output sections
 
 1. **Score summary** — avg score vs calibration target, avg tags made, avg times tagged. Colour-coded: green = within 500 of target, yellow = 500–1000 over, red = >1000 over.
 2. **Missile breakdown** — avg missile points, % of total score, avg missiles hit per round.
 3. **Reset-window tags** — avg times tagged while in the 4–7 s respawn window (informational; helps tune survival stats).
-4. **Uptime breakdown** — avg seconds in each state (active / reset-window / dead / not-targetable) and percentages. Useful for diagnosing whether a role is dying too fast or spending too much time in transit.
+4. **Uptime breakdown** — avg seconds in each state (active / reset-window / dead / not-targetable) and percentages. Source values are ticks (`ticks_*` + `1800 - was_eliminated_at`); shown in seconds via the `÷2` display conversion. Useful for diagnosing whether a role is dying too fast or spending too much time in transit.
 5. **Follow-up & reaction shots** — avg follow-up shots per round, follow-ups as % of total tags, same for reaction shots. Use this to check whether follow-up eligibility logic is working correctly (e.g. heavy should always show 0.0% follow-up).
 
 ### Calibration targets
@@ -43,4 +45,4 @@ Analyses events from a completed (DB-persisted) `GameRound` and prints per-playe
 python manage.py game_analysis --round-id <game_round_pk>
 ```
 
-Useful for verifying that the `ResourceBasedSimulator`'s event log produces uptime numbers consistent with what `BatchSimulator` accumulates directly.
+Useful for verifying that the `ResourceBasedSimulator`'s event log produces uptime numbers consistent with what `BatchSimulator` accumulates directly. **TIME-01:** `GameEvent.timestamp` and `was_eliminated_at` read here are in ticks; like `score_averages`, this command divides by 2 at the display boundary only (dead-time = `1800 - was_eliminated_at`).

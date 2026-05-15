@@ -262,7 +262,9 @@ class TestBatchSimulatorFollowUps:
 
         assert len(pending_fu) == 1
         fu = pending_fu[0]
-        assert fu.fire_at == pytest.approx(10.5)
+        # TIME-01: tick-native. Scout cooldown 0.5 s → 1 tick; scheduled at
+        # tick 10 + 1 = 11 (was second 10.0 + 0.5 = 10.5).
+        assert fu.fire_at == pytest.approx(11.0)
         assert fu.attacker is attacker
         assert fu.defender is defender
         assert fu.chain_depth == 1
@@ -369,7 +371,9 @@ class TestBatchSimulatorReactions:
 
         assert len(pending_rx) == 1
         rx = pending_rx[0]
-        assert rx.fire_at == pytest.approx(10.5)
+        # TIME-01: tick-native. Reaction cooldown 0.5 s → 1 tick;
+        # scheduled at tick 10 + 1 = 11 (was second 10.0 + 0.5 = 10.5).
+        assert rx.fire_at == pytest.approx(11.0)
         assert rx.attacker is defender
         assert rx.defender is attacker
 
@@ -391,7 +395,7 @@ class TestBatchSimulatorReactions:
 
         assert len(pending_rx) == 0
 
-    def test_heavy_defender_reaction_has_1s_delay(self):
+    def test_heavy_defender_reaction_has_2_tick_delay(self):
         sim = BatchSimulator()
         attacker = _make_ps("scout", team_color="red", final_shots=20)
         defender = _make_ps(
@@ -408,7 +412,9 @@ class TestBatchSimulatorReactions:
             )
 
         assert len(pending_rx) == 1
-        assert pending_rx[0].fire_at == pytest.approx(11.0)
+        # TIME-01: tick-native. Heavy cooldown 1.0 s → 2 ticks;
+        # scheduled at tick 10 + 2 = 12 (was second 10.0 + 1.0 = 11.0).
+        assert pending_rx[0].fire_at == pytest.approx(12.0)
 
     def test_inactive_defender_does_not_react(self):
         sim = BatchSimulator()
@@ -498,9 +504,12 @@ class TestSim06FlushFields:
 
     Fields under test:
         follow_up_shots, reaction_shots,
-        seconds_active, seconds_not_targetable, seconds_reset_window,
+        ticks_active, ticks_not_targetable, ticks_reset_window,
         combo_resupply_count, times_tagged_in_reset_window,
         missile_points, cell_row, cell_col
+
+    TIME-01: the uptime columns were renamed seconds_* → ticks_* and store
+    ticks; the survived sentinel is 1801.
     """
 
     # ------------------------------------------------------------------
@@ -588,8 +597,12 @@ class TestSim06FlushFields:
     # Tests
     # ------------------------------------------------------------------
 
-    def test_seconds_active_written_for_all_players(self):
-        """Every non-immediately-eliminated player accumulates seconds_active > 0."""
+    def test_ticks_active_written_for_all_players(self):
+        """Every non-immediately-eliminated player accumulates ticks_active > 0.
+
+        TIME-01: renamed from test_seconds_active_written_for_all_players;
+        seconds_active → ticks_active. Survivors have was_eliminated_at == 1801.
+        """
         from matches.models import PlayerRoundState
 
         team_red, _ = make_team_with_slots("Sim06ActiveR")
@@ -600,12 +613,14 @@ class TestSim06FlushFields:
 
         states = list(PlayerRoundState.objects.filter(game_round=gr))
         assert states, "No PlayerRoundState rows were created"
-        # Every player with positive final_lives has been active for some ticks
+        # Players who were not eliminated at tick 0 have been active for some
+        # ticks (sentinel 1801 == survived; any positive elimination tick also
+        # implies they were active before being eliminated).
         active_states = [s for s in states if s.was_eliminated_at > 0]
         for s in active_states:
-            assert s.seconds_active > 0, (
+            assert s.ticks_active > 0, (
                 f"{s.player} ({s.role}) has was_eliminated_at={s.was_eliminated_at} "
-                f"but seconds_active=0"
+                f"but ticks_active=0"
             )
 
     def test_cell_row_and_cell_col_non_null_with_map(self):
@@ -660,8 +675,11 @@ class TestSim06FlushFields:
             "This field is probably not being written by _flush_to_db."
         )
 
-    def test_seconds_not_targetable_non_zero_on_at_least_one_player(self):
-        """At least one player has seconds_not_targetable > 0 (was tagged at least once)."""
+    def test_ticks_not_targetable_non_zero_on_at_least_one_player(self):
+        """At least one player has ticks_not_targetable > 0 (was tagged at least once).
+
+        TIME-01: renamed from seconds_not_targetable.
+        """
         from matches.models import PlayerRoundState
 
         team_red, _ = make_team_with_slots("Sim06NTR")
@@ -671,13 +689,16 @@ class TestSim06FlushFields:
         gr = self._run_and_flush(team_red, team_blue, arena_map, n_rounds=3)
 
         states = list(PlayerRoundState.objects.filter(game_round=gr))
-        assert any(s.seconds_not_targetable > 0 for s in states), (
-            "Expected seconds_not_targetable > 0 on at least one tagged player "
+        assert any(s.ticks_not_targetable > 0 for s in states), (
+            "Expected ticks_not_targetable > 0 on at least one tagged player "
             "but all were 0."
         )
 
-    def test_seconds_reset_window_non_zero_on_at_least_one_player(self):
-        """At least one player has seconds_reset_window > 0 (had taggable reset time)."""
+    def test_ticks_reset_window_non_zero_on_at_least_one_player(self):
+        """At least one player has ticks_reset_window > 0 (had taggable reset time).
+
+        TIME-01: renamed from seconds_reset_window.
+        """
         from matches.models import PlayerRoundState
 
         team_red, _ = make_team_with_slots("Sim06RWR")
@@ -687,8 +708,8 @@ class TestSim06FlushFields:
         gr = self._run_and_flush(team_red, team_blue, arena_map, n_rounds=3)
 
         states = list(PlayerRoundState.objects.filter(game_round=gr))
-        assert any(s.seconds_reset_window > 0 for s in states), (
-            "Expected seconds_reset_window > 0 on at least one player that was "
+        assert any(s.ticks_reset_window > 0 for s in states), (
+            "Expected ticks_reset_window > 0 on at least one player that was "
             "tagged (and thus entered the reset window), but all were 0."
         )
 
@@ -757,9 +778,10 @@ class TestSim06FlushFields:
         int_fields = [
             "follow_up_shots",
             "reaction_shots",
-            "seconds_active",
-            "seconds_not_targetable",
-            "seconds_reset_window",
+            # TIME-01: seconds_* → ticks_*
+            "ticks_active",
+            "ticks_not_targetable",
+            "ticks_reset_window",
             "combo_resupply_count",
             "times_tagged_in_reset_window",
             "missile_points",

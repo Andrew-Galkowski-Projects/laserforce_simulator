@@ -5,11 +5,11 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 ## Features
 
 - **Team & player management** — Create teams with 6 role-based player slots (Commander, Heavy, Scout, Medic, Ammo, + one duplicate)
-- **Match simulation** — 2-round matches, 15 minutes each, simulated in 2-second ticks with role-specific action weights
+- **Match simulation** — 2-round matches, 15 minutes each, simulated tick-by-tick (1 tick = 0.5 s, 1800 ticks/round) with role-specific action weights; seconds are a display-only conversion
 - **Arena map support** — Optionally attach a confirmed arena map to any match or round; players navigate via A* pathfinding on the real cell grid toward the enemy base (or a critical ally), recording a `movement` event per step for replay
 - **Wall hazards** — Three wall types on the map grid: high walls (block movement + sight), low walls (block movement, transparent to LOS), and windowed walls (block sight but allow directional tagging through a user-placed aperture). Wall types are painted in the map editor; windowed wall facing (N/S/E/W) determines which axis an attack can pass through
 - **Role mechanics** — Shields, lives, missiles/nukes, resupply, special charges, and zone movement all modeled
-- **Game event log** — Every tag, miss, missile, resupply, and base capture is recorded with timestamps and points
+- **Game event log** — Every tag, miss, missile, resupply, and base capture is recorded with tick timestamps and points (the JSON API returns raw ticks; the UI divides by 2 for seconds)
 - **MVP scoring** — Role-specific formulas weighted toward each role's primary contribution
 - **Game replay** — Step through match events chronologically with per-player stat tracking
 - **Team history** — Win/loss records across all matches
@@ -113,7 +113,7 @@ laserforce_simulator/
 
 ### Simulation Engine
 
-`ResourceBasedSimulator` runs a 900-second round in 2-second ticks:
+`ResourceBasedSimulator` runs an 1800-tick round (1 tick = 0.5 s; seconds are display-only, see [ADR-0001](docs/adr/0001-time-unit-seconds-now-tick-native-later.md)):
 
 1. Resolve any pending missiles/nukes whose delay has elapsed
 2. Each active player picks an action (weighted random by role, zone, remaining resources)

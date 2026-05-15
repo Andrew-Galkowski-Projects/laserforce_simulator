@@ -40,6 +40,14 @@ from .sim_helpers.pending_events import (
 )
 from .sim_helpers.spawn_assigner import assign_spawn_cells
 from .sim_helpers.resupply_queue import resolve_resupply_requests
+from .sim_helpers.time_constants import (
+    MEDIC_UNDER_FIRE_WINDOW_TICKS,
+    SCORE_BROADCAST_PERIOD_TICKS,
+    SURVIVED_SENTINEL,
+    TEAM_ELIM_BONUS_CUTOFF_TICKS,
+    TICK_SECONDS,
+    TICKS_PER_ROUND,
+)
 
 # Fields mutated by resupply resolution — saved once per touched player after the batch.
 _RESUPPLY_SAVE_FIELDS = [
@@ -51,6 +59,16 @@ _RESUPPLY_SAVE_FIELDS = [
     "combo_resupply_count",
     "resupplies_given",
 ]
+
+
+def _sec_to_ticks(seconds: float) -> int:
+    """TIME-01 persistence-boundary conversion: seconds -> ticks (×2).
+
+    Used ONLY by ResourceBasedSimulator, which stays second-internal and
+    byte-identical; this maps its second-valued persisted/serialized time
+    columns into the canonical tick unit at the single save/emit boundary.
+    """
+    return int(round(seconds / TICK_SECONDS))
 
 
 def _str_tag_id(player) -> str:
@@ -215,11 +233,21 @@ def _broadcast_communication(
             ally_memory[best_tag_id] = dict(best_entry)
 
 
-def _apply_score_broadcast(all_alive: list, second: float) -> None:
-    """MECH-06: every 180 s, compute which team is winning and update score_broadcast_state.
+def _apply_score_broadcast(
+    all_alive: list,
+    second: float,
+    period: int = SCORE_BROADCAST_PERIOD_TICKS,
+) -> None:
+    """MECH-06: every ``period`` time-units, compute which team is winning and
+    update score_broadcast_state.
 
-    Stores {"winning_team": "red"|"blue"|"tied", "timestamp": second} on each player.
-    Players whose score_broadcast_next <= second get the update.
+    Stores {"winning_team": "red"|"blue"|"tied", "timestamp": second} on each
+    player. Players whose score_broadcast_next <= second get the update.
+
+    TIME-01: ``period`` is the broadcast cadence in the caller's time domain.
+    BatchSimulator (tick-native) uses the default SCORE_BROADCAST_PERIOD_TICKS;
+    ResourceBasedSimulator passes its seconds-domain cadence (180) explicitly so
+    its internal behaviour stays byte-identical.
     """
     red_pts = sum(p.points_scored for p in all_alive if p.team_color == "red")
     blue_pts = sum(p.points_scored for p in all_alive if p.team_color == "blue")
@@ -231,13 +259,13 @@ def _apply_score_broadcast(all_alive: list, second: float) -> None:
         winning_team = "tied"
 
     for player in all_alive:
-        next_broadcast = getattr(player, "score_broadcast_next", 180)
+        next_broadcast = getattr(player, "score_broadcast_next", period)
         if second >= next_broadcast:
             player.score_broadcast_state = {
                 "winning_team": winning_team,
                 "timestamp": second,
             }
-            player.score_broadcast_next = next_broadcast + 180
+            player.score_broadcast_next = next_broadcast + period
 
 
 def _apply_nuke_activation_broadcast(
@@ -269,19 +297,25 @@ def _check_medic_under_fire(
     medic,
     all_alive: list,
     second: float,
+    window: int = MEDIC_UNDER_FIRE_WINDOW_TICKS,
 ) -> None:
-    """MECH-06: when a Medic is hit 2× within 12 s, alert all living teammates.
+    """MECH-06: when a Medic is hit 2× within ``window``, alert all living teammates.
 
-    Appends current second to medic.medic_hit_times, trims entries older than 12 s,
-    and if ≥ 2 hits remain, updates all alive teammates' memory with the medic's cell.
+    Appends current second to medic.medic_hit_times, trims entries older than
+    ``window``, and if ≥ 2 hits remain, updates all alive teammates' memory
+    with the medic's cell.
+
+    TIME-01: ``window`` is in the caller's time domain. BatchSimulator uses the
+    default MEDIC_UNDER_FIRE_WINDOW_TICKS; ResourceBasedSimulator passes its
+    seconds-domain window (12) explicitly so its behaviour stays byte-identical.
     """
     hit_times = getattr(medic, "medic_hit_times", None)
     if hit_times is None:
         medic.medic_hit_times = []
         hit_times = medic.medic_hit_times
     hit_times.append(second)
-    # Trim entries older than 12 s
-    medic.medic_hit_times = [t for t in hit_times if second - t <= 12]
+    # Trim entries older than the window
+    medic.medic_hit_times = [t for t in hit_times if second - t <= window]
     if len(medic.medic_hit_times) >= 2 and medic.cell_row is not None:
         medic_tag = _str_tag_id(medic)
         for p in all_alive:
@@ -383,10 +417,16 @@ class ResourceBasedSimulator:
     """Enhanced simulator that tracks individual player resources"""
 
     TICK = 0.5  # seconds per simulation tick (matches BatchSimulator)
-    ROUND_SECONDS = 900  # full 15-minute round
+    # TIME-01: round length is now tick-valued. RBS still runs its loop in
+    # seconds internally (byte-identical), so the seconds duration is derived.
+    ROUND_TICKS = TICKS_PER_ROUND  # full 15-minute round (1800 ticks)
 
-    def __init__(self, duration: int | None = None):
-        self._round_duration = duration if duration is not None else self.ROUND_SECONDS
+    def __init__(self, duration_ticks: int | None = None):
+        # The constructor argument is in TICKS (like every other code-facing
+        # time value). RBS's internal loop is still second-based, so convert
+        # the tick duration to its seconds equivalent for the loop bound.
+        round_ticks = duration_ticks if duration_ticks is not None else self.ROUND_TICKS
+        self._round_duration = round_ticks * TICK_SECONDS
         self.elimination_bonus = 10000  # Bonus points for eliminating entire team
         # Role-based starting resources
         self.role_starting_resources = {
@@ -496,9 +536,19 @@ class ResourceBasedSimulator:
         game_round.is_completed = True
         game_round.save()
 
+        # TIME-01 emission boundary: RBS builds every event dict with a
+        # seconds-valued "timestamp" (db_second / int(second)). GameEvent.timestamp
+        # is the canonical TICK unit, so convert seconds -> ticks (×2) exactly
+        # here, where the in-memory buffer becomes persisted rows.
         GameEvent.objects.bulk_create(
             [
-                GameEvent(game_round=game_round, **ev)
+                GameEvent(
+                    game_round=game_round,
+                    **{
+                        **ev,
+                        "timestamp": _sec_to_ticks(ev["timestamp"]),
+                    },
+                )
                 for ev in round_result["event_buffer"]
             ]
         )
@@ -1312,8 +1362,18 @@ class ResourceBasedSimulator:
             blue_eliminated,
         )
 
-        # Save final states
+        # TIME-01 persistence boundary: RBS runs entirely in seconds internally
+        # (byte-identical to pre-TIME-01). Convert the persisted, API-serialized
+        # time columns from seconds to TICKS (×2) exactly once, here, after the
+        # tick loop has finished reading them. SURVIVED-sentinel rows
+        # (was_eliminated_at left at its 1801 default) are NOT rescaled.
         for p in red_players + blue_players:
+            if p.was_eliminated_at != SURVIVED_SENTINEL:
+                p.was_eliminated_at = _sec_to_ticks(p.was_eliminated_at)
+            if p.last_downed_time is not None:
+                p.last_downed_time = _sec_to_ticks(p.last_downed_time)
+            if p.special_active_until:
+                p.special_active_until = _sec_to_ticks(p.special_active_until)
             p.save()
 
         return {
@@ -1321,7 +1381,14 @@ class ResourceBasedSimulator:
             "blue_points": blue_points,
             "red_eliminated": red_eliminated,
             "blue_eliminated": blue_eliminated,
-            "eliminated_at": eliminated_at,
+            # RBS's in-loop "no team elimination" sentinel is the legacy
+            # seconds value 901; map it to the tick SURVIVED_SENTINEL, and
+            # convert a real elimination second to ticks (×2).
+            "eliminated_at": (
+                SURVIVED_SENTINEL
+                if eliminated_at == 901
+                else _sec_to_ticks(eliminated_at)
+            ),
             "event_buffer": event_buffer,
         }
 
@@ -2575,6 +2642,15 @@ def _precompute_roster(roster) -> list:
     return result
 
 
+def _cooldown_ticks(player, tick) -> int:
+    """TIME-01: shot_cooldown() returns SECONDS (0.0 / 0.5 / 1.0). The
+    tick-native BatchSimulator schedules pending shots at integer tick offsets,
+    so convert the seconds cooldown to whole ticks: 0.0s -> 0, 0.5s -> 1,
+    1.0s -> 2 (round to nearest tick)."""
+    cooldown_seconds = shot_cooldown(player, tick)
+    return int(round(cooldown_seconds / TICK_SECONDS))
+
+
 class BatchSimulator:
     """Pure in-memory simulator for running N rounds without DB writes.
 
@@ -2884,10 +2960,19 @@ class BatchSimulator:
         pending_nukes: list[PendingNuke] = []
         pending_followups: list[PendingFollowup] = []
         pending_reactions: list[PendingReaction] = []
-        eliminated_at = 901
+        eliminated_at = SURVIVED_SENTINEL
 
-        for _tick in range(int(900 / self.TICK)):
-            second = _tick * self.TICK
+        # TIME-01: fully tick-native loop. `tick` is the integer tick index in
+        # [0, TICKS_PER_ROUND). All internal comparisons, scheduling, uptime
+        # accumulation, and timestamps are in ticks. shot_cooldown() still
+        # returns seconds, so it is converted to ticks at each scheduling site.
+        for tick in range(TICKS_PER_ROUND):
+            # TIME-01: `second` is bound to the integer tick so every internal
+            # comparison, scheduled time, uptime accumulation, and emitted
+            # timestamp below is tick-valued (the canonical unit). The name is
+            # retained only to avoid a 50-site mechanical rename in this
+            # SIM-09-doomed engine; no value here is in real seconds.
+            second = tick
             # --- process missile locks (LOS-check per tick for 3 ticks) ---
             still_locking_b: list[PendingMissileLock] = []
             for lock in pending_missile_locks:
@@ -3111,8 +3196,8 @@ class BatchSimulator:
                         )
                     if not downed and chain < 2 and fu_defender.final_lives > 0:
                         if fu_defender.player_awareness < random.randint(0, 100):
-                            cooldown = shot_cooldown(fu_attacker, second)
-                            if cooldown == 0.0:
+                            cd_ticks = _cooldown_ticks(fu_attacker, second)
+                            if cd_ticks == 0:
                                 due_fu.append(
                                     PendingFollowup(
                                         second, fu_attacker, fu_defender, chain + 1
@@ -3121,7 +3206,7 @@ class BatchSimulator:
                             else:
                                 pending_followups.append(
                                     PendingFollowup(
-                                        second + cooldown,
+                                        second + cd_ticks,
                                         fu_attacker,
                                         fu_defender,
                                         chain + 1,
@@ -3165,15 +3250,6 @@ class BatchSimulator:
                 if p.final_lives > 0 and p.was_eliminated_at > second
             ]
             all_alive = red_alive + blue_alive
-
-            # accumulate uptime for all living players
-            for p in all_alive:
-                if not p.is_active_at(second) and not p.is_taggable_at(second):
-                    p.seconds_not_targetable += self.TICK
-                elif not p.is_active_at(second):
-                    p.seconds_reset_window += self.TICK
-                else:
-                    p.seconds_active += self.TICK
 
             # MECH-04: mark players reacting to incoming nukes.
             # Runs after drain_nukes so flags apply to still-pending (future) nukes only;
@@ -3288,6 +3364,21 @@ class BatchSimulator:
                     all_alive=all_alive,
                 )
 
+            # Accumulate uptime AFTER combat resolves (TIME-01: tick-native,
+            # +1 tick per iteration). Membership is recomputed post-combat so a
+            # player eliminated this tick is excluded — their last uptime tick
+            # is the previous one, making total uptime == was_eliminated_at
+            # exactly and reconciling with dead = TICKS_PER_ROUND - elim_tick.
+            for p in red_players + blue_players:
+                if p.final_lives <= 0 or p.was_eliminated_at <= second:
+                    continue
+                if not p.is_active_at(second) and not p.is_taggable_at(second):
+                    p.ticks_not_targetable += 1
+                elif not p.is_active_at(second):
+                    p.ticks_reset_window += 1
+                else:
+                    p.ticks_active += 1
+
             # --- check for team elimination ---
             red_alive = [p for p in red_players if p.final_lives > 0]
             blue_alive = [p for p in blue_players if p.final_lives > 0]
@@ -3300,6 +3391,19 @@ class BatchSimulator:
                     for p in red_alive:
                         self._award_bases(p, event_log, second)
                 break
+
+        # TIME-01: guarantee uptime reconciles to exactly TICKS_PER_ROUND per
+        # player. If the loop broke early on a team wipe, survivors are credited
+        # the remaining ticks as active (they were alive the whole round).
+        # Eliminated players' remainder is dead-time (TICKS_PER_ROUND -
+        # was_eliminated_at), accounted at report time, so no top-up is needed.
+        for p in red_players + blue_players:
+            if p.final_lives > 0:
+                accounted = (
+                    p.ticks_active + p.ticks_not_targetable + p.ticks_reset_window
+                )
+                if accounted < TICKS_PER_ROUND:
+                    p.ticks_active += TICKS_PER_ROUND - accounted
 
         red_points = sum(p.points_scored for p in red_players)
         blue_points = sum(p.points_scored for p in blue_players)
@@ -3320,8 +3424,10 @@ class BatchSimulator:
     # Action planning — reuses weight functions from weights.py
     # ------------------------------------------------------------------ #
 
-    def _plan_action(self, player, all_alive, second, movement_ctx=None):
-        return plan_action(player, all_alive, second, movement_ctx)
+    def _plan_action(self, player, all_alive, tick, movement_ctx=None):
+        # TIME-01: BatchSimulator is fully tick-native — pass the integer tick
+        # and select tick-domain thresholds in the shared planning helpers.
+        return plan_action(player, all_alive, tick, movement_ctx, time_domain="ticks")
 
     def _move_player_in_memory(self, player, goal_cell, movement_ctx):
         if goal_cell is None or player.cell_row is None:
@@ -3516,14 +3622,14 @@ class BatchSimulator:
             if r_target.final_lives <= 0:
                 continue
             if r_reactor.player_awareness >= random.randint(0, 100):
-                cooldown = shot_cooldown(r_reactor, second)
-                if cooldown == 0.0:
+                cd_ticks = _cooldown_ticks(r_reactor, second)
+                if cd_ticks == 0:
                     immediate_reactions.append(
                         {"attacker": r_reactor, "defender": r_target}
                     )
                 elif pending_reactions is not None:
                     pending_reactions.append(
-                        PendingReaction(second + cooldown, r_reactor, r_target)
+                        PendingReaction(second + cd_ticks, r_reactor, r_target)
                     )
 
         for ra in immediate_reactions:
@@ -3631,8 +3737,8 @@ class BatchSimulator:
             if o["attacker"].final_shots <= 0 and o["attacker"].role != "ammo":
                 continue
             if o["defender"].player_awareness < random.randint(0, 100):
-                cooldown = shot_cooldown(o["attacker"], second)
-                if cooldown == 0.0:
+                cd_ticks = _cooldown_ticks(o["attacker"], second)
+                if cd_ticks == 0:
                     immediate_follow_ups.append(
                         {
                             "attacker": o["attacker"],
@@ -3643,7 +3749,7 @@ class BatchSimulator:
                 elif pending_followups is not None:
                     pending_followups.append(
                         PendingFollowup(
-                            second + cooldown, o["attacker"], o["defender"], 1
+                            second + cd_ticks, o["attacker"], o["defender"], 1
                         )
                     )
 
@@ -3839,7 +3945,8 @@ class BatchSimulator:
         player.specials_used += 1
         if player.role == "commander":
             player.final_special -= player.special_cost
-            countdown = random.randint(4, 7)
+            # TIME-01: nuke fuse is 4-7 s -> 8-14 ticks (tick-native).
+            countdown = random.randint(8, 14)
             player.special_active_until = second + countdown
             if event_log is not None:
                 event_log.append(
@@ -3859,7 +3966,8 @@ class BatchSimulator:
             return ("nuke", second + countdown, player)
         elif player.role == "scout":
             player.final_special -= player.special_cost
-            player.special_active_until = 900
+            # TIME-01: rapid fire lasts the whole round (tick-native sentinel).
+            player.special_active_until = TICKS_PER_ROUND
             if event_log is not None:
                 event_log.append(
                     {
@@ -4051,9 +4159,9 @@ class BatchSimulator:
                 times_tagged_in_reset_window=p.times_tagged_in_reset_window,
                 follow_up_shots=p.follow_up_shots,
                 reaction_shots=p.reaction_shots,
-                seconds_active=p.seconds_active,
-                seconds_not_targetable=p.seconds_not_targetable,
-                seconds_reset_window=p.seconds_reset_window,
+                ticks_active=p.ticks_active,
+                ticks_not_targetable=p.ticks_not_targetable,
+                ticks_reset_window=p.ticks_reset_window,
                 was_eliminated_at=p.was_eliminated_at,
             )
 

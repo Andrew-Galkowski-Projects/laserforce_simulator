@@ -747,7 +747,11 @@
                 type: el.dataset.eventType,
                 actorId: el.dataset.actorId,
                 targetId: el.dataset.targetId,
-                sec: parseInt(el.dataset.ts || 0),
+                // TIME-01 DISPLAY boundary: data-ts is the canonical TICK
+                // timestamp (1 tick = 0.5 s). Convert to seconds (÷2) here so
+                // the entire playback engine below (scrubber, mm:ss, respawn
+                // windows) stays in seconds and unchanged.
+                sec: parseInt(el.dataset.ts || 0) / 2,
                 points: parseInt(el.dataset.points || 0),
                 shotsRes: parseInt(el.getAttribute('data-meta-single-shots-resupplied') || 0),
                 livesRes: parseInt(el.getAttribute('data-meta-single-lives-resupplied') || 0),

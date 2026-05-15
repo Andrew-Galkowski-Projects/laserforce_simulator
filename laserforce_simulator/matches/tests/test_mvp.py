@@ -144,9 +144,12 @@ class TestMVP:
         assert s.get_mvp == 0.0
 
     def test_elimination_bonus_minimum(self):
-        # Eliminated at second 720 → 180 s remaining → exactly 4 pts (no extra above 3 min)
+        # TIME-01: eliminated_at is now ticks. 720 s → 1440 ticks; 360 ticks
+        # (180 s) remaining → exactly 4 pts (no extra above the 360-tick / 3-min
+        # threshold). Expected MVP value is unchanged by the unit migration —
+        # this is the elimination-bonus formula genuinely under test.
         self.gr.blue_team_eliminated = True
-        self.gr.eliminated_at = 720
+        self.gr.eliminated_at = 1440
         self.gr.save()
         s = self._state(
             self.players_red["heavy"],
@@ -160,9 +163,12 @@ class TestMVP:
         assert s.get_mvp == 4.0
 
     def test_elimination_bonus_with_extra_time(self):
-        # Eliminated at second 540 → 360 s remaining → 4 + (360-180)/60 = 7.0
+        # TIME-01: eliminated_at is now ticks. 540 s → 1080 ticks; 720 ticks
+        # (360 s) remaining → 4 + (720 - 360 extra ticks)/120 = 7.0. Expected
+        # MVP value is unchanged by the unit migration — this is the
+        # elimination-bonus formula genuinely under test.
         self.gr.blue_team_eliminated = True
-        self.gr.eliminated_at = 540
+        self.gr.eliminated_at = 1080
         self.gr.save()
         s = self._state(
             self.players_red["heavy"],

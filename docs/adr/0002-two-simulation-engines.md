@@ -1,0 +1,7 @@
+# Two simulation engines: ResourceBasedSimulator and BatchSimulator
+
+**Status:** accepted (consolidation planned — PLAN.md Phase 3.5)
+
+We deliberately run two simulators for the same game. `ResourceBasedSimulator` is DB-backed: it writes a full `GameEvent` log and persists `PlayerRoundState`, used wherever a round must be replayable or inspectable. `BatchSimulator` is pure in-memory (`PlayerState` dataclasses, no ORM) and runs a round in ~25 ms vs ~9 s, used by `score_averages` and batch win-rate analysis where only aggregate outcomes matter. The trade-off is real: persisting every event is the right default for a single inspectable round but ~360× too slow to run hundreds of calibration rounds, and a single configurable engine was rejected as carrying the slow path's object overhead into the fast path.
+
+**Consequence:** all shared game logic lives in `matches/sim_helpers/` behind a duck-typed interface that both `PlayerRoundState` and `PlayerState` satisfy, so the two engines cannot silently diverge in mechanics. This duplication is intended to be temporary — Phase 3.5 (SIM-06..09) consolidates onto `BatchSimulator` as the single engine, after which `ResourceBasedSimulator` is removed. A plan that proposes "just use one simulator" must account for both the replay/persistence requirement and the batch-speed requirement, not pick one.
