@@ -184,7 +184,9 @@ def _broadcast_communication(
     for tag_id, entry in actor_memory.items():
         if not (isinstance(tag_id, str) and tag_id.startswith(enemy_color)):
             continue
-        priority = _COMM_ROLE_PRIORITY.get(entry.get("role", ""), len(_COMM_ROLE_PRIORITY))
+        priority = _COMM_ROLE_PRIORITY.get(
+            entry.get("role", ""), len(_COMM_ROLE_PRIORITY)
+        )
         if priority < best_priority:
             best_priority = priority
             best_tag_id = tag_id
@@ -1833,7 +1835,9 @@ class ResourceBasedSimulator:
                 # MECH-06: tag confirms enemy position and status — update memory and broadcast
                 if movement_ctx is not None and all_alive is not None:
                     _update_player_memory(attacker, [defender], db_second)
-                    _broadcast_communication(attacker, all_alive, movement_ctx, db_second)
+                    _broadcast_communication(
+                        attacker, all_alive, movement_ctx, db_second
+                    )
 
                 attacker.save()
                 defender.save()
@@ -3957,23 +3961,24 @@ class BatchSimulator:
     # Seed-based exact replay and DB persistence
     # ------------------------------------------------------------------ #
 
-    def replay_round(self, red_roster, blue_roster, seed_state):
+    def replay_round(self, red_roster, blue_roster, seed_state, movement_ctx=None):
         """Replay one round from a saved random state, collecting full event log."""
         events = []
         random.setstate(seed_state)
         result, red_players, blue_players = self._simulate_round(
-            red_roster, blue_roster, event_log=events
+            red_roster, blue_roster, event_log=events, movement_ctx=movement_ctx
         )
         return result, red_players, blue_players, events
 
-    def save_games(self, team_red, team_blue, seeds, n):
+    def save_games(self, team_red, team_blue, seeds, n, *, arena_map=None):
         """Replay and persist n games using the provided seed states."""
         red_roster = list(team_red.active_roster)
         blue_roster = list(team_blue.active_roster)
+        movement_ctx, _ = ResourceBasedSimulator._load_map_context(arena_map)
         saved = []
         for seed_state in seeds[:n]:
             result, red_players, blue_players, events = self.replay_round(
-                red_roster, blue_roster, seed_state
+                red_roster, blue_roster, seed_state, movement_ctx=movement_ctx
             )
             gr = self._flush_to_db(
                 team_red, team_blue, result, red_players, blue_players, events
@@ -4018,6 +4023,8 @@ class BatchSimulator:
                 team_color=p.team_color,
                 role=p.role,
                 zone_fallback=p.current_zone,
+                cell_row=p.cell_row,
+                cell_col=p.cell_col,
                 shields=p.shields,
                 starting_lives=p.starting_lives,
                 starting_shots=p.starting_shots,
@@ -4037,8 +4044,16 @@ class BatchSimulator:
                 times_tagged=p.times_tagged,
                 times_missiled=p.times_missiled,
                 missiles_landed=p.missiles_landed,
+                missile_points=p.missile_points,
                 resupplies_given=p.resupplies_given,
+                combo_resupply_count=p.combo_resupply_count,
                 specials_used=p.specials_used,
+                times_tagged_in_reset_window=p.times_tagged_in_reset_window,
+                follow_up_shots=p.follow_up_shots,
+                reaction_shots=p.reaction_shots,
+                seconds_active=p.seconds_active,
+                seconds_not_targetable=p.seconds_not_targetable,
+                seconds_reset_window=p.seconds_reset_window,
                 was_eliminated_at=p.was_eliminated_at,
             )
 

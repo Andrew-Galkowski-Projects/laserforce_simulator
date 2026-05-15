@@ -264,6 +264,28 @@ lookups in `_goal_from_action`, `_goal_from_role`, and the nuke-reaction logic i
 
 ---
 
+## Phase 3.5 — Simulator Consolidation
+
+Replace `ResourceBasedSimulator` with `BatchSimulator` as the single simulation engine across all three use cases. RBS remains in the codebase only until all views are migrated; it is then retired.
+
+### SIM-06 · Close `_flush_to_db` field gaps
+`BatchSimulator._flush_to_db` skips several `PlayerRoundState` columns that exist on `PlayerState`. Fill in all missing fields: `follow_up_shots`, `reaction_shots`, `seconds_active`, `seconds_not_targetable`, `seconds_reset_window`, `combo_resupply_count`, `times_tagged_in_reset_window`, `missile_points`, `cell_row`, `cell_col`. Add a test that simulates a round, flushes to DB, and asserts every field is non-default on at least one player.
+- completed
+- note: migration added for 4 new `IntegerField(default=0)` columns (`seconds_active`, `seconds_not_targetable`, `seconds_reset_window`, `missile_points`); the other 6 fields (`follow_up_shots`, `reaction_shots`, `combo_resupply_count`, `times_tagged_in_reset_window`, `cell_row`, `cell_col`) already had DB columns and required no migration. `_flush_to_db` now writes all 10 previously-skipped fields. Flush coverage added in `test_batch_sim.py::TestSim06FlushFields`.
+
+### SIM-07 · RNG seed storage on `GameRound`
+Add an `rng_seed` field (JSONField, null/blank) to `GameRound`. Before calling `_simulate_round`, capture `random.getstate()` and store it on the saved round. This makes every persisted round replayable: restoring the seed and re-running `_simulate_round` must produce an identical event log (covered by the existing `test_same_seed_produces_identical_event_log` test pattern). Required for the single-game replay UI (SIM-05).
+
+### SIM-08 · BatchSim team side alternation
+When simulating multiple games between the same two teams, alternate which team plays red vs blue so each team gets an equal number of games on each side. In `_simulate_round` the roster order determines color; the caller (views, `save_games`, `run`) should flip argument order on every other game. Add a helper or flag rather than requiring every callsite to track the alternation manually. Enforce even alternation in `save_games` so league and batch results are not biased by map-side advantage.
+
+### SIM-09 · Replace RBS with BatchSim in all views + pass map through
+Once SIM-06–08 are complete, replace `ResourceBasedSimulator()` with `BatchSimulator()` in `matches/views.py` for both the `create_match` and `create_single_round` views. Each view runs a single round (or two for a full match), captures the seed, and calls `_flush_to_db` / `_flush_match_to_db` immediately. After migration, `ResourceBasedSimulator` is dead code and should be removed.
+
+**Critical:** currently no BatchSim callsite passes a map. Every BatchSim round ever run — batch simulate page, save-games, `score_averages` command — used the 3-zone fallback regardless of what map the user selected. This means BatchSim has been simulating a fundamentally different game than RBS (no A* movement, no LOS targeting, no spawn cells, no elevation). As part of this migration, all BatchSim callsites must accept and forward the `arena_map` argument so map-aware simulation is consistent everywhere.
+
+---
+
 ## Phase 4 — Analytics & Review
 
 Surfaces the data already being collected. No new simulation work required.

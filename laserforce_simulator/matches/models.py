@@ -320,6 +320,14 @@ class PlayerRoundState(models.Model):
     reaction_shots = models.IntegerField(
         default=0
     )  # shots fired as reactions to being tagged/missed
+    seconds_active = models.IntegerField(default=0)  # ticks player was fully active
+    seconds_not_targetable = models.IntegerField(
+        default=0
+    )  # ticks player was in the 0-3s post-down untargetable window
+    seconds_reset_window = models.IntegerField(
+        default=0
+    )  # ticks player was in the 4-7s taggable-but-not-active reset window
+    missile_points = models.IntegerField(default=0)  # points awarded from missiles
 
     # detailed performance stats
     specific_tags = models.JSONField(

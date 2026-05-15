@@ -1098,13 +1098,17 @@ class TestUpdatePlayerMemory(unittest.TestCase):
         p.last_downed_time = None
         return p
 
-    def _downed_player(self, role: str, team: str, row: int, col: int, second: float) -> PlayerState:
+    def _downed_player(
+        self, role: str, team: str, row: int, col: int, second: float
+    ) -> PlayerState:
         """Player downed at `second` — is_taggable_at(second) is False."""
         p = _ps(role, team, cell_row=row, cell_col=col)
         p.last_downed_time = second
         return p
 
-    def _reset_window_player(self, role: str, team: str, row: int, col: int, second: float) -> PlayerState:
+    def _reset_window_player(
+        self, role: str, team: str, row: int, col: int, second: float
+    ) -> PlayerState:
         """Player downed 5 s ago — taggable but not active."""
         p = _ps(role, team, cell_row=row, cell_col=col)
         p.last_downed_time = second - 5
@@ -1220,7 +1224,9 @@ class TestUpdatePlayerMemory(unittest.TestCase):
             if new_info:
                 _broadcast_communication(observer, [observer, ally], None, 10.0)
 
-        self.assertIn("blue_heavy", ally.player_memory, "Ally should receive first sighting")
+        self.assertIn(
+            "blue_heavy", ally.player_memory, "Ally should receive first sighting"
+        )
 
     def test_broadcast_suppressed_on_repeated_sighting(self):
         """Broadcast is NOT triggered when the same enemy is seen at the same cell/status."""
