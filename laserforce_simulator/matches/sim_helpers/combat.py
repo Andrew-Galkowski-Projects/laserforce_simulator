@@ -412,6 +412,7 @@ def attempt_resupply(
             teammate.special_active_until = second
         if teammate.role == "commander" and teammate.special_active_until > second:
             teammate.special_active_until = 0
+        tagger.last_tagged_id = teammate.tag_id_key
         tagger.resupplies_given += 1
         if emit_event is not None:
             emit_event(
@@ -442,6 +443,7 @@ def attempt_resupply(
             teammate.special_active_until = second
         if teammate.role == "commander" and teammate.special_active_until > second:
             teammate.special_active_until = 0
+        tagger.last_tagged_id = teammate.tag_id_key
         tagger.resupplies_given += 1
         if emit_event is not None:
             emit_event(
@@ -592,11 +594,17 @@ def start_missile_lock(
         return None
 
     # Require LOS at lock initiation
-    if movement_ctx is not None and attacker.cell_row is not None and defender.cell_row is not None:
+    if (
+        movement_ctx is not None
+        and attacker.cell_row is not None
+        and defender.cell_row is not None
+    ):
         sight_data = movement_ctx.sight_data
         actor_key = f"{attacker.cell_row},{attacker.cell_col}"
         def_key = f"{defender.cell_row},{defender.cell_col}"
-        has_los = sight_data is not None and def_key in sight_data.get(actor_key, frozenset())
+        has_los = sight_data is not None and def_key in sight_data.get(
+            actor_key, frozenset()
+        )
     else:
         has_los = attacker.current_zone == defender.current_zone
 
@@ -640,7 +648,9 @@ def tick_missile_lock(
         sight_data = movement_ctx.sight_data
         actor_key = f"{lock.attacker.cell_row},{lock.attacker.cell_col}"
         def_key = f"{lock.defender.cell_row},{lock.defender.cell_col}"
-        has_los = sight_data is not None and def_key in sight_data.get(actor_key, frozenset())
+        has_los = sight_data is not None and def_key in sight_data.get(
+            actor_key, frozenset()
+        )
     else:
         has_los = lock.attacker.current_zone == lock.defender.current_zone
 

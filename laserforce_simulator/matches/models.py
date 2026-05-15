@@ -472,6 +472,10 @@ class PlayerRoundState(models.Model):
         return self.player.stat_for_simulation("player_awareness", self.role)
 
     @property
+    def game_awareness(self) -> int:
+        return self.player.stat_for_simulation("game_awareness", self.role)
+
+    @property
     def decision_making(self) -> int:
         return self.player.stat_for_simulation("decision_making", self.role)
 

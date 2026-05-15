@@ -20,6 +20,18 @@ def shot_cooldown(player, second: float) -> float:
     return 0.5
 
 
+def _aware_of_target(player, target) -> bool:
+    """Return True if the player correctly avoids wasting a shot on a locked reset target.
+
+    game_awareness >= 35: always smart — never wastes a shot.
+    game_awareness <  35: game_awareness/100 chance to be smart; otherwise wastes the shot.
+    """
+    ga = getattr(player, "game_awareness", 50)
+    if ga >= 35:
+        return True
+    return random.random() < ga / 100.0
+
+
 def choose_tag_target(player, all_alive, second, movement_ctx=None, *, los_filter=None):
     """Return a random enemy target weighted by role, or None.
 
@@ -38,7 +50,13 @@ def choose_tag_target(player, all_alive, second, movement_ctx=None, *, los_filte
         and p.final_lives > 0
         and (
             p.is_active_at(second)
-            or (p.is_taggable_at(second) and player.last_tagged_id != p.tag_id_key)
+            or (
+                p.is_taggable_at(second)
+                and (
+                    player.last_tagged_id != p.tag_id_key
+                    or not _aware_of_target(player, p)
+                )
+            )
         )
     ]
     targets = los_filter(player, enemies, movement_ctx)
