@@ -243,11 +243,8 @@ def plan_action(
     """
     weights = [70, 30, 0, 0, 0, 0, 0, 0]
 
-    # TODO(MECH-06): Player memory system — players have imperfect knowledge of enemy positions.
-    # teamwork: scales ally-covering behavior (defend allies during nukes, stay in LOS).
-    # communication: % chance to broadcast spotted enemy positions to nearby teammates.
-    # Memory is updated from: LOS events, global broadcasts (nuke/score/medic alerts).
-    # Not wired until MECH-06.
+    # MECH-06 wired: teamwork bias in pathfinding._goal_from_role; communication
+    # broadcast in simulation.py tick loop; memory updated from LOS + global broadcasts.
 
     check_stamina_penalty(player, second)
 
@@ -341,6 +338,7 @@ def plan_action(
                 movement_ctx.get_spawn_cells(),
                 movement_ctx,
                 prev_action,
+                second,
             )
             plans.append(
                 {

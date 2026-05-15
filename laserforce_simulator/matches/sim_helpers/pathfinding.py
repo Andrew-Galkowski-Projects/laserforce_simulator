@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 import heapq
+import math
+import random
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .map_context import MapContext
+
+# Staleness thresholds (seconds) by role of the REMEMBERED player.
+# Stationary support roles stay valid longer; mobile roles go stale quickly.
+_STALE_THRESHOLD = {
+    "heavy": 60,
+    "medic": 60,
+    "ammo": 60,
+    "scout": 15,
+    "commander": 15,
+}
 
 
 def _elevation_at(r: int, c: int, elevation_data: dict | None = None) -> float:
@@ -129,6 +141,137 @@ def _find_role(all_alive: list, team_color: str, role: str) -> Any:
     )
 
 
+def _cell_from_memory(
+    player,
+    target_tag_id: str,
+    second: float,
+) -> "tuple[int, int] | None":
+    """Return the last-known cell for target_tag_id from player's memory, or None.
+
+    Applies role-specific freshness windows:
+      - heavy / medic / ammo: fresh for up to 60 s (slow-moving support roles)
+      - scout / commander:    fresh for up to 15 s (fast-moving roles go stale quickly)
+    Returns None when the entry is absent, the cell is None, or the entry is stale.
+    """
+    memory = getattr(player, "player_memory", None)
+    if not memory:
+        return None
+    entry = memory.get(target_tag_id)
+    if entry is None:
+        return None
+    role = entry.get("role", "scout")  # default to stale-quickly if unknown
+    threshold = _STALE_THRESHOLD.get(role, 15)
+    age = second - entry.get("timestamp", 0)
+    if age > threshold:
+        return None
+    cell = entry.get("cell")
+    if cell is None:
+        return None
+    return (int(cell[0]), int(cell[1]))
+
+
+def _known_enemies_from_memory(
+    player,
+    enemy_color: str,
+    second: float,
+) -> "list[tuple[int, int]]":
+    """Return a list of (row, col) cells for non-stale enemy entries in player's memory."""
+    memory = getattr(player, "player_memory", None)
+    if not memory:
+        return []
+    cells = []
+    for tag_id, entry in memory.items():
+        # Only enemies
+        if not tag_id.startswith(enemy_color):
+            continue
+        role = entry.get("role", "scout")
+        threshold = _STALE_THRESHOLD.get(role, 15)
+        age = second - entry.get("timestamp", 0)
+        if age > threshold:
+            continue
+        cell = entry.get("cell")
+        if cell is not None:
+            cells.append((int(cell[0]), int(cell[1])))
+    return cells
+
+
+def _find_enemy_commander_in_memory(
+    player,
+    enemy_color: str,
+    second: float,
+) -> "tuple[int, int] | None":
+    """Return last-known cell for enemy commander if in memory and not stale."""
+    commander_tag = f"{enemy_color}_commander"
+    return _cell_from_memory(player, commander_tag, second)
+
+
+def _apply_teamwork_bias(
+    player,
+    goal: "tuple[int, int] | None",
+    all_alive: list,
+    cell_row: int,
+    cell_col: int,
+    movement_ctx: "MapContext",
+) -> "tuple[int, int] | None":
+    """Gently bias goal toward high-LOS cells also visible to ≥1 living ally.
+
+    Only applied when teamwork > 50. Returns a modified goal or the original goal.
+    """
+    teamwork = getattr(player, "teamwork", 50)
+    if teamwork <= 50:
+        return goal
+
+    # Find living allies
+    allies = [
+        p
+        for p in all_alive
+        if p.team_color == player.team_color
+        and p is not player
+        and p.final_lives > 0
+        and p.cell_row is not None
+    ]
+    if not allies:
+        return goal
+
+    sight_data = movement_ctx.sight_data or {}
+
+    # Check if the current goal is already in LOS of an ally
+    if goal is not None:
+        goal_key = f"{goal[0]},{goal[1]}"
+        for ally in allies:
+            ally_key = f"{ally.cell_row},{ally.cell_col}"
+            ally_visible = sight_data.get(ally_key, frozenset())
+            if goal_key in ally_visible:
+                return goal  # already ally-visible, no bias needed
+
+    # Find high-LOS cells also visible to at least one ally
+    high_los_cells = movement_ctx.get_high_los_cells()
+    if not high_los_cells:
+        return goal
+
+    # Build set of cells visible from any ally
+    ally_visible_cells: set = set()
+    for ally in allies:
+        ally_key = f"{ally.cell_row},{ally.cell_col}"
+        for cell_str in sight_data.get(ally_key, frozenset()):
+            ally_visible_cells.add(cell_str)
+
+    teamwork_cells = [
+        rc for rc in high_los_cells if f"{rc[0]},{rc[1]}" in ally_visible_cells
+    ]
+    if not teamwork_cells:
+        return goal
+
+    # With probability teamwork/100, choose the teamwork goal instead
+    teamwork_prob = teamwork / 100.0
+    if random.random() < teamwork_prob:
+        tw_goal = _nearest_cell(cell_row, cell_col, teamwork_cells)
+        if tw_goal:
+            return tw_goal
+
+    return goal
+
+
 def _goal_from_action(
     player,
     all_alive: list,
@@ -137,15 +280,28 @@ def _goal_from_action(
     cell_col: int,
     intended_action: str,
     movement_ctx: "MapContext",
+    second: float = 0.0,
 ) -> tuple[int, int] | None:
     """Return a goal cell driven by the player's last action, or None."""
     cell_los_counts: dict[str, int] = movement_ctx.cell_los_counts
 
     if intended_action in ("tag_player", "missile_player"):
         if player.role == "commander":
+            # MECH-06: prefer memory; fall back to perfect knowledge when memory is empty
+            enemy_medic_cell = _cell_from_memory(player, f"{enemy_color}_medic", second)
+            if enemy_medic_cell:
+                return enemy_medic_cell
+            # Perfect-knowledge fallback
             enemy_medic = _find_role(all_alive, enemy_color, "medic")
             if enemy_medic and enemy_medic.cell_row is not None:
                 return (enemy_medic.cell_row, enemy_medic.cell_col)
+        # MECH-06: use memory when entries exist; fall back to perfect knowledge otherwise
+        known_cells = _known_enemies_from_memory(player, enemy_color, second)
+        if known_cells:
+            goal = _nearest_cell(cell_row, cell_col, known_cells)
+            if goal:
+                return goal
+        # Perfect-knowledge fallback when memory is empty or all stale
         enemies = [
             p
             for p in all_alive
@@ -203,18 +359,24 @@ def _goal_from_role(
     cell_row: int,
     cell_col: int,
     movement_ctx: "MapContext",
+    second: float = 0.0,
+    nuke_active: bool = False,
 ) -> tuple[int, int] | None:
-    """Return a role-specific goal cell, or None."""
+    """Return a role-specific goal cell, or None.
+
+    MECH-06: Uses player memory for enemy-targeting when a map is active.
+    Teamwork bias applied at the end (when teamwork > 50 and not nuke_active).
+    """
     cell_los_counts: dict[str, int] = movement_ctx.cell_los_counts
     high_los_cells: list = movement_ctx.get_high_los_cells()
     strong_spots: list = movement_ctx.get_strong_spots()
     sight_data: dict = movement_ctx.sight_data or {}
 
+    goal: tuple[int, int] | None = None
+
     if player.role == "scout":
         if high_los_cells:
             goal = _nearest_cell(cell_row, cell_col, high_los_cells)
-            if goal:
-                return goal
 
     elif player.role == "heavy":
         max_lives = getattr(player, "max_lives", player.starting_lives)
@@ -225,12 +387,12 @@ def _goal_from_role(
         )
         if healthy and strong_spots:
             goal = _nearest_cell(cell_row, cell_col, strong_spots)
-            if goal:
-                return goal
-        for support_role in ("medic", "ammo"):
-            ally = _find_role(all_alive, player.team_color, support_role)
-            if ally and ally.cell_row is not None:
-                return (ally.cell_row, ally.cell_col)
+        if goal is None:
+            for support_role in ("medic", "ammo"):
+                ally = _find_role(all_alive, player.team_color, support_role)
+                if ally and ally.cell_row is not None:
+                    goal = (ally.cell_row, ally.cell_col)
+                    break
 
     elif player.role == "medic":
         heavy = _find_role(all_alive, player.team_color, "heavy")
@@ -240,8 +402,9 @@ def _goal_from_role(
             if heavy_visible and cell_los_counts:
                 best = min(heavy_visible, key=lambda k: cell_los_counts.get(k, 0))
                 r, c = best.split(",")
-                return (int(r), int(c))
-            return (heavy.cell_row, heavy.cell_col)
+                goal = (int(r), int(c))
+            else:
+                goal = (heavy.cell_row, heavy.cell_col)
 
     elif player.role == "ammo":
         heavy = _find_role(all_alive, player.team_color, "heavy")
@@ -251,15 +414,27 @@ def _goal_from_role(
             if heavy_visible and cell_los_counts:
                 best = max(heavy_visible, key=lambda k: cell_los_counts.get(k, 0))
                 r, c = best.split(",")
-                return (int(r), int(c))
-            return (heavy.cell_row, heavy.cell_col)
+                goal = (int(r), int(c))
+            else:
+                goal = (heavy.cell_row, heavy.cell_col)
 
     elif player.role == "commander":
-        enemy_medic = _find_role(all_alive, enemy_color, "medic")
-        if enemy_medic and enemy_medic.cell_row is not None:
-            return (enemy_medic.cell_row, enemy_medic.cell_col)
+        # MECH-06: try memory first, then perfect knowledge fallback
+        memory_cell = _cell_from_memory(player, f"{enemy_color}_medic", second)
+        if memory_cell:
+            goal = memory_cell
+        else:
+            enemy_medic = _find_role(all_alive, enemy_color, "medic")
+            if enemy_medic and enemy_medic.cell_row is not None:
+                goal = (enemy_medic.cell_row, enemy_medic.cell_col)
 
-    return None
+    # MECH-06: teamwork bias — only when not in a nuke-reaction tick
+    if not nuke_active and goal is not None:
+        goal = _apply_teamwork_bias(
+            player, goal, all_alive, cell_row, cell_col, movement_ctx
+        )
+
+    return goal
 
 
 def choose_goal_cell(
@@ -268,6 +443,7 @@ def choose_goal_cell(
     spawn_cells: dict[str, tuple[int, int]],
     movement_ctx: "MapContext | None" = None,
     intended_action: str = "",
+    second: float = 0.0,
 ) -> tuple[int, int] | None:
     """Return the cell a player should navigate toward (MAP-05).
 
@@ -277,6 +453,7 @@ def choose_goal_cell(
        non-support roles — always trumps role/action logic.
     2. Action-driven movement: based on the action chosen last tick (intended_action):
        - tag_player / missile_player: move toward enemies (Commander → enemy medic first).
+         MECH-06: uses player memory when map is active.
        - resupply_ally: Medic → neediest ally by lives; Ammo → neediest ally by shots.
        - hide: move to the safest adjacent cell (lowest LOS count).
     3. Role-specific positioning (for change_zone, capture_base, use_special, or fallback):
@@ -286,7 +463,12 @@ def choose_goal_cell(
        - Medic: nearest low-LOS cell within the allied Heavy's visible set.
        - Ammo: nearest high-LOS cell within the allied Heavy's visible set.
        - Commander: enemy medic cell (priority target), else enemy base.
+         MECH-06: uses player memory when map is active.
     4. Default: enemy base cell.
+
+    MECH-06 additions:
+    - teamwork bias applied in _goal_from_role (when teamwork > 50 and not nuke-reacting).
+    - score broadcast override: winning + low lives + medic alive + second >= 360 → seek medic.
     """
     enemy_color = "blue" if player.team_color == "red" else "red"
     default_goal: tuple[int, int] | None = spawn_cells.get(enemy_color)
@@ -298,7 +480,8 @@ def choose_goal_cell(
     max_shots = getattr(player, "max_shots", player.starting_shots)
 
     # ── 0. MECH-04: nuke-reaction override (highest priority when active) ────
-    if getattr(player, "reacting_to_nuke", False):
+    nuke_active = getattr(player, "reacting_to_nuke", False)
+    if nuke_active:
         if player.role in ("medic", "ammo"):
             # Support roles: rush toward the neediest ally to maximise resupply
             # output in the ticks before the nuke lands.
@@ -329,10 +512,13 @@ def choose_goal_cell(
             if medic and medic.cell_row is not None:
                 return (medic.cell_row, medic.cell_col)
         else:
-            # TODO MECH-06: if player knows enemy commander location (memory system),
-            #     set movement goal to enemy commander cell to attempt tag-cancel.
-            #     For now: no action override — hook wired but left empty.
-            pass
+            # MECH-06: if player knows enemy commander location (memory system),
+            # set movement goal to enemy commander cell to attempt tag-cancel.
+            enemy_cmd_cell = _find_enemy_commander_in_memory(
+                player, enemy_color, second
+            )
+            if enemy_cmd_cell is not None:
+                return enemy_cmd_cell
 
     # ── 1. Critical-resource overrides (non-support roles) ───────────────────
     if player.role not in ("medic", "ammo"):
@@ -348,6 +534,19 @@ def choose_goal_cell(
     if movement_ctx is None or cell_row is None or cell_col is None:
         return default_goal
 
+    # ── 1b. MECH-06: score broadcast movement override ────────────────────────
+    # Winning + low lives + medic alive + second >= 360 → seek allied medic
+    # Support roles skip this — a Medic seeking "the medic" is a no-op.
+    score_state = getattr(player, "score_broadcast_state", None)
+    if score_state and player.role not in ("medic", "ammo"):
+        winning_team = score_state.get("winning_team", "")
+        if winning_team == player.team_color and second >= 360:
+            low_lives = player.final_lives <= max_lives * 0.3
+            if low_lives:
+                allied_medic = _find_role(all_alive, player.team_color, "medic")
+                if allied_medic is not None and allied_medic.cell_row is not None:
+                    return (allied_medic.cell_row, allied_medic.cell_col)
+
     # ── 2. Action-driven movement ────────────────────────────────────────────
     goal = _goal_from_action(
         player,
@@ -357,13 +556,21 @@ def choose_goal_cell(
         cell_col,
         intended_action,
         movement_ctx,
+        second,
     )
     if goal is not None:
         return goal
 
     # ── 3. Role-specific positioning ─────────────────────────────────────────
     goal = _goal_from_role(
-        player, all_alive, enemy_color, cell_row, cell_col, movement_ctx
+        player,
+        all_alive,
+        enemy_color,
+        cell_row,
+        cell_col,
+        movement_ctx,
+        second,
+        nuke_active=nuke_active,
     )
     if goal is not None:
         return goal

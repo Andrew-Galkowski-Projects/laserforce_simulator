@@ -36,6 +36,7 @@ class PlayerState:
     shields: int = 1
     player_awareness: int = 50  # 0-100, from Player model
     game_awareness: int = 50  # 0-100, from Player model
+    resource_awareness: int = 50  # 0-100, from Player model
 
     current_zone: int = 0
     cell_row: Optional[int] = None
@@ -74,6 +75,21 @@ class PlayerState:
 
     # MECH-04: transient nuke-reaction flag — reset each tick, never persisted to DB
     reacting_to_nuke: bool = False
+
+    # MECH-06: per-player memory — {tag_id: {"cell": (r,c), "timestamp": s, "role": role}}
+    # Transient; never persisted to DB.
+    player_memory: dict = field(default_factory=dict)
+
+    # MECH-06: medic-under-fire tracking — list of seconds at which this Medic was hit.
+    # Only meaningful for the medic role.
+    medic_hit_times: list = field(default_factory=list)
+
+    # MECH-06: score broadcast state — set every 180 s by the simulator tick loop.
+    # {"winning_team": "red"|"blue"|"tied", "timestamp": s}  or None if not yet broadcast.
+    score_broadcast_state: dict = field(default_factory=dict)
+
+    # MECH-06: next second at which the score broadcast should fire for this player.
+    score_broadcast_next: int = 180
 
     # stamina tracking (transient — not persisted to DB)
     stamina_penalty_count: int = 0
@@ -161,9 +177,11 @@ class PlayerState:
         """Common tag-identity accessor used by choose_tag_target in mechanics.py."""
         return self.tag_id
 
-    # ------ Deferred stats (wired in MECH-01) ------
+    # ------ Stats wired in MECH-01 ------
     # resupply_efficiency: affects request_resupply action weight; doubles speed for Medic/Ammo
     # resupply_synergy: keeps support pairs together; scales double-resupply chance
-    # teamwork: scales ally-cover behavior weight
-    # communication: % chance to broadcast spotted info to nearby allies
+
+    # ------ Stats wired in MECH-06 ------
+    # teamwork: scales ally-cover bias in _goal_from_role (pathfinding.py)
+    # communication: % chance to broadcast spotted enemy positions to nearby teammates
     # Global broadcasts: nuke activation, score delta every 3 min, medic-under-fire alert

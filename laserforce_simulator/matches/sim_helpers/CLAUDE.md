@@ -33,6 +33,15 @@ Dead time (after elimination) is derived at report time as `900 - was_eliminated
 
 `points_scored`, `tags_made`, `times_tagged`, `shots_missed`, `times_missiled`, `resupplies_given`, `specials_used`, `times_tagged_in_reset_window`, `missile_points`, `follow_up_shots`, `reaction_shots`, `combo_resupply_count` (number of times this player received a combo resupply — both lives and shots in the same tick; default 0).
 
+### MECH-06 transient fields (no DB columns)
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `player_memory` | `dict[str, dict]` | `{tag_id: {"cell": (r,c), "timestamp": s, "role": role}}` — last-known cell per player from LOS observations and broadcasts |
+| `medic_hit_times` | `list[float]` | Timestamps of the two most recent hits received (for medic-under-fire alert — 2 hits within 12 s) |
+| `score_broadcast_state` | `str \| None` | Outcome of the last score broadcast: `"losing"`, `"hide"`, `"seek_medic"`, or `None` |
+| `score_broadcast_next` | `float` | Simulation second at which the next score broadcast fires (initialised to 180.0) |
+
 ### Role stat lookups
 
 `_ROLE_STATS`, `_MAX_LIVES`, `_MAX_SHOTS`, `_SPECIAL_COST` are imported from `matches.sim_helpers.role_constants` (with `_`-prefixed aliases to preserve existing callsites). `role_constants` has no Django imports so the zero-dependency guarantee is maintained.
@@ -73,9 +82,11 @@ The caller (`BatchSimulator._plan_action`) passes a baseline of `[70, 30, 0, 0, 
 
 `resupply_efficiency` scales the `request_resupply` weight (index 7) for all roles — the weight is only non-zero when the player needs resources (has room to receive lives or shots). `resupply_synergy` scales the `resupply_ally` weight (index 5) for Medic and Ammo players — higher synergy pushes support players toward fulfilling requests. Both stats are fully wired as of MECH-01; the former TODO/skeleton blocks have been removed.
 
-`teamwork` and `communication` retain skeleton TODO blocks in the weight functions, deferred to MECH-06.
+`teamwork` and `communication` are fully wired as of MECH-06 — former skeleton TODO blocks removed. `teamwork` (>50) applies a bias in goal selection (see pathfinding.py `_apply_teamwork_bias`); `communication` is a per-tick broadcast probability handled in the simulator tick loop, not in `weights.py` directly.
 
-`_commander_nuke_gate(sp, ga)` gates the Commander `use_special` weight based on the awareness-tier stacking table (MECH-03): ga<30→fire at sp>20; ga<50→fire at sp>40; ga<70→fire at sp>60; always fire at sp>80. When the gate is closed, weight stays 0 and the Commander stacks SP toward the next threshold. A `# MECH-06:` hook comment inside `_get_commander_weights` marks where situational overrides will plug in.
+**`_apply_score_broadcast_weights(player, weights)`** (MECH-06) — adjusts the weight vector based on the player's current `score_broadcast_state`: `"losing"` → `tag_player` weight +10; `"hide"` → `hide` weight +20; `"seek_medic"` → movement override handled in `pathfinding.choose_goal_cell` (no weight change here). Called from each role's weight function when `score_broadcast_state` is set.
+
+`_commander_nuke_gate(sp, ga)` gates the Commander `use_special` weight based on the awareness-tier stacking table (MECH-03): ga<30→fire at sp>20; ga<50→fire at sp>40; ga<70→fire at sp>60; always fire at sp>80. When the gate is closed, weight stays 0 and the Commander stacks SP toward the next threshold. The `# MECH-06:` situational-override hook inside `_get_commander_weights` is now populated — MECH-06 memory checks can cause the gate to open early when conditions are favourable.
 
 ### Known pre-existing test failure
 
@@ -107,12 +118,25 @@ Cell-aware movement helpers shared by both simulators. Used when `arena_map` is 
 - Ammo → highest-LOS cell within the allied Heavy's visible set (exposed support position near Heavy).
 - Commander → enemy medic cell.
 
+**`_STALE_THRESHOLD`** — module-level dict mapping role strings to their memory staleness thresholds in seconds: `Heavy/Medic/Ammo → 60`, `Scout/Commander → 15`.
+
+**`_cell_from_memory(player, tag_id, movement_ctx) -> tuple[int,int] | None`** — looks up `tag_id` in `player.player_memory`; returns the stored cell if the entry is fresh (within the role's staleness threshold), `None` if stale or absent. Stale slow-role entries (Heavy/Medic/Ammo) return the last-known cell anyway; stale fast-role entries return `None` to let callers fall through to role defaults.
+
+**`_known_enemies_from_memory(player, all_alive, movement_ctx) -> list`** — returns all enemy `PlayerState` objects whose last-known cell is fresh enough to use, substituting the memory cell for the player's actual cell in a lightweight proxy so callers don't need to distinguish real vs remembered positions.
+
+**`_apply_teamwork_bias(player, candidates, movement_ctx) -> tuple[int,int] | None`** — when `player.teamwork > 50`, filters `candidates` (high-LOS cells) to those also within LOS of ≥1 alive ally; returns the nearest qualifying cell, or `None` when no ally-visible high-LOS cell exists (caller falls through to unbiased selection).
+
+**`_goal_from_action(player, all_alive, enemy_color, cell_row, cell_col, intended_action, movement_ctx) -> tuple[int,int] | None`** — unchanged signature; now uses `_known_enemies_from_memory` instead of direct `all_alive` iteration when selecting a tag/missile target so goal selection uses memory rather than perfect knowledge.
+
+**`_goal_from_role(player, all_alive, enemy_color, cell_row, cell_col, movement_ctx) -> tuple[int,int] | None`** — unchanged signature; internally calls `_apply_teamwork_bias` after identifying role-specific candidate cells (Scout, Heavy-healthy paths) before returning.
+
 **`choose_goal_cell(player, all_alive, spawn_cells, movement_ctx=None, intended_action="")`** — duck-typed goal selector shared by both simulators (MAP-05). Priority order:
-1. **MECH-04 nuke-reaction override** (highest priority): when `player.reacting_to_nuke` is `True`, Medic/Ammo rush toward the neediest ally (by lives ratio for Medic, shots ratio for Ammo). Non-support players with lives ≤ 30% of max are forced to the allied Medic cell (survival mode); lives > 30% hits the `# TODO MECH-06` hook and falls through.
-2. Critical-resource override (non-support): lives ≤ 30% → seek allied Medic; shots ≤ 30% → seek allied Ammo.
-3. Action-driven movement via `_goal_from_action` (uses `intended_action`, which is the action chosen on the previous tick).
-4. Role-specific positioning via `_goal_from_role`.
-5. Default: enemy base cell from `spawn_cells`.
+1. **MECH-04 nuke-reaction override** (highest priority): when `player.reacting_to_nuke` is `True`, Medic/Ammo rush toward the neediest ally. Non-support players with lives ≤ 30% of max → allied Medic cell (survival mode); lives > 30% → seeks enemy Commander's last-known cell from `player_memory` (MECH-06 fills the former TODO hook) to attempt a tag-cancel; falls through to step 2 if memory is absent/stale.
+2. **Score-broadcast seek-medic override**: when `player.score_broadcast_state == "seek_medic"`, movement is overridden to the allied Medic's last-known cell from memory.
+3. Critical-resource override (non-support): lives ≤ 30% → seek allied Medic; shots ≤ 30% → seek allied Ammo.
+4. Action-driven movement via `_goal_from_action` (uses `intended_action`, which is the action chosen on the previous tick).
+5. Role-specific positioning via `_goal_from_role` (includes teamwork bias via `_apply_teamwork_bias`).
+6. Default: enemy base cell from `spawn_cells`.
 
 ### Elevation model (stub)
 
