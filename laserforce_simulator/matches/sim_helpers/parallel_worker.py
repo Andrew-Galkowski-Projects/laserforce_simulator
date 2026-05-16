@@ -50,12 +50,24 @@ def batch_round_worker(args: tuple) -> dict:
     """Run one simulation round for BatchSimulator.run() with workers > 1.
 
     Returns the same aggregate result dict as the serial path.
+
+    SIM-08: ``flipped`` is the per-game orientation computed in the parent
+    from the ordered game index. When ``flipped`` is ``True`` the precomputed
+    rosters are swapped before simulating (canonical blue plays the physical
+    red side) so the worker produces the exact game the serial path would for
+    the same (seed, orientation). The parent de-flips the result identically,
+    keeping serial/parallel team-position aggregates and side_advantage in
+    lockstep for a given master_seed.
     """
     from matches.simulation import BatchSimulator  # noqa: PLC0415
 
-    red_data, blue_data, movement_ctx, seed = args
+    red_data, blue_data, movement_ctx, seed, flipped = args
     random.seed(seed)
+    if flipped:
+        sim_red, sim_blue = blue_data, red_data
+    else:
+        sim_red, sim_blue = red_data, blue_data
     result, _, _ = BatchSimulator()._simulate_round(
-        red_data, blue_data, movement_ctx=movement_ctx
+        sim_red, sim_blue, movement_ctx=movement_ctx
     )
     return result

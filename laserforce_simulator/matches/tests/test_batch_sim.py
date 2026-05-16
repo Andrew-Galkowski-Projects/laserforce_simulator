@@ -578,12 +578,19 @@ class TestSim06FlushFields:
     # ------------------------------------------------------------------
 
     def _run_and_flush(self, team_red, team_blue, arena_map, n_rounds=3):
-        """Run n_rounds via BatchSimulator.run() then flush the first avg_seed."""
+        """Run n_rounds via BatchSimulator.run() then flush the first avg_seed.
+
+        SIM-08: ``run()`` returns ``avg_seeds`` / ``outlier_seeds`` as
+        ``[seed, flipped]`` pairs and ``save_games`` consumes that
+        ``(seed, flipped)``-pair list directly.
+        """
         import random
 
         random.seed(42)
         sim = BatchSimulator()
-        stats = sim.run(team_red, team_blue, n=n_rounds, arena_map=arena_map)
+        stats = sim.run(
+            team_red, team_blue, n=n_rounds, arena_map=arena_map, master_seed=42
+        )
         seeds = stats["avg_seeds"] or stats["outlier_seeds"]
         assert seeds, "run() produced no seeds — cannot flush to DB"
         game_rounds = sim.save_games(
@@ -845,6 +852,11 @@ class TestSim07RngSeed:
         int seed, reloads the GameRound, asserts rng_seed is a valid non-null
         63-bit int, then replays that exact seed twice and asserts the two
         event logs are byte-for-byte identical.
+
+        SIM-08: ``save_games`` now takes ``(seed, flipped)`` pairs and
+        ``replay_round`` takes an explicit ``flipped`` flag. This case uses a
+        canonical (non-flipped) game so the original SIM-07 intent —
+        replay-vs-replay determinism from the stored seed — is preserved.
         """
         from matches.models import GameRound
 
@@ -853,15 +865,15 @@ class TestSim07RngSeed:
         sim = BatchSimulator()
 
         fixed_seed = 13572468
-        saved = sim.save_games(team_red, team_blue, seeds=[fixed_seed], n=1)
+        saved = sim.save_games(team_red, team_blue, seeds=[(fixed_seed, False)], n=1)
         assert saved, "save_games returned no GameRound objects"
 
         gr = GameRound.objects.get(id=saved[0].id)
         assert gr.rng_seed is not None, "GameRound.rng_seed must be persisted"
         assert 0 <= gr.rng_seed < 2**63, f"rng_seed out of 63-bit range: {gr.rng_seed}"
 
-        _, _, _, log_a = sim.replay_round(red, blue, gr.rng_seed)
-        _, _, _, log_b = sim.replay_round(red, blue, gr.rng_seed)
+        _, _, _, log_a = sim.replay_round(red, blue, gr.rng_seed, flipped=False)
+        _, _, _, log_b = sim.replay_round(red, blue, gr.rng_seed, flipped=False)
 
         assert len(log_a) > 0, "Replay event log must not be empty"
         assert len(log_a) == len(
@@ -889,7 +901,9 @@ class TestSim07RngSeed:
         sim = BatchSimulator()
 
         s0, s1 = 111111, 222222
-        saved = sim.save_games(team_red, team_blue, seeds=[s0, s1], n=2)
+        saved = sim.save_games(
+            team_red, team_blue, seeds=[(s0, False), (s1, False)], n=2
+        )
         assert len(saved) == 2, f"Expected 2 saved rounds, got {len(saved)}"
 
         rounds = list(
@@ -925,9 +939,14 @@ class TestSim07RngSeed:
         assert stats_a["avg_blue_score"] == stats_b["avg_blue_score"]
         assert stats_a["avg_seeds"] == stats_b["avg_seeds"]
         assert stats_a["outlier_seeds"] == stats_b["outlier_seeds"]
-        # Seeds must be plain ints, not RNG-state tuples.
-        assert all(isinstance(s, int) for s in stats_a["avg_seeds"])
-        assert all(isinstance(s, int) for s in stats_a["outlier_seeds"])
+        # SIM-08: seeds are now ``[seed, flipped]`` pairs (was plain int).
+        # The int seed must still be a plain int (not an RNG-state tuple) and
+        # the flipped flag a bool.
+        for pair in stats_a["avg_seeds"] + stats_a["outlier_seeds"]:
+            assert len(pair) == 2, f"Expected [seed, flipped] pair, got {pair!r}"
+            seed, flipped = pair
+            assert isinstance(seed, int) and not isinstance(seed, bool)
+            assert isinstance(flipped, bool)
 
         stats_c = sim.run(team_red, team_blue, n=8, master_seed=99999)
         assert (
@@ -967,3 +986,450 @@ class TestSim07RngSeed:
         assert serial["ties"] == parallel["ties"]
         assert serial["avg_red_score"] == parallel["avg_red_score"]
         assert serial["avg_blue_score"] == parallel["avg_blue_score"]
+
+
+# ---------------------------------------------------------------------------
+# SIM-08 — deterministic physical-side alternation with de-flipped,
+# team-position-keyed aggregates and a new physical-side advantage panel
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestSim08SideAlternation:
+    """SIM-08 alternates physical sides per game (k odd ⇒ flipped) so the
+    canonical/flipped split is exact, while keeping result keys keyed by
+    *team position* (the ``team_red`` arg always maps to ``red_*``).
+
+    Contract under test:
+      * ``run`` flips game ``k`` iff ``k`` is odd; the choice never consumes
+        the RNG and the per-game seed sequence is identical regardless of
+        flipping.
+      * ``red_*`` / ``blue_*`` aggregates are de-flipped → team-position keyed.
+      * ``results["side_advantage"]`` carries PHYSICAL-side aggregates.
+      * ``avg_seeds`` / ``outlier_seeds`` are ``[seed, flipped]`` pairs.
+      * ``replay_round(red, blue, seed, flipped=...)`` swaps rosters for
+        ``flipped=True`` and reproduces the team-position result ``run``
+        recorded.
+      * ``save_games`` takes ``(seed, flipped)`` pairs and persists the
+        ACTUAL physical sides for flipped games.
+
+    All tests pin ``master_seed`` and use deterministic ORM rosters built via
+    the shared ``make_team_with_slots`` conftest helper, so the whole class is
+    ``django_db`` (mirrors ``TestSim07RngSeed``).
+    """
+
+    SIDE_ADV_KEYS = (
+        "red_side_wins",
+        "blue_side_wins",
+        "side_ties",
+        "red_side_win_pct",
+        "blue_side_win_pct",
+        "avg_red_side_score",
+        "avg_blue_side_score",
+        "n",
+    )
+
+    def _rosters(self, prefix):
+        team, players = make_team_with_slots(prefix)
+        return list(team.active_roster), team, players
+
+    def _bump_team_stats(self, players, *, accuracy, survival, awareness):
+        """Set the combat-relevant stats on every player of a team.
+
+        ``make_team_with_slots`` players default all stats to 50; bumping
+        accuracy/awareness up and survival down (or vice versa) makes one
+        team dramatically stronger than the other regardless of side.
+        """
+        for p in players.values():
+            p.accuracy = accuracy
+            p.survival = survival
+            p.player_awareness = awareness
+            p.save()
+
+    # ------------------------------------------------------------------
+    # 1 + 2. Alternation parity / even-split guarantee
+    # ------------------------------------------------------------------
+
+    def test_even_n_yields_exact_50_50_canonical_vs_flipped(self):
+        """Even n ⇒ exactly n/2 flipped and n/2 canonical games.
+
+        Asserted via the ``flipped`` flags on the documented
+        ``avg_seeds`` + ``outlier_seeds`` pairs and via ``side_advantage``
+        physical-side counts summing to n.
+        """
+        _, team_red, _ = self._rosters("Sim08EvenR")
+        _, team_blue, _ = self._rosters("Sim08EvenB")
+        sim = BatchSimulator()
+
+        n = 8
+        stats = sim.run(team_red, team_blue, n=n, master_seed=2024)
+
+        # Both score lists carry exactly one entry per game (team-position).
+        assert len(stats["red_scores"]) == n
+        assert len(stats["blue_scores"]) == n
+
+        # side_advantage physical-side counts partition all n games.
+        sa = stats["side_advantage"]
+        assert (
+            sa["red_side_wins"] + sa["blue_side_wins"] + sa["side_ties"] == n
+        ), f"side_advantage counts must sum to n={n}: {sa}"
+        assert sa["n"] == n
+
+        # The documented [seed, flipped] pairs for an 8-game run cover all 8
+        # games across avg + outlier (run() splits 10 avg / 10 outlier but
+        # caps at n). Verify the alternation rule produces an exact split:
+        # n even ⇒ |#flipped - #canonical| == 0.
+        seen = {}
+        for pair in stats["avg_seeds"] + stats["outlier_seeds"]:
+            seed, flipped = pair[0], pair[1]
+            seen[seed] = bool(flipped)
+        flips = list(seen.values())
+        n_flipped = sum(1 for f in flips if f)
+        n_canon = sum(1 for f in flips if not f)
+        assert abs(n_flipped - n_canon) <= (n % 2), (
+            "Even n must split flipped/canonical exactly 50/50 "
+            f"(got {n_flipped} flipped vs {n_canon} canonical across "
+            f"{len(flips)} distinct seeds)"
+        )
+
+    def test_odd_n_split_differs_by_exactly_one(self):
+        """Odd n ⇒ physical-side game counts differ by exactly 1.
+
+        Derived from the alternation: with n odd the canonical side gets one
+        extra game. Verified through ``side_advantage`` (counts still sum to
+        n) and the distinct ``[seed, flipped]`` pairs.
+        """
+        _, team_red, _ = self._rosters("Sim08OddR")
+        _, team_blue, _ = self._rosters("Sim08OddB")
+        sim = BatchSimulator()
+
+        n = 7
+        stats = sim.run(team_red, team_blue, n=n, master_seed=4242)
+
+        assert len(stats["red_scores"]) == n
+        assert len(stats["blue_scores"]) == n
+
+        sa = stats["side_advantage"]
+        assert sa["red_side_wins"] + sa["blue_side_wins"] + sa["side_ties"] == n
+        assert sa["n"] == n
+
+        seen = {}
+        for pair in stats["avg_seeds"] + stats["outlier_seeds"]:
+            seed, flipped = pair[0], pair[1]
+            seen[seed] = bool(flipped)
+        n_flipped = sum(1 for f in seen.values() if f)
+        n_canon = sum(1 for f in seen.values() if not f)
+        assert abs(n_flipped - n_canon) == 1, (
+            "Odd n must split flipped/canonical differing by exactly 1 "
+            f"(got {n_flipped} flipped vs {n_canon} canonical)"
+        )
+
+    # ------------------------------------------------------------------
+    # 3. De-flip correctness — strong team's win% survives alternation
+    # ------------------------------------------------------------------
+
+    def test_strong_team_winpct_not_diluted_by_alternation(self):
+        """A dramatically stronger team keeps a high *team-position* win%.
+
+        ``team_red`` arg = strong team. Despite playing physical blue half
+        the games, its de-flipped ``red_win_pct`` stays clearly above 50%.
+        Meanwhile ``side_advantage`` red_side_win_pct should be ≈ 50% because
+        each team plays physical red equally.
+
+        The load-bearing invariant is the CONTRAST: the team-position win
+        signal (strong team well above 50%) must be far stronger than the
+        physical-side signal (near 50%). If results were *not* de-flipped,
+        ``red_win_pct`` would itself collapse toward 50% — that is exactly
+        what this test rules out.
+        """
+        _, strong_team, strong_players = self._rosters("Sim08StrongR")
+        _, weak_team, weak_players = self._rosters("Sim08WeakB")
+
+        # Strong: max accuracy/awareness, min survival (easy hits, hard to be
+        # missed against). Weak: the inverse.
+        self._bump_team_stats(strong_players, accuracy=100, survival=0, awareness=100)
+        self._bump_team_stats(weak_players, accuracy=0, survival=100, awareness=0)
+
+        sim = BatchSimulator()
+        n = 30
+        stats = sim.run(strong_team, weak_team, n=n, master_seed=9001)
+
+        # Team-position: the strong team is the team_red arg → red_*.
+        # It must out-score and out-win the weak team on a team-position
+        # basis despite playing physical blue half the games.
+        assert stats["avg_red_score"] > stats["avg_blue_score"], (
+            "Strong team must out-score the weak team on a team-position "
+            f"basis ({stats['avg_red_score']} vs {stats['avg_blue_score']})"
+        )
+        red_pct = stats["red_win_pct"]
+        assert red_pct >= 58.0, (
+            "Strong team's team-position win% must stay clearly above 50% "
+            f"(not diluted by side alternation); got {red_pct:.1f}%. "
+            "If de-flipping is broken this collapses toward ~50%."
+        )
+
+        # Physical-side advantage should be roughly balanced: both teams play
+        # red equally often, so neither physical side has a structural edge.
+        sa = stats["side_advantage"]
+        side_pct = sa["red_side_win_pct"]
+        assert 30.0 <= side_pct <= 70.0, (
+            "Physical red-side win% should be near 50% (both teams play red "
+            f"equally) — got {side_pct:.1f}%. If this tracks the strong "
+            "team's win%, results were never de-flipped."
+        )
+
+        # The decisive contrast: the team-position signal must be strictly
+        # stronger than the physical-side signal. De-flipping preserves the
+        # team-strength signal while alternation washes out the side signal.
+        assert abs(red_pct - 50.0) > abs(side_pct - 50.0), (
+            "De-flip failure: the team-position win signal "
+            f"(|{red_pct:.1f}-50|={abs(red_pct-50):.1f}) is not stronger "
+            f"than the physical-side signal "
+            f"(|{side_pct:.1f}-50|={abs(side_pct-50):.1f}). A correct "
+            "de-flip keeps team strength visible in red_win_pct while "
+            "side_advantage stays balanced."
+        )
+
+    # ------------------------------------------------------------------
+    # 4. side_advantage shape
+    # ------------------------------------------------------------------
+
+    def test_side_advantage_shape_and_bounds(self):
+        """All documented keys present; pcts in [0,100]; counts sum to n."""
+        _, team_red, _ = self._rosters("Sim08ShapeR")
+        _, team_blue, _ = self._rosters("Sim08ShapeB")
+        sim = BatchSimulator()
+
+        n = 10
+        stats = sim.run(team_red, team_blue, n=n, master_seed=555)
+
+        assert "side_advantage" in stats, "results must expose 'side_advantage'"
+        sa = stats["side_advantage"]
+        for key in self.SIDE_ADV_KEYS:
+            assert key in sa, f"side_advantage missing documented key {key!r}"
+
+        assert sa["n"] == n
+        assert sa["red_side_wins"] + sa["blue_side_wins"] + sa["side_ties"] == n
+        for pct_key in ("red_side_win_pct", "blue_side_win_pct"):
+            assert (
+                0.0 <= sa[pct_key] <= 100.0
+            ), f"{pct_key} out of [0,100]: {sa[pct_key]}"
+        for score_key in ("avg_red_side_score", "avg_blue_side_score"):
+            assert sa[score_key] >= 0, f"{score_key} must be non-negative"
+
+        # Team-position aggregates must still be present and consistent.
+        assert stats["red_wins"] + stats["blue_wins"] + stats["ties"] == n
+
+    # ------------------------------------------------------------------
+    # 5. Determinism: same master_seed ⇒ identical everything
+    # ------------------------------------------------------------------
+
+    def test_same_master_seed_reproduces_scores_and_side_advantage(self):
+        """Two ``run()`` calls with the same master_seed match exactly."""
+        _, team_red, _ = self._rosters("Sim08DetR")
+        _, team_blue, _ = self._rosters("Sim08DetB")
+        sim = BatchSimulator()
+
+        a = sim.run(team_red, team_blue, n=8, master_seed=314159)
+        b = sim.run(team_red, team_blue, n=8, master_seed=314159)
+
+        assert a["red_scores"] == b["red_scores"]
+        assert a["blue_scores"] == b["blue_scores"]
+        assert a["side_advantage"] == b["side_advantage"]
+        assert a["avg_seeds"] == b["avg_seeds"]
+        assert a["outlier_seeds"] == b["outlier_seeds"]
+
+        # Each seed list element is the documented [seed, flipped] pair.
+        for pair in a["avg_seeds"] + a["outlier_seeds"]:
+            assert len(pair) == 2
+            seed, flipped = pair[0], pair[1]
+            assert isinstance(seed, int) and not isinstance(seed, bool)
+            assert isinstance(flipped, bool)
+
+    def test_serial_equals_parallel_team_position_and_side_advantage(self):
+        """Serial and ``workers=2`` agree on team-position aggregates AND
+        ``side_advantage`` for the same master_seed.
+
+        Mirrors the SIM-07 serial-vs-parallel skip-on-unavailable pattern.
+        """
+        _, team_red, _ = self._rosters("Sim08ParR")
+        _, team_blue, _ = self._rosters("Sim08ParB")
+        sim = BatchSimulator()
+
+        serial = sim.run(team_red, team_blue, n=4, master_seed=2718)
+        try:
+            parallel = sim.run(team_red, team_blue, n=4, master_seed=2718, workers=2)
+        except Exception as exc:  # pragma: no cover - environment dependent
+            pytest.skip(
+                f"Parallel worker pool unavailable in this environment: {exc!r}"
+            )
+
+        assert serial["red_wins"] == parallel["red_wins"]
+        assert serial["blue_wins"] == parallel["blue_wins"]
+        assert serial["ties"] == parallel["ties"]
+        assert serial["red_scores"] == parallel["red_scores"]
+        assert serial["blue_scores"] == parallel["blue_scores"]
+        assert serial["avg_red_score"] == parallel["avg_red_score"]
+        assert serial["avg_blue_score"] == parallel["avg_blue_score"]
+        assert serial["side_advantage"] == parallel["side_advantage"]
+        assert serial["avg_seeds"] == parallel["avg_seeds"]
+        assert serial["outlier_seeds"] == parallel["outlier_seeds"]
+
+    # ------------------------------------------------------------------
+    # 6. Faithful flipped replay (pure, no DB persistence)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _deflip(result, flipped):
+        """De-flip a physical-side result back to team position.
+
+        ``replay_round`` swaps rosters internally for ``flipped=True`` and
+        returns the PHYSICAL-side result ("Returns (result, ...) as before").
+        The team-position view — the one ``run()`` aggregates — is recovered
+        by swapping red/blue back when the game was flipped.
+        """
+        rp, bp = result["red_points"], result["blue_points"]
+        return (bp, rp) if flipped else (rp, bp)
+
+    def test_flipped_replay_reproduces_recorded_team_position_result(self):
+        """A flipped ``[seed, True]`` pair, replayed with ``flipped=True``,
+        reproduces a team-position result that ``run()`` actually recorded for
+        that batch; replaying it twice is byte-for-byte identical.
+
+        Two distinguishable teams are used so the internal roster swap
+        genuinely changes the physical-side outcome. ``replay_round`` returns
+        the PHYSICAL-side result; de-flipping it (swap red/blue because the
+        game was flipped) must yield a ``(team_red, team_blue)`` points pair
+        that appears among the ``(red_scores[i], blue_scores[i])`` pairs
+        ``run()`` recorded for the same ``master_seed``.
+        """
+        red, team_red, red_players = self._rosters("Sim08FlipReplayR")
+        blue, team_blue, blue_players = self._rosters("Sim08FlipReplayB")
+        # Make the two teams distinguishable so a roster swap actually changes
+        # the physical-side outcome (otherwise flipped/non-flipped would be
+        # trivially identical and the test would not exercise the swap).
+        self._bump_team_stats(red_players, accuracy=90, survival=20, awareness=80)
+        self._bump_team_stats(blue_players, accuracy=20, survival=90, awareness=20)
+        sim = BatchSimulator()
+
+        n = 12
+        stats = sim.run(team_red, team_blue, n=n, master_seed=8675309)
+
+        recorded_pairs = list(zip(stats["red_scores"], stats["blue_scores"]))
+
+        # Find a flipped pair among the recorded seeds.
+        all_pairs = stats["avg_seeds"] + stats["outlier_seeds"]
+        flipped_pairs = [p for p in all_pairs if bool(p[1])]
+        assert flipped_pairs, (
+            "Expected at least one flipped game among recorded seeds for "
+            f"n={n} (alternation guarantees ~n/2 flipped)"
+        )
+        seed = flipped_pairs[0][0]
+        assert bool(flipped_pairs[0][1]) is True
+
+        # Replay the flipped game twice — physical-side result, swapped
+        # rosters internally.
+        res_a, _, _, log_a = sim.replay_round(red, blue, seed, flipped=True)
+        res_b, _, _, log_b = sim.replay_round(red, blue, seed, flipped=True)
+
+        assert len(log_a) > 0, "Flipped replay event log must not be empty"
+        assert len(log_a) == len(
+            log_b
+        ), f"Flipped replay log length differs: {len(log_a)} vs {len(log_b)}"
+        for i, (e1, e2) in enumerate(zip(log_a, log_b)):
+            assert e1 == e2, f"Flipped replay event {i} differs:\n {e1}\n {e2}"
+
+        # Determinism: replaying twice is byte-identical at the result level.
+        assert res_a["red_points"] == res_b["red_points"]
+        assert res_a["blue_points"] == res_b["blue_points"]
+
+        # Faithfulness: the flipped game's team-position outcome must be one
+        # of the pairs run() recorded for this batch (same master_seed ⇒ same
+        # per-game seeds ⇒ this flipped game's team-position score was
+        # bucketed into red_scores/blue_scores). The contract leaves it open
+        # whether replay_round returns the PHYSICAL-side result or already
+        # de-flips it, so accept either orientation — both are faithful as
+        # long as the team-position pair matches what the batch recorded.
+        raw = (res_a["red_points"], res_a["blue_points"])
+        deflipped = self._deflip(res_a, flipped=True)
+        assert raw in recorded_pairs or deflipped in recorded_pairs, (
+            "Flipped replay result is not faithful: neither the raw result "
+            f"{raw} nor its de-flipped form {deflipped} appears among the "
+            f"team-position score pairs run() recorded for the same "
+            f"master_seed: {recorded_pairs}. replay_round(flipped=True) must "
+            "reproduce the team-position outcome the batch saw for that "
+            "flipped game (in physical or de-flipped orientation)."
+        )
+
+        # The flipped flag must actually change which roster plays physical
+        # red: with distinguishable teams, a non-flipped replay of the SAME
+        # seed yields a different physical-side result.
+        res_canon, _, _, _ = sim.replay_round(red, blue, seed, flipped=False)
+        assert (res_canon["red_points"], res_canon["blue_points"]) != (
+            res_a["red_points"],
+            res_a["blue_points"],
+        ), (
+            "Flipped vs non-flipped replay of the same seed must differ for "
+            "distinguishable teams — the flipped flag is being ignored "
+            "(no internal roster swap)."
+        )
+
+    # ------------------------------------------------------------------
+    # 7. DB persistence — actual physical sides for flipped games
+    # ------------------------------------------------------------------
+
+    def test_save_games_persists_actual_physical_sides(self):
+        """``save_games`` with one canonical and one flipped pair stores the
+        ACTUAL physical sides.
+
+        For the flipped pair, ``GameRound.team_red`` must be the team that
+        physically played red (the ``team_blue`` arg), and every red-colored
+        ``PlayerRoundState`` must belong to ``GameRound.team_red``. The
+        canonical pair stores the unswapped sides.
+        """
+        from matches.models import GameRound, PlayerRoundState
+
+        _, team_red, _ = self._rosters("Sim08PersistR")
+        _, team_blue, _ = self._rosters("Sim08PersistB")
+        sim = BatchSimulator()
+
+        s_canon, s_flip = 1010101, 2020202
+        saved = sim.save_games(
+            team_red,
+            team_blue,
+            seeds=[(s_canon, False), (s_flip, True)],
+            n=2,
+        )
+        assert len(saved) == 2, f"Expected 2 saved rounds, got {len(saved)}"
+
+        rounds = list(
+            GameRound.objects.filter(id__in=[g.id for g in saved]).order_by("id")
+        )
+        canon_round, flip_round = rounds[0], rounds[1]
+
+        # Canonical: stored sides are the unswapped arguments.
+        assert canon_round.team_red_id == team_red.id
+        assert canon_round.team_blue_id == team_blue.id
+
+        # Flipped: the ACTUAL physical red side was team_blue arg.
+        assert flip_round.team_red_id == team_blue.id, (
+            "Flipped game must persist the team that physically played red "
+            "(the team_blue argument) as GameRound.team_red"
+        )
+        assert flip_round.team_blue_id == team_red.id
+
+        # PlayerRoundState.team_color must stay consistent with stored sides:
+        # red-colored PRS players belong to GameRound.team_red.
+        for gr in (canon_round, flip_round):
+            states = list(PlayerRoundState.objects.filter(game_round=gr))
+            assert states, f"No PlayerRoundState rows for round {gr.id}"
+            for s in states:
+                expected_team = (
+                    gr.team_red_id if s.team_color == "red" else gr.team_blue_id
+                )
+                assert s.player.team_id == expected_team, (
+                    f"PRS {s.player} team_color={s.team_color} but its player "
+                    f"belongs to team {s.player.team_id}, inconsistent with "
+                    f"stored GameRound sides (red={gr.team_red_id}, "
+                    f"blue={gr.team_blue_id})"
+                )

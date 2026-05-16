@@ -294,9 +294,9 @@ Shared drain/split helpers for the four pending-event queues. Both simulators ca
 
 All return `(ready_now, still_pending)` typed lists. Resolution logic (what to do with ready items) stays in each simulator. Post-TIME-01 the `second` cursor argument and the `complete_time`/`fire_at` fields it splits on are tick-valued for BatchSim (RBS converts at its persist boundary); the split arithmetic is unit-agnostic.
 
-### Parallel batch workers (SIM-07)
+### Parallel batch workers (SIM-07 / SIM-08)
 
-`BatchSimulator._run_parallel` fans rounds out to `batch_round_worker`, the process-pool worker. **SIM-07:** `batch_round_worker` now takes a per-round **int** seed and `random.seed(it)`s before simulating, so a given master seed yields identical games whether the batch runs serially or in parallel (guaranteed, tested property). Per-round seeds are derived from a deterministic `random.Random(master_seed)` seed chain in `run`. `score_round_worker` (the `score_averages` command path) is intentionally **unchanged** and out of SIM-07 scope — it does not take or seed an int seed.
+`BatchSimulator._run_parallel` fans rounds out to `batch_round_worker`, the process-pool worker. **SIM-07:** `batch_round_worker` takes a per-round **int** seed and `random.seed(it)`s before simulating, so a given master seed yields identical games whether the batch runs serially or in parallel (guaranteed, tested property). Per-round seeds are derived from a deterministic `random.Random(master_seed)` seed chain in `run`. **SIM-08:** `batch_round_worker` additionally accepts the per-game `flipped` flag (the Orientation, deterministic by game index — never RNG-derived); when `flipped` is true it **swaps the precomputed red/blue rosters** before simulating, so the worker plays the same Orientation the serial path would. Serial and parallel runs therefore produce identical team-position aggregates **and identical `side_advantage`** for a given master seed. `score_round_worker` (the `score_averages` command path) is intentionally **unchanged** and out of SIM-07/SIM-08 scope — it does not take or seed an int seed, nor flip sides.
 
 ---
 
