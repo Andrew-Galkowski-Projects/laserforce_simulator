@@ -6,7 +6,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 
 - **Team & player management** — Create teams with 6 role-based player slots (Commander, Heavy, Scout, Medic, Ammo, + one duplicate)
 - **Match simulation** — 2-round matches, 15 minutes each, simulated tick-by-tick (1 tick = 0.5 s, 1800 ticks/round) with role-specific action weights; seconds are a display-only conversion
-- **Arena map support** — Optionally attach a confirmed arena map to any match or round; players navigate via A* pathfinding on the real cell grid toward the enemy base (or a critical ally), recording a `movement` event per step for replay
+- **Arena map support** — Optionally attach a confirmed arena map to any match or round; on the map every non-stationary player advances via A* pathfinding on the real cell grid toward their goal (enemy base, a critical ally, etc.) every tick — independent of their chosen action — recording a compact start/end `movement` event whenever their cell changes, from which the full path is reconstructed on replay
 - **Wall hazards** — Three wall types on the map grid: high walls (block movement + sight), low walls (block movement, transparent to LOS), and windowed walls (block sight but allow directional tagging through a user-placed aperture). Wall types are painted in the map editor; windowed wall facing (N/S/E/W) determines which axis an attack can pass through
 - **Role mechanics** — Shields, lives, missiles/nukes, resupply, special charges, and zone movement all modeled
 - **Game event log** — Every tag, miss, missile, resupply, and base capture is recorded with tick timestamps and points (the JSON API returns raw ticks; the UI divides by 2 for seconds)
@@ -119,7 +119,8 @@ laserforce_simulator/
 1. Resolve any pending missiles/nukes whose delay has elapsed
 2. Each active player picks an action (weighted random by role, zone, remaining resources)
 3. Resolve the action — update player state and write a `GameEvent`
-4. Check for eliminations; award a 10,000-point bonus for wiping the opposing team
+4. On a map, every non-stationary player also advances toward their goal cell this tick — movement is decoupled from the chosen action; a player is stationary only while hiding or capturing a base
+5. Check for eliminations; award a 10,000-point bonus for wiping the opposing team
 
 Action weights live in `matches/sim_helpers/weights.py` and shift dynamically based on remaining lives, special charges, current zone, and allied presence.
 

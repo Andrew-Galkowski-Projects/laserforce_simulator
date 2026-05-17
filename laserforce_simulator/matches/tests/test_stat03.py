@@ -5,8 +5,8 @@ and accuracy/survival hit-chance regression.
 These tests describe the expected behavior and will fail until the production
 implementation is complete.
 
-Weight array layout — indices 0-6:
-  tag_player, change_zone, hide, capture_base, use_special, resupply_ally, missile_player
+Weight array layout — indices 0-6 (MOVE-01: index 1 renamed change_zone → only_move):
+  tag_player, only_move, hide, capture_base, use_special, resupply_ally, missile_player
 
 STAT-03 adds three behavioral wires:
   1. decision_making (0-100): linear spread multiplier on weights after role function.
@@ -14,7 +14,7 @@ STAT-03 adds three behavioral wires:
        best weight *= factor; all other weights /= factor (clamped >= 0)
   2. stamina (0-100): checked at every 10% of round elapsed (every 90 s for 900 s round).
        If player.stamina < elapsed_percent → stamina_penalty_count += 1
-       Each penalty: change_zone weight -10% (stacking), stamina_hit_modifier -= 0.05
+       Each penalty: only_move weight -10% (stacking), stamina_hit_modifier -= 0.05
        stamina_hit_modifier = max(0.5, 1.0 - 0.05 * stamina_penalty_count)
   3. special_usage (0-100): multiplier on use_special weight delta.
        multiplier = special_usage / 50 (50=1.0x baseline, 100=2.0x, 0=0.0x)
@@ -41,7 +41,7 @@ from matches.sim_helpers.weights import (
 
 _ACTION_IDX = {
     "tag_player": 0,
-    "change_zone": 1,
+    "only_move": 1,
     "hide": 2,
     "capture_base": 3,
     "use_special": 4,
@@ -243,17 +243,21 @@ class TestStaminaHitModifier:
 
 
 class TestStaminaMovementPenalty:
-    """After stamina penalties, change_zone weight is reduced by 10% per penalty (stacking)."""
+    """After stamina penalties, only_move weight is reduced by 10% per penalty (stacking).
 
-    def test_two_penalties_reduce_change_zone_by_20_pct(self):
-        """2 stamina penalties → change_zone weight reduced by 20% (2 × 10%).
+    MOVE-01: the index-1 weight slot was renamed change_zone → only_move; the
+    stamina penalty still scales that same slot.
+    """
+
+    def test_two_penalties_reduce_only_move_by_20_pct(self):
+        """2 stamina penalties → only_move weight reduced by 20% (2 × 10%).
 
         The penalty is applied in plan_action after the role weight function, so
         we replicate that logic here: get baseline weights, then apply the penalty.
         """
         player = _ps("scout", stamina_penalty_count=0)
         baseline_w = _get_scout_weights(player, _ACTION_IDX, _fresh(), [player], 0)
-        cz_idx = _ACTION_IDX["change_zone"]
+        cz_idx = _ACTION_IDX["only_move"]
         baseline_cz = baseline_w[cz_idx]
 
         # Simulate plan_action penalty step with 2 accumulated penalties
@@ -262,13 +266,13 @@ class TestStaminaMovementPenalty:
         # 1 - 0.10*2 = 0.8 → 20% reduction
         assert penalised_cz == pytest.approx(baseline_cz * 0.80, abs=2.0)
 
-    def test_zero_penalties_no_change_zone_reduction(self):
-        """0 stamina penalties → change_zone weight unchanged from role baseline."""
+    def test_zero_penalties_no_only_move_reduction(self):
+        """0 stamina penalties → only_move weight unchanged from role baseline."""
         player = _ps("heavy", stamina_penalty_count=0, missiles_landed=5)
         baseline = _get_heavy_weights(player, _ACTION_IDX, _fresh(), [player], 0)
-        # No penalties: no change_zone reduction applied on top of role baseline
-        # change_zone for heavy no-missile baseline is 25
-        assert baseline[_ACTION_IDX["change_zone"]] == 25
+        # No penalties: no only_move reduction applied on top of role baseline
+        # only_move (index 1) for heavy no-missile baseline is 25
+        assert baseline[_ACTION_IDX["only_move"]] == 25
 
 
 # ===========================================================================

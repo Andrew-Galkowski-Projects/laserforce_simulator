@@ -185,7 +185,7 @@ class TestBatchSimulatorShotCooldown:
 
         def capture(ch, wt):
             captured.append(list(wt))
-            return ["change_zone"]
+            return ["only_move"]
 
         with patch("random.choices", side_effect=capture):
             sim._plan_action(p, [p], 5.3)
@@ -202,7 +202,7 @@ class TestBatchSimulatorShotCooldown:
 
         def capture(ch, wt):
             captured.append(list(wt))
-            return ["change_zone"]
+            return ["only_move"]
 
         with patch("random.choices", side_effect=capture):
             sim._plan_action(p, [p], 5.6)
@@ -1459,3 +1459,340 @@ class TestPrecomputeRosterParity:
         assert len(players) == len(precomputed)
         for p in players:
             assert isinstance(p.game_awareness, int)
+
+
+# ---------------------------------------------------------------------------
+# MOVE-01 — BatchSimulator compact movement trail + determinism
+#
+# Locked decisions encoded here (CONTEXT.md / sim_helpers/CLAUDE.md / ADR-0007):
+#   * PlayerState.movement_trail: transient list of compact
+#     (start_cell, end_cell, timestamp) Advance steps; NO DB column, NO
+#     migration; appended only when the cell actually changed.
+#   * _flush_to_db turns movement_trail into compact movement GameEvents
+#     (start + end + timestamp, no route list) ONLY when a round is saved.
+#   * an unsaved run() never persists movement (no DB writes at all).
+#   * determinism preserved: same master_seed ⇒ identical games (incl. trails);
+#     serial == parallel team-position aggregates. Advance/A* consume no RNG.
+# ---------------------------------------------------------------------------
+
+
+_FLOOR_12X12 = [[1] * 12 for _ in range(12)]
+
+
+def _move01_make_map(name, zone_data=None, zone_size=100):
+    """Confirmed ArenaMap with the configs BatchSimulator.run needs for a map.
+
+    Mirrors test_map.py::TestMap02CellMovement._make_map.
+    """
+    from core.models import (
+        ArenaMap,
+        BaseSightLineConfig,
+        MapBaseConfig,
+        MapZoneConfig,
+        SightLineConfig,
+    )
+    from core.map_processing import compute_sight_lines
+
+    zone_data = zone_data or _FLOOR_12X12
+    rows, cols, px = len(zone_data), len(zone_data[0]), zone_size
+    arena_map = ArenaMap.objects.create(
+        name=name, img_width=cols * px, img_height=rows * px
+    )
+    MapZoneConfig.objects.create(
+        arena_map=arena_map, zone_size=px, zone_data=zone_data, confirmed=True
+    )
+    MapBaseConfig.objects.create(
+        arena_map=arena_map, base_type="red", x_px=px // 2, y_px=px // 2
+    )
+    MapBaseConfig.objects.create(
+        arena_map=arena_map,
+        base_type="blue",
+        x_px=cols * px - px // 2,
+        y_px=rows * px - px // 2,
+    )
+    SightLineConfig.objects.create(
+        arena_map=arena_map,
+        zone_size=px,
+        sight_data=compute_sight_lines(zone_data),
+    )
+    BaseSightLineConfig.objects.create(
+        arena_map=arena_map, base_type="red", zone_size=px, visible_cells=[]
+    )
+    BaseSightLineConfig.objects.create(
+        arena_map=arena_map, base_type="blue", zone_size=px, visible_cells=[]
+    )
+    return arena_map
+
+
+@pytest.mark.django_db
+class TestMove01PlayerStateMovementTrail:
+    """PlayerState.movement_trail: transient, defaults empty, accumulates
+    compact (start, end, timestamp) entries during a map-active round."""
+
+    def _rosters(self, prefix):
+        team, _ = make_team_with_slots(prefix)
+        return list(team.active_roster), team
+
+    def test_movement_trail_defaults_to_empty_list(self):
+        """Fresh PlayerState has an independent empty movement_trail (no DB
+        column — it is a transient default_factory list)."""
+        from matches.sim_helpers.player_state import PlayerState
+
+        a = PlayerState(
+            tag_id="red_scout",
+            name="s",
+            team_color="red",
+            role="scout",
+            accuracy=50,
+            survival=50,
+            starting_lives=15,
+            starting_shots=30,
+            final_lives=15,
+            final_shots=30,
+        )
+        b = PlayerState(
+            tag_id="blue_scout",
+            name="s2",
+            team_color="blue",
+            role="scout",
+            accuracy=50,
+            survival=50,
+            starting_lives=15,
+            starting_shots=30,
+            final_lives=15,
+            final_shots=30,
+        )
+        assert a.movement_trail == []
+        a.movement_trail.append(((0, 0), (0, 1), 0))
+        assert b.movement_trail == [], "movement_trail must not be shared state"
+
+    def test_move_player_in_memory_appends_compact_trail_entry(self):
+        """A real in-memory move appends one compact (start, end, ts) tuple;
+        a no-op move appends nothing."""
+        from matches.simulation import BatchSimulator
+        from matches.sim_helpers.player_state import PlayerState
+        from matches.sim_helpers.map_context import MapContext
+        from matches.sim_helpers.pathfinding import build_movement_adjacency
+
+        grid = [[1] * 20]
+        ctx = MapContext.from_dict(
+            {
+                "adj": build_movement_adjacency(grid),
+                "spawn_cells": {"red": (0, 0), "blue": (0, 19)},
+                "zone_data": grid,
+                "sight_data": None,
+            }
+        )
+        player = PlayerState(
+            tag_id="red_scout",
+            name="s",
+            team_color="red",
+            role="scout",
+            accuracy=50,
+            survival=50,
+            starting_lives=15,
+            starting_shots=30,
+            final_lives=15,
+            final_shots=30,
+            speed=50,
+            cell_row=0,
+            cell_col=0,
+        )
+
+        sim = BatchSimulator()
+        sim._move_player_in_memory(player, 4, (0, 19), ctx, 1)
+        assert len(player.movement_trail) == 1
+        start, end, ts = player.movement_trail[0]
+        assert start == (0, 0)
+        assert end == (player.cell_row, player.cell_col)
+        assert ts == 4
+
+        # No-op move (already at goal) appends nothing.
+        before = list(player.movement_trail)
+        sim._move_player_in_memory(
+            player, 5, (player.cell_row, player.cell_col), ctx, 1
+        )
+        assert player.movement_trail == before
+
+    def test_movement_trail_accumulates_over_a_map_round(self):
+        """Over a batch round with a map active, players accumulate a
+        multi-step movement_trail (the always-on Advance fires every tick)."""
+        red, team_red = self._rosters("M01TrailR")
+        blue, team_blue = self._rosters("M01TrailB")
+        arena_map = _move01_make_map("M01TrailMap")
+
+        from matches.simulation import ResourceBasedSimulator
+
+        sim = BatchSimulator()
+        movement_ctx, _ = ResourceBasedSimulator._load_map_context(arena_map)
+
+        import random
+
+        random.seed(42)
+        _result, red_players, blue_players = sim._simulate_round(
+            red, blue, movement_ctx=movement_ctx
+        )
+
+        all_players = red_players + blue_players
+        assert any(
+            len(p.movement_trail) > 0 for p in all_players
+        ), "at least one player must accumulate a movement_trail under a map"
+        for p in all_players:
+            for entry in p.movement_trail:
+                start, end, ts = entry
+                assert start != end, "trail entries are real (changed) Advances"
+                assert isinstance(ts, int)
+
+
+@pytest.mark.django_db
+class TestMove01FlushTrailToCompactEvents:
+    """_flush_to_db converts movement_trail into compact movement GameEvents
+    (start + end + timestamp, no route list); an unsaved run() persists none."""
+
+    def _rosters(self, prefix):
+        team, _ = make_team_with_slots(prefix)
+        return list(team.active_roster), team
+
+    _ROUTE_KEYS = ("route", "path", "cells", "cell_path", "trail", "steps")
+
+    def test_save_games_emits_compact_movement_events_from_trail(self):
+        from matches.models import GameEvent
+
+        red, team_red = self._rosters("M01FlushR")
+        blue, team_blue = self._rosters("M01FlushB")
+        arena_map = _move01_make_map("M01FlushMap")
+
+        sim = BatchSimulator()
+        saved = sim.save_games(
+            team_red,
+            team_blue,
+            seeds=[(20240517, False)],
+            n=1,
+            arena_map=arena_map,
+        )
+        assert saved, "save_games returned no rounds"
+        gr = saved[0]
+
+        move_events = list(
+            GameEvent.objects.filter(game_round=gr, event_type="movement")
+        )
+        assert move_events, (
+            "save_games must flush PlayerState.movement_trail into compact "
+            "movement GameEvents"
+        )
+        for ev in move_events:
+            md = ev.metadata
+            assert "start_row" in md and "start_col" in md, md
+            assert "end_row" in md and "end_col" in md, md
+            assert ev.timestamp is not None
+            assert (md["start_row"], md["start_col"]) != (
+                md["end_row"],
+                md["end_col"],
+            ), f"compact event must reflect a real Advance: {md}"
+            for bad in self._ROUTE_KEYS:
+                assert bad not in md, f"no route list allowed in metadata: {md}"
+            for v in md.values():
+                assert not isinstance(
+                    v, (list, tuple)
+                ), f"metadata must be flat scalars: {md}"
+
+    def test_unsaved_run_persists_no_movement_events(self):
+        """run() is pure in-memory: a movement_trail accumulates but NO
+        GameEvent / PlayerRoundState rows are written for an unsaved batch."""
+        from matches.models import GameEvent, GameRound, PlayerRoundState
+
+        red, team_red = self._rosters("M01NoSaveR")
+        blue, team_blue = self._rosters("M01NoSaveB")
+        arena_map = _move01_make_map("M01NoSaveMap")
+
+        gr_before = GameRound.objects.count()
+        ev_before = GameEvent.objects.count()
+        prs_before = PlayerRoundState.objects.count()
+
+        BatchSimulator().run(
+            team_red, team_blue, n=2, arena_map=arena_map, master_seed=99
+        )
+
+        assert GameRound.objects.count() == gr_before
+        assert GameEvent.objects.count() == ev_before
+        assert PlayerRoundState.objects.count() == prs_before
+
+
+@pytest.mark.django_db
+class TestMove01DeterminismPreserved:
+    """MOVE-01 must not perturb SIM-07/08 determinism: the always-on Advance
+    and 2× step consume no RNG, so same master_seed ⇒ identical games and
+    serial == parallel team-position aggregates (with a map active)."""
+
+    def _rosters(self, prefix):
+        team, _ = make_team_with_slots(prefix)
+        return list(team.active_roster), team
+
+    def test_same_master_seed_identical_with_map(self):
+        red, team_red = self._rosters("M01DetR")
+        blue, team_blue = self._rosters("M01DetB")
+        arena_map = _move01_make_map("M01DetMap")
+        sim = BatchSimulator()
+
+        a = sim.run(team_red, team_blue, n=6, arena_map=arena_map, master_seed=2024)
+        b = sim.run(team_red, team_blue, n=6, arena_map=arena_map, master_seed=2024)
+
+        assert a["avg_red_score"] == b["avg_red_score"]
+        assert a["avg_blue_score"] == b["avg_blue_score"]
+        assert a["red_wins"] == b["red_wins"]
+        assert a["avg_seeds"] == b["avg_seeds"]
+        assert a["outlier_seeds"] == b["outlier_seeds"]
+        assert a["side_advantage"] == b["side_advantage"]
+
+    def test_replay_movement_trail_is_deterministic(self):
+        """Two replays of the same (seed, orientation) with a map produce
+        byte-identical movement trails (Advance/A* are deterministic)."""
+        red, team_red = self._rosters("M01ReplayR")
+        blue, team_blue = self._rosters("M01ReplayB")
+        arena_map = _move01_make_map("M01ReplayMap")
+
+        from matches.simulation import ResourceBasedSimulator
+
+        movement_ctx, _ = ResourceBasedSimulator._load_map_context(arena_map)
+        sim = BatchSimulator()
+
+        seed = 76543210
+        _, red_a, blue_a, _ = sim.replay_round(
+            red, blue, seed, flipped=False, movement_ctx=movement_ctx
+        )
+        _, red_b, blue_b, _ = sim.replay_round(
+            red, blue, seed, flipped=False, movement_ctx=movement_ctx
+        )
+
+        trails_a = [p.movement_trail for p in red_a + blue_a]
+        trails_b = [p.movement_trail for p in red_b + blue_b]
+        assert trails_a == trails_b, "replayed movement trails must be identical"
+        assert any(t for t in trails_a), "expected non-empty trails with a map"
+
+    def test_serial_equals_parallel_team_positions_with_map(self):
+        """Serial vs parallel batch with a map active: identical team-position
+        aggregates and side_advantage (MOVE-01 Advance is RNG-free)."""
+        red, team_red = self._rosters("M01ParR")
+        blue, team_blue = self._rosters("M01ParB")
+        arena_map = _move01_make_map("M01ParMap")
+        sim = BatchSimulator()
+
+        serial = sim.run(team_red, team_blue, n=4, arena_map=arena_map, master_seed=777)
+        try:
+            parallel = sim.run(
+                team_red,
+                team_blue,
+                n=4,
+                arena_map=arena_map,
+                master_seed=777,
+                workers=2,
+            )
+        except Exception as exc:  # pragma: no cover - environment dependent
+            pytest.skip(f"Parallel worker pool unavailable: {exc!r}")
+
+        assert serial["red_wins"] == parallel["red_wins"]
+        assert serial["blue_wins"] == parallel["blue_wins"]
+        assert serial["ties"] == parallel["ties"]
+        assert serial["avg_red_score"] == parallel["avg_red_score"]
+        assert serial["avg_blue_score"] == parallel["avg_blue_score"]
+        assert serial["side_advantage"] == parallel["side_advantage"]

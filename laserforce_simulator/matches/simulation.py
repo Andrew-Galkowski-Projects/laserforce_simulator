@@ -14,6 +14,7 @@ from .sim_helpers.pathfinding import (
     astar_next_step,
     astar_advance,
     cells_to_move,
+    choose_goal_cell,
 )
 from .sim_helpers.combat import (
     _NEUTRAL_BASE_TYPES,
@@ -1480,6 +1481,14 @@ class ResourceBasedSimulator:
 
         # TODO: eventually want to sort all_alive by player decision making or something
         random.shuffle(all_alive)
+        # MOVE-01: snapshot each player's previous-tick action BEFORE planning
+        # overwrites last_chosen_action, so the always-on Advance can feed
+        # choose_goal_cell the same MAP-05 ``intended_action`` (prev action)
+        # the old in-plan change_zone branch used.
+        prev_actions = {
+            id(player): getattr(player, "last_chosen_action", "")
+            for player in all_alive
+        }
         plans = []
         for player in all_alive:
             plans.extend(
@@ -1546,15 +1555,16 @@ class ResourceBasedSimulator:
                 self._attempt_resupply(actor, plan.get("target"), second, event_buffer)
             elif ptype == "request_resupply":
                 resupply_requestors.append(actor)
+            elif ptype == "only_move":
+                # MOVE-01: map-path movement is the always-on per-tick Advance
+                # step below (decoupled from the weighted action roll); the
+                # only_move roll only flags this tick's Advance as a single 2×
+                # step. Nothing to do here.
+                pass
             elif ptype == "change_zone":
-                goal_cell = plan.get("goal_cell")
-                ctx = plan.get("movement_ctx")
-                if goal_cell is not None and ctx is not None:
-                    self._move_to_cell(actor, second, goal_cell, ctx, event_buffer)
-                else:
-                    self._change_zone(
-                        actor, second, event_buffer, towards=plan.get("zone")
-                    )
+                # MOVE-01 decision 7: 3-zone fallback only (movement_ctx is
+                # None) — keep the weighted _change_zone behaviour.
+                self._change_zone(actor, second, event_buffer, towards=plan.get("zone"))
             elif ptype == "hide":
                 actor.is_hiding = True
                 actor.save()
@@ -1587,6 +1597,24 @@ class ResourceBasedSimulator:
                     _apply_nuke_activation_broadcast(actor, nuke_targets_rbs, second)
             elif ptype == "tag":
                 tag_attempts.append({"attacker": actor, "defender": plan.get("target")})
+
+        # MOVE-01: always-on Advance — every non-stationary player advances
+        # toward their goal cell every tick, decoupled from the weighted action
+        # roll (map path only; movement_ctx is None falls back to the weighted
+        # change_zone dispatch above). Runs after the action dispatch so
+        # is_hiding (set by the hide branch) and last_chosen_action are final
+        # for the stationary check. Order-stable: iterates the already-shuffled
+        # all_alive; consumes no RNG (SIM-07/SIM-08 determinism preserved).
+        if movement_ctx is not None:
+            for actor in all_alive:
+                self._advance_player(
+                    actor,
+                    all_alive,
+                    second,
+                    movement_ctx,
+                    prev_actions.get(id(actor), ""),
+                    event_buffer,
+                )
 
         # Resupply request phase: resolve all request_resupply actions as a batch
         if resupply_requestors:
@@ -1971,7 +1999,55 @@ class ResourceBasedSimulator:
                     PendingFollowup(second + cooldown, o["attacker"], o["defender"], 1)
                 )
 
-    def _move_to_cell(self, player, second, goal_cell, movement_ctx, event_buffer=None):
+    def _advance_player(
+        self,
+        player,
+        all_alive,
+        second,
+        movement_ctx,
+        prev_action: str,
+        event_buffer=None,
+    ) -> None:
+        """MOVE-01: always-on goal-directed Advance for one player this tick.
+
+        Performed for every non-stationary player every tick, independent of
+        the weighted action roll. Stationary set (suppress the Advance this
+        tick): ``player.is_hiding`` is True, OR this tick's chosen action is
+        ``capture_base`` (frozen, anchored to base). When this tick's action is
+        ``only_move`` the Advance is a single 2× step in one astar_advance call.
+        No-op when there is no map path (the 3-zone fallback handles
+        movement_ctx is None via the weighted change_zone dispatch).
+        """
+        if movement_ctx is None or player.cell_row is None:
+            return
+        chosen = getattr(player, "last_chosen_action", "")
+        # Stationary set: hiding or anchored to a base capture this tick.
+        if player.is_hiding or chosen == "capture_base":
+            return
+        goal_cell = choose_goal_cell(
+            player,
+            all_alive,
+            movement_ctx.get_spawn_cells(),
+            movement_ctx,
+            prev_action,
+            second,
+        )
+        # only_move = one single 2× step; all other (non-stationary) actions
+        # Advance the normal speed-scaled distance while they act.
+        multiplier = 2 if chosen == "only_move" else 1
+        self._move_to_cell(
+            player, second, goal_cell, movement_ctx, event_buffer, multiplier
+        )
+
+    def _move_to_cell(
+        self,
+        player,
+        second,
+        goal_cell,
+        movement_ctx,
+        event_buffer=None,
+        multiplier: int = 1,
+    ):
         if event_buffer is None:
             event_buffer = []
         if goal_cell is None:
@@ -1982,15 +2058,23 @@ class ResourceBasedSimulator:
         if current == goal_cell or current not in adj:
             return
         # STAT-03 Phase 1: traverse speed-scaled cells per tick, not just one.
-        steps = cells_to_move(getattr(player, "speed", 50), zone_data)
+        # MOVE-01: an only_move roll covers a single 2× step (multiplier=2) in
+        # ONE astar_advance call.
+        steps = cells_to_move(getattr(player, "speed", 50), zone_data) * multiplier
         next_cell = astar_advance(current, goal_cell, adj, steps)
         if next_cell == current:
+            # MOVE-01: emit the movement event only when the cell actually
+            # changed (skip no-op Advances).
             return
         player.cell_row, player.cell_col = next_cell
         player.zone_fallback = self._zone_from_cell(
             next_cell[0], next_cell[1], movement_ctx["spawn_cells"]
         )
         player.save(update_fields=["cell_row", "cell_col", "zone_fallback"])
+        # MOVE-01: compact movement event — start cell, end cell, timestamp.
+        # The intermediate route is NOT stored; it is recomputed on demand at
+        # replay by re-running deterministic A* start->end. new_zone/actor_role
+        # are kept for compatibility.
         event_buffer.append(
             {
                 "timestamp": second,
@@ -2001,6 +2085,10 @@ class ResourceBasedSimulator:
                 "description": f"{player.player.name} moves to cell ({next_cell[0]}, {next_cell[1]})",
                 "metadata": {
                     "actor_role": player.role,
+                    "start_row": current[0],
+                    "start_col": current[1],
+                    "end_row": next_cell[0],
+                    "end_col": next_cell[1],
                     "cell_row": next_cell[0],
                     "cell_col": next_cell[1],
                     "new_zone": player.current_zone,
@@ -3381,6 +3469,15 @@ class BatchSimulator:
 
             random.shuffle(all_alive)
 
+            # MOVE-01: snapshot each player's previous-tick action BEFORE
+            # planning overwrites last_chosen_action, so the always-on Advance
+            # can feed choose_goal_cell the same MAP-05 ``intended_action``
+            # (prev action) the old in-plan change_zone branch used.
+            prev_actions = {
+                id(player): getattr(player, "last_chosen_action", "")
+                for player in all_alive
+            }
+
             plans = []
             for player in all_alive:
                 plans.extend(
@@ -3398,13 +3495,16 @@ class BatchSimulator:
                     self._attempt_resupply(actor, plan["target"], second, event_log)
                 elif ptype == "request_resupply":
                     batch_resupply_requestors.append(actor)
+                elif ptype == "only_move":
+                    # MOVE-01: map-path movement is the always-on per-tick
+                    # Advance step below (decoupled from the weighted action
+                    # roll); the only_move roll only flags this tick's Advance
+                    # as a single 2× step. Nothing to do here.
+                    pass
                 elif ptype == "change_zone":
-                    goal_cell = plan.get("goal_cell")
-                    ctx = plan.get("movement_ctx")
-                    if goal_cell is not None and ctx is not None:
-                        self._move_player_in_memory(actor, goal_cell, ctx)
-                    else:
-                        self._change_zone(actor, plan.get("zone"))
+                    # MOVE-01 decision 7: 3-zone fallback only (movement_ctx
+                    # is None) — keep the weighted _change_zone behaviour.
+                    self._change_zone(actor, plan.get("zone"))
                 elif ptype == "hide":
                     actor.is_hiding = True
                 elif ptype == "capture_base":
@@ -3437,6 +3537,24 @@ class BatchSimulator:
                         _apply_nuke_activation_broadcast(actor, nuke_targets, second)
                 elif ptype == "tag":
                     tag_attempts.append({"attacker": actor, "defender": plan["target"]})
+
+            # MOVE-01: always-on Advance — every non-stationary player advances
+            # toward their goal cell every tick, decoupled from the weighted
+            # action roll (map path only; movement_ctx is None falls back to
+            # the weighted change_zone dispatch above). Runs after the action
+            # dispatch so is_hiding (set by the hide branch) and
+            # last_chosen_action are final for the stationary check.
+            # Order-stable: iterates the already-shuffled all_alive; consumes
+            # no RNG (SIM-07/SIM-08 determinism preserved).
+            if movement_ctx is not None:
+                for actor in all_alive:
+                    self._advance_player(
+                        actor,
+                        all_alive,
+                        second,
+                        movement_ctx,
+                        prev_actions.get(id(actor), ""),
+                    )
 
             if batch_resupply_requestors:
 
@@ -3530,7 +3648,46 @@ class BatchSimulator:
         # and select tick-domain thresholds in the shared planning helpers.
         return plan_action(player, all_alive, tick, movement_ctx, time_domain="ticks")
 
-    def _move_player_in_memory(self, player, goal_cell, movement_ctx):
+    def _advance_player(
+        self,
+        player,
+        all_alive,
+        second,
+        movement_ctx,
+        prev_action: str,
+    ) -> None:
+        """MOVE-01: always-on goal-directed Advance for one player this tick.
+
+        Mirrors RBS._advance_player. Performed for every non-stationary player
+        every tick, independent of the weighted action roll. Stationary set
+        (suppress the Advance this tick): ``player.is_hiding`` is True, OR this
+        tick's chosen action is ``capture_base`` (frozen, anchored to base).
+        When this tick's action is ``only_move`` the Advance is a single 2×
+        step in one astar_advance call. No-op when there is no map path.
+        """
+        if movement_ctx is None or player.cell_row is None:
+            return
+        chosen = getattr(player, "last_chosen_action", "")
+        # Stationary set: hiding or anchored to a base capture this tick.
+        if player.is_hiding or chosen == "capture_base":
+            return
+        goal_cell = choose_goal_cell(
+            player,
+            all_alive,
+            movement_ctx.get_spawn_cells(),
+            movement_ctx,
+            prev_action,
+            second,
+            time_domain="ticks",
+        )
+        # only_move = one single 2× step; all other (non-stationary) actions
+        # Advance the normal speed-scaled distance while they act.
+        multiplier = 2 if chosen == "only_move" else 1
+        self._move_player_in_memory(player, second, goal_cell, movement_ctx, multiplier)
+
+    def _move_player_in_memory(
+        self, player, second, goal_cell, movement_ctx, multiplier: int = 1
+    ):
         if goal_cell is None or player.cell_row is None:
             return
         adj = movement_ctx["adj"]
@@ -3539,14 +3696,24 @@ class BatchSimulator:
         if current == goal_cell or current not in adj:
             return
         # STAT-03 Phase 1: traverse speed-scaled cells per tick, not just one.
-        steps = cells_to_move(getattr(player, "speed", 50), zone_data)
+        # MOVE-01: an only_move roll covers a single 2× step (multiplier=2) in
+        # ONE astar_advance call.
+        steps = cells_to_move(getattr(player, "speed", 50), zone_data) * multiplier
         next_cell = astar_advance(current, goal_cell, adj, steps)
         if next_cell == current:
+            # MOVE-01: record a move only when the cell actually changed.
             return
         player.cell_row, player.cell_col = next_cell
         player.current_zone = ResourceBasedSimulator._zone_from_cell(
             next_cell[0], next_cell[1], movement_ctx["spawn_cells"]
         )
+        # MOVE-01: append a compact (start, end, timestamp) entry to the
+        # transient movement_trail (no DB column / no migration). _flush_to_db
+        # turns these into compact movement GameEvents when a batch round is
+        # persisted, mirroring RBS movement-event semantics. The intermediate
+        # route is NOT stored; it is recomputed on demand at replay via
+        # deterministic A* start->end.
+        player.movement_trail.append((current, next_cell, second))
 
     # ------------------------------------------------------------------ #
     # Action resolution (no DB writes)
@@ -4252,6 +4419,7 @@ class BatchSimulator:
                 blue_players,
                 events,
                 rng_seed=seed,
+                movement_ctx=movement_ctx,
             )
             saved.append(gr)
         return saved
@@ -4267,8 +4435,15 @@ class BatchSimulator:
         events,
         *,
         rng_seed: int | None = None,
+        movement_ctx=None,
     ):
-        """Write a replayed in-memory round to DB as a standalone GameRound."""
+        """Write a replayed in-memory round to DB as a standalone GameRound.
+
+        MOVE-01: ``movement_ctx`` (optional) is used only to resolve each
+        movement step's end-cell zone for the compact movement GameEvents
+        flushed from each player's ``movement_trail``. When ``None`` the
+        per-move ``new_zone`` falls back to the player's final zone.
+        """
         from teams.models import Player as PlayerModel
 
         game_round = GameRound.objects.create(
@@ -4354,6 +4529,42 @@ class BatchSimulator:
                 description=ev.get("description", ""),
                 metadata=ev.get("metadata", {}),
             )
+
+        # MOVE-01: flush each player's compact movement trail to movement
+        # GameEvents (start cell + end cell + timestamp). Mirrors RBS
+        # movement-event semantics; the exact intermediate route is recomputed
+        # at replay by re-running deterministic A* start->end (not stored).
+        spawn_cells = movement_ctx.get_spawn_cells() if movement_ctx else None
+        for p in red_players + blue_players:
+            actor_obj = players_by_id.get(p.player_id)
+            if not actor_obj:
+                continue
+            for start_cell, end_cell, ts in p.movement_trail:
+                if spawn_cells is not None:
+                    new_zone = ResourceBasedSimulator._zone_from_cell(
+                        end_cell[0], end_cell[1], spawn_cells
+                    )
+                else:
+                    new_zone = p.current_zone
+                GameEvent.objects.create(
+                    game_round=game_round,
+                    timestamp=ts,
+                    event_type="movement",
+                    actor=actor_obj,
+                    target=None,
+                    points_awarded=0,
+                    description=f"{p.name} moves to cell ({end_cell[0]}, {end_cell[1]})",
+                    metadata={
+                        "actor_role": p.role,
+                        "start_row": start_cell[0],
+                        "start_col": start_cell[1],
+                        "end_row": end_cell[0],
+                        "end_col": end_cell[1],
+                        "cell_row": end_cell[0],
+                        "cell_col": end_cell[1],
+                        "new_zone": new_zone,
+                    },
+                )
 
         return game_round
 

@@ -2,7 +2,8 @@
 Per-role action weight function unit tests (sim_helpers/weights.py).
 
 Weight array layout — indices 0-6:
-  tag_player, change_zone, hide, capture_base, use_special, resupply_ally, missile_player
+  tag_player, only_move, hide, capture_base, use_special, resupply_ally, missile_player
+  (MOVE-01: index 1 renamed change_zone → only_move; same slot/weights)
 
 Base weights before any role function: [70, 30, 0, 0, 0, 0, 0]
 """
@@ -21,7 +22,7 @@ from matches.tests.conftest import make_team_with_slots
 
 _ACTION_IDX = {
     "tag_player": 0,
-    "change_zone": 1,
+    "only_move": 1,
     "hide": 2,
     "capture_base": 3,
     "use_special": 4,

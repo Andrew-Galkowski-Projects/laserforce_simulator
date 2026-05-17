@@ -57,7 +57,7 @@ _MAX_SHOTS = {"commander": 60, "heavy": 40, "scout": 60, "medic": 30, "ammo": 15
 
 _ACTION_IDX = {
     "tag_player": 0,
-    "change_zone": 1,
+    "only_move": 1,
     "hide": 2,
     "capture_base": 3,
     "use_special": 4,
@@ -511,13 +511,14 @@ class TestApplyScoreBroadcastWeights(unittest.TestCase):
         _apply_score_broadcast_weights(w, _ACTION_IDX, player, [player], 200.0)
         self.assertEqual(w[_ACTION_IDX["tag_player"]], 80)
 
-    def test_losing_team_change_zone_decreases(self):
-        """Losing team: change_zone -= 10 (clamped >= 0)."""
+    def test_losing_team_only_move_decreases(self):
+        """MOVE-01: index-1 slot renamed change_zone → only_move.
+        Losing team: only_move -= 10 (clamped >= 0)."""
         player = _ps("scout", "red")
         player.score_broadcast_state = {"winning_team": "blue", "timestamp": 180.0}
         w = self._weights()
         _apply_score_broadcast_weights(w, _ACTION_IDX, player, [player], 200.0)
-        self.assertEqual(w[_ACTION_IDX["change_zone"]], 20)
+        self.assertEqual(w[_ACTION_IDX["only_move"]], 20)
 
     def test_losing_team_hide_decreases_clamped_at_zero(self):
         """Losing team: hide -= 10, clamped at 0 (starts at 0 so stays 0)."""

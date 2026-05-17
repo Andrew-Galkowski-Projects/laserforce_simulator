@@ -33,7 +33,7 @@ random.seed(42)
 
 _ACTION_IDX = {
     "tag_player": 0,
-    "change_zone": 1,
+    "only_move": 1,
     "hide": 2,
     "capture_base": 3,
     "use_special": 4,

@@ -138,7 +138,7 @@ def _find_ally(all_alive, team_color, role):
 def _apply_role_baseline(w, c, i):
     """Apply the unconditional opening role adjustments from constants."""
     w[i["tag_player"]] += c.get("baseline_tag", 0)
-    w[i["change_zone"]] += c.get("baseline_cz", 0)
+    w[i["only_move"]] += c.get("baseline_cz", 0)
     w[i["hide"]] += c.get("baseline_hide", 0)
     w[i["resupply_ally"]] += c.get("baseline_resupply", 0)
 
@@ -181,21 +181,21 @@ def _apply_seek_ally(
     if primary_ally is not None:
         if player.current_zone != primary_ally.current_zone:
             w[i["tag_player"]] -= c["seek_diff_tag"]
-            w[i["change_zone"]] += c["seek_diff_cz"]
+            w[i["only_move"]] += c["seek_diff_cz"]
         else:
-            w[i["change_zone"]] -= c["seek_same_cz"]
+            w[i["only_move"]] -= c["seek_same_cz"]
             w[i["tag_player"]] -= c["seek_same_tag"]
             w[i["hide"]] += c["seek_same_hide"]
     elif player.can_capture_base_in_current_zone:
         w[i["capture_base"]] += c["seek_base_capture_gain"]
         w[i["tag_player"]] -= c["seek_base_tag_cost"]
-        w[i["change_zone"]] -= c["seek_base_cz_cost"]
+        w[i["only_move"]] -= c["seek_base_cz_cost"]
     elif fallback_ally is not None:
         if player.current_zone != fallback_ally.current_zone:
             w[i["tag_player"]] -= c["seek_diff_tag"]
-            w[i["change_zone"]] += c["seek_diff_cz"]
+            w[i["only_move"]] += c["seek_diff_cz"]
         else:
-            w[i["change_zone"]] -= c["seek_same_cz"]
+            w[i["only_move"]] -= c["seek_same_cz"]
             w[i["tag_player"]] -= c["seek_same_tag"]
             w[i["hide"]] += c["seek_same_hide"]
     elif no_resource:
@@ -220,12 +220,12 @@ def _apply_not_active(
     always_escape=False,
 ):
     """
-    When downed, redistribute idle weight to hide or change_zone based on a nearby ally.
+    When downed, redistribute idle weight to hide or only_move based on a nearby ally.
 
     - watch_role / watch_team_color: the ally to look for in the current zone.
     - drain_key: the weight index to drain from (tag_player or resupply_ally).
     - also_drain_resupply: if True (ammo), pool tag_player + resupply_ally and zero both.
-    - always_escape: if True, always redirect to change_zone regardless of ally presence
+    - always_escape: if True, always redirect to only_move regardless of ally presence
       (used for heavy to force movement out of line of fire during reset window).
     """
     if not player.is_active_at(second):
@@ -254,7 +254,7 @@ def _apply_not_active(
         if not always_escape and ally_in_zone:
             w[i["hide"]] += idle
         else:
-            w[i["change_zone"]] += idle
+            w[i["only_move"]] += idle
 
 
 def _apply_request_resupply_weight(
@@ -314,7 +314,7 @@ def _apply_score_broadcast_weights(
 
     Losing team:
       - tag_player += 10
-      - change_zone -= 10  (clamped ≥ 0)
+      - only_move -= 10    (clamped ≥ 0)
       - hide -= 10         (clamped ≥ 0)
 
     Winning team + low lives (≤ 30%) + allied medic dead:
@@ -337,8 +337,8 @@ def _apply_score_broadcast_weights(
         # Losing: be more aggressive
         if i.get("tag_player") is not None:
             w[i["tag_player"]] = max(0, w[i["tag_player"]] + 10)
-        if i.get("change_zone") is not None:
-            w[i["change_zone"]] = max(0, w[i["change_zone"]] - 10)
+        if i.get("only_move") is not None:
+            w[i["only_move"]] = max(0, w[i["only_move"]] - 10)
         if i.get("hide") is not None:
             w[i["hide"]] = max(0, w[i["hide"]] - 10)
     elif winning_team == player_team and low_lives:
@@ -426,7 +426,7 @@ def _get_ammo_weights(
         if medic is not None:
             if player.current_zone != medic.current_zone:
                 w[i["resupply_ally"]] -= c["low_lives_diff_zone_resupply_cost"]
-                w[i["change_zone"]] += c["low_lives_diff_zone_resupply_cost"]
+                w[i["only_move"]] += c["low_lives_diff_zone_resupply_cost"]
             else:
                 w[i["resupply_ally"]] -= c["low_lives_same_zone_resupply_cost"]
                 w[i["hide"]] += c["low_lives_same_zone_hide_gain"]
@@ -435,7 +435,7 @@ def _get_ammo_weights(
             if heavy is not None:
                 if player.current_zone != heavy.current_zone:
                     w[i["resupply_ally"]] -= c["low_lives_fallback_resupply_cost"]
-                    w[i["change_zone"]] += c["low_lives_fallback_resupply_cost"]
+                    w[i["only_move"]] += c["low_lives_fallback_resupply_cost"]
                 else:
                     w[i["resupply_ally"]] -= c["low_lives_fallback_resupply_cost"]
                     w[i["hide"]] += c["low_lives_fallback_hide_gain"]
@@ -511,12 +511,12 @@ def _get_scout_weights(
             100 * (player.final_shots / player.max_shots) * (player.special_usage / 50)
         )
 
-    # Not active: redistribute tag weight — 20% to change_zone (capped), 80% to hide
+    # Not active: redistribute tag weight — 20% to only_move (capped), 80% to hide
     if not player.is_active_at(second):
         tag_weight = max(0, w[i["tag_player"]])
         w[i["tag_player"]] = 0
         cz_bonus = min(c["not_active_cz_cap"], tag_weight)
-        w[i["change_zone"]] += cz_bonus
+        w[i["only_move"]] += cz_bonus
         w[i["hide"]] += tag_weight - cz_bonus
 
     _apply_endgame_rush(w, c, i, player, second, "tag_player", time_domain)
@@ -542,11 +542,11 @@ def _get_heavy_weights(
     _apply_role_baseline(w, c, i)
 
     if player.missiles_used < 5:
-        w[i["change_zone"]] -= c["missile_cz_cost"]
+        w[i["only_move"]] -= c["missile_cz_cost"]
         w[i["missile_player"]] += c["missile_gain"]
 
     if player.can_capture_base_in_current_zone:
-        w[i["change_zone"]] -= c["base_capture_cz_cost"]
+        w[i["only_move"]] -= c["base_capture_cz_cost"]
         w[i["tag_player"]] -= c["base_capture_tag_cost"]
         w[i["capture_base"]] += c["base_capture_gain"]
 
@@ -620,7 +620,7 @@ def _get_commander_weights(
     _apply_role_baseline(w, c, i)
 
     if player.missiles_used < 5:
-        w[i["change_zone"]] -= c["missile_cz_cost"]
+        w[i["only_move"]] -= c["missile_cz_cost"]
         w[i["missile_player"]] += c["missile_gain"]
 
     if player.can_capture_base_in_current_zone:
@@ -634,7 +634,7 @@ def _get_commander_weights(
         else:
             base_early_threshold = c["base_early_threshold"]
         early_bonus = c["base_early_bonus"] if second < base_early_threshold else 0
-        w[i["change_zone"]] -= c["base_capture_cz_cost"]
+        w[i["only_move"]] -= c["base_capture_cz_cost"]
         w[i["tag_player"]] -= c["base_capture_tag_cost"] + early_bonus
         w[i["capture_base"]] += c["base_capture_gain"] + early_bonus
 
@@ -695,7 +695,7 @@ def check_stamina_penalty(player, second: float, round_duration: int = 900) -> N
 
     Increments ``player.stamina_penalty_count`` once for every 10% checkpoint
     that has elapsed where ``player.stamina < checkpoint_percent``.  Penalties
-    stack; each one later reduces ``change_zone`` weight (in ``combat.py``) and
+    stack; each one later reduces ``only_move`` weight (in ``combat.py``) and
     ``stamina_hit_modifier`` on the player object.
 
     Idempotent across repeated calls within the same 10% window — the

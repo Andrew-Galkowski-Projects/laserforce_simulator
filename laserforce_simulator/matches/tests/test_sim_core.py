@@ -113,7 +113,7 @@ class TestSimulation:
         assert "seq" in captured
         assert captured["seq"] == [
             "tag_player",
-            "change_zone",
+            "only_move",
             "hide",
             "capture_base",
             "use_special",
@@ -308,7 +308,11 @@ class TestSimulation:
             final_shots=5,
             final_lives=10,
         )
-        with patch("random.choices", return_value=["change_zone"]), patch(
+        # MOVE-01: the weighted slot at index 1 is now ``only_move``.
+        # With no map (3-zone fallback), an ``only_move`` roll keeps the
+        # legacy weighted ``_change_zone`` behaviour (decision 7), so the
+        # neutral-zone player still steps to an adjacent zone.
+        with patch("random.choices", return_value=["only_move"]), patch(
             "random.choice", return_value=1
         ):
             simulator._simulate_combat_exchange(
