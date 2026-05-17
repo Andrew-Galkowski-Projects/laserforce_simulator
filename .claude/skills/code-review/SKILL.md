@@ -5,14 +5,18 @@ description: Review all changes on the current branch vs main as a senior develo
 
 ## Step 1 — Gather changed files
 
-```powershell
-git diff main...HEAD --name-only
-git diff --name-only          # unstaged changes too
+This is a fixed git operation, not a judgement call. Use the shared helper
+(single source of truth, also used by `verify` and `update-docs`):
+
+```
+python .claude/skills/verify/scripts/changed_files.py --base main --mode branch
 ```
 
-Combine and deduplicate. Separate into: Python files, templates, migrations, config/other.
+The JSON it prints already has the files deduplicated and bucketed:
+`python`, `templates`, `migrations`, `other`, plus `pytest_targets` (the
+authoritative test mapping — use these in Step 3, do not hand-derive them).
 
-If nothing has changed, output "No changes detected vs main." and stop.
+If `nothing_changed` is `true`, output "No changes detected vs main." and stop.
 
 ## Step 2 — Read the full diff
 
@@ -34,10 +38,7 @@ For every changed Python file, evaluate the following dimensions and collect fin
 - Dead code: unused imports, unreachable branches, commented-out blocks.
 
 ### Test Coverage
-- For every new public function or method, confirm a test exists covering the happy path AND at least one edge case/failure. Reference the test mapping:
-  - `matches/**` → `matches/tests/simulation_tests.py` and `matches/tests.py`
-  - `teams/**` → `teams/tests.py`
-  - `core/**` → `core/tests.py`
+- For every new public function or method, confirm a test exists covering the happy path AND at least one edge case/failure. The relevant test locations are the `pytest_targets` reported by `changed_files.py` in Step 1 (authoritative — do not hand-maintain a mapping here; it drifts).
 - For bug fixes, confirm a regression test is present that would have caught the bug.
 - Flag any new code paths (branches, exception handlers) with no test coverage.
 - Warn if tests use mocks in place of real behavior (project rule: prefer real in-memory objects over mocks).
