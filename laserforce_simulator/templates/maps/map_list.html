@@ -37,8 +37,13 @@
                 {% endif %}
                 {% endwith %}
             </div>
-            <div class="card-footer">
-                <a href="{% url 'map_editor' arena_map.pk %}" class="btn btn-primary btn-sm w-100">Open Editor</a>
+            <div class="card-footer d-flex gap-2">
+                <a href="{% url 'map_editor' arena_map.pk %}" class="btn btn-primary btn-sm flex-grow-1">Open Editor</a>
+                <form method="post" action="{% url 'delete_map' arena_map.pk %}" class="m-0"
+                      onsubmit="return confirm('Delete “{{ arena_map.name|escapejs }}”? This permanently removes its zone config, bases, elevation, walls, and sight lines. Saved game rounds keep their results but lose the map link. This cannot be undone.');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
+                </form>
             </div>
         </div>
     </div>

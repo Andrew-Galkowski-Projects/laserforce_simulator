@@ -55,6 +55,7 @@ Two modes toggled in the top bar:
 ```
 /maps/                              → map list + upload
 /maps/<id>/editor/                  → map editor (zones, bases, sight lines)
+/maps/<id>/delete/                  → POST: delete map (cascades configs; image + processed cache cleaned up; GameRound.arena_map SET_NULL)
 /maps/<id>/zones/                   → AJAX: zone detection for given zone_size
 /maps/<id>/processed-image/         → B&W cached map image
 /maps/<id>/save/                    → POST: save zone config + base positions
@@ -87,6 +88,7 @@ Two modes toggled in the top bar:
 - `GetImageLocalPathTests` — local storage path passthrough, remote download-to-cache, cache reuse (no duplicate downloads)
 - `SeedDefaultsTests` — skips seeding when non-`FileSystemStorage` is active
 - `UploadMapViewTests` — dimensions stored correctly after upload; corrupt uploads rejected and not persisted
+- `DeleteMapViewTests` — `delete_map` POST removes map + redirects to list, related configs cascade, GET → 405, missing map → 404, list page renders the Delete control
 
 Map-processing tests for MAP-05/07 features live in `matches/tests/test_map.py` alongside the MAP-02–04 tests:
 - `TestMap05ComputeHighLosRanking` — sort correctness (highest-LOS cell first), all cells returned, empty input returns empty

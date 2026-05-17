@@ -89,6 +89,33 @@
   </div>
 </div>
 
+{# ---- Map-side advantage (SIM-08) ---- #}
+{% if side_advantage %}
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <table class="table table-sm table-bordered mb-1">
+      <thead class="table-secondary">
+        <tr><th colspan="3">Map-side advantage (sides alternated evenly across {{ side_advantage.n }} games)</th></tr>
+        <tr><th>Side</th><th>Win rate</th><th>Avg score</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="text-danger fw-bold">Red side</span></td>
+          <td>{{ side_advantage.red_side_win_pct|floatformat:1 }}% ({{ side_advantage.red_side_wins }} W)</td>
+          <td>{{ side_advantage.avg_red_side_score|floatformat:0 }}</td>
+        </tr>
+        <tr>
+          <td><span class="text-primary fw-bold">Blue side</span></td>
+          <td>{{ side_advantage.blue_side_win_pct|floatformat:1 }}% ({{ side_advantage.blue_side_wins }} W)</td>
+          <td>{{ side_advantage.avg_blue_side_score|floatformat:0 }}</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="text-muted small mb-0">{{ side_advantage.side_ties }} side ties. Raw physical-side signal — the per-team results above are side-neutral.</p>
+  </div>
+</div>
+{% endif %}
+
 {# ---- Score distribution histogram ---- #}
 <h4>Score distribution</h4>
 <canvas id="scoreChart" height="100"></canvas>

@@ -9,9 +9,14 @@ Batch-simulates N rounds using `BatchSimulator` (pure in-memory, no DB writes) a
 ```bash
 python manage.py score_averages --rounds 50
 python manage.py score_averages --rounds 100 --team-red "Team A" --team-blue "Team B" --seed 42
+python manage.py score_averages --rounds 500 --map "Arena Name" --workers 8
 ```
 
 Defaults to the first two teams in the DB with active rosters. Use `--seed` for reproducible runs.
+
+**`--map <name>`:** resolves an `ArenaMap` by `name` and runs with cell-aware A* pathfinding instead of the 3-zone fallback (omit for no map). Resolution uses `ResourceBasedSimulator._load_map_context`; a missing/duplicate name, or a map missing its confirmed zone config / bases / sight lines, raises a clean `CommandError` (the `_load_map_context` `ValueError` is caught and re-raised). The `MapContext` is built once in the parent and threaded into both the serial loop and the parallel workers (`score_round_worker` takes it as a 4th arg element), so `--map` works under `--workers > 1`. This is the only `score_round_worker` change — seeding stays `random.getstate()`-based and out of SIM-07/SIM-08 scope (no int seed, no Side flip).
+
+**Parallel-path stat bug (fixed alongside `--map`):** `_precompute_roster` (the `--workers > 1` path) builds picklable `_PlayerData` from `_SIMULATION_STATS`, but `_make_players` also reads `game_awareness` and `resource_awareness`, which were absent from that tuple — `_PlayerData.stat_for_simulation` does a hard dict lookup, so any `--workers > 1` run raised `KeyError` regardless of `--map` (the serial path reads stats live off the ORM `Player` and was unaffected). Both keys were added to `_SIMULATION_STATS` (and later `speed`, when STAT-03 Phase 1 multi-cell movement wired `PlayerState.speed`); regression test: `matches/tests/test_batch_sim.py::TestPrecomputeRosterParity`. Rule: every stat `_make_players` reads must be in `_SIMULATION_STATS`.
 
 **Time unit (TIME-01):** `BatchSimulator` accumulates uptime in **ticks** (`ticks_active` / `ticks_not_targetable` / `ticks_reset_window`); dead-time is derived as `1800 - was_eliminated_at`. `score_averages` divides ticks by 2 at the **display boundary only** — this command and `game_analysis` are the sole `÷2` sites besides HTML templates. The uptime aggregation reads the renamed `ticks_*` fields and reports the seconds figures for human readability.
 

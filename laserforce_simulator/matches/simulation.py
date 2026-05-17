@@ -12,6 +12,8 @@ from .sim_helpers.map_context import MapContext
 from .sim_helpers.pathfinding import (
     build_movement_adjacency,
     astar_next_step,
+    astar_advance,
+    cells_to_move,
 )
 from .sim_helpers.combat import (
     _NEUTRAL_BASE_TYPES,
@@ -1979,7 +1981,9 @@ class ResourceBasedSimulator:
         current = (player.cell_row, player.cell_col)
         if current == goal_cell or current not in adj:
             return
-        next_cell = astar_next_step(current, goal_cell, adj)
+        # STAT-03 Phase 1: traverse speed-scaled cells per tick, not just one.
+        steps = cells_to_move(getattr(player, "speed", 50), zone_data)
+        next_cell = astar_advance(current, goal_cell, adj, steps)
         if next_cell == current:
             return
         player.cell_row, player.cell_col = next_cell
@@ -2617,6 +2621,7 @@ _SIMULATION_STATS = (
     "accuracy",
     "survival",
     "player_awareness",
+    "game_awareness",
     "decision_making",
     "stamina",
     "special_usage",
@@ -2624,6 +2629,8 @@ _SIMULATION_STATS = (
     "resupply_synergy",
     "teamwork",
     "communication",
+    "resource_awareness",
+    "speed",
 )
 
 
@@ -2670,6 +2677,140 @@ class BatchSimulator:
     # 0.5-second tick: models real shot speeds (regular=2/s, heavy=1/s).
     TICK = 0.5
 
+    @staticmethod
+    def _is_flipped(game_index: int) -> bool:
+        """SIM-08: per-game orientation parity — flipped iff the index is odd.
+
+        Single source of truth for the side-alternation rule, shared by
+        ``_side_order`` (serial) and ``_run_parallel``. An even game count
+        yields an exact 50/50 split; an odd count differs by exactly one
+        game. Pure function of the loop index — NEVER consumes the RNG.
+        """
+        return bool(game_index & 1)
+
+    @staticmethod
+    def _side_order(
+        game_index: int,
+        red_roster: list,
+        blue_roster: list,
+    ) -> tuple[list, list, bool]:
+        """SIM-08: deterministic per-game side assignment.
+
+        Returns ``(side_red_roster, side_blue_roster, flipped)`` for game
+        ``game_index``, with ``flipped`` from :meth:`_is_flipped`. When
+        ``flipped`` is ``True`` the canonical blue roster is passed as the
+        physical "red" side and vice versa, so ``_simulate_round`` sees the
+        swapped rosters; callers de-flip results back to team position using
+        the returned ``flipped`` flag.
+        """
+        flipped = BatchSimulator._is_flipped(game_index)
+        if flipped:
+            return blue_roster, red_roster, True
+        return red_roster, blue_roster, False
+
+    @staticmethod
+    def _aggregate_batch(games: list[tuple[dict, int, bool]], n: int) -> dict:
+        """SIM-08: build the run()/_run_parallel result dict from per-game
+        ``(result, seed, flipped)`` triples.
+
+        This is the SINGLE aggregation path shared by the serial and
+        parallel runs, so the contractually-required serial==parallel
+        guarantee (identical team-position aggregates AND ``side_advantage``
+        for a given master_seed) is structurally impossible to break by
+        drift between two copies of the logic.
+
+        ``red_*`` / ``blue_*`` are TEAM-POSITION keyed (the team passed as
+        the team_red / team_blue argument, de-flipped from the physical side
+        it actually played); ``side_advantage`` carries the raw
+        physical-side signal (whichever team really played red / blue).
+        """
+        red_wins = blue_wins = ties = 0
+        red_scores: list = []
+        blue_scores: list = []
+        red_survivors_list: list = []
+        blue_survivors_list: list = []
+        # Each entry is (team_position_score_diff, seed, flipped).
+        round_seeds: list = []
+        # Raw PHYSICAL-side accumulators for the side_advantage dict.
+        red_side_wins = blue_side_wins = side_ties = 0
+        red_side_scores: list = []
+        blue_side_scores: list = []
+
+        for result, s, flipped in games:
+            phys_rp, phys_bp = result["red_points"], result["blue_points"]
+            # De-flip the physical-side result back to team position.
+            if flipped:
+                rp, bp = phys_bp, phys_rp
+                red_surv = result["blue_survivors"]
+                blue_surv = result["red_survivors"]
+            else:
+                rp, bp = phys_rp, phys_bp
+                red_surv = result["red_survivors"]
+                blue_surv = result["blue_survivors"]
+
+            round_seeds.append((rp - bp, s, flipped))
+            if rp > bp:
+                red_wins += 1
+            elif bp > rp:
+                blue_wins += 1
+            else:
+                ties += 1
+            red_scores.append(rp)
+            blue_scores.append(bp)
+            red_survivors_list.append(red_surv)
+            blue_survivors_list.append(blue_surv)
+
+            # Physical-side aggregation (un-de-flipped).
+            if phys_rp > phys_bp:
+                red_side_wins += 1
+            elif phys_bp > phys_rp:
+                blue_side_wins += 1
+            else:
+                side_ties += 1
+            red_side_scores.append(phys_rp)
+            blue_side_scores.append(phys_bp)
+
+        # Pick the 10 most average and 10 most outlier rounds by score diff.
+        if round_seeds:
+            mean_diff = sum(d for d, _, _ in round_seeds) / n
+            ranked = sorted(round_seeds, key=lambda x: abs(x[0] - mean_diff))
+            # JSON-safe [seed, flipped] pairs (lists, not tuples) so they
+            # survive a Django session round-trip unchanged.
+            avg_seeds = [[s, f] for _, s, f in ranked[:10]]
+            outlier_seeds = [[s, f] for _, s, f in ranked[-10:]]
+        else:
+            avg_seeds = outlier_seeds = []
+
+        avg = lambda lst: sum(lst) / len(lst) if lst else 0
+        pct = lambda w: w / n * 100 if n else 0.0
+        return {
+            "n": n,
+            "red_wins": red_wins,
+            "blue_wins": blue_wins,
+            "ties": ties,
+            "red_win_pct": pct(red_wins),
+            "blue_win_pct": pct(blue_wins),
+            "avg_red_score": avg(red_scores),
+            "avg_blue_score": avg(blue_scores),
+            "avg_red_survivors": avg(red_survivors_list),
+            "avg_blue_survivors": avg(blue_survivors_list),
+            "red_scores": red_scores,
+            "blue_scores": blue_scores,
+            "avg_seeds": avg_seeds,
+            "outlier_seeds": outlier_seeds,
+            # Raw map-side advantage signal across the batch.
+            "side_advantage": {
+                "n": n,
+                "red_side_wins": red_side_wins,
+                "blue_side_wins": blue_side_wins,
+                "side_ties": side_ties,
+                "red_side_win_pct": pct(red_side_wins),
+                "blue_side_win_pct": pct(blue_side_wins),
+                "avg_red_side_score": avg(red_side_scores),
+                "avg_blue_side_score": avg(blue_side_scores),
+            },
+        }
+
     def run(
         self,
         team_red,
@@ -2711,56 +2852,21 @@ class BatchSimulator:
                 red_roster, blue_roster, n, movement_ctx, workers, gen
             )
 
-        red_wins = blue_wins = ties = 0
-        red_scores, blue_scores = [], []
-        red_survivors_list, blue_survivors_list = [], []
-        round_seeds = []  # (score_diff, seed_int)
-
-        for _ in range(n):
+        # SIM-08: simulate each game under its index-determined orientation,
+        # collecting (result, seed, flipped) triples; the shared
+        # _aggregate_batch helper de-flips to team position and builds the
+        # result dict (identical path to the parallel run).
+        games: list[tuple[dict, int, bool]] = []
+        for i in range(n):
             s = gen.getrandbits(63)
+            side_red, side_blue, flipped = self._side_order(i, red_roster, blue_roster)
             random.seed(s)
             result, _, _ = self._simulate_round(
-                red_roster, blue_roster, movement_ctx=movement_ctx
+                side_red, side_blue, movement_ctx=movement_ctx
             )
-            rp, bp = result["red_points"], result["blue_points"]
-            round_seeds.append((rp - bp, s))
-            if rp > bp:
-                red_wins += 1
-            elif bp > rp:
-                blue_wins += 1
-            else:
-                ties += 1
-            red_scores.append(rp)
-            blue_scores.append(bp)
-            red_survivors_list.append(result["red_survivors"])
-            blue_survivors_list.append(result["blue_survivors"])
+            games.append((result, s, flipped))
 
-        # Pick the 10 most average and 10 most outlier rounds by score diff
-        if round_seeds:
-            mean_diff = sum(d for d, _ in round_seeds) / n
-            ranked = sorted(round_seeds, key=lambda x: abs(x[0] - mean_diff))
-            avg_seeds = [s for _, s in ranked[:10]]
-            outlier_seeds = [s for _, s in ranked[-10:]]
-        else:
-            avg_seeds = outlier_seeds = []
-
-        avg = lambda lst: sum(lst) / len(lst) if lst else 0
-        return {
-            "n": n,
-            "red_wins": red_wins,
-            "blue_wins": blue_wins,
-            "ties": ties,
-            "red_win_pct": red_wins / n * 100,
-            "blue_win_pct": blue_wins / n * 100,
-            "avg_red_score": avg(red_scores),
-            "avg_blue_score": avg(blue_scores),
-            "avg_red_survivors": avg(red_survivors_list),
-            "avg_blue_survivors": avg(blue_survivors_list),
-            "red_scores": red_scores,
-            "blue_scores": blue_scores,
-            "avg_seeds": avg_seeds,
-            "outlier_seeds": outlier_seeds,
-        }
+        return self._aggregate_batch(games, n)
 
     def _run_parallel(
         self,
@@ -2788,7 +2894,18 @@ class BatchSimulator:
         # Generate n distinct integer seeds in the parent before spawning.
         seeds = [gen.getrandbits(63) for _ in range(n)]
 
-        args_list = [(red_data, blue_data, movement_ctx, s) for s in seeds]
+        # SIM-08: orientation is a pure function of the ordered game index
+        # (single source of truth: _is_flipped), so it is computed in the
+        # parent and shipped to each worker. The worker swaps which
+        # precomputed roster it treats as red vs blue when flipped; the
+        # parent feeds the same _aggregate_batch helper the serial path
+        # uses, so serial and parallel produce identical team-position
+        # aggregates AND identical side_advantage for a given master_seed.
+        flips = [self._is_flipped(i) for i in range(n)]
+
+        args_list = [
+            (red_data, blue_data, movement_ctx, s, f) for s, f in zip(seeds, flips)
+        ]
         chunksize = max(1, n // (workers * 4))
 
         from matches.sim_helpers.parallel_worker import (
@@ -2803,50 +2920,11 @@ class BatchSimulator:
                 executor.map(batch_round_worker, args_list, chunksize=chunksize)
             )
 
-        red_wins = blue_wins = ties = 0
-        red_scores, blue_scores = [], []
-        red_survivors_list, blue_survivors_list = [], []
-        round_seeds = []
-
-        for result, s in zip(results, seeds):
-            rp, bp = result["red_points"], result["blue_points"]
-            round_seeds.append((rp - bp, s))
-            if rp > bp:
-                red_wins += 1
-            elif bp > rp:
-                blue_wins += 1
-            else:
-                ties += 1
-            red_scores.append(rp)
-            blue_scores.append(bp)
-            red_survivors_list.append(result["red_survivors"])
-            blue_survivors_list.append(result["blue_survivors"])
-
-        if round_seeds:
-            mean_diff = sum(d for d, _ in round_seeds) / n
-            ranked = sorted(round_seeds, key=lambda x: abs(x[0] - mean_diff))
-            avg_seeds = [s for _, s in ranked[:10]]
-            outlier_seeds = [s for _, s in ranked[-10:]]
-        else:
-            avg_seeds = outlier_seeds = []
-
-        avg = lambda lst: sum(lst) / len(lst) if lst else 0
-        return {
-            "n": n,
-            "red_wins": red_wins,
-            "blue_wins": blue_wins,
-            "ties": ties,
-            "red_win_pct": red_wins / n * 100,
-            "blue_win_pct": blue_wins / n * 100,
-            "avg_red_score": avg(red_scores),
-            "avg_blue_score": avg(blue_scores),
-            "avg_red_survivors": avg(red_survivors_list),
-            "avg_blue_survivors": avg(blue_survivors_list),
-            "red_scores": red_scores,
-            "blue_scores": blue_scores,
-            "avg_seeds": avg_seeds,
-            "outlier_seeds": outlier_seeds,
-        }
+        # SIM-08: same shared aggregation path as the serial run() — the
+        # workers returned physical-side results in submission order, so
+        # zip them back with their seeds and orientations and de-flip.
+        games = list(zip(results, seeds, flips))
+        return self._aggregate_batch(games, n)
 
     # ------------------------------------------------------------------ #
     # Internal round simulation
@@ -2936,6 +3014,7 @@ class BatchSimulator:
                 resource_awareness=player_model.stat_for_simulation(
                     "resource_awareness", role
                 ),
+                speed=player_model.stat_for_simulation("speed", role),
                 starting_lives=resources["lives"],
                 starting_shots=resources["shots"],
                 final_lives=resources["lives"],
@@ -3459,7 +3538,9 @@ class BatchSimulator:
         current = (player.cell_row, player.cell_col)
         if current == goal_cell or current not in adj:
             return
-        next_cell = astar_next_step(current, goal_cell, adj)
+        # STAT-03 Phase 1: traverse speed-scaled cells per tick, not just one.
+        steps = cells_to_move(getattr(player, "speed", 50), zone_data)
+        next_cell = astar_advance(current, goal_cell, adj, steps)
         if next_cell == current:
             return
         player.cell_row, player.cell_col = next_cell
@@ -4091,28 +4172,81 @@ class BatchSimulator:
     # Seed-based exact replay and DB persistence
     # ------------------------------------------------------------------ #
 
-    def replay_round(self, red_roster, blue_roster, seed: int, movement_ctx=None):
-        """Replay one round from a stored integer seed, collecting full event log."""
-        events = []
+    def replay_round(
+        self,
+        red_roster,
+        blue_roster,
+        seed: int,
+        flipped: bool,
+        movement_ctx=None,
+    ):
+        """Replay one round from a stored (seed, orientation) pair.
+
+        SIM-08: ``flipped`` is the orientation carried alongside the seed.
+        ``red_roster`` / ``blue_roster`` are the canonical team rosters; when
+        ``flipped`` is ``True`` they are swapped before ``_simulate_round`` so
+        the replayed game is byte-identical to the one ``run()`` scored under
+        the same (seed, orientation). The returned ``red_players`` /
+        ``blue_players`` therefore reflect the ACTUAL physical sides simulated
+        (a flipped game's ``red_players`` are the team_blue roster's players).
+        """
+        events: list = []
         random.seed(seed)
+        if flipped:
+            sim_red, sim_blue = blue_roster, red_roster
+        else:
+            sim_red, sim_blue = red_roster, blue_roster
         result, red_players, blue_players = self._simulate_round(
-            red_roster, blue_roster, event_log=events, movement_ctx=movement_ctx
+            sim_red, sim_blue, event_log=events, movement_ctx=movement_ctx
         )
         return result, red_players, blue_players, events
 
-    def save_games(self, team_red, team_blue, seeds: list[int], n, *, arena_map=None):
-        """Replay and persist n games using the provided integer seeds."""
+    def save_games(
+        self,
+        team_red,
+        team_blue,
+        seeds: list[tuple[int, bool]],
+        n,
+        *,
+        arena_map=None,
+    ):
+        """Replay and persist n games from carried (seed, orientation) pairs.
+
+        SIM-08: ``seeds`` is a list of ``(seed, flipped)`` pairs. Session
+        round-trips turn tuples into lists, so each pair is unpacked
+        defensively to accept either shape. When a game was flipped, the team
+        that physically played red is ``team_blue`` (the argument): the
+        rosters are swapped into ``replay_round`` and the Team objects are
+        swapped into ``_flush_to_db`` so the persisted ``GameRound.team_red``
+        / ``team_blue`` and every ``PlayerRoundState.team_color`` match the
+        sides actually simulated. The actual-sides storage implicitly encodes
+        the orientation — no new column or migration is required.
+        """
         red_roster = list(team_red.active_roster)
         blue_roster = list(team_blue.active_roster)
         movement_ctx, _ = ResourceBasedSimulator._load_map_context(arena_map)
         saved = []
-        for seed in seeds[:n]:
+        for pair in seeds[:n]:
+            seed, flipped = pair  # tuple or 2-element list (session-safe)
+            flipped = bool(flipped)
             result, red_players, blue_players, events = self.replay_round(
-                red_roster, blue_roster, seed, movement_ctx=movement_ctx
+                red_roster,
+                blue_roster,
+                seed,
+                flipped,
+                movement_ctx=movement_ctx,
             )
+            # SIM-08: persist the ACTUAL sides. red_players/blue_players from
+            # replay_round are already the physical sides; pass the matching
+            # Team objects so GameRound FKs and PlayerRoundState.team_color
+            # stay consistent with the simulated round.
+            if flipped:
+                db_team_red, db_team_blue = team_blue, team_red
+            else:
+                db_team_red, db_team_blue = team_red, team_blue
             gr = self._flush_to_db(
-                team_red,
-                team_blue,
+                db_team_red,
+                db_team_blue,
                 result,
                 red_players,
                 blue_players,

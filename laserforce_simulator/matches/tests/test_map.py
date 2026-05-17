@@ -2349,3 +2349,221 @@ class TestMap08DBIntegration:
         assert (
             stored.get("spawn_user_edited") is True
         ), "spawn_user_edited flag must be set when client sends spawn with compute"
+
+
+# ---------------------------------------------------------------------------
+# MAP-02 / STAT-03 — speed-scaled multi-cell movement per tick
+# ---------------------------------------------------------------------------
+
+_FLOOR_6X6 = [[1] * 6 for _ in range(6)]
+_CORRIDOR_1X10 = [[1] * 10]  # single row, cols 0..9 — a straight path
+
+
+class TestAstarPathAndAdvance:
+    """Pure-unit tests for the path-returning and multi-step A* helpers."""
+
+    def _adj(self, grid):
+        from matches.sim_helpers.pathfinding import build_movement_adjacency
+
+        return build_movement_adjacency(grid)
+
+    def test_astar_path_full_path_start_to_goal(self):
+        from matches.sim_helpers.pathfinding import astar_path
+
+        adj = self._adj(_FLOOR_6X6)
+        path = astar_path((0, 0), (0, 5), adj)
+        # Straight horizontal run: 5 steps, excludes start, ends at goal.
+        assert path == [(0, 1), (0, 2), (0, 3), (0, 4), (0, 5)]
+
+    def test_astar_path_consecutive_cells_adjacent(self):
+        from matches.sim_helpers.pathfinding import astar_path
+
+        adj = self._adj(_FLOOR_6X6)
+        path = astar_path((0, 0), (5, 5), adj)
+        assert len(path) == 10  # Manhattan distance on open grid
+        assert path[-1] == (5, 5)
+        prev = (0, 0)
+        for cell in path:
+            assert abs(cell[0] - prev[0]) + abs(cell[1] - prev[1]) == 1
+            prev = cell
+
+    def test_astar_path_no_path_is_empty(self):
+        from matches.sim_helpers.pathfinding import astar_path
+
+        adj = self._adj([[1, 0, 1], [1, 0, 1], [1, 0, 1]])
+        assert astar_path((0, 0), (0, 2), adj) == []
+
+    def test_astar_path_same_cell_is_empty(self):
+        from matches.sim_helpers.pathfinding import astar_path
+
+        adj = self._adj(_FLOOR_6X6)
+        assert astar_path((2, 2), (2, 2), adj) == []
+
+    def test_astar_next_step_equals_first_path_cell(self):
+        # Regression guard: refactored astar_next_step must equal path[0].
+        from matches.sim_helpers.pathfinding import astar_next_step, astar_path
+
+        adj = self._adj(_FLOOR_6X6)
+        for goal in ((5, 5), (0, 5), (3, 1), (4, 0)):
+            path = astar_path((0, 0), goal, adj)
+            assert astar_next_step((0, 0), goal, adj) == path[0]
+
+    def test_astar_advance_full_steps_reaches_goal(self):
+        from matches.sim_helpers.pathfinding import astar_advance
+
+        adj = self._adj(_CORRIDOR_1X10)
+        assert astar_advance((0, 0), (0, 9), adj, 99) == (0, 9)
+
+    def test_astar_advance_partial_steps(self):
+        from matches.sim_helpers.pathfinding import astar_advance
+
+        adj = self._adj(_CORRIDOR_1X10)
+        assert astar_advance((0, 0), (0, 9), adj, 1) == (0, 1)
+        assert astar_advance((0, 0), (0, 9), adj, 3) == (0, 3)
+        assert astar_advance((0, 0), (0, 9), adj, 5) == (0, 5)
+
+    def test_astar_advance_one_step_equals_next_step(self):
+        from matches.sim_helpers.pathfinding import astar_advance, astar_next_step
+
+        adj = self._adj(_FLOOR_6X6)
+        for goal in ((5, 5), (0, 5), (3, 1)):
+            assert astar_advance((0, 0), goal, adj, 1) == astar_next_step(
+                (0, 0), goal, adj
+            )
+
+    def test_astar_advance_zero_or_negative_steps_returns_start(self):
+        from matches.sim_helpers.pathfinding import astar_advance
+
+        adj = self._adj(_CORRIDOR_1X10)
+        assert astar_advance((0, 0), (0, 9), adj, 0) == (0, 0)
+        assert astar_advance((0, 0), (0, 9), adj, -3) == (0, 0)
+
+    def test_astar_advance_no_path_returns_start(self):
+        from matches.sim_helpers.pathfinding import astar_advance
+
+        adj = self._adj([[1, 0, 1], [1, 0, 1], [1, 0, 1]])
+        assert astar_advance((0, 0), (0, 2), adj, 5) == (0, 0)
+
+
+class TestSpeedCellsPerTick:
+    """STAT-03 / PLAN.md: ceil(speed/100 * max_movement), max_movement 5..10."""
+
+    def test_max_movement_clamped_5_to_10(self):
+        from matches.sim_helpers.pathfinding import max_movement_for_map
+
+        assert max_movement_for_map([[1] * 5 for _ in range(5)]) == 5  # tiny → 5
+        assert max_movement_for_map([[1] * 89 for _ in range(55)]) == 8  # 89//10
+        assert max_movement_for_map([[1] * 200 for _ in range(10)]) == 10  # clamp
+
+    def test_cells_to_move_formula(self):
+        import math
+
+        from matches.sim_helpers.pathfinding import (
+            cells_to_move,
+            max_movement_for_map,
+        )
+
+        big = [[1] * 89 for _ in range(55)]
+        mm = max_movement_for_map(big)  # 8
+        assert cells_to_move(100, big) == math.ceil(1.0 * mm)
+        assert cells_to_move(50, big) == math.ceil(0.5 * mm)
+        assert cells_to_move(1, big) == 1  # min 1 floor
+        assert cells_to_move(0, big) == 1  # never freeze a mover
+
+    def test_higher_speed_moves_at_least_as_far(self):
+        from matches.sim_helpers.pathfinding import cells_to_move
+
+        big = [[1] * 89 for _ in range(55)]
+        assert cells_to_move(90, big) >= cells_to_move(40, big) >= 1
+
+
+class TestPlayerStateSpeedField:
+    def test_player_state_has_speed_default_50(self):
+        from matches.sim_helpers.player_state import PlayerState
+
+        ps = PlayerState(
+            tag_id="red_scout",
+            name="s",
+            team_color="red",
+            role="scout",
+            accuracy=50,
+            survival=50,
+            starting_lives=15,
+            starting_shots=30,
+            final_lives=15,
+            final_shots=30,
+        )
+        assert ps.speed == 50
+
+
+class TestMoveInMemoryMultiCell:
+    """BatchSimulator._move_player_in_memory advances speed-many cells/tick."""
+
+    def _ctx(self, grid):
+        from matches.sim_helpers.pathfinding import build_movement_adjacency
+
+        return MapContext.from_dict(
+            {
+                "adj": build_movement_adjacency(grid),
+                "spawn_cells": {"red": (0, 0), "blue": (0, len(grid[0]) - 1)},
+                "zone_data": grid,
+                "sight_data": None,
+            }
+        )
+
+    def _player(self, speed):
+        from matches.sim_helpers.player_state import PlayerState
+
+        return PlayerState(
+            tag_id="red_scout",
+            name="s",
+            team_color="red",
+            role="scout",
+            accuracy=50,
+            survival=50,
+            starting_lives=15,
+            starting_shots=30,
+            final_lives=15,
+            final_shots=30,
+            speed=speed,
+            cell_row=0,
+            cell_col=0,
+        )
+
+    def test_moves_multiple_cells_in_one_tick(self):
+        from matches.sim_helpers.pathfinding import cells_to_move
+        from matches.simulation import BatchSimulator
+
+        grid = [[1] * 30]  # long corridor so the goal is far
+        ctx = self._ctx(grid)
+        player = self._player(speed=50)
+        expected = cells_to_move(50, grid)
+        assert expected > 1, "test precondition: speed 50 should move >1 cell"
+
+        BatchSimulator()._move_player_in_memory(player, (0, 29), ctx)
+
+        assert (player.cell_row, player.cell_col) == (0, expected)
+
+    def test_higher_speed_travels_farther_in_one_tick(self):
+        from matches.simulation import BatchSimulator
+
+        grid = [[1] * 40]
+        ctx = self._ctx(grid)
+        slow = self._player(speed=20)
+        fast = self._player(speed=100)
+
+        BatchSimulator()._move_player_in_memory(slow, (0, 39), ctx)
+        BatchSimulator()._move_player_in_memory(fast, (0, 39), ctx)
+
+        assert fast.cell_col > slow.cell_col >= 1
+
+    def test_stops_at_goal_without_overshoot(self):
+        from matches.simulation import BatchSimulator
+
+        grid = [[1] * 30]
+        ctx = self._ctx(grid)
+        player = self._player(speed=100)  # would move many cells
+
+        BatchSimulator()._move_player_in_memory(player, (0, 2), ctx)
+
+        assert (player.cell_row, player.cell_col) == (0, 2)

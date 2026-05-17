@@ -29,6 +29,10 @@ Accumulated each tick by the simulation loop (not stored in the DB):
 
 (TIME-01 rename from `seconds_*`; values are now ticks.) Dead time (after elimination) is derived at report time as `1800 - was_eliminated_at`. The four together (`ticks_active + ticks_reset_window + ticks_not_targetable + dead-time`) reconcile to exactly 1800 ticks per player.
 
+### Player stat fields
+
+Baked from `Player.stat_for_simulation(<stat>, role)` at construction (no per-tick ORM): `accuracy`, `survival`, `player_awareness`, `game_awareness`, `resource_awareness`, `decision_making`, `stamina`, `special_usage`, `resupply_efficiency`, `resupply_synergy`, `teamwork`, `communication`, **`speed`** (default 50; cells traversed per move tick via `pathfinding.cells_to_move` — STAT-03 Phase 1). The full set is enumerated in `simulation._SIMULATION_STATS`, which the parallel `_precompute_roster` path must keep in sync with every stat `_make_players` reads (a missing entry → worker `KeyError` only under `--workers > 1`; regression: `test_batch_sim.py::TestPrecomputeRosterParity`).
+
 ### Aggregate stat fields
 
 `points_scored`, `tags_made`, `times_tagged`, `shots_missed`, `times_missiled`, `resupplies_given`, `specials_used`, `times_tagged_in_reset_window`, `missile_points`, `follow_up_shots`, `reaction_shots`, `combo_resupply_count` (number of times this player received a combo resupply — both lives and shots in the same tick; default 0).
@@ -104,7 +108,15 @@ Cell-aware movement helpers shared by both simulators. Used when `arena_map` is 
 
 **`build_movement_adjacency(zone_data)`** — builds a 4-connected adjacency dict `{cell: [neighbor, ...]}` for every movement-passable cell. Uses module constant `_MOVEMENT_PASSABLE = {1, 2, 3}` (floor + legacy red/blue zones). High wall (0), low wall (4), and windowed wall (5) all block movement and are excluded entirely, so `cell in adj` doubles as a passability check.
 
-**`astar_next_step(start, goal, adj, elevation_data=None)`** — returns the immediate next cell on the shortest path from `start` to `goal` using A* with a Manhattan heuristic. Returns `start` unchanged when `start == goal`, no path exists, or `start` is not in the adjacency graph.
+**`astar_path(start, goal, adj, elevation_data=None)`** — core A* (Manhattan heuristic, optional elevation cost). Returns the ordered list of cells from `start` to `goal` **excluding `start`** (last element is `goal`); `[]` when `start == goal`, no path exists, or `start` is not in the adjacency graph. `astar_next_step` and `astar_advance` are thin wrappers over it.
+
+**`astar_next_step(start, goal, adj, elevation_data=None)`** — `astar_path(...)[0]` (or `start` when the path is empty). Behaviour unchanged from the pre-refactor implementation (regression-guarded by `test_map.py::TestAstarPathAndAdvance` + the legacy `TestMap02CellMovement` astar tests).
+
+**`astar_advance(start, goal, adj, steps, elevation_data=None)`** — returns the cell reached after walking up to `steps` cells along the A* path (stops at `goal`, no overshoot). Returns `start` when `steps <= 0`, no path, or non-navigable start. This is what both simulators' move functions call so a player traverses multiple cells per move tick (STAT-03 Phase 1 / MAP-02).
+
+**`max_movement_for_map(zone_data)`** — cells-per-tick ceiling scaled by map size: `max(rows, cols) // 10` clamped to **5..10** (PLAN.md STAT-03 Phase 1). `None`/empty → 5.
+
+**`cells_to_move(speed, zone_data)`** — `max(1, ceil(speed/100 * max_movement_for_map(zone_data)))`. The PLAN.md `speed`-stat formula; floored at 1 so a moving player is never frozen by a low `speed`. Called by `BatchSimulator._move_player_in_memory` and `ResourceBasedSimulator._move_to_cell` with `getattr(player, "speed", 50)` (a baked `PlayerState.speed` field for BatchSim; a `PlayerRoundState.speed` forwarding property for RBS).
 
 **`_find_role(all_alive, team_color, role) -> Any`** — returns the first alive player on `team_color` with the given `role`, or `None`. Return type is `Any` (not `object`) because callers access duck-typed attributes (`cell_row`, `cell_col`, etc.).
 
@@ -294,9 +306,9 @@ Shared drain/split helpers for the four pending-event queues. Both simulators ca
 
 All return `(ready_now, still_pending)` typed lists. Resolution logic (what to do with ready items) stays in each simulator. Post-TIME-01 the `second` cursor argument and the `complete_time`/`fire_at` fields it splits on are tick-valued for BatchSim (RBS converts at its persist boundary); the split arithmetic is unit-agnostic.
 
-### Parallel batch workers (SIM-07)
+### Parallel batch workers (SIM-07 / SIM-08)
 
-`BatchSimulator._run_parallel` fans rounds out to `batch_round_worker`, the process-pool worker. **SIM-07:** `batch_round_worker` now takes a per-round **int** seed and `random.seed(it)`s before simulating, so a given master seed yields identical games whether the batch runs serially or in parallel (guaranteed, tested property). Per-round seeds are derived from a deterministic `random.Random(master_seed)` seed chain in `run`. `score_round_worker` (the `score_averages` command path) is intentionally **unchanged** and out of SIM-07 scope — it does not take or seed an int seed.
+`BatchSimulator._run_parallel` fans rounds out to `batch_round_worker`, the process-pool worker. **SIM-07:** `batch_round_worker` takes a per-round **int** seed and `random.seed(it)`s before simulating, so a given master seed yields identical games whether the batch runs serially or in parallel (guaranteed, tested property). Per-round seeds are derived from a deterministic `random.Random(master_seed)` seed chain in `run`. **SIM-08:** `batch_round_worker` additionally accepts the per-game `flipped` flag (the Orientation, deterministic by game index — never RNG-derived); when `flipped` is true it **swaps the precomputed red/blue rosters** before simulating, so the worker plays the same Orientation the serial path would. Serial and parallel runs therefore produce identical team-position aggregates **and identical `side_advantage`** for a given master seed. `score_round_worker` (the `score_averages` command path) remains out of SIM-07/SIM-08 scope — it does not take or seed an int seed, nor flip sides; seeding stays `random.getstate()`-based. It now takes the parent-built `MapContext` (or `None`) as a 4th args-tuple element and threads it into `_simulate_round`, so `score_averages --map` works under `--workers > 1`; this is the only change to it.
 
 ---
 

@@ -74,3 +74,52 @@ class TestCreateMatchView:
         )
         assert response.status_code == 200
         assert Match.objects.count() == before
+
+
+@pytest.mark.django_db
+class TestSim08BatchSideAdvantageView:
+    """SIM-08: the batch-simulate view exposes the physical-side advantage
+    panel alongside the de-flipped team-position results.
+    """
+
+    def test_batch_simulate_renders_side_advantage(self):
+        """POST two valid rosters → 200 and ``side_advantage`` in results.
+
+        The view stashes ``avg_seeds``/``outlier_seeds`` in the session and
+        passes ``results`` (including the new ``side_advantage`` sub-dict) to
+        the template context. Keep this light per existing view-test patterns.
+        """
+        red, _ = make_team_with_slots("Sim08ViewRed")
+        blue, _ = make_team_with_slots("Sim08ViewBlue")
+        client = Client()
+
+        response = client.post(
+            reverse("simulate_batch"),
+            {"team_red": red.id, "team_blue": blue.id, "n": "10"},
+        )
+
+        assert response.status_code == 200
+        assert (
+            "results" in response.context
+        ), "batch view must pass aggregate 'results' to the template context"
+        results = response.context["results"]
+        assert "side_advantage" in results, (
+            "results must include the SIM-08 'side_advantage' physical-side "
+            "panel data"
+        )
+        sa = results["side_advantage"]
+        for key in (
+            "red_side_wins",
+            "blue_side_wins",
+            "side_ties",
+            "red_side_win_pct",
+            "blue_side_win_pct",
+            "avg_red_side_score",
+            "avg_blue_side_score",
+            "n",
+        ):
+            assert key in sa, f"side_advantage missing documented key {key!r}"
+        assert sa["n"] == 10
+        assert sa["red_side_wins"] + sa["blue_side_wins"] + sa["side_ties"] == 10
+        # Team-position aggregates remain present and consistent.
+        assert results["red_wins"] + results["blue_wins"] + results["ties"] == 10

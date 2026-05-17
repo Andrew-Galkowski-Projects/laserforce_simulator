@@ -17,7 +17,12 @@ _JOBS_LOCK = threading.Lock()
 
 
 def _run_save_job(job_id, team_red_id, team_blue_id, seeds, n):
-    """Background thread: replay and persist n games, then update job status."""
+    """Background thread: replay and persist n games, then update job status.
+
+    SIM-08: ``seeds`` is a list of ``[seed, flipped]`` pairs (session-stashed
+    as JSON-safe lists). ``BatchSimulator.save_games`` unpacks each pair and
+    persists the actual simulated sides.
+    """
     import django.db
 
     try:
@@ -397,6 +402,8 @@ def simulate_batch(request):
                 "red_hist_json": json.dumps(red_hist),
                 "blue_hist_json": json.dumps(blue_hist),
                 "has_seeds": bool(avg_seeds or outlier_seeds),
+                # SIM-08: raw map-side advantage panel data.
+                "side_advantage": results.get("side_advantage"),
             }
         )
 

@@ -5,6 +5,7 @@ urlpatterns = [
     path("", views.map_list, name="map_list"),
     path("upload/", views.upload_map, name="upload_map"),
     path("<int:map_id>/editor/", views.map_editor, name="map_editor"),
+    path("<int:map_id>/delete/", views.delete_map, name="delete_map"),
     path("<int:map_id>/zones/", views.process_zones, name="process_zones"),
     path(
         "<int:map_id>/processed-image/", views.processed_image, name="processed_image"

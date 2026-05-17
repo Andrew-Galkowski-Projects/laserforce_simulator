@@ -11,7 +11,8 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - **Role mechanics** — Shields, lives, missiles/nukes, resupply, special charges, and zone movement all modeled
 - **Game event log** — Every tag, miss, missile, resupply, and base capture is recorded with tick timestamps and points (the JSON API returns raw ticks; the UI divides by 2 for seconds)
 - **MVP scoring** — Role-specific formulas weighted toward each role's primary contribution
-- **Game replay** — Step through match events chronologically with per-player stat tracking; each persisted round also stores the RNG seed it was simulated with, so the exact game can be re-run (faithful while its rosters and map config are unchanged)
+- **Game replay** — Step through match events chronologically with per-player stat tracking; each persisted round also stores the RNG seed it was simulated with, so the exact game can be re-run (faithful while its rosters, map config, and side orientation are unchanged)
+- **Batch simulation** — Run N games between two teams and view aggregate win % / scores. The two teams alternate which physical side (red/blue) they play across the run, so neither team's aggregate is biased by any map-side advantage; per-team stats are reported by team position regardless of side played, with a separate map-side-advantage panel showing the raw red-side vs blue-side signal
 - **Team history** — Win/loss records across all matches
 - **Read-only REST API** — JSON endpoints for teams, players, matches, rounds, and events at `/api/` (paginated, 20 per page)
 

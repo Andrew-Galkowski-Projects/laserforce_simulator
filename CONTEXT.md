@@ -217,8 +217,18 @@ The age past which a **Player memory** entry is no longer trusted; threshold dep
 
 ### Reproducibility
 
+**Side** (a.k.a. **Colour**):
+The red or blue assignment a **Team** plays for one **Round** — which physical half of the arena and **Base** it starts from. Distinct from **Zone** (the red/neutral/blue *territorial* classification of a region). "The teams swap colours between rounds" (the per-**Match** rule) is one specific reuse of this assignment.
+_Avoid_: using "side" for a **Zone** or a **Cell**; conflating the per-**Match** colour swap with **Side alternation**
+
+**Side alternation**:
+The **Batch run** policy of flipping which **Team** takes the red **Side** on successive games (game 0 canonical, game 1 flipped, …), so neither team's aggregated stats are biased by any map-side advantage. Deterministic by game index — it never consumes the RNG. Distinct from the per-**Match** colour swap, which flips colours between the *two Rounds of one Match*; side alternation flips between the *independent single Rounds of one Batch run*.
+
+**Orientation**:
+The per-game side assignment under **Side alternation**, recorded as a `flipped` boolean. The reproducible unit of a batch game is the pair *(RNG seed, orientation)*: replay is faithful only when the orientation is reproduced alongside the seed, rosters, and map. A persisted flipped game stores the *actual* sides (its `team_red` is the team that really played red).
+
 **RNG seed**:
-A single integer used to initialise the random number generator before one **Round** is simulated, persisted on that round. Reseeding from it reproduces that round's event log exactly, *provided the rosters and map are unchanged*. Distinct from an **RNG state**.
+A single integer used to initialise the random number generator before one **Round** is simulated, persisted on that round. Reseeding from it reproduces that round's event log exactly, *provided the rosters, map, and **Orientation** are unchanged*. Distinct from an **RNG state**.
 _Avoid_: calling the stored `random.getstate()` snapshot a "seed" — that is an **RNG state**
 
 **RNG state**:
@@ -231,10 +241,10 @@ The root integer of a **Batch run** from which every per-round **RNG seed** is d
 The deterministic sequence of per-round **RNG seeds** produced from a **Master seed** — "same master seed ⇒ same chain ⇒ same games."
 
 **Replay**:
-Re-running a single persisted **Round** from its stored **RNG seed** to reproduce its exact event log. Faithful only while that round's rosters and map are unchanged; the seed captures randomness only, not world state.
+Re-running a single persisted **Round** from its stored **RNG seed** to reproduce its exact event log. Faithful only while that round's rosters, map, and **Orientation** are unchanged; the seed captures randomness only, not world state.
 
 **Batch run**:
-Simulating the same two **Teams** N times to sample the outcome distribution (win %, score variance); remains a variance sampler — a fresh random **Master seed** per run unless one is supplied.
+Simulating the same two **Teams** N times to sample the outcome distribution (win %, score variance); remains a variance sampler — a fresh random **Master seed** per run unless one is supplied. Applies **Side alternation** so per-team aggregates are not biased by map-side advantage; aggregate keys are **team-position keyed** (`red_*` = the team passed as the `team_red` argument, whichever **Side** it played), with a separate side-advantage breakdown for the raw red/blue-side signal.
 
 ## Relationships
 
@@ -262,4 +272,5 @@ Simulating the same two **Teams** N times to sample the outcome distribution (wi
 - **"special"** — resolved: **Special** = the role ability (Nuke / Rapid Fire); **Special points (SP)** = the charge resource; "use_special" / activating the special = spending SP to trigger the ability.
 - **"round" vs "match" vs "game"** — resolved: a **Match** is the two-round contest; a **Round** is one 15-minute simulation; "game" is informal and should be avoided in favour of **Round**.
 - **"seed" vs "state"** — resolved 2026-05-15 by SIM-07: the project persists an **RNG seed** (a small integer passed to `random.seed()`), *not* an **RNG state** (`random.getstate()` snapshot). `GameRound.rng_seed` is genuinely a seed. Do not call a getstate() tuple a "seed"; do not try `random.seed()` on a state tuple. Decision and rejected alternatives recorded in [docs/adr/0005-rng-seed-not-state-for-replay.md](docs/adr/0005-rng-seed-not-state-for-replay.md).
+- **"side / colour swap" vs "side alternation"** — resolved 2026-05-15 by SIM-08: the per-**Match** colour swap (red/blue flip between the *two Rounds of one Match*) and **Side alternation** (flip between the *independent single Rounds of one Batch run*) are different mechanisms — do not conflate. Batch aggregate keys are **team-position keyed**, not side-keyed; the reproducible unit of a batch game is *(RNG seed, **Orientation**)*. Decision and rejected alternatives (seed-derived parity; persist-only) recorded in [docs/adr/0006-batch-side-alternation.md](docs/adr/0006-batch-side-alternation.md).
 - **"seconds_active stores ticks vs seconds"** — re-resolved 2026-05-15 by TIME-01 (supersedes the earlier "stores seconds" resolution): the uptime fields are renamed `ticks_*` and store **ticks**; the survived sentinel is `1801`; `GameEvent.timestamp`, constructor args, and the REST API are all ticks. Seconds are a display-only `÷2` at HTML/CLI output. Decision and the API-returns-ticks consequence recorded in [docs/adr/0001-time-unit-seconds-now-tick-native-later.md](docs/adr/0001-time-unit-seconds-now-tick-native-later.md).
