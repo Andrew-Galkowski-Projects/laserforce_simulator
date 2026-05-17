@@ -5,19 +5,28 @@ description: Sync all documentation (CLAUDE.md files, PLAN.md, README.md, IMPLEM
 
 ## Step 1 — Identify what changed
 
-```powershell
-git diff main...HEAD --name-only
-git diff main...HEAD --stat
-git log main...HEAD --oneline
+The file inventory is a fixed git operation — use the shared helper (single
+source of truth, also used by `verify` and `code-review`), so the bucketing
+matches those skills exactly:
+
+```
+python .claude/skills/verify/scripts/changed_files.py --base main --mode branch
 ```
 
-Read the full diff to understand what was added, changed, or removed:
+Its JSON gives the deduplicated change set already bucketed into `python`,
+`templates`, `migrations`, `other`. If `nothing_changed` is `true`, report
+"No changes vs main" and stop.
+
+Then read the human context the helper deliberately leaves to judgement:
 
 ```powershell
+git diff main...HEAD --stat
+git log main...HEAD --oneline
 git diff main...HEAD
 ```
 
-Categorise changes by app area: `teams/`, `matches/`, `core/`, root-level config, templates, migrations.
+Categorise the changed files by app area (`teams/`, `matches/`, `core/`,
+root-level config, templates, migrations) using the buckets above.
 
 ## Step 2 — Update app-level CLAUDE.md files
 
