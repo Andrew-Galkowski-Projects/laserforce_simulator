@@ -21,12 +21,20 @@ def score_round_worker(args: tuple) -> list[dict]:
 
     Used by the score_averages management command parallel path.
     Lazy-imports BatchSimulator so the import happens after django.setup().
+
+    ``movement_ctx`` is the optional map context built in the parent (a
+    picklable ``MapContext`` or ``None`` for the 3-zone fallback); it is
+    threaded through so ``--map`` works under ``--workers > 1``. This is the
+    only worker change for the map flag — seeding stays state-based and out of
+    SIM-07/SIM-08 scope.
     """
     from matches.simulation import BatchSimulator  # noqa: PLC0415
 
-    red_data, blue_data, seed_state = args
+    red_data, blue_data, seed_state, movement_ctx = args
     random.setstate(seed_state)
-    _, red_players, blue_players = BatchSimulator()._simulate_round(red_data, blue_data)
+    _, red_players, blue_players = BatchSimulator()._simulate_round(
+        red_data, blue_data, movement_ctx=movement_ctx
+    )
     return [
         {
             "role": p.role,

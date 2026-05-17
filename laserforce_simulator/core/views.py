@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 
 from django.conf import settings
+from django.contrib import messages
 from django.db.models.fields.files import FieldFile
 from django.http import FileResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -126,6 +127,23 @@ def upload_map(request):
     _clear_processed_cache(arena_map.pk)
 
     return redirect("map_editor", map_id=arena_map.pk)
+
+
+@require_POST
+def delete_map(request, map_id):
+    """Delete an ArenaMap and its cached processed image.
+
+    Related zone/base/sight-line configs cascade automatically via their FK
+    ``on_delete=CASCADE``. ``GameRound.arena_map`` is ``SET_NULL``, so any
+    persisted rounds keep their results but lose the (now-deleted) map link.
+    """
+    arena_map = get_object_or_404(ArenaMap, pk=map_id)
+    name = arena_map.name
+    _clear_processed_cache(arena_map.pk)
+    arena_map.image.delete(save=False)
+    arena_map.delete()
+    messages.success(request, f"Deleted map “{name}”.")
+    return redirect("map_list")
 
 
 def map_editor(request, map_id):

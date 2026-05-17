@@ -1433,3 +1433,29 @@ class TestSim08SideAlternation:
                     f"stored GameRound sides (red={gr.team_red_id}, "
                     f"blue={gr.team_blue_id})"
                 )
+
+
+@pytest.mark.django_db
+class TestPrecomputeRosterParity:
+    """Regression: _precompute_roster must precompute every stat _make_players reads.
+
+    The parallel score_averages path (--workers > 1) ships _precompute_roster
+    output into worker processes, which call _make_players on it. _PlayerData
+    does a hard dict lookup, so any stat consumed by _make_players but absent
+    from _SIMULATION_STATS raised KeyError only under --workers > 1 (the serial
+    path reads stats live off the ORM Player and was unaffected).
+    'game_awareness' was the missing key.
+    """
+
+    def test_precomputed_roster_runs_through_make_players(self):
+        from matches.simulation import _precompute_roster
+
+        team, _ = make_team_with_slots("PrecompParity")
+        precomputed = _precompute_roster(list(team.active_roster))
+
+        # Must not raise KeyError for any stat _make_players consumes.
+        players = BatchSimulator()._make_players(precomputed, "red")
+
+        assert len(players) == len(precomputed)
+        for p in players:
+            assert isinstance(p.game_awareness, int)

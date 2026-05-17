@@ -97,20 +97,21 @@ def build_movement_adjacency(
     return adj
 
 
-def astar_next_step(
+def astar_path(
     start: tuple[int, int],
     goal: tuple[int, int],
     adj: dict[tuple[int, int], list[tuple[int, int]]],
     elevation_data: dict | None = None,
-) -> tuple[int, int]:
-    """Return the first step on the shortest path from start toward goal.
+) -> list[tuple[int, int]]:
+    """Return the shortest path from start to goal, excluding start.
 
-    Uses A* with Manhattan-distance heuristic and optional elevation costs.
-    Returns start unchanged when: start == goal, no path exists, or start
-    is not in the adjacency graph.
+    The returned list is the ordered sequence of cells to step through,
+    ending at ``goal``. Uses A* with a Manhattan-distance heuristic and
+    optional elevation costs. Returns ``[]`` when start == goal, no path
+    exists, or start is not in the adjacency graph.
     """
     if start == goal or start not in adj:
-        return start
+        return []
 
     h = abs(goal[0] - start[0]) + abs(goal[1] - start[1])
     heap: list[tuple[float, float, tuple[int, int]]] = [(h, 0.0, start)]
@@ -124,10 +125,13 @@ def astar_next_step(
             continue
 
         if current == goal:
+            path: list[tuple[int, int]] = []
             node = goal
-            while came_from.get(node) != start:
+            while node != start:
+                path.append(node)
                 node = came_from[node]
-            return node
+            path.reverse()
+            return path
 
         for neighbor in adj.get(current, []):
             cost = g + _movement_cost(current, neighbor, elevation_data)
@@ -137,7 +141,65 @@ def astar_next_step(
                 nh = abs(goal[0] - neighbor[0]) + abs(goal[1] - neighbor[1])
                 heapq.heappush(heap, (cost + nh, cost, neighbor))
 
-    return start
+    return []
+
+
+def astar_next_step(
+    start: tuple[int, int],
+    goal: tuple[int, int],
+    adj: dict[tuple[int, int], list[tuple[int, int]]],
+    elevation_data: dict | None = None,
+) -> tuple[int, int]:
+    """Return the first step on the shortest path from start toward goal.
+
+    Thin wrapper over :func:`astar_path`; returns ``start`` unchanged when
+    start == goal, no path exists, or start is not in the adjacency graph.
+    """
+    path = astar_path(start, goal, adj, elevation_data)
+    return path[0] if path else start
+
+
+def astar_advance(
+    start: tuple[int, int],
+    goal: tuple[int, int],
+    adj: dict[tuple[int, int], list[tuple[int, int]]],
+    steps: int,
+    elevation_data: dict | None = None,
+) -> tuple[int, int]:
+    """Return the cell reached after walking up to ``steps`` cells toward goal.
+
+    Walks the A* path; stops early at ``goal`` (no overshoot). Returns
+    ``start`` when ``steps <= 0``, no path exists, or start is not navigable.
+    """
+    if steps <= 0:
+        return start
+    path = astar_path(start, goal, adj, elevation_data)
+    if not path:
+        return start
+    return path[min(steps, len(path)) - 1]
+
+
+def max_movement_for_map(zone_data: list[list[int]] | None) -> int:
+    """Cells-per-tick ceiling, scaled by map size (PLAN.md STAT-03 Phase 1).
+
+    Larger maps allow more cells per tick so traversal time stays sane:
+    ``max(rows, cols) // 10`` clamped to the documented 5..10 range.
+    """
+    if not zone_data:
+        return 5
+    rows = len(zone_data)
+    cols = len(zone_data[0]) if rows else 0
+    return max(5, min(10, max(rows, cols) // 10))
+
+
+def cells_to_move(speed: int, zone_data: list[list[int]] | None) -> int:
+    """Cells a player traverses this tick: ``ceil(speed/100 * max_movement)``.
+
+    PLAN.md STAT-03 Phase 1 (pairs with MAP-02). Floored at 1 so a moving
+    player is never frozen by a low ``speed`` stat.
+    """
+    mm = max_movement_for_map(zone_data)
+    return max(1, math.ceil((speed / 100.0) * mm))
 
 
 def _nearest_cell(

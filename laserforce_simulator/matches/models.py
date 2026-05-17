@@ -547,6 +547,10 @@ class PlayerRoundState(models.Model):
         return self.player.stat_for_simulation("communication", self.role)
 
     @property
+    def speed(self) -> int:
+        return self.player.stat_for_simulation("speed", self.role)
+
+    @property
     def stamina_hit_modifier(self) -> float:
         penalty_count = getattr(self, "stamina_penalty_count", 0)
         return max(0.5, 1.0 - 0.05 * penalty_count)

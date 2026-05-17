@@ -10,7 +10,11 @@ from matches.sim_helpers.time_constants import (
     TICK_SECONDS,
     TICKS_PER_ROUND,
 )
-from matches.simulation import BatchSimulator, _precompute_roster
+from matches.simulation import (
+    BatchSimulator,
+    ResourceBasedSimulator,
+    _precompute_roster,
+)
 from teams.models import Team
 
 ROLE_ORDER = ["commander", "heavy", "scout", "ammo", "medic"]
@@ -57,6 +61,15 @@ class Command(BaseCommand):
             default=1,
             help="Number of parallel worker processes (default: 1 = serial)",
         )
+        parser.add_argument(
+            "--map",
+            dest="arena_map",
+            default=None,
+            help=(
+                "Name of an ArenaMap to simulate on (cell-aware pathfinding). "
+                "Default: no map (3-zone fallback)."
+            ),
+        )
 
     def _team_with_roster(self, exclude_pk):
         qs = Team.objects.all()
@@ -99,12 +112,32 @@ class Command(BaseCommand):
         if not blue_roster:
             raise CommandError(f"Team '{team_blue.name}' has no active roster.")
 
+        arena_map = None
+        if options["arena_map"]:
+            from core.models import ArenaMap
+
+            try:
+                arena_map = ArenaMap.objects.get(name=options["arena_map"])
+            except ArenaMap.DoesNotExist:
+                raise CommandError(f"ArenaMap '{options['arena_map']}' not found.")
+            except ArenaMap.MultipleObjectsReturned:
+                raise CommandError(
+                    f"Multiple ArenaMaps named '{options['arena_map']}'; "
+                    "rename or remove duplicates."
+                )
+
+        try:
+            movement_ctx, _ = ResourceBasedSimulator._load_map_context(arena_map)
+        except ValueError as exc:
+            raise CommandError(str(exc))
+
         if options["seed"] is not None:
             random.seed(options["seed"])
 
         parallel_note = f" ({workers} workers)" if workers > 1 else ""
+        map_note = f" on map '{arena_map.name}'" if arena_map else ""
         self.stdout.write(
-            f"\nSimulating {n} rounds{parallel_note}: "
+            f"\nSimulating {n} rounds{parallel_note}{map_note}: "
             f"{team_red.name} (red) vs {team_blue.name} (blue)\n"
         )
 
@@ -129,7 +162,7 @@ class Command(BaseCommand):
                 seed_states.append(random.getstate())
                 random.random()
 
-            args_list = [(red_data, blue_data, s) for s in seed_states]
+            args_list = [(red_data, blue_data, s, movement_ctx) for s in seed_states]
             chunksize = max(1, n // (workers * 4))
 
             with ProcessPoolExecutor(
@@ -166,7 +199,7 @@ class Command(BaseCommand):
             sim = BatchSimulator()
             for _ in range(n):
                 _, red_players, blue_players = sim._simulate_round(
-                    red_roster, blue_roster
+                    red_roster, blue_roster, movement_ctx=movement_ctx
                 )
                 for p in red_players + blue_players:
                     role_scores[p.role].append(p.points_scored)

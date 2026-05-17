@@ -12,6 +12,8 @@ from .sim_helpers.map_context import MapContext
 from .sim_helpers.pathfinding import (
     build_movement_adjacency,
     astar_next_step,
+    astar_advance,
+    cells_to_move,
 )
 from .sim_helpers.combat import (
     _NEUTRAL_BASE_TYPES,
@@ -1979,7 +1981,9 @@ class ResourceBasedSimulator:
         current = (player.cell_row, player.cell_col)
         if current == goal_cell or current not in adj:
             return
-        next_cell = astar_next_step(current, goal_cell, adj)
+        # STAT-03 Phase 1: traverse speed-scaled cells per tick, not just one.
+        steps = cells_to_move(getattr(player, "speed", 50), zone_data)
+        next_cell = astar_advance(current, goal_cell, adj, steps)
         if next_cell == current:
             return
         player.cell_row, player.cell_col = next_cell
@@ -2617,6 +2621,7 @@ _SIMULATION_STATS = (
     "accuracy",
     "survival",
     "player_awareness",
+    "game_awareness",
     "decision_making",
     "stamina",
     "special_usage",
@@ -2624,6 +2629,8 @@ _SIMULATION_STATS = (
     "resupply_synergy",
     "teamwork",
     "communication",
+    "resource_awareness",
+    "speed",
 )
 
 
@@ -3007,6 +3014,7 @@ class BatchSimulator:
                 resource_awareness=player_model.stat_for_simulation(
                     "resource_awareness", role
                 ),
+                speed=player_model.stat_for_simulation("speed", role),
                 starting_lives=resources["lives"],
                 starting_shots=resources["shots"],
                 final_lives=resources["lives"],
@@ -3530,7 +3538,9 @@ class BatchSimulator:
         current = (player.cell_row, player.cell_col)
         if current == goal_cell or current not in adj:
             return
-        next_cell = astar_next_step(current, goal_cell, adj)
+        # STAT-03 Phase 1: traverse speed-scaled cells per tick, not just one.
+        steps = cells_to_move(getattr(player, "speed", 50), zone_data)
+        next_cell = astar_advance(current, goal_cell, adj, steps)
         if next_cell == current:
             return
         player.cell_row, player.cell_col = next_cell

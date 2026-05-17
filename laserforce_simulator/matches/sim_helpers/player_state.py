@@ -38,6 +38,7 @@ class PlayerState:
     resupply_synergy: int = 50
     teamwork: int = 50
     communication: int = 50
+    speed: int = 50  # 0-100, from Player model; cells traversed per move tick
     final_missiles: int = 0
     shields: int = 1
     player_awareness: int = 50  # 0-100, from Player model
