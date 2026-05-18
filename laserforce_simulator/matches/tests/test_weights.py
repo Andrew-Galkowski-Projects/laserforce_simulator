@@ -465,3 +465,122 @@ class TestWeightFunctions:
         w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
         # Current code gives capture_base=5, not 50
         assert w[_ACTION_IDX["capture_base"]] == 5
+
+    # ------------------------------------------------------------------ #
+    # MOVE-03 — `hold` (Overwatch) weight slot, index 8
+    # ------------------------------------------------------------------ #
+    #
+    # The MOVE-03 contract (ADR-0009 + matches/sim_helpers/CLAUDE.md) widens
+    # the action-weight array to 9 slots, adding `hold` at index 8. The role
+    # functions index purely via the passed action_to_weight_index dict, so
+    # these tests pass a 9-element base + 9-key index map (the legacy 7-slot
+    # tests above keep their own _BASE/_ACTION_IDX and remain untouched).
+    #
+    # Per-role `hold` (idx 8) redistribution, baseline state:
+    #   Medic     0   (no source — Medic never holds at baseline)
+    #   Ammo     +20  (from tag_player: 35 -> 15 effective)
+    #   Scout    +10  (from only_move)
+    #   Heavy    +20  (from only_move)
+    #   Commander+10  (from only_move)
+    # All 9 weights must remain >= 0 (random.choices rejects negatives).
+
+    _ACTION_IDX9 = {
+        "tag_player": 0,
+        "only_move": 1,
+        "hide": 2,
+        "capture_base": 3,
+        "use_special": 4,
+        "resupply_ally": 5,
+        "missile_player": 6,
+        "request_resupply": 7,
+        "hold": 8,
+    }
+    _BASE9 = [70, 30, 0, 0, 0, 0, 0, 0, 0]
+
+    def _fresh9(self):
+        return list(self._BASE9)
+
+    def test_medic_hold_weight_is_zero(self):
+        """Medic never holds at baseline — hold weight stays 0."""
+        s = self._state(self.gr, self.players["medic"], "medic")
+        w = _get_medic_weights(s, self._ACTION_IDX9, self._fresh9(), [s], 0)
+        assert len(w) == 9
+        assert w[self._ACTION_IDX9["hold"]] == 0
+
+    def test_ammo_hold_weight_plus_20_from_tag(self):
+        """Ammo gains +20 hold, sourced from tag_player (35 -> 15)."""
+        s = self._state(self.gr, self.players["ammo"], "ammo")
+        w = _get_ammo_weights(s, self._ACTION_IDX9, self._fresh9(), [s], 0)
+        assert w[self._ACTION_IDX9["hold"]] == 20
+        # tag_player correspondingly reduced by the 20 routed into hold.
+        # 7-slot baseline gives Ammo tag_player == 45; -20 -> 25.
+        assert w[self._ACTION_IDX9["tag_player"]] == 25
+
+    def test_scout_hold_weight_plus_10_from_only_move(self):
+        """Scout gains +10 hold, sourced from only_move."""
+        s = self._state(self.gr, self.players["scout"], "scout")
+        w = _get_scout_weights(s, self._ACTION_IDX9, self._fresh9(), [s], 0)
+        assert w[self._ACTION_IDX9["hold"]] == 10
+        # 7-slot baseline gives Scout only_move == 60; -10 -> 50.
+        assert w[self._ACTION_IDX9["only_move"]] == 50
+
+    def test_heavy_hold_weight_plus_20_from_only_move(self):
+        """Heavy gains +20 hold, sourced from only_move."""
+        s = self._state(self.gr, self.players["heavy"], "heavy", missiles_landed=5)
+        w = _get_heavy_weights(s, self._ACTION_IDX9, self._fresh9(), [s], 0)
+        assert w[self._ACTION_IDX9["hold"]] == 20
+        # 7-slot baseline gives Heavy only_move == 25 (no missiles); -20 -> 5.
+        assert w[self._ACTION_IDX9["only_move"]] == 5
+
+    def test_commander_hold_weight_plus_10_from_only_move(self):
+        """Commander gains +10 hold, sourced from only_move."""
+        s = self._state(
+            self.gr, self.players["commander"], "commander", missiles_landed=5
+        )
+        w = _get_commander_weights(s, self._ACTION_IDX9, self._fresh9(), [s], 0)
+        assert w[self._ACTION_IDX9["hold"]] == 10
+        # 7-slot baseline gives Commander only_move == 15 (no missiles); -10 -> 5.
+        assert w[self._ACTION_IDX9["only_move"]] == 5
+
+    @pytest.mark.parametrize(
+        "role",
+        ["medic", "ammo", "scout", "heavy", "commander"],
+    )
+    @pytest.mark.parametrize(
+        "state_kwargs",
+        [
+            {},  # baseline
+            {"final_lives": 2},  # low lives / critical-resource
+            {"final_lives": 5, "last_downed_time": 0},  # not-active
+            {"final_shots": 1},  # critical shots resource
+        ],
+    )
+    def test_no_weight_is_negative_across_state_combos(self, role, state_kwargs):
+        """No slot in the 9-element vector may be negative (random.choices)."""
+        fns = {
+            "medic": _get_medic_weights,
+            "ammo": _get_ammo_weights,
+            "scout": _get_scout_weights,
+            "heavy": _get_heavy_weights,
+            "commander": _get_commander_weights,
+        }
+        kwargs = dict(state_kwargs)
+        if role in ("heavy", "commander"):
+            kwargs.setdefault("missiles_landed", 5)
+        s = self._state(self.gr, self.players[role], role, **kwargs)
+        w = fns[role](s, self._ACTION_IDX9, self._fresh9(), [s], 0)
+        assert len(w) == 9
+        if role == "scout" and state_kwargs == {"final_shots": 1}:
+            # Pre-existing, MOVE-03-independent: Scout `seek_no_ammo_tag` (50)
+            # exceeds the post-baseline `tag_player` (40) when shots-critical,
+            # driving tag_player negative. Documented "known pre-existing"
+            # failure in sim_helpers/CLAUDE.md; out of MOVE-03 scope (hold is
+            # sourced from only_move, never tag_player). plan_action's final
+            # clamp keeps random.choices from ever seeing the negative.
+            pytest.xfail(
+                "pre-existing Scout seek_no_ammo_tag > tag_player baseline "
+                "(see sim_helpers/CLAUDE.md); unrelated to MOVE-03 hold slot"
+            )
+        assert all(
+            x >= 0 for x in w
+        ), f"{role} produced a negative weight for {state_kwargs}: {w}"

@@ -9,6 +9,9 @@ _MEDIC = dict(
     baseline_cz=-30,
     baseline_hide=+30,
     baseline_resupply=+65,
+    # MOVE-03: Medic does not Overwatch (it heals, not holds).
+    baseline_hold=0,
+    baseline_hold_source="tag_player",
     support_capture_gain=5,
     support_capture_resupply_cost=5,
     low_lives_threshold=3,  # fixed life count (not a percentage)
@@ -24,6 +27,10 @@ _AMMO = dict(
     baseline_tag=-25,
     baseline_cz=-30,
     baseline_resupply=+55,
+    # MOVE-03: +20 to hold, drawn from tag_player. Post-baseline tag = 70 - 25
+    # = 45; 45 - 20 = 25 (>= 0, OK).
+    baseline_hold=+20,
+    baseline_hold_source="tag_player",
     support_capture_gain=5,
     support_capture_resupply_cost=5,
     low_lives_threshold=3,
@@ -42,6 +49,10 @@ _AMMO = dict(
 _SCOUT = dict(
     baseline_tag=-30,
     baseline_cz=+30,
+    # MOVE-03: +10 to hold, drawn from only_move. Post-baseline only_move =
+    # 30 + 30 = 60; 60 - 10 = 50 (>= 0, OK).
+    baseline_hold=+10,
+    baseline_hold_source="only_move",
     critical_pct=0.3,
     base_capture_gain=20,
     base_capture_tag_cost=20,
@@ -65,6 +76,10 @@ _SCOUT = dict(
 _HEAVY = dict(
     baseline_cz=-5,
     baseline_hide=+5,
+    # MOVE-03: +20 to hold, drawn from only_move. Post-baseline only_move =
+    # 30 - 5 = 25; 25 - 20 = 5 (>= 0, OK).
+    baseline_hold=+20,
+    baseline_hold_source="only_move",
     critical_pct=0.3,
     missile_cz_cost=15,
     missile_gain=15,
@@ -91,6 +106,10 @@ _HEAVY = dict(
 _COMMANDER = dict(
     baseline_tag=+10,
     baseline_cz=-15,
+    # MOVE-03: +10 to hold, drawn from only_move. Post-baseline only_move =
+    # 30 - 15 = 15; 15 - 10 = 5 (>= 0, OK).
+    baseline_hold=+10,
+    baseline_hold_source="only_move",
     critical_pct=0.3,
     missile_cz_cost=15,
     missile_gain=15,
@@ -141,6 +160,30 @@ def _apply_role_baseline(w, c, i):
     w[i["only_move"]] += c.get("baseline_cz", 0)
     w[i["hide"]] += c.get("baseline_hide", 0)
     w[i["resupply_ally"]] += c.get("baseline_resupply", 0)
+
+
+def _apply_hold_baseline(w, c, i):
+    """MOVE-03: shift ``baseline_hold`` weight into the ``hold`` slot (index 8).
+
+    The amount is drawn from ``baseline_hold_source`` (``tag_player`` for Ammo,
+    ``only_move`` for Scout/Heavy/Commander; Medic is 0 so this is a no-op).
+    The per-role amounts were verified to leave the source weight >= 0 after the
+    role baseline (see each role const dict comment); the ``max(0, ...)`` clamp
+    is a defensive guard so ``random.choices`` never sees a negative weight.
+    Additive on the 9-slot array; consumes no RNG.
+    """
+    amount = c.get("baseline_hold", 0)
+    if amount == 0:
+        return
+    # Legacy 7/8-slot callers (older unit tests build a pre-MOVE-03
+    # action-index dict without "hold"); the production path always passes the
+    # 9-slot _ACTION_IDX. Guarding here keeps those callers KeyError-free
+    # without widening every legacy fixture.
+    if "hold" not in i or len(w) <= i["hold"]:
+        return
+    source = c.get("baseline_hold_source", "only_move")
+    w[i["hold"]] += amount
+    w[i[source]] = max(0, w[i[source]] - amount)
 
 
 def _apply_support_base_capture(w, c, i, player):
@@ -368,6 +411,7 @@ def _get_medic_weights(
     w, c, i = weights, _MEDIC, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
+    _apply_hold_baseline(w, c, i)
     _apply_support_base_capture(w, c, i, player)
 
     if player.final_lives <= c["low_lives_threshold"]:
@@ -419,6 +463,7 @@ def _get_ammo_weights(
     w, c, i = weights, _AMMO, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
+    _apply_hold_baseline(w, c, i)
     _apply_support_base_capture(w, c, i, player)
 
     if player.final_lives <= c["low_lives_threshold"]:
@@ -487,6 +532,7 @@ def _get_scout_weights(
     w, c, i = weights, _SCOUT, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
+    _apply_hold_baseline(w, c, i)
 
     if player.can_capture_base_in_current_zone:
         w[i["tag_player"]] -= c["base_capture_tag_cost"]
@@ -540,6 +586,7 @@ def _get_heavy_weights(
     w, c, i = weights, _HEAVY, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
+    _apply_hold_baseline(w, c, i)
 
     if player.missiles_used < 5:
         w[i["only_move"]] -= c["missile_cz_cost"]
@@ -618,6 +665,7 @@ def _get_commander_weights(
     w, c, i = weights, _COMMANDER, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
+    _apply_hold_baseline(w, c, i)
 
     if player.missiles_used < 5:
         w[i["only_move"]] -= c["missile_cz_cost"]

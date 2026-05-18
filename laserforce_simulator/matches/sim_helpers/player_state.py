@@ -52,6 +52,11 @@ class PlayerState:
     last_downed_time: Optional[int] = None
     special_active_until: int = 0
     is_hiding: bool = False
+    # MOVE-03: transient Overwatch flag (mirrors is_hiding). Set on a ``hold``
+    # roll, carried over until a non-Hold Action or a Down/respawn. No DB
+    # column / no migration (PlayerRoundState has no such attr by default —
+    # read everywhere via getattr(player, "is_holding", False)).
+    is_holding: bool = False
     last_tagged_id: Optional[str] = None
 
     # missile bookkeeping
@@ -99,6 +104,14 @@ class PlayerState:
     # process boundary. Managed by pathfinding.astar_advance_cached; cleared
     # to None on Down/respawn via BatchSimulator._record_down.
     _path_cache: Optional[tuple] = None
+
+    # MOVE-03: transient list of cells actually traversed by the most recent
+    # astar_advance_cached call this tick (intermediate + end cells walked,
+    # excluding the start cell); [] when nothing moved. Used by the
+    # BatchSimulator Overwatch resolution to test whether a mover crossed a
+    # holder's line of sight mid-Advance. No DB column / no migration; never
+    # crosses the parallel-worker process boundary.
+    _last_step_cells: list = field(default_factory=list)
 
     # MECH-04: transient nuke-reaction flag — reset each tick, never persisted to DB
     reacting_to_nuke: bool = False

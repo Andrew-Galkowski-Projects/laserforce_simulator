@@ -120,11 +120,13 @@ class TestSimulation:
             "resupply_ally",
             "missile_player",
             "request_resupply",
+            "hold",
         ]
         # dm=50 (player default) → factor=1.5; max weight 65 (resupply_ally) × 1.5 = 97;
         # others ÷ 1.5: tag_player 5→3, hide 30→20, request_resupply 25→16.
         # medic: final_shots=10 < max_shots=15 → request_resupply = resupply_efficiency/2 = 25
-        assert captured["weights"] == [3, 0, 20, 0, 0, 97, 0, 16]
+        # MOVE-03: 9th slot `hold` = 0 for Medic (baseline_hold=0, no-op).
+        assert captured["weights"] == [3, 0, 20, 0, 0, 97, 0, 16, 0]
 
     def test_tag_event_created_when_hit(self):
         simulator = ResourceBasedSimulator()
@@ -899,7 +901,8 @@ class TestSimulationChangesWithWeights:
         def all_tag_weights(
             player, action_to_weight_index, weights, all_alive, second, time_domain
         ):
-            return [100, 0, 0, 0, 0, 0, 0, 0]
+            # MOVE-03: 9-slot action array (index 8 = hold).
+            return [100, 0, 0, 0, 0, 0, 0, 0, 0]
 
         # TIME-01: duration is now ticks; 60 s → 120 ticks (RBS behaviour unchanged).
         simulator = ResourceBasedSimulator(duration_ticks=120)

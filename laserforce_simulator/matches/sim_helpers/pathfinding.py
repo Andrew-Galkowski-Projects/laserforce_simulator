@@ -226,6 +226,14 @@ def astar_advance_cached(
     boundary). Returns the cell reached (``current`` when ``steps <= 0`` or no
     route exists). ``astar_advance`` itself is left unchanged for RBS + tests.
     """
+    # MOVE-03: every call records the cells actually traversed this call onto
+    # ``player._last_step_cells`` (intermediate + end cells walked, excluding
+    # ``current``); ``[]`` whenever nothing moves. The BatchSimulator Overwatch
+    # resolution reads this to detect an enemy crossing a holder's LoS
+    # mid-Advance. Set unconditionally before every return so a stale list from
+    # a prior tick can never leak into the LoS check. Consumes no RNG.
+    player._last_step_cells = []
+
     if steps <= 0:
         return current
 
@@ -273,6 +281,11 @@ def astar_advance_cached(
     # the same early-stop semantics as astar_advance).
     take = min(steps, len(remaining))
     reached = remaining[take - 1]
+    # MOVE-03: the cells popped this call ARE the cells walked this tick
+    # (``remaining`` excludes ``current`` and ends at ``goal``, so the slice is
+    # the intermediate cells + the cell reached). Snapshot before the in-place
+    # ``del`` so the cache mutation below doesn't empty it.
+    player._last_step_cells = list(remaining[:take])
     del remaining[:take]
     if not remaining:
         # Route consumed — player is at goal; next tick recomputes/idles.

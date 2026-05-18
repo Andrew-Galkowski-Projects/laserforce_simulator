@@ -13,6 +13,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Shell: PowerShell on Windows (use PowerShell-compatible commands, not bash-isms like `&&`)
 - Path separators: prefer forward slashes or `os.path.join` in Python
+- **Never prepend `cd` to any command — git especially.** The shell already
+  starts at the repo root (`...\laserforce_simulator`), which is where `.git`
+  lives. A `cd` in a compound command can trigger a permission prompt, clutters
+  output, and — because the agent worktrees share this `.git` — a `cd`-then-git
+  sequence has already corrupted the working tree once (a stray `git stash pop`
+  reverted in-progress edits). Run `git` **directly, with no `cd` and no `-C`**:
+  `git status`, `git diff`, `git commit …` all just work from the cwd.
+- For commands that must run from a subdirectory, pass the path to the tool
+  instead of `cd`-ing:
+  - black: `python -m black laserforce_simulator` (target path as argument).
+  - pytest / manage.py: the Django project and `pytest.ini` live in the nested
+    `laserforce_simulator/laserforce_simulator/`. Invoke via the path —
+    `python laserforce_simulator/manage.py <cmd>` — or, when pytest config
+    discovery requires it, run the test tool from that nested dir as a last
+    resort (never `cd` before `git`).
 
 ## Commands
 

@@ -111,7 +111,14 @@
       "Skill(grill-with-docs)",
       "PowerShell(python manage.py makemigrations matches)",
       "Bash(git -C \"C:/Users/Andrew Galkowski/Desktop/programming/laserforce_simulator/.claude/worktrees/agent-a51005228c668c6e5\" check-ignore laserforce_simulator/.env)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Skill(caveman)",
+      "PowerShell($env:SECRET_KEY='dummy-smoke-key'; $env:DEBUG='True'; python -m pytest laserforce_simulator/matches/tests/test_move03_hold_overwatch.py -q --no-header -p no:cacheprovider 2>&1 | Select-Object -Last 25)",
+      "PowerShell($env:SECRET_KEY='dummy-smoke-key'; $env:DEBUG='True'; python _ow_smoke.py)",
+      "Bash(git --no-pager log --oneline -1)",
+      "Bash(git --no-pager diff --stat)",
+      "Bash(git --no-pager diff -- laserforce_simulator/matches/sim_helpers/weights.py)",
+      "Bash(git reset *)"
     ]
   }
 }

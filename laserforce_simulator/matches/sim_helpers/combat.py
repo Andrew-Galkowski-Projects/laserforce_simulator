@@ -47,6 +47,7 @@ _ACTION_IDX = {
     "resupply_ally": 5,
     "missile_player": 6,
     "request_resupply": 7,
+    "hold": 8,
 }
 _CHOICES = [
     "tag_player",
@@ -57,6 +58,7 @@ _CHOICES = [
     "resupply_ally",
     "missile_player",
     "request_resupply",
+    "hold",
 ]
 
 
@@ -249,7 +251,9 @@ def plan_action(
     seconds. ``"ticks"`` selects the tick-native thresholds from
     ``time_constants`` — used by the fully tick-native BatchSimulator.
     """
-    weights = [70, 30, 0, 0, 0, 0, 0, 0]
+    # MOVE-03: 9-slot action array — index 8 is the new ``hold`` Action
+    # (Overwatch). Per-role weight redistribution is applied in weights.py.
+    weights = [70, 30, 0, 0, 0, 0, 0, 0, 0]
 
     # MECH-06 wired: teamwork bias in pathfinding._goal_from_role; communication
     # broadcast in simulation.py tick loop; memory updated from LOS + global broadcasts.
@@ -307,6 +311,15 @@ def plan_action(
         player.is_hiding = False
         if save_player is not None:
             save_player(player)
+
+    # MOVE-03: ``is_holding`` carry-over (mirrors is_hiding; transient — no DB
+    # column / no migration, like _path_cache / movement_trail). A ``hold`` roll
+    # keeps the player in Overwatch (Stationary) until it rolls a non-Hold
+    # Action; a Down/respawn force-clears it via _record_down. Consumes no RNG.
+    if choice == "hold":
+        player.is_holding = True
+    elif getattr(player, "is_holding", False):
+        player.is_holding = False
 
     plans = []
     if choice == "tag_player":
@@ -395,6 +408,11 @@ def plan_action(
         plans.append({"type": "hide", "actor": player})
     elif choice == "request_resupply":
         plans.append({"type": "request_resupply", "actor": player})
+    elif choice == "hold":
+        # MOVE-03: enter/maintain Overwatch. Stationary; the actual Overwatch
+        # shots are resolved by the BatchSimulator tick loop (BatchSim-only by
+        # design — RBS treats this as a no-op).
+        plans.append({"type": "hold", "actor": player})
 
     return plans
 

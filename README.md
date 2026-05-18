@@ -9,6 +9,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - **Arena map support** — Optionally attach a confirmed arena map to any match or round; on the map every non-stationary player advances via A* pathfinding on the real cell grid toward their goal (enemy base, a critical ally, etc.) every tick — independent of their chosen action — recording a compact start/end `movement` event whenever their cell changes, from which the full path is reconstructed on replay
 - **Wall hazards** — Three wall types on the map grid: high walls (block movement + sight), low walls (block movement, transparent to LOS), and windowed walls (block sight but allow directional tagging through a user-placed aperture). Wall types are painted in the map editor; windowed wall facing (N/S/E/W) determines which axis an attack can pass through
 - **Role mechanics** — Shields, lives, missiles/nukes, resupply, special charges, and zone movement all modeled
+- **Hold / overwatch** — A player can take up a stationary *hold*: it stops advancing and watches its line of sight, automatically firing a pre-emptive shot at the first enemy that enters — or moves through — its sight (distinct from a retaliatory reaction shot). Overwatch fire is resolved in batch simulations
 - **Game event log** — Every tag, miss, missile, resupply, and base capture is recorded with tick timestamps and points (the JSON API returns raw ticks; the UI divides by 2 for seconds)
 - **MVP scoring** — Role-specific formulas weighted toward each role's primary contribution
 - **Game replay** — Step through match events chronologically with per-player stat tracking; each persisted round also stores the RNG seed it was simulated with, so the exact game can be re-run (faithful while its rosters, map config, and side orientation are unchanged)
@@ -119,7 +120,7 @@ laserforce_simulator/
 1. Resolve any pending missiles/nukes whose delay has elapsed
 2. Each active player picks an action (weighted random by role, zone, remaining resources)
 3. Resolve the action — update player state and write a `GameEvent`
-4. On a map, every non-stationary player also advances toward their goal cell this tick — movement is decoupled from the chosen action; a player is stationary only while hiding or capturing a base
+4. On a map, every non-stationary player also advances toward their goal cell this tick — movement is decoupled from the chosen action; a player is stationary only while hiding, holding (overwatch), or capturing a base
 5. Check for eliminations; award a 10,000-point bonus for wiping the opposing team
 
 Action weights live in `matches/sim_helpers/weights.py` and shift dynamically based on remaining lives, special charges, current zone, and allied presence.

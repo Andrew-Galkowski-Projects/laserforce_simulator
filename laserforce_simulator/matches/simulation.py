@@ -1562,6 +1562,13 @@ class ResourceBasedSimulator:
                 # only_move roll only flags this tick's Advance as a single 2×
                 # step. Nothing to do here.
                 pass
+            elif ptype == "hold":
+                # MOVE-03: RBS treats hold as a Stationary no-op — Overwatch
+                # shot resolution is BatchSimulator-only by design (ADR-0009;
+                # RBS is removed by SIM-09). is_holding (set in plan_action)
+                # still anchors the player via the Stationary predicate in
+                # _advance_player; no Overwatch shot is fired here.
+                pass
             elif ptype == "change_zone":
                 # MOVE-01 decision 7: 3-zone fallback only (movement_ctx is
                 # None) — keep the weighted _change_zone behaviour.
@@ -2022,8 +2029,14 @@ class ResourceBasedSimulator:
         if movement_ctx is None or player.cell_row is None:
             return
         chosen = getattr(player, "last_chosen_action", "")
-        # Stationary set: hiding or anchored to a base capture this tick.
-        if player.is_hiding or chosen == "capture_base":
+        # Stationary set: hiding, holding (MOVE-03 Overwatch — RBS still treats
+        # the player as Stationary even though Overwatch resolution is
+        # BatchSim-only), or anchored to a base capture this tick.
+        if (
+            player.is_hiding
+            or getattr(player, "is_holding", False)
+            or chosen == "capture_base"
+        ):
             return
         goal_cell = choose_goal_cell(
             player,
@@ -3502,6 +3515,13 @@ class BatchSimulator:
                     # roll); the only_move roll only flags this tick's Advance
                     # as a single 2× step. Nothing to do here.
                     pass
+                elif ptype == "hold":
+                    # MOVE-03: entering/maintaining Overwatch is a Stationary
+                    # no-op in the dispatch — is_holding (set in plan_action)
+                    # anchors the player via the _advance_player Stationary
+                    # predicate, and the Overwatch shots are collected after
+                    # the Advance loop below (BatchSim-only, ADR-0009).
+                    pass
                 elif ptype == "change_zone":
                     # MOVE-01 decision 7: 3-zone fallback only (movement_ctx
                     # is None) — keep the weighted _change_zone behaviour.
@@ -3537,7 +3557,13 @@ class BatchSimulator:
                         ]
                         _apply_nuke_activation_broadcast(actor, nuke_targets, second)
                 elif ptype == "tag":
-                    tag_attempts.append({"attacker": actor, "defender": plan["target"]})
+                    tag_attempts.append(
+                        {
+                            "attacker": actor,
+                            "defender": plan["target"],
+                            "overwatch": False,
+                        }
+                    )
 
             # MOVE-01: always-on Advance — every non-stationary player advances
             # toward their goal cell every tick, decoupled from the weighted
@@ -3556,6 +3582,18 @@ class BatchSimulator:
                         movement_ctx,
                         prev_actions.get(id(actor), ""),
                     )
+
+            # MOVE-03: Overwatch resolution (BatchSimulator-only, ADR-0009).
+            # Runs AFTER the Advance loop (so _last_step_cells is final for
+            # every mover) and BEFORE _resolve_tag_attempts (so Overwatch
+            # shots flow through the SAME deterministic tag path — hit roll,
+            # follow-up, victim reaction, last_shot_time — as a deliberate
+            # tag, with no duplicated combat logic). Collection / LoS check /
+            # dedupe iterate the already-shuffled all_alive and consume NO RNG
+            # (SIM-07/SIM-08 internal determinism: serial == parallel).
+            tag_attempts.extend(
+                self._collect_overwatch_attempts(all_alive, second, movement_ctx)
+            )
 
             if batch_resupply_requestors:
 
@@ -3669,8 +3707,14 @@ class BatchSimulator:
         if movement_ctx is None or player.cell_row is None:
             return
         chosen = getattr(player, "last_chosen_action", "")
-        # Stationary set: hiding or anchored to a base capture this tick.
-        if player.is_hiding or chosen == "capture_base":
+        # Stationary set: hiding, holding (MOVE-03 Overwatch — anchored to its
+        # current cell watching its sightline), or anchored to a base capture
+        # this tick.
+        if (
+            player.is_hiding
+            or getattr(player, "is_holding", False)
+            or chosen == "capture_base"
+        ):
             return
         goal_cell = choose_goal_cell(
             player,
@@ -3698,9 +3742,15 @@ class BatchSimulator:
         something a reviewer must re-verify seven times. Deliberately does
         *not* touch lives/shields — those differ per site
         (tag / follow-up / reaction / missile / nuke).
+
+        MOVE-03: also force-clears Overwatch (``is_holding``) — a Down/respawn
+        ends Hold, mirroring how it knocks the player off its committed route.
+        Hanging this off the same helper keeps "every life-loss site clears
+        the hold" structural rather than per-site review.
         """
         player.last_downed_time = second
         player._path_cache = None
+        player.is_holding = False
 
     def _move_player_in_memory(
         self, player, second, goal_cell, movement_ctx, multiplier: int = 1
@@ -3740,6 +3790,76 @@ class BatchSimulator:
         # deterministic A* start->end.
         player.movement_trail.append((current, next_cell, second))
 
+    def _collect_overwatch_attempts(self, all_alive, second, movement_ctx) -> list:
+        """MOVE-03: Overwatch tag-attempts for this tick (BatchSim-only, ADR-0009).
+
+        Called AFTER the Advance loop (so every mover's ``_last_step_cells`` is
+        final) and BEFORE ``_resolve_tag_attempts`` (so Overwatch shots flow
+        through the SAME deterministic tag path — hit roll, follow-up, victim
+        reaction, ``last_shot_time`` — as a deliberate tag, no duplicated combat
+        logic). Returns a list of ``{"attacker", "defender", "overwatch": True}``
+        dicts to be appended to the tick's ``tag_attempts``.
+
+        Collection / LoS check / dedupe iterate the already-shuffled
+        ``all_alive`` and consume **no RNG** (SIM-07/SIM-08 internal
+        determinism: serial == parallel). Returns ``[]`` on the 3-zone fallback
+        (``movement_ctx is None``) — Overwatch needs cell LoS.
+        """
+        if movement_ctx is None:
+            return []
+        # Live holder pool (enemy-agnostic; filtered per mover below).
+        holders = [
+            h
+            for h in all_alive
+            if getattr(h, "is_holding", False)
+            and h.cell_row is not None
+            and h.final_lives > 0
+            and h.final_shots > 0
+            and h.is_active_at(second)
+            and h.is_taggable_at(second)
+        ]
+        if not holders:
+            return []
+        # Per-tick dedupe: a normal holder fires at most ONE Overwatch shot per
+        # tick. A rapid-fire Scout holder (special active → shot_cooldown == 0)
+        # may fire at every crossing enemy, so it is exempt from the dedupe set.
+        attempts: list = []
+        fired_holder_ids: set = set()
+        for mover in all_alive:
+            if mover.cell_row is None:
+                continue
+            # An enemy draws Overwatch if it is currently *in* the holder's LoS
+            # OR its Advance this tick crossed it. _last_step_cells is the
+            # popped committed-route slice (intermediate + end) — the
+            # "moved *through* LoS in one Advance" guarantee (ADR-0009); the
+            # current cell covers a stationary / just-arrived enemy. Dedup
+            # while preserving order so the LoS scan is stable.
+            traversed = getattr(mover, "_last_step_cells", []) or []
+            check_cells = list(
+                dict.fromkeys(
+                    [tuple(c) for c in traversed] + [(mover.cell_row, mover.cell_col)]
+                )
+            )
+            for h in holders:
+                if h.team_color == mover.team_color or h is mover:
+                    continue
+                is_rapid_scout = h.role == "scout" and h.special_active_until > second
+                if not is_rapid_scout and id(h) in fired_holder_ids:
+                    continue
+                # Shot-cooldown gate: free shot when cooldown is 0, else require
+                # the gap to have elapsed.
+                h_cd = shot_cooldown(h, second)
+                if not (h_cd == 0.0 or (second - h.last_shot_time) >= h_cd):
+                    continue
+                holder_cell = (h.cell_row, h.cell_col)
+                if any(movement_ctx.can_see(holder_cell, tc) for tc in check_cells):
+                    attempts.append(
+                        {"attacker": h, "defender": mover, "overwatch": True}
+                    )
+                    if not is_rapid_scout:
+                        fired_holder_ids.add(id(h))
+        return attempts
+
     # ------------------------------------------------------------------ #
     # Action resolution (no DB writes)
     # ------------------------------------------------------------------ #
@@ -3757,14 +3877,27 @@ class BatchSimulator:
         outcomes = []
         for a in attempts:
             attacker, defender = a["attacker"], a["defender"]
+            # MOVE-03: carry the Overwatch provenance flag from the attempt
+            # into the outcome so the tag/miss event metadata can mark it.
+            overwatch = a.get("overwatch", False)
             if attacker.final_shots <= 0 or defender.final_lives <= 0:
                 outcomes.append(
-                    {"attacker": attacker, "defender": defender, "result": "invalid"}
+                    {
+                        "attacker": attacker,
+                        "defender": defender,
+                        "result": "invalid",
+                        "overwatch": overwatch,
+                    }
                 )
                 continue
             if defender.is_hiding and random.random() > 0.5:
                 outcomes.append(
-                    {"attacker": attacker, "defender": defender, "result": "miss_hid"}
+                    {
+                        "attacker": attacker,
+                        "defender": defender,
+                        "result": "miss_hid",
+                        "overwatch": overwatch,
+                    }
                 )
                 continue
             elev_mod = _elevation_hit_modifier(
@@ -3791,6 +3924,7 @@ class BatchSimulator:
                     "attacker": attacker,
                     "defender": defender,
                     "result": "hit" if hit else "miss",
+                    "overwatch": overwatch,
                 }
             )
 
@@ -3804,6 +3938,11 @@ class BatchSimulator:
                 attacker.shots_missed += 1
                 attacker.last_shot_time = second
                 if event_log is not None:
+                    _miss_hid_meta: dict = {"reason": "hiding"}
+                    # MOVE-03: Overwatch-origin provenance (reuses
+                    # event_type="miss"; scoring/accuracy unchanged).
+                    if o.get("overwatch", False):
+                        _miss_hid_meta["overwatch"] = True
                     event_log.append(
                         {
                             "event_type": "miss",
@@ -3812,7 +3951,7 @@ class BatchSimulator:
                             "timestamp": second,
                             "points_awarded": 0,
                             "description": f"{attacker.name} misses {defender.name} (hiding)",
-                            "metadata": {"reason": "hiding"},
+                            "metadata": _miss_hid_meta,
                         }
                     )
                 continue
@@ -3838,6 +3977,16 @@ class BatchSimulator:
                     _check_medic_under_fire(defender, all_alive, second)
 
                 if event_log is not None:
+                    _tag_meta = {
+                        "actor_role": attacker.role,
+                        "target_role": defender.role,
+                        "target_lives": defender.final_lives,
+                    }
+                    # MOVE-03: mark Overwatch-origin shots so the event carries
+                    # provenance. Reuses event_type="tag" — scoring / MVP /
+                    # accuracy paths are unchanged (analytics marker only).
+                    if o.get("overwatch", False):
+                        _tag_meta["overwatch"] = True
                     event_log.append(
                         {
                             "event_type": "tag",
@@ -3846,11 +3995,7 @@ class BatchSimulator:
                             "timestamp": second,
                             "points_awarded": 100,
                             "description": f"{attacker.name} tags {defender.name}",
-                            "metadata": {
-                                "actor_role": attacker.role,
-                                "target_role": defender.role,
-                                "target_lives": defender.final_lives,
-                            },
+                            "metadata": _tag_meta,
                         }
                     )
 
@@ -3890,6 +4035,11 @@ class BatchSimulator:
                 attacker.shots_missed += 1
                 attacker.last_shot_time = second
                 if event_log is not None:
+                    _miss_meta: dict = {}
+                    # MOVE-03: Overwatch-origin miss provenance (reuses
+                    # event_type="miss"; scoring/accuracy unchanged).
+                    if o.get("overwatch", False):
+                        _miss_meta["overwatch"] = True
                     event_log.append(
                         {
                             "event_type": "miss",
@@ -3898,7 +4048,7 @@ class BatchSimulator:
                             "timestamp": second,
                             "points_awarded": 0,
                             "description": f"{attacker.name} misses {defender.name}",
-                            "metadata": {},
+                            "metadata": _miss_meta,
                         }
                     )
 
