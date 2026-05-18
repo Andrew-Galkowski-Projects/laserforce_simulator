@@ -3790,7 +3790,9 @@ class BatchSimulator:
         # deterministic A* start->end.
         player.movement_trail.append((current, next_cell, second))
 
-    def _collect_overwatch_attempts(self, all_alive, second, movement_ctx) -> list:
+    def _collect_overwatch_attempts(
+        self, all_alive: list, second: int, movement_ctx
+    ) -> "list[dict]":
         """MOVE-03: Overwatch tag-attempts for this tick (BatchSim-only, ADR-0009).
 
         Called AFTER the Advance loop (so every mover's ``_last_step_cells`` is
@@ -3804,6 +3806,12 @@ class BatchSimulator:
         ``all_alive`` and consume **no RNG** (SIM-07/SIM-08 internal
         determinism: serial == parallel). Returns ``[]`` on the 3-zone fallback
         (``movement_ctx is None``) — Overwatch needs cell LoS.
+
+        Provenance scope: only the *initiating* Overwatch shot is flagged
+        ``overwatch`` in event metadata. Any Follow-up / Reaction shots it
+        chains via ``_resolve_tag_attempts`` are ordinary shots and remain
+        unmarked by design (ADR-0009) — revisit only if per-chain Overwatch
+        analytics are ever required.
         """
         if movement_ctx is None:
             return []

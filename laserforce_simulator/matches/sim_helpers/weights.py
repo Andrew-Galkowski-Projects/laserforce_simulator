@@ -162,7 +162,7 @@ def _apply_role_baseline(w, c, i):
     w[i["resupply_ally"]] += c.get("baseline_resupply", 0)
 
 
-def _apply_hold_baseline(w, c, i):
+def _apply_hold_baseline(w: list, c: dict, i: dict) -> None:
     """MOVE-03: shift ``baseline_hold`` weight into the ``hold`` slot (index 8).
 
     The amount is drawn from ``baseline_hold_source`` (``tag_player`` for Ammo,
