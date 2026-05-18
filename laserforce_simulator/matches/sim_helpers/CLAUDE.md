@@ -18,6 +18,7 @@ Helper modules used by both `ResourceBasedSimulator` and `BatchSimulator` in `ma
 | `special_active_until` | Tick until which the scout's rapid-fire (or commander's shield) special is active |
 | `last_shot_time` | Transient; set every time the player fires; used by `_shot_cooldown` to enforce shot-speed limits |
 | `last_chosen_action` | Action chosen on the previous tick (`"tag_player"`, `"hide"`, etc.); read by `choose_goal_cell` to make movement action-aware (MAP-05) |
+| `movement_trail` | **MOVE-01** transient list of compact `(start_cell, end_cell, timestamp)` Advance steps, appended by `_move_player_in_memory` only when the cell actually changed; **no DB column / no migration** — flushed to compact `GameEvent(event_type="movement")` rows by `_flush_to_db` only when a round is saved. Reconstructs the player's **Movement trail** (CONTEXT.md); the exact intermediate route is recomputed at replay via deterministic A* `start → end` |
 
 ### Uptime breakdown fields
 
@@ -62,25 +63,27 @@ One function per role: `_get_medic_weights`, `_get_ammo_weights`, `_get_scout_we
 
 ### Weight array layout
 
-Index 0–7 map to: `tag_player`, `change_zone`, `hide`, `capture_base`, `use_special`, `resupply_ally`, `missile_player`, `request_resupply`.
+Index 0–7 map to: `tag_player`, **`only_move`**, `hide`, `capture_base`, `use_special`, `resupply_ally`, `missile_player`, `request_resupply`. **MOVE-01:** index 1 was renamed `change_zone` → **`only_move`** (same slot, per-role weight tuning preserved). It no longer gates movement — every non-**Stationary** player **Advances** every tick regardless of the chosen Action; the `only_move` Action merely *doubles* that tick's Advance. See [ADR-0007](../../docs/adr/0007-movement-decoupled-from-action.md) and CONTEXT.md.
 
 The caller (`BatchSimulator._plan_action`) passes a baseline of `[70, 30, 0, 0, 0, 0, 0, 0]`. Role functions apply deltas from there. **All weights must remain ≥ 0** — `random.choices` raises `ValueError` on negative weights.
 
 ### Critical weight-safety rules
 
 - Before subtracting from a weight, check that the result can't go below zero given the baseline.
-- The not-active blocks zero out `tag_player` and/or `resupply_ally` and redistribute to `hide`/`change_zone`. They must not push any other weight negative.
+- The not-active blocks zero out `tag_player` and/or `resupply_ally` and redistribute to `hide`/`only_move` (index 1, formerly `change_zone`). They must not push any other weight negative.
 - Tests in `matches/tests/test_weights.py::TestWeightFunctions` cover representative state combinations for each role. Run these whenever changing weights.
 
 ### Role baselines (after role-adjustment, before situational modifiers)
 
-| Role | tag_player | change_zone | resupply_ally |
-|------|-----------|-------------|---------------|
+| Role | tag_player | only_move | resupply_ally |
+|------|-----------|-----------|---------------|
 | Medic | 10 | 0 | 90 |
 | Ammo | 35 | 0 | 95 |
 | Scout | 50 | 50 | 0 |
 | Heavy | 70 | 25 | 0 |
 | Commander | 70 | 30 | 0 |
+
+**MOVE-01:** the `only_move` (index 1, formerly `change_zone`) column is preserved unchanged — a `0` baseline (Medic/Ammo/Commander-at-baseline) no longer means "never moves". Movement is decoupled from this weight: every non-**Stationary** player **Advances** toward their **Goal cell** every tick; `only_move` now only *doubles* that tick's Advance. The baseline `0` roles still traverse the map.
 
 ### Stat wiring in weights.py
 
@@ -104,6 +107,8 @@ The caller (`BatchSimulator._plan_action`) passes a baseline of `[70, 30, 0, 0, 
 
 Cell-aware movement helpers shared by both simulators. Used when `arena_map` is provided; 3-zone fallback is used otherwise.
 
+**MOVE-01 — movement decoupled from the weighted Action ([ADR-0007](../../docs/adr/0007-movement-decoupled-from-action.md), CONTEXT.md).** On the map path, every non-**Stationary** player **Advances** toward their **Goal cell** **every tick**, regardless of which Action the weighted roll picked — so `choose_goal_cell` is now consulted every tick (previously only on the `change_zone` roll, which left zero-weight Commander/Medic/Ammo frozen on spawn). **Stationary** = no Advance = `is_hiding` True OR chosen Action == `capture_base`. The renamed **`only_move`** Action (was `change_zone`) no longer gates movement — it devotes the tick entirely to repositioning by **doubling** that tick's Advance (`cells_to_move(speed) * 2` cells in one `astar_advance`). Advance and A* consume **no RNG** (SIM-07/SIM-08 contract preserved in form). Per-tick A* / goal-path caching is explicitly deferred to **MOVE-02** — MOVE-01 is pure behaviour.
+
 ### Functions
 
 **`build_movement_adjacency(zone_data)`** — builds a 4-connected adjacency dict `{cell: [neighbor, ...]}` for every movement-passable cell. Uses module constant `_MOVEMENT_PASSABLE = {1, 2, 3}` (floor + legacy red/blue zones). High wall (0), low wall (4), and windowed wall (5) all block movement and are excluded entirely, so `cell in adj` doubles as a passability check.
@@ -116,7 +121,7 @@ Cell-aware movement helpers shared by both simulators. Used when `arena_map` is 
 
 **`max_movement_for_map(zone_data)`** — cells-per-tick ceiling scaled by map size: `max(rows, cols) // 10` clamped to **5..10** (PLAN.md STAT-03 Phase 1). `None`/empty → 5.
 
-**`cells_to_move(speed, zone_data)`** — `max(1, ceil(speed/100 * max_movement_for_map(zone_data)))`. The PLAN.md `speed`-stat formula; floored at 1 so a moving player is never frozen by a low `speed`. Called by `BatchSimulator._move_player_in_memory` and `ResourceBasedSimulator._move_to_cell` with `getattr(player, "speed", 50)` (a baked `PlayerState.speed` field for BatchSim; a `PlayerRoundState.speed` forwarding property for RBS).
+**`cells_to_move(speed, zone_data)`** — `max(1, ceil(speed/100 * max_movement_for_map(zone_data)))`. The PLAN.md `speed`-stat formula; floored at 1 so a moving player is never frozen by a low `speed`. Called by `BatchSimulator._move_player_in_memory` and `ResourceBasedSimulator._move_to_cell` with `getattr(player, "speed", 50)` (a baked `PlayerState.speed` field for BatchSim; a `PlayerRoundState.speed` forwarding property for RBS). **MOVE-01:** on an `only_move` tick the move functions pass `cells_to_move(...) * 2` to `astar_advance` (one single 2× step, no other deliberate effect); every other non-**Stationary** Action still Advances the normal `cells_to_move(...)` distance.
 
 **`_find_role(all_alive, team_color, role) -> Any`** — returns the first alive player on `team_color` with the given `role`, or `None`. Return type is `Any` (not `object`) because callers access duck-typed attributes (`cell_row`, `cell_col`, etc.).
 
@@ -144,7 +149,7 @@ Cell-aware movement helpers shared by both simulators. Used when `arena_map` is 
 
 **`_goal_from_role(player, all_alive, enemy_color, cell_row, cell_col, movement_ctx) -> tuple[int,int] | None`** — unchanged signature; internally calls `_apply_teamwork_bias` after identifying role-specific candidate cells (Scout, Heavy-healthy paths) before returning.
 
-**`choose_goal_cell(player, all_alive, spawn_cells, movement_ctx=None, intended_action="")`** — duck-typed goal selector shared by both simulators (MAP-05). Priority order:
+**`choose_goal_cell(player, all_alive, spawn_cells, movement_ctx=None, intended_action="")`** — duck-typed goal selector shared by both simulators (MAP-05). **MOVE-01: now consulted every tick** a player is not **Stationary** (was only reached from the old `change_zone` branch), so the nuke / critical-resource / score-broadcast overrides below are live for all roles every tick. Priority order:
 1. **MECH-04 nuke-reaction override** (highest priority): when `player.reacting_to_nuke` is `True`, Medic/Ammo rush toward the neediest ally. Non-support players with lives ≤ 30% of max → allied Medic cell (survival mode); lives > 30% → seeks enemy Commander's last-known cell from `player_memory` (MECH-06 fills the former TODO hook) to attempt a tag-cancel; falls through to step 2 if memory is absent/stale.
 2. **Score-broadcast seek-medic override**: when `player.score_broadcast_state == "seek_medic"`, movement is overridden to the allied Medic's last-known cell from memory.
 3. Critical-resource override (non-support): lives ≤ 30% → seek allied Medic; shots ≤ 30% → seek allied Ammo.
@@ -200,7 +205,7 @@ Shared combat resolution used by both simulators. No Django imports — operates
 
 ### Action index constants
 
-`_ACTION_IDX` and `_CHOICES` define the 8-slot action array (indices 0–7): `tag_player`, `change_zone`, `hide`, `capture_base`, `use_special`, `resupply_ally`, `missile_player`, `request_resupply`. `request_resupply` (index 7) is available to all 5 roles; weight is non-zero only when the player needs resources (Ammo players are locked to requesting lives; Medic players to requesting shots). Fulfilled asynchronously by `resolve_resupply_requests` in `resupply_queue.py` at end of tick.
+`_ACTION_IDX` and `_CHOICES` define the 8-slot action array (indices 0–7): `tag_player`, **`only_move`** (renamed from `change_zone`, MOVE-01 — same index 1), `hide`, `capture_base`, `use_special`, `resupply_ally`, `missile_player`, `request_resupply`. `request_resupply` (index 7) is available to all 5 roles; weight is non-zero only when the player needs resources (Ammo players are locked to requesting lives; Medic players to requesting shots). Fulfilled asynchronously by `resolve_resupply_requests` in `resupply_queue.py` at end of tick.
 
 ### Combat actions
 

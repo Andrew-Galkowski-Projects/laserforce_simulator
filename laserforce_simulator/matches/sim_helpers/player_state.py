@@ -80,6 +80,14 @@ class PlayerState:
     last_shot_time: float = -99.0  # transient; tracks shot cooldown enforcement
     last_chosen_action: str = ""  # action chosen in previous tick; guides movement goal
 
+    # MOVE-01: transient compact movement trail — list of
+    # (start_cell, end_cell, timestamp) tuples, one per actual cell change.
+    # No DB column / no migration; _flush_to_db turns these into compact
+    # movement GameEvents (start+end+timestamp) when a batch round is saved.
+    # The exact intermediate route is recomputed on demand at replay via
+    # deterministic A* start->end (not stored here).
+    movement_trail: list = field(default_factory=list)
+
     # MECH-04: transient nuke-reaction flag — reset each tick, never persisted to DB
     reacting_to_nuke: bool = False
 

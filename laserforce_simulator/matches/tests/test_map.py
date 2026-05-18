@@ -2540,7 +2540,9 @@ class TestMoveInMemoryMultiCell:
         expected = cells_to_move(50, grid)
         assert expected > 1, "test precondition: speed 50 should move >1 cell"
 
-        BatchSimulator()._move_player_in_memory(player, (0, 29), ctx)
+        # MOVE-01: _move_player_in_memory signature is now
+        # (player, second, goal_cell, movement_ctx, multiplier=1).
+        BatchSimulator()._move_player_in_memory(player, 0, (0, 29), ctx)
 
         assert (player.cell_row, player.cell_col) == (0, expected)
 
@@ -2552,8 +2554,8 @@ class TestMoveInMemoryMultiCell:
         slow = self._player(speed=20)
         fast = self._player(speed=100)
 
-        BatchSimulator()._move_player_in_memory(slow, (0, 39), ctx)
-        BatchSimulator()._move_player_in_memory(fast, (0, 39), ctx)
+        BatchSimulator()._move_player_in_memory(slow, 0, (0, 39), ctx)
+        BatchSimulator()._move_player_in_memory(fast, 0, (0, 39), ctx)
 
         assert fast.cell_col > slow.cell_col >= 1
 
@@ -2564,6 +2566,598 @@ class TestMoveInMemoryMultiCell:
         ctx = self._ctx(grid)
         player = self._player(speed=100)  # would move many cells
 
-        BatchSimulator()._move_player_in_memory(player, (0, 2), ctx)
+        BatchSimulator()._move_player_in_memory(player, 0, (0, 2), ctx)
 
         assert (player.cell_row, player.cell_col) == (0, 2)
+
+
+# ---------------------------------------------------------------------------
+# MOVE-01 — movement decoupled from the weighted action
+#
+# Locked decisions encoded here (see CONTEXT.md / matches/CLAUDE.md / ADR-0007):
+#   1. action `change_zone` renamed `only_move` (index 1 unchanged).
+#   2. every non-stationary player Advances toward their goal cell EVERY tick,
+#      regardless of which weighted action was chosen (map path only).
+#   3. Stationary = is_hiding True OR chosen action == capture_base.
+#      Every other action (tag/missile/use_special/resupply/request/only_move)
+#      Advances while acting.
+#   4. only_move = ONE single 2× step: cells_to_move(...) * 2 in one
+#      astar_advance call (vs the normal cells_to_move(...) for normal ticks).
+#   5. compact movement GameEvent: start cell + end cell + timestamp in
+#      metadata, NO route/path list, emitted ONLY when the cell changed.
+#   6. 3-zone fallback (movement_ctx is None) unchanged — old weighted
+#      _change_zone behaviour on the only_move roll.
+#   7. determinism preserved: Advance/A* consume no RNG.
+# ---------------------------------------------------------------------------
+
+
+_FLOOR_30X1 = [[1] * 30]
+
+
+def _move01_player(role, *, speed=50, cell_row=0, cell_col=0, **kw):
+    """Lightweight in-memory PlayerState for MOVE-01 pure-unit movement tests."""
+    from matches.sim_helpers.player_state import PlayerState
+
+    defaults = dict(
+        tag_id=f"red_{role}",
+        name=role,
+        team_color="red",
+        role=role,
+        accuracy=50,
+        survival=50,
+        starting_lives=15,
+        starting_shots=30,
+        final_lives=15,
+        final_shots=30,
+        speed=speed,
+        cell_row=cell_row,
+        cell_col=cell_col,
+    )
+    defaults.update(kw)
+    return PlayerState(**defaults)
+
+
+def _move01_ctx(grid):
+    """MapContext over a 1-D corridor; goal = far end of the corridor."""
+    from matches.sim_helpers.pathfinding import build_movement_adjacency
+
+    return MapContext.from_dict(
+        {
+            "adj": build_movement_adjacency(grid),
+            "spawn_cells": {"red": (0, 0), "blue": (0, len(grid[0]) - 1)},
+            "zone_data": grid,
+            "sight_data": None,
+        }
+    )
+
+
+class TestMove01OnlyMoveDoubleStep:
+    """Decision 4: only_move = a single 2× step in ONE astar_advance call;
+    a normal non-stationary tick Advances the normal cells_to_move distance."""
+
+    def test_astar_advance_double_steps_reaches_double_distance(self):
+        """Pure-unit: astar_advance with steps*2 ends ~twice as far as steps."""
+        from matches.sim_helpers.pathfinding import (
+            astar_advance,
+            build_movement_adjacency,
+            cells_to_move,
+        )
+
+        grid = _FLOOR_30X1
+        adj = build_movement_adjacency(grid)
+        steps = cells_to_move(50, grid)
+        assert steps >= 1
+
+        normal_end = astar_advance((0, 0), (0, 29), adj, steps)
+        double_end = astar_advance((0, 0), (0, 29), adj, steps * 2)
+
+        # One-D corridor: column index == distance travelled from start.
+        assert normal_end == (0, steps)
+        assert double_end == (0, steps * 2)
+        assert double_end[1] == 2 * normal_end[1]
+
+    def test_move_player_in_memory_multiplier_2_doubles_advance(self):
+        """BatchSim: multiplier=2 covers twice the cells of multiplier=1
+        for the same start/goal/speed, in one move call."""
+        from matches.simulation import BatchSimulator
+        from matches.sim_helpers.pathfinding import cells_to_move
+
+        grid = _FLOOR_30X1
+        ctx = _move01_ctx(grid)
+        normal_p = _move01_player("scout", speed=50)
+        double_p = _move01_player("scout", speed=50)
+        step = cells_to_move(50, grid)
+        assert step >= 1
+
+        BatchSimulator()._move_player_in_memory(normal_p, 0, (0, 29), ctx, 1)
+        BatchSimulator()._move_player_in_memory(double_p, 0, (0, 29), ctx, 2)
+
+        assert (normal_p.cell_row, normal_p.cell_col) == (0, step)
+        assert (double_p.cell_row, double_p.cell_col) == (0, step * 2)
+        assert double_p.cell_col == 2 * normal_p.cell_col
+
+    def test_advance_player_only_move_action_uses_double_step(self):
+        """_advance_player reads last_chosen_action == 'only_move' and applies
+        the 2× multiplier; a non-only_move action uses the 1× distance."""
+        from matches.simulation import BatchSimulator
+        from matches.sim_helpers.pathfinding import cells_to_move
+
+        grid = _FLOOR_30X1
+        ctx = _move01_ctx(grid)
+        step = cells_to_move(50, grid)
+
+        only_move_p = _move01_player("scout", speed=50)
+        only_move_p.last_chosen_action = "only_move"
+        tag_p = _move01_player("scout", speed=50)
+        tag_p.last_chosen_action = "tag_player"
+
+        sim = BatchSimulator()
+        sim._advance_player(only_move_p, [only_move_p], 0, ctx, "")
+        sim._advance_player(tag_p, [tag_p], 0, ctx, "")
+
+        assert only_move_p.cell_col == step * 2
+        assert tag_p.cell_col == step
+        assert only_move_p.cell_col == 2 * tag_p.cell_col
+
+
+class TestMove01AlwaysOnAdvance:
+    """Decisions 2 & 3: every non-stationary player Advances every tick
+    regardless of the weighted action; stationary players do not."""
+
+    def test_tag_action_still_advances_toward_goal(self):
+        """A non-stationary action (tag) Advances the normal distance —
+        movement is NOT gated by picking only_move."""
+        from matches.simulation import BatchSimulator
+        from matches.sim_helpers.pathfinding import cells_to_move
+
+        grid = _FLOOR_30X1
+        ctx = _move01_ctx(grid)
+        player = _move01_player("scout", speed=50)
+        player.last_chosen_action = "tag_player"
+        step = cells_to_move(50, grid)
+
+        BatchSimulator()._advance_player(player, [player], 0, ctx, "")
+
+        assert (player.cell_row, player.cell_col) == (0, step)
+
+    def test_resupply_action_still_advances(self):
+        """resupply_ally is non-stationary → the player still Advances."""
+        from matches.simulation import BatchSimulator
+
+        grid = _FLOOR_30X1
+        ctx = _move01_ctx(grid)
+        player = _move01_player("medic", speed=50)
+        player.last_chosen_action = "resupply_ally"
+
+        BatchSimulator()._advance_player(player, [player], 0, ctx, "")
+
+        assert player.cell_col > 0, "non-stationary medic must Advance toward goal"
+
+    def test_is_hiding_is_stationary_no_advance(self):
+        """Stationary: is_hiding True → no Advance, no trail entry this tick."""
+        from matches.simulation import BatchSimulator
+
+        grid = _FLOOR_30X1
+        ctx = _move01_ctx(grid)
+        player = _move01_player("scout", speed=50)
+        player.is_hiding = True
+        player.last_chosen_action = "hide"
+
+        BatchSimulator()._advance_player(player, [player], 0, ctx, "")
+
+        assert (player.cell_row, player.cell_col) == (0, 0)
+        assert getattr(player, "movement_trail", []) == []
+
+    def test_capture_base_is_stationary_no_advance(self):
+        """Stationary: chosen action == capture_base → anchored, no Advance."""
+        from matches.simulation import BatchSimulator
+
+        grid = _FLOOR_30X1
+        ctx = _move01_ctx(grid)
+        player = _move01_player("scout", speed=50)
+        player.last_chosen_action = "capture_base"
+
+        BatchSimulator()._advance_player(player, [player], 0, ctx, "")
+
+        assert (player.cell_row, player.cell_col) == (0, 0)
+        assert getattr(player, "movement_trail", []) == []
+
+    def test_use_special_is_not_stationary_advances(self):
+        """use_special is NOT in the stationary set → player still Advances."""
+        from matches.simulation import BatchSimulator
+
+        grid = _FLOOR_30X1
+        ctx = _move01_ctx(grid)
+        player = _move01_player("commander", speed=50)
+        player.last_chosen_action = "use_special"
+
+        BatchSimulator()._advance_player(player, [player], 0, ctx, "")
+
+        assert player.cell_col > 0
+
+
+@pytest.mark.django_db
+class TestMove01BaselineZeroPlayerMovesAcrossMap:
+    """The core bug MOVE-01 fixes: a role whose baseline only_move (index 1)
+    weight is 0 (commander/medic/ammo) still traverses the map over a round
+    when a map is active, because the Advance is decoupled from the roll."""
+
+    def _make_map(self, name, zone_data, zone_size=100):
+        from core.models import (
+            ArenaMap,
+            BaseSightLineConfig,
+            MapBaseConfig,
+            MapZoneConfig,
+            SightLineConfig,
+        )
+        from core.map_processing import compute_sight_lines
+
+        rows, cols, px = len(zone_data), len(zone_data[0]), zone_size
+        arena_map = ArenaMap.objects.create(
+            name=name, img_width=cols * px, img_height=rows * px
+        )
+        MapZoneConfig.objects.create(
+            arena_map=arena_map, zone_size=px, zone_data=zone_data, confirmed=True
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="red", x_px=px // 2, y_px=px // 2
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map,
+            base_type="blue",
+            x_px=cols * px - px // 2,
+            y_px=rows * px - px // 2,
+        )
+        SightLineConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=px,
+            sight_data=compute_sight_lines(zone_data),
+        )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="red", zone_size=px, visible_cells=[]
+        )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="blue", zone_size=px, visible_cells=[]
+        )
+        return arena_map
+
+    def test_baseline_zero_only_move_roles_advance_from_spawn(self):
+        """Commander/Medic/Ammo (baseline only_move weight 0) move off their
+        spawn cell over a round when a map is active (pre-MOVE-01 they would
+        almost never roll only_move and so never moved)."""
+        import random
+
+        random.seed(42)
+
+        arena_map = self._make_map("Move01Baseline10x10", _FLOOR_10X10)
+        team_red, _ = make_team_with_slots("M01R")
+        team_blue, _ = make_team_with_slots("M01B")
+
+        game_round = ResourceBasedSimulator(
+            duration_ticks=40
+        ).simulate_single_round_detailed(team_red, team_blue, arena_map=arena_map)
+
+        red_spawn = (0, 0)
+        moved_roles = set()
+        for s in game_round.player_states.filter(team_color="red"):
+            if s.cell_row is None:
+                continue
+            dist = abs(s.cell_row - red_spawn[0]) + abs(s.cell_col - red_spawn[1])
+            if dist > 0:
+                moved_roles.add(s.role)
+
+        for role in ("commander", "medic", "ammo"):
+            assert role in moved_roles, (
+                f"{role} (baseline only_move weight 0) must still Advance across "
+                f"the map every tick under MOVE-01; moved roles were {moved_roles}"
+            )
+
+
+@pytest.mark.django_db
+class TestMove01CompactMovementEvent:
+    """Decision 5: movement GameEvent carries a compact start + end + timestamp;
+    NO route/path list; no event on a no-op / stationary tick."""
+
+    def _make_map(self, name, zone_data, zone_size=100):
+        from core.models import (
+            ArenaMap,
+            BaseSightLineConfig,
+            MapBaseConfig,
+            MapZoneConfig,
+            SightLineConfig,
+        )
+        from core.map_processing import compute_sight_lines
+
+        rows, cols, px = len(zone_data), len(zone_data[0]), zone_size
+        arena_map = ArenaMap.objects.create(
+            name=name, img_width=cols * px, img_height=rows * px
+        )
+        MapZoneConfig.objects.create(
+            arena_map=arena_map, zone_size=px, zone_data=zone_data, confirmed=True
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="red", x_px=px // 2, y_px=px // 2
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map,
+            base_type="blue",
+            x_px=cols * px - px // 2,
+            y_px=rows * px - px // 2,
+        )
+        SightLineConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=px,
+            sight_data=compute_sight_lines(zone_data),
+        )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="red", zone_size=px, visible_cells=[]
+        )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="blue", zone_size=px, visible_cells=[]
+        )
+        return arena_map
+
+    # Any key that would represent a stored full route/path list. The compact
+    # event must contain NONE of these — the route is recomputed at replay.
+    _ROUTE_KEYS = ("route", "path", "cells", "cell_path", "trail", "steps")
+
+    def test_movement_event_has_compact_start_end_timestamp(self):
+        import random
+
+        random.seed(42)
+
+        arena_map = self._make_map("Move01Compact10x10", _FLOOR_10X10)
+        team_red, _ = make_team_with_slots("CmpR")
+        team_blue, _ = make_team_with_slots("CmpB")
+
+        game_round = ResourceBasedSimulator(
+            duration_ticks=40
+        ).simulate_single_round_detailed(team_red, team_blue, arena_map=arena_map)
+
+        move_events = list(
+            GameEvent.objects.filter(game_round=game_round, event_type="movement")
+        )
+        assert move_events, "expected at least one compact movement event"
+
+        for ev in move_events:
+            md = ev.metadata
+            # start cell present
+            assert "start_row" in md and "start_col" in md, md
+            # end cell present
+            assert "end_row" in md and "end_col" in md, md
+            # timestamp present on the event itself
+            assert ev.timestamp is not None
+            # NO route/path list stored anywhere in metadata
+            for bad in self._ROUTE_KEYS:
+                assert bad not in md, (
+                    f"compact movement metadata must not store a route list; "
+                    f"found {bad!r} in {md}"
+                )
+            for v in md.values():
+                assert not isinstance(
+                    v, (list, tuple)
+                ), f"movement metadata must be flat scalars, got list/tuple: {md}"
+            # the cell actually changed (no no-op events emitted)
+            assert (md["start_row"], md["start_col"]) != (
+                md["end_row"],
+                md["end_col"],
+            ), f"no movement event should be emitted for a no-op Advance: {md}"
+
+    def test_no_movement_event_when_no_map(self):
+        """Regression: 3-zone fallback movement never records cell coords."""
+        import random
+
+        random.seed(42)
+
+        team_red, _ = make_team_with_slots("NoMapR")
+        team_blue, _ = make_team_with_slots("NoMapB")
+
+        game_round = ResourceBasedSimulator(
+            duration_ticks=40
+        ).simulate_single_round_detailed(team_red, team_blue)
+
+        for ev in GameEvent.objects.filter(
+            game_round=game_round, event_type="movement"
+        ):
+            assert "start_row" not in ev.metadata
+            assert "cell_row" not in ev.metadata
+
+
+class TestMove01MoveToCellEventEmission:
+    """Pure-ish unit: _move_to_cell emits exactly one compact event on a real
+    move and ZERO events on a no-op Advance (start == reachable end)."""
+
+    def _ctx(self, grid):
+        from matches.sim_helpers.pathfinding import build_movement_adjacency
+
+        return MapContext.from_dict(
+            {
+                "adj": build_movement_adjacency(grid),
+                "spawn_cells": {"red": (0, 0), "blue": (0, len(grid[0]) - 1)},
+                "zone_data": grid,
+                "sight_data": None,
+            }
+        )
+
+    def _rbs_player(self, cell_row=0, cell_col=0):
+        """A minimal stand-in with the attributes _move_to_cell touches.
+
+        _move_to_cell calls player.save(update_fields=...) and reads
+        player.player.name / player.role / player.player_id; a tiny stub keeps
+        this a pure-unit test (no DB) while exercising the real method.
+        """
+
+        class _Inner:
+            name = "stub"
+
+        class _Stub:
+            def __init__(self, r, c):
+                self.cell_row = r
+                self.cell_col = c
+                self.zone_fallback = 0
+                self.role = "scout"
+                self.player_id = 1
+                self.player = _Inner()
+
+            @property
+            def current_zone(self):
+                return self.zone_fallback
+
+            def save(self, update_fields=None):
+                pass
+
+        return _Stub(cell_row, cell_col)
+
+    def test_real_move_emits_single_compact_event(self):
+        from matches.simulation import ResourceBasedSimulator
+
+        grid = _FLOOR_30X1
+        ctx = self._ctx(grid)
+        player = self._rbs_player(0, 0)
+        buf: list = []
+
+        ResourceBasedSimulator()._move_to_cell(player, 7, (0, 29), ctx, buf, 1)
+
+        assert len(buf) == 1, "exactly one movement event per real Advance"
+        ev = buf[0]
+        assert ev["event_type"] == "movement"
+        assert ev["timestamp"] == 7
+        md = ev["metadata"]
+        assert (md["start_row"], md["start_col"]) == (0, 0)
+        assert (md["end_row"], md["end_col"]) == (player.cell_row, player.cell_col)
+
+    def test_noop_advance_emits_no_event(self):
+        """start == goal → astar_advance returns start → NO event appended."""
+        from matches.simulation import ResourceBasedSimulator
+
+        grid = _FLOOR_30X1
+        ctx = self._ctx(grid)
+        player = self._rbs_player(0, 5)
+        buf: list = []
+
+        # goal == current cell → no movement, no event.
+        ResourceBasedSimulator()._move_to_cell(player, 3, (0, 5), ctx, buf, 1)
+
+        assert buf == [], "no movement event on a no-op / stationary tick"
+        assert (player.cell_row, player.cell_col) == (0, 5)
+
+
+@pytest.mark.django_db
+class TestMove01ThreeZoneFallbackUnchanged:
+    """Decision 6: with movement_ctx is None the only_move roll keeps the
+    pre-MOVE-01 weighted _change_zone behaviour (always-on Advance + 2× apply
+    to the MAP path only)."""
+
+    def create_team_with_roster(self, prefix):
+        return make_team_with_slots(prefix)
+
+    def test_only_move_roll_in_fallback_steps_one_zone(self):
+        """No map: an only_move roll dispatches the legacy _change_zone, so a
+        neutral-zone player steps to an adjacent zone (old behaviour)."""
+        from unittest.mock import patch
+
+        team, players = self.create_team_with_roster("M01Fb")
+        gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
+        state = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=players["scout"],
+            team_color="red",
+            role="scout",
+            zone_fallback=0,  # red zone → fallback flips to neutral (1)
+            final_shots=5,
+            final_lives=10,
+        )
+
+        sim = ResourceBasedSimulator()
+        with patch("random.choices", return_value=["only_move"]), patch(
+            "random.choice", return_value=1
+        ):
+            sim._simulate_combat_exchange(
+                gr,
+                [state],
+                [],
+                second=3,
+                pending_nukes=[],
+            )
+
+        # Pre-MOVE-01 _change_zone behaviour: red(0) → neutral(1).
+        assert state.current_zone == 1
+
+    def test_fallback_movement_event_has_no_cell_coords(self):
+        """3-zone fallback movement events never carry cell coordinates
+        (regression — compact cell events are map-path only)."""
+        from unittest.mock import patch
+
+        team, players = self.create_team_with_roster("M01Fb2")
+        gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
+        state = PlayerRoundState.objects.create(
+            game_round=gr,
+            player=players["scout"],
+            team_color="red",
+            role="scout",
+            zone_fallback=0,
+            final_shots=5,
+            final_lives=10,
+        )
+
+        sim = ResourceBasedSimulator()
+        with patch("random.choices", return_value=["only_move"]), patch(
+            "random.choice", return_value=1
+        ):
+            sim._simulate_combat_exchange(gr, [state], [], second=3, pending_nukes=[])
+
+        for ev in GameEvent.objects.filter(game_round=gr, event_type="movement"):
+            assert "cell_row" not in ev.metadata
+            assert "start_row" not in ev.metadata
+
+
+class TestMove01SelectLosCell:
+    """MOVE-01: `_select_los_cell` — deterministic LOS-biased cell pick.
+
+    Closes the code-review WARNING: the helper underpins Medic (sheltered,
+    low LOS) and Ammo (exposed, high LOS) goal selection and must be fully
+    deterministic and hash-independent (SIM-07/08: serial == per-process
+    parallel). Pure unit, no DB."""
+
+    def test_medic_picks_lowest_los(self):
+        from matches.sim_helpers.pathfinding import _select_los_cell
+
+        keys = frozenset({"0,0", "0,1", "5,5"})
+        los = {"0,0": 9, "0,1": 9, "5,5": 2}
+        # prefer_high=False (Medic): minimise LOS → the 5,5 cell.
+        assert _select_los_cell(keys, los, 0, 0, prefer_high=False) == (5, 5)
+
+    def test_ammo_picks_highest_los(self):
+        from matches.sim_helpers.pathfinding import _select_los_cell
+
+        keys = frozenset({"0,0", "0,1", "5,5"})
+        los = {"0,0": 1, "0,1": 1, "5,5": 8}
+        # prefer_high=True (Ammo): maximise LOS → the 5,5 cell.
+        assert _select_los_cell(keys, los, 0, 0, prefer_high=True) == (5, 5)
+
+    def test_tie_broken_by_nearest_then_coords(self):
+        from matches.sim_helpers.pathfinding import _select_los_cell
+
+        # All equal LOS → tie-break must be the cell nearest (from_row,col).
+        keys = frozenset({"9,9", "1,0", "0,3"})
+        los = {"9,9": 4, "1,0": 4, "0,3": 4}
+        assert _select_los_cell(keys, los, 0, 0, prefer_high=False) == (1, 0)
+        assert _select_los_cell(keys, los, 0, 0, prefer_high=True) == (1, 0)
+
+    def test_deterministic_and_hash_independent(self):
+        from matches.sim_helpers.pathfinding import _select_los_cell
+
+        # Same elements, many rebuilt frozensets (insertion order varies, and
+        # str hashing is PYTHONHASHSEED-randomised) → identical result every
+        # call. Equidistant ties resolve by (r, c) ascending.
+        los = {f"{r},{c}": 3 for r in range(6) for c in range(6)}
+        results = set()
+        for _ in range(25):
+            keys = frozenset(f"{r},{c}" for r in range(6) for c in range(6))
+            results.add(_select_los_cell(keys, los, 2, 2, prefer_high=False))
+        assert results == {(2, 2)}  # exactly at the origin → nearest, stable
+
+    def test_empty_returns_none(self):
+        from matches.sim_helpers.pathfinding import _select_los_cell
+
+        assert _select_los_cell(frozenset(), {}, 0, 0, prefer_high=False) is None

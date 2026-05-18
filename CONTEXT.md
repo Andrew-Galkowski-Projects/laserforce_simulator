@@ -195,13 +195,27 @@ The graph of which **Cells** a player can step between (≠ **Sight line** adjac
 The engine that advances a round tick-by-tick; the project deliberately has two (see [ADR-0002](docs/adr/0002-two-simulation-engines.md)).
 
 **Action**:
-The single choice a player makes per tick (tag, move, hide, capture, special, resupply, missile, request resupply), chosen by weighted random.
+The single *deliberate* choice a player makes per tick — **tag**, **only_move**, **hide**, **capture**, **special**, **resupply**, **missile**, or **request resupply** — chosen by weighted random. Independent of the always-on **Advance**: movement toward the **Goal cell** happens every non-**stationary** tick regardless of which Action was chosen. The Action does not gate movement.
+_Avoid_: treating "move" as something done *instead of* acting — movement is decoupled from the Action choice (MOVE-01); the only movement-flavoured Action is **only_move**, which merely *doubles* that tick's Advance.
+
+**only_move**:
+The **Action** that devotes the tick entirely to repositioning: that tick's **Advance** covers **twice** the normal distance and no other deliberate effect is applied. Renamed from the legacy `change_zone`; movement itself is no longer gated by this choice.
+_Avoid_: the old name `change_zone` (and reading it as "the action that makes you move" — every tick moves).
+
+**Advance**:
+The goal-directed **Cell** movement every non-**stationary** player performs **each tick**, toward their current **Goal cell**, a distance set by their **speed** **Stat**. Always-on and independent of the weighted **Action**; suppressed only while the player is **stationary**. Doubled on a tick whose Action is **only_move**.
+
+**Stationary**:
+The state in which a player does **not Advance** this tick. True only while **hiding** (`hide` Action / hide carried over) or when the tick's **Action** is **capture_base** (the player is anchored to the **Base** being captured). Every other Action Advances toward the **Goal cell** while it acts.
 
 **Weight**:
 The per-action numeric likelihood, derived from role, situation, and **Stats**, that drives the random **Action** choice.
 
 **Goal cell**:
-The **Cell** a player is currently navigating toward, chosen from their **Action**, **Role**, and **Player memory**.
+The **Cell** a player is navigating toward via **Advance**, recomputed each tick from their **Action**, **Role**, and **Player memory**.
+
+**Movement trail**:
+The ordered list of **Cells** a player occupies across a **Round** — every cell stepped through by each **Advance**, in sequence. The record of where a player has *been* (basis for the planned cell-movement heatmap, RES-04). Distinct from **Goal cell** (where they are *going*) and **Movement adjacency** (where they *could* step).
 
 **MVP score**:
 A role-weighted per-player round score emphasising that role's primary contribution; display/ranking only, distinct from points.
@@ -255,7 +269,7 @@ Simulating the same two **Teams** N times to sample the outcome distribution (wi
 - Scoring accrues **SP**; spending **SP** activates a **Special** (**Nuke** for Commander, **Rapid Fire** for Scout).
 - A **Round** runs on an **Arena map** (→ **Cells**, **Sight lines**, **Bases**, **Elevation**) or on the **3-zone fallback**.
 - **LOS** between **Cells** gates **Tag** eligibility; **Movement adjacency** (≠ LOS) gates stepping between cells.
-- A **Player** picks an **Action** by **Weight**, then moves toward a **Goal cell** informed by **Player memory**.
+- A **Player** picks an **Action** by **Weight** and, unless **stationary**, **Advances** toward their **Goal cell** (informed by **Player memory**) every tick; the **only_move** Action doubles that Advance. The path of cells walked accumulates into the player's **Movement trail**.
 
 ## Example dialogue
 
@@ -274,3 +288,4 @@ Simulating the same two **Teams** N times to sample the outcome distribution (wi
 - **"seed" vs "state"** — resolved 2026-05-15 by SIM-07: the project persists an **RNG seed** (a small integer passed to `random.seed()`), *not* an **RNG state** (`random.getstate()` snapshot). `GameRound.rng_seed` is genuinely a seed. Do not call a getstate() tuple a "seed"; do not try `random.seed()` on a state tuple. Decision and rejected alternatives recorded in [docs/adr/0005-rng-seed-not-state-for-replay.md](docs/adr/0005-rng-seed-not-state-for-replay.md).
 - **"side / colour swap" vs "side alternation"** — resolved 2026-05-15 by SIM-08: the per-**Match** colour swap (red/blue flip between the *two Rounds of one Match*) and **Side alternation** (flip between the *independent single Rounds of one Batch run*) are different mechanisms — do not conflate. Batch aggregate keys are **team-position keyed**, not side-keyed; the reproducible unit of a batch game is *(RNG seed, **Orientation**)*. Decision and rejected alternatives (seed-derived parity; persist-only) recorded in [docs/adr/0006-batch-side-alternation.md](docs/adr/0006-batch-side-alternation.md).
 - **"seconds_active stores ticks vs seconds"** — re-resolved 2026-05-15 by TIME-01 (supersedes the earlier "stores seconds" resolution): the uptime fields are renamed `ticks_*` and store **ticks**; the survived sentinel is `1801`; `GameEvent.timestamp`, constructor args, and the REST API are all ticks. Seconds are a display-only `÷2` at HTML/CLI output. Decision and the API-returns-ticks consequence recorded in [docs/adr/0001-time-unit-seconds-now-tick-native-later.md](docs/adr/0001-time-unit-seconds-now-tick-native-later.md).
+- **"move" / `change_zone` / Advance** — resolved 2026-05-17 by MOVE-01: movement is **decoupled** from the weighted **Action**. Every non-**Stationary** player **Advances** toward their **Goal cell** every tick (formerly movement only happened when the weighted roll picked `change_zone`, so zero-`change_zone`-weight roles never moved). The legacy `change_zone` Action is renamed **only_move** and now only *doubles* that tick's Advance distance — it no longer gates movement. **Stationary** = hiding or capturing a **Base**. Cells stepped through accumulate into a per-player **Movement trail**. Do not call movement an Action, and do not read `only_move` as "the action that makes you move" (every tick moves). Recorded in [docs/adr/0007-movement-decoupled-from-action.md](docs/adr/0007-movement-decoupled-from-action.md).

@@ -40,7 +40,7 @@ _MEDIC_CHART = {"commander": 4, "heavy": 3, "scout": 5, "ammo": 3}
 
 _ACTION_IDX = {
     "tag_player": 0,
-    "change_zone": 1,
+    "only_move": 1,
     "hide": 2,
     "capture_base": 3,
     "use_special": 4,
@@ -50,7 +50,7 @@ _ACTION_IDX = {
 }
 _CHOICES = [
     "tag_player",
-    "change_zone",
+    "only_move",
     "hide",
     "capture_base",
     "use_special",
@@ -284,7 +284,7 @@ def plan_action(
 
     penalty_count = getattr(player, "stamina_penalty_count", 0)
     if penalty_count > 0:
-        cz_idx = _ACTION_IDX["change_zone"]
+        cz_idx = _ACTION_IDX["only_move"]
         if weights[cz_idx] > 0:
             weights[cz_idx] = max(
                 0, int(weights[cz_idx] * max(0.1, 1.0 - 0.10 * penalty_count))
@@ -300,11 +300,10 @@ def plan_action(
         weights, getattr(player, "decision_making", 50)
     )
 
-    prev_action = getattr(player, "last_chosen_action", "")
     choice = random.choices(_CHOICES, weights)[0]
     player.last_chosen_action = choice
 
-    if player.is_hiding and choice not in ("hide", "change_zone", "resupply_ally"):
+    if player.is_hiding and choice not in ("hide", "only_move", "resupply_ally"):
         player.is_hiding = False
         if save_player is not None:
             save_player(player)
@@ -351,26 +350,19 @@ def plan_action(
                         "target": random.choice(targets),
                     }
                 )
-    elif choice == "change_zone":
+    elif choice == "only_move":
         if movement_ctx is not None and player.cell_row is not None:
-            goal = choose_goal_cell(
-                player,
-                all_alive,
-                movement_ctx.get_spawn_cells(),
-                movement_ctx,
-                prev_action,
-                second,
-                time_domain=time_domain,
-            )
-            plans.append(
-                {
-                    "type": "change_zone",
-                    "actor": player,
-                    "goal_cell": goal,
-                    "movement_ctx": movement_ctx,
-                }
-            )
+            # MOVE-01 (Option B): on the map path the goal-directed Advance is
+            # an always-on per-tick step performed by each simulator's dispatch
+            # (decoupled from the weighted action roll). The only effect of the
+            # ``only_move`` roll itself is to make this tick's Advance a single
+            # 2× step; the dispatch reads this marker plan to apply that.
+            plans.append({"type": "only_move", "actor": player})
         else:
+            # MOVE-01 decision 7: the 3-zone fallback (movement_ctx is None)
+            # keeps the existing weighted _change_zone behaviour triggered by
+            # the only_move roll (MAP-06 pattern). Always-on Advance + 2× apply
+            # to the map path only.
             zone = choose_zone_change(player, all_alive)
             plans.append({"type": "change_zone", "actor": player, "zone": zone})
     elif choice == "capture_base":

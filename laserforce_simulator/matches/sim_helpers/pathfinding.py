@@ -214,6 +214,40 @@ def _nearest_cell(
     return (int(best[0]), int(best[1]))
 
 
+def _select_los_cell(
+    visible_keys,
+    cell_los_counts: dict,
+    from_row: int,
+    from_col: int,
+    *,
+    prefer_high: bool,
+) -> "tuple[int, int] | None":
+    """Pick a cell from ``visible_keys`` (``"r,c"`` strings) by LOS count.
+
+    ``prefer_high`` maximises the sight-line count (Ammo — exposed support),
+    else minimises it (Medic — sheltered). Ties are broken by the cell nearest
+    ``(from_row, from_col)`` then by ``(r, c)`` — a fully deterministic,
+    hash-independent ordering. ``visible_keys`` is a ``frozenset`` whose
+    ``str`` iteration order is PYTHONHASHSEED-randomised per process, so a
+    naive ``min``/``max`` tie-break makes serial and parallel workers diverge
+    (SIM-07/08 determinism; reached every tick under MOVE-01). The
+    nearest-bias also keeps support roles tracking the advancing Heavy rather
+    than teleporting to a far equal-LOS cell.
+    """
+    best: tuple[int, int] | None = None
+    best_key: tuple | None = None
+    for k in visible_keys:
+        los = cell_los_counts.get(k, 0)
+        r_s, c_s = k.split(",")
+        r, c = int(r_s), int(c_s)
+        dist = abs(r - from_row) + abs(c - from_col)
+        sort_key = (-los if prefer_high else los, dist, r, c)
+        if best_key is None or sort_key < best_key:
+            best_key = sort_key
+            best = (r, c)
+    return best
+
+
 def _find_role(all_alive: list, team_color: str, role: str) -> Any:
     return next(
         (
@@ -496,10 +530,14 @@ def _goal_from_role(
             heavy_key = f"{heavy.cell_row},{heavy.cell_col}"
             heavy_visible = sight_data.get(heavy_key, frozenset())
             if heavy_visible and cell_los_counts:
-                best = min(heavy_visible, key=lambda k: cell_los_counts.get(k, 0))
-                r, c = best.split(",")
-                goal = (int(r), int(c))
-            else:
+                goal = _select_los_cell(
+                    heavy_visible,
+                    cell_los_counts,
+                    cell_row,
+                    cell_col,
+                    prefer_high=False,
+                )
+            if goal is None:
                 goal = (heavy.cell_row, heavy.cell_col)
 
     elif player.role == "ammo":
@@ -508,10 +546,14 @@ def _goal_from_role(
             heavy_key = f"{heavy.cell_row},{heavy.cell_col}"
             heavy_visible = sight_data.get(heavy_key, frozenset())
             if heavy_visible and cell_los_counts:
-                best = max(heavy_visible, key=lambda k: cell_los_counts.get(k, 0))
-                r, c = best.split(",")
-                goal = (int(r), int(c))
-            else:
+                goal = _select_los_cell(
+                    heavy_visible,
+                    cell_los_counts,
+                    cell_row,
+                    cell_col,
+                    prefer_high=True,
+                )
+            if goal is None:
                 goal = (heavy.cell_row, heavy.cell_col)
 
     elif player.role == "commander":
@@ -555,7 +597,7 @@ def choose_goal_cell(
          MECH-06: uses player memory when map is active.
        - resupply_ally: Medic → neediest ally by lives; Ammo → neediest ally by shots.
        - hide: move to the safest adjacent cell (lowest LOS count).
-    3. Role-specific positioning (for change_zone, capture_base, use_special, or fallback):
+    3. Role-specific positioning (for only_move, capture_base, use_special, or fallback):
        - Scout: nearest high-LOS cell (top 25% of cells by sight-line count).
        - Heavy: nearest strong-spot cell when healthy (>50% lives and shots); otherwise
          seek nearest allied Medic or Ammo dynamically.
