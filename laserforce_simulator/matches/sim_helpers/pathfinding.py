@@ -179,6 +179,114 @@ def astar_advance(
     return path[min(steps, len(path)) - 1]
 
 
+def astar_advance_cached(
+    player: Any,
+    current: tuple[int, int],
+    goal: tuple[int, int],
+    adj: dict[tuple[int, int], list[tuple[int, int]]],
+    steps: int,
+    elevation_data: dict | None = None,
+) -> tuple[int, int]:
+    """Re-step a goal-keyed cached A* route instead of recomputing per tick.
+
+    MOVE-02 ([ADR-0008](../../../docs/adr/0008-path-commitment-via-goal-keyed-cache.md)).
+    ``BatchSimulator`` only — ``ResourceBasedSimulator`` keeps per-tick
+    ``astar_advance`` (RBS is DB-bound and removed by SIM-09).
+
+    Manages ``player._path_cache``: a ``(cached_goal, remaining_cells,
+    anchor)`` tuple where ``remaining_cells`` is the ordered list of cells
+    still to walk (head = next cell), mirroring the route shape ``astar_path``
+    returns (excludes the current cell, last element is ``goal``), and
+    ``anchor`` is the cell the previous re-step left the player on. A legacy
+    2-tuple (no ``anchor``) is tolerated for hand-built test caches.
+
+    A full ``astar_path`` recompute happens iff ANY of:
+      1. the cache is ``None`` or empty;
+      2. the live ``goal`` differs from the cached goal (goal changed);
+      3. the player was Downed/respawned since the last move — the BatchSim
+         life-loss sites (``_record_down``) clear ``_path_cache`` to ``None``,
+         which falls into case 1 here (knocked off-path);
+      4. the player's live ``current`` no longer matches the ``anchor`` —
+         some other mechanic displaced it off the committed route without
+         clearing the cache (enforces the off-path invariant rather than
+         relying on it; no such mechanic exists today);
+      5. the next cached cell is no longer in ``adj`` (blocked — a cheap
+         future-proof check; map adjacency is immutable per round so this
+         never actually fires in production).
+    Otherwise the committed route is RE-STEPPED: up to ``steps`` cells are
+    popped from the cached list, advancing the player and stopping at ``goal``
+    with no overshoot — identical traversal semantics to ``astar_advance``.
+    Cache exhaustion and an ``only_move`` 2× ``steps`` are NOT recompute
+    triggers; when the cache empties the player has reached ``goal`` and the
+    next tick's fresh ``choose_goal_cell`` drives recompute-or-idle.
+
+    Consumes **no RNG** — re-stepping a committed route is fully reproducible,
+    so the SIM-07/SIM-08 serial == parallel contract still holds (the round is
+    re-simulated in-worker; the transient cache never crosses the process
+    boundary). Returns the cell reached (``current`` when ``steps <= 0`` or no
+    route exists). ``astar_advance`` itself is left unchanged for RBS + tests.
+    """
+    if steps <= 0:
+        return current
+
+    cache = getattr(player, "_path_cache", None)
+    cached_goal = cache[0] if cache else None
+    remaining = cache[1] if cache else None
+    # Position anchor (cache[2]): the cell the previous re-step left the
+    # player on. On a cache hit the player's live `current` MUST still equal
+    # it — if any other mechanic moved the player off the committed route
+    # without going through clear-on-Down (a future knockback/teleport; none
+    # exists today), `current != anchor` forces a fresh recompute instead of
+    # silently teleporting along the stale route. This makes the off-path
+    # invariant *enforced* rather than relied upon. A legacy/hand-built
+    # 2-tuple cache (no anchor) is tolerated — the check is simply skipped.
+    anchor = cache[2] if cache and len(cache) > 2 else None
+
+    needs_recompute = (
+        not cache
+        or not remaining
+        or cached_goal != goal
+        or (anchor is not None and current != anchor)
+        # Future-proof only: map adjacency is immutable per round, so a cached
+        # cell never actually leaves `adj` mid-round — kept as a cheap guard.
+        or remaining[0] not in adj
+    )
+
+    if needs_recompute:
+        remaining = astar_path(current, goal, adj, elevation_data)
+        if not remaining:
+            # Unreachable goal: no negative caching — this recomputes again
+            # next tick too. Goals are normally reachable cells, so the
+            # repeated full A* here stays rare and is not worth caching.
+            player._path_cache = None
+            return current
+        # Copy so the in-place `del` below mutates only our working list,
+        # never a list `astar_path` might hand back by reference.
+        remaining = list(remaining)
+
+    # Past the recompute guard `remaining` is always a non-empty list (the
+    # `not cache`/`not remaining` triggers above guarantee it); assert it so
+    # the type narrows from the cache's ``Any | None``.
+    assert remaining is not None
+    # Re-step the committed route: walk up to `steps` cells, stopping at goal
+    # (no overshoot — `remaining` ends at goal, so capping at its length is
+    # the same early-stop semantics as astar_advance).
+    take = min(steps, len(remaining))
+    reached = remaining[take - 1]
+    del remaining[:take]
+    if not remaining:
+        # Route consumed — player is at goal; next tick recomputes/idles.
+        player._path_cache = None
+    else:
+        # Re-anchor to the cell the player will occupy after this re-step
+        # (the caller sets player.cell_{row,col} = reached) so the next
+        # cache hit can detect off-route displacement. `remaining` is the
+        # same list object retained here, so the in-place `del` above
+        # persists the route consumption into the cached tuple.
+        player._path_cache = (goal, remaining, reached)
+    return reached
+
+
 def max_movement_for_map(zone_data: list[list[int]] | None) -> int:
     """Cells-per-tick ceiling, scaled by map size (PLAN.md STAT-03 Phase 1).
 

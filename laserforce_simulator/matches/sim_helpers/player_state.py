@@ -88,6 +88,18 @@ class PlayerState:
     # deterministic A* start->end (not stored here).
     movement_trail: list = field(default_factory=list)
 
+    # MOVE-02: transient goal-keyed A* path cache (BatchSimulator only —
+    # ADR-0008). None or a (goal_cell, remaining_cells, anchor) tuple:
+    # remaining_cells is the ordered list of cells still to walk (head = next
+    # cell); anchor is the cell the previous re-step left the player on, used
+    # to detect off-route displacement. Lets move ticks re-step a committed
+    # route instead of recomputing full A* over the ~3700-cell graph every
+    # tick. No DB column / no migration (mirrors movement_trail); default None
+    # so it is never a required ctor arg and never crosses the parallel-worker
+    # process boundary. Managed by pathfinding.astar_advance_cached; cleared
+    # to None on Down/respawn via BatchSimulator._record_down.
+    _path_cache: Optional[tuple] = None
+
     # MECH-04: transient nuke-reaction flag — reset each tick, never persisted to DB
     reacting_to_nuke: bool = False
 
