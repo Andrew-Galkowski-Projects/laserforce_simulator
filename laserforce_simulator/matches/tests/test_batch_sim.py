@@ -1796,3 +1796,218 @@ class TestMove01DeterminismPreserved:
         assert serial["avg_red_score"] == parallel["avg_red_score"]
         assert serial["avg_blue_score"] == parallel["avg_blue_score"]
         assert serial["side_advantage"] == parallel["side_advantage"]
+
+
+# ---------------------------------------------------------------------------
+# MOVE-02 — path commitment via a goal-keyed A* cache (BatchSimulator only)
+#
+# Behavioural spec: docs/adr/0008-path-commitment-via-goal-keyed-cache.md +
+# CONTEXT.md "Path commitment".
+#
+# Locked decisions encoded here:
+#   * The MOVE-02 contract is *internal* determinism, NOT identity to
+#     pre-MOVE-02 games (ADR-0008): same master_seed + Orientation + rosters +
+#     map ⇒ identical game, and serial == parallel team-position aggregates
+#     and side_advantage — and this must STILL hold with the path cache active
+#     (the cache and its invalidation consume no RNG).
+#   * The compact movement trail still flushes to compact
+#     GameEvent(event_type="movement") rows correctly under caching: route
+#     commitment must not corrupt the flushed trail (start/end cells coherent,
+#     a row only when the cell actually changed, no route list in metadata).
+#   * Scope is BatchSimulator only (RBS deliberately uncached per ADR-0008).
+#
+# No wall-clock timing, no Score-Calibration point assertions (re-baseline
+# pending per ADR-0008), no mock-returns-mock.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestMove02DeterminismParityWithCache(TestMove01DeterminismPreserved):
+    """Extends the MOVE-01 serial==parallel / master-seed parity contract:
+
+    the SAME determinism guarantees must hold with the MOVE-02 path cache
+    active. Inherits every MOVE-01 determinism case (re-run here against the
+    cached pathfinding) and adds a stronger same-master-seed parity assertion
+    that also pins the per-round seed/orientation lists and the win split — the
+    internal contract MOVE-02 must preserve.
+    """
+
+    def test_path_cache_does_not_perturb_master_seed_determinism(self):
+        """Two map-active run()s with the same master_seed are identical down
+        to seed/orientation lists and the full win split — the path cache and
+        its invalidation must consume no RNG (ADR-0008 internal contract)."""
+        red, team_red = self._rosters("M02DetR")
+        blue, team_blue = self._rosters("M02DetB")
+        arena_map = _move01_make_map("M02DetMap")
+        sim = BatchSimulator()
+
+        a = sim.run(team_red, team_blue, n=6, arena_map=arena_map, master_seed=2024)
+        b = sim.run(team_red, team_blue, n=6, arena_map=arena_map, master_seed=2024)
+
+        assert a["red_wins"] == b["red_wins"]
+        assert a["blue_wins"] == b["blue_wins"]
+        assert a["ties"] == b["ties"]
+        assert a["avg_red_score"] == b["avg_red_score"]
+        assert a["avg_blue_score"] == b["avg_blue_score"]
+        assert a["avg_seeds"] == b["avg_seeds"]
+        assert a["outlier_seeds"] == b["outlier_seeds"]
+        assert a["side_advantage"] == b["side_advantage"]
+
+    def test_replay_movement_trail_identical_with_cache(self):
+        """Two replays of the same (seed, orientation) with a map produce
+        byte-identical movement trails even with path commitment active —
+        the committed route is a deterministic function of the seeded game."""
+        red, team_red = self._rosters("M02ReplayR")
+        blue, team_blue = self._rosters("M02ReplayB")
+        arena_map = _move01_make_map("M02ReplayMap")
+
+        from matches.simulation import ResourceBasedSimulator
+
+        movement_ctx, _ = ResourceBasedSimulator._load_map_context(arena_map)
+        sim = BatchSimulator()
+
+        seed = 24681357
+        _, red_a, blue_a, _ = sim.replay_round(
+            red, blue, seed, flipped=False, movement_ctx=movement_ctx
+        )
+        _, red_b, blue_b, _ = sim.replay_round(
+            red, blue, seed, flipped=False, movement_ctx=movement_ctx
+        )
+
+        trails_a = [p.movement_trail for p in red_a + blue_a]
+        trails_b = [p.movement_trail for p in red_b + blue_b]
+        assert trails_a == trails_b, (
+            "MOVE-02: committed routes must replay byte-identically under the "
+            "path cache"
+        )
+        assert any(t for t in trails_a), "expected non-empty trails with a map"
+
+
+@pytest.mark.django_db
+class TestMove02FlushTrailUnderCaching:
+    """DB integration: a small BatchSim round WITH a map persisted via
+    save_games (→ _flush_to_db) must produce coherent compact movement
+    GameEvents under path commitment — route commitment must not corrupt the
+    flushed trail."""
+
+    def _rosters(self, prefix):
+        team, _ = make_team_with_slots(prefix)
+        return list(team.active_roster), team
+
+    _ROUTE_KEYS = ("route", "path", "cells", "cell_path", "trail", "steps")
+
+    def test_flushed_movement_trail_coherent_with_path_cache(self):
+        from matches.models import GameEvent
+
+        red, team_red = self._rosters("M02FlushR")
+        blue, team_blue = self._rosters("M02FlushB")
+        arena_map = _move01_make_map("M02FlushMap")
+
+        sim = BatchSimulator()
+        saved = sim.save_games(
+            team_red,
+            team_blue,
+            seeds=[(20240517, False)],
+            n=1,
+            arena_map=arena_map,
+        )
+        assert saved, "save_games returned no rounds"
+        gr = saved[0]
+
+        move_events = list(
+            GameEvent.objects.filter(game_round=gr, event_type="movement")
+        )
+        assert move_events, (
+            "a map-active saved round must flush movement_trail into compact "
+            "movement GameEvents even with the path cache active"
+        )
+
+        # Group movement events per actor in timestamp order; under path
+        # commitment the per-Advance compact events must still chain coherently
+        # (each event's start == the previous event's end for that actor) and
+        # only ever fire on a real cell change.
+        by_actor: dict[int, list] = {}
+        for ev in sorted(move_events, key=lambda e: (e.actor_id, e.timestamp)):
+            md = ev.metadata
+            assert "start_row" in md and "start_col" in md, md
+            assert "end_row" in md and "end_col" in md, md
+            assert ev.timestamp is not None
+            assert (md["start_row"], md["start_col"]) != (
+                md["end_row"],
+                md["end_col"],
+            ), f"compact event must reflect a real Advance (cell changed): {md}"
+            for bad in self._ROUTE_KEYS:
+                assert bad not in md, (
+                    f"route commitment must NOT leak a route list into "
+                    f"metadata: {md}"
+                )
+            for v in md.values():
+                assert not isinstance(
+                    v, (list, tuple)
+                ), f"metadata must be flat scalars: {md}"
+            by_actor.setdefault(ev.actor_id, []).append(ev)
+
+        # Per-actor trail continuity: consecutive Advances are contiguous —
+        # the end cell of one compact event is the start cell of the next.
+        # A wobbling / corrupted committed route would break this chain.
+        chained_any = False
+        for actor_id, evs in by_actor.items():
+            for prev, nxt in zip(evs, evs[1:]):
+                chained_any = True
+                assert (
+                    prev.metadata["end_row"],
+                    prev.metadata["end_col"],
+                ) == (
+                    nxt.metadata["start_row"],
+                    nxt.metadata["start_col"],
+                ), (
+                    f"actor {actor_id} trail discontinuity: "
+                    f"{prev.metadata} then {nxt.metadata} — route commitment "
+                    f"corrupted the flushed trail"
+                )
+        assert chained_any, (
+            "expected at least one actor with >=2 chained Advances to verify "
+            "trail continuity under caching"
+        )
+
+    def test_saved_cell_position_matches_last_trail_end(self):
+        """The persisted PlayerRoundState.cell_row/col must equal the end cell
+        of that player's final flushed movement event — path commitment must
+        not desync the final cell from the committed trail."""
+        from matches.models import GameEvent, PlayerRoundState
+
+        red, team_red = self._rosters("M02CoherR")
+        blue, team_blue = self._rosters("M02CoherB")
+        arena_map = _move01_make_map("M02CoherMap")
+
+        sim = BatchSimulator()
+        saved = sim.save_games(
+            team_red,
+            team_blue,
+            seeds=[(13131313, False)],
+            n=1,
+            arena_map=arena_map,
+        )
+        assert saved
+        gr = saved[0]
+
+        checked = 0
+        for prs in PlayerRoundState.objects.filter(game_round=gr):
+            evs = list(
+                GameEvent.objects.filter(
+                    game_round=gr, event_type="movement", actor=prs.player
+                ).order_by("timestamp")
+            )
+            if not evs:
+                continue
+            last = evs[-1]
+            assert (prs.cell_row, prs.cell_col) == (
+                last.metadata["end_row"],
+                last.metadata["end_col"],
+            ), (
+                f"{prs.player} final cell {(prs.cell_row, prs.cell_col)} must "
+                f"match last committed Advance end "
+                f"{(last.metadata['end_row'], last.metadata['end_col'])}"
+            )
+            checked += 1
+        assert checked > 0, "expected at least one player with movement events"

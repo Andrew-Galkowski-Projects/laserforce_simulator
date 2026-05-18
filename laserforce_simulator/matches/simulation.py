@@ -13,6 +13,7 @@ from .sim_helpers.pathfinding import (
     build_movement_adjacency,
     astar_next_step,
     astar_advance,
+    astar_advance_cached,
     cells_to_move,
     choose_goal_cell,
 )
@@ -3246,7 +3247,7 @@ class BatchSimulator:
                     )
                     if r_defender.shields == 0:
                         r_defender.final_lives = max(0, r_defender.final_lives - 1)
-                        r_defender.last_downed_time = second
+                        BatchSimulator._record_down(r_defender, second)
                         r_defender.shields = r_defender.max_shields
                         if r_defender.final_lives <= 0:
                             r_defender.was_eliminated_at = second
@@ -3348,7 +3349,7 @@ class BatchSimulator:
                     downed = fu_defender.shields == 0
                     if downed:
                         fu_defender.final_lives = max(0, fu_defender.final_lives - 1)
-                        fu_defender.last_downed_time = second
+                        BatchSimulator._record_down(fu_defender, second)
                         fu_defender.shields = fu_defender.max_shields
                         if fu_defender.final_lives <= 0:
                             fu_defender.was_eliminated_at = second
@@ -3685,6 +3686,22 @@ class BatchSimulator:
         multiplier = 2 if chosen == "only_move" else 1
         self._move_player_in_memory(player, second, goal_cell, movement_ctx, multiplier)
 
+    @staticmethod
+    def _record_down(player, second) -> None:
+        """Stamp a life-loss tick and drop the committed A* route.
+
+        Centralises the two things every BatchSim life-loss site must do:
+        record ``last_downed_time`` (drives the respawn cooldown) and clear
+        ``_path_cache`` so the next move recomputes (MOVE-02 / ADR-0008 — a
+        Down knocks the player off its committed route). One call site makes
+        "every life-loss site clears the cache" structural rather than
+        something a reviewer must re-verify seven times. Deliberately does
+        *not* touch lives/shields — those differ per site
+        (tag / follow-up / reaction / missile / nuke).
+        """
+        player.last_downed_time = second
+        player._path_cache = None
+
     def _move_player_in_memory(
         self, player, second, goal_cell, movement_ctx, multiplier: int = 1
     ):
@@ -3697,11 +3714,19 @@ class BatchSimulator:
             return
         # STAT-03 Phase 1: traverse speed-scaled cells per tick, not just one.
         # MOVE-01: an only_move roll covers a single 2× step (multiplier=2) in
-        # ONE astar_advance call.
+        # ONE advance call.
         steps = cells_to_move(getattr(player, "speed", 50), zone_data) * multiplier
-        next_cell = astar_advance(current, goal_cell, adj, steps)
+        # MOVE-02 (ADR-0008): re-step a goal-keyed cached A* route instead of
+        # recomputing full A* every tick. choose_goal_cell still runs every
+        # tick upstream (it does no A*); only the PATH is cached here. The 2×
+        # only_move multiplier consumes 2×steps cells from the SAME committed
+        # route — it is not a recompute trigger. BatchSimulator-only; RBS keeps
+        # astar_advance. Consumes no RNG (serial == parallel still holds).
+        next_cell = astar_advance_cached(player, current, goal_cell, adj, steps)
         if next_cell == current:
-            # MOVE-01: record a move only when the cell actually changed.
+            # MOVE-01: record a move only when the cell actually changed. The
+            # cache (if any) is preserved so the next tick re-steps the same
+            # committed route rather than recomputing.
             return
         player.cell_row, player.cell_col = next_cell
         player.current_zone = ResourceBasedSimulator._zone_from_cell(
@@ -3840,7 +3865,7 @@ class BatchSimulator:
                     ):
                         defender.special_active_until = 0
                     defender.final_lives = max(0, defender.final_lives - 1)
-                    defender.last_downed_time = second
+                    BatchSimulator._record_down(defender, second)
                     defender.shields = defender.max_shields
                     if defender.final_lives <= 0:
                         defender.was_eliminated_at = second
@@ -3947,7 +3972,7 @@ class BatchSimulator:
                 r_defender.shields = max(0, r_defender.shields - r_attacker.shot_power)
                 if r_defender.shields == 0:
                     r_defender.final_lives = max(0, r_defender.final_lives - 1)
-                    r_defender.last_downed_time = second
+                    BatchSimulator._record_down(r_defender, second)
                     r_defender.shields = r_defender.max_shields
                     if r_defender.final_lives <= 0:
                         r_defender.was_eliminated_at = second
@@ -4073,7 +4098,7 @@ class BatchSimulator:
                 downed = fu_defender.shields == 0
                 if downed:
                     fu_defender.final_lives = max(0, fu_defender.final_lives - 1)
-                    fu_defender.last_downed_time = second
+                    BatchSimulator._record_down(fu_defender, second)
                     fu_defender.shields = fu_defender.max_shields
                     if fu_defender.final_lives <= 0:
                         fu_defender.was_eliminated_at = second
@@ -4177,7 +4202,7 @@ class BatchSimulator:
                             "metadata": {"elimination_action": "missile"},
                         }
                     )
-            defender.last_downed_time = second
+            BatchSimulator._record_down(defender, second)
             defender.times_missiled += 1
 
             attacker.points_scored += 500
@@ -4316,7 +4341,7 @@ class BatchSimulator:
                     continue
                 lives_taken = min(opp.final_lives, 3)
                 opp.final_lives -= lives_taken
-                opp.last_downed_time = second
+                BatchSimulator._record_down(opp, second)
                 opp.shields = opp.max_shields
                 if opp.role == "commander" and opp.special_active_until > second:
                     opp.special_active_until = 0

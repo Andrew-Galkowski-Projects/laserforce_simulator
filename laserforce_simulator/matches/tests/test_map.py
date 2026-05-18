@@ -3161,3 +3161,356 @@ class TestMove01SelectLosCell:
         from matches.sim_helpers.pathfinding import _select_los_cell
 
         assert _select_los_cell(frozenset(), {}, 0, 0, prefer_high=False) is None
+
+
+# ---------------------------------------------------------------------------
+# MOVE-02 — path commitment via a goal-keyed A* cache (BatchSimulator only)
+#
+# Behavioural spec: docs/adr/0008-path-commitment-via-goal-keyed-cache.md +
+# CONTEXT.md "Path commitment".
+#
+# Locked decisions encoded here:
+#   1. The player follows the route computed when its Goal cell was set;
+#      `astar_path` is NOT re-run every move tick — exactly once per committed
+#      route (behavioural proxy for the documented ~8x perf win, NO timing).
+#   2. A recompute (fresh `astar_path`) happens ONLY on invalidation:
+#        (a) the Goal cell changes between ticks,
+#        (b) the cached route is exhausted (player reached the goal) and a new
+#            goal is chosen next tick,
+#        (c) the player is knocked off-path (Down/respawn) → cache cleared
+#            (the BatchSim life-loss sites set ``player._path_cache = None``),
+#        (d) the next cached cell is no longer passable (not in adj).
+#   3. `only_move` (2x cells_to_move) consumes 2x cells along the SAME
+#      committed route with NO extra recompute vs a normal tick on it.
+#   4. With >=2 equal-cost shortest routes, the cache commits to ONE route —
+#      the walked cell sequence is stable (no per-tick "wobble"). Locks
+#      ADR-0008 option (c).
+#   5. Scope is BatchSimulator only (RBS deliberately uncached per ADR-0008).
+#
+# BEHAVIOURAL tests: a call counter wraps pathfinding.astar_path and drives
+# BatchSimulator._move_player_in_memory / _advance_player over several ticks.
+# No wall-clock timing, no Score-Calibration point assertions (re-baseline
+# pending per ADR-0008), no mock-returns-mock.
+# ---------------------------------------------------------------------------
+
+
+_FLOOR_3X8 = [[1] * 8 for _ in range(3)]  # small open map: many equal routes
+
+
+class _AstarCounter:
+    """Wrap ``pathfinding.astar_path`` with a call counter, preserving its
+    real behaviour (no mock return value).
+
+    ``astar_advance`` and the MOVE-02 ``astar_advance_cached`` both call the
+    module-global ``astar_path`` inside ``pathfinding``, so patching the name
+    on that module counts every real recompute regardless of caller.
+    """
+
+    def __init__(self):
+        self.calls = 0
+        self._orig = None
+
+    def __enter__(self):
+        import importlib
+
+        self._pf = importlib.import_module("matches.sim_helpers.pathfinding")
+        self._orig = self._pf.astar_path
+        orig = self._orig
+        counter = self
+
+        def _counting_astar_path(*args, **kwargs):
+            counter.calls += 1
+            return orig(*args, **kwargs)
+
+        self._pf.astar_path = _counting_astar_path
+        return self
+
+    def __exit__(self, *exc):
+        self._pf.astar_path = self._orig
+        return False
+
+
+def _move02_ctx(grid, *, spawn_blue=None):
+    """MapContext over ``grid``; blue spawn defaults to the far corner so the
+    default Goal (enemy base) is a long fixed walk from (0, 0)."""
+    from matches.sim_helpers.pathfinding import build_movement_adjacency
+
+    rows, cols = len(grid), len(grid[0])
+    return MapContext.from_dict(
+        {
+            "adj": build_movement_adjacency(grid),
+            "spawn_cells": {
+                "red": (0, 0),
+                "blue": spawn_blue or (rows - 1, cols - 1),
+            },
+            "zone_data": grid,
+            "sight_data": None,
+        }
+    )
+
+
+def _move02_player(role="scout", *, speed=20, cell_row=0, cell_col=0, **kw):
+    """Slow PlayerState so a long route takes several ticks to traverse
+    (speed=20 → 1 cell/tick on a small map; multiple ticks per route)."""
+    from matches.sim_helpers.player_state import PlayerState
+
+    defaults = dict(
+        tag_id=f"red_{role}",
+        name=role,
+        team_color="red",
+        role=role,
+        accuracy=50,
+        survival=50,
+        starting_lives=15,
+        starting_shots=30,
+        final_lives=15,
+        final_shots=30,
+        speed=speed,
+        cell_row=cell_row,
+        cell_col=cell_col,
+    )
+    defaults.update(kw)
+    return PlayerState(**defaults)
+
+
+@pytest.mark.django_db  # PlayerState alone needs no DB; keep file parity
+class TestMove02CacheHitAvoidsRecompute:
+    """Decision 1: a fixed unchanging Goal ⇒ exactly ONE astar_path call
+    across the whole multi-tick traversal (path commitment, not per-tick
+    re-planning)."""
+
+    def test_fixed_goal_recomputes_path_exactly_once_over_many_ticks(self):
+        from matches.simulation import BatchSimulator
+
+        grid = _FLOOR_3X8
+        ctx = _move02_ctx(grid)
+        # Default goal (enemy base) is the fixed blue spawn — never changes.
+        goal = ctx.get_spawn_cells()["blue"]
+        player = _move02_player(speed=20)  # 1 cell/tick → many ticks
+        sim = BatchSimulator()
+
+        ticks_walked = 0
+        with _AstarCounter() as counter:
+            for tick in range(50):
+                before = (player.cell_row, player.cell_col)
+                sim._move_player_in_memory(player, tick, goal, ctx)
+                ticks_walked += 1
+                if (player.cell_row, player.cell_col) == goal:
+                    break
+                assert (player.cell_row, player.cell_col) != before, (
+                    "player must make progress each tick toward a reachable " "goal"
+                )
+
+        assert ticks_walked > 1, "precondition: a multi-tick traversal"
+        assert (player.cell_row, player.cell_col) == goal
+        assert counter.calls == 1, (
+            "MOVE-02 path commitment: astar_path must be computed ONCE for a "
+            f"fixed Goal across {ticks_walked} move ticks, not per tick (got "
+            f"{counter.calls})"
+        )
+
+
+@pytest.mark.django_db
+class TestMove02InvalidationTriggers:
+    """Decision 2: each documented invalidation forces exactly one recompute;
+    a same-goal continuation is a cache hit (no recompute)."""
+
+    def test_goal_change_between_ticks_recomputes(self):
+        from matches.simulation import BatchSimulator
+
+        ctx = _move02_ctx(_FLOOR_3X8)
+        player = _move02_player(speed=20)
+        sim = BatchSimulator()
+
+        goal_a = (2, 7)
+        goal_b = (0, 7)  # different Goal cell → must invalidate the commit
+        with _AstarCounter() as counter:
+            sim._move_player_in_memory(player, 0, goal_a, ctx)
+            after_first = counter.calls
+            sim._move_player_in_memory(player, 1, goal_a, ctx)  # same goal
+            after_same = counter.calls
+            sim._move_player_in_memory(player, 2, goal_b, ctx)  # new goal
+            after_change = counter.calls
+
+        assert after_first == 1
+        assert after_same == 1, "same Goal next tick must be a cache hit"
+        assert after_change == 2, "a changed Goal must trigger one recompute"
+
+    def test_cache_exhausted_then_new_goal_recomputes(self):
+        from matches.simulation import BatchSimulator
+
+        ctx = _move02_ctx(_FLOOR_3X8)
+        # Fast enough to reach goal_a in a single tick → route exhausted.
+        player = _move02_player(speed=100, cell_row=0, cell_col=0)
+        sim = BatchSimulator()
+
+        goal_a = (0, 1)  # 1 cell away → reached immediately, cache exhausted
+        goal_b = (2, 7)  # brand-new goal next tick → must recompute
+        with _AstarCounter() as counter:
+            sim._move_player_in_memory(player, 0, goal_a, ctx)
+            assert (player.cell_row, player.cell_col) == goal_a
+            after_reach = counter.calls
+            sim._move_player_in_memory(player, 1, goal_b, ctx)
+            after_new = counter.calls
+
+        assert after_reach == 1
+        assert after_new == 2, (
+            "an exhausted cache (goal reached) followed by a new goal must "
+            "recompute, not reuse a stale/empty route"
+        )
+
+    def test_downed_respawn_cache_clear_recomputes(self):
+        """Decision 2c: a Down/respawn knocks the player off the committed
+        path. The BatchSim life-loss sites set ``player._path_cache = None``;
+        the next move must therefore recompute (not re-step a stale route)."""
+        from matches.simulation import BatchSimulator
+
+        ctx = _move02_ctx(_FLOOR_3X8)
+        player = _move02_player(speed=20)
+        goal = (2, 7)
+        sim = BatchSimulator()
+
+        with _AstarCounter() as counter:
+            sim._move_player_in_memory(player, 0, goal, ctx)
+            sim._move_player_in_memory(player, 1, goal, ctx)
+            assert counter.calls == 1, "two ticks on one route = 1 compute"
+
+            # Reproduce exactly what the simulator's life-loss sites do on a
+            # Down (see BatchSimulator tag/followup/missile/nuke resolution):
+            # teleport-ish state change + clear the committed path cache.
+            player.final_lives -= 1
+            player.last_downed_time = 2
+            player.cell_row, player.cell_col = 0, 0
+            player._path_cache = None  # MOVE-02 Down/respawn invalidation
+
+            sim._move_player_in_memory(player, 3, goal, ctx)
+            after_respawn = counter.calls
+
+        assert after_respawn == 2, (
+            "MOVE-02: a cleared path cache (Down/respawn) must recompute the "
+            f"route on the next move (got {after_respawn} total calls)"
+        )
+
+    def test_blocked_next_cell_recomputes(self):
+        """Decision 2d: when the next cached cell becomes non-passable (no
+        longer in adj), the player must re-plan around it."""
+        from matches.sim_helpers.pathfinding import build_movement_adjacency
+        from matches.simulation import BatchSimulator
+
+        grid = [[1] * 8 for _ in range(3)]
+        ctx = _move02_ctx(grid)
+        player = _move02_player(speed=20)
+        goal = (0, 7)
+        sim = BatchSimulator()
+
+        with _AstarCounter() as counter:
+            sim._move_player_in_memory(player, 0, goal, ctx)
+            assert counter.calls == 1
+
+            # Block the cell directly ahead of the player on its committed
+            # route by rebuilding adjacency from a grid with a wall there.
+            ahead_r, ahead_c = player.cell_row, player.cell_col + 1
+            blocked_grid = [row[:] for row in grid]
+            blocked_grid[ahead_r][ahead_c] = 0  # high wall
+            new_adj = build_movement_adjacency(blocked_grid)
+            ctx.adj = new_adj  # MapContext.adj field (see map_context.py)
+
+            sim._move_player_in_memory(player, 1, goal, ctx)
+            after_block = counter.calls
+
+        assert (ahead_r, ahead_c) not in new_adj, "precondition: cell blocked"
+        assert after_block == 2, (
+            "a blocked next cached cell must trigger exactly one recompute "
+            f"(got {after_block} total calls)"
+        )
+
+
+@pytest.mark.django_db
+class TestMove02OnlyMoveDoubleStepNoExtraRecompute:
+    """Decision 3: an `only_move` tick consumes 2x cells along the SAME
+    committed route with no extra recompute vs a normal tick on it."""
+
+    def test_only_move_consumes_double_on_committed_route_no_recompute(self):
+        from matches.simulation import BatchSimulator
+        from matches.sim_helpers.pathfinding import cells_to_move
+
+        grid = _FLOOR_30X1  # long 1-D corridor: column == distance travelled
+        ctx = _move01_ctx(grid)
+        goal = (0, 29)
+        step = cells_to_move(50, grid)
+        assert step >= 1
+
+        normal_p = _move01_player("scout", speed=50)
+        only_move_p = _move01_player("scout", speed=50)
+        sim = BatchSimulator()
+
+        with _AstarCounter() as counter:
+            # First tick commits the route for each player (1 compute each).
+            sim._move_player_in_memory(normal_p, 0, goal, ctx, 1)
+            sim._move_player_in_memory(only_move_p, 0, goal, ctx, 2)
+            after_commit = counter.calls
+
+        # only_move covered 2x the cells in that single committed tick.
+        assert only_move_p.cell_col == 2 * normal_p.cell_col
+        assert only_move_p.cell_col == step * 2
+        assert after_commit == 2, (
+            "exactly one recompute per player on the first committed tick; "
+            f"the only_move 2x step must NOT add a recompute (got "
+            f"{after_commit})"
+        )
+
+        # A subsequent only_move tick on the SAME committed route adds no
+        # recompute compared to the normal player's cache hit.
+        with _AstarCounter() as counter2:
+            sim._move_player_in_memory(normal_p, 1, goal, ctx, 1)
+            sim._move_player_in_memory(only_move_p, 1, goal, ctx, 2)
+        assert counter2.calls == 0, (
+            "both players continue along their committed routes — an "
+            f"only_move 2x step is still a cache hit (got {counter2.calls})"
+        )
+
+
+@pytest.mark.django_db
+class TestMove02RouteCommitmentRegression:
+    """Decision 4 / ADR-0008: with >=2 equal-cost shortest routes, the cache
+    commits the player to ONE route — the walked cell sequence is stable
+    (no per-tick re-pick "wobble")."""
+
+    def test_committed_route_is_stable_no_wobble(self):
+        from matches.simulation import BatchSimulator
+
+        # 3x8 open grid: from (0,0) to (2,7) there are MANY equal-cost
+        # Manhattan shortest paths (9 steps each). Pre-MOVE-02 per-tick
+        # recompute could re-pick a different equal-cost route each tick.
+        ctx = _move02_ctx(_FLOOR_3X8)
+        goal = (2, 7)
+        player = _move02_player(speed=20)  # 1 cell/tick → many ticks
+        sim = BatchSimulator()
+
+        walked = [(player.cell_row, player.cell_col)]
+        for tick in range(40):
+            sim._move_player_in_memory(player, tick, goal, ctx)
+            walked.append((player.cell_row, player.cell_col))
+            if (player.cell_row, player.cell_col) == goal:
+                break
+
+        assert walked[-1] == goal, "player must reach the fixed goal"
+
+        # The committed route equals the single A* path computed once from the
+        # start cell (path commitment), NOT a per-tick re-derived mixture.
+        from matches.sim_helpers.pathfinding import astar_path
+
+        committed = astar_path((0, 0), goal, ctx.get_adjacency())
+        actual_route = walked[1:]  # drop the duplicated start cell
+        assert actual_route == committed, (
+            "MOVE-02 route commitment: the walked sequence must be exactly "
+            "the single route A* picked when the Goal was set (stable, no "
+            f"wobble).\n committed: {committed}\n walked:    {actual_route}"
+        )
+
+        # Every consecutive pair is adjacent (no teleporting between equal-cost
+        # routes mid-traversal).
+        for a, b in zip(walked, walked[1:]):
+            assert (
+                abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1
+            ), f"non-adjacent hop {a} -> {b} indicates route wobble"
