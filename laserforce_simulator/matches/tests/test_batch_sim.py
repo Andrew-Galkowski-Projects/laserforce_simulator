@@ -1151,7 +1151,15 @@ class TestSim08SideAlternation:
         self._bump_team_stats(weak_players, accuracy=0, survival=100, awareness=0)
 
         sim = BatchSimulator()
-        n = 30
+        # MOVE-03 (ADR-0009): the new `hold` Action adds seed-sensitive
+        # variance (strong-team players occasionally hold instead of pressing),
+        # so a 30-game sample with a hard 58% cutoff became statistically
+        # brittle while the genuine strength gap (avg_red_score asserted below)
+        # is unchanged. Raising n restores a robust separation between the
+        # team-position win signal and the ~50% physical-side signal — the
+        # actual load-bearing invariant — without weakening the de-flipping
+        # guard (the calibration re-baseline itself stays deferred).
+        n = 120
         stats = sim.run(strong_team, weak_team, n=n, master_seed=9001)
 
         # Team-position: the strong team is the team_red arg → red_*.

@@ -107,7 +107,11 @@ _Avoid_: "down" (a Down is one life; an Elimination is all of them)
 An extra shot the attacker may fire after a **Hit** that did *not* **Down** the target (chain depth capped at 2).
 
 **Reaction shot**:
-A shot the defender may fire back after being **Tagged** or **Missed**.
+A shot the defender may fire back after being **Tagged** or **Missed** — it *requires a prior enemy **Shot** at the defender*. Distinct from an **Overwatch shot** (pre-emptive, no prior Shot).
+
+**Overwatch shot**:
+The shot a player in **Overwatch** (a **Hold**ing player) fires automatically the moment an enemy enters its **Line of sight**, *with no prior enemy **Shot** against the holder* — a pre-emptive trigger, the inverse of a **Reaction shot**. A full **Shot** in every other respect: consumes one **Shot**, rolls the normal hit chance, can **Tag**/**Down**, chains a **Follow-up shot**, and provokes a **Reaction shot** from its victim.
+_Avoid_: calling it a **Reaction shot** (a Reaction shot is retaliation *after* being shot at; an Overwatch shot fires *first*).
 
 **Miss**:
 A fired **Shot** that does not connect.
@@ -195,7 +199,7 @@ The graph of which **Cells** a player can step between (≠ **Sight line** adjac
 The engine that advances a round tick-by-tick; the project deliberately has two (see [ADR-0002](docs/adr/0002-two-simulation-engines.md)).
 
 **Action**:
-The single *deliberate* choice a player makes per tick — **tag**, **only_move**, **hide**, **capture**, **special**, **resupply**, **missile**, or **request resupply** — chosen by weighted random. Independent of the always-on **Advance**: movement toward the **Goal cell** happens every non-**stationary** tick regardless of which Action was chosen. The Action does not gate movement.
+The single *deliberate* choice a player makes per tick — **tag**, **only_move**, **hide**, **capture**, **special**, **resupply**, **missile**, **request resupply**, or **hold** — chosen by weighted random. Independent of the always-on **Advance**: movement toward the **Goal cell** happens every non-**stationary** tick regardless of which Action was chosen. The Action does not gate movement.
 _Avoid_: treating "move" as something done *instead of* acting — movement is decoupled from the Action choice (MOVE-01); the only movement-flavoured Action is **only_move**, which merely *doubles* that tick's Advance.
 
 **only_move**:
@@ -205,8 +209,15 @@ _Avoid_: the old name `change_zone` (and reading it as "the action that makes yo
 **Advance**:
 The goal-directed **Cell** movement every non-**stationary** player performs **each tick**, toward their current **Goal cell**, a distance set by their **speed** **Stat**. Always-on and independent of the weighted **Action**; suppressed only while the player is **stationary**. Doubled on a tick whose Action is **only_move**.
 
+**Hold**:
+The **Action** of taking up **Overwatch**: the player anchors to its current **Cell** and watches its **Sight lines**. Like **hide**, Hold *carries over* — once rolled it stays in effect (the player remains in Overwatch) until the player rolls a non-Hold Action or is **Down**ed/respawned (a life loss force-clears it, knocked off position). A Hold**ing** player is **Stationary** (does not **Advance**).
+_Avoid_: confusing **Hold** with **hide** — hide seeks a low-LOS cell to *avoid* being seen; Hold deliberately watches a sightline to *shoot* anyone who crosses it.
+
+**Overwatch**:
+The state of a **Hold**ing player: every tick, the moment any enemy enters (or **Advances** through) the holder's **Line of sight**, the holder fires an **Overwatch shot** at it pre-emptively. Persists for as long as **Hold** is carried over.
+
 **Stationary**:
-The state in which a player does **not Advance** this tick. True only while **hiding** (`hide` Action / hide carried over) or when the tick's **Action** is **capture_base** (the player is anchored to the **Base** being captured). Every other Action Advances toward the **Goal cell** while it acts.
+The state in which a player does **not Advance** this tick. True only while **hiding** (`hide` Action / hide carried over), while in **Overwatch** (`hold` Action / hold carried over — the holder is anchored to its sightline), or when the tick's **Action** is **capture_base** (the player is anchored to the **Base** being captured). Every other Action Advances toward the **Goal cell** while it acts.
 
 **Weight**:
 The per-action numeric likelihood, derived from role, situation, and **Stats**, that drives the random **Action** choice.
@@ -274,6 +285,7 @@ Simulating the same two **Teams** N times to sample the outcome distribution (wi
 - A **Round** runs on an **Arena map** (→ **Cells**, **Sight lines**, **Bases**, **Elevation**) or on the **3-zone fallback**.
 - **LOS** between **Cells** gates **Tag** eligibility; **Movement adjacency** (≠ LOS) gates stepping between cells.
 - A **Player** picks an **Action** by **Weight** and, unless **stationary**, **Advances** toward their **Goal cell** (informed by **Player memory**) every tick; the **only_move** Action doubles that Advance. The path of cells walked accumulates into the player's **Movement trail**.
+- A **Hold**ing player is in **Overwatch** and **Stationary**: any enemy entering or **Advancing** through its **Line of sight** draws a pre-emptive **Overwatch shot** (a full **Shot**, distinct from a **Reaction shot**).
 
 ## Example dialogue
 
@@ -294,3 +306,4 @@ Simulating the same two **Teams** N times to sample the outcome distribution (wi
 - **"seconds_active stores ticks vs seconds"** — re-resolved 2026-05-15 by TIME-01 (supersedes the earlier "stores seconds" resolution): the uptime fields are renamed `ticks_*` and store **ticks**; the survived sentinel is `1801`; `GameEvent.timestamp`, constructor args, and the REST API are all ticks. Seconds are a display-only `÷2` at HTML/CLI output. Decision and the API-returns-ticks consequence recorded in [docs/adr/0001-time-unit-seconds-now-tick-native-later.md](docs/adr/0001-time-unit-seconds-now-tick-native-later.md).
 - **"path caching is behaviour-neutral"** — resolved 2026-05-17 by MOVE-02: goal-keyed A* path caching is **not** free of behavioural change. A grid has many equal-cost shortest paths; the pre-MOVE-02 per-tick recompute could re-pick among them ("wobble"), a goal-keyed cache commits to one route (**Path commitment**). Both are fully deterministic (`astar_path` heap orders on int tuples, PYTHONHASHSEED-independent; serial == parallel holds either way), but they produce different cell sequences ⇒ different seeded games. MOVE-02's contract is *internal* determinism, **not** identity to pre-MOVE-02 games; the delta is absorbed by the already-pending post-MOVE-01 Score Calibration re-baseline (no new obligation). The PLAN.md "no behavioural change / identical games" wording was contradictory and is superseded. Goal-recompute throttling is a separate *behavioural* perf lever, out of scope (parked as MOVE-04); `hold`/overwatch is split to MOVE-03. Decision and rejected alternatives in [docs/adr/0008-path-commitment-via-goal-keyed-cache.md](docs/adr/0008-path-commitment-via-goal-keyed-cache.md).
 - **"move" / `change_zone` / Advance** — resolved 2026-05-17 by MOVE-01: movement is **decoupled** from the weighted **Action**. Every non-**Stationary** player **Advances** toward their **Goal cell** every tick (formerly movement only happened when the weighted roll picked `change_zone`, so zero-`change_zone`-weight roles never moved). The legacy `change_zone` Action is renamed **only_move** and now only *doubles* that tick's Advance distance — it no longer gates movement. **Stationary** = hiding or capturing a **Base**. Cells stepped through accumulate into a per-player **Movement trail**. Do not call movement an Action, and do not read `only_move` as "the action that makes you move" (every tick moves). Recorded in [docs/adr/0007-movement-decoupled-from-action.md](docs/adr/0007-movement-decoupled-from-action.md).
+- **"hold" vs "hide"; "Overwatch shot" vs "Reaction shot"** — resolved 2026-05-18 by MOVE-03: **Hold** is a new 9th **Action** (a carried-over, **Stationary** posture like hide, also force-cleared on **Down**/respawn) that puts the player in **Overwatch**; an enemy entering or **Advancing** through the holder's **Line of sight** draws a pre-emptive **Overwatch shot**. An **Overwatch shot** is a full **Shot** (consumes a Shot, normal hit roll, can **Tag**/**Down**, chains a **Follow-up shot**, provokes a victim **Reaction shot**) but is **not** a **Reaction shot**: a Reaction shot requires a prior enemy Shot at the defender, an Overwatch shot fires *first*. **Hide** seeks a low-LOS cell to avoid being seen; **Hold** watches a sightline to shoot. The 9-slot Action array + per-role weight redistribution are shared by both simulators (weights stay ≥0), but Overwatch *resolution* (traversed-cell LoS check via the **`BatchSimulator`** path-commitment cache) is **BatchSim-only** — RBS treats `hold` as a Stationary no-op (dead code, removed by SIM-09; mirrors the MOVE-02 scoping precedent). Behavioural change ⇒ folds into the already-pending post-MOVE-01 Score Calibration re-baseline (no new obligation). Decision and rejected alternatives recorded in [docs/adr/0009-hold-overwatch.md](docs/adr/0009-hold-overwatch.md).
