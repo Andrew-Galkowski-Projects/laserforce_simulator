@@ -61,3 +61,34 @@ class NavbarMobileTogglerTest(TestCase):
             html,
             r'class="collapse navbar-collapse"[^>]*id="%s"' % re.escape(target_id),
         )
+
+
+class TeamListPlayerCountLabelTest(TestCase):
+    """Regression: T-2 — teams list showed 'player_count/6', so a valid
+    6-active + 1-bench roster read as a misleading over-capacity '7/6'.
+    It must show active/6 plus an explicit bench count instead."""
+
+    def test_valid_roster_with_bench_is_not_over_capacity(self):
+        team = Team.objects.create(name="Bench Team")
+        slots = ("commander", "heavy", "scout_1", "scout_2", "medic", "ammo")
+        for i, slot in enumerate(slots):
+            p = Player.objects.create(team=team, name=f"P{i}")
+            setattr(team, f"slot_{slot}", p)
+        team.save()
+        Player.objects.create(team=team, name="Benched")  # 7th, on bench
+
+        html = self.client.get(reverse("team_list")).content.decode()
+        self.assertIn("6/6 active", html)
+        self.assertIn("(+1 bench)", html)
+        # The misleading mixed-total label must be gone.
+        self.assertNotIn("7/6", html)
+
+    def test_incomplete_roster_shows_active_over_six(self):
+        team = Team.objects.create(name="Incomplete Team")
+        p = Player.objects.create(team=team, name="Solo")
+        team.slot_commander = p
+        team.save()
+
+        html = self.client.get(reverse("team_list")).content.decode()
+        self.assertIn("1/6 active", html)
+        self.assertNotIn("(+", html)  # no bench players → no bench suffix

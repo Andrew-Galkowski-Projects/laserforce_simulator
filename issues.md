@@ -17,7 +17,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ~~T-3~~ | ~~🟠~~ | ~~Team detail~~ | ~~"Roster Status" Scout row renders `6 2 slots` (dead placeholder code in template)~~ _(fixed)_ |
 | ~~T-4~~ | ~~🟠~~ | ~~Global nav~~ | ~~Navbar has no mobile toggler — unusable layout below 992px~~ _(fixed)_ |
 | ~~M-1~~ | ~~🟠~~ | ~~Event log~~ | ~~HTML event log renders the entire log (~20.6k DOM nodes) with no server pagination~~ _(DEFERRED: needs dedicated redesign PR (playback DOM-row coupling), per user decision)_ |
-| T-2  | 🟡 | Teams list | `7/6` players label on a valid roster is misleading |
+| ~~T-2~~ | ~~🟡~~ | ~~Teams list~~ | ~~`7/6` players label on a valid roster is misleading~~ _(fixed)_ |
 | CT-1 | 🟡 | Assign Slots | Form requires all 6 slots filled at once; no partial save |
 | CT-2 | 🟡 | Add Player | Profile number fields (Age etc.) have no min/max bounds |
 | PD-1 | 🟡 | Player detail | Stat category grouping doesn't match documented categories |
@@ -54,7 +54,7 @@ testing.)
 Every page requests `/favicon.ico` → 404 (console resource error).
 Cosmetic; add a favicon or a catch route.
 
-### 🟡 T-2 — Teams list "7/6" label is misleading
+### ~~🟡 T-2 — Teams list "7/6" label is misleading~~ _(fixed)_
 Team **1** displays `Players: 7/6` with a green **"Valid Roster"**
 badge. The detail page clarifies this is **6 active + 1 bench = valid**
 (bench players are by design). The roster is correct, but `7/6` reads as
