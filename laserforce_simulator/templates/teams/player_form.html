@@ -41,8 +41,8 @@
         </div>
     </div>
 
-    <div class="mb-3">
-        <label class="form-label">{{ form.preferred_roles.label }}</label>
+    <fieldset class="mb-3">
+        <legend class="form-label fs-6">{{ form.preferred_roles.label }}</legend>
         <div class="d-flex flex-wrap gap-3">
             {{ form.preferred_roles }}
         </div>
@@ -50,7 +50,7 @@
         <div class="text-danger">{{ form.preferred_roles.errors }}</div>
         {% endif %}
         <div class="form-text">{{ form.preferred_roles.help_text }}</div>
-    </div>
+    </fieldset>
 
     <div class="mb-3">
         <h5>Player Stats</h5>

@@ -21,7 +21,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ~~CT-1~~ | ~~🟡~~ | ~~Assign Slots~~ | ~~Form requires all 6 slots filled at once; no partial save~~ _(fixed)_ |
 | ~~CT-2~~ | ~~🟡~~ | ~~Add Player~~ | ~~Profile number fields (Age etc.) have no min/max bounds~~ _(fixed)_ |
 | ~~PD-1~~ | ~~🟡~~ | ~~Player detail~~ | ~~Stat category grouping doesn't match documented categories~~ _(fixed)_ |
-| PD-2 | 🟡 | Player edit | A11y: missing form label / autocomplete attribute |
+| ~~PD-2~~ | ~~🟡~~ | ~~Player edit~~ | ~~A11y: missing form label / autocomplete attribute~~ _(fixed)_ |
 | M-2  | 🟡 | Match list | Many stale `0-0 Tie` seed matches in history |
 | BS-1 | 🟡 | Batch Sim | Run ~8× slower than the ~25 ms/round figure in the docs |
 | T-1  | 🟡 | Global | `/favicon.ico` 404 on every page |
@@ -93,7 +93,7 @@ Making* group contains Positioning, Adaptability, **Special Usage**,
 **Resupply Efficiency**. Per the model these are Role/Team/Physical
 stats respectively. Cosmetic but confusing.
 
-### 🟡 PD-2 — Accessibility warnings on player edit form
+### ~~🟡 PD-2 — Accessibility warnings on player edit form~~ _(fixed)_
 Console (DevTools Issues) on `/<team>/player/<id>/edit/`: "No label
 associated with a form field" and "An element doesn't have an
 autocomplete attribute". Minor a11y; add `<label for>` / `autocomplete`.

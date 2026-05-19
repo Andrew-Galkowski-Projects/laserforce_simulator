@@ -141,3 +141,22 @@ class PlayerDetailStatGroupingTest(TestCase):
         labels = [label for _, rows in self._groups() for label, _ in rows]
         self.assertEqual(len(labels), 19)
         self.assertEqual(len(set(labels)), 19, "a stat is duplicated/missing")
+
+
+class PlayerEditA11yLabelTest(TestCase):
+    """Regression: PD-2 — the preferred-roles group rendered a bare
+    <label class="form-label"> with no 'for' and no wrapped control,
+    tripping DevTools 'No label associated with a form field'. The group
+    must use fieldset/legend semantics instead."""
+
+    def _edit_html(self):
+        team = Team.objects.create(name="A11y Team")
+        p = Player.objects.create(team=team, name="A11y Player")
+        url = reverse("player_edit", kwargs={"team_id": team.id, "player_id": p.id})
+        return self.client.get(url).content.decode()
+
+    def test_preferred_roles_group_uses_legend_not_orphan_label(self):
+        html = self._edit_html()
+        self.assertIn("<legend", html)
+        # The exact orphan label markup must be gone.
+        self.assertNotIn('<label class="form-label">Preferred Roles</label>', html)

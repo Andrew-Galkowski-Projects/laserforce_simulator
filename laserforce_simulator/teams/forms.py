@@ -3,7 +3,14 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 
 from .models import Team, Player, ROLE_CHOICES
 
-_STAT_WIDGET_ATTRS = {"class": "form-control", "min": "0", "max": "100"}
+# PD-2: every text/number input carries autocomplete (a11y) — these are
+# gameplay stats / identifiers, not browser-autofillable personal data.
+_STAT_WIDGET_ATTRS = {
+    "class": "form-control",
+    "min": "0",
+    "max": "100",
+    "autocomplete": "off",
+}
 
 # CT-2: sensible bounds for the profile number fields (previously
 # unbounded — reported valuemin=0 valuemax=0 and accepted negatives).
@@ -66,22 +73,49 @@ class PlayerForm(forms.ModelForm):
         ]
         widgets = {
             "name": forms.TextInput(
-                attrs={"class": "form-control", "placeholder": "Enter player name"}
+                attrs={
+                    "class": "form-control",
+                    "placeholder": "Enter player name",
+                    "autocomplete": "off",
+                }
             ),
             "age": forms.NumberInput(
-                attrs={"class": "form-control", "min": "5", "max": "100"}
+                attrs={
+                    "class": "form-control",
+                    "min": "5",
+                    "max": "100",
+                    "autocomplete": "off",
+                }
             ),
             "started_playing_age": forms.NumberInput(
-                attrs={"class": "form-control", "min": "3", "max": "100"}
+                attrs={
+                    "class": "form-control",
+                    "min": "3",
+                    "max": "100",
+                    "autocomplete": "off",
+                }
             ),
             "total_games": forms.NumberInput(
-                attrs={"class": "form-control", "min": "0", "max": "100000"}
+                attrs={
+                    "class": "form-control",
+                    "min": "0",
+                    "max": "100000",
+                    "autocomplete": "off",
+                }
             ),
             "home_site": forms.TextInput(
-                attrs={"class": "form-control", "placeholder": "e.g. Ultrazone Chicago"}
+                attrs={
+                    "class": "form-control",
+                    "placeholder": "e.g. Ultrazone Chicago",
+                    "autocomplete": "off",
+                }
             ),
             "height": forms.TextInput(
-                attrs={"class": "form-control", "placeholder": "e.g. 5'11\""}
+                attrs={
+                    "class": "form-control",
+                    "placeholder": "e.g. 5'11\"",
+                    "autocomplete": "off",
+                }
             ),
             "player_awareness": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),
             "game_awareness": forms.NumberInput(attrs=_STAT_WIDGET_ATTRS),

@@ -354,3 +354,18 @@ class PlayerFormProfileBoundsTest(TestCase):
         data = _minimal_stat_payload(age=25, started_playing_age=12, total_games=300)
         form = PlayerForm(data=data)
         self.assertTrue(form.is_valid(), form.errors.as_json())
+
+
+class PlayerFormAutocompleteTest(TestCase):
+    """Regression: PD-2 — the text/number inputs on the player form had no
+    autocomplete attribute (DevTools a11y warning)."""
+
+    def test_text_and_number_widgets_declare_autocomplete(self):
+        form = PlayerForm()
+        missing = []
+        for name, field in form.fields.items():
+            widget = field.widget
+            if getattr(widget, "input_type", None) in ("text", "number"):
+                if "autocomplete" not in widget.attrs:
+                    missing.append(name)
+        self.assertEqual(missing, [], f"widgets missing autocomplete: {missing}")
