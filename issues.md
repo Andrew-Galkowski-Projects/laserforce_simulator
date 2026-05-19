@@ -16,7 +16,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 |------|-----|------|-----------|
 | ~~T-3~~ | ~~🟠~~ | ~~Team detail~~ | ~~"Roster Status" Scout row renders `6 2 slots` (dead placeholder code in template)~~ _(fixed)_ |
 | ~~T-4~~ | ~~🟠~~ | ~~Global nav~~ | ~~Navbar has no mobile toggler — unusable layout below 992px~~ _(fixed)_ |
-| ~~M-1~~ | ~~🟠~~ | ~~Event log~~ | ~~HTML event log renders the entire log (~20.6k DOM nodes) with no server pagination~~ _(DEFERRED: needs dedicated redesign PR (playback DOM-row coupling), per user decision)_ |
+| ~~M-1~~ | ~~🟠~~ | ~~Event log~~ | ~~HTML event log renders the entire log (~20.6k DOM nodes) with no server pagination~~ _(fixed: events emitted once as JSON; client-side windowed timeline + charts/playback decoupled from the DOM)_ |
 | ~~T-2~~ | ~~🟡~~ | ~~Teams list~~ | ~~`7/6` players label on a valid roster is misleading~~ _(fixed)_ |
 | ~~CT-1~~ | ~~🟡~~ | ~~Assign Slots~~ | ~~Form requires all 6 slots filled at once; no partial save~~ _(fixed)_ |
 | ~~CT-2~~ | ~~🟡~~ | ~~Add Player~~ | ~~Profile number fields (Age etc.) have no min/max bounds~~ _(fixed)_ |
@@ -25,7 +25,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ~~M-2~~ | ~~🟡~~ | ~~Match list~~ | ~~Many stale `0-0 Tie` seed matches in history~~ _(fixed)_ |
 | ~~BS-1~~ | ~~🟡~~ | ~~Batch Sim~~ | ~~Run ~8× slower than the ~25 ms/round figure in the docs~~ _(fixed)_ |
 | ~~T-1~~ | ~~🟡~~ | ~~Global~~ | ~~`/favicon.ico` 404 on every page~~ _(fixed)_ |
-| E-1  | ℹ️ | Setup | 3 unapplied migrations on fresh `runserver` |
+| ~~E-1~~ | ~~ℹ️~~ | ~~Setup~~ | ~~3 unapplied migrations on fresh `runserver`~~ _(fixed: README already documents `migrate`; added a `makemigrations --check` CI guard)_ |
 
 **Overall:** every core flow works — creating a team, adding/editing
 players, assigning slots, creating & simulating a tournament match,
@@ -38,13 +38,21 @@ concern (M-1), and a set of low-severity polish/UX/a11y items.
 
 ## Environment / Setup
 
-### ℹ️ E-1 — 3 unapplied migrations on a fresh server start
+### ~~ℹ️ E-1 — 3 unapplied migrations on a fresh server start~~ _(fixed)_
 `python manage.py runserver` warned: *"You have 3 unapplied
 migration(s)... matches"* (`0022_playerroundstate_missile_points`,
 `0023_rename_seconds_active...`, `0024_gameround_rng_seed`). The app
 misbehaves for anyone who pulls and runs without `migrate` first. Not a
 code bug, but worth a setup note / CI guard. (Applied locally before
 testing.)
+
+**Fix:** the setup note already exists — `README.md` documents
+`python manage.py migrate` before `runserver` (Option A), Docker
+auto-migrates via `entrypoint.sh`, and CI already runs
+`migrate --noinput`. The missing half was the CI guard: a
+`python manage.py makemigrations --check --dry-run` step was added to
+`.github/workflows/ci.yml` (before the migrate step) so a model change
+shipped without its generated migration now fails CI.
 
 ---
 
@@ -137,7 +145,7 @@ no console errors), and event log all render. Team dropdowns correctly
 **exclude** the incomplete "ChromeTest QA" team. Elimination bonus
 (+10000/round) correctly reflected in totals.
 
-### ~~🟠 M-1 — Event Log page loads the entire log into one DOM (no server pagination)~~ _(DEFERRED: needs dedicated redesign PR (playback DOM-row coupling), per user decision)_
+### ~~🟠 M-1 — Event Log page loads the entire log into one DOM (no server pagination)~~ _(fixed)_
 `/matches/game-round/<id>/events/` rendered **4533 events → ~20,600
 a11y/DOM nodes** for a single 2-team, no-map round. The REST API
 `/events/` is paginated (per matches/CLAUDE.md) but the HTML view is
@@ -146,6 +154,18 @@ scrollable panels. Longer rounds / map rounds (movement events explode
 under MOVE-01) produce far more. Loads without error here, but will
 degrade badly (slow render, large response) on big rounds. Recommend
 server-side pagination or windowing for the HTML timeline.
+
+**Fix:** the view now emits every event **once** as a compact JSON
+list (`events_data` via `json_script`) plus a `players_data` block,
+instead of one server-rendered DOM row per event. `game_round_events.html`
+renders only a bounded **window** of the timeline client-side
+(`WIN = 250` rows, Newer/Older pager) and feeds the same JSON array to
+the kill feed (recency-capped at 250), the three charts, and the SIM-05
+playback engine — nothing reads the DOM for event data anymore. The
+playback engine auto-pages the window onto the current event and
+click-on-row still jumps playback. DOM nodes are now bounded (~250 rows)
+regardless of round length. JSON shape pinned by
+`TestM1EventLogWindowing`.
 
 ### ~~🟡 M-2 — Many stale "1 vs 2 — Tie 0–0" matches in history~~ _(fixed)_
 The match list shows numerous old `1 vs 2 … Tie / 0 - 0 / Rounds 0-0`

@@ -127,8 +127,11 @@
       "mcp__chrome-devtools__fill_form",
       "mcp__chrome-devtools__wait_for",
       "PowerShell(Stop-Process *)",
-     "Bash(break)",
+      "Bash(break)",
       "mcp__chrome-devtools__get_console_message",
+      "Bash(findstr /i \"README ci.yml\")",
+      "Bash(curl.exe -s -o NUL -w \"%{http_code}\" http://127.0.0.1:8000/matches/ --max-time 5)",
+      "PowerShell(Get-NetTCPConnection *)"
     ]
   }
 }

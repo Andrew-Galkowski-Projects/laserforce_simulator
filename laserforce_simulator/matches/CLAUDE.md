@@ -183,6 +183,8 @@ The corresponding views (`create_match`, `create_single_round`) extract `arena_m
 
 All templates live in `laserforce_simulator/templates/`. The `game_round_events.html` template has event filtering and color-coded display; `game_round_detail.html` shows per-player stats and MVP scores. Both `enhanced_match_setup.html` and `enhanced_single_round_setup.html` include the optional `arena_map` picker field.
 
+**M-1 — event-log windowing.** `game_round_events` (view) emits every event **once** as a compact JSON list (`{{ events_data|json_script:"events-data" }}`) plus a `players_data` block, instead of one server-rendered DOM row per event (the old design produced ~20k DOM nodes for a single round). `game_round_events.html` renders only a bounded **window** of the timeline client-side (`WIN = 250` rows, Newer/Older pager) and feeds the *same* JSON array to the kill feed (recency-capped at 250), the three Chart.js charts, and the SIM-05 playback engine — nothing reads the DOM for event data anymore. The playback engine auto-pages the window onto the current event (and click-on-row still jumps playback). The per-event JSON key set (`type/ts/tf/icon/desc/pts/aid/an/at/tid/tn/tt/meta`, `tid == -1` when targetless) and the `players_data` shape are pinned by `TestM1EventLogWindowing` in `views_tests.py`; changing a key requires updating both the view and the template. `GameRound.get_kill_feed` is now unused by the view (kill feed is derived client-side from `events_data`) but retained as a public model helper.
+
 ## Tests
 
 `matches/tests/` package:

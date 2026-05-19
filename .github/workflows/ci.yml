@@ -41,6 +41,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r ./laserforce_simulator/requirements.txt
 
+      - name: Check for missing migrations
+        working-directory: ./laserforce_simulator
+        # E-1 guard: fail CI if a model change has no generated migration,
+        # so contributors can't ship models that are out of sync with the
+        # migration history (the "unapplied/forgotten migration" footgun).
+        run: |
+          python manage.py makemigrations --check --dry-run
+
       - name: Run migrations
         working-directory: ./laserforce_simulator
         run: |
