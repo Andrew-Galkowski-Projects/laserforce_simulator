@@ -16,7 +16,7 @@
             <div class="card-body">
                 <h5 class="card-title">{{ team.name }}</h5>
                 <p class="card-text">
-                    <strong>Players:</strong> {{ team.player_count }}/6
+                    <strong>Players:</strong> {{ team.active_players|length }}/6 active{% if team.bench_players %} (+{{ team.bench_players|length }} bench){% endif %}
                     {% if team.is_valid_roster %}
                     <span class="badge bg-success ms-2">Valid Roster</span>
                     {% else %}

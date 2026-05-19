@@ -2,7 +2,7 @@
 
 from django.test import TestCase
 
-from teams.forms import PlayerForm
+from teams.forms import PlayerForm, TeamSlotForm
 from teams.models import Player, Team
 
 ALL_STAT_FIELDS = [
@@ -283,3 +283,89 @@ class PlayerOverallRatingTest(TestCase):
                 "is it included in the stat list?",
             )
             setattr(player, stat, 50)
+
+
+class TeamSlotFormPartialSaveTest(TestCase):
+    """Regression: CT-1 — every slot was required, so a team with < 6
+    players could never assign any slot and progress couldn't be saved
+    incrementally. Slots are null/blank on the model; the form must allow
+    partial assignment."""
+
+    def setUp(self):
+        self.team = Team.objects.create(name="Partial Slots Team")
+        self.cmd = Player.objects.create(team=self.team, name="Cmd")
+        self.hvy = Player.objects.create(team=self.team, name="Hvy")
+
+    def test_no_slot_field_is_required(self):
+        form = TeamSlotForm(instance=self.team)
+        required = [n for n, f in form.fields.items() if f.required]
+        self.assertEqual(required, [], f"slot field(s) still required: {required}")
+
+    def test_partial_assignment_is_valid_and_saves(self):
+        form = TeamSlotForm(data={"slot_commander": self.cmd.id}, instance=self.team)
+        self.assertTrue(form.is_valid(), form.errors.as_json())
+        form.save()
+        self.team.refresh_from_db()
+        self.assertEqual(self.team.slot_commander_id, self.cmd.id)
+        self.assertIsNone(self.team.slot_heavy_id)
+        self.assertIsNone(self.team.slot_medic_id)
+
+    def test_empty_assignment_is_valid(self):
+        form = TeamSlotForm(data={}, instance=self.team)
+        self.assertTrue(form.is_valid(), form.errors.as_json())
+
+
+class PlayerFormProfileBoundsTest(TestCase):
+    """Regression: CT-2 — Age / Started playing age / Total games had no
+    real min/max (reported valuemin=0 valuemax=0) and accepted arbitrary
+    or negative numbers. They must have bounded widgets and server-side
+    validators."""
+
+    PROFILE_FIELDS = ("age", "started_playing_age", "total_games")
+
+    def test_profile_widgets_declare_min_and_max(self):
+        form = PlayerForm()
+        for name in self.PROFILE_FIELDS:
+            attrs = form.fields[name].widget.attrs
+            self.assertIn("min", attrs, f"{name} widget missing min")
+            self.assertIn("max", attrs, f"{name} widget missing max")
+            self.assertGreater(
+                int(attrs["max"]), int(attrs["min"]), f"{name} max <= min"
+            )
+
+    def test_negative_and_oversized_values_rejected(self):
+        for name, bad in [
+            ("age", -1),
+            ("age", 999),
+            ("started_playing_age", -3),
+            ("started_playing_age", 999),
+            ("total_games", -1),
+            ("total_games", 10_000_000),
+        ]:
+            data = _minimal_stat_payload(**{name: bad})
+            form = PlayerForm(data=data)
+            self.assertFalse(
+                form.is_valid(),
+                f"{name}={bad} should be rejected by validators",
+            )
+            self.assertIn(name, form.errors)
+
+    def test_sensible_values_accepted(self):
+        data = _minimal_stat_payload(age=25, started_playing_age=12, total_games=300)
+        form = PlayerForm(data=data)
+        self.assertTrue(form.is_valid(), form.errors.as_json())
+
+
+class PlayerFormAutocompleteTest(TestCase):
+    """Regression: PD-2 — the text/number inputs on the player form had no
+    autocomplete attribute (DevTools a11y warning)."""
+
+    def test_text_and_number_widgets_declare_autocomplete(self):
+        form = PlayerForm()
+        missing = []
+        for name, field in form.fields.items():
+            widget = field.widget
+            if getattr(widget, "input_type", None) in ("text", "number"):
+                if "autocomplete" not in widget.attrs:
+                    missing.append(name)
+        self.assertEqual(missing, [], f"widgets missing autocomplete: {missing}")

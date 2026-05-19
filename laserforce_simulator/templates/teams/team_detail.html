@@ -110,9 +110,6 @@
                     <span>{{ role_name }}</span>
                     <span class="badge {% if role_code == 'scout' %}bg-info{% else %}bg-light text-dark{% endif %}">
                         {% if role_code == 'scout' %}
-                            {% with scout_count=0 %}
-                            {{ active_roster|length }}<!-- placeholder -->
-                            {% endwith %}
                             2 slots
                         {% else %}
                             1 slot

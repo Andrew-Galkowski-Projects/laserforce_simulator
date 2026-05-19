@@ -85,6 +85,9 @@ def team_slots_edit(request, team_id):
     )
 
 
+# PD-1: groups mirror the documented stat categories in teams/CLAUDE.md
+# (Awareness / Decision-making / Physical / Team / Role). Every one of the
+# 19 stats appears in exactly one group.
 _STAT_GROUPS = [
     (
         "Awareness",
@@ -95,34 +98,39 @@ _STAT_GROUPS = [
         ],
     ),
     (
-        "Decision Making",
+        "Decision-making",
         [
             ("decision_making", "Decision Making"),
-            ("positioning", "Positioning"),
-            ("adaptability", "Adaptability"),
-            ("special_usage", "Special Usage"),
-            ("survival", "Survival"),
-        ],
-    ),
-    (
-        "Team",
-        [
-            ("teamwork", "Teamwork"),
-            ("Offensive_synergy", "Offensive Synergy"),
-            ("defensive_synergy", "Defensive Synergy"),
-            ("midfield_synergy", "Midfield Synergy"),
-            ("resupply_synergy", "Resupply Synergy"),
         ],
     ),
     (
         "Physical",
         [
+            ("positioning", "Positioning"),
             ("stamina", "Stamina"),
             ("speed", "Speed"),
             ("flexibility", "Flexibility"),
+            ("adaptability", "Adaptability"),
+        ],
+    ),
+    (
+        "Team",
+        [
             ("communication", "Communication"),
-            ("accuracy", "Accuracy"),
+            ("teamwork", "Teamwork"),
+        ],
+    ),
+    (
+        "Role",
+        [
+            ("Offensive_synergy", "Offensive Synergy"),
+            ("defensive_synergy", "Defensive Synergy"),
+            ("midfield_synergy", "Midfield Synergy"),
+            ("resupply_synergy", "Resupply Synergy"),
             ("resupply_efficiency", "Resupply Efficiency"),
+            ("accuracy", "Accuracy"),
+            ("survival", "Survival"),
+            ("special_usage", "Special Usage"),
         ],
     ),
 ]

@@ -7,7 +7,7 @@ import pytest
 from unittest.mock import patch
 
 from teams.models import Team, Player
-from matches.models import GameRound, PlayerRoundState, GameEvent
+from matches.models import GameRound, PlayerRoundState, GameEvent, Match
 from matches.simulation import ResourceBasedSimulator
 from matches.tests.conftest import make_team_with_slots
 
@@ -1045,3 +1045,29 @@ class TestStat02PreferredRoleBoost:
         )
 
         assert state.survival == 72  # int(60 * 1.2) = 72
+
+
+@pytest.mark.django_db
+class TestM2NoEmptyMatchOnFailure:
+    """Regression: M-2 — simulate_match created the Match row before
+    simulating any round and was not atomic, so a round failure left an
+    empty 0-0 / 0-rounds match persisted. The whole create-match path
+    must roll back if simulation fails."""
+
+    def test_round_failure_rolls_back_the_match(self):
+        red, _ = make_team_with_slots("M2Red")
+        blue, _ = make_team_with_slots("M2Blue")
+        sim = ResourceBasedSimulator()
+        before = Match.objects.count()
+
+        with patch.object(
+            ResourceBasedSimulator,
+            "simulate_detailed_round",
+            side_effect=ValueError("simulation blew up"),
+        ):
+            with pytest.raises(ValueError):
+                sim.simulate_match(red, blue, "tournament")
+
+        assert (
+            Match.objects.count() == before
+        ), "an empty Match was persisted despite simulation failing"
