@@ -160,3 +160,15 @@ class PlayerEditA11yLabelTest(TestCase):
         self.assertIn("<legend", html)
         # The exact orphan label markup must be gone.
         self.assertNotIn('<label class="form-label">Preferred Roles</label>', html)
+
+
+class FaviconLinkTest(TestCase):
+    """Regression: T-1 — no favicon was declared, so every page triggered
+    a /favicon.ico request that 404'd. base.html must declare an icon so
+    the browser never falls back to /favicon.ico."""
+
+    def test_pages_declare_a_favicon(self):
+        html = self.client.get(reverse("team_list")).content.decode()
+        m = re.search(r'<link[^>]+rel="(?:shortcut )?icon"[^>]*>', html)
+        self.assertIsNotNone(m, "base.html declares no <link rel=icon>")
+        self.assertRegex(m.group(0), r'href="[^"]+"')

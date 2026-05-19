@@ -24,7 +24,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ~~PD-2~~ | ~~🟡~~ | ~~Player edit~~ | ~~A11y: missing form label / autocomplete attribute~~ _(fixed)_ |
 | ~~M-2~~ | ~~🟡~~ | ~~Match list~~ | ~~Many stale `0-0 Tie` seed matches in history~~ _(fixed)_ |
 | ~~BS-1~~ | ~~🟡~~ | ~~Batch Sim~~ | ~~Run ~8× slower than the ~25 ms/round figure in the docs~~ _(fixed)_ |
-| T-1  | 🟡 | Global | `/favicon.ico` 404 on every page |
+| ~~T-1~~ | ~~🟡~~ | ~~Global~~ | ~~`/favicon.ico` 404 on every page~~ _(fixed)_ |
 | E-1  | ℹ️ | Setup | 3 unapplied migrations on fresh `runserver` |
 
 **Overall:** every core flow works — creating a team, adding/editing
@@ -50,7 +50,7 @@ testing.)
 
 ## Teams list / Homepage (`/`)
 
-### 🟡 T-1 — `favicon.ico` returns 404
+### ~~🟡 T-1 — `favicon.ico` returns 404~~ _(fixed)_
 Every page requests `/favicon.ico` → 404 (console resource error).
 Cosmetic; add a favicon or a catch route.
 
