@@ -452,23 +452,58 @@ def save_batch_status(request, job_id):
 
 
 def game_round_events(request, round_id):
-    """Display detailed event log for a game round"""
+    """Display the detailed event log for a game round.
+
+    M-1: every event is emitted **once** as a compact JSON list
+    (``events_data``) instead of one server-rendered DOM row each. The
+    template renders only a window of the timeline client-side and feeds
+    the same JSON to the charts and the SIM-05 playback engine, so the
+    page stays bounded regardless of round length (the old design emitted
+    ~20k DOM nodes for a single round). Keep the per-event keys short —
+    they are read directly by ``game_round_events.html``; the shape is
+    pinned by ``TestM1EventLogWindowing``.
+    """
     game_round = get_object_or_404(GameRound, id=round_id)
 
-    # Get all events
-    events = game_round.events.all().select_related("actor", "target")
+    events_qs = game_round.events.all().select_related(
+        "actor", "target", "actor__team", "target__team"
+    )
+    events_data = [
+        {
+            "type": e.event_type,
+            "ts": e.timestamp,  # canonical ticks (1 tick = 0.5 s)
+            "tf": e.formatted_timestamp,  # mm:ss display string
+            "icon": e.get_event_icon(),
+            "desc": e.description,
+            "pts": e.points_awarded,
+            "aid": e.actor_id,
+            "an": e.actor.name,
+            "at": e.actor.team_id,
+            "tid": e.target_id if e.target_id else -1,
+            "tn": e.target.name if e.target_id else "",
+            "tt": e.target.team_id if e.target_id else "",
+            "meta": e.metadata or {},
+        }
+        for e in events_qs
+    ]
 
-    # Event summary
-    event_summary = game_round.get_event_summary()
-
-    # Get kill feed (tags and eliminations only)
-    kill_feed = game_round.get_kill_feed()
+    players_data = [
+        {
+            "id": ps.player_id,
+            "name": ps.player.name,
+            "team": ps.team_color,
+            "role": ps.role,
+            "sl": ps.starting_lives,
+            "ss": ps.starting_shots,
+        }
+        for ps in game_round.player_states.select_related("player").all()
+    ]
 
     context = {
         "round": game_round,
-        "events": events,
-        "event_summary": event_summary,
-        "kill_feed": kill_feed,
+        "events_data": events_data,
+        "players_data": players_data,
+        "event_summary": game_round.get_event_summary(),
     }
 
     return render(request, "matches/game_round_events.html", context)

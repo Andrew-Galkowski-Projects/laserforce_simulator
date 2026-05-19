@@ -4,6 +4,21 @@
 {% block title %}Event Log - {{ round.team_red.name }} vs {{ round.team_blue.name }}{% endblock %}
 
 {% block content %}
+{# M-1: events are emitted ONCE as JSON (below) instead of one server- #}
+{# rendered DOM row each. The timeline is windowed client-side; the    #}
+{# charts and the SIM-05 playback engine read the same JSON array, so  #}
+{# the page stays bounded regardless of round length. See views.py     #}
+{# game_round_events and TestM1EventLogWindowing for the JSON contract. #}
+{{ events_data|json_script:"events-data" }}
+{{ players_data|json_script:"players-data" }}
+
+<style>
+    .event-metadata { display: none; }
+    #timeline-scroll.show-meta .event-metadata { display: block; }
+    .evt-row { cursor: pointer; }
+    .pb-cur-evt { outline: 2px solid #ffc107; }
+</style>
+
 <div class="mb-4">
     <h1>Event Log</h1>
     <p class="text-muted">{{ round.team_red.name }} vs {{ round.team_blue.name }}</p>
@@ -76,27 +91,7 @@
             <div class="card-header">
                 <h5 class="mb-0">🎯 Kill Feed</h5>
             </div>
-            <div class="card-body" style="max-height: 400px; overflow-y: auto;">
-                {% for event in kill_feed %}
-                <div class="d-flex justify-content-between align-items-center mb-2 p-2 border-bottom">
-                    <span class="badge bg-secondary">{{ event.formatted_timestamp }}</span>
-                    <span>
-                        <strong
-                            class="{% if event.actor.team == round.team_red %}text-danger{% elif event.actor.team == round.team_blue %}text-primary{% endif %}">
-                            {{ event.actor.name }}
-                        </strong>
-                        {{ event.get_event_icon }}
-                        {% if event.target %}
-                        <strong
-                            class="{% if event.target.team == round.team_red %}text-danger{% elif event.target.team == round.team_blue %}text-primary{% endif %}">
-                            {{ event.target.name }}
-                        </strong>
-                        {% endif %}
-                    </span>
-                    <span class="badge bg-info">+{{ event.points_awarded }}</span>
-                </div>
-                {% endfor %}
-            </div>
+            <div class="card-body" style="max-height: 400px; overflow-y: auto;" id="kill-feed-body"></div>
         </div>
     </div>
 
@@ -163,19 +158,7 @@
                                 </button>
                                 <div class="dropdown-menu p-3" style="max-height:300px; overflow:auto;"
                                     id="player-filters">
-                                    {% for ps in round.player_states.all %}
-                                    <div class="form-check">
-                                        <input class="form-check-input player-filter" type="checkbox"
-                                            value="{{ ps.player.id }}" id="player-{{ ps.player.id }}" checked
-                                            data-team="{{ ps.team_color }}"
-                                            data-starting-lives="{{ ps.starting_lives }}"
-                                            data-starting-shots="{{ ps.starting_shots }}"
-                                            data-role="{{ ps.role }}"
-                                            data-player-name="{{ ps.player.name }}">
-                                        <label class="form-check-label" for="player-{{ ps.player.id }}">
-                                            {{ ps.player.name }}</label>
-                                    </div>
-                                    {% endfor %}
+                                    {# populated client-side from players-data #}
                                 </div>
                             </div>
 
@@ -188,47 +171,14 @@
                     </div>
                 </div>
             </div>
-            <div class="card-body" style="max-height: 400px; overflow-y: auto;">
-                {% for event in events %}
-                <div class="mb-2 p-2 border-bottom 
-                        {% if event.event_type == 'tag' %}bg-light
-                        {% elif event.event_type == 'elimination' %}bg-danger bg-opacity-10
-                        {% elif event.event_type == 'miss' %}bg-secondary bg-opacity-10
-                        {% elif event.event_type == 'special' %}bg-warning bg-opacity-10
-                        {% endif %}" data-event-type="{{ event.event_type }}" data-actor-id="{{ event.actor.id }}"
-                    data-target-id="{% if event.target %}{{ event.target.id }}{% else %}-1{% endif %}"
-                    data-actor-name="{{ event.actor.name }}"
-                    data-target-name="{% if event.target %}{{ event.target.name }}{% endif %}"
-                    data-actor-team="{{ event.actor.team.id }}"
-                    data-target-team="{% if event.target %}{{ event.target.team.id }}{% endif %}"
-                    data-meta-actor-role="{{ event.metadata.actor_role|default:'' }}"
-                    data-meta-target-role="{{ event.metadata.target_role|default:'' }}"
-                    data-meta-target-shields="{{ event.metadata.target_shields|default:0 }}"
-                    data-meta-single-shots-resupplied="{{ event.metadata.target_shots_resupplied|default:0 }}"
-                    data-meta-single-lives-resupplied="{{ event.metadata.target_lives_resupplied|default:0 }}"
-                    data-meta-shots-resupplied="{{ event.metadata.shots_resupplied|default:0 }}"
-                    data-meta-lives-resupplied="{{ event.metadata.lives_resupplied|default:0 }}"
-                    data-meta-lives-taken="{{ event.metadata.lives_taken|default:0 }}"
-                    data-ts="{{ event.timestamp }}"
-                    data-points="{{ event.points_awarded }}">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <span class="badge bg-dark">{{ event.formatted_timestamp }}</span>
-                        <div class="flex-grow-1 ms-2">
-                            <span class="event-desc">{{ event.get_event_icon }} {{ event.description }}</span>
-                            {% if event.points_awarded > 0 %}
-                            <span class="badge bg-success ms-2">+{{ event.points_awarded }}</span>
-                            {% endif %}
-                        </div>
-                    </div>
-                    {% if event.metadata %}
-                    <small class="text-muted mt-1 event-metadata">
-                        {% for key, value in event.metadata.items %}
-                        <span class="me-2">{{ key }}: {{ value }}</span>
-                        {% endfor %}
-                    </small>
-                    {% endif %}
-                </div>
-                {% endfor %}
+            <!-- Pager: only a bounded window of rows is in the DOM at once -->
+            <div class="card-body border-bottom d-flex align-items-center gap-2 py-2">
+                <button id="tl-prev" class="btn btn-sm btn-outline-secondary">&laquo; Newer</button>
+                <small id="tl-pager-label" class="text-muted flex-grow-1 text-center">Showing 0–0 of 0</small>
+                <button id="tl-next" class="btn btn-sm btn-outline-secondary">Older &raquo;</button>
+            </div>
+            <div class="card-body" style="max-height: 400px; overflow-y: auto;" id="timeline-scroll">
+                <div id="timeline-list"></div>
             </div>
         </div>
     </div>
@@ -293,10 +243,209 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function () {
+        // ===== Data (M-1: read once from JSON, never from the DOM) =====
+        const ALL = JSON.parse(document.getElementById('events-data').textContent);
+        const PLAYERS = JSON.parse(document.getElementById('players-data').textContent);
+        // ALL is emitted in chronological (timestamp) order by the view.
+        ALL.forEach((e, i) => { e.idx = i; e.sec = e.ts / 2; });
+
+        const RED_TEAM_ID = String('{{ round.team_red.id }}');
+        const BLUE_TEAM_ID = String('{{ round.team_blue.id }}');
+        const PB_RED = '{{ round.team_red.name|escapejs }}';
+        const PB_BLUE = '{{ round.team_blue.name|escapejs }}';
+
+        function esc(s) {
+            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+        function metaInt(ev, key) {
+            return (ev.meta && parseInt(ev.meta[key])) || 0;
+        }
+        function teamCls(teamId) {
+            teamId = String(teamId);
+            return (teamId === RED_TEAM_ID) ? 'text-danger'
+                : (teamId === BLUE_TEAM_ID ? 'text-primary' : 'fw-bold');
+        }
+        function nameSpan(name, teamId) {
+            return '<span class="' + teamCls(teamId) + '">' + esc(name) + '</span>';
+        }
+        // Colorize a player name inside an element by walking ONLY its
+        // text nodes (never markup/attributes), so single-letter names
+        // like "a"/"c" can't collide with injected class="" text. The
+        // split is word-boundary anchored (\b…\b) so a name is wrapped
+        // only as a whole token — never inside another word ("he[a]ls",
+        // "resupply_[a]mmo") and never inside a longer name ("s2" within
+        // "s21"). The pre-M-1 template lacked the \b on the split and so
+        // had both of these latent over-wrap bugs.
+        function escRegex(s) {
+            return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+        function replaceNameInElement(el, name, cls) {
+            if (!name) return;
+            const splitter = new RegExp('(\\b' + escRegex(name) + '\\b)', 'g');
+            const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+            const nodes = [];
+            let node;
+            while ((node = walker.nextNode())) nodes.push(node);
+            nodes.forEach(tn => {
+                const parts = tn.nodeValue.split(splitter);
+                if (parts.length === 1) return;
+                const frag = document.createDocumentFragment();
+                parts.forEach(part => {
+                    if (part === name) {
+                        const span = document.createElement('span');
+                        span.className = cls;
+                        span.textContent = name;
+                        frag.appendChild(span);
+                    } else if (part) {
+                        frag.appendChild(document.createTextNode(part));
+                    }
+                });
+                tn.parentNode.replaceChild(frag, tn);
+            });
+        }
+
+        // ===== Player filter checkboxes (built from JSON) =====
+        const playerFiltersEl = document.getElementById('player-filters');
+        playerFiltersEl.innerHTML = PLAYERS.map(p =>
+            '<div class="form-check">' +
+            '<input class="form-check-input player-filter" type="checkbox" value="' + p.id +
+            '" id="player-' + p.id + '" checked>' +
+            '<label class="form-check-label" for="player-' + p.id + '">' + esc(p.name) + '</label>' +
+            '</div>').join('');
+
         const typeCheckboxes = document.querySelectorAll('.type-filter');
         const playerCheckboxes = document.querySelectorAll('.player-filter');
+        function checkedValues(list) {
+            return Array.from(list).filter(n => n.checked).map(n => n.value);
+        }
 
-        // Overlay toggles UI (inserted above charts)
+        // ===== Filtering (operates on data, not the DOM) =====
+        // Preserve the original substring semantics: an event passes a type
+        // filter when its event_type *contains* the checkbox value.
+        function passes(ev, types, players) {
+            const typeMatch = types.some(t => ev.type.includes(t));
+            const playerMatch = players.includes(String(ev.aid)) ||
+                players.includes(String(ev.tid));
+            return typeMatch && playerMatch;
+        }
+
+        let filtered = ALL.slice();
+        let filteredPos = new Map();        // global idx -> position in `filtered`
+        const WIN = 250;                    // rows in the DOM at once (bounded)
+        let winStart = 0;                   // window offset into `filtered`
+
+        function recomputeFiltered() {
+            const types = checkedValues(typeCheckboxes);
+            const players = checkedValues(playerCheckboxes);
+            filtered = ALL.filter(ev => passes(ev, types, players));
+            filteredPos = new Map();
+            filtered.forEach((ev, i) => filteredPos.set(ev.idx, i));
+        }
+
+        // ===== Timeline row rendering =====
+        const listEl = document.getElementById('timeline-list');
+        const scrollEl = document.getElementById('timeline-scroll');
+        const pagerLabel = document.getElementById('tl-pager-label');
+        const prevBtn = document.getElementById('tl-prev');
+        const nextBtn = document.getElementById('tl-next');
+
+        function rowHtml(ev) {
+            // Plain escaped description; actor/target names are colorized
+            // post-render via the text-node walker (see renderWindow), which
+            // cannot corrupt the injected markup the way a string .replace()
+            // on escaped HTML does for one-character player names.
+            const desc = esc(ev.desc);
+            let bg = '';
+            if (ev.type === 'tag') bg = 'bg-light';
+            else if (ev.type === 'elimination') bg = 'bg-danger bg-opacity-10';
+            else if (ev.type === 'miss') bg = 'bg-secondary bg-opacity-10';
+            else if (ev.type === 'special') bg = 'bg-warning bg-opacity-10';
+            let meta = '';
+            if (ev.meta && Object.keys(ev.meta).length) {
+                meta = '<small class="text-muted mt-1 event-metadata">' +
+                    Object.entries(ev.meta).map(([k, v]) =>
+                        '<span class="me-2">' + esc(k) + ': ' + esc(v) + '</span>').join('') +
+                    '</small>';
+            }
+            const pts = ev.pts > 0
+                ? '<span class="badge bg-success ms-2">+' + ev.pts + '</span>' : '';
+            return '<div class="evt-row mb-2 p-2 border-bottom ' + bg +
+                '" data-idx="' + ev.idx + '">' +
+                '<div class="d-flex justify-content-between align-items-start">' +
+                '<span class="badge bg-dark">' + esc(ev.tf) + '</span>' +
+                '<div class="flex-grow-1 ms-2"><span class="event-desc">' +
+                esc(ev.icon) + ' ' + desc + '</span>' + pts + '</div></div>' +
+                meta + '</div>';
+        }
+
+        function renderWindow() {
+            if (filtered.length === 0) winStart = 0;
+            else if (winStart < 0) winStart = 0;
+            else if (winStart >= filtered.length) {
+                winStart = Math.max(0, Math.floor((filtered.length - 1) / WIN) * WIN);
+            }
+            const slice = filtered.slice(winStart, winStart + WIN);
+            listEl.innerHTML = slice.length
+                ? slice.map(rowHtml).join('')
+                : '<div class="text-muted p-3">No events match the current filters.</div>';
+            const a = filtered.length ? winStart + 1 : 0;
+            const b = Math.min(winStart + WIN, filtered.length);
+            pagerLabel.textContent = 'Showing ' + a + '–' + b + ' of ' + filtered.length;
+            prevBtn.disabled = winStart <= 0;
+            nextBtn.disabled = b >= filtered.length;
+            listEl.querySelectorAll('.evt-row').forEach(row => {
+                const ev = ALL[parseInt(row.dataset.idx)];
+                const descEl = row.querySelector('.event-desc');
+                if (ev && descEl) {
+                    // Actor first, then target (order matters for same-name
+                    // edge cases) — text nodes only, so markup stays intact.
+                    if (ev.an) replaceNameInElement(descEl, ev.an, teamCls(ev.at));
+                    if (ev.tn) replaceNameInElement(descEl, ev.tn, teamCls(ev.tt));
+                }
+                row.addEventListener('click', () => {
+                    pbPause();
+                    pbSetTime(ev.sec);
+                });
+            });
+        }
+
+        function applyFilters() {
+            recomputeFiltered();
+            winStart = 0;
+            renderWindow();
+            pbHighlight(false, false);
+        }
+        typeCheckboxes.forEach(cb => cb.addEventListener('change', applyFilters));
+        // Player checkboxes are generated; delegate the change event.
+        playerFiltersEl.addEventListener('change', applyFilters);
+        prevBtn.addEventListener('click', () => { winStart -= WIN; renderWindow(); });
+        nextBtn.addEventListener('click', () => { winStart += WIN; renderWindow(); });
+
+        // Metadata visibility is CSS-driven — no per-row listeners.
+        document.getElementById('toggle-metadata').addEventListener('change', e => {
+            scrollEl.classList.toggle('show-meta', e.target.checked);
+        });
+
+        // ===== Kill feed (client-rendered, recency-capped) =====
+        const KF_CAP = 250;
+        const kf = ALL.filter(e =>
+            e.type === 'tag' || e.type === 'missile' || e.type === 'elimination');
+        const kfShown = kf.slice(Math.max(0, kf.length - KF_CAP));
+        document.getElementById('kill-feed-body').innerHTML =
+            (kf.length > KF_CAP
+                ? '<div class="text-muted small mb-2">Showing the most recent ' +
+                  KF_CAP + ' of ' + kf.length + ' kill-feed events</div>'
+                : '') +
+            kfShown.map(e =>
+                '<div class="d-flex justify-content-between align-items-center mb-2 p-2 border-bottom">' +
+                '<span class="badge bg-secondary">' + esc(e.tf) + '</span><span>' +
+                nameSpan(e.an, String(e.at)) + ' ' + esc(e.icon) + ' ' +
+                (e.tid !== -1 ? nameSpan(e.tn, String(e.tt)) : '') +
+                '</span><span class="badge bg-info">+' + e.pts + '</span></div>').join('') ||
+            '<div class="text-muted p-2">No kills this round.</div>';
+
+        // ===== Charts (read the full JSON array, like the old DOM scan) =====
         const chartsRow = document.querySelector('.row.mt-4');
         const overlayControls = document.createElement('div');
         overlayControls.className = 'mb-3';
@@ -316,76 +465,38 @@
         `;
         chartsRow.parentNode.insertBefore(overlayControls, chartsRow);
 
-        function getCheckedValues(nodeList) {
-            return Array.from(nodeList).filter(n => n.checked).map(n => n.value);
-        }
+        const rawEntries = ALL.map(ev => ({
+            t: ev.type,
+            sec: ev.sec,
+            actor: String(ev.aid),
+            target: String(ev.tid),
+            points: ev.pts || 0,
+            meta_actor_role: (ev.meta && ev.meta.actor_role) || '',
+            meta_target_role: (ev.meta && ev.meta.target_role) || '',
+            meta_target_shields: metaInt(ev, 'target_shields'),
+            meta_target_shots_resupplied: metaInt(ev, 'target_shots_resupplied'),
+            meta_target_lives_resupplied: metaInt(ev, 'target_lives_resupplied'),
+            meta_spec_shots_resupplied: metaInt(ev, 'shots_resupplied'),
+            meta_spec_lives_resupplied: metaInt(ev, 'lives_resupplied'),
+            meta_nuke_lives: metaInt(ev, 'lives_taken'),
+        })).sort((a, b) => a.sec - b.sec);
 
-        // filtering logic
-        function applyFilters() {
-            const allowedTypes = getCheckedValues(typeCheckboxes);
-            const allowedPlayers = getCheckedValues(playerCheckboxes);
-            const entries = document.querySelectorAll('[data-event-type]');
-            entries.forEach(el => {
-                const t = el.getAttribute('data-event-type');
-                const actor = el.getAttribute('data-actor-id');
-                const target = el.getAttribute('data-target-id');
-                const playerMatch = allowedPlayers.includes(actor) || allowedPlayers.includes(target);
-                const typeMatch = allowedTypes.some(type => t.includes(type));
-                if (typeMatch && playerMatch) {
-                    el.style.display = '';
-                } else {
-                    el.style.display = 'none';
-                }
-            });
-        }
-
-        typeCheckboxes.forEach(cb => cb.addEventListener('change', applyFilters));
-        playerCheckboxes.forEach(cb => cb.addEventListener('change', applyFilters));
-
-        // initial filter pass
-        applyFilters();
-
-        // Build time-series arrays for charts with 5s buckets
-        const rawEntries = Array.from(document.querySelectorAll('[data-event-type]'))
-            .map(el => ({
-                t: el.getAttribute('data-event-type'),
-                time: el.querySelector('.badge.bg-dark') ? el.querySelector('.badge.bg-dark').textContent : '',
-                s: el.querySelector('.badge.bg-dark') ? el.querySelector('.badge.bg-dark').textContent : '',
-                actor: el.getAttribute('data-actor-id'),
-                target: el.getAttribute('data-target-id'),
-                points: (el.querySelector('.badge.bg-success') ? parseInt(el.querySelector('.badge.bg-success').textContent.replace('+', '')) : 0),
-                // read structured metadata from data attributes we added
-                meta_actor_role: el.dataset.metaActorRole || el.getAttribute('data-meta-actor-role') || '',
-                meta_target_role: el.dataset.metaTargetRole || el.getAttribute('data-meta-target-role') || '',
-                meta_target_shields: parseInt(el.dataset.metaTargetShields || el.getAttribute('data-meta-target-shields') || 0),
-                meta_target_shots_resupplied: parseInt(el.dataset.metaShotsResupplied || el.getAttribute('data-meta-single-shots-resupplied') || 0),
-                meta_target_lives_resupplied: parseInt(el.dataset.metaLivesResupplied || el.getAttribute('data-meta-single-lives-resupplied') || 0),
-                meta_spec_shots_resupplied: parseInt(el.dataset.metaShotsResupplied || el.getAttribute('data-meta-shots-resupplied') || 0),
-                meta_spec_lives_resupplied: parseInt(el.dataset.metaLivesResupplied || el.getAttribute('data-meta-lives-resupplied') || 0),
-                meta_nuke_lives: parseInt(el.dataset.meta_nuke_lives) || el.getAttribute('data-meta-lives-taken')
-            }))
-            .map(e => (Object.assign(e, { sec: (function (mmss) { const p = mmss.split(':'); if (p.length !== 2) return 0; return parseInt(p[0]) * 60 + parseInt(p[1]); })(e.time) })))
-            .sort((a, b) => a.sec - b.sec);
-
-        // Determine bucket range (use 5s buckets)
         const bucketSize = 5; // seconds
         const minSec = rawEntries.length ? rawEntries[0].sec : 0;
         const maxSec = rawEntries.length ? rawEntries[rawEntries.length - 1].sec : 0;
         const buckets = [];
-        // ensure at least one bucket and include final endpoint
         if (rawEntries.length === 0) buckets.push(0);
         for (let s = minSec; s <= maxSec + bucketSize; s += bucketSize) buckets.push(s);
 
-        // Team player lists and starting lives
-        const redPlayers = Array.from(document.querySelectorAll('.player-filter[data-team="red"]'));
-        const bluePlayers = Array.from(document.querySelectorAll('.player-filter[data-team="blue"]'));
-        const redIds = redPlayers.map(n => n.value);
-        const blueIds = bluePlayers.map(n => n.value);
-        const redStartingLives = redPlayers.reduce((acc, n) => acc + (parseInt(n.getAttribute('data-starting-lives')) || 0), 0);
-        const blueStartingLives = bluePlayers.reduce((acc, n) => acc + (parseInt(n.getAttribute('data-starting-lives')) || 0), 0);
-        const redStartingShots = redPlayers.reduce((acc, n) => acc + (parseInt(n.getAttribute('data-starting-shots')) || 0), 0);
-        const blueStartingShots = bluePlayers.reduce((acc, n) => acc + (parseInt(n.getAttribute('data-starting-shots')) || 0), 0);
-        // Initialize series (prefill with starting values so first/last buckets aren't empty)
+        const redPlayers = PLAYERS.filter(p => p.team === 'red');
+        const bluePlayers = PLAYERS.filter(p => p.team === 'blue');
+        const redIds = redPlayers.map(p => String(p.id));
+        const blueIds = bluePlayers.map(p => String(p.id));
+        const redStartingLives = redPlayers.reduce((a, p) => a + (parseInt(p.sl) || 0), 0);
+        const blueStartingLives = bluePlayers.reduce((a, p) => a + (parseInt(p.sl) || 0), 0);
+        const redStartingShots = redPlayers.reduce((a, p) => a + (parseInt(p.ss) || 0), 0);
+        const blueStartingShots = bluePlayers.reduce((a, p) => a + (parseInt(p.ss) || 0), 0);
+
         const times = buckets;
         const shotsRed = new Array(buckets.length).fill(redStartingShots);
         const shotsBlue = new Array(buckets.length).fill(blueStartingShots);
@@ -394,38 +505,29 @@
         const pointsRed = new Array(buckets.length).fill(0);
         const pointsBlue = new Array(buckets.length).fill(0);
 
-        // Start with starting lives/shots from player data
         let curRedLives = redStartingLives, curBlueLives = blueStartingLives;
         let curRedShots = redStartingShots, curBlueShots = blueStartingShots;
         let cumRedPoints = 0, cumBluePoints = 0;
 
-        // Map events into buckets
         rawEntries.forEach(ev => {
             const bucketIdx = Math.floor((ev.sec - minSec) / bucketSize);
-
-            // read parsed metadata fields (populated from data attributes)
             const meta_actor_role = ev.meta_actor_role || '';
             const meta_target_role = ev.meta_target_role || '';
-            const meta_target_shields = Number.isFinite(ev.meta_target_shields) ? ev.meta_target_shields : parseInt(ev.meta_target_shields || 0) || 0;
-            const meta_target_shots_resupplied = Number.isFinite(ev.meta_target_shots_resupplied) ? ev.meta_target_shots_resupplied : parseInt(ev.meta_target_shots_resupplied || 0) || 0;
-            const meta_target_lives_resupplied = Number.isFinite(ev.meta_target_lives_resupplied) ? ev.meta_target_lives_resupplied : parseInt(ev.meta_target_lives_resupplied || 0) || 0;
-            const meta_spec_shots_resupplied = Number.isFinite(ev.meta_spec_shots_resupplied) ? ev.meta_spec_shots_resupplied : parseInt(ev.meta_spec_shots_resupplied || 0) || 0;
-            const meta_spec_lives_resupplied = Number.isFinite(ev.meta_spec_lives_resupplied) ? ev.meta_spec_lives_resupplied : parseInt(ev.meta_spec_lives_resupplied || 0) || 0;
-            const meta_nuke_lives_taken = Number.isFinite(ev.meta_nuke_lives) ? ev.meta_nuke_lives : parseInt(ev.meta_nuke_lives || 0) || 0;
-            
+            const meta_target_shields = ev.meta_target_shields || 0;
+            const meta_target_shots_resupplied = ev.meta_target_shots_resupplied || 0;
+            const meta_target_lives_resupplied = ev.meta_target_lives_resupplied || 0;
+            const meta_spec_shots_resupplied = ev.meta_spec_shots_resupplied || 0;
+            const meta_spec_lives_resupplied = ev.meta_spec_lives_resupplied || 0;
+            const meta_nuke_lives_taken = ev.meta_nuke_lives || 0;
+
             if (ev.t === 'tag') {
-                role_to_max_shields = {
-                    "commander": 3,
-                    "heavy": 3,
-                    "scout": 1,
-                    "ammo": 1,
-                    "medic": 1,
-                }
+                const role_to_max_shields = {
+                    commander: 3, heavy: 3, scout: 1, ammo: 1, medic: 1,
+                };
                 if (redIds.includes(ev.actor)) {
                     curRedShots -= 1;
                     cumRedPoints += 100;
                     cumBluePoints -= 20;
-                    // if target_shields equals max shields for target role, count as life lost
                     if (meta_target_shields === role_to_max_shields[meta_target_role]) {
                         curBlueLives = Math.max(0, curBlueLives - 1);
                     }
@@ -444,24 +546,20 @@
                 if (redIds.includes(ev.actor)) {
                     cumRedPoints += 500;
                     cumBluePoints -= 100;
-                    curBlueLives -= 2
+                    curBlueLives -= 2;
                 }
                 if (blueIds.includes(ev.actor)) {
                     cumBluePoints += 500;
                     cumRedPoints -= 100;
-                    curRedLives -= 2
+                    curRedLives -= 2;
                 }
             }
 
             if (ev.t === 'special') {
-                // if ammo award shots per active ally
                 if (meta_actor_role === 'ammo') {
-                    // alert(meta_spec_shots_resupplied)
                     if (redIds.includes(ev.actor)) curRedShots += meta_spec_shots_resupplied;
                     if (blueIds.includes(ev.actor)) curBlueShots += meta_spec_shots_resupplied;
                 }
-
-                // if medic award lives per active ally
                 if (meta_actor_role === 'medic') {
                     if (redIds.includes(ev.actor)) curRedLives += meta_spec_lives_resupplied;
                     if (blueIds.includes(ev.actor)) curBlueLives += meta_spec_lives_resupplied;
@@ -473,22 +571,17 @@
                 if (blueIds.includes(ev.actor)) curBlueShots -= 1;
             }
 
-            // if ammo resupply, determine how many shots to increment up
             if (ev.t === 'resupply_ammo' && meta_actor_role === 'ammo') {
-                // alert(meta_target_shots_resupplied)
                 if (redIds.includes(ev.actor)) curRedShots += meta_target_shots_resupplied;
                 if (blueIds.includes(ev.actor)) curBlueShots += meta_target_shots_resupplied;
             }
 
-            // if medic resupply, determine how many lives to increment up
             if (ev.t === 'resupply_lives' && meta_actor_role === 'medic') {
-                // alert(meta_target_lives_resupplied)
                 if (redIds.includes(ev.actor)) curRedLives += meta_target_lives_resupplied;
                 if (blueIds.includes(ev.actor)) curBlueLives += meta_target_lives_resupplied;
             }
 
             if (ev.t === 'nuke_detonated') {
-                // award 500 points to detonating team and subtract 3 lives from each player opposing with lives above 0
                 if (redIds.includes(ev.actor)) {
                     cumRedPoints += 500;
                     curBlueLives -= meta_nuke_lives_taken;
@@ -500,7 +593,6 @@
             }
 
             if (ev.t === 'base_capture') {
-                // award 1001 points to capturing team
                 if (redIds.includes(ev.actor)) {
                     cumRedPoints += 1001;
                     curRedShots -= 3;
@@ -510,26 +602,23 @@
                     curBlueShots -= 3;
                 }
             }
-            // write cumulative values into this and subsequent buckets
+
             for (let i = bucketIdx; i < buckets.length; i++) {
                 shotsRed[i] = curRedShots;
                 shotsBlue[i] = curBlueShots;
                 pointsRed[i] = cumRedPoints;
                 pointsBlue[i] = cumBluePoints;
-                // lives reflect reductions as events processed; we snapshot current lives
                 livesRed[i] = curRedLives;
                 livesBlue[i] = curBlueLives;
             }
         });
 
-        // If no events, fill initial values
         if (rawEntries.length === 0) {
             shotsRed[0] = 0; shotsBlue[0] = 0;
             pointsRed[0] = 0; pointsBlue[0] = 0;
             livesRed[0] = redStartingLives; livesBlue[0] = blueStartingLives;
         }
 
-        // Smoothing: simple moving average with window 3
         function smooth(arr) {
             const out = new Array(arr.length).fill(0);
             const w = 3;
@@ -550,14 +639,12 @@
         const pointsRedSm = smooth(pointsRed);
         const pointsBlueSm = smooth(pointsBlue);
 
-        // Prepare labels formatted as MM:SS
         const labelTimes = times.map(s => {
             const mm = Math.floor(s / 60).toString().padStart(2, '0');
             const ss = (s % 60).toString().padStart(2, '0');
             return `${mm}:${ss}`;
         });
 
-        // Chart helper
         function makeLine(ctx, labels, dataSets, opts) {
             return new Chart(ctx, {
                 type: 'line',
@@ -581,16 +668,11 @@
             { label: '{{ round.team_blue.name }} Points', data: pointsBlueSm, borderColor: 'rgba(13,110,253,1)', backgroundColor: 'rgba(13,110,253,0.2)', fill: false, tension: 0.3 }
         ], { scales: { y: { beginAtZero: true } } });
 
-        // Overlay handling: draw vertical lines on all three charts for selected event types
         const overlayToggles = document.querySelectorAll('.overlay-toggle');
         function drawOverlays() {
-            // gather overlay event seconds for enabled types
-            const enabled = getCheckedValues(overlayToggles);
+            const enabled = checkedValues(overlayToggles);
             const overlaySecs = rawEntries.filter(e => enabled.includes(e.t)).map(e => e.sec);
-            // Clear existing plugin-generated annotations by updating datasets to include extra scatter overlays
             function makeVLines(chart) {
-                // Remove any existing plugin dataset markers (we won't add datasets; instead we use plugin to draw)
-                // We'll attach a simple plugin to draw afterDraw
                 if (chart.__overlayPlugin) chart.options.plugins._overlay_plugin = chart.__overlayPlugin;
                 chart.__overlayPlugin = {
                     id: '_overlay_plugin',
@@ -602,12 +684,10 @@
                         overlaySecs.forEach(s => {
                             const bucketIdx = Math.floor((s - start) / bucketSize);
                             if (bucketIdx < 0 || bucketIdx >= times.length) return;
-                            // pixel X for the bucket index
                             let x;
                             try {
                                 x = xScale.getPixelForValue(bucketIdx);
                             } catch (e) {
-                                // fallback: compute via proportion
                                 const range = xScale.max - xScale.min || 1;
                                 const frac = (bucketIdx - xScale.min) / range;
                                 x = chartInstance.chartArea.left + frac * (chartInstance.chartArea.right - chartInstance.chartArea.left);
@@ -623,305 +703,218 @@
                         });
                     }
                 };
-                // attach plugin
                 chart.options.plugins._overlay_plugin = chart.__overlayPlugin;
                 chart.update();
             }
             [chartShots, chartLives, chartPoints].forEach(makeVLines);
         }
-
         overlayToggles.forEach(t => t.addEventListener('change', drawOverlays));
-        // initial overlays
-        drawOverlays();
 
-        // --- Inline color actor/target names inside the event description ---
-        const RED_TEAM_ID = String('{{ round.team_red.id }}');
-        const BLUE_TEAM_ID = String('{{ round.team_blue.id }}');
+        // ===== SIM-05 PLAYBACK ENGINE (reads JSON, drives the window) =====
+        const MAX_SH = { commander: 3, heavy: 3, scout: 1, medic: 1, ammo: 1 };
+        const SHOT_POWER = { commander: 2, heavy: 3, scout: 1, medic: 1, ammo: 1 };
+        const ROLE_ICONS = {
+            commander: '{% static "commander.png" %}',
+            heavy: '{% static "heavy.png" %}',
+            scout: '{% static "scout.png" %}',
+            medic: '{% static "medic.png" %}',
+            ammo: '{% static "ammo.png" %}',
+        };
 
-        function escRegex(s) {
-            return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        }
-
-        // Replace occurrences of a name inside text nodes under `el` with a span of class `cls`.
-        function replaceNameInElement(el, name, cls) {
-            if (!name) return;
-            const re = new RegExp('\\b' + escRegex(name) + '\\b');
-            // Use TreeWalker to only touch text nodes (preserve icons and markup)
-            const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
-            const nodes = [];
-            let node;
-            while (node = walker.nextNode()) {
-                if (re.test(node.nodeValue)) nodes.push(node);
-            }
-            nodes.forEach(tn => {
-                // split by the name preserving matches
-                const parts = tn.nodeValue.split(new RegExp('(' + escRegex(name) + ')'));
-                if (parts.length === 1) return;
-                const frag = document.createDocumentFragment();
-                parts.forEach(part => {
-                    if (part === name) {
-                        const span = document.createElement('span');
-                        span.className = cls;
-                        span.textContent = name;
-                        frag.appendChild(span);
-                    } else {
-                        frag.appendChild(document.createTextNode(part));
-                    }
-                });
-                tn.parentNode.replaceChild(frag, tn);
-            });
-        }
-
-        function colorizeAllEvents() {
-            document.querySelectorAll('.mb-2').forEach(evEl => {
-                const actor = evEl.dataset.actorName || '';
-                const target = evEl.dataset.targetName || '';
-                const actorTeam = evEl.dataset.actorTeam || '';
-                const targetTeam = evEl.dataset.targetTeam || '';
-                const descEl = evEl.querySelector('.event-desc');
-                if (!descEl) return;
-                // First replace actor, then target (order matters for same-name edge cases)
-                if (actor) {
-                    const cls = (actorTeam === RED_TEAM_ID) ? 'text-danger' : (actorTeam === BLUE_TEAM_ID ? 'text-primary' : 'fw-bold');
-                    replaceNameInElement(descEl, actor, cls);
-                }
-                if (target) {
-                    const cls = (targetTeam === RED_TEAM_ID) ? 'text-danger' : (targetTeam === BLUE_TEAM_ID ? 'text-primary' : 'fw-bold');
-                    replaceNameInElement(descEl, target, cls);
-                }
-            });
-        }
-
-        // metadata toggle wiring
-        const metaToggle = document.getElementById('toggle-metadata');
-        if (metaToggle) {
-            // Set initial state (hidden by default)
-            document.querySelectorAll('.event-metadata').forEach(el => {
-                el.style.display = 'none';
-            });
-
-            metaToggle.addEventListener('change', (e) => {
-                document.querySelectorAll('.event-metadata').forEach(el => {
-                    el.style.display = e.target.checked ? 'block' : 'none';
-                });
-            });
-        }
-
-        // run initial colorization
-        colorizeAllEvents();
-
-        // ===== SIM-05 PLAYBACK ENGINE =====
-        (function pbEngine() {
-            const MAX_SH = {commander: 3, heavy: 3, scout: 1, medic: 1, ammo: 1};
-            const SHOT_POWER = {commander: 2, heavy: 3, scout: 1, medic: 1, ammo: 1};
-            const ROLE_ICONS = {
-                commander: '{% static "commander.png" %}',
-                heavy:     '{% static "heavy.png" %}',
-                scout:     '{% static "scout.png" %}',
-                medic:     '{% static "medic.png" %}',
-                ammo:      '{% static "ammo.png" %}',
+        const pbPlayers = {};
+        PLAYERS.forEach(p => {
+            const id = String(p.id);
+            const role = (p.role || 'scout').toLowerCase();
+            const sl = parseInt(p.sl) || 0;
+            const ss = parseInt(p.ss) || 0;
+            const sh = MAX_SH[role] || 1;
+            pbPlayers[id] = {
+                id, name: p.name || id, team: p.team || 'red',
+                role, startLives: sl, startShots: ss, startShields: sh,
+                lives: sl, shots: ss, shields: sh, score: 0,
+                lastDownedAt: null, isElim: false,
             };
-            const PB_RED = '{{ round.team_red.name|escapejs }}';
-            const PB_BLUE = '{{ round.team_blue.name|escapejs }}';
+        });
 
-            function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+        // TIME-01 DISPLAY boundary: ev.sec = ts/2 (1 tick = 0.5 s). The whole
+        // playback engine stays in seconds. pbEvts is already chronological.
+        const pbEvts = ALL.map(ev => ({
+            idx: ev.idx,
+            type: ev.type,
+            actorId: String(ev.aid),
+            targetId: String(ev.tid),
+            sec: ev.sec,
+            points: ev.pts || 0,
+            shotsRes: metaInt(ev, 'target_shots_resupplied'),
+            livesRes: metaInt(ev, 'target_lives_resupplied'),
+        }));
 
-            // Build per-player registry from player filter checkboxes
-            const pbPlayers = {};
-            document.querySelectorAll('.player-filter').forEach(cb => {
-                const id = cb.value;
-                const role = (cb.dataset.role || 'scout').toLowerCase();
-                const sl = parseInt(cb.dataset.startingLives) || 0;
-                const ss = parseInt(cb.dataset.startingShots) || 0;
-                const sh = MAX_SH[role] || 1;
-                pbPlayers[id] = {
-                    id, name: cb.dataset.playerName || id, team: cb.dataset.team || 'red',
-                    role, startLives: sl, startShots: ss, startShields: sh,
-                    lives: sl, shots: ss, shields: sh, score: 0, lastDownedAt: null, isElim: false,
-                };
+        function pbReset() {
+            Object.values(pbPlayers).forEach(p => {
+                p.lives = p.startLives; p.shots = p.startShots; p.shields = p.startShields;
+                p.score = 0; p.lastDownedAt = null; p.isElim = false;
             });
+        }
 
-            // Parse all event elements into structured list sorted by game time
-            const pbEvts = Array.from(document.querySelectorAll('[data-event-type]')).map(el => ({
-                el,
-                type: el.dataset.eventType,
-                actorId: el.dataset.actorId,
-                targetId: el.dataset.targetId,
-                // TIME-01 DISPLAY boundary: data-ts is the canonical TICK
-                // timestamp (1 tick = 0.5 s). Convert to seconds (÷2) here so
-                // the entire playback engine below (scrubber, mm:ss, respawn
-                // windows) stays in seconds and unchanged.
-                sec: parseInt(el.dataset.ts || 0) / 2,
-                points: parseInt(el.dataset.points || 0),
-                shotsRes: parseInt(el.getAttribute('data-meta-single-shots-resupplied') || 0),
-                livesRes: parseInt(el.getAttribute('data-meta-single-lives-resupplied') || 0),
-            })).sort((a, b) => a.sec - b.sec);
-
-            function pbReset() {
-                Object.values(pbPlayers).forEach(p => {
-                    p.lives = p.startLives; p.shots = p.startShots; p.shields = p.startShields;
-                    p.score = 0; p.lastDownedAt = null; p.isElim = false;
-                });
-            }
-
-            function pbApply(ev) {
-                const a = pbPlayers[ev.actorId], t = pbPlayers[ev.targetId];
-                if (a) a.score += ev.points;
-                if (ev.type === 'tag') {
-                    if (a) a.shots = Math.max(0, a.shots - 1);
-                    if (t) {
-                        t.score -= 20;
-                        // Track shields internally using the actor's shot power
-                        const sp = (a ? SHOT_POWER[a.role] : null) || 1;
-                        t.shields = Math.max(0, t.shields - sp);
-                        if (t.shields === 0) {
-                            t.lives = Math.max(0, t.lives - 1);
-                            t.lastDownedAt = ev.sec;
-                            t.shields = MAX_SH[t.role] || 1;
-                            if (t.lives === 0) t.isElim = true;
-                        }
-                    }
-                } else if (ev.type === 'elimination') {
-                    if (t) { t.lives = 0; t.isElim = true; t.lastDownedAt = ev.sec; }
-                } else if (ev.type === 'miss') {
-                    if (a) a.shots = Math.max(0, a.shots - 1);
-                } else if (ev.type === 'missile_hit') {
-                    if (t) {
-                        t.lives = Math.max(0, t.lives - 2);
+        function pbApply(ev) {
+            const a = pbPlayers[ev.actorId], t = pbPlayers[ev.targetId];
+            if (a) a.score += ev.points;
+            if (ev.type === 'tag') {
+                if (a) a.shots = Math.max(0, a.shots - 1);
+                if (t) {
+                    t.score -= 20;
+                    const sp = (a ? SHOT_POWER[a.role] : null) || 1;
+                    t.shields = Math.max(0, t.shields - sp);
+                    if (t.shields === 0) {
+                        t.lives = Math.max(0, t.lives - 1);
                         t.lastDownedAt = ev.sec;
                         t.shields = MAX_SH[t.role] || 1;
                         if (t.lives === 0) t.isElim = true;
                     }
-                } else if (ev.type === 'resupply_ammo') {
-                    if (t) { t.shots += ev.shotsRes; t.shields = MAX_SH[t.role] || 1; t.lastDownedAt = ev.sec; }
-                } else if (ev.type === 'resupply_lives') {
-                    if (t) { t.lives += ev.livesRes; t.shields = MAX_SH[t.role] || 1; t.lastDownedAt = ev.sec; }
-                } else if (ev.type === 'base_capture') {
-                    if (a && a.role !== 'ammo') a.shots = Math.max(0, a.shots - 3);
                 }
+            } else if (ev.type === 'elimination') {
+                if (t) { t.lives = 0; t.isElim = true; t.lastDownedAt = ev.sec; }
+            } else if (ev.type === 'miss') {
+                if (a) a.shots = Math.max(0, a.shots - 1);
+            } else if (ev.type === 'missile_hit') {
+                if (t) {
+                    t.lives = Math.max(0, t.lives - 2);
+                    t.lastDownedAt = ev.sec;
+                    t.shields = MAX_SH[t.role] || 1;
+                    if (t.lives === 0) t.isElim = true;
+                }
+            } else if (ev.type === 'resupply_ammo') {
+                if (t) { t.shots += ev.shotsRes; t.shields = MAX_SH[t.role] || 1; t.lastDownedAt = ev.sec; }
+            } else if (ev.type === 'resupply_lives') {
+                if (t) { t.lives += ev.livesRes; t.shields = MAX_SH[t.role] || 1; t.lastDownedAt = ev.sec; }
+            } else if (ev.type === 'base_capture') {
+                if (a && a.role !== 'ammo') a.shots = Math.max(0, a.shots - 3);
             }
+        }
 
-            let pbCur = 0, pbRunning = false, pbSpeed = 1, pbTimer = null;
+        let pbCur = 0, pbRunning = false, pbSpeed = 1, pbTimer = null;
 
-            function pbSetTime(t, scroll) {
-                pbCur = Math.max(0, Math.min(900, t));
+        function pbSetTime(t, scroll) {
+            pbCur = Math.max(0, Math.min(900, t));
+            pbReset();
+            for (const ev of pbEvts) { if (ev.sec > pbCur) break; pbApply(ev); }
+            pbRefresh(scroll !== false, true);
+        }
+
+        function pbRefresh(scroll, smoothScroll) {
+            const mm = String(Math.floor(pbCur / 60)).padStart(2, '0');
+            const ss = String(Math.floor(pbCur % 60)).padStart(2, '0');
+            document.getElementById('pb-time-display').textContent = mm + ':' + ss;
+            document.getElementById('pb-scrubber').value = pbCur;
+            pbDrawBoards();
+            pbHighlight(scroll, smoothScroll);
+        }
+
+        function pbHighlight(scroll, smoothScroll) {
+            const old = listEl.querySelector('.pb-cur-evt');
+            if (old) { old.classList.remove('pb-cur-evt'); old.style.outline = ''; }
+            let cur = null;
+            for (const ev of pbEvts) { if (ev.sec <= pbCur) cur = ev; else break; }
+            if (!cur) return;
+            // Page the window onto the current event if it's filtered-in but
+            // off-window; if it's filtered out there is simply no row.
+            if (!filteredPos.has(cur.idx)) return;
+            const fIdx = filteredPos.get(cur.idx);
+            if (fIdx < winStart || fIdx >= winStart + WIN) {
+                winStart = Math.floor(fIdx / WIN) * WIN;
+                renderWindow();
+            }
+            const row = listEl.querySelector('.evt-row[data-idx="' + cur.idx + '"]');
+            if (row) {
+                row.classList.add('pb-cur-evt');
+                row.style.outline = '2px solid #ffc107';
+                if (scroll) row.scrollIntoView({ block: 'nearest', behavior: smoothScroll ? 'smooth' : 'instant' });
+            }
+        }
+
+        function pbRowClass(p) {
+            if (p.isElim) return 'table-secondary opacity-50';
+            if (p.lastDownedAt !== null) {
+                const elapsed = pbCur - p.lastDownedAt;
+                if (elapsed < 4) return 'table-secondary';
+                if (elapsed < 8) return 'table-secondary opacity-75';
+            }
+            return '';
+        }
+
+        function pbCellClass(p) {
+            if (p.isElim) return '';
+            if (p.lastDownedAt !== null && (pbCur - p.lastDownedAt) < 8) return '';
+            return p.team === 'red' ? 'text-danger' : 'text-primary';
+        }
+
+        function pbDrawBoard(id, teamName, color, pList) {
+            const total = pList.reduce((s, p) => s + p.score, 0);
+            const rows = pList.map(p => {
+                const rowCls = pbRowClass(p);
+                const cc = pbCellClass(p);
+                const livesTxt = p.isElim ? '&#9760;' : p.lives;
+                return '<tr class="' + rowCls + '">' +
+                    '<td class="' + cc + '">' + esc(p.name) + '<img src="' + (ROLE_ICONS[p.role] || '') + '" alt="' + esc(p.role) + '" title="' + esc(p.role) + '" height="16" class="ms-1" style="vertical-align:middle"></td>' +
+                    '<td class="' + cc + ' fw-bold">' + p.score.toLocaleString() + '</td>' +
+                    '<td class="' + cc + '">' + livesTxt + '</td>' +
+                    '<td class="' + cc + '">' + p.shots + '</td></tr>';
+            }).join('');
+            document.getElementById(id).innerHTML =
+                '<div class="d-flex justify-content-between fw-bold text-' + color + ' mb-1">' +
+                '<span>' + esc(teamName) + '</span><span>' + total.toLocaleString() + '</span></div>' +
+                '<table class="table table-sm table-bordered mb-0">' +
+                '<thead class="table-' + color + '"><tr><th>Player</th><th>Score</th><th>Lives</th><th>Shots</th></tr></thead>' +
+                '<tbody>' + rows + '</tbody></table>';
+        }
+
+        function pbDrawBoards() {
+            const reds = Object.values(pbPlayers).filter(p => p.team === 'red');
+            const blues = Object.values(pbPlayers).filter(p => p.team === 'blue');
+            pbDrawBoard('pb-sb-red', PB_RED, 'danger', reds);
+            pbDrawBoard('pb-sb-blue', PB_BLUE, 'primary', blues);
+        }
+
+        function pbPlay() {
+            if (pbRunning) return;
+            pbRunning = true;
+            document.getElementById('pb-play').textContent = '⏸';
+            pbTimer = setInterval(() => {
+                pbCur += pbSpeed * 0.1;
+                if (pbCur >= 900) { pbCur = 900; pbPause(); }
                 pbReset();
                 for (const ev of pbEvts) { if (ev.sec > pbCur) break; pbApply(ev); }
-                pbRefresh(scroll !== false, true);
-            }
+                pbRefresh(true, false);
+            }, 100);
+        }
 
-            function pbRefresh(scroll, smooth) {
-                const mm = String(Math.floor(pbCur / 60)).padStart(2, '0');
-                const ss = String(Math.floor(pbCur % 60)).padStart(2, '0');
-                document.getElementById('pb-time-display').textContent = mm + ':' + ss;
-                document.getElementById('pb-scrubber').value = pbCur;
-                pbDrawBoards();
-                pbHighlight(scroll, smooth);
-            }
+        function pbPause() {
+            if (!pbRunning) return;
+            pbRunning = false;
+            document.getElementById('pb-play').innerHTML = '&#9654;';
+            clearInterval(pbTimer);
+        }
 
-            function pbHighlight(scroll, smooth) {
-                document.querySelectorAll('.pb-cur-evt').forEach(el => {
-                    el.classList.remove('pb-cur-evt');
-                    el.style.outline = '';
-                });
-                let last = null;
-                for (const ev of pbEvts) { if (ev.sec <= pbCur) last = ev; else break; }
-                if (last) {
-                    last.el.classList.add('pb-cur-evt');
-                    last.el.style.outline = '2px solid #ffc107';
-                    if (scroll) last.el.scrollIntoView({block: 'nearest', behavior: smooth ? 'smooth' : 'instant'});
-                }
-            }
+        document.getElementById('pb-play').addEventListener('click', () => pbRunning ? pbPause() : pbPlay());
+        document.getElementById('pb-step-fwd').addEventListener('click', () => {
+            pbPause();
+            const nxt = pbEvts.find(ev => ev.sec > pbCur);
+            pbSetTime(nxt ? nxt.sec : 900);
+        });
+        document.getElementById('pb-step-back').addEventListener('click', () => {
+            pbPause();
+            let prev = null;
+            for (const ev of pbEvts) { if (ev.sec < pbCur) prev = ev; else break; }
+            pbSetTime(prev ? prev.sec : 0);
+        });
+        document.getElementById('pb-speed').addEventListener('change', e => { pbSpeed = parseFloat(e.target.value); });
+        document.getElementById('pb-scrubber').addEventListener('input', e => { pbPause(); pbSetTime(parseFloat(e.target.value), false); });
 
-            // Bootstrap 5 table cells use --bs-table-color (CSS variable), so text-* classes
-            // on <tr> don't cascade. Use table-* on <tr> for downed/elim states, and apply
-            // team colors via text-* directly on each <td> for active players.
-            function pbRowClass(p) {
-                if (p.isElim) return 'table-secondary opacity-50';
-                if (p.lastDownedAt !== null) {
-                    const elapsed = pbCur - p.lastDownedAt;
-                    if (elapsed < 4) return 'table-secondary';
-                    if (elapsed < 8) return 'table-secondary opacity-75';
-                }
-                return '';
-            }
-
-            function pbCellClass(p) {
-                if (p.isElim) return '';
-                if (p.lastDownedAt !== null && (pbCur - p.lastDownedAt) < 8) return '';
-                return p.team === 'red' ? 'text-danger' : 'text-primary';
-            }
-
-            function pbDrawBoard(id, teamName, color, pList) {
-                const total = pList.reduce((s, p) => s + p.score, 0);
-                const rows = pList.map(p => {
-                    const rowCls = pbRowClass(p);
-                    const cc = pbCellClass(p);
-                    const livesTxt = p.isElim ? '&#9760;' : p.lives;
-                    return '<tr class="' + rowCls + '">' +
-                        '<td class="' + cc + '">' + esc(p.name) + '<img src="' + (ROLE_ICONS[p.role] || '') + '" alt="' + esc(p.role) + '" title="' + esc(p.role) + '" height="16" class="ms-1" style="vertical-align:middle"></td>' +
-                        '<td class="' + cc + ' fw-bold">' + p.score.toLocaleString() + '</td>' +
-                        '<td class="' + cc + '">' + livesTxt + '</td>' +
-                        '<td class="' + cc + '">' + p.shots + '</td></tr>';
-                }).join('');
-                document.getElementById(id).innerHTML =
-                    '<div class="d-flex justify-content-between fw-bold text-' + color + ' mb-1">' +
-                    '<span>' + esc(teamName) + '</span><span>' + total.toLocaleString() + '</span></div>' +
-                    '<table class="table table-sm table-bordered mb-0">' +
-                    '<thead class="table-' + color + '"><tr><th>Player</th><th>Score</th><th>Lives</th><th>Shots</th></tr></thead>' +
-                    '<tbody>' + rows + '</tbody></table>';
-            }
-
-            function pbDrawBoards() {
-                const reds = Object.values(pbPlayers).filter(p => p.team === 'red');
-                const blues = Object.values(pbPlayers).filter(p => p.team === 'blue');
-                pbDrawBoard('pb-sb-red', PB_RED, 'danger', reds);
-                pbDrawBoard('pb-sb-blue', PB_BLUE, 'primary', blues);
-            }
-
-            function pbPlay() {
-                if (pbRunning) return;
-                pbRunning = true;
-                document.getElementById('pb-play').textContent = '⏸';
-                pbTimer = setInterval(() => {
-                    pbCur += pbSpeed * 0.1;
-                    if (pbCur >= 900) { pbCur = 900; pbPause(); }
-                    pbReset();
-                    for (const ev of pbEvts) { if (ev.sec > pbCur) break; pbApply(ev); }
-                    pbRefresh(true, false);
-                }, 100);
-            }
-
-            function pbPause() {
-                if (!pbRunning) return;
-                pbRunning = false;
-                document.getElementById('pb-play').innerHTML = '&#9654;';
-                clearInterval(pbTimer);
-            }
-
-            document.getElementById('pb-play').addEventListener('click', () => pbRunning ? pbPause() : pbPlay());
-            document.getElementById('pb-step-fwd').addEventListener('click', () => {
-                pbPause();
-                const nxt = pbEvts.find(ev => ev.sec > pbCur);
-                pbSetTime(nxt ? nxt.sec : 900);
-            });
-            document.getElementById('pb-step-back').addEventListener('click', () => {
-                pbPause();
-                let prev = null;
-                for (const ev of pbEvts) { if (ev.sec < pbCur) prev = ev; else break; }
-                pbSetTime(prev ? prev.sec : 0);
-            });
-            document.getElementById('pb-speed').addEventListener('change', e => { pbSpeed = parseFloat(e.target.value); });
-            document.getElementById('pb-scrubber').addEventListener('input', e => { pbPause(); pbSetTime(parseFloat(e.target.value), false); });
-
-            // Click any event in the timeline → jump to that timestamp
-            pbEvts.forEach(ev => {
-                ev.el.style.cursor = 'pointer';
-                ev.el.addEventListener('click', () => { pbPause(); pbSetTime(ev.sec); });
-            });
-
-            pbSetTime(0);
-        })();
+        // ===== Initial render =====
+        recomputeFiltered();
+        renderWindow();
+        drawOverlays();
+        pbSetTime(0);
     });
 </script>
 <div class="mt-4">
