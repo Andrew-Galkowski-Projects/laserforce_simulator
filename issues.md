@@ -20,7 +20,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ~~T-2~~ | ~~🟡~~ | ~~Teams list~~ | ~~`7/6` players label on a valid roster is misleading~~ _(fixed)_ |
 | ~~CT-1~~ | ~~🟡~~ | ~~Assign Slots~~ | ~~Form requires all 6 slots filled at once; no partial save~~ _(fixed)_ |
 | ~~CT-2~~ | ~~🟡~~ | ~~Add Player~~ | ~~Profile number fields (Age etc.) have no min/max bounds~~ _(fixed)_ |
-| PD-1 | 🟡 | Player detail | Stat category grouping doesn't match documented categories |
+| ~~PD-1~~ | ~~🟡~~ | ~~Player detail~~ | ~~Stat category grouping doesn't match documented categories~~ _(fixed)_ |
 | PD-2 | 🟡 | Player edit | A11y: missing form label / autocomplete attribute |
 | M-2  | 🟡 | Match list | Many stale `0-0 Tie` seed matches in history |
 | BS-1 | 🟡 | Batch Sim | Run ~8× slower than the ~25 ms/round figure in the docs |
@@ -85,7 +85,7 @@ block is unused. Confirmed it varies with roster size — a freshly created
 team with 0 active players shows `0 2 slots`. Fix: delete the placeholder
 lines, leaving just `2 slots`.
 
-### 🟡 PD-1 — Stat category grouping on player detail looks jumbled
+### ~~🟡 PD-1 — Stat category grouping on player detail looks jumbled~~ _(fixed)_
 On `/<team>/player/<id>/` stats are grouped under headings that don't
 match the documented categories (teams/CLAUDE.md). Observed: *Decision
 Making* group contains Positioning, Adaptability, **Special Usage**,

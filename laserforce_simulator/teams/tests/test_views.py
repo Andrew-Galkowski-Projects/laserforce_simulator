@@ -92,3 +92,52 @@ class TeamListPlayerCountLabelTest(TestCase):
         html = self.client.get(reverse("team_list")).content.decode()
         self.assertIn("1/6 active", html)
         self.assertNotIn("(+", html)  # no bench players → no bench suffix
+
+
+class PlayerDetailStatGroupingTest(TestCase):
+    """Regression: PD-1 — player detail stat groups must match the five
+    documented categories in teams/CLAUDE.md (Awareness / Decision-making
+    / Physical / Team / Role), with every one of the 19 stats appearing
+    exactly once."""
+
+    DOCUMENTED = {
+        "Awareness": {
+            "Player Awareness",
+            "Game Awareness",
+            "Resource Awareness",
+        },
+        "Decision-making": {"Decision Making"},
+        "Physical": {
+            "Positioning",
+            "Stamina",
+            "Speed",
+            "Flexibility",
+            "Adaptability",
+        },
+        "Team": {"Communication", "Teamwork"},
+        "Role": {
+            "Offensive Synergy",
+            "Defensive Synergy",
+            "Midfield Synergy",
+            "Resupply Synergy",
+            "Resupply Efficiency",
+            "Accuracy",
+            "Survival",
+            "Special Usage",
+        },
+    }
+
+    def _groups(self):
+        team = Team.objects.create(name="PD1 Team")
+        p = Player.objects.create(team=team, name="Stat Player")
+        url = reverse("player_detail", kwargs={"team_id": team.id, "player_id": p.id})
+        return self.client.get(url).context["stat_groups"]
+
+    def test_groups_match_documented_categories(self):
+        got = {name: {label for label, _ in rows} for name, rows in self._groups()}
+        self.assertEqual(got, self.DOCUMENTED)
+
+    def test_every_stat_appears_exactly_once(self):
+        labels = [label for _, rows in self._groups() for label, _ in rows]
+        self.assertEqual(len(labels), 19)
+        self.assertEqual(len(set(labels)), 19, "a stat is duplicated/missing")
