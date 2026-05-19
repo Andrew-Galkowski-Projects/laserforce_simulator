@@ -441,10 +441,15 @@ class ResourceBasedSimulator:
             "ammo": {"lives": 10, "shots": 15, "special": 0, "missiles": 0},
         }
 
+    @transaction.atomic
     def simulate_match(
         self, team_red, team_blue, match_type="friendly", *, arena_map=None
     ):
-        """Simulate a full 2-round match with detailed tracking"""
+        """Simulate a full 2-round match with detailed tracking.
+
+        M-2: atomic so a mid-simulation failure rolls back the Match row
+        created up front — no empty 0-0 / 0-round match is ever persisted.
+        """
         match = Match.objects.create(
             team_red=team_red, team_blue=team_blue, match_type=match_type
         )

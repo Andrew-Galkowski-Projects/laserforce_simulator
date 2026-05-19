@@ -22,7 +22,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ~~CT-2~~ | ~~🟡~~ | ~~Add Player~~ | ~~Profile number fields (Age etc.) have no min/max bounds~~ _(fixed)_ |
 | ~~PD-1~~ | ~~🟡~~ | ~~Player detail~~ | ~~Stat category grouping doesn't match documented categories~~ _(fixed)_ |
 | ~~PD-2~~ | ~~🟡~~ | ~~Player edit~~ | ~~A11y: missing form label / autocomplete attribute~~ _(fixed)_ |
-| M-2  | 🟡 | Match list | Many stale `0-0 Tie` seed matches in history |
+| ~~M-2~~ | ~~🟡~~ | ~~Match list~~ | ~~Many stale `0-0 Tie` seed matches in history~~ _(fixed)_ |
 | BS-1 | 🟡 | Batch Sim | Run ~8× slower than the ~25 ms/round figure in the docs |
 | T-1  | 🟡 | Global | `/favicon.ico` 404 on every page |
 | E-1  | ℹ️ | Setup | 3 unapplied migrations on fresh `runserver` |
@@ -147,7 +147,7 @@ under MOVE-01) produce far more. Loads without error here, but will
 degrade badly (slow render, large response) on big rounds. Recommend
 server-side pagination or windowing for the HTML timeline.
 
-### 🟡 M-2 — Many stale "1 vs 2 — Tie 0–0" matches in history
+### ~~🟡 M-2 — Many stale "1 vs 2 — Tie 0–0" matches in history~~ _(fixed)_
 The match list shows numerous old `1 vs 2 … Tie / 0 - 0 / Rounds 0-0`
 entries (Oct 17 2025). Likely stale seed data, but a `0-0` tie with
 `0-0` rounds suggests matches persisted without a successful
