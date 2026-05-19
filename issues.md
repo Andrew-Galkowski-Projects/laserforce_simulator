@@ -19,7 +19,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ~~M-1~~ | ~~🟠~~ | ~~Event log~~ | ~~HTML event log renders the entire log (~20.6k DOM nodes) with no server pagination~~ _(DEFERRED: needs dedicated redesign PR (playback DOM-row coupling), per user decision)_ |
 | ~~T-2~~ | ~~🟡~~ | ~~Teams list~~ | ~~`7/6` players label on a valid roster is misleading~~ _(fixed)_ |
 | ~~CT-1~~ | ~~🟡~~ | ~~Assign Slots~~ | ~~Form requires all 6 slots filled at once; no partial save~~ _(fixed)_ |
-| CT-2 | 🟡 | Add Player | Profile number fields (Age etc.) have no min/max bounds |
+| ~~CT-2~~ | ~~🟡~~ | ~~Add Player~~ | ~~Profile number fields (Age etc.) have no min/max bounds~~ _(fixed)_ |
 | PD-1 | 🟡 | Player detail | Stat category grouping doesn't match documented categories |
 | PD-2 | 🟡 | Player edit | A11y: missing form label / autocomplete attribute |
 | M-2  | 🟡 | Match list | Many stale `0-0 Tie` seed matches in history |
@@ -119,7 +119,7 @@ server-side duplicate-player validation can't be reached via the UI
 because the client `required` check fires first.) Consider allowing
 partial saves or messaging that 6 players are required first.
 
-### 🟡 CT-2 — Profile number inputs have no min/max bounds
+### ~~🟡 CT-2 — Profile number inputs have no min/max bounds~~ _(fixed)_
 On Add/Edit Player, Age / Started playing age / Total games report
 `valuemin=0 valuemax=0` (no real bounds) while the 19 stat fields
 correctly use `0–100`. These accept arbitrary/negative numbers. Add

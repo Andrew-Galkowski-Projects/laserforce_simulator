@@ -313,3 +313,44 @@ class TeamSlotFormPartialSaveTest(TestCase):
     def test_empty_assignment_is_valid(self):
         form = TeamSlotForm(data={}, instance=self.team)
         self.assertTrue(form.is_valid(), form.errors.as_json())
+
+
+class PlayerFormProfileBoundsTest(TestCase):
+    """Regression: CT-2 — Age / Started playing age / Total games had no
+    real min/max (reported valuemin=0 valuemax=0) and accepted arbitrary
+    or negative numbers. They must have bounded widgets and server-side
+    validators."""
+
+    PROFILE_FIELDS = ("age", "started_playing_age", "total_games")
+
+    def test_profile_widgets_declare_min_and_max(self):
+        form = PlayerForm()
+        for name in self.PROFILE_FIELDS:
+            attrs = form.fields[name].widget.attrs
+            self.assertIn("min", attrs, f"{name} widget missing min")
+            self.assertIn("max", attrs, f"{name} widget missing max")
+            self.assertGreater(
+                int(attrs["max"]), int(attrs["min"]), f"{name} max <= min"
+            )
+
+    def test_negative_and_oversized_values_rejected(self):
+        for name, bad in [
+            ("age", -1),
+            ("age", 999),
+            ("started_playing_age", -3),
+            ("started_playing_age", 999),
+            ("total_games", -1),
+            ("total_games", 10_000_000),
+        ]:
+            data = _minimal_stat_payload(**{name: bad})
+            form = PlayerForm(data=data)
+            self.assertFalse(
+                form.is_valid(),
+                f"{name}={bad} should be rejected by validators",
+            )
+            self.assertIn(name, form.errors)
+
+    def test_sensible_values_accepted(self):
+        data = _minimal_stat_payload(age=25, started_playing_age=12, total_games=300)
+        form = PlayerForm(data=data)
+        self.assertTrue(form.is_valid(), form.errors.as_json())

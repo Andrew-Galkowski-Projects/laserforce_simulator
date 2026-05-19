@@ -1,7 +1,17 @@
 from django import forms
+from django.core.validators import MinValueValidator, MaxValueValidator
+
 from .models import Team, Player, ROLE_CHOICES
 
 _STAT_WIDGET_ATTRS = {"class": "form-control", "min": "0", "max": "100"}
+
+# CT-2: sensible bounds for the profile number fields (previously
+# unbounded — reported valuemin=0 valuemax=0 and accepted negatives).
+_PROFILE_BOUNDS = {
+    "age": (5, 100),
+    "started_playing_age": (3, 100),
+    "total_games": (0, 100_000),
+}
 
 
 class TeamForm(forms.ModelForm):
@@ -58,12 +68,14 @@ class PlayerForm(forms.ModelForm):
             "name": forms.TextInput(
                 attrs={"class": "form-control", "placeholder": "Enter player name"}
             ),
-            "age": forms.NumberInput(attrs={"class": "form-control", "min": "0"}),
+            "age": forms.NumberInput(
+                attrs={"class": "form-control", "min": "5", "max": "100"}
+            ),
             "started_playing_age": forms.NumberInput(
-                attrs={"class": "form-control", "min": "0"}
+                attrs={"class": "form-control", "min": "3", "max": "100"}
             ),
             "total_games": forms.NumberInput(
-                attrs={"class": "form-control", "min": "0"}
+                attrs={"class": "form-control", "min": "0", "max": "100000"}
             ),
             "home_site": forms.TextInput(
                 attrs={"class": "form-control", "placeholder": "e.g. Ultrazone Chicago"}
@@ -96,6 +108,11 @@ class PlayerForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         if self.instance and self.instance.pk and self.instance.preferred_roles:
             self.initial["preferred_roles"] = self.instance.preferred_roles
+        # CT-2: enforce the profile bounds server-side too (widget min/max
+        # alone is bypassable). Model fields are unchanged → no migration.
+        for name, (lo, hi) in _PROFILE_BOUNDS.items():
+            self.fields[name].validators.append(MinValueValidator(lo))
+            self.fields[name].validators.append(MaxValueValidator(hi))
 
     def clean_preferred_roles(self):
         return list(self.cleaned_data.get("preferred_roles", []))
