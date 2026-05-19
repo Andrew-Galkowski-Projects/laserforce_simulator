@@ -23,7 +23,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ~~PD-1~~ | ~~🟡~~ | ~~Player detail~~ | ~~Stat category grouping doesn't match documented categories~~ _(fixed)_ |
 | ~~PD-2~~ | ~~🟡~~ | ~~Player edit~~ | ~~A11y: missing form label / autocomplete attribute~~ _(fixed)_ |
 | ~~M-2~~ | ~~🟡~~ | ~~Match list~~ | ~~Many stale `0-0 Tie` seed matches in history~~ _(fixed)_ |
-| BS-1 | 🟡 | Batch Sim | Run ~8× slower than the ~25 ms/round figure in the docs |
+| ~~BS-1~~ | ~~🟡~~ | ~~Batch Sim~~ | ~~Run ~8× slower than the ~25 ms/round figure in the docs~~ _(fixed)_ |
 | T-1  | 🟡 | Global | `/favicon.ico` 404 on every page |
 | E-1  | ℹ️ | Setup | 3 unapplied migrations on fresh `runserver` |
 
@@ -163,7 +163,7 @@ Ran 50 sims (1 vs 2): win rates, ties, per-team avg score/survivors,
 map-side advantage table, score distribution all render correctly.
 "Save Average Game(s)" worked and produced a "View Round 61" link.
 
-### 🟡 BS-1 — Batch run much slower than documented
+### ~~🟡 BS-1 — Batch run much slower than documented~~ _(fixed)_
 50 sims "completed in 20.54s" (~411 ms/game; ≈2 rounds/game ⇒
 ~205 ms/round). matches/CLAUDE.md states BatchSimulator runs a round in
 "~25 ms" — this is ~8× slower on the no-map 3-zone path. May be an
