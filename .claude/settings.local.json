@@ -118,7 +118,17 @@
       "Bash(git --no-pager log --oneline -1)",
       "Bash(git --no-pager diff --stat)",
       "Bash(git --no-pager diff -- laserforce_simulator/matches/sim_helpers/weights.py)",
-      "Bash(git reset *)"
+      "Bash(git reset *)",
+      "mcp__chrome-devtools__new_page",
+      "mcp__chrome-devtools__list_console_messages",
+      "mcp__chrome-devtools__list_network_requests",
+      "mcp__chrome-devtools__resize_page",
+      "mcp__chrome-devtools__fill",
+      "mcp__chrome-devtools__fill_form",
+      "mcp__chrome-devtools__wait_for",
+      "PowerShell(Stop-Process *)",
+     "Bash(break)",
+      "mcp__chrome-devtools__get_console_message",
     ]
   }
 }
