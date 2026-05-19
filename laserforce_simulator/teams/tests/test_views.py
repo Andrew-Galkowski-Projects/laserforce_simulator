@@ -43,3 +43,21 @@ class TeamDetailRosterStatusTest(TestCase):
     def test_no_placeholder_artifact_in_response(self):
         url = reverse("team_detail", kwargs={"team_id": self.team.id})
         self.assertNotContains(self.client.get(url), "<!-- placeholder -->")
+
+
+class NavbarMobileTogglerTest(TestCase):
+    """Regression: T-4 — base.html uses navbar-expand-lg but had no
+    hamburger toggler / collapse wrapper, leaving the nav unusable < 992px."""
+
+    def test_navbar_has_toggler_and_collapse_wrapper(self):
+        html = self.client.get(reverse("team_list")).content.decode()
+        self.assertIn('class="navbar-toggler"', html)
+        self.assertIn("navbar-toggler-icon", html)
+        # The toggler must control a collapsible nav container by id.
+        m = re.search(r'data-bs-target="#([\w-]+)"', html)
+        self.assertIsNotNone(m, "navbar-toggler has no data-bs-target")
+        target_id = m.group(1)
+        self.assertRegex(
+            html,
+            r'class="collapse navbar-collapse"[^>]*id="%s"' % re.escape(target_id),
+        )

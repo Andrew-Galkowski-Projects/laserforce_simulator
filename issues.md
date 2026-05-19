@@ -15,7 +15,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ID   | Sev | Area | One-liner |
 |------|-----|------|-----------|
 | ~~T-3~~ | ~~🟠~~ | ~~Team detail~~ | ~~"Roster Status" Scout row renders `6 2 slots` (dead placeholder code in template)~~ _(fixed)_ |
-| T-4  | 🟠 | Global nav | Navbar has no mobile toggler — unusable layout below 992px |
+| ~~T-4~~ | ~~🟠~~ | ~~Global nav~~ | ~~Navbar has no mobile toggler — unusable layout below 992px~~ _(fixed)_ |
 | M-1  | 🟠 | Event log | HTML event log renders the entire log (~20.6k DOM nodes) with no server pagination |
 | T-2  | 🟡 | Teams list | `7/6` players label on a valid roster is misleading |
 | CT-1 | 🟡 | Assign Slots | Form requires all 6 slots filled at once; no partial save |
@@ -186,7 +186,7 @@ toggles cleanly between **Zones & Bases** and **Sight Lines** modes
 
 ## Global / Responsive
 
-### 🟠 T-4 — Navbar has no mobile toggler (unusable layout < 992px)
+### ~~🟠 T-4 — Navbar has no mobile toggler (unusable layout < 992px)~~ _(fixed)_
 `templates/base.html:10` uses `navbar navbar-expand-lg` but there is
 **no `navbar-toggler` (hamburger) button and no `collapse
 navbar-collapse` wrapper**. Below the Bootstrap `lg` breakpoint (992px —
