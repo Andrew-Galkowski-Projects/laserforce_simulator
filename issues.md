@@ -16,7 +16,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 |------|-----|------|-----------|
 | ~~T-3~~ | ~~🟠~~ | ~~Team detail~~ | ~~"Roster Status" Scout row renders `6 2 slots` (dead placeholder code in template)~~ _(fixed)_ |
 | ~~T-4~~ | ~~🟠~~ | ~~Global nav~~ | ~~Navbar has no mobile toggler — unusable layout below 992px~~ _(fixed)_ |
-| M-1  | 🟠 | Event log | HTML event log renders the entire log (~20.6k DOM nodes) with no server pagination |
+| ~~M-1~~ | ~~🟠~~ | ~~Event log~~ | ~~HTML event log renders the entire log (~20.6k DOM nodes) with no server pagination~~ _(DEFERRED: needs dedicated redesign PR (playback DOM-row coupling), per user decision)_ |
 | T-2  | 🟡 | Teams list | `7/6` players label on a valid roster is misleading |
 | CT-1 | 🟡 | Assign Slots | Form requires all 6 slots filled at once; no partial save |
 | CT-2 | 🟡 | Add Player | Profile number fields (Age etc.) have no min/max bounds |
@@ -137,7 +137,7 @@ no console errors), and event log all render. Team dropdowns correctly
 **exclude** the incomplete "ChromeTest QA" team. Elimination bonus
 (+10000/round) correctly reflected in totals.
 
-### 🟠 M-1 — Event Log page loads the entire log into one DOM (no server pagination)
+### ~~🟠 M-1 — Event Log page loads the entire log into one DOM (no server pagination)~~ _(DEFERRED: needs dedicated redesign PR (playback DOM-row coupling), per user decision)_
 `/matches/game-round/<id>/events/` rendered **4533 events → ~20,600
 a11y/DOM nodes** for a single 2-team, no-map round. The REST API
 `/events/` is paginated (per matches/CLAUDE.md) but the HTML view is
