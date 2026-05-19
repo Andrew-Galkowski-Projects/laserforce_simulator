@@ -122,5 +122,8 @@ class TeamSlotForm(forms.ModelForm):
             qs = team.players.all()
             for field_name in self.fields:
                 self.fields[field_name].queryset = qs
-                self.fields[field_name].required = field_name != "slot_scout_2"
+                # CT-1: slots are null/blank on the model — keep every slot
+                # optional so partial rosters can be saved incrementally
+                # (and server-side validation is reachable past the browser).
+                self.fields[field_name].required = False
                 self.fields[field_name].widget.attrs["class"] = "form-select"

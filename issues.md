@@ -18,7 +18,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ~~T-4~~ | ~~🟠~~ | ~~Global nav~~ | ~~Navbar has no mobile toggler — unusable layout below 992px~~ _(fixed)_ |
 | ~~M-1~~ | ~~🟠~~ | ~~Event log~~ | ~~HTML event log renders the entire log (~20.6k DOM nodes) with no server pagination~~ _(DEFERRED: needs dedicated redesign PR (playback DOM-row coupling), per user decision)_ |
 | ~~T-2~~ | ~~🟡~~ | ~~Teams list~~ | ~~`7/6` players label on a valid roster is misleading~~ _(fixed)_ |
-| CT-1 | 🟡 | Assign Slots | Form requires all 6 slots filled at once; no partial save |
+| ~~CT-1~~ | ~~🟡~~ | ~~Assign Slots~~ | ~~Form requires all 6 slots filled at once; no partial save~~ _(fixed)_ |
 | CT-2 | 🟡 | Add Player | Profile number fields (Age etc.) have no min/max bounds |
 | PD-1 | 🟡 | Player detail | Stat category grouping doesn't match documented categories |
 | PD-2 | 🟡 | Player edit | A11y: missing form label / autocomplete attribute |
@@ -110,7 +110,7 @@ Average/Elite" presets work. Player added → lands on Bench as designed.
 Edit Player correctly pre-loads existing values and shows a live
 "Overall Rating". Assign Slots renders all 6 slot dropdowns.
 
-### 🟡 CT-1 — Slots form requires all 6 slots at once; no partial save
+### ~~🟡 CT-1 — Slots form requires all 6 slots at once; no partial save~~ _(fixed)_
 On `/<id>/slots/` every slot `<select>` is `required`, so the browser
 blocks submit ("Please select an item in the list.") unless all 6 slots
 are filled in one save. A team with < 6 players can never have *any*

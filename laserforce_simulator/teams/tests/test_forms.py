@@ -2,7 +2,7 @@
 
 from django.test import TestCase
 
-from teams.forms import PlayerForm
+from teams.forms import PlayerForm, TeamSlotForm
 from teams.models import Player, Team
 
 ALL_STAT_FIELDS = [
@@ -283,3 +283,33 @@ class PlayerOverallRatingTest(TestCase):
                 "is it included in the stat list?",
             )
             setattr(player, stat, 50)
+
+
+class TeamSlotFormPartialSaveTest(TestCase):
+    """Regression: CT-1 — every slot was required, so a team with < 6
+    players could never assign any slot and progress couldn't be saved
+    incrementally. Slots are null/blank on the model; the form must allow
+    partial assignment."""
+
+    def setUp(self):
+        self.team = Team.objects.create(name="Partial Slots Team")
+        self.cmd = Player.objects.create(team=self.team, name="Cmd")
+        self.hvy = Player.objects.create(team=self.team, name="Hvy")
+
+    def test_no_slot_field_is_required(self):
+        form = TeamSlotForm(instance=self.team)
+        required = [n for n, f in form.fields.items() if f.required]
+        self.assertEqual(required, [], f"slot field(s) still required: {required}")
+
+    def test_partial_assignment_is_valid_and_saves(self):
+        form = TeamSlotForm(data={"slot_commander": self.cmd.id}, instance=self.team)
+        self.assertTrue(form.is_valid(), form.errors.as_json())
+        form.save()
+        self.team.refresh_from_db()
+        self.assertEqual(self.team.slot_commander_id, self.cmd.id)
+        self.assertIsNone(self.team.slot_heavy_id)
+        self.assertIsNone(self.team.slot_medic_id)
+
+    def test_empty_assignment_is_valid(self):
+        form = TeamSlotForm(data={}, instance=self.team)
+        self.assertTrue(form.is_valid(), form.errors.as_json())
