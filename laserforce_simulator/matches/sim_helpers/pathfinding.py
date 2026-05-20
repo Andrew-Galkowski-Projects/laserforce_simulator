@@ -25,7 +25,11 @@ _STALE_THRESHOLD = {
 # TIME-01: tick-domain staleness thresholds (STALENESS_SLOW_TICKS=120 for
 # slow/stationary roles, STALENESS_FAST_TICKS=30 for mobile roles). Used only
 # when time_domain == "ticks" (BatchSimulator).
-from .time_constants import STALENESS_FAST_TICKS, STALENESS_SLOW_TICKS
+from .time_constants import (
+    GOAL_RECOMPUTE_PERIOD_TICKS,
+    STALENESS_FAST_TICKS,
+    STALENESS_SLOW_TICKS,
+)
 
 _STALE_THRESHOLD_TICKS = {
     "heavy": STALENESS_SLOW_TICKS,
@@ -767,11 +771,15 @@ def choose_goal_cell(
                         key=lambda p: p.final_shots
                         / max(1, getattr(p, "max_shots", p.starting_shots)),
                     )
+                # MOVE-04: reactive override fires — clear any committed goal.
+                player._committed_goal = None
                 return (target.cell_row, target.cell_col)
         elif player.final_lives <= max_lives * 0.3:
             # Non-support, lives critical: seek allied medic for safety
             medic = _find_role(all_alive, player.team_color, "medic")
             if medic and medic.cell_row is not None:
+                # MOVE-04: reactive override fires — clear any committed goal.
+                player._committed_goal = None
                 return (medic.cell_row, medic.cell_col)
         else:
             # MECH-06: if player knows enemy commander location (memory system),
@@ -780,6 +788,8 @@ def choose_goal_cell(
                 player, enemy_color, second, time_domain
             )
             if enemy_cmd_cell is not None:
+                # MOVE-04: reactive override fires — clear any committed goal.
+                player._committed_goal = None
                 return enemy_cmd_cell
 
     # ── 1. Critical-resource overrides (non-support roles) ───────────────────
@@ -787,10 +797,14 @@ def choose_goal_cell(
         if player.final_lives <= max_lives * 0.3:
             medic = _find_role(all_alive, player.team_color, "medic")
             if medic and medic.cell_row is not None:
+                # MOVE-04: reactive override fires — clear any committed goal.
+                player._committed_goal = None
                 return (medic.cell_row, medic.cell_col)
         elif player.final_shots <= max_shots * 0.3:
             ammo = _find_role(all_alive, player.team_color, "ammo")
             if ammo and ammo.cell_row is not None:
+                # MOVE-04: reactive override fires — clear any committed goal.
+                player._committed_goal = None
                 return (ammo.cell_row, ammo.cell_col)
 
     if movement_ctx is None or cell_row is None or cell_col is None:
@@ -815,7 +829,26 @@ def choose_goal_cell(
             if low_lives:
                 allied_medic = _find_role(all_alive, player.team_color, "medic")
                 if allied_medic is not None and allied_medic.cell_row is not None:
+                    # MOVE-04: reactive override fires — clear committed goal.
+                    player._committed_goal = None
                     return (allied_medic.cell_row, allied_medic.cell_col)
+
+    # ── MOVE-04: Goal commitment throttle (BatchSimulator only) ──────────────
+    # Steps 2–4 below run a fresh goal-selection pass every tick by default;
+    # under MOVE-04 / ADR-0010 the tick-domain (BatchSim) caller re-uses the
+    # previously committed goal for ``GOAL_RECOMPUTE_PERIOD_TICKS`` ticks
+    # before recomputing, provided the player hasn't reached it. Reactive
+    # overrides (steps 0/1/1b above) bypass this entirely and clear the
+    # commitment as a side effect when they fire. The RBS path
+    # (time_domain != "ticks") is unchanged.
+    if time_domain == "ticks":
+        committed = player._committed_goal
+        if (
+            committed is not None
+            and (cell_row, cell_col) != committed[0]
+            and second < committed[2]
+        ):
+            return committed[0]
 
     # ── 2. Action-driven movement ────────────────────────────────────────────
     goal = _goal_from_action(
@@ -829,23 +862,37 @@ def choose_goal_cell(
         second,
         time_domain,
     )
-    if goal is not None:
-        return goal
-
-    # ── 3. Role-specific positioning ─────────────────────────────────────────
-    goal = _goal_from_role(
-        player,
-        all_alive,
-        enemy_color,
-        cell_row,
-        cell_col,
-        movement_ctx,
-        second,
-        nuke_active=nuke_active,
-        time_domain=time_domain,
-    )
-    if goal is not None:
-        return goal
+    from_action = goal is not None
+    if goal is None:
+        # ── 3. Role-specific positioning ─────────────────────────────────────
+        goal = _goal_from_role(
+            player,
+            all_alive,
+            enemy_color,
+            cell_row,
+            cell_col,
+            movement_ctx,
+            second,
+            nuke_active=nuke_active,
+            time_domain=time_domain,
+        )
 
     # ── 4. Default: enemy base ───────────────────────────────────────────────
-    return default_goal
+    if goal is None:
+        goal = default_goal
+
+    # MOVE-04: commit the freshly chosen goal for the next
+    # GOAL_RECOMPUTE_PERIOD_TICKS ticks (BatchSim / tick-domain only).
+    # ``from_action`` is True iff step 2 (``_goal_from_action``) produced it;
+    # False for step 3 (role positioning), step 4 (enemy-base default), or
+    # any None-fallback. ``_record_down`` consults the flag to decide whether
+    # a Down clears the commitment (action-driven goals drop; positioning
+    # goals survive).
+    if time_domain == "ticks" and goal is not None:
+        player._committed_goal = (
+            goal,
+            from_action,
+            int(second) + GOAL_RECOMPUTE_PERIOD_TICKS,
+        )
+
+    return goal
