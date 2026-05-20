@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=$(python -c \"import json,sys; print(json.load(sys.stdin).get('tool_input',{}).get('file_path',''))\"); case \"$p\" in *.py) python laserforce_simulator/manage.py makemigrations --check --dry-run 2>&1 | tail -n 5 ;; esac"
+          }
+        ]
+      }
+    ]
+  }
+}
