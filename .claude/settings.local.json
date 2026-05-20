@@ -131,7 +131,12 @@
       "mcp__chrome-devtools__get_console_message",
       "Bash(findstr /i \"README ci.yml\")",
       "Bash(curl.exe -s -o NUL -w \"%{http_code}\" http://127.0.0.1:8000/matches/ --max-time 5)",
-      "PowerShell(Get-NetTCPConnection *)"
+      "PowerShell(Get-NetTCPConnection *)",
+      "Bash(git -P status --porcelain)",
+      "Bash(git -P branch --show-current)",
+      "Bash(git -P checkout -b move-04-goal-commitment-throttling)",
+      "Bash(git -P diff --stat)",
+      "Bash(git -P diff laserforce_simulator/matches/sim_helpers/pathfinding.py)"
     ]
   }
 }

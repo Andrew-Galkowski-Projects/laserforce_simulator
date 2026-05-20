@@ -3756,6 +3756,12 @@ class BatchSimulator:
         player.last_downed_time = second
         player._path_cache = None
         player.is_holding = False
+        # MOVE-04 / ADR-0010: action-driven committed goals (from_action=True)
+        # drop on a Down — the action that picked them is no longer current.
+        # Positioning goals (from_action=False: step 3 / step 4 / default) are
+        # role/map-derived and stay valid through a respawn, so they survive.
+        if player._committed_goal is not None and player._committed_goal[1]:
+            player._committed_goal = None
 
     def _move_player_in_memory(
         self, player, second, goal_cell, movement_ctx, multiplier: int = 1

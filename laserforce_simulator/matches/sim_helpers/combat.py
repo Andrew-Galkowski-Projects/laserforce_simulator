@@ -309,6 +309,12 @@ def plan_action(
 
     if player.is_hiding and choice not in ("hide", "only_move", "resupply_ally"):
         player.is_hiding = False
+        # MOVE-04 / ADR-0010: exiting Stationary (hide→non-hide) is a force
+        # trigger — drop the committed goal so the next ``choose_goal_cell``
+        # recomputes immediately rather than reusing a stale hide-time goal.
+        # Safe for RBS: RBS never sets ``_committed_goal``, so the assignment
+        # is a no-op on None.
+        player._committed_goal = None
         if save_player is not None:
             save_player(player)
 
@@ -320,6 +326,10 @@ def plan_action(
         player.is_holding = True
     elif getattr(player, "is_holding", False):
         player.is_holding = False
+        # MOVE-04 / ADR-0010: exiting Stationary (hold→non-hold) is a force
+        # trigger — drop the committed goal for the same reason as the hide
+        # transition above. Safe for RBS (never sets _committed_goal).
+        player._committed_goal = None
 
     plans = []
     if choice == "tag_player":

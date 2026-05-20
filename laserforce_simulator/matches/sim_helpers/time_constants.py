@@ -76,3 +76,10 @@ STALENESS_FAST_TICKS: int = 30
 
 #: Sliding window for the "Medic hit 2x" alert (was 12 s).
 MEDIC_UNDER_FIRE_WINDOW_TICKS: int = 24
+
+# --- Goal recompute throttling (MOVE-04 / ADR-0010) ----------------------
+
+#: Tick cadence for the steady-state ``choose_goal_cell`` recompute (steps
+#: 2–4). Reactive overrides (steps 0/1/1b) bypass the throttle and run every
+#: tick. BatchSimulator only — RBS path is unchanged. (MOVE-04 / ADR-0010.)
+GOAL_RECOMPUTE_PERIOD_TICKS: int = 4

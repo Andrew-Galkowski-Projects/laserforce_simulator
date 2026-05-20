@@ -105,6 +105,25 @@ class PlayerState:
     # to None on Down/respawn via BatchSimulator._record_down.
     _path_cache: Optional[tuple] = None
 
+    # MOVE-04: transient goal-commitment tuple (BatchSimulator only —
+    # ADR-0010). None or a ``(goal_cell, from_action, expires_at_tick)``
+    # 3-tuple: ``goal_cell`` is the committed Goal cell, ``from_action`` is
+    # True iff ``choose_goal_cell`` step 2 (``_goal_from_action``) produced it
+    # (False for step 3 / step 4 / None-fallback), and ``expires_at_tick`` is
+    # the tick at which the commitment lapses (set to ``second +
+    # GOAL_RECOMPUTE_PERIOD_TICKS`` on each recompute). Lets steady-state
+    # goal selection (``choose_goal_cell`` steps 2–4) run every N ticks
+    # instead of every tick; reactive overrides (steps 0/1/1b) still run
+    # every tick and clear the commitment as a side effect when they fire.
+    # No DB column / no migration (mirrors ``_path_cache``); default None so
+    # it is never a required ctor arg and never crosses the parallel-worker
+    # process boundary. Managed by ``pathfinding.choose_goal_cell``; cleared
+    # to None on Down/respawn via ``BatchSimulator._record_down`` iff the
+    # committed goal came from an action (from_action=True) — positioning
+    # goals (from_action=False) survive Down. Also cleared on the non-hide /
+    # non-hold action-roll transitions in ``combat.plan_action``.
+    _committed_goal: Optional[tuple[tuple[int, int], bool, int]] = None
+
     # MOVE-03: transient list of cells actually traversed by the most recent
     # astar_advance_cached call this tick (intermediate + end cells walked,
     # excluding the start cell); [] when nothing moved. Used by the
