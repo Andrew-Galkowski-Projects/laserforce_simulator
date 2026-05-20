@@ -29,6 +29,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     discovery requires it, run the test tool from that nested dir as a last
     resort (never `cd` before `git`).
 
+## Windows Shell Conventions
+
+- Avoid Unicode box-drawing or non-ASCII characters in scripts and console
+  output; the Windows cp1252 console will crash. Use ASCII equivalents
+  (`+--+`, `|`, `+--+`) instead of `┌─┐│└─┘`.
+- When piping into `manage.py shell`, write a UTF-8 temp file and invoke
+  `manage.py shell -c "$(Get-Content tmp.py -Raw)"` (or pass the path via
+  `--command`) to avoid BOM and interactive-shell issues.
+
 ## Commands
 
 All commands run from the `laserforce_simulator/` subdirectory (where `manage.py` lives):
@@ -64,6 +73,18 @@ python manage.py game_analysis --round <id>
 
 CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci.yml`). Python version is 3.11.
 
+## Git Workflow
+
+- **ALWAYS create a feature branch BEFORE making commits for new work.** Never
+  commit directly to `main`. If you find yourself on `main` with changes,
+  branch first (`git switch -c <feature-name>`) and only then commit.
+- **ALWAYS pause for user approval before `git commit` or `git push`.** Output
+  a PR template/summary first (summary, test counts, files changed) and wait
+  for explicit "go" before writing to the repo or remote.
+- **Never use `cd` (or `-C`) before git commands.** Run `git` directly from the
+  session cwd — see `## Tooling` above for the full rationale (a stray
+  `cd`-then-git sequence has corrupted the working tree before).
+
 ## Test-Driven Development
 
 This project follows TDD. Before implementing any new feature or fixing a bug:
@@ -86,6 +107,31 @@ This project follows TDD. Before implementing any new feature or fixing a bug:
 **Simulation tests** use fixed random seeds (`random.seed(42)`) or inject deterministic player stats to keep results reproducible — avoid asserting on exact point totals from unseeded runs.
 
 **Do not** write tests that only verify mocks return what you told them to return. Prefer testing real behavior with lightweight in-memory objects or Django's `TestCase` with a test database.
+
+## Testing & Verification
+
+- After implementing a feature, run the full `pytest` suite before reporting
+  completion. Report exact pass/fail counts (e.g. "877 passed, 0 failed"), not
+  a vague "tests pass".
+- For changes affecting determinism (RNG, parallelism, ordering), add an
+  explicit serial-vs-parallel determinism test that asserts equal outputs from
+  both code paths given the same seed.
+- Before running analysis or management commands (`game_analysis`,
+  `score_averages`, etc.), check for unapplied migrations with
+  `python laserforce_simulator/manage.py makemigrations --check --dry-run` and
+  run `migrate` if needed — stale schema has caused silent run failures.
+
+## Sub-Agent Delegation
+
+- When dispatching parallel agents (code / tests / docs), **define the seam
+  contract upfront** as a written artifact: every new method name, signature,
+  dataclass field, and return shape. Share it with all agents so the test
+  agent and code agent cannot disagree on names.
+- **After agents return, manually verify their work — do not assume
+  completeness.** Triage failing tests yourself rather than trusting an
+  agent's self-report. Check for the failure modes that have bitten us before:
+  off-by-one in tick math, constant mismatches in formulas (e.g. MVP weights),
+  field-name drift between docs and code, missing methods on the seam.
 
 ## Architecture
 
