@@ -1629,10 +1629,10 @@ class TestMove01PlayerStateMovementTrail:
         blue, team_blue = self._rosters("M01TrailB")
         arena_map = _move01_make_map("M01TrailMap")
 
-        from matches.simulation import ResourceBasedSimulator
+        from matches.sim_helpers.map_loader import load_map_context
 
         sim = BatchSimulator()
-        movement_ctx, _ = ResourceBasedSimulator._load_map_context(arena_map)
+        movement_ctx, _ = load_map_context(arena_map)
 
         import random
 
@@ -1759,9 +1759,9 @@ class TestMove01DeterminismPreserved:
         blue, team_blue = self._rosters("M01ReplayB")
         arena_map = _move01_make_map("M01ReplayMap")
 
-        from matches.simulation import ResourceBasedSimulator
+        from matches.sim_helpers.map_loader import load_map_context
 
-        movement_ctx, _ = ResourceBasedSimulator._load_map_context(arena_map)
+        movement_ctx, _ = load_map_context(arena_map)
         sim = BatchSimulator()
 
         seed = 76543210
@@ -1869,9 +1869,9 @@ class TestMove02DeterminismParityWithCache(TestMove01DeterminismPreserved):
         blue, team_blue = self._rosters("M02ReplayB")
         arena_map = _move01_make_map("M02ReplayMap")
 
-        from matches.simulation import ResourceBasedSimulator
+        from matches.sim_helpers.map_loader import load_map_context
 
-        movement_ctx, _ = ResourceBasedSimulator._load_map_context(arena_map)
+        movement_ctx, _ = load_map_context(arena_map)
         sim = BatchSimulator()
 
         seed = 24681357

@@ -2,13 +2,14 @@
 MAP-05 — Role-aware, action-aware goal selection tests.
 
 Pure unit tests for choose_goal_cell and DB integration tests for
-_resolve_map_data / _build_movement_ctx returning MAP-05 config.
+resolve_map_data / load_map_context returning MAP-05 config.
+SIM-09: migrated from RBS static helpers to sim_helpers.map_loader free functions.
 """
 
 import pytest
 
-from matches.simulation import ResourceBasedSimulator
 from matches.sim_helpers.map_context import MapContext
+from matches.sim_helpers.map_loader import load_map_context, resolve_map_data
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -444,9 +445,9 @@ class TestMap05DBIntegration:
         return arena_map
 
     def test_resolve_map_data_returns_cell_ranking(self):
-        """_resolve_map_data cell_ranking field is the ranked cell list."""
+        """resolve_map_data cell_ranking field is the ranked cell list."""
         arena_map = self._make_full_map("ResolveCellRank")
-        cell_ranking = ResourceBasedSimulator._resolve_map_data(arena_map).cell_ranking
+        cell_ranking = resolve_map_data(arena_map).cell_ranking
 
         assert isinstance(cell_ranking, list)
         assert len(cell_ranking) > 0
@@ -454,33 +455,28 @@ class TestMap05DBIntegration:
         assert len(cell_ranking[0]) == 2
 
     def test_resolve_map_data_returns_strong_spots(self):
-        """_resolve_map_data strong_spots field is the heavy strong spots list."""
+        """resolve_map_data strong_spots field is the heavy strong spots list."""
         arena_map = self._make_full_map("ResolveStrongSpots")
-        strong_spots = ResourceBasedSimulator._resolve_map_data(arena_map).strong_spots
+        strong_spots = resolve_map_data(arena_map).strong_spots
 
         assert isinstance(strong_spots, list)
         assert len(strong_spots) > 0
 
     def test_resolve_map_data_returns_empty_lists_when_configs_absent(self):
-        """_resolve_map_data returns [] for cell_ranking and strong_spots when configs missing."""
+        """resolve_map_data returns [] for cell_ranking and strong_spots when configs missing."""
         arena_map = self._make_map_without_map05_configs("AbsentConfigs")
-        md = ResourceBasedSimulator._resolve_map_data(arena_map)
+        md = resolve_map_data(arena_map)
 
         assert md.cell_ranking == []
         assert md.strong_spots == []
 
     def test_build_movement_ctx_populates_map05_keys(self):
-        """_build_movement_ctx includes cell_los_counts, high_los_cells, and strong_spots."""
+        """load_map_context returns a MapContext with cell_los_counts, high_los_cells,
+        and strong_spots populated. SIM-09: load_map_context replaces the former
+        two-step resolve+build pipeline, deriving high_los_cells from cell_ranking inline.
+        """
         arena_map = self._make_full_map("BuildCtxMAP05")
-        md = ResourceBasedSimulator._resolve_map_data(arena_map)
-        ctx = ResourceBasedSimulator._build_movement_ctx(
-            md.zone_data,
-            md.spawn_cells,
-            md.sight_data,
-            md.base_sight_data,
-            md.cell_ranking,
-            md.strong_spots,
-        )
+        ctx, _zone_size = load_map_context(arena_map)
 
         assert "cell_los_counts" in ctx
         assert "high_los_cells" in ctx

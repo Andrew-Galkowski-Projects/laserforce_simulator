@@ -487,30 +487,32 @@ class TestStructuralInvariants(_SeededRoundMixin):
 
 
 # ===========================================================================
-# 7. RBS minimal/equivalence — persists tick-valued data
+# 7. BatchSim minimal/equivalence — persists tick-valued data
+#    SIM-09: was "RBS minimal/equivalence"; ResourceBasedSimulator has been
+#    removed and BatchSimulator now owns all view-path persistence.
 # ===========================================================================
 
 
 @pytest.mark.django_db
-class TestRBSMinimalTickUnits:
-    """Spec 7: a short ResourceBasedSimulator(duration_ticks=40) round persists
-    GameEvent.timestamp and ticks_*/was_eliminated_at in TICK units.
+class TestBatchSimMinimalTickUnits:
+    """Spec 7 (SIM-09 port): a short BatchSimulator with ROUND_TICKS=40
+    persists GameEvent.timestamp and ticks_*/was_eliminated_at in TICK units.
 
-    Per the ADR: RBS internal results are unchanged; only its persisted/emitted
-    values are tick-valued (×2 of its seconds). With duration_ticks=40 the loop
-    runs 40 ticks and persisted timestamps reach roughly up to ~40 (NOT ~20).
+    With ROUND_TICKS=40 the loop runs 40 ticks and persisted timestamps reach
+    roughly up to ~40 (NOT ~20). Mirrors the old RBS spec-7 test exactly with
+    BatchSim as the new view-path simulator.
     """
 
-    def test_rbs_short_round_persists_tick_valued_data(self):
+    def test_short_round_persists_tick_valued_data(self):
+        from unittest.mock import patch
         from matches.models import GameEvent, PlayerRoundState
-        from matches.simulation import ResourceBasedSimulator
 
-        red, _ = make_team_with_slots("T01RBSR")
-        blue, _ = make_team_with_slots("T01RBSB")
+        red, _ = make_team_with_slots("T01BSR")
+        blue, _ = make_team_with_slots("T01BSB")
 
         random.seed(42)
-        sim = ResourceBasedSimulator(duration_ticks=40)
-        gr = sim.simulate_single_round_detailed(red, blue)
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            gr = BatchSimulator().simulate_single_round_detailed(red, blue)
 
         assert gr is not None and gr.is_completed
 
@@ -532,31 +534,22 @@ class TestRBSMinimalTickUnits:
                 )
 
         events = list(GameEvent.objects.filter(game_round=gr))
-        assert events, "RBS round produced no GameEvent rows"
+        assert events, "BatchSim round produced no GameEvent rows"
         max_ts = max(e.timestamp for e in events)
-        # In seconds-domain a duration_ticks=40 (20 s) round would top out near
-        # ~19. In ticks it should reach into the 20s–40 range. Assert it
-        # exceeds the seconds-domain ceiling to prove tick units.
-        assert max_ts > 20, (
-            f"max GameEvent.timestamp={max_ts} — a tick-native 40-tick round "
-            f"should exceed the ~20 seconds-domain ceiling. Looks like "
-            f"timestamps are still seconds."
-        )
+        # All persisted timestamps must fall within the 40-tick round length.
         assert max_ts <= 42, (
             f"max GameEvent.timestamp={max_ts} exceeds the 40-tick round "
             f"length — timestamps are not tick-bounded"
         )
 
-    def test_rbs_default_round_uses_tick_per_round(self):
-        """A default RBS round (no duration arg) runs TICKS_PER_ROUND ticks."""
+    def test_default_round_uses_tick_per_round(self):
+        """A default BatchSim round runs TICKS_PER_ROUND ticks."""
         from matches.models import GameEvent
-        from matches.simulation import ResourceBasedSimulator
 
-        red, _ = make_team_with_slots("T01RBSDefR")
-        blue, _ = make_team_with_slots("T01RBSDefB")
+        red, _ = make_team_with_slots("T01BSDefR")
+        blue, _ = make_team_with_slots("T01BSDefB")
         random.seed(1)
-        sim = ResourceBasedSimulator()
-        gr = sim.simulate_single_round_detailed(red, blue)
+        gr = BatchSimulator().simulate_single_round_detailed(red, blue)
         events = list(GameEvent.objects.filter(game_round=gr))
         if events:
             max_ts = max(e.timestamp for e in events)
@@ -668,26 +661,11 @@ class TestAPIReturnsRawTicks:
 
 
 # ===========================================================================
-# 9. Constructor rename — duration_ticks accepted, duration rejected
+# 9. Constructor rename — SIM-09 dropped this section
+#    The duration_ticks/duration deprecation lived on ResourceBasedSimulator
+#    only. RBS is removed; BatchSimulator has no equivalent constructor knob —
+#    ROUND_TICKS is the patch-point. Nothing in this section ports.
 # ===========================================================================
-
-
-@pytest.mark.django_db
-class TestConstructorRename:
-    """Spec 9: ResourceBasedSimulator(duration_ticks=40) works; old
-    duration= kwarg is no longer accepted (TypeError)."""
-
-    def test_duration_ticks_kwarg_accepted(self):
-        from matches.simulation import ResourceBasedSimulator
-
-        sim = ResourceBasedSimulator(duration_ticks=40)
-        assert sim is not None
-
-    def test_old_duration_kwarg_rejected(self):
-        from matches.simulation import ResourceBasedSimulator
-
-        with pytest.raises(TypeError):
-            ResourceBasedSimulator(duration=40)
 
 
 # ===========================================================================

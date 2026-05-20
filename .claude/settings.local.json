@@ -136,7 +136,9 @@
       "Bash(git -P branch --show-current)",
       "Bash(git -P checkout -b move-04-goal-commitment-throttling)",
       "Bash(git -P diff --stat)",
-      "Bash(git -P diff laserforce_simulator/matches/sim_helpers/pathfinding.py)"
+      "Bash(git -P diff laserforce_simulator/matches/sim_helpers/pathfinding.py)",
+      "PowerShell(python \"C:\\\\Users\\\\Andrew Galkowski\\\\Desktop\\\\programming\\\\laserforce_simulator\\\\laserforce_simulator\\\\manage.py\" migrate --noinput 2>&1 | Select-Object -Last 10)",
+      "PowerShell(powershell -File \"C:\\\\Users\\\\Andrew Galkowski\\\\.claude\\\\skills\\\\chrome-web-testing\\\\scripts\\\\teardown_test_data.ps1\" -MatchIds 24 -RoundIds 66,67)"
     ]
   }
 }

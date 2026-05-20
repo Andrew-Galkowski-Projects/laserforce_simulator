@@ -8,7 +8,7 @@ from django.db.models import Q
 from django.http import JsonResponse
 from teams.models import Team
 from .models import Match, GameRound, PlayerRoundState
-from .simulation import ResourceBasedSimulator, BatchSimulator
+from .simulation import BatchSimulator
 from .forms import MatchSetupForm, SingleRoundSetupForm, BatchSimulateForm
 
 # In-process job store for async save operations
@@ -16,19 +16,41 @@ _SAVE_JOBS: dict = {}
 _JOBS_LOCK = threading.Lock()
 
 
-def _run_save_job(job_id, team_red_id, team_blue_id, seeds, n):
+def _run_save_job(
+    job_id: str,
+    team_red_id: int,
+    team_blue_id: int,
+    seeds,
+    n: int,
+    arena_map_id: int | None,
+) -> None:
     """Background thread: replay and persist n games, then update job status.
 
     SIM-08: ``seeds`` is a list of ``[seed, flipped]`` pairs (session-stashed
     as JSON-safe lists). ``BatchSimulator.save_games`` unpacks each pair and
     persists the actual simulated sides.
+
+    SIM-09: ``arena_map_id`` (``None`` for the 3-zone fallback) is resolved
+    to an ``ArenaMap`` here and forwarded so the saved rounds carry the
+    same map metadata batch-side simulation ran under. A stale id (the
+    map was deleted between simulation and save) is treated as ``None``.
     """
     import django.db
+    from core.models import ArenaMap
 
     try:
         team_red = Team.objects.get(id=team_red_id)
         team_blue = Team.objects.get(id=team_blue_id)
-        game_rounds = BatchSimulator().save_games(team_red, team_blue, seeds, n)
+        if arena_map_id is not None:
+            try:
+                arena_map = ArenaMap.objects.get(id=arena_map_id)
+            except ArenaMap.DoesNotExist:
+                arena_map = None
+        else:
+            arena_map = None
+        game_rounds = BatchSimulator().save_games(
+            team_red, team_blue, seeds, n, arena_map=arena_map
+        )
         round_ids = [gr.id for gr in game_rounds]
         with _JOBS_LOCK:
             _SAVE_JOBS[job_id] = {
@@ -161,7 +183,7 @@ def create_match(request):
                 )
 
             arena_map = form.cleaned_data.get("arena_map")
-            simulator = ResourceBasedSimulator()
+            simulator = BatchSimulator()
             try:
                 match = simulator.simulate_match(
                     team_red, team_blue, match_type, arena_map=arena_map
@@ -232,7 +254,7 @@ def create_single_round(request):
                 )
 
             arena_map = form.cleaned_data.get("arena_map")
-            simulator = ResourceBasedSimulator()
+            simulator = BatchSimulator()
             try:
                 game_round = simulator.simulate_single_round_detailed(
                     team_red, team_blue, arena_map=arena_map
@@ -359,8 +381,13 @@ def simulate_batch(request):
                 )
                 return render(request, "matches/batch_simulate.html", context)
 
+        arena_map = form.cleaned_data.get("arena_map")
         t0 = time.time()
-        results = BatchSimulator().run(team_red, team_blue, n)
+        try:
+            results = BatchSimulator().run(team_red, team_blue, n, arena_map=arena_map)
+        except ValueError as exc:
+            messages.error(request, str(exc))
+            return render(request, "matches/batch_simulate.html", context)
         elapsed = time.time() - t0
 
         # Stash seeds in session for the save-games views (strip from template context)
@@ -369,6 +396,9 @@ def simulate_batch(request):
         request.session["batch_seeds"] = {
             "team_red_id": team_red.id,
             "team_blue_id": team_blue.id,
+            # SIM-09: persist the map choice so save_batch_games can rebuild
+            # the same MapContext when replaying selected seeds.
+            "arena_map_id": arena_map.id if arena_map else None,
             "avg_seeds": avg_seeds,
             "outlier_seeds": outlier_seeds,
         }
@@ -429,13 +459,22 @@ def save_batch_games(request):
     if not seeds:
         return JsonResponse({"error": "No saved seeds for this category."}, status=400)
 
+    arena_map_id = seeds_data.get("arena_map_id")
+
     job_id = str(uuid.uuid4())
     with _JOBS_LOCK:
         _SAVE_JOBS[job_id] = {"status": "running", "round_ids": [], "error": None}
 
     thread = threading.Thread(
         target=_run_save_job,
-        args=(job_id, seeds_data["team_red_id"], seeds_data["team_blue_id"], seeds, n),
+        args=(
+            job_id,
+            seeds_data["team_red_id"],
+            seeds_data["team_blue_id"],
+            seeds,
+            n,
+            arena_map_id,
+        ),
         daemon=True,
     )
     thread.start()

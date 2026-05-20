@@ -1,216 +1,172 @@
 # Website Testing — Bugs & Issues
 
-Manual exploratory test of the Laserforce Simulator web app using Chrome
-DevTools MCP. Date: 2026-05-18. Server: Django dev server on
-`127.0.0.1:8000`. Pages exercised: Teams list / homepage, Create Team,
-Add/Edit Player, Assign Slots, Team detail, Matches list, Create
-Tournament Match (simulated 1 vs 2), Match detail, Round detail, Event
-log, Batch Sim (50 runs + save), Maps list, Map editor (Zones & Sight
-Lines modes).
+End-to-end Chrome MCP test pass against the SIM-09 branch
+(`sim-09-replace-rbs-with-batchsim`) on 2026-05-20. Server: Django dev
+on `http://127.0.0.1:8000`, DEBUG=True. Pages exercised: `/`, `/create/`,
+`/15/` (new team), `/matches/`, `/matches/create/`, `/matches/24/`,
+`/matches/game-round/64/`, `/matches/game-round/64/events/`,
+`/matches/single-round/create/`, `/matches/game-round/66/`,
+`/matches/simulate-batch/` (with new arena_map field), save flow,
+`/matches/game-round/67/`, `/maps/`. Responsive: 720×1115 + 1280×900.
 
 Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 
 ## Summary
 
-| ID   | Sev | Area | One-liner |
-|------|-----|------|-----------|
-| ~~T-3~~ | ~~🟠~~ | ~~Team detail~~ | ~~"Roster Status" Scout row renders `6 2 slots` (dead placeholder code in template)~~ _(fixed)_ |
-| ~~T-4~~ | ~~🟠~~ | ~~Global nav~~ | ~~Navbar has no mobile toggler — unusable layout below 992px~~ _(fixed)_ |
-| ~~M-1~~ | ~~🟠~~ | ~~Event log~~ | ~~HTML event log renders the entire log (~20.6k DOM nodes) with no server pagination~~ _(fixed: events emitted once as JSON; client-side windowed timeline + charts/playback decoupled from the DOM)_ |
-| ~~T-2~~ | ~~🟡~~ | ~~Teams list~~ | ~~`7/6` players label on a valid roster is misleading~~ _(fixed)_ |
-| ~~CT-1~~ | ~~🟡~~ | ~~Assign Slots~~ | ~~Form requires all 6 slots filled at once; no partial save~~ _(fixed)_ |
-| ~~CT-2~~ | ~~🟡~~ | ~~Add Player~~ | ~~Profile number fields (Age etc.) have no min/max bounds~~ _(fixed)_ |
-| ~~PD-1~~ | ~~🟡~~ | ~~Player detail~~ | ~~Stat category grouping doesn't match documented categories~~ _(fixed)_ |
-| ~~PD-2~~ | ~~🟡~~ | ~~Player edit~~ | ~~A11y: missing form label / autocomplete attribute~~ _(fixed)_ |
-| ~~M-2~~ | ~~🟡~~ | ~~Match list~~ | ~~Many stale `0-0 Tie` seed matches in history~~ _(fixed)_ |
-| ~~BS-1~~ | ~~🟡~~ | ~~Batch Sim~~ | ~~Run ~8× slower than the ~25 ms/round figure in the docs~~ _(fixed)_ |
-| ~~T-1~~ | ~~🟡~~ | ~~Global~~ | ~~`/favicon.ico` 404 on every page~~ _(fixed)_ |
-| ~~E-1~~ | ~~ℹ️~~ | ~~Setup~~ | ~~3 unapplied migrations on fresh `runserver`~~ _(fixed: README already documents `migrate`; added a `makemigrations --check` CI guard)_ |
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| BS-1 | 🟠 | Batch sim template | `BatchSimulateForm.arena_map` field wasn't rendered in `batch_simulate.html` — fix landed in this test run (template now renders it) |
+| MAPS-1 | 🟡 | Single round | Picking the Syracuse map raised "no red base placed" — pre-existing map-data issue, view caught + flashed correctly |
+| A11Y-1 | 🟡 | Maps list | One Chrome a11y issue: form element missing `autocomplete` attribute on `/maps/` |
+| ℹ️ | ℹ️ | All pages | No `/favicon.ico` 404 observed this session (browser didn't request one) |
 
-**Overall:** every core flow works — creating a team, adding/editing
-players, assigning slots, creating & simulating a tournament match,
-viewing match/round/event detail, batch simulation + save, and the map
-editor all function with no server errors or JS exceptions. Findings are
-one template bug (T-3), one responsive-layout gap (T-4), one scalability
-concern (M-1), and a set of low-severity polish/UX/a11y items.
+**Overall:** Every SIM-09 critical surface works end-to-end through the UI.
+The view path is dramatically faster than pre-SIM-09 (full 2-round match
+near-instant vs ~10-20 s under RBS). Single-round and full-match flows
+both persist `arena_map` + `zone_size` + `rng_seed` on the resulting
+`GameRound`. Batch-save now also carries the map (closes the pre-SIM-09
+gap). Overwatch resolution (MOVE-03) is firing on view-mode rounds for
+the first time — 146 overwatch-flagged events on round 64. One template
+miss found (BS-1) and fixed inline; no Python regressions surfaced.
 
 ---
 
-## Environment / Setup
+## Match flow (full SIM-09 path)
 
-### ~~ℹ️ E-1 — 3 unapplied migrations on a fresh server start~~ _(fixed)_
-`python manage.py runserver` warned: *"You have 3 unapplied
-migration(s)... matches"* (`0022_playerroundstate_missile_points`,
-`0023_rename_seconds_active...`, `0024_gameround_rng_seed`). The app
-misbehaves for anyone who pulls and runs without `migrate` first. Not a
-code bug, but worth a setup note / CI guard. (Applied locally before
-testing.)
+### ✅ Create + simulate match — works
+`/matches/create/` with teams 1+2 + San Marcos Laser Tag map →
+`/matches/24/` near-instantly (pre-SIM-09 RBS: ~10-20 s). Both rounds
+persisted, per-Match colour swap reflected in stored sides (round 1:
+team_red=1; round 2: team_red=2). Console + network clean.
 
-**Fix:** the setup note already exists — `README.md` documents
-`python manage.py migrate` before `runserver` (Option A), Docker
-auto-migrates via `entrypoint.sh`, and CI already runs
-`migrate --noinput`. The missing half was the CI guard: a
-`python manage.py makemigrations --check --dry-run` step was added to
-`.github/workflows/ci.yml` (before the migrate step) so a model change
-shipped without its generated migration now fails CI.
+### ✅ Round detail (`/matches/game-round/64/`) — works
+Per-player tables render, console clean. `arena_map` and `zone_size`
+displayed via the standard round-detail layout.
 
----
-
-## Teams list / Homepage (`/`)
-
-### ~~🟡 T-1 — `favicon.ico` returns 404~~ _(fixed)_
-Every page requests `/favicon.ico` → 404 (console resource error).
-Cosmetic; add a favicon or a catch route.
-
-### ~~🟡 T-2 — Teams list "7/6" label is misleading~~ _(fixed)_
-Team **1** displays `Players: 7/6` with a green **"Valid Roster"**
-badge. The detail page clarifies this is **6 active + 1 bench = valid**
-(bench players are by design). The roster is correct, but `7/6` reads as
-"over capacity": the numerator counts all players (incl. bench) while
-the denominator is the 6 active slots — two different totals mixed.
-Suggest `6/6 active (+1 bench)` so a valid roster never shows as `7/6`.
+### ✅ Event log (`/matches/game-round/64/events/`) — works
+3,787 events emitted as compact JSON for client-side windowing (M-1
+contract intact). Event types covered: `movement` (2309), `tag` (583),
+`miss` (437), `resupply_lives` (166), `resupply_ammo` (216),
+`combo_resupply` (24), `missile` (3), `missile_dodge` (2), `special`
+(29), `elimination` (8), `base_capture` (10). **146 events carry
+`metadata.overwatch=true`** — MOVE-03 Hold/Overwatch resolution
+([ADR-0009](docs/adr/0009-hold-overwatch.md)) is firing on view-mode
+rounds for the first time post-SIM-09. Movement metadata keys
+(`actor_role`, `start_row`/`col`, `end_row`/`col`, `cell_row`/`col`,
+`new_zone`) match the spec.
 
 ---
 
-## Team detail / Player pages
+## Single round flow
 
-### ~~🟠 T-3 — "Roster Status" Scout row renders "6 2 slots" (leftover placeholder code)~~ _(fixed)_
-On every team detail page, the **Scout** row of the *Roster Status*
-card shows `6 2 slots` instead of `2 slots`. Root cause is dead
-placeholder code in `templates/teams/team_detail.html:112-116`:
+### ✅ Create single round with map — works
+`/matches/single-round/create/` with San Marcos → standalone
+`GameRound` id=66. Direct DB inspection confirms:
+- `arena_map = "San Marcos Laser Tag"` ✓
+- `zone_size = 20` ✓
+- `rng_seed = 404797581936799606` ✓ (replayable)
+- `match = None` ✓ (standalone)
+- 4582 GameEvents persisted.
 
-```django
-{% if role_code == 'scout' %}
-    {% with scout_count=0 %}
-    {{ active_roster|length }}<!-- placeholder -->
-    {% endwith %}
-    2 slots
-```
+### 🟡 MAPS-1 — Syracuse map raises "no red base placed"
+Choosing "Syracuse Laser Tag" surfaces the `ValueError` from
+`load_map_context` as a flash message:
+> "Map 'Syracuse Laser Tag' has no red base placed. Place a red and
+> blue base in the map editor before simulating."
 
-`{{ active_roster|length }}` (= active roster size, 6 on a full team) is
-printed right before the literal `2 slots`; the `{% with scout_count=0 %}`
-block is unused. Confirmed it varies with roster size — a freshly created
-team with 0 active players shows `0 2 slots`. Fix: delete the placeholder
-lines, leaving just `2 slots`.
-
-### ~~🟡 PD-1 — Stat category grouping on player detail looks jumbled~~ _(fixed)_
-On `/<team>/player/<id>/` stats are grouped under headings that don't
-match the documented categories (teams/CLAUDE.md). Observed: *Decision
-Making* group contains Positioning, Adaptability, **Special Usage**,
-**Survival**; *Physical* group contains **Communication**, **Accuracy**,
-**Resupply Efficiency**. Per the model these are Role/Team/Physical
-stats respectively. Cosmetic but confusing.
-
-### ~~🟡 PD-2 — Accessibility warnings on player edit form~~ _(fixed)_
-Console (DevTools Issues) on `/<team>/player/<id>/edit/`: "No label
-associated with a form field" and "An element doesn't have an
-autocomplete attribute". Minor a11y; add `<label for>` / `autocomplete`.
-(Same autocomplete warning also seen on the Maps upload form.)
+This is the **expected** behaviour for an incomplete map — the
+`load_map_context` raise is caught by the view's `try/except
+ValueError` and surfaced cleanly. The actual data gap (no red base
+on the Syracuse map) is pre-existing and unrelated to SIM-09. Worth
+noting that `_maps_with_confirmed_config()` only filters to "has
+confirmed zone config" — it doesn't require base placement, so an
+unfinished map can appear in the picker. Fix idea (not SIM-09 scope):
+tighten the form queryset to also require both bases + sight lines,
+matching what `load_map_context` actually demands.
 
 ---
 
-## Create Team flow
+## Batch simulation (SIM-09 critical surface)
 
-### ✅ Works
-`/create/` → enter name → team created (success flash). "Add Player"
-pre-fills a random profile, stats default 50, "Set All to
-Average/Elite" presets work. Player added → lands on Bench as designed.
-Edit Player correctly pre-loads existing values and shows a live
-"Overall Rating". Assign Slots renders all 6 slot dropdowns.
+### 🟠 BS-1 — `arena_map` field missing from `batch_simulate.html`
+**Repro:** Open `/matches/simulate-batch/`. Initial render shows only
+Red Team / Blue Team / Number of simulations / Run.
+**Expected:** Arena Map dropdown between Blue Team and Number of
+simulations (mirroring the `MatchSetupForm` template).
+**Actual (pre-fix):** No Arena Map field. The form had it
+(`forms.py:94-100`), the view forwarded it (`views.py:384`), the
+session stash carried it (`views.py:401`), and the worker resolved it
+(`views.py:44-50`) — but the template `batch_simulate.html` rendered
+only `team_red`, `team_blue`, `n`, so users had no way to set it.
+**Root cause:** `laserforce_simulator/templates/matches/batch_simulate.html`
+omitted the field block (sibling templates `enhanced_match_setup.html`
+and `enhanced_single_round_setup.html` both have the matching block
+for their own `arena_map` field). The pre-fix template body was the
+3-column row at line 12-25.
+**Fix applied this session:** Added the field block between Blue Team
+and Number of simulations; column widths rebalanced to `col-md-3`s +
+`col-md-2` (n) + `col-md-1` (Run). Server restarted with `DEBUG=True`
+so the template cache picks up the change in future sessions; in
+production the existing template-cache invalidation on restart covers
+it.
+**Verified after fix:** Field renders, 50-round batch on San Marcos
+completed in 115 s (~2.3 s/round with map active vs ~200 ms no-map),
+all sections render (win rates, side advantage panel, score
+distribution, save buttons).
 
-### ~~🟡 CT-1 — Slots form requires all 6 slots at once; no partial save~~ _(fixed)_
-On `/<id>/slots/` every slot `<select>` is `required`, so the browser
-blocks submit ("Please select an item in the list.") unless all 6 slots
-are filled in one save. A team with < 6 players can never have *any*
-slot assigned, and progress can't be saved incrementally. (Side effect:
-server-side duplicate-player validation can't be reached via the UI
-because the client `required` check fires first.) Consider allowing
-partial saves or messaging that 6 players are required first.
+### ✅ Save batch game with map — works (SIM-09 critical fix)
+After running 50 sims with San Marcos map, clicked **Save Average
+Game(s)** → background save job replayed the seed and persisted
+`GameRound id=67`:
+- `arena_map = "San Marcos Laser Tag"` ✓
+- `zone_size = 20` ✓
+- `rng_seed = 5650959302570751530` ✓
+- 5719 events.
 
-### ~~🟡 CT-2 — Profile number inputs have no min/max bounds~~ _(fixed)_
-On Add/Edit Player, Age / Started playing age / Total games report
-`valuemin=0 valuemax=0` (no real bounds) while the 19 stat fields
-correctly use `0–100`. These accept arbitrary/negative numbers. Add
-sensible `min`/`max`.
-
----
-
-## Matches / Match creation
-
-### ✅ Create Match — works end to end
-`/matches/` → "New Tournament Match" → Red=1, Blue=2, Tournament →
-**simulated successfully** (Match 22, "1 Wins!" 98444-55523). Match
-detail, round detail (full per-player performance + resource summary,
-no console errors), and event log all render. Team dropdowns correctly
-**exclude** the incomplete "ChromeTest QA" team. Elimination bonus
-(+10000/round) correctly reflected in totals.
-
-### ~~🟠 M-1 — Event Log page loads the entire log into one DOM (no server pagination)~~ _(fixed)_
-`/matches/game-round/<id>/events/` rendered **4533 events → ~20,600
-a11y/DOM nodes** for a single 2-team, no-map round. The REST API
-`/events/` is paginated (per matches/CLAUDE.md) but the HTML view is
-not — every tag/move/miss/resupply row is emitted server-side into
-scrollable panels. Longer rounds / map rounds (movement events explode
-under MOVE-01) produce far more. Loads without error here, but will
-degrade badly (slow render, large response) on big rounds. Recommend
-server-side pagination or windowing for the HTML timeline.
-
-**Fix:** the view now emits every event **once** as a compact JSON
-list (`events_data` via `json_script`) plus a `players_data` block,
-instead of one server-rendered DOM row per event. `game_round_events.html`
-renders only a bounded **window** of the timeline client-side
-(`WIN = 250` rows, Newer/Older pager) and feeds the same JSON array to
-the kill feed (recency-capped at 250), the three charts, and the SIM-05
-playback engine — nothing reads the DOM for event data anymore. The
-playback engine auto-pages the window onto the current event and
-click-on-row still jumps playback. DOM nodes are now bounded (~250 rows)
-regardless of round length. JSON shape pinned by
-`TestM1EventLogWindowing`.
-
-### ~~🟡 M-2 — Many stale "1 vs 2 — Tie 0–0" matches in history~~ _(fixed)_
-The match list shows numerous old `1 vs 2 … Tie / 0 - 0 / Rounds 0-0`
-entries (Oct 17 2025). Likely stale seed data, but a `0-0` tie with
-`0-0` rounds suggests matches persisted without a successful
-simulation. Worth confirming the create-match path can't persist an
-empty match when simulation fails.
+Pre-SIM-09 this round would have had `arena_map=None`/`zone_size=None`
+because `save_games` didn't accept the kwarg and `_run_save_job`
+didn't resolve the session-stashed id. The view-thread-spawn arg
+plumbing (`save_batch_games` → `_run_save_job` 6-arg threading.Thread
+positional args) is unit-tested in
+`views_tests.py::test_save_batch_games_view_threads_arena_map_id_into_worker_args`.
 
 ---
 
-## Batch Sim (`/matches/simulate-batch/`)
+## Other pages
 
-### ✅ Works
-Ran 50 sims (1 vs 2): win rates, ties, per-team avg score/survivors,
-map-side advantage table, score distribution all render correctly.
-"Save Average Game(s)" worked and produced a "View Round 61" link.
+### ✅ Homepage (`/`) — works
+14 teams listed, valid roster badges accurate, console + network clean.
 
-### ~~🟡 BS-1 — Batch run much slower than documented~~ _(fixed)_
-50 sims "completed in 20.54s" (~411 ms/game; ≈2 rounds/game ⇒
-~205 ms/round). matches/CLAUDE.md states BatchSimulator runs a round in
-"~25 ms" — this is ~8× slower on the no-map 3-zone path. May be an
-outdated doc figure or single-worker default; worth confirming the
-batch path isn't hitting the ORM or failing to parallelise (a 500-sim
-run would extrapolate to ~3.5 min).
+### ✅ Match history (`/matches/`) — works
+Tournament Matches section lists match 24 (the new SIM-09 match);
+Single Rounds section lists rounds 66, 67 (the new SIM-09 rounds),
+both linkable.
+
+### ✅ Team detail (`/15/`) — works
+New `ChromeTest QA` team (id=15) renders with "0 players Incomplete
+Roster" badge, correct list of missing roles, Add Player / Assign
+Slots / Match History / Edit Team buttons present.
+
+### ✅ Maps list (`/maps/`) — works
+Both arena maps listed with thumbnails (304 cached). One a11y issue
+(see A11Y-1 below).
+
+### 🟡 A11Y-1 — Maps list form missing `autocomplete`
+Chrome flagged one Issue on `/maps/`: "An element doesn't have an
+autocomplete attribute". Likely the upload-map form input field. Not
+blocking but a quick fix (`autocomplete="off"` or
+`autocomplete="name"` on the relevant `<input>`).
+
+### ✅ Responsive (720×1115) — works
+Form fields stack vertically, navbar collapses to hamburger button as
+expected (below 992px breakpoint), Run button stretches full width,
+Arena Map field included in the stack. Screenshot:
+`.claude/worktrees/chrome-test-720.png`.
 
 ---
 
-## Maps (`/maps/`, `/maps/<id>/editor/`)
+## Known/benign
 
-### ✅ Works
-Maps list shows both configured maps (Syracuse, San Marcos) with
-Open Editor / Delete / Upload form. Map editor renders Original + B&W
-Zone Map with grid overlay, all brush/legend/elevation/spawn tools, and
-toggles cleanly between **Zones & Bases** and **Sight Lines** modes
-(Compute/Save Sight Lines controls appear) with no console errors.
-
----
-
-## Global / Responsive
-
-### ~~🟠 T-4 — Navbar has no mobile toggler (unusable layout < 992px)~~ _(fixed)_
-`templates/base.html:10` uses `navbar navbar-expand-lg` but there is
-**no `navbar-toggler` (hamburger) button and no `collapse
-navbar-collapse` wrapper**. Below the Bootstrap `lg` breakpoint (992px —
-tablets/phones) the brand and the five nav links stack awkwardly with no
-hamburger menu (reproduced at 720px wide). At ≥992px desktop the navbar
-is fine. Add the standard Bootstrap toggler + `collapse navbar-collapse`
-markup.
+- `/favicon.ico` 404 not observed this session (browser didn't request).
+- The "no red base placed" message on the Syracuse map is correct
+  error surfacing, not a SIM-09 bug.
