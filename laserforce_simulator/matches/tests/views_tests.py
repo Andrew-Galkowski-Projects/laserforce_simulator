@@ -4,7 +4,7 @@ from django.test import Client
 from django.urls import reverse, NoReverseMatch
 
 from matches.models import GameRound, Match
-from matches.simulation import ResourceBasedSimulator
+from matches.simulation import BatchSimulator
 from matches.tests.conftest import make_team_with_slots
 
 
@@ -21,9 +21,9 @@ class TestSingleRoundRemoval:
         blue, _ = make_team_with_slots("Blue")
         client = Client()
         before = GameRound.objects.count()
-        # TIME-01: ROUND_SECONDS → ROUND_TICKS; 20 s → 40 ticks (short round
-        # for test speed).
-        with patch.object(ResourceBasedSimulator, "ROUND_TICKS", 40):
+        # SIM-09: view now drives BatchSimulator (was RBS); ROUND_TICKS=40
+        # keeps the integration test fast.
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
             response = client.post(
                 reverse("create_single_round"),
                 {"team_red": red.id, "team_blue": blue.id},
@@ -157,9 +157,9 @@ class TestM1EventLogWindowing:
     def _round_with_events(self):
         red, _ = make_team_with_slots("M1Red")
         blue, _ = make_team_with_slots("M1Blue")
-        # Short round for speed (mirrors the TIME-01 view-test pattern).
-        with patch.object(ResourceBasedSimulator, "ROUND_TICKS", 40):
-            gr = ResourceBasedSimulator().simulate_single_round_detailed(red, blue)
+        # SIM-09: view-path now drives BatchSimulator. Short round for speed.
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            gr = BatchSimulator().simulate_single_round_detailed(red, blue)
         return gr
 
     def test_view_emits_json_not_per_event_rows(self):
@@ -220,3 +220,292 @@ class TestM1EventLogWindowing:
         assert resp.status_code == 200
         assert resp.context["events_data"] == []
         assert "data-event-type=" not in resp.content.decode()
+
+
+# ---------------------------------------------------------------------------
+# SIM-09 — batch view threads arena_map through to BatchSimulator + save path
+# ---------------------------------------------------------------------------
+
+
+def _make_minimal_arena_map(name="Sim09BatchMap"):
+    """Build a tiny but fully-configured ArenaMap usable by BatchSimulator.run.
+
+    Mirrors the smallest-config fixtures in ``test_map.py`` so the view-test
+    exercises the real form QuerySet + view → simulator plumbing.
+    """
+    from core.models import (
+        ArenaMap,
+        BaseSightLineConfig,
+        MapBaseConfig,
+        MapZoneConfig,
+        SightLineConfig,
+    )
+    from core.map_processing import compute_sight_lines
+
+    zone_size = 50
+    zone_data = [[1] * 4 for _ in range(4)]
+    arena_map = ArenaMap.objects.create(
+        name=name, img_width=4 * zone_size, img_height=4 * zone_size
+    )
+    MapZoneConfig.objects.create(
+        arena_map=arena_map,
+        zone_size=zone_size,
+        zone_data=zone_data,
+        confirmed=True,
+    )
+    MapBaseConfig.objects.create(
+        arena_map=arena_map,
+        base_type="red",
+        x_px=zone_size // 2,
+        y_px=zone_size // 2,
+    )
+    MapBaseConfig.objects.create(
+        arena_map=arena_map,
+        base_type="blue",
+        x_px=4 * zone_size - zone_size // 2,
+        y_px=4 * zone_size - zone_size // 2,
+    )
+    SightLineConfig.objects.create(
+        arena_map=arena_map,
+        zone_size=zone_size,
+        sight_data=compute_sight_lines(zone_data),
+    )
+    BaseSightLineConfig.objects.create(
+        arena_map=arena_map, base_type="red", zone_size=zone_size, visible_cells=[]
+    )
+    BaseSightLineConfig.objects.create(
+        arena_map=arena_map, base_type="blue", zone_size=zone_size, visible_cells=[]
+    )
+    return arena_map
+
+
+@pytest.mark.django_db
+class TestSim09BatchArenaMapPlumbing:
+    """SIM-09 view path: ``simulate_batch`` accepts an ``arena_map`` form
+    field, threads it through to ``BatchSimulator.run(arena_map=...)``, and
+    stashes the resolved map id in the session under
+    ``batch_seeds["arena_map_id"]`` so ``save_batch_games`` /
+    ``_run_save_job`` can reload it and pass it to ``save_games``.
+    """
+
+    def test_simulate_batch_threads_arena_map_to_run(self):
+        """POST with ``arena_map`` → view calls ``BatchSimulator.run`` with
+        that exact ArenaMap, and stashes ``arena_map_id`` in the session.
+        """
+        red, _ = make_team_with_slots("Sim09BatchR")
+        blue, _ = make_team_with_slots("Sim09BatchB")
+        arena_map = _make_minimal_arena_map("Sim09BatchMap")
+        client = Client()
+
+        # Spy on BatchSimulator.run so we capture the arena_map kwarg without
+        # actually running 10 full simulations (and so the assertion does not
+        # depend on round outcomes).
+        original_run = BatchSimulator.run
+        captured: dict = {}
+
+        def _spy_run(self, team_red, team_blue, n=100, *, arena_map=None, **kwargs):
+            captured["arena_map"] = arena_map
+            # Run a tiny real batch so the view's downstream code (histogram,
+            # session stash) sees a populated result dict.
+            with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+                return original_run(
+                    self, team_red, team_blue, n=2, arena_map=arena_map, **kwargs
+                )
+
+        with patch.object(BatchSimulator, "run", _spy_run):
+            response = client.post(
+                reverse("simulate_batch"),
+                {
+                    "team_red": red.id,
+                    "team_blue": blue.id,
+                    "n": "10",
+                    "arena_map": arena_map.id,
+                },
+            )
+
+        assert response.status_code == 200
+        assert captured.get("arena_map") == arena_map, (
+            "simulate_batch view did not forward arena_map to " "BatchSimulator.run"
+        )
+        # Session stash records the arena_map_id so the save path can reload.
+        session_seeds = client.session.get("batch_seeds")
+        assert session_seeds is not None, "view did not stash batch_seeds"
+        assert (
+            session_seeds.get("arena_map_id") == arena_map.id
+        ), "batch_seeds['arena_map_id'] missing or wrong"
+
+    def test_simulate_batch_no_arena_map_stashes_none(self):
+        """Omitting ``arena_map`` from the form keeps the 3-zone fallback —
+        ``BatchSimulator.run`` is called with ``arena_map=None`` and the
+        session stash records ``arena_map_id=None``.
+        """
+        red, _ = make_team_with_slots("Sim09BatchNoMapR")
+        blue, _ = make_team_with_slots("Sim09BatchNoMapB")
+        client = Client()
+
+        original_run = BatchSimulator.run
+        captured: dict = {}
+
+        def _spy_run(self, team_red, team_blue, n=100, *, arena_map=None, **kwargs):
+            captured["arena_map"] = arena_map
+            with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+                return original_run(
+                    self, team_red, team_blue, n=2, arena_map=arena_map, **kwargs
+                )
+
+        with patch.object(BatchSimulator, "run", _spy_run):
+            response = client.post(
+                reverse("simulate_batch"),
+                {"team_red": red.id, "team_blue": blue.id, "n": "10"},
+            )
+
+        assert response.status_code == 200
+        assert captured.get("arena_map") is None
+        session_seeds = client.session.get("batch_seeds")
+        assert session_seeds is not None
+        assert session_seeds.get("arena_map_id") is None
+
+    def test_run_save_job_threads_arena_map_to_save_games(self):
+        """``_run_save_job(arena_map_id=...)`` resolves the id to an
+        ``ArenaMap`` and passes it as the ``arena_map=`` kwarg to
+        ``BatchSimulator.save_games``. Calls ``_run_save_job`` synchronously
+        to side-step the cross-thread patch.object race the threaded
+        ``save_batch_games`` view would otherwise introduce — the threading
+        layer is just ``threading.Thread(target=_run_save_job)``, so testing
+        the target directly covers the load-bearing arena_map plumbing.
+        """
+        from matches.views import _run_save_job, _SAVE_JOBS
+
+        red, _ = make_team_with_slots("Sim09SaveR")
+        blue, _ = make_team_with_slots("Sim09SaveB")
+        arena_map = _make_minimal_arena_map("Sim09SaveMap")
+
+        captured: dict = {}
+
+        def _spy_save_games(self, t_red, t_blue, seeds, n, *, arena_map=None):
+            captured["arena_map"] = arena_map
+            captured["team_red"] = t_red
+            captured["team_blue"] = t_blue
+            return []
+
+        # _run_save_job's seeds arg is a list of (seed, flipped) pairs;
+        # the spy doesn't care about content, only that the kwarg is forwarded.
+        seeds = [(12345, False)]
+        job_id = "sim09-arena-map-job"
+        with patch.object(BatchSimulator, "save_games", _spy_save_games):
+            _run_save_job(job_id, red.id, blue.id, seeds, 1, arena_map.id)
+
+        assert (
+            "arena_map" in captured
+        ), "_run_save_job never called save_games with an arena_map kwarg"
+        assert captured["arena_map"] == arena_map, (
+            "save_games received the wrong ArenaMap; expected the one "
+            "stashed under arena_map_id"
+        )
+        assert captured["team_red"] == red
+        assert captured["team_blue"] == blue
+        # Job status reaches "done".
+        assert _SAVE_JOBS[job_id]["status"] == "done"
+
+    def test_run_save_job_none_arena_map_id_passes_none(self):
+        """``arena_map_id=None`` (the 3-zone fallback) is forwarded as
+        ``arena_map=None`` — the no-map path is preserved end-to-end.
+        """
+        from matches.views import _run_save_job
+
+        red, _ = make_team_with_slots("Sim09SaveNoneR")
+        blue, _ = make_team_with_slots("Sim09SaveNoneB")
+
+        captured: dict = {}
+
+        def _spy_save_games(self, t_red, t_blue, seeds, n, *, arena_map=None):
+            captured["arena_map"] = arena_map
+            return []
+
+        seeds = [(99999, False)]
+        with patch.object(BatchSimulator, "save_games", _spy_save_games):
+            _run_save_job("none-job", red.id, blue.id, seeds, 1, None)
+
+        assert "arena_map" in captured
+        assert captured["arena_map"] is None
+
+    def test_save_batch_games_view_threads_arena_map_id_into_worker_args(self):
+        """``save_batch_games`` constructs ``threading.Thread`` with
+        ``arena_map_id`` (read from the session stash) in the args tuple.
+        Spies on ``threading.Thread`` to capture the args without actually
+        spawning a thread — pins the seam between the synchronous view layer
+        and the asynchronous worker so a future refactor that drops the
+        arena_map_id arg fails here rather than silently falling back to
+        no-map.
+        """
+        from matches import views as views_module
+
+        red, _ = make_team_with_slots("Sim09ThreadArgR")
+        blue, _ = make_team_with_slots("Sim09ThreadArgB")
+        arena_map = _make_minimal_arena_map("Sim09ThreadArgMap")
+        client = Client()
+
+        # First seed the session via a real batch POST so save_batch_games
+        # has avg_seeds + arena_map_id in the session.
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            client.post(
+                reverse("simulate_batch"),
+                {
+                    "team_red": red.id,
+                    "team_blue": blue.id,
+                    "n": "10",
+                    "arena_map": arena_map.id,
+                },
+            )
+
+        captured_args: dict = {}
+
+        class _FakeThread:
+            def __init__(self, *, target, args, daemon):
+                captured_args["target"] = target
+                captured_args["args"] = args
+                captured_args["daemon"] = daemon
+
+            def start(self):
+                # Do not actually spawn — we only want the constructor args.
+                pass
+
+        with patch.object(views_module.threading, "Thread", _FakeThread):
+            response = client.post(
+                reverse("save_batch_games"), {"game_type": "avg", "n": "1"}
+            )
+
+        assert response.status_code == 200, response.content
+        assert captured_args["target"] is views_module._run_save_job
+        # _run_save_job(job_id, team_red_id, team_blue_id, seeds, n, arena_map_id)
+        # — arena_map_id is the 6th positional arg.
+        assert (
+            len(captured_args["args"]) == 6
+        ), "save_batch_games no longer passes arena_map_id positionally"
+        assert (
+            captured_args["args"][5] == arena_map.id
+        ), "save_batch_games dropped the session-stashed arena_map_id"
+
+    def test_run_save_job_stale_arena_map_id_treated_as_none(self):
+        """A stale ``arena_map_id`` (map deleted between simulation and save)
+        is resolved to ``None`` rather than crashing the job.
+        """
+        from matches.views import _run_save_job, _SAVE_JOBS
+
+        red, _ = make_team_with_slots("Sim09SaveStaleR")
+        blue, _ = make_team_with_slots("Sim09SaveStaleB")
+
+        captured: dict = {}
+
+        def _spy_save_games(self, t_red, t_blue, seeds, n, *, arena_map=None):
+            captured["arena_map"] = arena_map
+            return []
+
+        stale_id = 9_999_999  # no ArenaMap with this PK exists
+        seeds = [(11111, False)]
+        job_id = "stale-job"
+        with patch.object(BatchSimulator, "save_games", _spy_save_games):
+            _run_save_job(job_id, red.id, blue.id, seeds, 1, stale_id)
+
+        assert captured.get("arena_map") is None
+        assert _SAVE_JOBS[job_id]["status"] == "done"

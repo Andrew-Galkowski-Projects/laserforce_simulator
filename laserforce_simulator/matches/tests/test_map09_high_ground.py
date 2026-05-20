@@ -150,7 +150,7 @@ class TestMap09ElevationStorage:
             SightLineConfig,
         )
         from core.map_processing import compute_sight_lines
-        from matches.simulation import ResourceBasedSimulator
+        from matches.sim_helpers.map_loader import resolve_map_data
 
         zone_data = [[1, 1], [1, 1]]
         arena_map = ArenaMap.objects.create(
@@ -181,7 +181,7 @@ class TestMap09ElevationStorage:
         )
 
         # Must not raise
-        result = ResourceBasedSimulator._resolve_map_data(arena_map)
+        result = resolve_map_data(arena_map)
         assert result is not None
 
 
@@ -795,12 +795,10 @@ class TestMap09ResolvesElevationFromZoneData:
 
     def test_resolve_map_data_returns_elevation_data(self):
         """_resolve_map_data elevation_grid field is present when zone_data has elevation."""
-        from matches.simulation import ResourceBasedSimulator
+        from matches.sim_helpers.map_loader import resolve_map_data
 
         arena_map = self._make_elevated_map("ElevResolve")
-        elevation_grid = ResourceBasedSimulator._resolve_map_data(
-            arena_map
-        ).elevation_grid
+        elevation_grid = resolve_map_data(arena_map).elevation_grid
 
         assert (
             elevation_grid is not None
@@ -822,7 +820,7 @@ class TestMap09ResolvesElevationFromZoneData:
             SightLineConfig,
         )
         from core.map_processing import compute_sight_lines
-        from matches.simulation import ResourceBasedSimulator
+        from matches.sim_helpers.map_loader import resolve_map_data
 
         zone_data_grid = [[1, 1], [1, 1]]
         arena_map = ArenaMap.objects.create(
@@ -852,9 +850,7 @@ class TestMap09ResolvesElevationFromZoneData:
             arena_map=arena_map, base_type="blue", zone_size=100, visible_cells=[]
         )
 
-        elevation_grid = ResourceBasedSimulator._resolve_map_data(
-            arena_map
-        ).elevation_grid
+        elevation_grid = resolve_map_data(arena_map).elevation_grid
         assert (
             elevation_grid is None or elevation_grid == {}
         ), "elevation_grid should be None or empty when zone_data has no 'elevation' key"

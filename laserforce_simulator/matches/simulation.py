@@ -1,17 +1,10 @@
 import math as _math
 import random
 import logging
-import threading
-import uuid
-from collections import deque
-from dataclasses import dataclass, field
 from django.db import transaction
 from .models import GameEvent, Match, GameRound, PlayerRoundState
 from .sim_helpers.mechanics import shot_cooldown
-from .sim_helpers.map_context import MapContext
 from .sim_helpers.pathfinding import (
-    build_movement_adjacency,
-    astar_next_step,
     astar_advance,
     astar_advance_cached,
     cells_to_move,
@@ -43,6 +36,10 @@ from .sim_helpers.pending_events import (
     PendingReaction,
 )
 from .sim_helpers.spawn_assigner import assign_spawn_cells
+from .sim_helpers.map_loader import (
+    load_map_context,
+    zone_from_cell,
+)
 from .sim_helpers.resupply_queue import resolve_resupply_requests
 from .sim_helpers.time_constants import (
     MEDIC_UNDER_FIRE_WINDOW_TICKS,
@@ -52,27 +49,6 @@ from .sim_helpers.time_constants import (
     TICK_SECONDS,
     TICKS_PER_ROUND,
 )
-
-# Fields mutated by resupply resolution — saved once per touched player after the batch.
-_RESUPPLY_SAVE_FIELDS = [
-    "final_lives",
-    "final_shots",
-    "last_downed_time",
-    "shields",
-    "special_active_until",
-    "combo_resupply_count",
-    "resupplies_given",
-]
-
-
-def _sec_to_ticks(seconds: float) -> int:
-    """TIME-01 persistence-boundary conversion: seconds -> ticks (×2).
-
-    Used ONLY by ResourceBasedSimulator, which stays second-internal and
-    byte-identical; this maps its second-valued persisted/serialized time
-    columns into the canonical tick unit at the single save/emit boundary.
-    """
-    return int(round(seconds / TICK_SECONDS))
 
 
 def _str_tag_id(player) -> str:
@@ -381,15 +357,7 @@ def _resupply_event_dict(event_type: str, kwargs: dict, tick_second: float) -> d
     }
 
 
-from teams.models import Player
 from matches.sim_helpers.role_constants import ROLE_STATS
-from core.models import (
-    BaseSightLineConfig,
-    HeavyStrongSpotsConfig,
-    MapBaseConfig,
-    MapCellRankingConfig,
-    SightLineConfig,
-)
 
 # Module logger
 logger = logging.getLogger(__name__)
@@ -399,2313 +367,6 @@ logging.basicConfig(level=logging.DEBUG)
 # _elevation_hit_modifier, elevation_hit_modifier, _can_tag_through_windowed_wall,
 # _get_los_targets, _get_base_interaction, and _NEUTRAL_BASE_TYPES are imported
 # from sim_helpers/combat.py above and re-exported here for backward compatibility.
-
-
-@dataclass
-class MapData:
-    """All map-derived data needed for one simulation round."""
-
-    zone_size: int | None
-    spawn_cells: dict
-    zone_data: list | None
-    sight_data: dict | None
-    base_sight_data: dict
-    cell_ranking: list = field(default_factory=list)
-    strong_spots: list = field(default_factory=list)
-    wall_meta: dict = field(default_factory=dict)
-    spawn_pools: dict = field(default_factory=dict)
-    elevation_grid: list | None = None
-
-
-class ResourceBasedSimulator:
-    """Enhanced simulator that tracks individual player resources"""
-
-    TICK = 0.5  # seconds per simulation tick (matches BatchSimulator)
-    # TIME-01: round length is now tick-valued. RBS still runs its loop in
-    # seconds internally (byte-identical), so the seconds duration is derived.
-    ROUND_TICKS = TICKS_PER_ROUND  # full 15-minute round (1800 ticks)
-
-    def __init__(self, duration_ticks: int | None = None):
-        # The constructor argument is in TICKS (like every other code-facing
-        # time value). RBS's internal loop is still second-based, so convert
-        # the tick duration to its seconds equivalent for the loop bound.
-        round_ticks = duration_ticks if duration_ticks is not None else self.ROUND_TICKS
-        self._round_duration = round_ticks * TICK_SECONDS
-        self.elimination_bonus = 10000  # Bonus points for eliminating entire team
-        # Role-based starting resources
-        self.role_starting_resources = {
-            "commander": {"lives": 15, "shots": 30, "special": 0, "missiles": 5},
-            "heavy": {"lives": 10, "shots": 20, "special": 0, "missiles": 5},
-            "scout": {"lives": 15, "shots": 30, "special": 0, "missiles": 0},
-            "medic": {"lives": 20, "shots": 15, "special": 0, "missiles": 0},
-            "ammo": {"lives": 10, "shots": 15, "special": 0, "missiles": 0},
-        }
-
-    @transaction.atomic
-    def simulate_match(
-        self, team_red, team_blue, match_type="friendly", *, arena_map=None
-    ):
-        """Simulate a full 2-round match with detailed tracking.
-
-        M-2: atomic so a mid-simulation failure rolls back the Match row
-        created up front — no empty 0-0 / 0-round match is ever persisted.
-        """
-        match = Match.objects.create(
-            team_red=team_red, team_blue=team_blue, match_type=match_type
-        )
-
-        # Round 1: team_red as red, team_blue as blue
-        round1 = self.simulate_detailed_round(
-            team_red, team_blue, match, 1, arena_map=arena_map
-        )
-        match.red_round1_points = round1.red_points
-        match.blue_round1_points = round1.blue_points
-        match.red_round1_eliminated = round1.red_team_eliminated
-        match.blue_round1_eliminated = round1.blue_team_eliminated
-        match.round1_eliminated_at = round1.eliminated_at
-
-        # Round 2: teams switch colors
-        round2 = self.simulate_detailed_round(
-            team_blue, team_red, match, 2, arena_map=arena_map
-        )
-        match.red_round2_points = round2.blue_points  # Switched
-        match.blue_round2_points = round2.red_points  # Switched
-        match.red_round2_eliminated = round2.blue_team_eliminated  # Switched
-        match.blue_round2_eliminated = round2.red_team_eliminated  # Switched
-        match.round2_eliminated_at = round2.eliminated_at
-
-        # Calculate bonus points
-        if match.red_round1_eliminated:
-            match.blue_bonus_points += self.elimination_bonus
-        if match.blue_round1_eliminated:
-            match.red_bonus_points += self.elimination_bonus
-        if match.red_round2_eliminated:
-            match.blue_bonus_points += self.elimination_bonus
-        if match.blue_round2_eliminated:
-            match.red_bonus_points += self.elimination_bonus
-
-        match.is_completed = True
-        match.save()
-
-        return match
-
-    def simulate_single_round_detailed(self, team_red, team_blue, *, arena_map=None):
-        """Simulate a single round with detailed player tracking"""
-        game_round = self.simulate_detailed_round(
-            team_red, team_blue, None, 1, arena_map=arena_map
-        )
-        return game_round
-
-    @transaction.atomic
-    def simulate_detailed_round(
-        self, team_red, team_blue, match=None, round_number=1, *, arena_map=None
-    ):
-        """Simulate a round with full player resource tracking"""
-        movement_ctx, zone_size = ResourceBasedSimulator._load_map_context(arena_map)
-
-        # Extract per-player init data from the movement context (or fall back to
-        # empty dicts when no map is active).
-        if movement_ctx is not None:
-            spawn_cells = movement_ctx.spawn_cells
-            zone_data = movement_ctx.zone_data
-            spawn_pools = movement_ctx.team_spawn_pools
-        else:
-            spawn_cells = {}
-            zone_data = None
-            spawn_pools = {}
-
-        game_round = GameRound.objects.create(
-            match=match,
-            round_number=round_number,
-            team_red=team_red,
-            team_blue=team_blue,
-            arena_map=arena_map,
-            zone_size=zone_size,
-        )
-
-        # Initialize player states
-        red_players = self._initialize_players(
-            game_round, team_red, "red", spawn_cells, zone_data, spawn_pools
-        )
-        blue_players = self._initialize_players(
-            game_round, team_blue, "blue", spawn_cells, zone_data, spawn_pools
-        )
-
-        round_result = self._simulate_round_combat(
-            game_round, red_players, blue_players, movement_ctx=movement_ctx
-        )
-
-        # Update game round with results
-        game_round.red_points = round_result["red_points"]
-        game_round.blue_points = round_result["blue_points"]
-        game_round.red_team_eliminated = round_result["red_eliminated"]
-        game_round.blue_team_eliminated = round_result["blue_eliminated"]
-        game_round.eliminated_at = round_result["eliminated_at"]
-
-        game_round.is_completed = True
-        game_round.save()
-
-        # TIME-01 emission boundary: RBS builds every event dict with a
-        # seconds-valued "timestamp" (db_second / int(second)). GameEvent.timestamp
-        # is the canonical TICK unit, so convert seconds -> ticks (×2) exactly
-        # here, where the in-memory buffer becomes persisted rows.
-        GameEvent.objects.bulk_create(
-            [
-                GameEvent(
-                    game_round=game_round,
-                    **{
-                        **ev,
-                        "timestamp": _sec_to_ticks(ev["timestamp"]),
-                    },
-                )
-                for ev in round_result["event_buffer"]
-            ]
-        )
-
-        return game_round
-
-    @staticmethod
-    def _resolve_map_data(arena_map):
-        """Load zone_size, spawn cells, zone_data, sight_data, base_sight_data,
-        cell_ranking, strong_spots, wall_meta, spawn_pools, and elevation_grid from a map.
-
-        Returns (zone_size, spawn_cells, zone_grid, sight_data, base_sight_data,
-                 cell_ranking, strong_spots, wall_meta, spawn_pools, elevation_grid) where:
-        - All values are None/{}/[] when no map is provided.
-        - sight_data is {"r,c": frozenset(["r,c", ...])} keyed by cell — O(1) lookup.
-        - base_sight_data is {"base_type": frozenset(["r,c", ...])} for O(1) cell lookup.
-        - cell_ranking is [[r,c], ...] sorted highest-LOS first (empty if not yet computed).
-        - strong_spots is [[r,c], ...] of Heavy defensive positions (empty if not computed).
-        - wall_meta is {"r,c": {"facing": "N"|"S"|"E"|"W", "height": float}} for wall apertures/heights.
-        - spawn_pools is {"red": [(r,c),...], "blue": [(r,c),...]} from stored spawn data.
-        - elevation_grid is a 2D list of floats from zone_data["elevation"]; None when absent
-          (all cells treated as elevation 0.0 during simulation).
-        Raises ValueError if the map is missing its zone config, a base, sight lines, or
-        base sight line configs.
-        """
-        if arena_map is None:
-            return MapData(
-                zone_size=None,
-                spawn_cells={},
-                zone_data=None,
-                sight_data=None,
-                base_sight_data={},
-            )
-
-        config = arena_map.latest_confirmed_config()
-        if config is None:
-            raise ValueError(
-                f"Map '{arena_map.name}' has no confirmed zone configuration. "
-                "Please confirm a zone config in the map editor before simulating."
-            )
-
-        zone_size = config.zone_size
-        raw = config.zone_data
-        zone_grid = raw["zones"] if isinstance(raw, dict) else raw
-        wall_meta: dict = raw.get("wall_meta", {}) if isinstance(raw, dict) else {}
-        elevation_grid = raw.get("elevation") if isinstance(raw, dict) else None
-
-        base_cfgs = {
-            bc.base_type: bc
-            for bc in MapBaseConfig.objects.filter(
-                arena_map=arena_map, base_type__in=["red", "blue"]
-            )
-        }
-
-        spawn_cells = {}
-        for color in ("red", "blue"):
-            base_cfg = base_cfgs.get(color)
-            if base_cfg is None:
-                raise ValueError(
-                    f"Map '{arena_map.name}' has no {color} base placed. "
-                    "Place a red and blue base in the map editor before simulating."
-                )
-            spawn_cells[color] = (
-                base_cfg.y_px // zone_size,
-                base_cfg.x_px // zone_size,
-            )
-
-        sight_config = SightLineConfig.objects.filter(
-            arena_map=arena_map, zone_size=zone_size
-        ).first()
-        if sight_config is None:
-            raise ValueError(
-                f"Map '{arena_map.name}' has no sight lines computed for zone size "
-                f"{zone_size}px. Click 'Compute Sight Lines' in the map editor before simulating."
-            )
-        sight_data = {k: frozenset(v) for k, v in sight_config.sight_data.items()}
-
-        base_sight_configs = list(
-            BaseSightLineConfig.objects.filter(arena_map=arena_map, zone_size=zone_size)
-        )
-        if not base_sight_configs:
-            raise ValueError(
-                f"Map '{arena_map.name}' has no base sight lines computed for zone size "
-                f"{zone_size}px. Click 'Compute Sight Lines' in the map editor before simulating."
-            )
-        base_sight_data = {
-            bsc.base_type: frozenset(f"{r},{c}" for r, c in bsc.visible_cells)
-            for bsc in base_sight_configs
-        }
-
-        ranking_config = MapCellRankingConfig.objects.filter(
-            arena_map=arena_map, zone_size=zone_size
-        ).first()
-        cell_ranking = ranking_config.ranked_cells if ranking_config else []
-
-        strong_spots_config = HeavyStrongSpotsConfig.objects.filter(
-            arena_map=arena_map, zone_size=zone_size
-        ).first()
-        strong_spots = strong_spots_config.cells if strong_spots_config else []
-
-        spawn_pools: dict[str, list[tuple[int, int]]] = {}
-        if isinstance(raw, dict):
-            for color in ("red", "blue"):
-                pool = raw.get(f"{color}_spawn", [])
-                if pool:
-                    spawn_pools[color] = [tuple(rc) for rc in pool]
-
-        return MapData(
-            zone_size=zone_size,
-            spawn_cells=spawn_cells,
-            zone_data=zone_grid,
-            sight_data=sight_data,
-            base_sight_data=base_sight_data,
-            cell_ranking=cell_ranking,
-            strong_spots=strong_spots,
-            wall_meta=wall_meta,
-            spawn_pools=spawn_pools,
-            elevation_grid=elevation_grid,
-        )
-
-    @staticmethod
-    def _zone_from_cell(row: int, col: int, spawn_cells: dict | None) -> int:
-        """Return zone index (0=red, 1=neutral, 2=blue) via proximity to base cells.
-
-        Nearest base type determines the zone. Neutral bases take precedence over
-        team bases when equidistant or closer.
-        """
-        if not spawn_cells:
-            return 1
-        red_base = spawn_cells.get("red")
-        blue_base = spawn_cells.get("blue")
-        if red_base is None or blue_base is None:
-            return 1
-        dist_red = abs(row - red_base[0]) + abs(col - red_base[1])
-        dist_blue = abs(row - blue_base[0]) + abs(col - blue_base[1])
-        neutral_bases = [
-            spawn_cells[f"neutral_{i}"]
-            for i in range(1, 5)
-            if f"neutral_{i}" in spawn_cells
-        ]
-        dist_neutral = min(
-            (abs(row - nb[0]) + abs(col - nb[1]) for nb in neutral_bases),
-            default=float("inf"),
-        )
-        if dist_neutral < dist_red and dist_neutral < dist_blue:
-            return 1  # nearest to a neutral base
-        if dist_red < dist_blue:
-            return 0  # red zone
-        if dist_blue < dist_red:
-            return 2  # blue zone
-        return 1  # equidistant = neutral
-
-    @staticmethod
-    def _build_movement_ctx(
-        zone_data,
-        spawn_cells,
-        sight_data=None,
-        base_sight_data=None,
-        cell_ranking=None,
-        strong_spots=None,
-        wall_meta=None,
-        team_spawn_pools=None,
-        elevation_grid=None,
-    ):
-        if zone_data is None:
-            return None
-        # Precompute per-cell LOS count and the top-25% high-LOS cell list once per round.
-        cell_los_counts: dict[str, int] = {}
-        if sight_data:
-            cell_los_counts = {k: len(v) for k, v in sight_data.items()}
-        ranking = cell_ranking or []
-        top_n = max(1, len(ranking) // 4) if ranking else 0
-        high_los_cells = [tuple(rc) for rc in ranking[:top_n]]
-        return MapContext(
-            adj=build_movement_adjacency(zone_data),
-            spawn_cells=spawn_cells,
-            zone_data=zone_data,
-            sight_data=sight_data,
-            base_sight_data=base_sight_data or {},
-            cell_los_counts=cell_los_counts,
-            high_los_cells=high_los_cells,
-            strong_spots=[tuple(rc) for rc in (strong_spots or [])],
-            wall_meta=wall_meta or {},
-            team_spawn_pools=team_spawn_pools or {},
-            elevation_grid=elevation_grid,
-        )
-
-    @staticmethod
-    def _load_map_context(
-        arena_map,
-    ) -> "tuple[MapContext | None, int | None]":
-        """Load all map data from DB and build the movement context in one step.
-
-        Merges the two-step ``_resolve_map_data`` -> ``_build_movement_ctx``
-        pipeline into a single static method that performs all ORM queries and
-        immediately constructs the :class:`MapContext` object.
-
-        Returns:
-            ``(movement_ctx, zone_size)`` where:
-
-            - ``movement_ctx`` is a :class:`MapContext` ready for use in the
-              simulation tick loop, or ``None`` when ``arena_map`` is ``None``
-              (3-zone fallback).
-            - ``zone_size`` is the integer pixel size of one cell, or ``None``
-              when ``arena_map`` is ``None``.
-
-        Raises:
-            ValueError: if the map is missing its confirmed zone config, a
-                base placement, computed sight lines, or computed base sight
-                lines.
-        """
-        if arena_map is None:
-            return None, None
-
-        config = arena_map.latest_confirmed_config()
-        if config is None:
-            raise ValueError(
-                f"Map '{arena_map.name}' has no confirmed zone configuration. "
-                "Please confirm a zone config in the map editor before simulating."
-            )
-
-        zone_size: int = config.zone_size
-        raw = config.zone_data
-        zone_grid = raw["zones"] if isinstance(raw, dict) else raw
-        wall_meta_lm: dict = raw.get("wall_meta", {}) if isinstance(raw, dict) else {}
-        elevation_grid_lm = raw.get("elevation") if isinstance(raw, dict) else None
-
-        base_cfgs = {
-            bc.base_type: bc
-            for bc in MapBaseConfig.objects.filter(
-                arena_map=arena_map, base_type__in=["red", "blue"]
-            )
-        }
-
-        spawn_cells_lm: dict = {}
-        for color in ("red", "blue"):
-            base_cfg = base_cfgs.get(color)
-            if base_cfg is None:
-                raise ValueError(
-                    f"Map '{arena_map.name}' has no {color} base placed. "
-                    "Place a red and blue base in the map editor before simulating."
-                )
-            spawn_cells_lm[color] = (
-                base_cfg.y_px // zone_size,
-                base_cfg.x_px // zone_size,
-            )
-
-        sight_config = SightLineConfig.objects.filter(
-            arena_map=arena_map, zone_size=zone_size
-        ).first()
-        if sight_config is None:
-            raise ValueError(
-                f"Map '{arena_map.name}' has no sight lines computed for zone size "
-                f"{zone_size}px. Click 'Compute Sight Lines' in the map editor before simulating."
-            )
-        sight_data_lm: dict = {
-            k: frozenset(v) for k, v in sight_config.sight_data.items()
-        }
-
-        base_sight_configs = list(
-            BaseSightLineConfig.objects.filter(arena_map=arena_map, zone_size=zone_size)
-        )
-        if not base_sight_configs:
-            raise ValueError(
-                f"Map '{arena_map.name}' has no base sight lines computed for zone size "
-                f"{zone_size}px. Click 'Compute Sight Lines' in the map editor before simulating."
-            )
-        base_sight_data_lm: dict = {
-            bsc.base_type: frozenset(f"{r},{c}" for r, c in bsc.visible_cells)
-            for bsc in base_sight_configs
-        }
-
-        ranking_config = MapCellRankingConfig.objects.filter(
-            arena_map=arena_map, zone_size=zone_size
-        ).first()
-        cell_ranking_lm: list = ranking_config.ranked_cells if ranking_config else []
-
-        strong_spots_config = HeavyStrongSpotsConfig.objects.filter(
-            arena_map=arena_map, zone_size=zone_size
-        ).first()
-        strong_spots_lm: list = strong_spots_config.cells if strong_spots_config else []
-
-        team_spawn_pools_lm: dict[str, list[tuple[int, int]]] = {}
-        if isinstance(raw, dict):
-            for color in ("red", "blue"):
-                pool = raw.get(f"{color}_spawn", [])
-                if pool:
-                    team_spawn_pools_lm[color] = [tuple(rc) for rc in pool]
-
-        # Build the movement context (formerly _build_movement_ctx).
-        cell_los_counts_lm: dict[str, int] = {
-            k: len(v) for k, v in sight_data_lm.items()
-        }
-        top_n = max(1, len(cell_ranking_lm) // 4) if cell_ranking_lm else 0
-        high_los_cells_lm: list[tuple[int, int]] = [
-            tuple(rc) for rc in cell_ranking_lm[:top_n]
-        ]
-
-        movement_ctx = MapContext(
-            adj=build_movement_adjacency(zone_grid),
-            spawn_cells=spawn_cells_lm,
-            zone_data=zone_grid,
-            sight_data=sight_data_lm,
-            base_sight_data=base_sight_data_lm,
-            cell_los_counts=cell_los_counts_lm,
-            high_los_cells=high_los_cells_lm,
-            strong_spots=[tuple(rc) for rc in strong_spots_lm],
-            wall_meta=wall_meta_lm,
-            team_spawn_pools=team_spawn_pools_lm,
-            elevation_grid=elevation_grid_lm,
-        )
-
-        return movement_ctx, zone_size
-
-    @staticmethod
-    def _build_spawn_assignments(
-        roster_roles: list[str],
-        team_color: str,
-        spawn_cells: dict,
-        team_spawn_pools: dict,
-    ) -> dict[int, tuple[int, int] | None]:
-        """Pre-compute spawn cell assignments for all players in a team.
-
-        Delegates to :func:`matches.sim_helpers.spawn_assigner.assign_spawn_cells`
-        which is the single source of truth for MAP-08 role-priority spawn logic.
-        Kept here for backward compatibility — both simulators and external callers
-        can reach it via ``ResourceBasedSimulator._build_spawn_assignments(...)``
-        or directly via ``assign_spawn_cells(...)``.
-        """
-        return assign_spawn_cells(
-            roster_roles, team_color, spawn_cells, team_spawn_pools
-        )
-
-    def _initialize_players(
-        self,
-        game_round,
-        team,
-        team_color: str,
-        spawn_cells: dict,
-        zone_data,
-        team_spawn_pools: dict | None = None,
-    ):
-        """Initialize player states from the team's active slot assignments."""
-        player_states = []
-        default_zone = 0 if team_color == "red" else 2
-        base_spawn = spawn_cells.get(team_color)
-        roster = list(team.active_roster)
-
-        # Pre-compute spawn assignments using role-priority ordering (MAP-08).
-        if team_spawn_pools and zone_data is not None:
-            roster_roles = [role for role, _ in roster]
-            cell_assignments = assign_spawn_cells(
-                roster_roles, team_color, spawn_cells, team_spawn_pools
-            )
-        else:
-            cell_assignments = {}
-
-        for idx, (role, player) in enumerate(roster):
-            resources = self.role_starting_resources[role]
-
-            # Determine cell position for this player.
-            if cell_assignments:
-                chosen = cell_assignments.get(idx)
-                if chosen is not None:
-                    cell_row: int | None = chosen[0]
-                    cell_col: int | None = chosen[1]
-                else:
-                    cell_row = None
-                    cell_col = None
-            elif base_spawn is not None and zone_data is not None:
-                cell_row = base_spawn[0]
-                cell_col = base_spawn[1]
-            else:
-                cell_row = None
-                cell_col = None
-
-            starting_zone = (
-                self._zone_from_cell(cell_row, cell_col, spawn_cells)
-                if cell_row is not None
-                else default_zone
-            )
-
-            state = PlayerRoundState.objects.create(
-                game_round=game_round,
-                team_color=team_color,
-                role=role,
-                player=player,
-                zone_fallback=starting_zone,
-                cell_row=cell_row,
-                cell_col=cell_col,
-                shields=ROLE_STATS[role]["shield"],
-                starting_lives=resources["lives"],
-                starting_shots=resources["shots"],
-                starting_special=resources["special"],
-                starting_missiles=resources["missiles"],
-                final_lives=resources["lives"],
-                final_shots=resources["shots"],
-                final_special=resources["special"],
-                final_missiles=resources["missiles"],
-            )
-
-            # MECH-06: initialize transient memory fields (no DB columns)
-            state.player_memory = {}
-            state.medic_hit_times = []
-            state.score_broadcast_state = {}
-            state.score_broadcast_next = 180
-            # Set scout index for string_tag_id property
-            if role == "scout":
-                scout_count = sum(1 for s in player_states if s.role == "scout") + 1
-                state._scout_index = scout_count
-
-            player_states.append(state)
-
-        return player_states
-
-    def _simulate_round_combat(
-        self, game_round, red_players, blue_players, movement_ctx=None
-    ):
-        """Simulate combat between two teams"""
-        round_duration = self._round_duration
-
-        pending_missile_locks: list[PendingMissileLock] = []
-        pending_nukes: list[PendingNuke] = []
-        pending_followups: list[PendingFollowup] = []
-        pending_reactions: list[PendingReaction] = []
-        event_buffer = []  # accumulated event dicts; bulk-written after the loop
-        last_shot_times = (
-            {}
-        )  # player.id → float last-shot second (survives refresh_from_db)
-        eliminated_at = 901
-
-        second = 0.0
-        while second < round_duration:
-            db_second = int(second)
-
-            # --- process missile locks (LOS-check per tick for 3 ticks) ---
-            still_locking: list[PendingMissileLock] = []
-            for lock in pending_missile_locks:
-                result = _tick_missile_lock_shared(lock, second, movement_ctx)
-                if result == "pending":
-                    still_locking.append(lock)
-                elif result == "hit":
-                    survival = getattr(lock.defender, "survival", 50)
-                    dodge_pct = min(20.0, survival / 5.0)
-                    if random.random() * 100 < dodge_pct:
-                        event_buffer.append(
-                            {
-                                "event_type": "missile_dodge",
-                                "actor_id": lock.defender.player_id,
-                                "target_id": lock.attacker.player_id,
-                                "timestamp": db_second,
-                                "points_awarded": 0,
-                                "description": f"{lock.defender.player.name} dodges missile from {lock.attacker.player.name}",
-                                "metadata": {
-                                    "actor_role": lock.attacker.role,
-                                    "target_role": lock.defender.role,
-                                },
-                            }
-                        )
-                    else:
-                        self._complete_missile(
-                            lock.attacker, lock.defender, db_second, event_buffer
-                        )
-                # "miss": missile already consumed, no further action
-            pending_missile_locks = still_locking
-
-            # REFRESH player states from database after missiles
-            for p in red_players + blue_players:
-                p.refresh_from_db()
-
-            # --- process pending reactions (deferred by shot cooldown) ---
-            due_rx, pending_reactions = drain_reactions(pending_reactions, second)
-            for rx in due_rx:
-                r_attacker, r_defender = rx.attacker, rx.defender
-                if r_attacker.final_lives <= 0 or r_defender.final_lives <= 0:
-                    continue
-                if not r_attacker.is_active_at(db_second):
-                    continue
-                if r_attacker.final_shots <= 0 and r_attacker.role != "ammo":
-                    continue
-                r_attacker.reaction_shots += 1
-                r_attacker.last_shot_time = second
-                _rx_elev_mod = _elevation_hit_modifier(
-                    r_attacker.cell_row,
-                    r_attacker.cell_col,
-                    r_defender.cell_row,
-                    r_defender.cell_col,
-                    movement_ctx,
-                )
-                hit_chance = max(
-                    10,
-                    min(
-                        95,
-                        int(
-                            (
-                                70
-                                + r_attacker.player.accuracy
-                                - r_defender.player.survival
-                            )
-                            * _rx_elev_mod
-                            * r_attacker.stamina_hit_modifier
-                        ),
-                    ),
-                )
-                react_hit = random.randint(1, 100) < hit_chance
-                if r_attacker.role != "ammo":
-                    r_attacker.final_shots = max(0, r_attacker.final_shots - 1)
-                if react_hit:
-                    r_attacker.tags_made += 1
-                    if r_attacker.role != "heavy":
-                        r_attacker.final_special += 1
-                    r_attacker.points_scored += 100
-                    if r_defender.role == "medic":
-                        r_attacker.final_medic_hits += 1
-                    r_defender.times_tagged += 1
-                    r_defender.points_scored -= 20
-                    if not r_defender.is_active_at(
-                        db_second
-                    ) and r_defender.is_taggable_at(db_second):
-                        r_defender.times_tagged_in_reset_window += 1
-                    r_defender.shields = max(
-                        0, r_defender.shields - r_attacker.shot_power
-                    )
-                    if r_defender.shields == 0:
-                        r_defender.final_lives = max(0, r_defender.final_lives - 1)
-                        r_defender.last_downed_time = db_second
-                        r_defender.shields = r_defender.max_shields
-                        event_buffer.append(
-                            {
-                                "timestamp": db_second,
-                                "event_type": "player_downed",
-                                "actor_id": r_attacker.player_id,
-                                "target_id": r_defender.player_id,
-                                "points_awarded": 0,
-                                "description": f"{r_defender.player.name} downed by {r_attacker.player.name} (reaction)",
-                                "metadata": {
-                                    "cause": "reaction",
-                                    "actor_role": r_attacker.role,
-                                    "target_role": r_defender.role,
-                                    "target_lives": r_defender.final_lives,
-                                },
-                            }
-                        )
-                        if r_defender.final_lives <= 0:
-                            r_defender.was_eliminated_at = db_second
-                            event_buffer.append(
-                                {
-                                    "timestamp": db_second,
-                                    "event_type": "elimination",
-                                    "actor_id": r_attacker.player_id,
-                                    "target_id": r_defender.player_id,
-                                    "points_awarded": 0,
-                                    "description": f"{r_defender.player.name} eliminated by {r_attacker.player.name} (reaction)",
-                                    "metadata": {
-                                        "elimination_action": "reaction",
-                                        "actor_role": r_attacker.role,
-                                        "target_role": r_defender.role,
-                                    },
-                                }
-                            )
-                    event_buffer.append(
-                        {
-                            "timestamp": db_second,
-                            "event_type": "tag",
-                            "actor_id": r_attacker.player_id,
-                            "target_id": r_defender.player_id,
-                            "points_awarded": 100,
-                            "description": f"{r_attacker.player.name} reacts and zaps {r_defender.player.name}",
-                            "metadata": {
-                                "actor_role": r_attacker.role,
-                                "target_role": r_defender.role,
-                                "is_reaction": True,
-                            },
-                        }
-                    )
-                    r_attacker.save()
-                    r_defender.save()
-                else:
-                    r_attacker.shots_missed += 1
-                    r_attacker.save()
-                    event_buffer.append(
-                        {
-                            "timestamp": db_second,
-                            "event_type": "miss",
-                            "actor_id": r_attacker.player_id,
-                            "target_id": r_defender.player_id,
-                            "points_awarded": 0,
-                            "description": f"{r_attacker.player.name} reaction miss on {r_defender.player.name}",
-                            "metadata": {
-                                "actor_role": r_attacker.role,
-                                "is_reaction": True,
-                            },
-                        }
-                    )
-
-            # --- process pending follow-ups (deferred by shot cooldown) ---
-            due_fu, pending_followups = drain_followups(pending_followups, second)
-            for fu in due_fu:
-                fu_attacker, fu_defender, chain = (
-                    fu.attacker,
-                    fu.defender,
-                    fu.chain_depth,
-                )
-                if fu_attacker.final_lives <= 0 or fu_defender.final_lives <= 0:
-                    continue
-                if fu_attacker.final_shots <= 0 and fu_attacker.role != "ammo":
-                    continue
-                fu_attacker.follow_up_shots += 1
-                fu_attacker.last_shot_time = second
-                _fu_elev_mod = _elevation_hit_modifier(
-                    fu_attacker.cell_row,
-                    fu_attacker.cell_col,
-                    fu_defender.cell_row,
-                    fu_defender.cell_col,
-                    movement_ctx,
-                )
-                hit_chance = max(
-                    10,
-                    min(
-                        95,
-                        int(
-                            (
-                                70
-                                + fu_attacker.player.accuracy
-                                - fu_defender.player.survival
-                            )
-                            * _fu_elev_mod
-                            * fu_attacker.stamina_hit_modifier
-                        ),
-                    ),
-                )
-                fu_hit = random.randint(1, 100) < hit_chance
-                if fu_attacker.role != "ammo":
-                    fu_attacker.final_shots = max(0, fu_attacker.final_shots - 1)
-                if fu_hit:
-                    fu_attacker.tags_made += 1
-                    if fu_attacker.role != "heavy":
-                        fu_attacker.final_special += 1
-                    fu_attacker.points_scored += 100
-                    if fu_defender.role == "medic":
-                        fu_attacker.final_medic_hits += 1
-                    fu_defender.times_tagged += 1
-                    fu_defender.points_scored -= 20
-                    if not fu_defender.is_active_at(
-                        db_second
-                    ) and fu_defender.is_taggable_at(db_second):
-                        fu_defender.times_tagged_in_reset_window += 1
-                    fu_defender.shields = max(
-                        0, fu_defender.shields - fu_attacker.shot_power
-                    )
-                    downed = fu_defender.shields == 0
-                    if downed:
-                        fu_defender.final_lives = max(0, fu_defender.final_lives - 1)
-                        fu_defender.last_downed_time = db_second
-                        fu_defender.shields = fu_defender.max_shields
-                        event_buffer.append(
-                            {
-                                "timestamp": db_second,
-                                "event_type": "player_downed",
-                                "actor_id": fu_attacker.player_id,
-                                "target_id": fu_defender.player_id,
-                                "points_awarded": 0,
-                                "description": f"{fu_defender.player.name} downed by {fu_attacker.player.name} (follow-up)",
-                                "metadata": {
-                                    "cause": "follow_up_tag",
-                                    "actor_role": fu_attacker.role,
-                                    "target_role": fu_defender.role,
-                                    "target_lives": fu_defender.final_lives,
-                                },
-                            }
-                        )
-                        if fu_defender.final_lives <= 0:
-                            fu_defender.was_eliminated_at = db_second
-                            event_buffer.append(
-                                {
-                                    "timestamp": db_second,
-                                    "event_type": "elimination",
-                                    "actor_id": fu_attacker.player_id,
-                                    "target_id": fu_defender.player_id,
-                                    "points_awarded": 0,
-                                    "description": f"{fu_defender.player.name} eliminated by {fu_attacker.player.name} (follow-up)",
-                                    "metadata": {
-                                        "elimination_action": "follow_up_tag",
-                                        "actor_role": fu_attacker.role,
-                                        "target_role": fu_defender.role,
-                                    },
-                                }
-                            )
-                    event_buffer.append(
-                        {
-                            "timestamp": db_second,
-                            "event_type": "tag",
-                            "actor_id": fu_attacker.player_id,
-                            "target_id": fu_defender.player_id,
-                            "points_awarded": 100,
-                            "description": f"{fu_attacker.player.name} follow-up tags {fu_defender.player.name}",
-                            "metadata": {
-                                "actor_role": fu_attacker.role,
-                                "target_role": fu_defender.role,
-                                "is_follow_up": True,
-                                "chain": chain,
-                            },
-                        }
-                    )
-                    fu_attacker.save()
-                    fu_defender.save()
-                    if not downed and chain < 2 and fu_defender.final_lives > 0:
-                        if fu_defender.player.player_awareness < random.randint(0, 100):
-                            cooldown = shot_cooldown(fu_attacker, second)
-                            pending_followups.append(
-                                PendingFollowup(
-                                    second + cooldown,
-                                    fu_attacker,
-                                    fu_defender,
-                                    chain + 1,
-                                )
-                            )
-                else:
-                    fu_attacker.shots_missed += 1
-                    fu_attacker.save()
-                    event_buffer.append(
-                        {
-                            "timestamp": db_second,
-                            "event_type": "miss",
-                            "actor_id": fu_attacker.player_id,
-                            "target_id": fu_defender.player_id,
-                            "points_awarded": 0,
-                            "description": f"{fu_attacker.player.name} follow-up miss on {fu_defender.player.name}",
-                            "metadata": {
-                                "actor_role": fu_attacker.role,
-                                "is_follow_up": True,
-                            },
-                        }
-                    )
-
-            # --- process pending nukes (MECH-05: after reactions/followups so tag-cancels land first) ---
-            # Note: nukes still resolve before _simulate_combat_exchange, so a tag
-            # issued in THIS tick's action phase cannot cancel a same-tick detonation.
-            # That narrower edge is left for MECH-06's memory system.
-            to_run_n, pending_nukes = drain_nukes(pending_nukes, second)
-            for n in to_run_n:
-                self._resolve_pending_nuke(n.player, int(n.complete_time), event_buffer)
-
-            # Plan and resolve simultaneous actions for this tick
-            self._simulate_combat_exchange(
-                game_round,
-                red_players,
-                blue_players,
-                second,
-                pending_nukes,
-                pending_followups,
-                pending_reactions,
-                last_shot_times,
-                movement_ctx=movement_ctx,
-                event_buffer=event_buffer,
-                pending_missile_locks=pending_missile_locks,
-            )
-
-            # Check for team eliminations
-            red_alive = [p for p in red_players if p.final_lives > 0]
-            blue_alive = [p for p in blue_players if p.final_lives > 0]
-
-            if not red_alive or not blue_alive:
-                eliminated_at = second
-                logger.debug(
-                    "%s - %s: Round ends at second %s, red alive %s, blue alive %s",
-                    second,
-                    "simulate_round_combat",
-                    second,
-                    red_alive,
-                    blue_alive,
-                )
-
-                # award uncaptured bases to alive players on the winning team,
-                # but only if eliminated with more than 1 minute remaining
-                if not red_alive and second < 840:
-                    for blue_player in blue_alive:
-                        self._award_bases(blue_player, second, event_buffer)
-                if not blue_alive and second < 840:
-                    for red_player in red_alive:
-                        self._award_bases(red_player, second, event_buffer)
-
-                break  # Round ends on elimination
-
-            second += self.TICK
-
-        # Calculate final results
-        red_points = sum(p.points_scored for p in red_players)
-        blue_points = sum(p.points_scored for p in blue_players)
-
-        # AI added survival bonuses, we don't want point bonuses here
-        # but maybe we keep this in for MVP bonuses later
-
-        # # Add survival bonuses
-        # red_survivors = len([p for p in red_players if p.final_lives > 0])
-        # blue_survivors = len([p for p in blue_players if p.final_lives > 0])
-
-        # red_points += red_survivors * 50  # Survival bonus
-        # blue_points += blue_survivors * 50
-
-        # Determine eliminations
-        red_eliminated = all(p.final_lives <= 0 for p in red_players)
-        blue_eliminated = all(p.final_lives <= 0 for p in blue_players)
-        logger.debug(
-            "%s - %s: Final Results: %s red points, %s blue points, red eliminated: %s, blue eliminated: %s",
-            second,
-            "simulate round combat",
-            red_points,
-            blue_points,
-            red_eliminated,
-            blue_eliminated,
-        )
-
-        # TIME-01 persistence boundary: RBS runs entirely in seconds internally
-        # (byte-identical to pre-TIME-01). Convert the persisted, API-serialized
-        # time columns from seconds to TICKS (×2) exactly once, here, after the
-        # tick loop has finished reading them. SURVIVED-sentinel rows
-        # (was_eliminated_at left at its 1801 default) are NOT rescaled.
-        for p in red_players + blue_players:
-            if p.was_eliminated_at != SURVIVED_SENTINEL:
-                p.was_eliminated_at = _sec_to_ticks(p.was_eliminated_at)
-            if p.last_downed_time is not None:
-                p.last_downed_time = _sec_to_ticks(p.last_downed_time)
-            if p.special_active_until:
-                p.special_active_until = _sec_to_ticks(p.special_active_until)
-            p.save()
-
-        return {
-            "red_points": red_points,
-            "blue_points": blue_points,
-            "red_eliminated": red_eliminated,
-            "blue_eliminated": blue_eliminated,
-            # RBS's in-loop "no team elimination" sentinel is the legacy
-            # seconds value 901; map it to the tick SURVIVED_SENTINEL, and
-            # convert a real elimination second to ticks (×2).
-            "eliminated_at": (
-                SURVIVED_SENTINEL
-                if eliminated_at == 901
-                else _sec_to_ticks(eliminated_at)
-            ),
-            "event_buffer": event_buffer,
-        }
-
-    # this simulates multiple hits between teams at random
-    # TODO: once I do some testing to verify this works I want to improve this
-    # I want something along the lines of 3 zones of (red, mid, blue) and have players
-    # move between zones and only have the ability to hit players in adjacent zones
-    # or their own zone.  target probability should change based on role and who else is in the zone
-    # heavies should "tank" hits if they are in the same zone as the medic and or ammo player
-    # this will be simulated by having an random roll for who is attacked and weighting it based on these factors
-    # in this simulation we want to also simulate down time when tagged so that weight would change if
-    # the combat exchange happens while a player is down
-
-    def _simulate_combat_exchange(
-        self,
-        game_round,
-        red_players,
-        blue_players,
-        second,
-        pending_nukes=None,
-        pending_followups=None,
-        pending_reactions=None,
-        last_shot_times=None,
-        movement_ctx=None,
-        event_buffer=None,
-        pending_missile_locks=None,
-    ):
-        """Simulate a single combat exchange between teams"""
-        # Get alive players
-        red_alive = [
-            p for p in red_players if p.final_lives > 0 and p.was_eliminated_at > second
-        ]
-        blue_alive = [
-            p
-            for p in blue_players
-            if p.final_lives > 0 and p.was_eliminated_at > second
-        ]
-        all_alive = red_alive + blue_alive
-
-        # new logic instead of random
-        """
-        get list of all alive players
-        randmize the order of that list
-        pick first player off list
-        decide action to perform
-            use player awareness, game awareness, resource awareness, speed, decision making
-        peform action
-        determine if follow up action
-        """
-        # Plan phase: decide all player actions this tick (no side-effects yet)
-        if pending_missile_locks is None:
-            pending_missile_locks = []
-        if pending_nukes is None:
-            pending_nukes = []
-        if pending_followups is None:
-            pending_followups = []
-        if pending_reactions is None:
-            pending_reactions = []
-        if last_shot_times is None:
-            last_shot_times = {}
-        if event_buffer is None:
-            event_buffer = []
-
-        # MECH-04: mark players reacting to incoming nukes (uses setattr — no DB column)
-        _apply_nuke_reaction_flags(all_alive, pending_nukes)
-
-        # MECH-06: per-tick LOS-based memory update + communication broadcast
-        if movement_ctx is not None:
-            sight_data_rbs = movement_ctx.sight_data or {}
-            for actor in all_alive:
-                if actor.cell_row is None:
-                    continue
-                actor_key = f"{actor.cell_row},{actor.cell_col}"
-                visible_cells_rbs = sight_data_rbs.get(actor_key, frozenset())
-                seen_rbs = [
-                    p
-                    for p in all_alive
-                    if p is not actor
-                    and p.cell_row is not None
-                    and f"{p.cell_row},{p.cell_col}" in visible_cells_rbs
-                ]
-                if seen_rbs and _update_player_memory(actor, seen_rbs, second):
-                    _broadcast_communication(actor, all_alive, movement_ctx, second)
-
-        # MECH-06: score broadcast every 180 s
-        _apply_score_broadcast(all_alive, second)
-
-        # TODO: eventually want to sort all_alive by player decision making or something
-        random.shuffle(all_alive)
-        # MOVE-01: snapshot each player's previous-tick action BEFORE planning
-        # overwrites last_chosen_action, so the always-on Advance can feed
-        # choose_goal_cell the same MAP-05 ``intended_action`` (prev action)
-        # the old in-plan change_zone branch used.
-        prev_actions = {
-            id(player): getattr(player, "last_chosen_action", "")
-            for player in all_alive
-        }
-        plans = []
-        for player in all_alive:
-            plans.extend(
-                self._plan_action(player, all_alive, second, movement_ctx=movement_ctx)
-            )
-
-        zone_map = {0: "red_zone", 1: "neutral_zone", 2: "blue_zone"}
-
-        counts = {
-            ("red", "red_zone"): 0,
-            ("red", "neutral_zone"): 0,
-            ("red", "blue_zone"): 0,
-            ("blue", "red_zone"): 0,
-            ("blue", "neutral_zone"): 0,
-            ("blue", "blue_zone"): 0,
-        }
-        r_lives = 0
-        b_lives = 0
-        for player in all_alive:
-            if player.team_color == "red":
-                r_lives += player.final_lives
-            else:
-                b_lives += player.final_lives
-            zone_name = zone_map.get(player.current_zone)
-            if zone_name and player.team_color in ["red", "blue"]:
-                counts[(player.team_color, zone_name)] += 1
-
-        logger.debug(
-            "%s - %s: red zone: %s-%s Neutral zone: %s-%s blue zone: %s-%s",
-            second,
-            "sim-combat-exch",
-            counts[("red", "red_zone")],
-            counts[("blue", "red_zone")],
-            counts[("red", "neutral_zone")],
-            counts[("blue", "neutral_zone")],
-            counts[("red", "blue_zone")],
-            counts[("blue", "blue_zone")],
-        )
-        logger.debug(
-            "%s - %s: alive: %s r-lives: %s b-lives: %s",
-            second,
-            "sim-combat-exch",
-            len(all_alive),
-            r_lives,
-            b_lives,
-        )
-
-        # Apply non-combat actions immediately (resupplies, zone changes, hides, base captures)
-        tag_attempts = []  # collect tag attempts for simultaneous resolution
-        resupply_requestors = []  # collect request_resupply actors for batch processing
-        for plan in plans:
-            ptype = plan.get("type")
-            actor = plan.get("actor")
-            # logger.debug(
-            #     "%s - %s: actor: %s%s type: %s",
-            #     second,
-            #     "sim-combat-exch",
-            #     actor.team_color,
-            #     actor.role,
-            #     ptype,
-            # )
-            if ptype == "resupply_ammo" or ptype == "resupply_lives":
-                # use existing helper
-                self._attempt_resupply(actor, plan.get("target"), second, event_buffer)
-            elif ptype == "request_resupply":
-                resupply_requestors.append(actor)
-            elif ptype == "only_move":
-                # MOVE-01: map-path movement is the always-on per-tick Advance
-                # step below (decoupled from the weighted action roll); the
-                # only_move roll only flags this tick's Advance as a single 2×
-                # step. Nothing to do here.
-                pass
-            elif ptype == "hold":
-                # MOVE-03: RBS treats hold as a Stationary no-op — Overwatch
-                # shot resolution is BatchSimulator-only by design (ADR-0009;
-                # RBS is removed by SIM-09). is_holding (set in plan_action)
-                # still anchors the player via the Stationary predicate in
-                # _advance_player; no Overwatch shot is fired here.
-                pass
-            elif ptype == "change_zone":
-                # MOVE-01 decision 7: 3-zone fallback only (movement_ctx is
-                # None) — keep the weighted _change_zone behaviour.
-                self._change_zone(actor, second, event_buffer, towards=plan.get("zone"))
-            elif ptype == "hide":
-                actor.is_hiding = True
-                actor.save()
-            elif ptype == "capture_base":
-                self._capture_base(
-                    actor,
-                    plan.get("base_id"),
-                    second,
-                    movement_ctx=plan.get("movement_ctx"),
-                    event_buffer=event_buffer,
-                )
-            elif ptype == "missile":
-                scheduled = self._start_missile_lock(
-                    actor, plan.get("target"), second, event_buffer, movement_ctx
-                )
-                if scheduled:
-                    pending_missile_locks.append(scheduled)
-            elif ptype == "use_special":
-                # _use_special will apply resource costs / activation event and may return a scheduled nuke
-                scheduled = self._use_special(actor, second, event_buffer)
-                if scheduled and scheduled[0] == "nuke":
-                    pending_nukes.append(
-                        PendingNuke(complete_time=scheduled[1], player=scheduled[2])
-                    )
-                    # MECH-06: nuke activation broadcast — enemy team learns commander's cell
-                    enemy_color_rbs = "blue" if actor.team_color == "red" else "red"
-                    nuke_targets_rbs = [
-                        p for p in all_alive if p.team_color == enemy_color_rbs
-                    ]
-                    _apply_nuke_activation_broadcast(actor, nuke_targets_rbs, second)
-            elif ptype == "tag":
-                tag_attempts.append({"attacker": actor, "defender": plan.get("target")})
-
-        # MOVE-01: always-on Advance — every non-stationary player advances
-        # toward their goal cell every tick, decoupled from the weighted action
-        # roll (map path only; movement_ctx is None falls back to the weighted
-        # change_zone dispatch above). Runs after the action dispatch so
-        # is_hiding (set by the hide branch) and last_chosen_action are final
-        # for the stationary check. Order-stable: iterates the already-shuffled
-        # all_alive; consumes no RNG (SIM-07/SIM-08 determinism preserved).
-        if movement_ctx is not None:
-            for actor in all_alive:
-                self._advance_player(
-                    actor,
-                    all_alive,
-                    second,
-                    movement_ctx,
-                    prev_actions.get(id(actor), ""),
-                    event_buffer,
-                )
-
-        # Resupply request phase: resolve all request_resupply actions as a batch
-        if resupply_requestors:
-            _rbs_touched: set = set()
-
-            def _rbs_emit(event_type: str, **kwargs) -> None:
-                event_buffer.append(_resupply_event_dict(event_type, kwargs, second))
-                actor = kwargs.get("actor") or kwargs.get("requestor")
-                target = kwargs.get("target")
-                if actor is not None:
-                    _rbs_touched.add(actor)
-                if target is not None:
-                    _rbs_touched.add(target)
-
-            resolve_resupply_requests(
-                resupply_requestors,
-                all_alive,
-                second,
-                movement_ctx,
-                emit_event=_rbs_emit,
-            )
-            for _p in _rbs_touched:
-                _p.save(update_fields=_RESUPPLY_SAVE_FIELDS)
-
-        # Combat phase: resolve all tag attempts simultaneously
-        if tag_attempts:
-            self._resolve_tag_attempts(
-                game_round,
-                tag_attempts,
-                second,
-                last_shot_times,
-                pending_followups,
-                pending_reactions,
-                movement_ctx,
-                event_buffer,
-                all_alive=all_alive,
-            )
-
-    def _plan_action(self, player, all_alive, second, movement_ctx=None):
-        return plan_action(
-            player, all_alive, second, movement_ctx, save_player=lambda p: p.save()
-        )
-
-    def _resolve_tag_attempts(
-        self,
-        game_round,
-        attempts,
-        second,
-        last_shot_times=None,
-        pending_followups=None,
-        pending_reactions=None,
-        movement_ctx=None,
-        event_buffer=None,
-        all_alive=None,
-    ):
-        """Resolve multiple tag attempts simultaneously.
-
-        attempts: list of {'attacker': PlayerRoundState, 'defender': PlayerRoundState}
-        """
-        if last_shot_times is None:
-            last_shot_times = {}
-        if pending_followups is None:
-            pending_followups = []
-        if pending_reactions is None:
-            pending_reactions = []
-        if event_buffer is None:
-            event_buffer = []
-        db_second = int(second)
-        # First, determine outcomes without mutating shared state that would affect other attempts in this tick
-        outcomes = []
-        for a in attempts:
-            attacker = a["attacker"]
-            defender = a["defender"]
-            # Basic checks
-            if attacker.final_shots <= 0 or defender.final_lives <= 0:
-                outcomes.append(
-                    {"attacker": attacker, "defender": defender, "result": "invalid"}
-                )
-                continue
-            if defender.is_hiding and random.random() > 0.5:
-                outcomes.append(
-                    {"attacker": attacker, "defender": defender, "result": "miss_hid"}
-                )
-                continue
-
-            base_accuracy = 70
-            accuracy = attacker.player.accuracy
-            evasion = defender.player.survival
-            elev_mod = _elevation_hit_modifier(
-                attacker.cell_row,
-                attacker.cell_col,
-                defender.cell_row,
-                defender.cell_col,
-                movement_ctx,
-            )
-            hit_chance = max(
-                10,
-                min(
-                    95,
-                    int(
-                        (base_accuracy + accuracy - evasion)
-                        * elev_mod
-                        * attacker.stamina_hit_modifier
-                    ),
-                ),
-            )
-            rolled = random.randint(1, 100)
-            hit = rolled < hit_chance
-            outcomes.append(
-                {
-                    "attacker": attacker,
-                    "defender": defender,
-                    "result": "hit" if hit else "miss",
-                    "rolled": rolled,
-                    "hit_chance": hit_chance,
-                }
-            )
-
-        # Apply outcomes: decrement shots for attackers, apply damage to defenders and create events
-        for o in outcomes:
-            attacker = o["attacker"]
-            defender = o["defender"]
-
-            if o["result"] == "miss_hid":
-                if attacker.role != "ammo":
-                    attacker.final_shots -= 1
-                attacker.shots_missed += 1
-                last_shot_times[attacker.id] = second
-                attacker.last_shot_time = second
-                attacker.save()
-                event_buffer.append(
-                    {
-                        "timestamp": db_second,
-                        "event_type": "miss",
-                        "actor_id": attacker.player_id,
-                        "target_id": defender.player_id,
-                        "points_awarded": 0,
-                        "description": f"{attacker.player.name} misses {defender.player.name}",
-                        "metadata": {
-                            "actor_role": attacker.role,
-                            "actor_points": attacker.points_scored,
-                            "actor_lives": attacker.final_lives,
-                            "actor_shots": attacker.final_shots,
-                            "target_role": defender.role,
-                            "target_points": defender.points_scored,
-                            "target_lives": defender.final_lives,
-                            "target_shots": defender.final_shots,
-                            "rolled_hit_pct": o.get("rolled", 0),
-                        },
-                    }
-                )
-                continue
-
-            if o["result"] == "invalid":
-                continue
-
-            # Apply hit or miss
-            if o["result"] == "hit":
-
-                atk_key = attacker.get_tag_id
-                def_key = defender.get_tag_id
-                if attacker.specific_tags is None:
-                    attacker.specific_tags = {}
-                if defender.specific_tags is None:
-                    defender.specific_tags = {}
-                if def_key not in attacker.specific_tags:
-                    attacker.specific_tags[def_key] = {
-                        "tags": 0,
-                        "tagged_by": 0,
-                        "missiled": 0,
-                        "missiled by": 0,
-                    }
-                if atk_key not in defender.specific_tags:
-                    defender.specific_tags[atk_key] = {
-                        "tags": 0,
-                        "tagged_by": 0,
-                        "missiled": 0,
-                        "missiled by": 0,
-                    }
-
-                attacker.tags_made += 1
-                if attacker.role != "heavy":
-                    attacker.final_special += 1
-                attacker.points_scored += 100
-                attacker.specific_tags[def_key]["tags"] += 1
-                attacker.last_tagged_id = def_key
-                last_shot_times[attacker.id] = second
-                attacker.last_shot_time = second
-                if defender.role == "medic":
-                    attacker.final_medic_hits += 1
-                    # MECH-06: medic-under-fire alert
-                    if all_alive is not None:
-                        _check_medic_under_fire(defender, all_alive, second)
-
-                defender.specific_tags[atk_key]["tagged_by"] += 1
-
-                logger.debug(
-                    "%s - %s: %s %s tags %s %s atk ammo: %s def shd/lv: %s/%s",
-                    db_second,
-                    "attempt tag",
-                    attacker.team_color,
-                    attacker.role,
-                    defender.team_color,
-                    defender.role,
-                    attacker.final_shots,
-                    defender.shields,
-                    defender.final_lives,
-                )
-                event_buffer.append(
-                    {
-                        "timestamp": db_second,
-                        "event_type": "tag",
-                        "actor_id": attacker.player_id,
-                        "target_id": defender.player_id,
-                        "points_awarded": 100,
-                        "description": f"{attacker.player.name} zaps {defender.player.name}",
-                        "metadata": {
-                            "actor_role": attacker.role,
-                            "actor_points": attacker.points_scored,
-                            "actor_lives": attacker.final_lives,
-                            "actor_shots": attacker.final_shots,
-                            "actor_special": attacker.final_special,
-                            "actor_last_tag_id": attacker.last_tagged_id,
-                            "target_role": defender.role,
-                            "target_points": defender.points_scored,
-                            "target_active": defender.is_active_at(db_second),
-                            "target_taggable": defender.is_taggable_at(db_second),
-                            "target_id": defender.get_tag_id,
-                            "target_lives": defender.final_lives,
-                            "target_shields": defender.shields,
-                            "target_shots": defender.final_shots,
-                            "rolled_hit_pct": o.get("rolled", 0),
-                        },
-                    }
-                )
-                if not defender.is_active_at(db_second) and defender.is_taggable_at(
-                    db_second
-                ):
-                    defender.times_tagged_in_reset_window += 1
-                defender.shields = max(0, defender.shields - attacker.shot_power)
-                o["downed"] = defender.shields == 0
-                if defender.shields == 0:
-                    # nuke cancel check
-                    if (
-                        defender.role == "commander"
-                        and defender.special_active_until > db_second
-                    ):
-                        if attacker.team_color != defender.team_color:
-                            attacker.enemy_nuke_cancels += 1
-                        else:
-                            attacker.ally_nuke_cancels += 1
-                        defender.own_specials_cancelled += 1
-                        defender.special_active_until = 0
-                        defender.save()
-                        event_buffer.append(
-                            {
-                                "timestamp": db_second,
-                                "event_type": "special",
-                                "actor_id": attacker.player_id,
-                                "target_id": defender.player_id,
-                                "points_awarded": 0,
-                                "description": f"{attacker.player.name} cancels {defender.player.name}'s nuke",
-                                "metadata": {
-                                    "canceled_by": "tag",
-                                    "actor_role": attacker.role,
-                                    "actor_enemy_nuke_cancels": attacker.enemy_nuke_cancels,
-                                    "actor_ally_nuke_cancels": attacker.ally_nuke_cancels,
-                                    "target_role": defender.role,
-                                    "target_own_specials_cancelled": defender.own_specials_cancelled,
-                                },
-                            }
-                        )
-                        attacker.save()
-                    defender.final_lives -= min(1, defender.final_lives)
-                    defender.last_downed_time = db_second
-                    defender.shields = defender.max_shields
-                    event_buffer.append(
-                        {
-                            "timestamp": db_second,
-                            "event_type": "player_downed",
-                            "actor_id": attacker.player_id,
-                            "target_id": defender.player_id,
-                            "points_awarded": 0,
-                            "description": f"{defender.player.name} downed by {attacker.player.name} (tag)",
-                            "metadata": {
-                                "cause": "tag",
-                                "actor_role": attacker.role,
-                                "target_role": defender.role,
-                                "target_lives": defender.final_lives,
-                            },
-                        }
-                    )
-                    if defender.final_lives <= 0:
-                        defender.was_eliminated_at = db_second
-                        event_buffer.append(
-                            {
-                                "timestamp": db_second,
-                                "event_type": "elimination",
-                                "actor_id": attacker.player_id,
-                                "target_id": defender.player_id,
-                                "points_awarded": 0,
-                                "description": f"{defender.player.name} is eliminated by {attacker.player.name}",
-                                "metadata": {
-                                    "elimination_action": "tag",
-                                    "actor_role": attacker.role,
-                                    "target_role": defender.role,
-                                    "target_lives": defender.final_lives,
-                                },
-                            }
-                        )
-
-                defender.times_tagged += 1
-                defender.points_scored -= 20
-
-                # MECH-06: tag confirms enemy position and status — update memory and broadcast
-                if movement_ctx is not None and all_alive is not None:
-                    _update_player_memory(attacker, [defender], db_second)
-                    _broadcast_communication(
-                        attacker, all_alive, movement_ctx, db_second
-                    )
-
-                attacker.save()
-                defender.save()
-
-            else:
-                attacker.shots_missed += 1
-                last_shot_times[attacker.id] = second
-                attacker.last_shot_time = second
-                attacker.save()
-                event_buffer.append(
-                    {
-                        "timestamp": db_second,
-                        "event_type": "miss",
-                        "actor_id": attacker.player_id,
-                        "target_id": defender.player_id,
-                        "points_awarded": 0,
-                        "description": f"{attacker.player.name} misses {defender.player.name}",
-                        "metadata": {
-                            "actor_role": attacker.role,
-                            "actor_points": attacker.points_scored,
-                            "actor_lives": attacker.final_lives,
-                            "actor_shots": attacker.final_shots,
-                            "target_role": defender.role,
-                            "target_points": defender.points_scored,
-                            "target_lives": defender.final_lives,
-                            "target_shots": defender.final_shots,
-                            "rolled_hit_pct": o.get("rolled", 0),
-                        },
-                    }
-                )
-
-        # Reactions: schedule via pending_reactions so they fire after the shot cooldown.
-        for o in outcomes:
-            if o["result"] not in ("hit", "miss"):
-                continue
-            r_reactor = o["defender"]
-            r_target = o["attacker"]
-            if not r_reactor.is_active_at(db_second) or r_reactor.final_lives <= 0:
-                continue
-            if r_reactor.final_shots <= 0 and r_reactor.role != "ammo":
-                continue
-            if r_target.final_lives <= 0:
-                continue
-            if r_reactor.player.player_awareness >= random.randint(0, 100):
-                cooldown = shot_cooldown(r_reactor, second)
-                pending_reactions.append(
-                    PendingReaction(second + cooldown, r_reactor, r_target)
-                )
-
-        # Follow-up tags: schedule via pending_followups so they fire after the shot cooldown.
-        # A hit that downs the defender (shields → 0) never generates a follow-up.
-        for o in outcomes:
-            if o["result"] != "hit" or o.get("downed", False):
-                continue
-            if o["defender"].final_lives <= 0:
-                continue
-            if o["attacker"].final_shots <= 0 and o["attacker"].role != "ammo":
-                continue
-            if o["defender"].player.player_awareness < random.randint(0, 100):
-                cooldown = shot_cooldown(o["attacker"], second)
-                pending_followups.append(
-                    PendingFollowup(second + cooldown, o["attacker"], o["defender"], 1)
-                )
-
-    def _advance_player(
-        self,
-        player,
-        all_alive,
-        second,
-        movement_ctx,
-        prev_action: str,
-        event_buffer=None,
-    ) -> None:
-        """MOVE-01: always-on goal-directed Advance for one player this tick.
-
-        Performed for every non-stationary player every tick, independent of
-        the weighted action roll. Stationary set (suppress the Advance this
-        tick): ``player.is_hiding`` is True, OR this tick's chosen action is
-        ``capture_base`` (frozen, anchored to base). When this tick's action is
-        ``only_move`` the Advance is a single 2× step in one astar_advance call.
-        No-op when there is no map path (the 3-zone fallback handles
-        movement_ctx is None via the weighted change_zone dispatch).
-        """
-        if movement_ctx is None or player.cell_row is None:
-            return
-        chosen = getattr(player, "last_chosen_action", "")
-        # Stationary set: hiding, holding (MOVE-03 Overwatch — RBS still treats
-        # the player as Stationary even though Overwatch resolution is
-        # BatchSim-only), or anchored to a base capture this tick.
-        if (
-            player.is_hiding
-            or getattr(player, "is_holding", False)
-            or chosen == "capture_base"
-        ):
-            return
-        goal_cell = choose_goal_cell(
-            player,
-            all_alive,
-            movement_ctx.get_spawn_cells(),
-            movement_ctx,
-            prev_action,
-            second,
-        )
-        # only_move = one single 2× step; all other (non-stationary) actions
-        # Advance the normal speed-scaled distance while they act.
-        multiplier = 2 if chosen == "only_move" else 1
-        self._move_to_cell(
-            player, second, goal_cell, movement_ctx, event_buffer, multiplier
-        )
-
-    def _move_to_cell(
-        self,
-        player,
-        second,
-        goal_cell,
-        movement_ctx,
-        event_buffer=None,
-        multiplier: int = 1,
-    ):
-        if event_buffer is None:
-            event_buffer = []
-        if goal_cell is None:
-            return
-        adj = movement_ctx["adj"]
-        zone_data = movement_ctx["zone_data"]
-        current = (player.cell_row, player.cell_col)
-        if current == goal_cell or current not in adj:
-            return
-        # STAT-03 Phase 1: traverse speed-scaled cells per tick, not just one.
-        # MOVE-01: an only_move roll covers a single 2× step (multiplier=2) in
-        # ONE astar_advance call.
-        steps = cells_to_move(getattr(player, "speed", 50), zone_data) * multiplier
-        next_cell = astar_advance(current, goal_cell, adj, steps)
-        if next_cell == current:
-            # MOVE-01: emit the movement event only when the cell actually
-            # changed (skip no-op Advances).
-            return
-        player.cell_row, player.cell_col = next_cell
-        player.zone_fallback = self._zone_from_cell(
-            next_cell[0], next_cell[1], movement_ctx["spawn_cells"]
-        )
-        player.save(update_fields=["cell_row", "cell_col", "zone_fallback"])
-        # MOVE-01: compact movement event — start cell, end cell, timestamp.
-        # The intermediate route is NOT stored; it is recomputed on demand at
-        # replay by re-running deterministic A* start->end. new_zone/actor_role
-        # are kept for compatibility.
-        event_buffer.append(
-            {
-                "timestamp": second,
-                "event_type": "movement",
-                "actor_id": player.player_id,
-                "target_id": None,
-                "points_awarded": 0,
-                "description": f"{player.player.name} moves to cell ({next_cell[0]}, {next_cell[1]})",
-                "metadata": {
-                    "actor_role": player.role,
-                    "start_row": current[0],
-                    "start_col": current[1],
-                    "end_row": next_cell[0],
-                    "end_col": next_cell[1],
-                    "cell_row": next_cell[0],
-                    "cell_col": next_cell[1],
-                    "new_zone": player.current_zone,
-                },
-            }
-        )
-
-    def _change_zone(self, player, second, event_buffer=None, towards=None):
-        if event_buffer is None:
-            event_buffer = []
-        if player.zone_fallback == 1:
-            # 50/50 chance to go to either adjacent zone
-            if towards in [0, 2]:
-                player.zone_fallback = towards
-            else:
-                player.zone_fallback = random.choice([0, 2])
-        else:
-            player.zone_fallback = 1
-        player.save()
-        event_buffer.append(
-            {
-                "timestamp": second,
-                "event_type": "movement",
-                "actor_id": player.player_id,
-                "target_id": None,
-                "points_awarded": 0,
-                "description": f"{player.player.name} moves to zone {player.current_zone}",
-                "metadata": {
-                    "actor_role": player.role,
-                    "new_zone": player.current_zone,
-                },
-            }
-        )
-
-    def _attempt_resupply(self, tagger, teammate, second, event_buffer=None):
-        """Simulate a resupply action (delegates core logic to shared attempt_resupply).
-
-        RBS-specific additions: nuke-cancel stat tracking and immediate DB event creation.
-        """
-        if event_buffer is None:
-            event_buffer = []
-        was_active_nuke = (
-            teammate.role == "commander"
-            and teammate.special_active_until is not None
-            and teammate.special_active_until > second
-        )
-
-        _attempt_resupply_shared(
-            tagger, teammate, second, emit_event=event_buffer.append
-        )
-
-        # Nuke cancel tracking is RBS-only (PlayerState has no ally_nuke_cancels field)
-        if was_active_nuke and (
-            teammate.special_active_until is None
-            or teammate.special_active_until <= second
-        ):
-            tagger.ally_nuke_cancels += 1
-            teammate.own_specials_cancelled += 1
-            event_buffer.append(
-                {
-                    "timestamp": int(second),
-                    "event_type": "special",
-                    "actor_id": tagger.player_id,
-                    "target_id": teammate.player_id,
-                    "points_awarded": 0,
-                    "description": f"{tagger.name} cancels {teammate.name}'s nuke",
-                    "metadata": {
-                        "canceled_by": "resupply",
-                        "actor_role": tagger.role,
-                        "target_role": teammate.role,
-                    },
-                }
-            )
-        tagger.save()
-        teammate.save()
-
-    def _start_missile_lock(
-        self, attacker, defender, second, event_buffer=None, movement_ctx=None
-    ):
-        if event_buffer is None:
-            event_buffer = []
-        return _start_missile_lock_shared(
-            attacker, defender, second, movement_ctx, emit_event=event_buffer.append
-        )
-
-    def _complete_missile(self, attacker, defender, second, event_buffer=None):
-        """Simulate finishing missle on opponent"""
-        if event_buffer is None:
-            event_buffer = []
-        if attacker.is_active_at(second) and defender.is_taggable_at(second):
-            # normalize role checks (roles are stored lowercase elsewhere)
-            if not defender.is_active_at(second) and defender.is_taggable_at(second):
-                defender.times_tagged_in_reset_window += 1
-            defender.shields = defender.max_shields  # reset shields on missile hit
-            defender.points_scored -= 100
-            # don't go below 0 lives
-            defender.final_lives -= min(defender.final_lives, 2)
-            if defender.final_lives <= 0:
-                defender.was_eliminated_at = second
-                logger.debug(
-                    "%s - %s: Player eliminated: %s by %s",
-                    second,
-                    "complete msl",
-                    defender.player.name,
-                    attacker.player.name,
-                )
-                event_buffer.append(
-                    {
-                        "timestamp": second,
-                        "event_type": "elimination",
-                        "actor_id": attacker.player_id,
-                        "target_id": defender.player_id,
-                        "points_awarded": 0,
-                        "description": f"{defender.player.name} is eliminated by {attacker.player.name}",
-                        "metadata": {
-                            "elimination_action": "missile",
-                            "target_role:": defender.role,
-                            "target_lives": defender.final_lives,
-                        },
-                    }
-                )
-            defender.last_downed_time = second  # set downed time for respawn logic
-            event_buffer.append(
-                {
-                    "timestamp": second,
-                    "event_type": "player_downed",
-                    "actor_id": attacker.player_id,
-                    "target_id": defender.player_id,
-                    "points_awarded": 0,
-                    "description": f"{defender.player.name} downed by {attacker.player.name} (missile)",
-                    "metadata": {
-                        "cause": "missile",
-                        "actor_role": attacker.role,
-                        "target_role": defender.role,
-                        "target_lives": defender.final_lives,
-                    },
-                }
-            )
-            defender.times_missiled += 1
-            # Ensure keys exist for missile bookkeeping
-            atk_key = attacker.get_tag_id
-            def_key = defender.get_tag_id
-            if attacker.specific_tags is None:
-                attacker.specific_tags = {}
-            if defender.specific_tags is None:
-                defender.specific_tags = {}
-            if atk_key not in defender.specific_tags:
-                defender.specific_tags[atk_key] = {
-                    "tags": 0,
-                    "tagged_by": 0,
-                    "missiled": 0,
-                    "missiled by": 0,
-                }
-            if def_key not in attacker.specific_tags:
-                attacker.specific_tags[def_key] = {
-                    "tags": 0,
-                    "tagged_by": 0,
-                    "missiled": 0,
-                    "missiled by": 0,
-                }
-
-            defender.specific_tags[atk_key]["missiled by"] += 1
-
-            attacker.last_tagged_id = defender.get_tag_id
-            attacker.specific_tags[def_key]["missiled"] += 1
-            attacker.points_scored += 500
-            attacker.missiles_landed += 1
-            # heavies don't get specials
-            if attacker.role != "heavy":
-                attacker.final_special += 2
-            if str(defender.role).lower() == "medic":
-                attacker.final_medic_hits += 2
-
-            defender.save()
-            attacker.save()
-
-            event_buffer.append(
-                {
-                    "timestamp": second,
-                    "event_type": "missile_hit",
-                    "actor_id": attacker.player_id,
-                    "target_id": defender.player_id,
-                    "points_awarded": 500,
-                    "description": f"{attacker.player.name} hits {defender.player.name} with a missile",
-                    "metadata": {
-                        "actor_role": attacker.role,
-                        "actor_points": attacker.points_scored,
-                        "actor_lives": attacker.final_lives,
-                        "actor_shots": attacker.final_shots,
-                        "actor_missiles": attacker.final_missiles,
-                        "actor_special": attacker.final_special,
-                        "target_role": defender.role,
-                        "target_points": defender.points_scored,
-                        "target_lives": defender.final_lives,
-                        "target_shots": defender.final_shots,
-                        "target_shields": defender.shields,
-                    },
-                }
-            )
-            logger.debug(
-                "%s - %s: missile hit completed a: %s d: %s",
-                second,
-                "complete msl",
-                attacker.role,
-                defender.role,
-            )
-
-    def _use_special(self, player_state, second, event_buffer=None):
-        """Simulate using a special ability"""
-        if event_buffer is None:
-            event_buffer = []
-        # if player has enough special points, is alive and is active, expend special points and apply effect
-        logger.debug(
-            "%s - %s: %s at %s, %s/%s special, active until %s, succeds: %s",
-            second,
-            "use special",
-            player_state.player.name,
-            second,
-            player_state.final_special,
-            player_state.special_cost,
-            player_state.special_active_until,
-            player_state.can_use_special
-            and player_state.final_lives > 0
-            and player_state.is_active_at(second),
-        )
-        if (
-            player_state.can_use_special
-            and player_state.final_lives > 0
-            and player_state.is_active_at(second)
-        ):
-            if player_state.role == "commander":
-                player_state.final_special -= player_state.special_cost
-                player_state.specials_used += 1
-                countdown = random.randint(4, 7)
-                player_state.special_active_until = second + countdown
-                player_state.save()
-                event_buffer.append(
-                    {
-                        "timestamp": second,
-                        "event_type": "special",
-                        "actor_id": player_state.player_id,
-                        "target_id": None,
-                        "points_awarded": 0,
-                        "description": f"{player_state.player.name} activates Nuke special",
-                        "metadata": {
-                            "actor_role": player_state.role,
-                            "special_active_until": player_state.special_active_until,
-                            "special_points": player_state.final_special,
-                            "event_subtype": "nuke_armed",
-                        },
-                    }
-                )
-                return ("nuke", second + countdown, player_state)
-            elif player_state.role == "scout":
-                # remove special points, set special active until to 900 (lasts whole round)
-                player_state.final_special -= player_state.special_cost
-                player_state.specials_used += 1
-                player_state.special_active_until = 900
-                player_state.save()
-                event_buffer.append(
-                    {
-                        "timestamp": second,
-                        "event_type": "special",
-                        "actor_id": player_state.player_id,
-                        "target_id": None,
-                        "points_awarded": 0,
-                        "description": f"{player_state.player.name} activates rapid fire special",
-                        "metadata": {
-                            "actor_role": player_state.role,
-                            "special_active_until": player_state.special_active_until,
-                            "special_points": player_state.final_special,
-                        },
-                    }
-                )
-            elif player_state.role == "medic":
-                # remove special points
-                # find all teammates active at second and add lives to each based on role
-                player_state.final_special -= player_state.special_cost
-                player_state.specials_used += 1
-                player_state.save()
-                teammates = PlayerRoundState.objects.filter(
-                    game_round=player_state.game_round,
-                    team_color=player_state.team_color,
-                    final_lives__gt=0,
-                )
-                teammates = [mate for mate in teammates if mate.is_active_at(second)]
-                medic_heal_chart = {
-                    "commander": 4,
-                    "heavy": 3,
-                    "scout": 5,
-                    "ammo": 2,
-                    "medic": 0,
-                }
-                total_healed = 0
-                for mate in teammates:
-                    heal_amount = medic_heal_chart[mate.role]
-                    if mate.final_lives + heal_amount > mate.max_lives:
-                        total_healed += mate.max_lives - mate.final_lives
-                        mate.final_lives = mate.max_lives
-                    else:
-                        total_healed += heal_amount
-                        mate.final_lives += heal_amount
-                    mate.save()
-                event_buffer.append(
-                    {
-                        "timestamp": second,
-                        "event_type": "special",
-                        "actor_id": player_state.player_id,
-                        "target_id": None,
-                        "points_awarded": 0,
-                        "description": f"{player_state.player.name} resupplies team",
-                        "metadata": {
-                            "actor_role": player_state.role,
-                            "special_points": player_state.final_special,
-                            "teammates_resupplied": len(teammates),
-                            "lives_resupplied": total_healed,
-                        },
-                    }
-                )
-            elif player_state.role == "ammo":
-                # remove special points
-                # find all teammates active at second and add shots to each based on role
-                player_state.final_special -= player_state.special_cost
-                player_state.specials_used += 1
-                player_state.save()
-                teammates = PlayerRoundState.objects.filter(
-                    game_round=player_state.game_round,
-                    team_color=player_state.team_color,
-                    final_lives__gt=0,
-                )
-                teammates = [mate for mate in teammates if mate.is_active_at(second)]
-                ammo_resupply_chart = {
-                    "commander": 5,
-                    "heavy": 5,
-                    "scout": 10,
-                    "medic": 5,
-                    "ammo": 0,
-                }
-                total_ammo = 0
-                for mate in teammates:
-                    resupply_amount = ammo_resupply_chart[mate.role]
-                    if mate.final_shots + resupply_amount > mate.max_shots:
-                        total_ammo += mate.max_shots - mate.final_shots
-                        mate.final_shots = mate.max_shots
-                    else:
-                        total_ammo += resupply_amount
-                        mate.final_shots += resupply_amount
-                    mate.save()
-                event_buffer.append(
-                    {
-                        "timestamp": second,
-                        "event_type": "special",
-                        "actor_id": player_state.player_id,
-                        "target_id": None,
-                        "points_awarded": 0,
-                        "description": f"{player_state.player.name} resupplies team",
-                        "metadata": {
-                            "actor_role": player_state.role,
-                            "special_points": player_state.final_special,
-                            "teammates_resupplied": len(teammates),
-                            "shots_resupplied": total_ammo,
-                        },
-                    }
-                )
-
-    def _complete_nuke(self, player_state, second, event_buffer=None):
-        """Simulate completing a nuke special ability"""
-        if event_buffer is None:
-            event_buffer = []
-        # check if player is active and alive
-        # find all opposing players, subtract 3 lives from each and set their last_downed_time to second
-        # award 500 points to player_state
-        # create game event for nuke
-        if player_state.is_active_at(second) and player_state.final_lives > 0:
-            player_state.points_scored += 500
-            player_state.save()
-
-            opposing_players = PlayerRoundState.objects.filter(
-                game_round=player_state.game_round,
-                team_color="blue" if player_state.team_color == "red" else "red",
-                final_lives__gt=0,
-            )
-            lives_removed_from_nuke = 0
-
-            # check for lives removed, medic lives removed and nuke cancels
-            for opponent in opposing_players:
-                lives_removed_from_nuke += min(opponent.final_lives, 3)
-                if opponent.role == "medic":
-                    player_state.medic_lives_removed_from_nuke += min(
-                        opponent.final_lives, 3
-                    )
-                elif (
-                    opponent.role == "commander"
-                    and opponent.special_active_until > second
-                ):
-                    player_state.enemy_nuke_cancels += 1
-                    opponent.own_specials_cancelled += 1
-                    opponent.save()
-                    event_buffer.append(
-                        {
-                            "timestamp": second,
-                            "event_type": "special",
-                            "actor_id": player_state.player_id,
-                            "target_id": opponent.player_id,
-                            "points_awarded": 0,
-                            "description": f"{player_state.player.name} cancels {opponent.player.name}'s nuke",
-                            "metadata": {
-                                "canceled by": "nuke",
-                                "actor_role": player_state.role,
-                                "actor_enemy_nuke_cancels": player_state.enemy_nuke_cancels,
-                                "actor_ally_nuke_cancels": player_state.ally_nuke_cancels,
-                                "target_role": opponent.role,
-                                "target_own_specials_cancelled": opponent.own_specials_cancelled,
-                            },
-                        }
-                    )
-                player_state.save()
-            event_buffer.append(
-                {
-                    "timestamp": second,
-                    "event_type": "special",
-                    "actor_id": player_state.player_id,
-                    "target_id": None,
-                    "points_awarded": 500,
-                    "description": f"{player_state.player.name} detonates Nuke",
-                    "metadata": {
-                        "actor_role": player_state.role,
-                        "special_points": player_state.final_special,
-                        "opponents_affected": opposing_players.count(),
-                        "lives_taken": lives_removed_from_nuke,
-                    },
-                }
-            )
-
-            # Apply damage to each opponent
-            for opponent in opposing_players:
-                if not opponent.is_active_at(second) and opponent.is_taggable_at(
-                    second
-                ):
-                    opponent.times_tagged_in_reset_window += 1
-                lives_taken = min(opponent.final_lives, 3)
-                opponent.lives_lost_to_nukes += lives_taken
-                opponent.final_lives -= lives_taken
-                opponent.last_downed_time = second
-                opponent.shields = opponent.max_shields
-                event_buffer.append(
-                    {
-                        "timestamp": second,
-                        "event_type": "player_downed",
-                        "actor_id": player_state.player_id,
-                        "target_id": opponent.player_id,
-                        "points_awarded": 0,
-                        "description": f"{opponent.player.name} downed by {player_state.player.name} (nuke)",
-                        "metadata": {
-                            "cause": "nuke",
-                            "actor_role": player_state.role,
-                            "target_role": opponent.role,
-                            "target_lives": opponent.final_lives,
-                        },
-                    }
-                )
-
-                # Check for elimination and set was_eliminated_at
-                if opponent.final_lives <= 0:
-                    opponent.was_eliminated_at = second
-                    logger.debug(
-                        "%s - %s: Player eliminated: %s by %s",
-                        second,
-                        "complete nuke",
-                        opponent.player.name,
-                        player_state.player.name,
-                    )
-                    event_buffer.append(
-                        {
-                            "timestamp": second,
-                            "event_type": "elimination",
-                            "actor_id": player_state.player_id,
-                            "target_id": opponent.player_id,
-                            "points_awarded": 0,
-                            "description": f"{opponent.player.name} is eliminated by {player_state.player.name}",
-                            "metadata": {
-                                "elimination_action": "nuke",
-                                "actor_role": player_state.role,
-                                "target_role": opponent.role,
-                                "target_lives": opponent.final_lives,
-                            },
-                        }
-                    )
-
-                # Save once with all changes
-                opponent.save()
-
-    def _resolve_pending_nuke(self, player_state, complete_time, event_buffer=None):
-        """Detonate or cancel a pending nuke at its scheduled completion time.
-
-        Nuke fires only if the commander is alive AND the fuse was not disarmed by a
-        tag-cancel (special_active_until would have been reset to 0 in that case).
-        A downed-but-alive commander's nuke still fires — being temporarily down does
-        not cancel the nuke per SM5 rules; only elimination or a tag-cancel does.
-        """
-        if event_buffer is None:
-            event_buffer = []
-        nuke_armed = player_state.special_active_until >= complete_time
-        if player_state.final_lives > 0 and nuke_armed:
-            self._complete_nuke(player_state, complete_time, event_buffer)
-            event_buffer.append(
-                {
-                    "timestamp": complete_time,
-                    "event_type": "special",
-                    "actor_id": player_state.player_id,
-                    "target_id": None,
-                    "points_awarded": 0,
-                    "description": f"{player_state.player.name}'s nuke detonated",
-                    "metadata": {
-                        "event_subtype": "nuke_detonated",
-                        "actor_role": "commander",
-                    },
-                }
-            )
-        elif nuke_armed:
-            # Commander was eliminated during the fuse window — nuke cancelled
-            player_state.own_specials_cancelled += 1
-            player_state.save()
-            event_buffer.append(
-                {
-                    "timestamp": complete_time,
-                    "event_type": "special",
-                    "actor_id": player_state.player_id,
-                    "target_id": None,
-                    "points_awarded": 0,
-                    "description": f"{player_state.player.name}'s nuke cancelled — eliminated during fuse",
-                    "metadata": {
-                        "event_subtype": "nuke_cancelled",
-                        "cancelled_by": "elimination",
-                        "actor_role": "commander",
-                    },
-                }
-            )
-        # else: nuke was already tag-cancelled (special_active_until == 0); counters already updated
-
-    def _reset_base(self, player_state, base_id, second):
-        """Simulate resetting off a base — deferred to a later ticket."""
-        return None
-
-    def _capture_base(
-        self, player_state, base_id, second, movement_ctx=None, event_buffer=None
-    ):
-        if event_buffer is None:
-            event_buffer = []
-        captured = _capture_base_shared(
-            player_state, base_id, second, movement_ctx, emit_event=event_buffer.append
-        )
-        if captured:
-            player_state.save()
-        return captured
-
-    def _award_bases(self, player_state, second, event_buffer=None):
-        if event_buffer is None:
-            event_buffer = []
-        _award_bases_shared(player_state, second, emit_event=event_buffer.append)
-        if player_state.final_lives > 0:
-            player_state.save()
-
-    def _missile_base(self, player_state, base_id, second, event_buffer=None):
-        """Simulate using a missile on a base target"""
-        if event_buffer is None:
-            event_buffer = []
-        player_state.missiles_fired += 1
-        player_state.final_missiles -= 1
-        if base_id == "neutral":
-            player_state.neutral_base_destroyed = True
-        else:
-            player_state.opposing_base_destroyed = True
-        player_state.points_scored += 1001  # base destroy score
-        player_state.final_special += 5
-        player_state.save()
-        event_buffer.append(
-            {
-                "timestamp": second,
-                "event_type": "base_missile",
-                "actor_id": player_state.player_id,
-                "target_id": None,
-                "points_awarded": 1001,
-                "description": f"{player_state.player.name} missiles base {'neutral' if base_id == 'neutral' else 'opposing'}",
-                "metadata": {
-                    "actor_role": player_state.role,
-                    "base_id": base_id,
-                    "missiles_remaining": player_state.final_missiles,
-                    "special_points": player_state.final_special,
-                    "points_scored": player_state.points_scored,
-                },
-            }
-        )
-
-    # TODO: need to determine if we are choosing who to reset off of first or in method
-    def _attempt_reset(self, player_state, second):
-        """Simulate a player resetting after being tagged"""
-        return None
 
 
 class _PlayerData:
@@ -2783,6 +444,17 @@ class BatchSimulator:
 
     # 0.5-second tick: models real shot speeds (regular=2/s, heavy=1/s).
     TICK = 0.5
+
+    # SIM-09: round length, patchable in tests (e.g. ``patch.object(
+    # BatchSimulator, "ROUND_TICKS", 40)``) so fast-path tests can simulate
+    # a short round without monkeypatching the module-level constant.
+    ROUND_TICKS = TICKS_PER_ROUND
+
+    # SIM-09: per-side bonus points for eliminating the opposing team
+    # within ``TEAM_ELIM_BONUS_CUTOFF_TICKS``. Applied per-Match in
+    # ``simulate_match`` (mirrors the former ``ResourceBasedSimulator``
+    # elimination bonus).
+    elimination_bonus = 10000
 
     @staticmethod
     def _is_flipped(game_index: int) -> bool:
@@ -2948,7 +620,7 @@ class BatchSimulator:
         red_roster = list(team_red.active_roster)
         blue_roster = list(team_blue.active_roster)
 
-        movement_ctx, _ = ResourceBasedSimulator._load_map_context(arena_map)
+        movement_ctx, _ = load_map_context(arena_map)
 
         if master_seed is None:
             master_seed = random.Random().getrandbits(63)
@@ -3034,6 +706,174 @@ class BatchSimulator:
         return self._aggregate_batch(games, n)
 
     # ------------------------------------------------------------------ #
+    # SIM-09: view-path persistence (replaces ResourceBasedSimulator)
+    # ------------------------------------------------------------------ #
+
+    def _simulate_and_flush_round(
+        self,
+        team_red,
+        team_blue,
+        *,
+        match,
+        round_number: int,
+        movement_ctx,
+        arena_map,
+        zone_size: int | None,
+    ) -> "GameRound":
+        """Draw a fresh 63-bit seed, ``random.seed()`` it, simulate one
+        round in-memory via ``_simulate_round``, and persist it through
+        ``_flush_to_db``.
+
+        SIM-09 helper shared by :meth:`simulate_match` (called twice —
+        round 1 with canonical args, round 2 with reversed args for the
+        per-Match colour swap) and :meth:`simulate_single_round_detailed`.
+        Each call draws its own independent seed, mirroring the per-round
+        seed-draw in :meth:`run`. The colour swap is a property of how
+        ``simulate_match`` *calls* this helper (which team it passes as
+        ``team_red``), not of the helper itself — the helper always sees
+        canonical "team_red plays red" inputs.
+        """
+        red_roster = list(team_red.active_roster)
+        blue_roster = list(team_blue.active_roster)
+
+        seed = random.Random().getrandbits(63)
+        random.seed(seed)
+
+        events: list = []
+        result, red_players, blue_players = self._simulate_round(
+            red_roster,
+            blue_roster,
+            event_log=events,
+            movement_ctx=movement_ctx,
+        )
+        return self._flush_to_db(
+            team_red,
+            team_blue,
+            result,
+            red_players,
+            blue_players,
+            events,
+            rng_seed=seed,
+            movement_ctx=movement_ctx,
+            match=match,
+            round_number=round_number,
+            arena_map=arena_map,
+            zone_size=zone_size,
+        )
+
+    @transaction.atomic
+    def simulate_match(
+        self,
+        team_red,
+        team_blue,
+        match_type: str = "friendly",
+        *,
+        arena_map=None,
+    ) -> Match:
+        """Create a ``Match``, simulate its two rounds in-memory, and
+        persist everything to the DB.
+
+        SIM-09: replaces ``ResourceBasedSimulator.simulate_match``. The
+        per-Match colour swap (round 2 with the team that was blue in
+        round 1 playing red) is implemented here by *passing the rosters
+        reversed* into the second :meth:`_simulate_and_flush_round`
+        call — the stored ``GameRound.team_red`` in round 2 is literally
+        the team that physically played red, and the swap is reflected
+        when copying per-round point/elimination columns onto the Match.
+        This per-Match swap is **distinct** from the SIM-08 batch
+        Orientation alternation: there is no ``flipped`` flag, no
+        odd/even index parity — every Match's round 2 reverses the
+        rosters relative to round 1.
+
+        Atomicity: one outer ``@transaction.atomic`` wraps the Match row
+        creation, both round persistences (nested ``_flush_to_db``
+        atomics become savepoints under Django's default behaviour), and
+        the bonus / completion update. A mid-simulation failure rolls
+        back the whole match so no half-built / 0-0 Match is left in the
+        DB.
+        """
+        movement_ctx, zone_size = load_map_context(arena_map)
+
+        match = Match.objects.create(
+            team_red=team_red, team_blue=team_blue, match_type=match_type
+        )
+
+        # Round 1: canonical sides (team_red plays red, team_blue plays blue).
+        round1 = self._simulate_and_flush_round(
+            team_red,
+            team_blue,
+            match=match,
+            round_number=1,
+            movement_ctx=movement_ctx,
+            arena_map=arena_map,
+            zone_size=zone_size,
+        )
+        match.red_round1_points = round1.red_points
+        match.blue_round1_points = round1.blue_points
+        match.red_round1_eliminated = round1.red_team_eliminated
+        match.blue_round1_eliminated = round1.blue_team_eliminated
+        match.round1_eliminated_at = round1.eliminated_at
+
+        # Round 2: per-Match colour swap — the team that was team_blue in
+        # round 1 is passed as team_red here, so the stored sides reflect
+        # what physically played which colour this round.
+        round2 = self._simulate_and_flush_round(
+            team_blue,
+            team_red,
+            match=match,
+            round_number=2,
+            movement_ctx=movement_ctx,
+            arena_map=arena_map,
+            zone_size=zone_size,
+        )
+        # round2.red_points is the score of the team that played red this
+        # round (= the canonical team_blue argument), so swap when copying
+        # onto the team-position-keyed Match columns.
+        match.red_round2_points = round2.blue_points
+        match.blue_round2_points = round2.red_points
+        match.red_round2_eliminated = round2.blue_team_eliminated
+        match.blue_round2_eliminated = round2.red_team_eliminated
+        match.round2_eliminated_at = round2.eliminated_at
+
+        # Per-side elimination bonus: a side whose opponent was eliminated
+        # in a round earns ``elimination_bonus`` for that round.
+        if match.red_round1_eliminated:
+            match.blue_bonus_points += self.elimination_bonus
+        if match.blue_round1_eliminated:
+            match.red_bonus_points += self.elimination_bonus
+        if match.red_round2_eliminated:
+            match.blue_bonus_points += self.elimination_bonus
+        if match.blue_round2_eliminated:
+            match.red_bonus_points += self.elimination_bonus
+
+        match.is_completed = True
+        match.save()
+
+        return match
+
+    @transaction.atomic
+    def simulate_single_round_detailed(
+        self, team_red, team_blue, *, arena_map=None
+    ) -> "GameRound":
+        """Simulate a single standalone round (no parent Match) and
+        persist it to the DB.
+
+        SIM-09: replaces ``ResourceBasedSimulator.simulate_single_round_detailed``.
+        Draws a fresh 63-bit seed, runs one ``_simulate_round``, and
+        flushes through ``_flush_to_db`` with ``match=None``.
+        """
+        movement_ctx, zone_size = load_map_context(arena_map)
+        return self._simulate_and_flush_round(
+            team_red,
+            team_blue,
+            match=None,
+            round_number=1,
+            movement_ctx=movement_ctx,
+            arena_map=arena_map,
+            zone_size=zone_size,
+        )
+
+    # ------------------------------------------------------------------ #
     # Internal round simulation
     # ------------------------------------------------------------------ #
 
@@ -3087,9 +927,7 @@ class BatchSimulator:
                 cell_col = None
 
             if cell_row is not None and spawn_cells:
-                starting_zone = ResourceBasedSimulator._zone_from_cell(
-                    cell_row, cell_col, spawn_cells
-                )
+                starting_zone = zone_from_cell(cell_row, cell_col, spawn_cells)
             else:
                 starting_zone = default_zone
 
@@ -3171,10 +1009,12 @@ class BatchSimulator:
         eliminated_at = SURVIVED_SENTINEL
 
         # TIME-01: fully tick-native loop. `tick` is the integer tick index in
-        # [0, TICKS_PER_ROUND). All internal comparisons, scheduling, uptime
+        # [0, self.ROUND_TICKS). All internal comparisons, scheduling, uptime
         # accumulation, and timestamps are in ticks. shot_cooldown() still
         # returns seconds, so it is converted to ticks at each scheduling site.
-        for tick in range(TICKS_PER_ROUND):
+        # SIM-09: round length is read from ``self.ROUND_TICKS`` (defaults to
+        # ``TICKS_PER_ROUND``) so tests can patch it for fast-path runs.
+        for tick in range(self.ROUND_TICKS):
             # TIME-01: `second` is bound to the integer tick so every internal
             # comparison, scheduled time, uptime accumulation, and emitted
             # timestamp below is tick-valued (the canonical unit). The name is
@@ -3790,7 +1630,7 @@ class BatchSimulator:
             # committed route rather than recomputing.
             return
         player.cell_row, player.cell_col = next_cell
-        player.current_zone = ResourceBasedSimulator._zone_from_cell(
+        player.current_zone = zone_from_cell(
             next_cell[0], next_cell[1], movement_ctx["spawn_cells"]
         )
         # MOVE-01: append a compact (start, end, timestamp) entry to the
@@ -4585,7 +2425,7 @@ class BatchSimulator:
         """
         red_roster = list(team_red.active_roster)
         blue_roster = list(team_blue.active_roster)
-        movement_ctx, _ = ResourceBasedSimulator._load_map_context(arena_map)
+        movement_ctx, zone_size = load_map_context(arena_map)
         saved = []
         for pair in seeds[:n]:
             seed, flipped = pair  # tuple or 2-element list (session-safe)
@@ -4605,6 +2445,9 @@ class BatchSimulator:
                 db_team_red, db_team_blue = team_blue, team_red
             else:
                 db_team_red, db_team_blue = team_red, team_blue
+            # SIM-09: persist arena_map / zone_size on every saved round so
+            # batch-saved games carry the same map metadata as match-path and
+            # single-round-path games.
             gr = self._flush_to_db(
                 db_team_red,
                 db_team_blue,
@@ -4614,6 +2457,8 @@ class BatchSimulator:
                 events,
                 rng_seed=seed,
                 movement_ctx=movement_ctx,
+                arena_map=arena_map,
+                zone_size=zone_size,
             )
             saved.append(gr)
         return saved
@@ -4630,19 +2475,30 @@ class BatchSimulator:
         *,
         rng_seed: int | None = None,
         movement_ctx=None,
+        match: "Match | None" = None,
+        round_number: int = 1,
+        arena_map=None,
+        zone_size: int | None = None,
     ):
-        """Write a replayed in-memory round to DB as a standalone GameRound.
+        """Write a replayed in-memory round to DB as a ``GameRound``.
 
         MOVE-01: ``movement_ctx`` (optional) is used only to resolve each
         movement step's end-cell zone for the compact movement GameEvents
         flushed from each player's ``movement_trail``. When ``None`` the
         per-move ``new_zone`` falls back to the player's final zone.
+
+        SIM-09: ``match`` / ``round_number`` allow the same flush path to
+        persist either a standalone round (default: ``match=None``,
+        ``round_number=1``) or the two rounds of a full Match (via
+        ``simulate_match``). ``arena_map`` / ``zone_size`` are persisted on
+        ``GameRound`` so saved batch / match / single-round games all carry
+        the same map metadata.
         """
         from teams.models import Player as PlayerModel
 
         game_round = GameRound.objects.create(
-            match=None,
-            round_number=1,
+            match=match,
+            round_number=round_number,
             team_red=team_red,
             team_blue=team_blue,
             red_points=result["red_points"],
@@ -4652,6 +2508,8 @@ class BatchSimulator:
             eliminated_at=result["eliminated_at"],
             is_completed=True,
             rng_seed=rng_seed,
+            arena_map=arena_map,
+            zone_size=zone_size,
         )
         # Trigger winner calculation
         game_round.save()
@@ -4735,9 +2593,7 @@ class BatchSimulator:
                 continue
             for start_cell, end_cell, ts in p.movement_trail:
                 if spawn_cells is not None:
-                    new_zone = ResourceBasedSimulator._zone_from_cell(
-                        end_cell[0], end_cell[1], spawn_cells
-                    )
+                    new_zone = zone_from_cell(end_cell[0], end_cell[1], spawn_cells)
                 else:
                     new_zone = p.current_zone
                 GameEvent.objects.create(

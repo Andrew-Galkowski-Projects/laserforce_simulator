@@ -86,7 +86,7 @@ cd laserforce_simulator
 pytest
 
 # Run a single test file
-pytest matches/tests/test_sim_core.py
+pytest matches/tests/test_batch_sim.py
 
 # Run a specific test class or method
 pytest matches/tests/test_map.py::TestMap02CellMovement
@@ -97,11 +97,12 @@ pytest matches/tests/test_map.py::TestMap02CellMovement
 ```
 laserforce_simulator/
 ├── matches/               # Match, GameRound, PlayerRoundState, GameEvent models
-│   ├── simulation.py      # ResourceBasedSimulator + BatchSimulator + MapData
+│   ├── simulation.py      # BatchSimulator (sole engine post-SIM-09) + MapData
 │   ├── sim_helpers/
 │   │   ├── combat.py      # Shared combat resolution (LOS, action planning, resupply, missiles)
 │   │   ├── mechanics.py   # Pure game mechanics (shot cooldown, target selection, zone change)
 │   │   ├── pathfinding.py # A* movement, adjacency building, goal selection
+│   │   ├── map_loader.py  # Map-loading helpers (load_map_context, zone_from_cell) — SIM-09
 │   │   ├── player_state.py# In-memory PlayerState dataclass for BatchSimulator
 │   │   ├── role_constants.py # Canonical ROLE_STATS, MAX_LIVES, MAX_SHOTS, SPECIAL_COST
 │   │   ├── score_calculator.py # calculate_mvp() pure function (extracted from PlayerRoundState)
@@ -115,7 +116,7 @@ laserforce_simulator/
 
 ### Simulation Engine
 
-`ResourceBasedSimulator` runs an 1800-tick round (1 tick = 0.5 s; seconds are display-only, see [ADR-0001](docs/adr/0001-time-unit-seconds-now-tick-native-later.md)):
+`BatchSimulator` runs an 1800-tick round (1 tick = 0.5 s; seconds are display-only, see [ADR-0001](docs/adr/0001-time-unit-seconds-now-tick-native-later.md)):
 
 1. Resolve any pending missiles/nukes whose delay has elapsed
 2. Each active player picks an action (weighted random by role, zone, remaining resources)

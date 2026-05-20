@@ -4,6 +4,7 @@ from concurrent.futures import ProcessPoolExecutor
 
 from django.core.management.base import BaseCommand, CommandError
 
+from matches.sim_helpers.map_loader import load_map_context
 from matches.sim_helpers.parallel_worker import score_round_worker, worker_django_init
 from matches.sim_helpers.time_constants import (
     SURVIVED_SENTINEL,
@@ -12,7 +13,6 @@ from matches.sim_helpers.time_constants import (
 )
 from matches.simulation import (
     BatchSimulator,
-    ResourceBasedSimulator,
     _precompute_roster,
 )
 from teams.models import Team
@@ -127,7 +127,7 @@ class Command(BaseCommand):
                 )
 
         try:
-            movement_ctx, _ = ResourceBasedSimulator._load_map_context(arena_map)
+            movement_ctx, _ = load_map_context(arena_map)
         except ValueError as exc:
             raise CommandError(str(exc))
 

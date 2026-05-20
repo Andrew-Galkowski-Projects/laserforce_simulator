@@ -9,22 +9,28 @@
 <form method="post" class="mb-4">
   {% csrf_token %}
   <div class="row g-3 align-items-end">
-    <div class="col-md-4">
+    <div class="col-md-3">
       <label class="form-label">{{ form.team_red.label }}</label>
       {{ form.team_red }}
       {% if form.team_red.errors %}<div class="text-danger small">{{ form.team_red.errors }}</div>{% endif %}
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
       <label class="form-label">{{ form.team_blue.label }}</label>
       {{ form.team_blue }}
       {% if form.team_blue.errors %}<div class="text-danger small">{{ form.team_blue.errors }}</div>{% endif %}
+    </div>
+    <div class="col-md-3">
+      {# SIM-09: arena_map plumbed through BatchSimulator.run / save_games — render the field. #}
+      <label class="form-label">{{ form.arena_map.label }}</label>
+      {{ form.arena_map }}
+      {% if form.arena_map.errors %}<div class="text-danger small">{{ form.arena_map.errors }}</div>{% endif %}
     </div>
     <div class="col-md-2">
       <label class="form-label">{{ form.n.label }}</label>
       {{ form.n }}
       {% if form.n.errors %}<div class="text-danger small">{{ form.n.errors }}</div>{% endif %}
     </div>
-    <div class="col-md-2">
+    <div class="col-md-1">
       <button type="submit" class="btn btn-primary w-100">Run</button>
     </div>
   </div>

@@ -1,12 +1,29 @@
 """
 Map-related tests: MAP-01 cell grid / spawn coordinates and MAP-02 pathfinding movement.
+
+SIM-09 note: tests that used to call ``ResourceBasedSimulator`` static helpers
+(``_zone_from_cell`` / ``_resolve_map_data`` / ``_build_movement_ctx`` /
+``_build_spawn_assignments``) now call the free functions in
+``matches.sim_helpers.map_loader``. End-to-end RBS round integration tests
+have been ported to ``BatchSimulator`` with ``patch.object(BatchSimulator,
+"ROUND_TICKS", 40)`` for speed. A few RBS-specific tests (legacy
+``_simulate_combat_exchange`` patching, ``_move_to_cell`` event-buffer
+emission) had no clean BatchSim equivalent and were dropped here — equivalent
+in-memory movement is already covered by ``test_batch_sim.py`` /
+``test_move03_hold_overwatch.py``.
 """
 
 import pytest
+from unittest.mock import patch
 
 from matches.models import GameRound, PlayerRoundState, GameEvent
-from matches.simulation import ResourceBasedSimulator
+from matches.simulation import BatchSimulator
 from matches.sim_helpers.map_context import MapContext
+from matches.sim_helpers.map_loader import (
+    build_spawn_assignments,
+    resolve_map_data,
+    zone_from_cell,
+)
 from matches.tests.conftest import make_team_with_slots
 
 # ---------------------------------------------------------------------------
@@ -100,9 +117,12 @@ class TestMap01CellGrid:
         """Without a map, red starts zone 0 and blue starts zone 2."""
         team_red, _ = make_team_with_slots("NoMapR")
         team_blue, _ = make_team_with_slots("NoMapB")
-        # TIME-01: duration is ticks now (20 s → 40 ticks); RBS unchanged.
-        sim = ResourceBasedSimulator(duration_ticks=40)
-        game_round = sim.simulate_single_round_detailed(team_red, team_blue)
+        # SIM-09: BatchSimulator now does single-round persistence; patch
+        # ROUND_TICKS for test speed (40 ticks = 20 s).
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            game_round = BatchSimulator().simulate_single_round_detailed(
+                team_red, team_blue
+            )
 
         assert game_round.arena_map is None
         assert game_round.zone_size is None
@@ -117,11 +137,10 @@ class TestMap01CellGrid:
         team_red, _ = make_team_with_slots("MapR")
         team_blue, _ = make_team_with_slots("MapB")
         arena_map = self._make_arena_map("StoreMapTest")
-        # TIME-01: duration is ticks now (20 s → 40 ticks); RBS unchanged.
-        sim = ResourceBasedSimulator(duration_ticks=40)
-        game_round = sim.simulate_single_round_detailed(
-            team_red, team_blue, arena_map=arena_map
-        )
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            game_round = BatchSimulator().simulate_single_round_detailed(
+                team_red, team_blue, arena_map=arena_map
+            )
 
         assert game_round.arena_map == arena_map
         assert game_round.zone_size == 50
@@ -131,11 +150,10 @@ class TestMap01CellGrid:
         team_red, _ = make_team_with_slots("CellR")
         team_blue, _ = make_team_with_slots("CellB")
         arena_map = self._make_arena_map("CellCoordTest")
-        # TIME-01: duration is ticks now (20 s → 40 ticks); RBS unchanged.
-        sim = ResourceBasedSimulator(duration_ticks=40)
-        game_round = sim.simulate_single_round_detailed(
-            team_red, team_blue, arena_map=arena_map
-        )
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            game_round = BatchSimulator().simulate_single_round_detailed(
+                team_red, team_blue, arena_map=arena_map
+            )
 
         # All players should have non-None cell coordinates within the 4×4 grid
         for s in game_round.player_states.all():
@@ -148,17 +166,16 @@ class TestMap01CellGrid:
         """_zone_from_cell uses proximity to spawn cells (not grid cell values)."""
         spawn_cells = {"red": (0, 0), "blue": (3, 3)}
         # Cell near red base
-        assert ResourceBasedSimulator._zone_from_cell(0, 0, spawn_cells) == 0
+        assert zone_from_cell(0, 0, spawn_cells) == 0
         # Cell near blue base
-        assert ResourceBasedSimulator._zone_from_cell(3, 3, spawn_cells) == 2
+        assert zone_from_cell(3, 3, spawn_cells) == 2
         # Cell equidistant → neutral
-        assert ResourceBasedSimulator._zone_from_cell(1, 2, spawn_cells) == 1
+        assert zone_from_cell(1, 2, spawn_cells) == 1
 
     def test_resolve_map_data_returns_spawn_cells_and_zone_data(self):
-        """_resolve_map_data returns MapData with named fields."""
+        """resolve_map_data returns MapData with named fields."""
         arena_map = self._make_arena_map("ResolveTest")
-        sim = ResourceBasedSimulator()
-        md = sim._resolve_map_data(arena_map)
+        md = resolve_map_data(arena_map)
 
         assert md.zone_size == 50
         assert md.spawn_cells["red"] == (1, 0)
@@ -203,74 +220,12 @@ class TestMap01CellGrid:
             arena_map=arena_map, base_type="red", zone_size=50, visible_cells=[]
         )
 
-        assert (
-            ResourceBasedSimulator._resolve_map_data(arena_map).zone_data == raw_zones
-        )
+        assert resolve_map_data(arena_map).zone_data == raw_zones
 
-    def test_initial_spawn_zone_derived_from_zone_data(self):
-        """Players' starting zone_fallback is derived from zone_data at spawn — tested at init."""
-        from core.models import (
-            ArenaMap,
-            BaseSightLineConfig,
-            MapZoneConfig,
-            MapBaseConfig,
-            SightLineConfig,
-        )
-        from core.map_processing import compute_sight_lines
-
-        zone_layout = [[2, 1], [1, 3]]
-        arena_map = ArenaMap.objects.create(
-            name="ZoneDeriveTest", img_width=100, img_height=100
-        )
-        MapZoneConfig.objects.create(
-            arena_map=arena_map,
-            zone_size=50,
-            zone_data=zone_layout,
-            confirmed=True,
-        )
-        MapBaseConfig.objects.create(
-            arena_map=arena_map, base_type="red", x_px=25, y_px=25
-        )
-        MapBaseConfig.objects.create(
-            arena_map=arena_map, base_type="blue", x_px=75, y_px=75
-        )
-        SightLineConfig.objects.create(
-            arena_map=arena_map,
-            zone_size=50,
-            sight_data=compute_sight_lines(zone_layout),
-        )
-        BaseSightLineConfig.objects.create(
-            arena_map=arena_map, base_type="red", zone_size=50, visible_cells=[]
-        )
-
-        team_red, _ = make_team_with_slots("ZoneR")
-        team_blue, _ = make_team_with_slots("ZoneB")
-        gr = GameRound.objects.create(
-            team_red=team_red,
-            team_blue=team_blue,
-            round_number=1,
-            arena_map=arena_map,
-            zone_size=50,
-        )
-        sim = ResourceBasedSimulator()
-        md = sim._resolve_map_data(arena_map)
-
-        red_states = sim._initialize_players(
-            gr, team_red, "red", md.spawn_cells, md.zone_data
-        )
-        blue_states = sim._initialize_players(
-            gr, team_blue, "blue", md.spawn_cells, md.zone_data
-        )
-
-        # Red spawn cell (0,0): zone_data[0][0]=2 → zone 0 (red_zone)
-        for s in red_states:
-            assert s.zone_fallback == 0
-            assert s.current_zone == 0
-
-        # Blue spawn cell (1,1): zone_data[1][1]=3 → zone 2 (blue_zone)
-        for s in blue_states:
-            assert s.zone_fallback == 2
-            assert s.current_zone == 2
+    # SIM-09 note: test_initial_spawn_zone_derived_from_zone_data was dropped —
+    # it exercised RBS's ``_initialize_players`` which creates DB-backed
+    # ``PlayerRoundState`` rows. BatchSim's ``_make_players`` builds
+    # ``PlayerState`` dataclasses; that path is covered by test_batch_sim.py.
 
     def test_missing_red_base_config_raises(self):
         """Simulating with a map that has no red base raises ValueError."""
@@ -291,9 +246,11 @@ class TestMap01CellGrid:
 
         team_red, _ = make_team_with_slots("ErrR")
         team_blue, _ = make_team_with_slots("ErrB")
-        sim = ResourceBasedSimulator()
         with pytest.raises(ValueError, match="red base"):
-            sim.simulate_single_round_detailed(team_red, team_blue, arena_map=arena_map)
+            with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+                BatchSimulator().simulate_single_round_detailed(
+                    team_red, team_blue, arena_map=arena_map
+                )
 
     def test_no_confirmed_config_raises(self):
         """Simulating with a map that has no confirmed zone config raises ValueError."""
@@ -311,9 +268,11 @@ class TestMap01CellGrid:
 
         team_red, _ = make_team_with_slots("NoCfgR")
         team_blue, _ = make_team_with_slots("NoCfgB")
-        sim = ResourceBasedSimulator()
         with pytest.raises(ValueError, match="confirmed zone configuration"):
-            sim.simulate_single_round_detailed(team_red, team_blue, arena_map=arena_map)
+            with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+                BatchSimulator().simulate_single_round_detailed(
+                    team_red, team_blue, arena_map=arena_map
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -494,54 +453,11 @@ class TestMap02CellMovement:
         )
         assert choose_goal_cell(player, [player], spawn_cells) == (9, 9)
 
-    def test_move_to_cell_creates_game_event_with_metadata(self):
-        import random
-
-        random.seed(42)
-
-        arena_map = self._make_map("Test5x5", _FLOOR_5X5)
-        team_red, _ = make_team_with_slots("MovR")
-        team_blue, _ = make_team_with_slots("MovB")
-
-        game_round = ResourceBasedSimulator(  # TIME-01: 20 s → 40 ticks
-            duration_ticks=40
-        ).simulate_single_round_detailed(team_red, team_blue, arena_map=arena_map)
-
-        cell_move_events = [
-            e
-            for e in GameEvent.objects.filter(
-                game_round=game_round, event_type="movement"
-            )
-            if "cell_row" in e.metadata and "cell_col" in e.metadata
-        ]
-        assert (
-            len(cell_move_events) > 0
-        ), "Expected at least one cell-based movement event"
-
-        ev = cell_move_events[0]
-        assert isinstance(ev.metadata["cell_row"], int)
-        assert isinstance(ev.metadata["cell_col"], int)
-        assert "actor_role" in ev.metadata
-        assert "new_zone" in ev.metadata
-
-    def test_fallback_no_map(self):
-        import random
-
-        random.seed(42)
-
-        team_red, _ = make_team_with_slots("FbR")
-        team_blue, _ = make_team_with_slots("FbB")
-
-        game_round = ResourceBasedSimulator(  # TIME-01: 20 s → 40 ticks
-            duration_ticks=40
-        ).simulate_single_round_detailed(team_red, team_blue)
-
-        for event in GameEvent.objects.filter(
-            game_round=game_round, event_type="movement"
-        ):
-            assert (
-                "cell_row" not in event.metadata
-            ), "Fallback movement should not record cell coordinates"
+    # SIM-09 note: test_move_to_cell_creates_game_event_with_metadata and
+    # test_fallback_no_map exercised the legacy RBS-only ``cell_row``/
+    # ``cell_col`` movement-event metadata shape (pre-MOVE-01). The compact
+    # ``start_row``/``start_col``/``end_row``/``end_col`` shape is covered by
+    # ``TestMove01CompactMovementEvent`` below.
 
     def test_player_advances_toward_enemy_base(self):
         import random
@@ -552,9 +468,10 @@ class TestMap02CellMovement:
         team_red, _ = make_team_with_slots("ReachR")
         team_blue, _ = make_team_with_slots("ReachB")
 
-        game_round = ResourceBasedSimulator(  # TIME-01: 20 s → 40 ticks
-            duration_ticks=40
-        ).simulate_single_round_detailed(team_red, team_blue, arena_map=arena_map)
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            game_round = BatchSimulator().simulate_single_round_detailed(
+                team_red, team_blue, arena_map=arena_map
+            )
 
         red_spawn = (0, 0)
         any_advanced = any(
@@ -823,9 +740,10 @@ class TestMap03DBIntegration:
         team_red, _ = make_team_with_slots("SightErrR")
         team_blue, _ = make_team_with_slots("SightErrB")
         with pytest.raises(ValueError, match="sight lines"):
-            ResourceBasedSimulator().simulate_single_round_detailed(
-                team_red, team_blue, arena_map=arena_map
-            )
+            with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+                BatchSimulator().simulate_single_round_detailed(
+                    team_red, team_blue, arena_map=arena_map
+                )
 
     def test_walled_map_produces_no_cross_wall_tags(self):
         """With a wall separating both teams, no tags occur across the wall.
@@ -843,9 +761,10 @@ class TestMap03DBIntegration:
         team_red, _ = make_team_with_slots("WallR")
         team_blue, _ = make_team_with_slots("WallB")
 
-        game_round = ResourceBasedSimulator(  # TIME-01: 20 s → 40 ticks
-            duration_ticks=40
-        ).simulate_single_round_detailed(team_red, team_blue, arena_map=arena_map)
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            game_round = BatchSimulator().simulate_single_round_detailed(
+                team_red, team_blue, arena_map=arena_map
+            )
 
         # With teams pinned to opposite sides of the wall, no enemy tags possible
         tag_events = list(
@@ -858,7 +777,7 @@ class TestMap03DBIntegration:
     def test_resolve_map_data_returns_sight_data(self):
         """_resolve_map_data sight_data field is a dict of frozensets."""
         arena_map = self._make_map_with_wall()
-        sight_data = ResourceBasedSimulator._resolve_map_data(arena_map).sight_data
+        sight_data = resolve_map_data(arena_map).sight_data
 
         assert isinstance(sight_data, dict)
         # Each value should be a frozenset
@@ -1117,16 +1036,15 @@ class TestMap04DBIntegration:
         team_red, _ = make_team_with_slots("BSCErrR")
         team_blue, _ = make_team_with_slots("BSCErrB")
         with pytest.raises(ValueError, match="base sight lines"):
-            ResourceBasedSimulator().simulate_single_round_detailed(
-                team_red, team_blue, arena_map=arena_map
-            )
+            with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+                BatchSimulator().simulate_single_round_detailed(
+                    team_red, team_blue, arena_map=arena_map
+                )
 
     def test_resolve_map_data_returns_base_sight_data(self):
         """_resolve_map_data base_sight_data field is a dict of frozensets keyed by base_type."""
         arena_map = self._make_base_map("ResolveBSD")
-        base_sight_data = ResourceBasedSimulator._resolve_map_data(
-            arena_map
-        ).base_sight_data
+        base_sight_data = resolve_map_data(arena_map).base_sight_data
 
         assert isinstance(base_sight_data, dict)
         assert "red" in base_sight_data
@@ -1138,14 +1056,17 @@ class TestMap04DBIntegration:
         assert "0,0" in base_sight_data["red"]
 
     def test_base_sight_data_included_in_movement_ctx(self):
-        """_build_movement_ctx includes base_sight_data from _resolve_map_data."""
+        """load_map_context produces a MapContext exposing base_sight_data."""
+        from matches.sim_helpers.map_loader import load_map_context
+
         arena_map = self._make_base_map("CtxBSD")
-        md = ResourceBasedSimulator._resolve_map_data(arena_map)
-        ctx = ResourceBasedSimulator._build_movement_ctx(
-            md.zone_data, md.spawn_cells, md.sight_data, md.base_sight_data
-        )
+        ctx, _zone_size = load_map_context(arena_map)
+        assert ctx is not None
         assert "base_sight_data" in ctx
-        assert ctx["base_sight_data"] is md.base_sight_data
+        # base_sight_data identity is exposed via the MapContext field /
+        # legacy dict-style shim — both MUST agree on shape.
+        assert isinstance(ctx["base_sight_data"], dict)
+        assert "red" in ctx["base_sight_data"] or "blue" in ctx["base_sight_data"]
 
 
 # ---------------------------------------------------------------------------
@@ -1492,22 +1413,22 @@ class TestMap07WallTypes:
 
     def test_zone_from_cell_near_red_base(self):
         spawn_cells = {"red": (0, 0), "blue": (10, 10)}
-        assert ResourceBasedSimulator._zone_from_cell(0, 1, spawn_cells) == 0
+        assert zone_from_cell(0, 1, spawn_cells) == 0
 
     def test_zone_from_cell_near_blue_base(self):
         spawn_cells = {"red": (0, 0), "blue": (10, 10)}
-        assert ResourceBasedSimulator._zone_from_cell(10, 9, spawn_cells) == 2
+        assert zone_from_cell(10, 9, spawn_cells) == 2
 
     def test_zone_from_cell_equidistant_is_neutral(self):
         spawn_cells = {"red": (0, 0), "blue": (10, 0)}
-        assert ResourceBasedSimulator._zone_from_cell(5, 0, spawn_cells) == 1
+        assert zone_from_cell(5, 0, spawn_cells) == 1
 
     def test_zone_from_cell_near_neutral_base_is_neutral(self):
         spawn_cells = {"red": (0, 0), "blue": (10, 0), "neutral_1": (3, 0)}
-        assert ResourceBasedSimulator._zone_from_cell(3, 1, spawn_cells) == 1
+        assert zone_from_cell(3, 1, spawn_cells) == 1
 
     def test_zone_from_cell_no_bases_returns_neutral(self):
-        assert ResourceBasedSimulator._zone_from_cell(5, 5, {}) == 1
+        assert zone_from_cell(5, 5, {}) == 1
 
     def test_windowed_wall_unknown_facing_blocks(self):
         """Unknown/garbage facing value must block, not silently pass through."""
@@ -1564,23 +1485,15 @@ class TestMap07DBIntegration:
     def test_wall_meta_round_trip_through_resolve_map_data(self):
         """wall_meta field from _resolve_map_data reflects zone_data JSON."""
         arena_map = self._make_windowed_map("WallMetaRoundTrip")
-        assert ResourceBasedSimulator._resolve_map_data(arena_map).wall_meta == {
-            "0,1": {"facing": "E"}
-        }
+        assert resolve_map_data(arena_map).wall_meta == {"0,1": {"facing": "E"}}
 
     def test_wall_meta_present_in_movement_ctx(self):
-        """_build_movement_ctx exposes wall_meta key from resolved map data."""
+        """load_map_context's MapContext exposes wall_meta from the zone config."""
+        from matches.sim_helpers.map_loader import load_map_context
+
         arena_map = self._make_windowed_map("WallMetaCtx")
-        md = ResourceBasedSimulator._resolve_map_data(arena_map)
-        ctx = ResourceBasedSimulator._build_movement_ctx(
-            md.zone_data,
-            md.spawn_cells,
-            md.sight_data,
-            md.base_sight_data,
-            md.cell_ranking,
-            md.strong_spots,
-            md.wall_meta,
-        )
+        ctx, _zone_size = load_map_context(arena_map)
+        assert ctx is not None
         assert ctx["wall_meta"] == {"0,1": {"facing": "E"}}
 
 
@@ -1798,7 +1711,7 @@ class TestMap08SpawnPoints:
         spawn_cells = {"red": (0, 0), "blue": (4, 4)}
         enemy_base = (4, 4)
 
-        assignments = ResourceBasedSimulator._build_spawn_assignments(
+        assignments = build_spawn_assignments(
             roster_roles, "red", spawn_cells, team_spawn_pools
         )
 
@@ -1845,7 +1758,7 @@ class TestMap08SpawnPoints:
         spawn_cells = {"red": (0, 0), "blue": (4, 4)}
 
         for color in ("red", "blue"):
-            assignments = ResourceBasedSimulator._build_spawn_assignments(
+            assignments = build_spawn_assignments(
                 roster_roles, color, spawn_cells, team_spawn_pools
             )
             cells = [cell for cell in assignments.values() if cell is not None]
@@ -1872,7 +1785,7 @@ class TestMap08SpawnPoints:
 
         for color in ("red", "blue"):
             base_cell = spawn_cells[color]
-            assignments = ResourceBasedSimulator._build_spawn_assignments(
+            assignments = build_spawn_assignments(
                 roster_roles, color, spawn_cells, team_spawn_pools
             )
             at_base = sum(1 for cell in assignments.values() if cell == base_cell)
@@ -1891,9 +1804,10 @@ class TestMap08SpawnPoints:
         team_red, _ = make_team_with_slots("FbSpR")
         team_blue, _ = make_team_with_slots("FbSpB")
 
-        game_round = ResourceBasedSimulator(  # TIME-01: 20 s → 40 ticks
-            duration_ticks=40
-        ).simulate_single_round_detailed(team_red, team_blue)
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            game_round = BatchSimulator().simulate_single_round_detailed(
+                team_red, team_blue
+            )
 
         assert game_round.arena_map is None
         for state in game_round.player_states.all():
@@ -2824,27 +2738,42 @@ class TestMove01BaselineZeroPlayerMovesAcrossMap:
     def test_baseline_zero_only_move_roles_advance_from_spawn(self):
         """Commander/Medic/Ammo (baseline only_move weight 0) move off their
         spawn cell over a round when a map is active (pre-MOVE-01 they would
-        almost never roll only_move and so never moved)."""
-        import random
+        almost never roll only_move and so never moved).
 
-        random.seed(42)
+        Uses ``replay_round`` with an explicit seed for determinism — SIM-09's
+        ``simulate_single_round_detailed`` intentionally draws its own fresh
+        per-round seed from OS entropy and so ignores ``random.seed(...)``
+        at the test level. The MOVE-01 invariant we want to pin here is
+        about movement, not persistence, so the in-memory path is the right
+        seam.
+        """
+        from matches.sim_helpers.map_loader import load_map_context
 
         arena_map = self._make_map("Move01Baseline10x10", _FLOOR_10X10)
         team_red, _ = make_team_with_slots("M01R")
         team_blue, _ = make_team_with_slots("M01B")
+        red_roster = list(team_red.active_roster)
+        blue_roster = list(team_blue.active_roster)
+        ctx, _ = load_map_context(arena_map)
 
-        game_round = ResourceBasedSimulator(
-            duration_ticks=40
-        ).simulate_single_round_detailed(team_red, team_blue, arena_map=arena_map)
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            (
+                _result,
+                red_players,
+                _blue_players,
+                _events,
+            ) = BatchSimulator().replay_round(
+                red_roster, blue_roster, seed=42, flipped=False, movement_ctx=ctx
+            )
 
         red_spawn = (0, 0)
         moved_roles = set()
-        for s in game_round.player_states.filter(team_color="red"):
-            if s.cell_row is None:
+        for p in red_players:
+            if p.cell_row is None:
                 continue
-            dist = abs(s.cell_row - red_spawn[0]) + abs(s.cell_col - red_spawn[1])
+            dist = abs(p.cell_row - red_spawn[0]) + abs(p.cell_col - red_spawn[1])
             if dist > 0:
-                moved_roles.add(s.role)
+                moved_roles.add(p.role)
 
         for role in ("commander", "medic", "ammo"):
             assert role in moved_roles, (
@@ -2910,9 +2839,10 @@ class TestMove01CompactMovementEvent:
         team_red, _ = make_team_with_slots("CmpR")
         team_blue, _ = make_team_with_slots("CmpB")
 
-        game_round = ResourceBasedSimulator(
-            duration_ticks=40
-        ).simulate_single_round_detailed(team_red, team_blue, arena_map=arena_map)
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            game_round = BatchSimulator().simulate_single_round_detailed(
+                team_red, team_blue, arena_map=arena_map
+            )
 
         move_events = list(
             GameEvent.objects.filter(game_round=game_round, event_type="movement")
@@ -2952,9 +2882,10 @@ class TestMove01CompactMovementEvent:
         team_red, _ = make_team_with_slots("NoMapR")
         team_blue, _ = make_team_with_slots("NoMapB")
 
-        game_round = ResourceBasedSimulator(
-            duration_ticks=40
-        ).simulate_single_round_detailed(team_red, team_blue)
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            game_round = BatchSimulator().simulate_single_round_detailed(
+                team_red, team_blue
+            )
 
         for ev in GameEvent.objects.filter(
             game_round=game_round, event_type="movement"
@@ -2963,152 +2894,13 @@ class TestMove01CompactMovementEvent:
             assert "cell_row" not in ev.metadata
 
 
-class TestMove01MoveToCellEventEmission:
-    """Pure-ish unit: _move_to_cell emits exactly one compact event on a real
-    move and ZERO events on a no-op Advance (start == reachable end)."""
-
-    def _ctx(self, grid):
-        from matches.sim_helpers.pathfinding import build_movement_adjacency
-
-        return MapContext.from_dict(
-            {
-                "adj": build_movement_adjacency(grid),
-                "spawn_cells": {"red": (0, 0), "blue": (0, len(grid[0]) - 1)},
-                "zone_data": grid,
-                "sight_data": None,
-            }
-        )
-
-    def _rbs_player(self, cell_row=0, cell_col=0):
-        """A minimal stand-in with the attributes _move_to_cell touches.
-
-        _move_to_cell calls player.save(update_fields=...) and reads
-        player.player.name / player.role / player.player_id; a tiny stub keeps
-        this a pure-unit test (no DB) while exercising the real method.
-        """
-
-        class _Inner:
-            name = "stub"
-
-        class _Stub:
-            def __init__(self, r, c):
-                self.cell_row = r
-                self.cell_col = c
-                self.zone_fallback = 0
-                self.role = "scout"
-                self.player_id = 1
-                self.player = _Inner()
-
-            @property
-            def current_zone(self):
-                return self.zone_fallback
-
-            def save(self, update_fields=None):
-                pass
-
-        return _Stub(cell_row, cell_col)
-
-    def test_real_move_emits_single_compact_event(self):
-        from matches.simulation import ResourceBasedSimulator
-
-        grid = _FLOOR_30X1
-        ctx = self._ctx(grid)
-        player = self._rbs_player(0, 0)
-        buf: list = []
-
-        ResourceBasedSimulator()._move_to_cell(player, 7, (0, 29), ctx, buf, 1)
-
-        assert len(buf) == 1, "exactly one movement event per real Advance"
-        ev = buf[0]
-        assert ev["event_type"] == "movement"
-        assert ev["timestamp"] == 7
-        md = ev["metadata"]
-        assert (md["start_row"], md["start_col"]) == (0, 0)
-        assert (md["end_row"], md["end_col"]) == (player.cell_row, player.cell_col)
-
-    def test_noop_advance_emits_no_event(self):
-        """start == goal → astar_advance returns start → NO event appended."""
-        from matches.simulation import ResourceBasedSimulator
-
-        grid = _FLOOR_30X1
-        ctx = self._ctx(grid)
-        player = self._rbs_player(0, 5)
-        buf: list = []
-
-        # goal == current cell → no movement, no event.
-        ResourceBasedSimulator()._move_to_cell(player, 3, (0, 5), ctx, buf, 1)
-
-        assert buf == [], "no movement event on a no-op / stationary tick"
-        assert (player.cell_row, player.cell_col) == (0, 5)
-
-
-@pytest.mark.django_db
-class TestMove01ThreeZoneFallbackUnchanged:
-    """Decision 6: with movement_ctx is None the only_move roll keeps the
-    pre-MOVE-01 weighted _change_zone behaviour (always-on Advance + 2× apply
-    to the MAP path only)."""
-
-    def create_team_with_roster(self, prefix):
-        return make_team_with_slots(prefix)
-
-    def test_only_move_roll_in_fallback_steps_one_zone(self):
-        """No map: an only_move roll dispatches the legacy _change_zone, so a
-        neutral-zone player steps to an adjacent zone (old behaviour)."""
-        from unittest.mock import patch
-
-        team, players = self.create_team_with_roster("M01Fb")
-        gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
-        state = PlayerRoundState.objects.create(
-            game_round=gr,
-            player=players["scout"],
-            team_color="red",
-            role="scout",
-            zone_fallback=0,  # red zone → fallback flips to neutral (1)
-            final_shots=5,
-            final_lives=10,
-        )
-
-        sim = ResourceBasedSimulator()
-        with patch("random.choices", return_value=["only_move"]), patch(
-            "random.choice", return_value=1
-        ):
-            sim._simulate_combat_exchange(
-                gr,
-                [state],
-                [],
-                second=3,
-                pending_nukes=[],
-            )
-
-        # Pre-MOVE-01 _change_zone behaviour: red(0) → neutral(1).
-        assert state.current_zone == 1
-
-    def test_fallback_movement_event_has_no_cell_coords(self):
-        """3-zone fallback movement events never carry cell coordinates
-        (regression — compact cell events are map-path only)."""
-        from unittest.mock import patch
-
-        team, players = self.create_team_with_roster("M01Fb2")
-        gr = GameRound.objects.create(team_red=team, team_blue=team, round_number=1)
-        state = PlayerRoundState.objects.create(
-            game_round=gr,
-            player=players["scout"],
-            team_color="red",
-            role="scout",
-            zone_fallback=0,
-            final_shots=5,
-            final_lives=10,
-        )
-
-        sim = ResourceBasedSimulator()
-        with patch("random.choices", return_value=["only_move"]), patch(
-            "random.choice", return_value=1
-        ):
-            sim._simulate_combat_exchange(gr, [state], [], second=3, pending_nukes=[])
-
-        for ev in GameEvent.objects.filter(game_round=gr, event_type="movement"):
-            assert "cell_row" not in ev.metadata
-            assert "start_row" not in ev.metadata
+# SIM-09 note: TestMove01MoveToCellEventEmission and
+# TestMove01ThreeZoneFallbackUnchanged were dropped — they exercised
+# RBS-specific ``_move_to_cell(player, second, goal, ctx, buf, ...)`` event-
+# buffer semantics and ``_simulate_combat_exchange`` direct invocation. The
+# equivalent BatchSim in-memory movement appends to ``PlayerState.movement_trail``
+# (no event-buffer parameter); end-to-end compact-event shape is already
+# covered by ``TestMove01CompactMovementEvent`` above.
 
 
 class TestMove01SelectLosCell:

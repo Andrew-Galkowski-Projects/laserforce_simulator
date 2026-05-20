@@ -91,6 +91,13 @@ class BatchSimulateForm(forms.Form):
         widget=forms.Select(attrs={"class": "form-control"}),
         label="Number of simulations",
     )
+    arena_map = forms.ModelChoiceField(
+        queryset=ArenaMap.objects.none(),
+        widget=forms.Select(attrs={"class": "form-control"}),
+        label="Arena Map",
+        required=False,
+        empty_label="No map (3-zone fallback)",
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -99,3 +106,4 @@ class BatchSimulateForm(forms.Form):
         )
         self.fields["team_red"].queryset = valid_teams
         self.fields["team_blue"].queryset = valid_teams
+        self.fields["arena_map"].queryset = _maps_with_confirmed_config()
