@@ -38,6 +38,43 @@ _NEUTRAL_BASE_TYPES = ("neutral_1", "neutral_2", "neutral_3", "neutral_4")
 _AMMO_CHART = {"commander": 5, "heavy": 5, "scout": 10, "medic": 5}
 _MEDIC_CHART = {"commander": 4, "heavy": 3, "scout": 5, "ammo": 3}
 
+
+# ----------------------------------------------------------------------------
+# RES-02b — Universal event metadata snapshot helpers.
+# Local copies of the helpers in matches/simulation.py to avoid a circular
+# import (simulation imports combat). The pair is intentionally duplicated;
+# any change to the helper key set must be made in both places.
+# ----------------------------------------------------------------------------
+def _actor_meta(actor) -> dict:
+    """Universal actor snapshot block (post-event values)."""
+    return {
+        "actor_role": actor.role,
+        "actor_shots": actor.final_shots,
+        "actor_lives": actor.final_lives,
+        "actor_points": actor.points_scored,
+        "sp": actor.final_special,
+    }
+
+
+def _target_meta(target) -> dict:
+    """Universal target snapshot block (post-event values)."""
+    return {
+        "target_role": target.role,
+        "target_shots": target.final_shots,
+        "target_lives": target.final_lives,
+        "target_points": target.points_scored,
+    }
+
+
+def _build_meta(actor, target=None, **extras) -> dict:
+    """Build event metadata with actor block, optional target block, and extras."""
+    md = _actor_meta(actor)
+    if target is not None:
+        md.update(_target_meta(target))
+    md.update(extras)
+    return md
+
+
 _ACTION_IDX = {
     "tag_player": 0,
     "only_move": 1,
@@ -463,11 +500,7 @@ def attempt_resupply(
                     "timestamp": second,
                     "points_awarded": 0,
                     "description": f"{tagger.name} resupplies {teammate.name}",
-                    "metadata": {
-                        "amount": amount,
-                        "actor_role": tagger.role,
-                        "target_role": teammate.role,
-                    },
+                    "metadata": _build_meta(tagger, teammate, amount=amount),
                 }
             )
     elif (
@@ -494,11 +527,7 @@ def attempt_resupply(
                     "timestamp": second,
                     "points_awarded": 0,
                     "description": f"{tagger.name} heals {teammate.name}",
-                    "metadata": {
-                        "amount": amount,
-                        "actor_role": tagger.role,
-                        "target_role": teammate.role,
-                    },
+                    "metadata": _build_meta(tagger, teammate, amount=amount),
                 }
             )
 
@@ -550,13 +579,12 @@ def capture_base(
                     "timestamp": second,
                     "points_awarded": 1001,
                     "description": f"{player.name} captures base {'neutral' if base_id == 15 else 'opposing'}",
-                    "metadata": {
-                        "base_id": base_id,
-                        "actor_role": player.role,
-                        "shots_remaining": player.final_shots,
-                        "special_points": player.final_special,
-                        "points_scored": player.points_scored,
-                    },
+                    "metadata": _build_meta(
+                        player,
+                        base_id=base_id,
+                        shots_remaining=player.final_shots,
+                        points_scored=player.points_scored,
+                    ),
                 }
             )
         return True
@@ -584,7 +612,7 @@ def award_bases(
                     "timestamp": second,
                     "points_awarded": 1001,
                     "description": f"{player.name} awarded neutral base",
-                    "metadata": {"base_id": 15, "actor_role": player.role},
+                    "metadata": _build_meta(player, base_id=15),
                 }
             )
     if not player.opposing_base_destroyed:
@@ -599,10 +627,10 @@ def award_bases(
                     "timestamp": second,
                     "points_awarded": 1001,
                     "description": f"{player.name} awarded opposing base",
-                    "metadata": {
-                        "base_id": 14 if player.team_color == "red" else 13,
-                        "actor_role": player.role,
-                    },
+                    "metadata": _build_meta(
+                        player,
+                        base_id=14 if player.team_color == "red" else 13,
+                    ),
                 }
             )
 

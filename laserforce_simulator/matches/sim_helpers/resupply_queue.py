@@ -11,6 +11,43 @@ from typing import Any, Callable, Optional
 
 from .mechanics import shot_cooldown
 
+
+# ----------------------------------------------------------------------------
+# RES-02b — Universal event metadata snapshot helpers.
+# Local copies of the helpers in matches/simulation.py to avoid a circular
+# import (simulation imports sim_helpers indirectly). Any change to the
+# helper key set must be made in all three locations.
+# ----------------------------------------------------------------------------
+def _actor_meta(actor) -> dict:
+    """Universal actor snapshot block (post-event values)."""
+    return {
+        "actor_role": actor.role,
+        "actor_shots": actor.final_shots,
+        "actor_lives": actor.final_lives,
+        "actor_points": actor.points_scored,
+        "sp": actor.final_special,
+    }
+
+
+def _target_meta(target) -> dict:
+    """Universal target snapshot block (post-event values)."""
+    return {
+        "target_role": target.role,
+        "target_shots": target.final_shots,
+        "target_lives": target.final_lives,
+        "target_points": target.points_scored,
+    }
+
+
+def _build_meta(actor, target=None, **extras) -> dict:
+    """Build event metadata with actor block, optional target block, and extras."""
+    md = _actor_meta(actor)
+    if target is not None:
+        md.update(_target_meta(target))
+    md.update(extras)
+    return md
+
+
 # Priority order for the queue sort (lower = higher priority)
 _ROLE_QUEUE_PRIORITY: dict[str, int] = {
     "heavy": 0,
@@ -189,16 +226,23 @@ def resolve_resupply_requests(
                 medic.last_shot_time = second
                 ammo.last_shot_time = second
                 if emit_event is not None:
-                    # actor_id will be resolved from the requestor kwarg by the caller;
-                    # target_id is None (both support players are named in metadata).
+                    # RES-02b: combo_resupply now uniformly carries
+                    # target_id=requestor.player_id (was None) and the
+                    # universal actor/target snapshot blocks. The "actor" is
+                    # one of the two supporters; we pick medic by convention
+                    # (the other supporter is named via the ammo_tag extra).
                     emit_event(
                         "combo_resupply",
+                        actor=medic,
+                        target=requestor,
                         requestor=requestor,
                         second=second,
-                        metadata={
-                            "medic_tag": medic.tag_id_key,
-                            "ammo_tag": ammo.tag_id_key,
-                        },
+                        metadata=_build_meta(
+                            medic,
+                            requestor,
+                            medic_tag=medic.tag_id_key,
+                            ammo_tag=ammo.tag_id_key,
+                        ),
                     )
                 prior_request_count += 1
                 continue
