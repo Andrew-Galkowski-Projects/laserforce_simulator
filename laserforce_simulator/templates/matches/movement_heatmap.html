@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Movement Heatmap - Round {{ game_round.id }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Movement Heatmap</h1>
+    <p>
+        <a href="{% url 'game_round_detail' round_id=game_round.id %}">Round detail</a>
+        |
+        <a href="{% url 'game_round_events' round_id=game_round.id %}">All events</a>
+        |
+        <a href="{% url 'missile_log' round_id=game_round.id %}">Missile log</a>
+    </p>
+
+    {% if not has_map %}
+        <div class="alert alert-warning" id="heatmap-no-map-notice">
+            No map &mdash; heatmap unavailable.
+        </div>
+    {% else %}
+        {# Filter row #}
+        <div class="row mb-3" id="heatmap-filter-row">
+            <div class="col-md-4">
+                <label for="heatmap-filter-player">Player</label>
+                <select id="heatmap-filter-player" class="form-select">
+                    <option value="">All players</option>
+                    {% for p in player_roster %}
+                        <option value="{{ p.id }}">{{ p.name }} ({{ p.team_color }} {{ p.role }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label for="heatmap-filter-role">Role</label>
+                <select id="heatmap-filter-role" class="form-select">
+                    <option value="">All roles</option>
+                    <option value="commander">Commander</option>
+                    <option value="heavy">Heavy</option>
+                    <option value="scout">Scout</option>
+                    <option value="medic">Medic</option>
+                    <option value="ammo">Ammo</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label for="heatmap-filter-team">Team color</label>
+                <select id="heatmap-filter-team" class="form-select">
+                    <option value="">Both</option>
+                    <option value="red">Red</option>
+                    <option value="blue">Blue</option>
+                </select>
+            </div>
+        </div>
+
+        {# Canvas overlay on processed map image #}
+        <div id="heatmap-stage" style="position: relative; display: inline-block;">
+            <img id="heatmap-bg" src="{{ processed_image_url }}"
+                 alt="Map background" style="display: block;">
+            <canvas id="heatmap-canvas"
+                    style="position: absolute; top: 0; left: 0; pointer-events: none;">
+            </canvas>
+        </div>
+
+        {{ cell_occupancy_json|json_script:"cell-occupancy-data" }}
+        {{ player_roster|json_script:"player-roster-data" }}
+        <script>window.LF_ZONE_SIZE = {{ zone_size|default:"null" }};</script>
+
+        <script>
+        (function() {
+            "use strict";
+
+            var occupancyEl = document.getElementById("cell-occupancy-data");
+            var rosterEl = document.getElementById("player-roster-data");
+            if (!occupancyEl || !rosterEl) return;
+
+            var occupancy = JSON.parse(occupancyEl.textContent || "{}") || {};
+            var roster = JSON.parse(rosterEl.textContent || "[]") || [];
+
+            var canvas = document.getElementById("heatmap-canvas");
+            var bg = document.getElementById("heatmap-bg");
+            var playerSel = document.getElementById("heatmap-filter-player");
+            var roleSel = document.getElementById("heatmap-filter-role");
+            var teamSel = document.getElementById("heatmap-filter-team");
+
+            // Index roster by string id (json_script preserves int ids; cast)
+            var rosterById = {};
+            roster.forEach(function(p) {
+                rosterById[String(p.id)] = p;
+            });
+
+            function parseCellKey(key) {
+                var parts = key.split(",");
+                return [parseInt(parts[0], 10), parseInt(parts[1], 10)];
+            }
+
+            function aggregate() {
+                var playerFilter = playerSel ? playerSel.value : "";
+                var roleFilter = roleSel ? roleSel.value : "";
+                var teamFilter = teamSel ? teamSel.value : "";
+
+                var sums = {};
+                Object.keys(occupancy).forEach(function(pid) {
+                    if (playerFilter && playerFilter !== pid) return;
+                    var meta = rosterById[pid];
+                    if (roleFilter) {
+                        if (!meta || meta.role !== roleFilter) return;
+                    }
+                    if (teamFilter) {
+                        if (!meta || meta.team_color !== teamFilter) return;
+                    }
+                    var perCell = occupancy[pid] || {};
+                    Object.keys(perCell).forEach(function(cellKey) {
+                        var v = perCell[cellKey];
+                        if (typeof v !== "number") return;
+                        sums[cellKey] = (sums[cellKey] || 0) + v;
+                    });
+                });
+                return sums;
+            }
+
+            function paint() {
+                if (!canvas || !bg) return;
+                var zoneSize = window.LF_ZONE_SIZE;
+                if (!zoneSize || zoneSize <= 0) return;
+
+                var w = bg.naturalWidth || bg.width;
+                var h = bg.naturalHeight || bg.height;
+                if (!w || !h) return;
+                canvas.width = w;
+                canvas.height = h;
+
+                var ctx = canvas.getContext("2d");
+                ctx.clearRect(0, 0, w, h);
+
+                var sums = aggregate();
+                var maxVal = 0;
+                Object.keys(sums).forEach(function(k) {
+                    if (sums[k] > maxVal) maxVal = sums[k];
+                });
+                if (maxVal <= 0) return;
+
+                Object.keys(sums).forEach(function(cellKey) {
+                    var val = sums[cellKey];
+                    if (val <= 0) return;
+                    var rc = parseCellKey(cellKey);
+                    var row = rc[0];
+                    var col = rc[1];
+                    if (isNaN(row) || isNaN(col)) return;
+
+                    // sqrt compresses dynamic range so mid-traffic cells
+                    // are visible even when one hot cell (spawn) dominates.
+                    var t = Math.sqrt(Math.min(1, val / maxVal));
+                    var hue = 60 * (1 - t);
+                    var alpha = 0.45 + 0.45 * t;
+                    ctx.fillStyle = "hsla(" + hue + ", 95%, 50%, " + alpha + ")";
+                    ctx.fillRect(col * zoneSize, row * zoneSize, zoneSize, zoneSize);
+                });
+            }
+
+            if (playerSel) playerSel.addEventListener("change", paint);
+            if (roleSel) roleSel.addEventListener("change", paint);
+            if (teamSel) teamSel.addEventListener("change", paint);
+
+            // Always attach the load listener AND attempt a paint immediately.
+            // The image may have completed between HTML parse and this script
+            // running (cached case), in which case the load event has already
+            // fired. paint() guards against missing dimensions, so calling it
+            // before the image is ready is a no-op.
+            bg.addEventListener("load", paint);
+            paint();
+        })();
+        </script>
+    {% endif %}
+</div>
+{% endblock %}

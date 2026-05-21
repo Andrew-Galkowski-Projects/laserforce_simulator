@@ -5,7 +5,8 @@ import uuid
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.db.models import Q
-from django.http import JsonResponse
+from django.http import HttpResponseNotAllowed, JsonResponse
+from django.urls import reverse
 from teams.models import Team
 from .models import Match, GameRound, PlayerRoundState, GameEvent
 from .simulation import BatchSimulator
@@ -606,3 +607,51 @@ def missile_log(request, round_id):
         "efficiency": efficiency,
     }
     return render(request, "matches/missile_log.html", context)
+
+
+def movement_heatmap(request, round_id: int):
+    """RES-04: render the per-round movement heatmap page.
+
+    Aggregates per-cell occupancy ticks across the round, surfaces the player
+    roster for client-side filtering, and overlays the result as a canvas on
+    the processed map image. When the round has no associated map, the
+    template renders a "No map" notice instead.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    game_round = get_object_or_404(GameRound, pk=round_id)
+
+    has_map = game_round.arena_map_id is not None
+    arena_map = game_round.arena_map if has_map else None
+    processed_image_url = (
+        reverse("processed_image", args=[arena_map.pk]) if arena_map else None
+    )
+
+    # Roster: red first then blue, each ordered by (role, name).
+    player_states = list(game_round.player_states.select_related("player").all())
+
+    def _sort_key(state):
+        team_rank = 0 if state.team_color == "red" else 1
+        return (team_rank, state.role, state.player.name)
+
+    player_roster = [
+        {
+            "id": state.player_id,
+            "name": state.player.name,
+            "role": state.role,
+            "team_color": state.team_color,
+        }
+        for state in sorted(player_states, key=_sort_key)
+    ]
+
+    context = {
+        "game_round": game_round,
+        "cell_occupancy_json": game_round.cell_occupancy_json or {},
+        "player_roster": player_roster,
+        "has_map": has_map,
+        "arena_map": arena_map,
+        "zone_size": game_round.zone_size,
+        "processed_image_url": processed_image_url,
+    }
+    return render(request, "matches/movement_heatmap.html", context)

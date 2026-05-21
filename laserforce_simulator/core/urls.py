@@ -35,4 +35,9 @@ urlpatterns = [
         name="save_strong_spots",
     ),
     path("<int:map_id>/spawn-cells/", views.get_spawn_cells, name="get_spawn_cells"),
+    path(
+        "<int:map_id>/heatmap-data/",
+        views.map_heatmap_data,
+        name="map_heatmap_data",
+    ),
 ]

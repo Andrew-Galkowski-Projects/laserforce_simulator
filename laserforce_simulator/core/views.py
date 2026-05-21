@@ -6,7 +6,12 @@ from pathlib import Path
 from django.conf import settings
 from django.contrib import messages
 from django.db.models.fields.files import FieldFile
-from django.http import FileResponse, JsonResponse
+from django.http import (
+    FileResponse,
+    HttpResponseBadRequest,
+    HttpResponseNotAllowed,
+    JsonResponse,
+)
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 from PIL import Image as PILImage, UnidentifiedImageError
@@ -686,3 +691,109 @@ def save_strong_spots(request, map_id):
         defaults={"cells": cells},
     )
     return JsonResponse({"status": "ok"})
+
+
+def map_heatmap_data(request, map_id: int):
+    """RES-04: aggregate cell occupancy across all GameRounds for a map.
+
+    Required query param ``zone_size`` (int). Optional ``team_color`` filter
+    (``"red"`` or ``"blue"``). Returns
+    ``{"cell_occupancy": {...}, "zone_size": int, "rows": int, "cols": int,
+    "round_count": int}``.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    arena_map = get_object_or_404(ArenaMap, pk=map_id)
+
+    # Lazy import to avoid a core -> matches import cycle at module load.
+    from matches.models import GameRound, PlayerRoundState
+
+    raw_zone_size = request.GET.get("zone_size")
+    if raw_zone_size is None:
+        return HttpResponseBadRequest("zone_size required")
+    try:
+        zone_size = int(raw_zone_size)
+    except (TypeError, ValueError):
+        return HttpResponseBadRequest("zone_size required")
+
+    team_color = request.GET.get("team_color")
+    if team_color is not None and team_color != "":
+        if team_color not in ("red", "blue"):
+            return HttpResponseBadRequest("invalid team_color")
+    else:
+        team_color = None
+
+    rounds = list(
+        GameRound.objects.filter(
+            arena_map_id=map_id,
+            zone_size=zone_size,
+            cell_occupancy_json__isnull=False,
+        )
+    )
+
+    # Batch-load player team_colors for every round in one query
+    # (was N+1: one query per round). Bucket into {round_id: {player_id: color}}.
+    round_ids = [gr.id for gr in rounds]
+    team_lookups: dict[int, dict[int, str]] = {rid: {} for rid in round_ids}
+    if round_ids:
+        for round_id, player_id, color in PlayerRoundState.objects.filter(
+            game_round_id__in=round_ids
+        ).values_list("game_round_id", "player_id", "team_color"):
+            team_lookups[round_id][player_id] = color
+
+    cell_totals: dict[str, int] = {}
+    round_count = 0
+    for game_round in rounds:
+        occupancy = game_round.cell_occupancy_json or {}
+        if not isinstance(occupancy, dict):
+            continue
+
+        team_lookup = team_lookups.get(game_round.id, {})
+
+        for player_id_str, per_cell in occupancy.items():
+            if not isinstance(per_cell, dict):
+                continue
+            try:
+                player_id = int(player_id_str)
+            except (TypeError, ValueError):
+                continue
+            if team_color is not None:
+                player_team = team_lookup.get(player_id)
+                if player_team != team_color:
+                    continue
+            for cell_key, ticks in per_cell.items():
+                if not isinstance(ticks, int):
+                    continue
+                cell_totals[cell_key] = cell_totals.get(cell_key, 0) + ticks
+
+        # Count every round with a non-null cell_occupancy_json. The
+        # team_color filter suppresses individual players' contributions
+        # to cell totals but does not change the round count.
+        round_count += 1
+
+    # Drop any cells with a final sum of zero (matches per-round format).
+    cell_occupancy = {k: v for k, v in cell_totals.items() if v != 0}
+
+    # Pull rows/cols from the confirmed MapZoneConfig for (map, zone_size).
+    rows = 0
+    cols = 0
+    zone_config = MapZoneConfig.objects.filter(
+        arena_map=arena_map, zone_size=zone_size, confirmed=True
+    ).first()
+    if zone_config is not None and isinstance(zone_config.zone_data, dict):
+        zones = zone_config.zone_data.get("zones")
+        if isinstance(zones, list):
+            rows = len(zones)
+            if rows > 0 and isinstance(zones[0], list):
+                cols = len(zones[0])
+
+    return JsonResponse(
+        {
+            "cell_occupancy": cell_occupancy,
+            "zone_size": zone_size,
+            "rows": rows,
+            "cols": cols,
+            "round_count": round_count,
+        }
+    )

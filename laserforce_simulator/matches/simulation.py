@@ -2789,6 +2789,46 @@ class BatchSimulator:
                     },
                 )
 
+        # RES-04: cell-occupancy snapshot. Only populated when a map is active
+        # (movement_ctx is not None); map-less rounds leave cell_occupancy_json
+        # null. The map-active gate is required because reconstruct_cell_occupancy
+        # needs an A* adjacency dict.
+        if movement_ctx is not None:
+            from matches.sim_helpers.cell_occupancy import reconstruct_cell_occupancy
+            from matches.sim_helpers.time_constants import TICKS_PER_ROUND
+
+            adj = movement_ctx.get_adjacency()
+            elevation_data = movement_ctx.elevation_grid  # may be None — that's fine
+
+            occupancy_json: dict[str, dict[str, int]] = {}
+            for p in red_players + blue_players:
+                if not p.player_id:
+                    continue
+                spawn_cell = (
+                    p.movement_trail[0][0]
+                    if p.movement_trail
+                    else (p.cell_row, p.cell_col)
+                )
+                # Skip players who never had a cell position (no map, edge case).
+                if spawn_cell[0] is None or spawn_cell[1] is None:
+                    continue
+
+                per_cell = reconstruct_cell_occupancy(
+                    movement_trail=p.movement_trail,
+                    spawn_cell=spawn_cell,
+                    round_ticks=TICKS_PER_ROUND,
+                    eliminated_at=p.was_eliminated_at,
+                    adj=adj,
+                    elevation_data=elevation_data,
+                )
+
+                occupancy_json[str(p.player_id)] = {
+                    f"{r},{c}": ticks for (r, c), ticks in per_cell.items()
+                }
+
+            game_round.cell_occupancy_json = occupancy_json
+            game_round.save(update_fields=["cell_occupancy_json"])
+
         return game_round
 
 

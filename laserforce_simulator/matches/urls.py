@@ -24,6 +24,11 @@ urlpatterns = [
         views.missile_log,
         name="missile_log",
     ),
+    path(
+        "game-round/<int:round_id>/heatmap/",
+        views.movement_heatmap,
+        name="movement_heatmap",
+    ),
     path("simulate-batch/", views.simulate_batch, name="simulate_batch"),
     path("save-batch-games/", views.save_batch_games, name="save_batch_games"),
     path(
