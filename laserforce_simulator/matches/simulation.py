@@ -1074,11 +1074,36 @@ class BatchSimulator:
                                     "event_type": "missile_dodge",
                                     "actor_id": lock.defender.player_id,
                                     "target_id": lock.attacker.player_id,
-                                    "timestamp": second,
+                                    "timestamp": int(second),
                                     "points_awarded": 0,
                                     "description": f"{lock.defender.name} dodges missile from {lock.attacker.name}",
                                     "metadata": _build_meta(
                                         lock.defender, lock.attacker
+                                    ),
+                                }
+                            )
+                            # RES-03: also emit a 'missiled' resolution row so
+                            # the missile log records this fired missile as a
+                            # miss (dodged).
+                            event_log.append(
+                                {
+                                    "event_type": "missiled",
+                                    "actor_id": lock.attacker.player_id,
+                                    "target_id": lock.defender.player_id,
+                                    "timestamp": int(second),
+                                    "points_awarded": 0,
+                                    "description": (
+                                        f"{lock.attacker.name} misses "
+                                        f"{lock.defender.name} with missile"
+                                    ),
+                                    "metadata": _build_meta(
+                                        lock.attacker,
+                                        lock.defender,
+                                        result="miss",
+                                        friendly_fire=bool(
+                                            lock.attacker.team_color
+                                            == lock.defender.team_color
+                                        ),
                                     ),
                                 }
                             )
@@ -1124,6 +1149,8 @@ class BatchSimulator:
                     r_attacker.final_shots = max(0, r_attacker.final_shots - 1)
                 if react_hit:
                     r_attacker.tags_made += 1
+                    if r_defender.role == "medic":
+                        r_attacker.medic_hits += 1
                     if r_attacker.role != "heavy":
                         r_attacker.final_special = min(
                             r_attacker.max_special, r_attacker.final_special + 1
@@ -1229,6 +1256,8 @@ class BatchSimulator:
                     fu_attacker.final_shots = max(0, fu_attacker.final_shots - 1)
                 if fu_hit:
                     fu_attacker.tags_made += 1
+                    if fu_defender.role == "medic":
+                        fu_attacker.medic_hits += 1
                     if fu_attacker.role != "heavy":
                         fu_attacker.final_special = min(
                             fu_attacker.max_special, fu_attacker.final_special + 1
@@ -1426,8 +1455,16 @@ class BatchSimulator:
                         movement_ctx=plan.get("movement_ctx"),
                     )
                 elif ptype == "missile":
+                    # RES-03: emit a 'locking' event on lock start by routing
+                    # event_log.append through the helper's emit_event seam.
                     scheduled = self._start_missile_lock(
-                        actor, plan["target"], second, movement_ctx
+                        actor,
+                        plan["target"],
+                        second,
+                        movement_ctx,
+                        emit_event=(
+                            event_log.append if event_log is not None else None
+                        ),
                     )
                     if scheduled:
                         pending_missile_locks.append(scheduled)
@@ -1837,7 +1874,7 @@ class BatchSimulator:
                 continue
             if o["result"] == "miss_hid":
                 if attacker.role != "ammo":
-                    attacker.final_shots -= 1
+                    attacker.final_shots = max(0, attacker.final_shots - 1)
                 attacker.shots_missed += 1
                 attacker.last_shot_time = second
                 if event_log is not None:
@@ -1863,6 +1900,8 @@ class BatchSimulator:
 
             if o["result"] == "hit":
                 attacker.tags_made += 1
+                if defender.role == "medic":
+                    attacker.medic_hits += 1
                 if attacker.role != "heavy":
                     attacker.final_special = min(
                         attacker.max_special, attacker.final_special + 1
@@ -2010,6 +2049,8 @@ class BatchSimulator:
                 r_attacker.final_shots = max(0, r_attacker.final_shots - 1)
             if react_hit:
                 r_attacker.tags_made += 1
+                if r_defender.role == "medic":
+                    r_attacker.medic_hits += 1
                 if r_attacker.role != "heavy":
                     r_attacker.final_special = min(
                         r_attacker.max_special, r_attacker.final_special + 1
@@ -2137,6 +2178,8 @@ class BatchSimulator:
                 fu_attacker.final_shots = max(0, fu_attacker.final_shots - 1)
             if fu_hit:
                 fu_attacker.tags_made += 1
+                if fu_defender.role == "medic":
+                    fu_attacker.medic_hits += 1
                 if fu_attacker.role != "heavy":
                     fu_attacker.final_special = min(
                         fu_attacker.max_special, fu_attacker.final_special + 1
@@ -2241,10 +2284,18 @@ class BatchSimulator:
         emit = event_log.append if event_log is not None else None
         _award_bases_shared(player, second, emit_event=emit)
 
-    def _start_missile_lock(self, attacker, defender, second, movement_ctx=None):
-        return _start_missile_lock_shared(attacker, defender, second, movement_ctx)
+    def _start_missile_lock(
+        self, attacker, defender, second, movement_ctx=None, *, emit_event=None
+    ):
+        return _start_missile_lock_shared(
+            attacker, defender, second, movement_ctx, emit_event=emit_event
+        )
 
     def _complete_missile(self, attacker, defender, second, event_log=None):
+        # RES-03: always emit a 'missiled' resolution event when the missile
+        # reaches resolution (gate below filters by active/taggable just like
+        # the legacy path). result='hit' here; the dodge/los-broken paths emit
+        # result='miss' from the caller.
         if attacker.is_active_at(second) and defender.is_taggable_at(second):
             if not defender.is_active_at(second) and defender.is_taggable_at(second):
                 defender.times_tagged_in_reset_window += 1
@@ -2259,7 +2310,7 @@ class BatchSimulator:
                             "event_type": "elimination",
                             "actor_id": attacker.player_id,
                             "target_id": defender.player_id,
-                            "timestamp": second,
+                            "timestamp": int(second),
                             "points_awarded": 0,
                             "description": f"{defender.name} eliminated by missile from {attacker.name}",
                             "metadata": _build_meta(
@@ -2281,13 +2332,20 @@ class BatchSimulator:
             if event_log is not None:
                 event_log.append(
                     {
-                        "event_type": "missile",
+                        "event_type": "missiled",
                         "actor_id": attacker.player_id,
                         "target_id": defender.player_id,
-                        "timestamp": second,
+                        "timestamp": int(second),
                         "points_awarded": 500,
                         "description": f"{attacker.name} hits {defender.name} with missile",
-                        "metadata": _build_meta(attacker, defender),
+                        "metadata": _build_meta(
+                            attacker,
+                            defender,
+                            result="hit",
+                            friendly_fire=bool(
+                                attacker.team_color == defender.team_color
+                            ),
+                        ),
                     }
                 )
 
@@ -2654,6 +2712,7 @@ class BatchSimulator:
                 is_hiding=p.is_hiding,
                 points_scored=p.points_scored,
                 tags_made=p.tags_made,
+                final_medic_hits=p.medic_hits,
                 shots_missed=p.shots_missed,
                 times_tagged=p.times_tagged,
                 times_missiled=p.times_missiled,

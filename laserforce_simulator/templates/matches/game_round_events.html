@@ -137,9 +137,9 @@
                                         <label class="form-check-label" for="type-special">Special</label>
                                     </div>
                                     <div class="form-check">
-                                        <input class="form-check-input type-filter" type="checkbox" value="missile_hit"
-                                            id="type-missile_hit" checked>
-                                        <label class="form-check-label" for="type-missile_hit">Missile</label>
+                                        <input class="form-check-input type-filter" type="checkbox" value="missiled"
+                                            id="type-missiled" checked>
+                                        <label class="form-check-label" for="type-missiled">Missile</label>
                                     </div>
                                     <div class="form-check">
                                         <input class="form-check-input type-filter" type="checkbox" value="resupply"
@@ -1030,7 +1030,7 @@
                 if (t) { t.lives = 0; t.isElim = true; t.lastDownedAt = ev.sec; }
             } else if (ev.type === 'miss') {
                 if (a) a.shots = Math.max(0, a.shots - 1);
-            } else if (ev.type === 'missile_hit') {
+            } else if (ev.type === 'missiled') {
                 if (t) {
                     t.lives = Math.max(0, t.lives - 2);
                     t.lastDownedAt = ev.sec;

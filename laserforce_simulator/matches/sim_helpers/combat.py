@@ -652,6 +652,11 @@ def start_missile_lock(
     The lock is resolved by calling ``tick_missile_lock`` once per simulation
     tick.  The old 45% instant-dodge is replaced by per-tick LOS checks and a
     survival-based dodge roll at the moment of impact.
+
+    RES-03: on a successful lock start the optional ``emit_event`` callable
+    receives a ``{"event_type": "locking", ...}`` dict so the missile-usage log
+    can render fired-but-not-yet-resolved missiles. Mirrors the ``emit_event``
+    kwarg pattern on ``attempt_resupply`` / ``capture_base``.
     """
     if not (
         attacker.is_active_at(second)
@@ -681,6 +686,21 @@ def start_missile_lock(
 
     # Consume the missile immediately; if the lock breaks the shot is still used
     attacker.final_missiles -= 1
+
+    if emit_event is not None:
+        emit_event(
+            {
+                "event_type": "locking",
+                "actor_id": getattr(attacker, "player_id", None),
+                "target_id": getattr(defender, "player_id", None),
+                "actor": attacker,
+                "target": defender,
+                "timestamp": int(second),
+                "points_awarded": 0,
+                "description": f"{attacker.name} locks on {defender.name}",
+                "metadata": _build_meta(attacker, defender),
+            }
+        )
 
     return PendingMissileLock(
         attacker=attacker,

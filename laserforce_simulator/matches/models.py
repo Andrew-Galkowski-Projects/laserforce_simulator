@@ -207,7 +207,7 @@ class GameRound(models.Model):
             "total_events": events.count(),
             "tags": events.filter(event_type="tag").count(),
             "moves": events.filter(event_type="movement").count(),
-            "missiles": events.filter(event_type="missile").count(),
+            "missiles": events.filter(event_type="missiled").count(),
             "misses": events.filter(event_type="miss").count(),
             "eliminations": events.filter(event_type="elimination").count(),
             "resupplies": events.filter(event_type__startswith="resupply").count(),
@@ -223,7 +223,7 @@ class GameRound(models.Model):
     def get_kill_feed(self):
         """Get chronological list of tags and eliminations for display"""
         return (
-            self.events.filter(event_type__in=["tag", "missile", "elimination"])
+            self.events.filter(event_type__in=["tag", "missiled", "elimination"])
             .select_related("actor", "target")
             .order_by("timestamp")
         )
@@ -678,7 +678,8 @@ class GameEvent(models.Model):
 
     EVENT_TYPES = [
         ("tag", "Tag"),
-        ("missile", "Missile Hit"),
+        ("locking", "Missile Lock Start"),
+        ("missiled", "Missile Resolved"),
         ("special", "Special Activated"),
         ("miss", "Missed Shot"),
         ("resupply_ammo", "Ammo Resupply"),
@@ -754,7 +755,8 @@ class GameEvent(models.Model):
         """Return an emoji/icon for display purposes"""
         icons = {
             "tag": "🎯",
-            "missile": "🚀",
+            "missiled": "🚀",
+            "locking": "🔒",
             "special": "⚡",
             "miss": "❌",
             "movement": "🏃",

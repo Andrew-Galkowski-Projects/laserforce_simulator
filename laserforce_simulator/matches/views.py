@@ -7,7 +7,7 @@ from django.contrib import messages
 from django.db.models import Q
 from django.http import JsonResponse
 from teams.models import Team
-from .models import Match, GameRound, PlayerRoundState
+from .models import Match, GameRound, PlayerRoundState, GameEvent
 from .simulation import BatchSimulator
 from .forms import MatchSetupForm, SingleRoundSetupForm, BatchSimulateForm
 
@@ -546,3 +546,63 @@ def game_round_events(request, round_id):
     }
 
     return render(request, "matches/game_round_events.html", context)
+
+
+def missile_log(request, round_id):
+    """RES-03: render the per-round missile usage log.
+
+    Filters ``GameEvent`` rows to the ``locking`` / ``missiled`` event-type
+    pair (the post-RES-03 split of the legacy ``"missile"`` event), then
+    computes a view-side fired / hit / efficiency summary. Friendly-fire
+    hits count as hits.
+    """
+    game_round = get_object_or_404(GameRound, id=round_id)
+
+    events = list(
+        GameEvent.objects.filter(
+            game_round=game_round,
+            event_type__in=["locking", "missiled"],
+        )
+        .select_related("actor", "target")
+        .order_by("timestamp")
+    )
+
+    # Only missiled rows render in the table; locking events are kept for
+    # the count surface (and for any future "fired but never resolved"
+    # column).
+    missiled_events = [e for e in events if e.event_type == "missiled"]
+
+    fired = len(missiled_events)
+    hit = sum(1 for e in missiled_events if (e.metadata or {}).get("result") == "hit")
+    efficiency = (hit / fired * 100.0) if fired else 0.0
+
+    # Pre-compute display-friendly rows so the template stays declarative.
+    rows = []
+    for ev in missiled_events:
+        meta = ev.metadata or {}
+        ts = ev.timestamp or 0
+        seconds_total = int(ts) // 2
+        minutes = seconds_total // 60
+        seconds = seconds_total % 60
+        mmss = f"{minutes:02d}:{seconds:02d}"
+        friendly = bool(meta.get("friendly_fire"))
+        rows.append(
+            {
+                "event": ev,
+                "timestamp_mmss": mmss,
+                "actor_role": meta.get("actor_role", ""),
+                "target_role": meta.get("target_role", ""),
+                "result": meta.get("result", ""),
+                "friendly_fire": friendly,
+                "row_class": "missile-row friendly-fire" if friendly else "missile-row",
+            }
+        )
+
+    context = {
+        "round": game_round,
+        "rows": rows,
+        "fired": fired,
+        "hit": hit,
+        "efficiency": efficiency,
+    }
+    return render(request, "matches/missile_log.html", context)

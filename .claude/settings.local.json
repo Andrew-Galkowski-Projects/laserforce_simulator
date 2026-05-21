@@ -145,7 +145,8 @@
       "PowerShell(python -m black \"C:\\\\Users\\\\Andrew Galkowski\\\\Desktop\\\\programming\\\\laserforce_simulator\\\\laserforce_simulator\\\\matches\\\\tests\\\\test_res02_sp_metadata.py\" \"C:\\\\Users\\\\Andrew Galkowski\\\\Desktop\\\\programming\\\\laserforce_simulator\\\\laserforce_simulator\\\\matches\\\\tests\\\\views_tests.py\")",
       "mcp__chrome-devtools__list_pages",
       "Bash(curl -sf http://127.0.0.1:8765/ -o /dev/null)",
-      "Bash(node *)"
+      "Bash(node *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

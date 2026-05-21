@@ -47,7 +47,7 @@ TARGET_BLOCK_KEYS = ("target_role", "target_shots", "target_lives", "target_poin
 
 # Event types that historically were claimed to carry ``sp`` reliably (kept
 # as a sanity-coverage hint for the broad-sweep test, NOT as a partition).
-SP_TYPES = {"tag", "missile", "special", "base_capture"}
+SP_TYPES = {"tag", "missiled", "special", "base_capture"}
 
 # Multi-target special event types — disambiguated by description substring.
 MULTI_TARGET_SPECIAL_DESCRIPTIONS = ("team heal", "team ammo", "nuke detonates")
@@ -465,7 +465,7 @@ class TestRes02EventMetadata:
             heavy_missiles = [
                 e
                 for e in events
-                if e["event_type"] == "missile"
+                if e["event_type"] == "missiled"
                 and (e.get("metadata") or {}).get("actor_role") == "heavy"
             ]
             if heavy_missiles:

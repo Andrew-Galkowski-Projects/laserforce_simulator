@@ -1,5 +1,7 @@
 from django import template
 
+from matches.sim_helpers.time_constants import SURVIVED_SENTINEL
+
 register = template.Library()
 
 
@@ -115,14 +117,16 @@ def is_eliminated(item):
     Uses `was_eliminated_at` when present, otherwise falls back to `final_lives == 0`.
     """
     try:
-        # Prefer explicit timestamp field if present. A sentinel value (e.g. 901)
-        # is treated as not eliminated.
+        # Prefer explicit timestamp field if present. The TIME-01 sentinel
+        # (SURVIVED_SENTINEL = 1801 ticks; was 901 pre-TIME-01) marks a
+        # player who survived the full round. Anything in [1, 1800] is an
+        # actual elimination tick — including the second half of the round,
+        # which the pre-TIME-01 `val > 900` check wrongly excluded.
         ts = getattr(item, "was_eliminated_at", None)
         if ts is not None:
-            # treat None or large sentinel (>1000) as not eliminated
             try:
                 val = int(ts)
-                if val > 900 or val == 0:
+                if val >= SURVIVED_SENTINEL or val == 0:
                     return False
                 return True
             except Exception:
