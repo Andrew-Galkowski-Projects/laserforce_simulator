@@ -181,17 +181,24 @@ class Command(BaseCommand):
         )
         self.stdout.write("-" * 63 + "\n")
 
-        missile_hits = {}
+        missile_landings = {}
         for e in events:
-            if e.event_type == "missile_hit" and e.actor_id:
-                missile_hits.setdefault(e.actor_id, 0)
-                missile_hits[e.actor_id] += 1
+            # RES-03: 'missiled' is the resolution event (replaces the legacy
+            # filter literal that was never actually emitted by either
+            # simulator, causing this section to silently report all zeros).
+            if (
+                e.event_type == "missiled"
+                and e.actor_id
+                and (e.metadata or {}).get("result") == "hit"
+            ):
+                missile_landings.setdefault(e.actor_id, 0)
+                missile_landings[e.actor_id] += 1
 
         for role in ROLE_ORDER:
             for p in sorted(players, key=lambda x: x.player.name):
                 if p.role != role:
                     continue
-                hits = missile_hits.get(p.player_id, 0)
+                hits = missile_landings.get(p.player_id, 0)
                 pts = hits * 500
                 if hits > 0:
                     self.stdout.write(

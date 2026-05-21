@@ -392,8 +392,8 @@ class TestMech02TagCooldown(unittest.TestCase):
         attacker.last_tagged_id = enemy_b.tag_id
         self.assertEqual(attacker.last_tagged_id, "blue_scout")
 
-    def test_missile_hit_writes_last_tagged_id(self):
-        """After a missile hit production code must set last_tagged_id = defender's tag_id."""
+    def test_missiled_writes_last_tagged_id(self):
+        """After a missiled (hit) production code must set last_tagged_id = defender's tag_id."""
         attacker = _ps("commander", game_awareness=50, final_missiles=1)
         enemy_b = _ps("scout", team_color="blue")
 

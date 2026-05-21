@@ -19,6 +19,11 @@ urlpatterns = [
         views.game_round_events,
         name="game_round_events",
     ),
+    path(
+        "game-round/<int:round_id>/missile-log/",
+        views.missile_log,
+        name="missile_log",
+    ),
     path("simulate-batch/", views.simulate_batch, name="simulate_batch"),
     path("save-batch-games/", views.save_batch_games, name="save_batch_games"),
     path(

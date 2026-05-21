@@ -125,6 +125,18 @@ The delay between a **Nuke** being fired and it detonating, during which **Downi
 **Rapid Fire**:
 The Scout **Special** that removes the shot-rate cooldown while active.
 
+**Locking event**:
+The `GameEvent` row emitted at **Missile** fire / lock start (`event_type="locking"`), carrying `metadata = {"actor_role", "target_role"}`. Distinct from the **Missiled event** that fires at resolution: a Locking event marks the *fire tick*, a Missiled event marks the *resolution tick* (hit or miss). Together they replace the pre-RES-03 single `event_type="missile"` row, which collapsed both moments into one and made fired-but-cancelled missiles invisible to the log. If the locking actor is **Down**ed before the missile resolves, the Locking event remains in the log but **no Missiled event fires** (mirrors the **MECH-05** nuke-cancellation precedent: a fired-but-cancelled attack leaves a fire-tick trace, not a resolution-tick one).
+_Avoid_: calling the resolution row a "locking" event, or reading a Locking event as proof that the missile landed (the resolution lives on the **Missiled event**).
+
+**Missiled event**:
+The `GameEvent` row emitted at **Missile** resolution (`event_type="missiled"`), carrying `metadata = {"result": "hit"|"miss", "friendly_fire": bool, "actor_role", "target_role"}`. One Missiled event per resolved missile; never emitted when the locking actor was **Down**ed before resolution (see **Locking event**). Drives the missile-log surface at `/matches/game-round/<id>/missile-log/` and its **fired / hit / efficiency** summary (efficiency = `hits / fired × 100`, computed view-side; **Friendly fire** hits count as hits). Distinct from the **Locking event** at the fire tick.
+_Avoid_: confusing the missile-log row count (Missiled events) with the lock-attempt count (Locking events) — they differ whenever a locker is Downed mid-flight.
+
+**Friendly fire**:
+A **Missiled event** where `actor.team_color == target.team_color` — a player hitting their own teammate with a **Missile**. Server-emitted on the event row as `metadata["friendly_fire"]: bool`, never derived view-side, so the view code stays dumb and the contract is single-source. Friendly fire hits **count as hits** in the missile-log efficiency summary — the missile landed; the friendly-fire flag carries the qualitative distinction rather than discounting the hit. Rendered with a CSS class containing the substring `friendly-fire` so the row is visually distinguishable. Tag events have no analogous flag — friendly fire is a missile-specific qualifier in this codebase.
+_Avoid_: deriving friendly-fire status from team-colour comparison at the template layer (the server emits the bool); excluding friendly fire from the hit count (it is a hit, just a regrettable one).
+
 ### Time
 
 **Tick**:
