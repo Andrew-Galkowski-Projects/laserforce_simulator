@@ -1149,6 +1149,8 @@ class BatchSimulator:
                     r_attacker.final_shots = max(0, r_attacker.final_shots - 1)
                 if react_hit:
                     r_attacker.tags_made += 1
+                    if r_defender.role == "medic":
+                        r_attacker.medic_hits += 1
                     if r_attacker.role != "heavy":
                         r_attacker.final_special = min(
                             r_attacker.max_special, r_attacker.final_special + 1
@@ -1254,6 +1256,8 @@ class BatchSimulator:
                     fu_attacker.final_shots = max(0, fu_attacker.final_shots - 1)
                 if fu_hit:
                     fu_attacker.tags_made += 1
+                    if fu_defender.role == "medic":
+                        fu_attacker.medic_hits += 1
                     if fu_attacker.role != "heavy":
                         fu_attacker.final_special = min(
                             fu_attacker.max_special, fu_attacker.final_special + 1
@@ -1896,6 +1900,8 @@ class BatchSimulator:
 
             if o["result"] == "hit":
                 attacker.tags_made += 1
+                if defender.role == "medic":
+                    attacker.medic_hits += 1
                 if attacker.role != "heavy":
                     attacker.final_special = min(
                         attacker.max_special, attacker.final_special + 1
@@ -2043,6 +2049,8 @@ class BatchSimulator:
                 r_attacker.final_shots = max(0, r_attacker.final_shots - 1)
             if react_hit:
                 r_attacker.tags_made += 1
+                if r_defender.role == "medic":
+                    r_attacker.medic_hits += 1
                 if r_attacker.role != "heavy":
                     r_attacker.final_special = min(
                         r_attacker.max_special, r_attacker.final_special + 1
@@ -2170,6 +2178,8 @@ class BatchSimulator:
                 fu_attacker.final_shots = max(0, fu_attacker.final_shots - 1)
             if fu_hit:
                 fu_attacker.tags_made += 1
+                if fu_defender.role == "medic":
+                    fu_attacker.medic_hits += 1
                 if fu_attacker.role != "heavy":
                     fu_attacker.final_special = min(
                         fu_attacker.max_special, fu_attacker.final_special + 1
@@ -2702,6 +2712,7 @@ class BatchSimulator:
                 is_hiding=p.is_hiding,
                 points_scored=p.points_scored,
                 tags_made=p.tags_made,
+                final_medic_hits=p.medic_hits,
                 shots_missed=p.shots_missed,
                 times_tagged=p.times_tagged,
                 times_missiled=p.times_missiled,

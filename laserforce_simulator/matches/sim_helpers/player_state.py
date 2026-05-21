@@ -72,6 +72,9 @@ class PlayerState:
     # aggregate stats for batch results
     points_scored: int = 0
     tags_made: int = 0
+    # Hits landed on an enemy Medic. Drives PlayerRoundState.final_medic_hits
+    # (flushed at round end) and the MVP bonus in score_calculator.
+    medic_hits: int = 0
     times_tagged: int = 0
     shots_missed: int = 0
     times_missiled: int = 0

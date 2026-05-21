@@ -2065,3 +2065,59 @@ class TestBugfixShotsClampOnMissHid:
         )
 
 
+class TestBugfixMedicHitsTracked:
+    """Regression: PlayerRoundState.final_medic_hits was never incremented
+    anywhere in the simulator — the column was always 0 since it was added.
+    The round detail template and the MVP score_calculator both consume it.
+    """
+
+    def test_tag_on_medic_increments_attacker_medic_hits(self):
+        """A successful tag on an enemy Medic must bump attacker.medic_hits."""
+        attacker = _make_ps("scout", team_color="red", final_shots=20, accuracy=100)
+        defender = _make_ps("medic", team_color="blue", final_shots=20, survival=0)
+        sim = BatchSimulator()
+        log: list = []
+        sim._resolve_tag_attempts(
+            [
+                {
+                    "attacker": attacker,
+                    "defender": defender,
+                    "second": 5,
+                    "movement_ctx": None,
+                    "overwatch": False,
+                }
+            ],
+            second=5,
+            event_log=log,
+            pending_followups=[],
+            pending_reactions=[],
+        )
+        assert attacker.tags_made >= 1, "fixture must produce a hit (accuracy=100)"
+        assert attacker.medic_hits == 1, (
+            f"tagging a medic must bump medic_hits; got " f"{attacker.medic_hits}"
+        )
+
+    def test_tag_on_non_medic_does_not_increment_medic_hits(self):
+        """Tagging a non-medic must NOT bump medic_hits."""
+        attacker = _make_ps("scout", team_color="red", final_shots=20, accuracy=100)
+        defender = _make_ps("heavy", team_color="blue", final_shots=20, survival=0)
+        sim = BatchSimulator()
+        log: list = []
+        sim._resolve_tag_attempts(
+            [
+                {
+                    "attacker": attacker,
+                    "defender": defender,
+                    "second": 5,
+                    "movement_ctx": None,
+                    "overwatch": False,
+                }
+            ],
+            second=5,
+            event_log=log,
+            pending_followups=[],
+            pending_reactions=[],
+        )
+        assert attacker.medic_hits == 0, (
+            f"non-medic tag must not bump medic_hits; got " f"{attacker.medic_hits}"
+        )
