@@ -2019,3 +2019,49 @@ class TestMove02FlushTrailUnderCaching:
             )
             checked += 1
         assert checked > 0, "expected at least one player with movement events"
+
+
+# ---------------------------------------------------------------------------
+# Bug regressions (2026-05)
+# ---------------------------------------------------------------------------
+
+
+class TestBugfixShotsClampOnMissHid:
+    """Regression: miss_hid path decremented final_shots without a max(0, ...)
+    clamp, producing negative shot counts for high-volume scouts who fired
+    at hiding defenders late in a round (e.g. round 78 Phoenix Scout-A).
+    Every other shot decrement in the file uses the clamp; this one did not.
+    """
+
+    def test_miss_hid_clamps_final_shots_at_zero(self):
+        """An attacker who fires at a hiding defender with final_shots == 0
+        must not drop below zero.
+        """
+        attacker = _make_ps("scout", team_color="red", final_shots=0)
+        defender = _make_ps("commander", team_color="blue", is_hiding=True)
+        sim = BatchSimulator()
+        log: list = []
+        # Drive a single tick through the public planning/resolution path.
+        # _resolve_tag_attempts is the post-plan stage that classifies the
+        # outcome (hit / miss / miss_hid) and applies the shot decrement.
+        # We construct one direct "tag_player" attempt and resolve it.
+        sim._resolve_tag_attempts(
+            [
+                {
+                    "attacker": attacker,
+                    "defender": defender,
+                    "second": 5,
+                    "movement_ctx": None,
+                    "overwatch": False,
+                }
+            ],
+            second=5,
+            event_log=log,
+            pending_followups=[],
+            pending_reactions=[],
+        )
+        assert attacker.final_shots == 0, (
+            f"final_shots must clamp at 0 on miss_hid; " f"got {attacker.final_shots}"
+        )
+
+

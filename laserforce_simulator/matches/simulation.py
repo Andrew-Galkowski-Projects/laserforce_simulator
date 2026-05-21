@@ -1870,7 +1870,7 @@ class BatchSimulator:
                 continue
             if o["result"] == "miss_hid":
                 if attacker.role != "ammo":
-                    attacker.final_shots -= 1
+                    attacker.final_shots = max(0, attacker.final_shots - 1)
                 attacker.shots_missed += 1
                 attacker.last_shot_time = second
                 if event_log is not None:
