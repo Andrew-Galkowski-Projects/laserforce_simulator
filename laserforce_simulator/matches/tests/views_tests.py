@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from unittest.mock import patch
 from django.test import Client
@@ -6,6 +8,32 @@ from django.urls import reverse, NoReverseMatch
 from matches.models import GameRound, Match
 from matches.simulation import BatchSimulator
 from matches.tests.conftest import make_team_with_slots
+
+
+def _run_thread_inline(captured: dict | None = None):
+    """Build a ``_FakeThread`` class that runs its ``target(*args)`` inline on
+    ``.start()``.
+
+    Used to drive ``_run_batch_job`` (and similar background-thread runners)
+    synchronously in tests, side-stepping the cross-thread race a real
+    ``threading.Thread`` would introduce. Originally introduced for SIM-10
+    view tests; reused by the SIM-08 / SIM-09 blast-radius updates after
+    SIM-10 made the batch-POST asynchronous.
+    """
+
+    class _FakeThread:
+        def __init__(self, *, target, args, daemon=True):
+            if captured is not None:
+                captured["target"] = target
+                captured["args"] = args
+                captured["daemon"] = daemon
+            self._target = target
+            self._args = args
+
+        def start(self):
+            self._target(*self._args)
+
+    return _FakeThread
 
 
 @pytest.mark.django_db
@@ -83,29 +111,41 @@ class TestSim08BatchSideAdvantageView:
     """
 
     def test_batch_simulate_renders_side_advantage(self):
-        """POST two valid rosters → 200 and ``side_advantage`` in results.
+        """POST drives a job through to ``complete`` and the partial
+        aggregate surfaces ``side_advantage``.
 
-        The view stashes ``avg_seeds``/``outlier_seeds`` in the session and
-        passes ``results`` (including the new ``side_advantage`` sub-dict) to
-        the template context. Keep this light per existing view-test patterns.
+        SIM-10 reshaped this view: POST returns ``{job_id, ...}`` JSON and
+        the aggregate is no longer in ``response.context["results"]`` — it
+        is in ``_BATCH_JOBS[job_id]["partial"]`` and surfaces to the client
+        through the polling endpoint. The SIM-08 contract (the side-advantage
+        sub-dict is present and consistent) still holds; we exercise it
+        through the new job-status surface.
         """
+        from matches import views as views_module
+
         red, _ = make_team_with_slots("Sim08ViewRed")
         blue, _ = make_team_with_slots("Sim08ViewBlue")
         client = Client()
 
-        response = client.post(
-            reverse("simulate_batch"),
-            {"team_red": red.id, "team_blue": blue.id, "n": "10"},
-        )
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            with patch.object(views_module.threading, "Thread", _run_thread_inline()):
+                post_resp = client.post(
+                    reverse("simulate_batch"),
+                    {"team_red": red.id, "team_blue": blue.id, "n": "10"},
+                )
 
-        assert response.status_code == 200
-        assert (
-            "results" in response.context
-        ), "batch view must pass aggregate 'results' to the template context"
-        results = response.context["results"]
-        assert "side_advantage" in results, (
-            "results must include the SIM-08 'side_advantage' physical-side "
-            "panel data"
+        assert post_resp.status_code == 200, post_resp.content
+        body = json.loads(post_resp.content.decode())
+        job_id = body["job_id"]
+
+        status_resp = client.get(reverse("batch_simulate_status", args=[job_id]))
+        assert status_resp.status_code == 200, status_resp.content
+        job = json.loads(status_resp.content.decode())
+        assert job["status"] == "complete", job
+        results = job["partial"]
+        assert results is not None and "side_advantage" in results, (
+            "partial aggregate must include the SIM-08 'side_advantage' "
+            "physical-side panel data"
         )
         sa = results["side_advantage"]
         for key in (
@@ -418,78 +458,113 @@ class TestSim09BatchArenaMapPlumbing:
     """
 
     def test_simulate_batch_threads_arena_map_to_run(self):
-        """POST with ``arena_map`` → view calls ``BatchSimulator.run`` with
-        that exact ArenaMap, and stashes ``arena_map_id`` in the session.
+        """POST with ``arena_map`` → the batch-job thread calls
+        ``BatchSimulator.run_incremental`` with that ``ArenaMap``, the
+        ``_BATCH_JOBS`` entry records the resolved id, and a subsequent
+        ``batch_simulate_status`` poll on ``complete`` stashes
+        ``arena_map_id`` into the session.
+
+        SIM-10 reshaped this path: POST is now async, ``run`` is no longer
+        called by the view (``run_incremental`` is, on the background
+        thread), and the session is populated by the first ``complete``-
+        observing poll rather than inline on POST.
         """
+        from matches import views as views_module
+
         red, _ = make_team_with_slots("Sim09BatchR")
         blue, _ = make_team_with_slots("Sim09BatchB")
         arena_map = _make_minimal_arena_map("Sim09BatchMap")
         client = Client()
 
-        # Spy on BatchSimulator.run so we capture the arena_map kwarg without
-        # actually running 10 full simulations (and so the assertion does not
-        # depend on round outcomes).
-        original_run = BatchSimulator.run
+        original_run_incremental = BatchSimulator.run_incremental
         captured: dict = {}
 
-        def _spy_run(self, team_red, team_blue, n=100, *, arena_map=None, **kwargs):
+        def _spy_run_incremental(
+            self, team_red, team_blue, n=100, *, arena_map=None, **kwargs
+        ):
             captured["arena_map"] = arena_map
-            # Run a tiny real batch so the view's downstream code (histogram,
-            # session stash) sees a populated result dict.
+            # Run a tiny real batch so the job's downstream aggregation /
+            # session-stash code paths exercise real snapshots.
             with patch.object(BatchSimulator, "ROUND_TICKS", 40):
-                return original_run(
+                yield from original_run_incremental(
                     self, team_red, team_blue, n=2, arena_map=arena_map, **kwargs
                 )
 
-        with patch.object(BatchSimulator, "run", _spy_run):
-            response = client.post(
-                reverse("simulate_batch"),
-                {
-                    "team_red": red.id,
-                    "team_blue": blue.id,
-                    "n": "10",
-                    "arena_map": arena_map.id,
-                },
-            )
+        with patch.object(BatchSimulator, "run_incremental", _spy_run_incremental):
+            with patch.object(views_module.threading, "Thread", _run_thread_inline()):
+                response = client.post(
+                    reverse("simulate_batch"),
+                    {
+                        "team_red": red.id,
+                        "team_blue": blue.id,
+                        "n": "10",
+                        "arena_map": arena_map.id,
+                    },
+                )
 
-        assert response.status_code == 200
-        assert captured.get("arena_map") == arena_map, (
-            "simulate_batch view did not forward arena_map to " "BatchSimulator.run"
+        assert response.status_code == 200, response.content
+        body = json.loads(response.content.decode())
+        assert (
+            body.get("arena_map_id") == arena_map.id
+        ), "POST JSON did not carry arena_map_id"
+        assert (
+            captured.get("arena_map") == arena_map
+        ), "simulate_batch did not forward arena_map to BatchSimulator.run_incremental"
+
+        # Poll the status endpoint once to trigger the SIM-10 session
+        # handover. The first complete-observing poll writes batch_seeds.
+        status_resp = client.get(
+            reverse("batch_simulate_status", args=[body["job_id"]])
         )
-        # Session stash records the arena_map_id so the save path can reload.
+        assert status_resp.status_code == 200
         session_seeds = client.session.get("batch_seeds")
-        assert session_seeds is not None, "view did not stash batch_seeds"
+        assert (
+            session_seeds is not None
+        ), "first complete-poll did not stash batch_seeds"
         assert (
             session_seeds.get("arena_map_id") == arena_map.id
-        ), "batch_seeds['arena_map_id'] missing or wrong"
+        ), "batch_seeds['arena_map_id'] missing or wrong after complete-poll"
 
     def test_simulate_batch_no_arena_map_stashes_none(self):
         """Omitting ``arena_map`` from the form keeps the 3-zone fallback —
-        ``BatchSimulator.run`` is called with ``arena_map=None`` and the
-        session stash records ``arena_map_id=None``.
+        ``BatchSimulator.run_incremental`` is called with ``arena_map=None``
+        and the session stash records ``arena_map_id=None`` after a
+        complete-observing poll.
         """
+        from matches import views as views_module
+
         red, _ = make_team_with_slots("Sim09BatchNoMapR")
         blue, _ = make_team_with_slots("Sim09BatchNoMapB")
         client = Client()
 
-        original_run = BatchSimulator.run
+        original_run_incremental = BatchSimulator.run_incremental
         captured: dict = {}
 
-        def _spy_run(self, team_red, team_blue, n=100, *, arena_map=None, **kwargs):
+        def _spy_run_incremental(
+            self, team_red, team_blue, n=100, *, arena_map=None, **kwargs
+        ):
             captured["arena_map"] = arena_map
             with patch.object(BatchSimulator, "ROUND_TICKS", 40):
-                return original_run(
+                yield from original_run_incremental(
                     self, team_red, team_blue, n=2, arena_map=arena_map, **kwargs
                 )
 
-        with patch.object(BatchSimulator, "run", _spy_run):
-            response = client.post(
-                reverse("simulate_batch"),
-                {"team_red": red.id, "team_blue": blue.id, "n": "10"},
-            )
+        with patch.object(BatchSimulator, "run_incremental", _spy_run_incremental):
+            with patch.object(views_module.threading, "Thread", _run_thread_inline()):
+                response = client.post(
+                    reverse("simulate_batch"),
+                    {"team_red": red.id, "team_blue": blue.id, "n": "10"},
+                )
 
-        assert response.status_code == 200
+        assert response.status_code == 200, response.content
+        body = json.loads(response.content.decode())
+        assert body.get("arena_map_id") is None
         assert captured.get("arena_map") is None
+
+        status_resp = client.get(
+            reverse("batch_simulate_status", args=[body["job_id"]])
+        )
+        assert status_resp.status_code == 200
         session_seeds = client.session.get("batch_seeds")
         assert session_seeds is not None
         assert session_seeds.get("arena_map_id") is None
@@ -561,11 +636,13 @@ class TestSim09BatchArenaMapPlumbing:
     def test_save_batch_games_view_threads_arena_map_id_into_worker_args(self):
         """``save_batch_games`` constructs ``threading.Thread`` with
         ``arena_map_id`` (read from the session stash) in the args tuple.
-        Spies on ``threading.Thread`` to capture the args without actually
-        spawning a thread — pins the seam between the synchronous view layer
-        and the asynchronous worker so a future refactor that drops the
-        arena_map_id arg fails here rather than silently falling back to
-        no-map.
+
+        SIM-10 made the simulate POST async, so the session is now populated
+        by the first ``complete``-observing poll of ``batch_simulate_status``
+        — not inline on the simulate POST. We drive the batch thread inline,
+        poll once to populate ``batch_seeds`` in the session, then capture
+        ``save_batch_games``'s ``threading.Thread`` construction so the
+        ``arena_map_id`` seam is pinned independent of polling indirection.
         """
         from matches import views as views_module
 
@@ -574,18 +651,26 @@ class TestSim09BatchArenaMapPlumbing:
         arena_map = _make_minimal_arena_map("Sim09ThreadArgMap")
         client = Client()
 
-        # First seed the session via a real batch POST so save_batch_games
-        # has avg_seeds + arena_map_id in the session.
+        # Drive a real batch job to ``complete`` synchronously via the inline
+        # ``_FakeThread``, then poll status once so the SIM-10 session
+        # handover writes ``batch_seeds`` into the session.
         with patch.object(BatchSimulator, "ROUND_TICKS", 40):
-            client.post(
-                reverse("simulate_batch"),
-                {
-                    "team_red": red.id,
-                    "team_blue": blue.id,
-                    "n": "10",
-                    "arena_map": arena_map.id,
-                },
-            )
+            with patch.object(views_module.threading, "Thread", _run_thread_inline()):
+                post_resp = client.post(
+                    reverse("simulate_batch"),
+                    {
+                        "team_red": red.id,
+                        "team_blue": blue.id,
+                        "n": "10",
+                        "arena_map": arena_map.id,
+                    },
+                )
+        assert post_resp.status_code == 200, post_resp.content
+        body = json.loads(post_resp.content.decode())
+        client.get(reverse("batch_simulate_status", args=[body["job_id"]]))
+        assert (
+            client.session.get("batch_seeds") is not None
+        ), "complete-poll did not populate batch_seeds; cannot test save flow"
 
         captured_args: dict = {}
 
@@ -638,3 +723,399 @@ class TestSim09BatchArenaMapPlumbing:
 
         assert captured.get("arena_map") is None
         assert _SAVE_JOBS[job_id]["status"] == "done"
+
+
+# ---------------------------------------------------------------------------
+# SIM-10 — progressive batch simulation: view surface tests.
+#
+# Pinned by `.claude/worktrees/sim-10-seam-contract.md` §2 (view surface) and
+# §5.2 (test boundary). The synchronous render-with-`results`-context path is
+# replaced by a JSON POST that dispatches a background thread plus a polling
+# endpoint, so these tests use a `_FakeThread` that runs the target inline
+# (mirrors the existing `TestSim09BatchArenaMapPlumbing._FakeThread` pattern)
+# to drive the job to completion without `time.sleep` or real threads.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestSim10SimulateBatchPostReturnsJson:
+    """§5.2 — POST to ``simulate_batch`` returns 200 + JSON with exactly the
+    locked key set. Form-validation failures keep returning HTML (existing
+    behaviour preserved).
+    """
+
+    _POST_KEYS = {
+        "job_id",
+        "team_red_id",
+        "team_red_name",
+        "team_blue_id",
+        "team_blue_name",
+        "arena_map_id",
+        "n",
+    }
+
+    def test_post_returns_json_with_locked_key_set(self):
+        from matches import views as views_module
+
+        red, _ = make_team_with_slots("Sim10PostR")
+        blue, _ = make_team_with_slots("Sim10PostB")
+        client = Client()
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            with patch.object(views_module.threading, "Thread", _run_thread_inline()):
+                response = client.post(
+                    reverse("simulate_batch"),
+                    {"team_red": red.id, "team_blue": blue.id, "n": "10"},
+                )
+
+        assert response.status_code == 200, response.content
+        assert response["Content-Type"].startswith(
+            "application/json"
+        ), f"POST must return JSON; got Content-Type={response['Content-Type']!r}"
+        import json as _json
+
+        body = _json.loads(response.content.decode())
+        assert set(body.keys()) == self._POST_KEYS, (
+            f"POST JSON keys drifted: got {set(body.keys())!r}, "
+            f"expected {self._POST_KEYS!r}"
+        )
+        assert isinstance(body["job_id"], str) and body["job_id"]
+        assert isinstance(body["team_red_id"], int) and body["team_red_id"] == red.id
+        assert (
+            isinstance(body["team_red_name"], str) and body["team_red_name"] == red.name
+        )
+        assert isinstance(body["team_blue_id"], int) and body["team_blue_id"] == blue.id
+        assert (
+            isinstance(body["team_blue_name"], str)
+            and body["team_blue_name"] == blue.name
+        )
+        assert body["arena_map_id"] is None or isinstance(body["arena_map_id"], int)
+        assert isinstance(body["n"], int) and body["n"] == 10
+
+    def test_form_validation_failure_returns_html_not_json(self):
+        """Same-team validation failure still renders HTML (with a Django
+        ``messages.error``) — the JSON branch only applies once form
+        validation passes.
+        """
+        red, _ = make_team_with_slots("Sim10ValidR")
+        client = Client()
+
+        response = client.post(
+            reverse("simulate_batch"),
+            {"team_red": red.id, "team_blue": red.id, "n": "10"},
+        )
+
+        assert response.status_code == 200
+        # HTML, not JSON. The exact body content is unstable so we only
+        # assert on the content type — the JSON branch sets
+        # application/json explicitly.
+        ctype = response.get("Content-Type", "")
+        assert "application/json" not in ctype, (
+            "Form-validation failures must return HTML, not the JSON "
+            f"dispatch response; got Content-Type={ctype!r}"
+        )
+
+
+@pytest.mark.django_db
+class TestSim10BatchSimulateStatusShape:
+    """§5.2 — polling ``batch_simulate_status`` returns a JSON body whose
+    keys are exactly the locked job-dict set with the types from §2.3.
+    """
+
+    _STATUS_KEYS = {
+        "status",
+        "completed",
+        "total",
+        "partial",
+        "error",
+        "team_red_id",
+        "team_blue_id",
+        "arena_map_id",
+    }
+
+    def test_status_endpoint_returns_locked_shape(self):
+        from matches import views as views_module
+        import json as _json
+
+        red, _ = make_team_with_slots("Sim10StatusR")
+        blue, _ = make_team_with_slots("Sim10StatusB")
+        client = Client()
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            with patch.object(views_module.threading, "Thread", _run_thread_inline()):
+                post_resp = client.post(
+                    reverse("simulate_batch"),
+                    {"team_red": red.id, "team_blue": blue.id, "n": "10"},
+                )
+                assert post_resp.status_code == 200
+                job_id = _json.loads(post_resp.content.decode())["job_id"]
+
+                status_resp = client.get(
+                    reverse("batch_simulate_status", args=[job_id])
+                )
+
+        assert status_resp.status_code == 200
+        body = _json.loads(status_resp.content.decode())
+        assert set(body.keys()) == self._STATUS_KEYS, (
+            f"status JSON keys drifted: got {set(body.keys())!r}, "
+            f"expected {self._STATUS_KEYS!r}"
+        )
+        assert isinstance(body["status"], str)
+        assert body["status"] in ("running", "complete", "error")
+        assert isinstance(body["completed"], int)
+        assert isinstance(body["total"], int)
+        # partial: dict | None
+        assert body["partial"] is None or isinstance(body["partial"], dict)
+        # error: str | None
+        assert body["error"] is None or isinstance(body["error"], str)
+        assert isinstance(body["team_red_id"], int)
+        assert isinstance(body["team_blue_id"], int)
+        assert body["arena_map_id"] is None or isinstance(body["arena_map_id"], int)
+
+
+@pytest.mark.django_db
+class TestSim10BatchSimulateStatusLifecycle:
+    """§5.2 — driving the job synchronously (via inline ``_FakeThread``), the
+    observed ``status`` sequence is a prefix of
+    ``["running", ..., "running", "complete"]``, ``completed`` is monotonic
+    non-decreasing, and the final poll has ``completed == total`` and
+    ``partial`` not None.
+    """
+
+    def test_lifecycle_running_then_complete(self):
+        from matches import views as views_module
+        import json as _json
+
+        red, _ = make_team_with_slots("Sim10LifeR")
+        blue, _ = make_team_with_slots("Sim10LifeB")
+        client = Client()
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            # Force ≥ 2 snapshots even on small n by pinning chunk size to 1.
+            with patch("matches.simulation._chunk_size_for", return_value=1):
+                with patch.object(
+                    views_module.threading, "Thread", _run_thread_inline()
+                ):
+                    post_resp = client.post(
+                        reverse("simulate_batch"),
+                        {"team_red": red.id, "team_blue": blue.id, "n": "10"},
+                    )
+                    job_id = _json.loads(post_resp.content.decode())["job_id"]
+
+                    # Inline thread already ran target to completion — polling
+                    # observes the final ``complete`` state. We poll twice to
+                    # exercise the GET path and verify it stays consistent
+                    # (no mutation on repeat poll beyond the documented
+                    # session-handover guard, asserted separately).
+                    polls = []
+                    for _ in range(2):
+                        r = client.get(reverse("batch_simulate_status", args=[job_id]))
+                        polls.append(_json.loads(r.content.decode()))
+
+        statuses = [p["status"] for p in polls]
+        # Every observed status is a valid lifecycle value, and the last
+        # observed status must be `complete` (target ran inline).
+        for st in statuses:
+            assert st in (
+                "running",
+                "complete",
+            ), f"unexpected status in lifecycle: {st!r}"
+        assert statuses[-1] == "complete"
+
+        # Monotonic non-decreasing `completed`.
+        completed = [p["completed"] for p in polls]
+        for prev, cur in zip(completed, completed[1:]):
+            assert cur >= prev, f"completed regressed: {prev} → {cur}"
+
+        # Final poll: `completed == total`, `partial` populated.
+        final = polls[-1]
+        assert final["completed"] == final["total"] == 10
+        assert isinstance(final["partial"], dict)
+        # Partial is the final aggregate dict — it carries the documented
+        # `_aggregate_batch` keys.
+        for key in (
+            "n",
+            "red_wins",
+            "blue_wins",
+            "ties",
+            "avg_red_score",
+            "avg_blue_score",
+            "avg_seeds",
+            "outlier_seeds",
+        ):
+            assert key in final["partial"], f"partial aggregate missing key {key!r}"
+
+
+@pytest.mark.django_db
+class TestSim10BatchSimulateStatusErrorPath:
+    """§5.2 — patching ``run_incremental`` to raise propagates to the
+    job dict as ``status='error'`` with ``error == str(exc)``.
+    """
+
+    def test_error_status_propagates_exception_message(self):
+        from matches import views as views_module
+        import json as _json
+
+        red, _ = make_team_with_slots("Sim10ErrR")
+        blue, _ = make_team_with_slots("Sim10ErrB")
+        client = Client()
+
+        def _raises(*args, **kwargs):
+            # Generator-shaped raise: yield nothing, then raise on consumption.
+            if False:
+                yield  # pragma: no cover - keep this a generator
+            raise RuntimeError("contrived")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            with patch.object(BatchSimulator, "run_incremental", _raises):
+                with patch.object(
+                    views_module.threading, "Thread", _run_thread_inline()
+                ):
+                    post_resp = client.post(
+                        reverse("simulate_batch"),
+                        {"team_red": red.id, "team_blue": blue.id, "n": "10"},
+                    )
+                    job_id = _json.loads(post_resp.content.decode())["job_id"]
+
+                    status_resp = client.get(
+                        reverse("batch_simulate_status", args=[job_id])
+                    )
+
+        body = _json.loads(status_resp.content.decode())
+        assert (
+            body["status"] == "error"
+        ), f"expected status='error' after raise, got {body['status']!r}"
+        assert (
+            body["error"] == "contrived"
+        ), f"expected error='contrived', got {body['error']!r}"
+
+
+@pytest.mark.django_db
+class TestSim10BatchSimulateStatusNotFound:
+    """§5.2 — GET ``batch_simulate_status`` with an unknown job id returns
+    404 with JSON ``{"status": "not_found"}`` (mirrors
+    ``save_batch_status``).
+    """
+
+    def test_not_found_returns_404_json(self):
+        import json as _json
+
+        client = Client()
+        resp = client.get(reverse("batch_simulate_status", args=["does-not-exist"]))
+        assert resp.status_code == 404
+        body = _json.loads(resp.content.decode())
+        assert body == {"status": "not_found"}
+
+
+@pytest.mark.django_db
+class TestSim10SessionHandoverWritesOnceOnComplete:
+    """§5.2 / §2.6 — on the FIRST poll observing ``status == 'complete'`` for
+    a given ``job_id``, the view writes ``request.session["batch_seeds"]``.
+    Subsequent polls observing ``complete`` skip the write (guard hit because
+    ``request.session["batch_seeds"]["job_id"]`` already matches).
+    ``save_batch_games`` continues to work end-to-end against the unchanged
+    session entry — a regression check that the existing seed-handover flow
+    is preserved.
+    """
+
+    def test_session_handover_writes_once_and_guard_holds(self):
+        from matches import views as views_module
+        import json as _json
+
+        red, _ = make_team_with_slots("Sim10SessR")
+        blue, _ = make_team_with_slots("Sim10SessB")
+        client = Client()
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            with patch.object(views_module.threading, "Thread", _run_thread_inline()):
+                post_resp = client.post(
+                    reverse("simulate_batch"),
+                    {"team_red": red.id, "team_blue": blue.id, "n": "10"},
+                )
+                job_id = _json.loads(post_resp.content.decode())["job_id"]
+
+                # First poll observes `complete` → triggers single write.
+                first = client.get(reverse("batch_simulate_status", args=[job_id]))
+
+        assert first.status_code == 200
+        first_body = _json.loads(first.content.decode())
+        assert first_body["status"] == "complete"
+
+        session_seeds = client.session.get("batch_seeds")
+        assert (
+            session_seeds is not None
+        ), "first complete-poll must write request.session['batch_seeds']"
+        for key in (
+            "job_id",
+            "team_red_id",
+            "team_blue_id",
+            "arena_map_id",
+            "avg_seeds",
+            "outlier_seeds",
+        ):
+            assert (
+                key in session_seeds
+            ), f"batch_seeds missing locked key {key!r}: {session_seeds!r}"
+        assert session_seeds["job_id"] == job_id
+        assert session_seeds["team_red_id"] == red.id
+        assert session_seeds["team_blue_id"] == blue.id
+        # avg_seeds + outlier_seeds match the final aggregate carried in
+        # `partial`.
+        partial = first_body["partial"]
+        assert session_seeds["avg_seeds"] == partial["avg_seeds"]
+        assert session_seeds["outlier_seeds"] == partial["outlier_seeds"]
+
+        # Mutate the session between polls; the next complete-poll must NOT
+        # overwrite (guard hit because job_id matches).
+        session = client.session
+        session["batch_seeds"]["avg_seeds"] = "SENTINEL"
+        session.save()
+
+        second = client.get(reverse("batch_simulate_status", args=[job_id]))
+        assert second.status_code == 200
+        assert _json.loads(second.content.decode())["status"] == "complete"
+
+        session_after = client.session.get("batch_seeds")
+        assert session_after is not None
+        assert session_after["avg_seeds"] == "SENTINEL", (
+            "second complete-poll overwrote session despite matching "
+            "`job_id` guard; the §2.6 single-write contract is broken"
+        )
+
+        # Regression: `save_batch_games` still works end-to-end against the
+        # unchanged session entry — restore the avg_seeds before saving so
+        # the SENTINEL marker does not leak into the save path.
+        session = client.session
+        session["batch_seeds"]["avg_seeds"] = partial["avg_seeds"]
+        session.save()
+
+        # Spy on save_games so the save flow does not actually persist
+        # rounds — we only need to assert the session was readable.
+        captured: dict = {}
+
+        def _spy_save_games(self, t_red, t_blue, seeds, n, *, arena_map=None):
+            captured["seeds"] = seeds
+            captured["n"] = n
+            return []
+
+        from matches.views import _run_save_job
+
+        with patch.object(BatchSimulator, "save_games", _spy_save_games):
+            # Drive the save target directly to skip the thread layer (the
+            # save-thread plumbing is covered by TestSim09 — we only care
+            # that the seeds are readable from the session).
+            saved_session = client.session
+            seeds = saved_session["batch_seeds"]["avg_seeds"][:1]
+            _run_save_job(
+                "sim10-save-job",
+                saved_session["batch_seeds"]["team_red_id"],
+                saved_session["batch_seeds"]["team_blue_id"],
+                seeds,
+                1,
+                saved_session["batch_seeds"]["arena_map_id"],
+            )
+
+        assert "seeds" in captured, (
+            "save_batch_games regression: save_games was never called "
+            "from the unaltered session entry"
+        )

@@ -1,6 +1,7 @@
 import math as _math
 import random
 import logging
+from typing import Iterator, Optional
 from django.db import transaction
 from .models import GameEvent, Match, GameRound, PlayerRoundState
 from .sim_helpers.mechanics import shot_cooldown
@@ -462,6 +463,17 @@ def _cooldown_ticks(player, tick) -> int:
     return int(round(cooldown_seconds / TICK_SECONDS))
 
 
+def _chunk_size_for(n: int) -> int:
+    """SIM-10: adaptive chunk size — ~50 snapshots per run regardless of n.
+
+    Returns an int in ``[1, 25]`` chosen so a full run of ``n`` games yields
+    roughly 50 progress snapshots: ``n // 50`` clamped into ``[1, 25]``. Used
+    by :meth:`BatchSimulator.run_incremental` to decide how often to yield a
+    partial-aggregate snapshot.
+    """
+    return max(1, min(25, n // 50))
+
+
 class BatchSimulator:
     """Pure in-memory simulator for running N rounds without DB writes.
 
@@ -630,13 +642,18 @@ class BatchSimulator:
         self,
         team_red,
         team_blue,
-        n=100,
+        n: int = 100,
         *,
         arena_map=None,
-        workers: int | None = None,
-        master_seed: int | None = None,
-    ):
+        workers: Optional[int] = None,
+        master_seed: Optional[int] = None,
+    ) -> dict:
         """Simulate n rounds and return aggregate statistics.
+
+        SIM-10: re-implemented as a consumer of :meth:`run_incremental` — the
+        generator is the sole game-loop and the sole caller of
+        :meth:`_aggregate_batch`. Behaviour and return value are unchanged
+        from the caller's perspective.
 
         Loads team rosters from the DB once upfront, then runs n purely
         in-memory rounds and aggregates the outcomes. Pass arena_map to enable
@@ -652,6 +669,58 @@ class BatchSimulator:
         seeds from the same master_seed, so a given master_seed always
         reproduces the same batch of games.
         """
+        last = None
+        for snap in self.run_incremental(
+            team_red,
+            team_blue,
+            n,
+            arena_map=arena_map,
+            workers=workers,
+            master_seed=master_seed,
+        ):
+            last = snap
+        if last is None:
+            # Defensive: run_incremental always yields at least once (even for
+            # n == 0 it emits the terminal empty-aggregate snapshot). This
+            # branch is unreachable under the current contract.
+            return self._aggregate_batch([], 0)
+        return last["aggregate"]
+
+    def run_incremental(
+        self,
+        team_red,
+        team_blue,
+        n: int = 100,
+        *,
+        arena_map=None,
+        workers: Optional[int] = None,
+        master_seed: Optional[int] = None,
+    ) -> Iterator[dict]:
+        """SIM-10: Generator twin of :meth:`run`. Yields partial-aggregate
+        snapshots at chunk boundaries (submission-indexed); the final yielded
+        snapshot's ``aggregate`` dict equals what :meth:`run` would return
+        for the same args.
+
+        Each snapshot is a dict with exactly three keys:
+
+        - ``completed`` (``int``): number of games included in ``aggregate``;
+          monotonic non-decreasing across yields; final yield has
+          ``completed == n``.
+        - ``total`` (``int``): equal to ``n`` for every yield.
+        - ``aggregate`` (``dict``): the existing :meth:`_aggregate_batch`
+          output dict over games ``[0..completed)`` (submission-indexed).
+
+        Serial (``workers in (None, 1)``) and parallel (``workers > 1``)
+        paths produce **identical snapshots at every chunk boundary** for
+        the same ``master_seed``.
+
+        Fail-fast: the first failing per-game ``.result()`` cancels every
+        pending future (best-effort) and re-raises the original exception
+        out of the generator. In serial mode the exception simply propagates.
+
+        ``n == 0`` yields one terminal snapshot with an empty aggregate and
+        returns.
+        """
         # Read rosters once — list of (role, Player) tuples
         red_roster = list(team_red.active_roster)
         blue_roster = list(team_blue.active_roster)
@@ -662,15 +731,24 @@ class BatchSimulator:
             master_seed = random.Random().getrandbits(63)
         gen = random.Random(master_seed)
 
-        if workers and workers > 1:
-            return self._run_parallel(
-                red_roster, blue_roster, n, movement_ctx, workers, gen
-            )
+        # n == 0: one terminal snapshot, empty aggregate.
+        if n <= 0:
+            yield {
+                "completed": 0,
+                "total": 0,
+                "aggregate": self._aggregate_batch([], 0),
+            }
+            return
 
-        # SIM-08: simulate each game under its index-determined orientation,
-        # collecting (result, seed, flipped) triples; the shared
-        # _aggregate_batch helper de-flips to team position and builds the
-        # result dict (identical path to the parallel run).
+        chunk = _chunk_size_for(n)
+
+        if workers and workers > 1:
+            yield from self._run_incremental_parallel(
+                red_roster, blue_roster, n, movement_ctx, workers, gen, chunk
+            )
+            return
+
+        # Serial path — submission-indexed snapshots at every chunk boundary.
         games: list[tuple[dict, int, bool]] = []
         for i in range(n):
             s = gen.getrandbits(63)
@@ -681,9 +759,18 @@ class BatchSimulator:
             )
             games.append((result, s, flipped))
 
-        return self._aggregate_batch(games, n)
+            completed = i + 1
+            # Emit on every multiple of chunk; the final boundary (completed
+            # == n) is always emitted because it is either a multiple of
+            # chunk or hits the explicit final-emission branch below.
+            if completed % chunk == 0 or completed == n:
+                yield {
+                    "completed": completed,
+                    "total": n,
+                    "aggregate": self._aggregate_batch(games[:completed], completed),
+                }
 
-    def _run_parallel(
+    def _run_incremental_parallel(
         self,
         red_roster,
         blue_roster,
@@ -691,55 +778,97 @@ class BatchSimulator:
         movement_ctx,
         workers: int,
         gen: random.Random,
-    ) -> dict:
-        """Simulate n rounds using a multiprocessing worker pool.
+        chunk: int,
+    ) -> Iterator[dict]:
+        """SIM-10: parallel branch of :meth:`run_incremental`.
 
-        Pre-serializes all player data in the parent so workers never touch
-        the ORM.  Returns the same aggregate dict as run().
+        Submits all ``n`` games up front to a ``ProcessPoolExecutor``,
+        drains via ``as_completed`` for liveness, but **gates** snapshot
+        emission on a ``pending_boundary`` watermark so snapshots are
+        emitted in strict submission-index order — identical to the
+        serial path at every chunk boundary for a given ``master_seed``.
 
-        Per-round seeds are drawn from the same master generator the serial
-        path uses, so a given master_seed produces identical games whether
-        run serially or in parallel.
+        Fail-fast: the first ``.result()`` exception cancels every still
+        pending future (best-effort) and re-raises out of the generator;
+        the ``ProcessPoolExecutor`` context manager handles pool shutdown.
         """
-        from concurrent.futures import ProcessPoolExecutor
-
-        red_data = _precompute_roster(red_roster)
-        blue_data = _precompute_roster(blue_roster)
-
-        # Generate n distinct integer seeds in the parent before spawning.
-        seeds = [gen.getrandbits(63) for _ in range(n)]
-
-        # SIM-08: orientation is a pure function of the ordered game index
-        # (single source of truth: _is_flipped), so it is computed in the
-        # parent and shipped to each worker. The worker swaps which
-        # precomputed roster it treats as red vs blue when flipped; the
-        # parent feeds the same _aggregate_batch helper the serial path
-        # uses, so serial and parallel produce identical team-position
-        # aggregates AND identical side_advantage for a given master_seed.
-        flips = [self._is_flipped(i) for i in range(n)]
-
-        args_list = [
-            (red_data, blue_data, movement_ctx, s, f) for s, f in zip(seeds, flips)
-        ]
-        chunksize = max(1, n // (workers * 4))
-
+        from concurrent.futures import ProcessPoolExecutor, as_completed
         from matches.sim_helpers.parallel_worker import (
             batch_round_worker,
             worker_django_init,
         )
 
+        red_data = _precompute_roster(red_roster)
+        blue_data = _precompute_roster(blue_roster)
+
+        # Generate n distinct integer seeds and orientations in the parent
+        # — identical to the serial path so a given master_seed produces
+        # the same per-game (seed, flipped) pairs in both modes.
+        seeds = [gen.getrandbits(63) for _ in range(n)]
+        flips = [self._is_flipped(i) for i in range(n)]
+
+        # Pre-allocated per-game results in submission order.
+        games_results: list[Optional[tuple[dict, int, bool]]] = [None] * n
+
         with ProcessPoolExecutor(
             max_workers=workers, initializer=worker_django_init
         ) as executor:
-            results = list(
-                executor.map(batch_round_worker, args_list, chunksize=chunksize)
-            )
+            future_to_index: dict = {}
+            for i in range(n):
+                future = executor.submit(
+                    batch_round_worker,
+                    (red_data, blue_data, movement_ctx, seeds[i], flips[i]),
+                )
+                future_to_index[future] = i
 
-        # SIM-08: same shared aggregation path as the serial run() — the
-        # workers returned physical-side results in submission order, so
-        # zip them back with their seeds and orientations and de-flip.
-        games = list(zip(results, seeds, flips))
-        return self._aggregate_batch(games, n)
+            pending_boundary = chunk  # Next boundary awaiting emission.
+
+            try:
+                for future in as_completed(future_to_index):
+                    idx = future_to_index[future]
+                    try:
+                        result = future.result()
+                    except BaseException:
+                        # Fail-fast: cancel every future (a no-op on the
+                        # one that just raised and on any already-completed
+                        # ones; effective on still-pending submissions).
+                        for f in future_to_index:
+                            f.cancel()
+                        raise
+                    games_results[idx] = (result, seeds[idx], flips[idx])
+
+                    # Emit every now-ready boundary in order. A single
+                    # as_completed step can bridge multiple boundaries
+                    # (a long gap of contiguous slots fills at once), so
+                    # loop until the next boundary is not yet ready.
+                    while pending_boundary <= n and all(
+                        games_results[j] is not None for j in range(pending_boundary)
+                    ):
+                        completed = pending_boundary
+                        # All slots [0..completed) are populated by the
+                        # all(...) gate above; the cast strips the Optional.
+                        completed_games = [
+                            g for g in games_results[:completed] if g is not None
+                        ]
+                        yield {
+                            "completed": completed,
+                            "total": n,
+                            "aggregate": self._aggregate_batch(
+                                completed_games, completed
+                            ),
+                        }
+                        # Step the watermark; the final boundary is n even
+                        # when n is not a multiple of chunk.
+                        if pending_boundary == n:
+                            pending_boundary = n + 1
+                            break
+                        next_boundary = pending_boundary + chunk
+                        pending_boundary = min(next_boundary, n)
+            finally:
+                # Context-manager __exit__ shuts down the pool; nothing
+                # else to do here. (Kept as an explicit anchor for the
+                # fail-fast comment above.)
+                pass
 
     # ------------------------------------------------------------------ #
     # SIM-09: view-path persistence (replaces ResourceBasedSimulator)
