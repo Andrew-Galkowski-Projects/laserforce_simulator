@@ -1,4 +1,3 @@
-import json
 import threading
 import uuid
 
@@ -14,6 +13,9 @@ from .forms import MatchSetupForm, SingleRoundSetupForm, BatchSimulateForm
 
 # In-process job store for async save operations
 _SAVE_JOBS: dict = {}
+# SIM-10: in-process job store for async batch-simulate operations; shares
+# the existing _JOBS_LOCK (no new lock).
+_BATCH_JOBS: dict = {}
 _JOBS_LOCK = threading.Lock()
 
 
@@ -62,6 +64,76 @@ def _run_save_job(
     except Exception as exc:
         with _JOBS_LOCK:
             _SAVE_JOBS[job_id] = {"status": "error", "round_ids": [], "error": str(exc)}
+    finally:
+        django.db.close_old_connections()
+
+
+def _run_batch_job(
+    job_id: str,
+    team_red_id: int,
+    team_blue_id: int,
+    n: int,
+    arena_map_id: int | None,
+    master_seed: int | None,
+) -> None:
+    """Background thread: iterate ``BatchSimulator.run_incremental``, updating
+    ``_BATCH_JOBS[job_id]`` with the latest snapshot after each yield. On
+    success sets ``status='complete'``; on exception sets ``status='error'``
+    with ``str(exc)``.
+
+    SIM-10: mirrors ``_run_save_job`` (try / ``with _JOBS_LOCK`` writes /
+    ``finally: django.db.close_old_connections()``). Resolves the team and
+    map FKs once at thread start; a stale ``arena_map_id`` (deleted between
+    POST and thread start) is treated as ``None`` exactly like
+    ``_run_save_job``.
+
+    The production POST passes ``master_seed=None`` — the parameter is
+    plumbed through for test pinning.
+    """
+    import django.db
+    from core.models import ArenaMap
+
+    try:
+        team_red = Team.objects.get(id=team_red_id)
+        team_blue = Team.objects.get(id=team_blue_id)
+        if arena_map_id is not None:
+            try:
+                arena_map = ArenaMap.objects.get(id=arena_map_id)
+            except ArenaMap.DoesNotExist:
+                arena_map = None
+        else:
+            arena_map = None
+
+        for snap in BatchSimulator().run_incremental(
+            team_red,
+            team_blue,
+            n,
+            arena_map=arena_map,
+            master_seed=master_seed,
+        ):
+            with _JOBS_LOCK:
+                # Initial entry was inserted under the lock in
+                # ``simulate_batch`` before this thread started; no
+                # ``get(default={})`` fallback is needed.
+                _BATCH_JOBS[job_id].update(
+                    {
+                        "status": "running",
+                        "completed": snap["completed"],
+                        "partial": snap["aggregate"],
+                    }
+                )
+
+        with _JOBS_LOCK:
+            _BATCH_JOBS[job_id].update(
+                {
+                    "status": "complete",
+                    "completed": n,
+                    "error": None,
+                }
+            )
+    except Exception as exc:
+        with _JOBS_LOCK:
+            _BATCH_JOBS[job_id].update({"status": "error", "error": str(exc)})
     finally:
         django.db.close_old_connections()
 
@@ -359,9 +431,13 @@ def team_match_history(request, team_id):
 
 
 def simulate_batch(request):
-    """Run N in-memory simulations and display aggregate statistics."""
-    import time
+    """Run N in-memory simulations asynchronously (SIM-10).
 
+    GET → render the form. POST → validate, dispatch a background batch-sim
+    job, and return JSON ``{job_id, team_red_id, team_red_name,
+    team_blue_id, team_blue_name, arena_map_id, n}``. The client polls
+    :func:`batch_simulate_status` for progress and final aggregate.
+    """
     form = BatchSimulateForm(request.POST or None)
     context = {"form": form}
 
@@ -383,62 +459,78 @@ def simulate_batch(request):
                 return render(request, "matches/batch_simulate.html", context)
 
         arena_map = form.cleaned_data.get("arena_map")
-        t0 = time.time()
-        try:
-            results = BatchSimulator().run(team_red, team_blue, n, arena_map=arena_map)
-        except ValueError as exc:
-            messages.error(request, str(exc))
-            return render(request, "matches/batch_simulate.html", context)
-        elapsed = time.time() - t0
+        arena_map_id = arena_map.id if arena_map else None
+        team_red_id = team_red.id
+        team_blue_id = team_blue.id
 
-        # Stash seeds in session for the save-games views (strip from template context)
-        avg_seeds = results.pop("avg_seeds", [])
-        outlier_seeds = results.pop("outlier_seeds", [])
-        request.session["batch_seeds"] = {
-            "team_red_id": team_red.id,
-            "team_blue_id": team_blue.id,
-            # SIM-09: persist the map choice so save_batch_games can rebuild
-            # the same MapContext when replaying selected seeds.
-            "arena_map_id": arena_map.id if arena_map else None,
-            "avg_seeds": avg_seeds,
-            "outlier_seeds": outlier_seeds,
-        }
+        job_id = str(uuid.uuid4())
+        with _JOBS_LOCK:
+            _BATCH_JOBS[job_id] = {
+                "status": "running",
+                "completed": 0,
+                "total": n,
+                "partial": None,
+                "error": None,
+                "team_red_id": team_red_id,
+                "team_blue_id": team_blue_id,
+                "arena_map_id": arena_map_id,
+            }
 
-        # Build histogram bins (5 000-point buckets)
-        all_scores = results["red_scores"] + results["blue_scores"]
-        if all_scores:
-            max_score = max(all_scores)
-            bin_size = 5000
-            num_bins = max(1, (max_score // bin_size) + 1)
-            bins = [i * bin_size for i in range(num_bins + 1)]
-            red_hist = [0] * num_bins
-            blue_hist = [0] * num_bins
-            for s in results["red_scores"]:
-                idx = min(int(s // bin_size), num_bins - 1)
-                red_hist[idx] += 1
-            for s in results["blue_scores"]:
-                idx = min(int(s // bin_size), num_bins - 1)
-                blue_hist[idx] += 1
-            bin_labels = [f"{b:,}–{b+bin_size:,}" for b in bins[:-1]]
-        else:
-            bin_labels = red_hist = blue_hist = []
+        thread = threading.Thread(
+            target=_run_batch_job,
+            args=(job_id, team_red_id, team_blue_id, n, arena_map_id, None),
+            daemon=True,
+        )
+        thread.start()
 
-        context.update(
+        return JsonResponse(
             {
-                "results": results,
-                "team_red": team_red,
-                "team_blue": team_blue,
-                "elapsed": round(elapsed, 2),
-                "bin_labels_json": json.dumps(bin_labels),
-                "red_hist_json": json.dumps(red_hist),
-                "blue_hist_json": json.dumps(blue_hist),
-                "has_seeds": bool(avg_seeds or outlier_seeds),
-                # SIM-08: raw map-side advantage panel data.
-                "side_advantage": results.get("side_advantage"),
+                "job_id": job_id,
+                "team_red_id": team_red_id,
+                "team_red_name": team_red.name,
+                "team_blue_id": team_blue_id,
+                "team_blue_name": team_blue.name,
+                "arena_map_id": arena_map_id,
+                "n": n,
             }
         )
 
     return render(request, "matches/batch_simulate.html", context)
+
+
+def batch_simulate_status(request, job_id):
+    """SIM-10: return JSON status of a batch-simulate job.
+
+    On the FIRST poll observing ``status == "complete"`` (guarded by a
+    ``job_id`` marker inside ``request.session["batch_seeds"]``) also copies
+    avg/outlier seeds into ``request.session`` so the existing
+    :func:`save_batch_games` flow keeps working unchanged.
+
+    Mirrors :func:`save_batch_status` — GET-by-convention (no method guard),
+    returns ``JsonResponse({"status": "not_found"}, status=404)`` if the job
+    is unknown.
+    """
+    with _JOBS_LOCK:
+        if job_id not in _BATCH_JOBS:
+            return JsonResponse({"status": "not_found"}, status=404)
+        # Copy under the lock so the caller can serialise without races.
+        job = dict(_BATCH_JOBS[job_id])
+
+    if job.get("status") == "complete":
+        existing = request.session.get("batch_seeds") or {}
+        if existing.get("job_id") != job_id:
+            agg = job.get("partial") or {}
+            request.session["batch_seeds"] = {
+                "job_id": job_id,
+                "team_red_id": job.get("team_red_id"),
+                "team_blue_id": job.get("team_blue_id"),
+                "arena_map_id": job.get("arena_map_id"),
+                "avg_seeds": agg.get("avg_seeds", []),
+                "outlier_seeds": agg.get("outlier_seeds", []),
+            }
+            request.session.modified = True
+
+    return JsonResponse(job)
 
 
 def save_batch_games(request):

@@ -4,9 +4,9 @@
 
 {% block content %}
 <h1>Batch Simulation</h1>
-<p class="text-muted">Run 10–500 rounds in memory and see the win-probability distribution. No match records are saved.</p>
+<p class="text-muted">Run 10–500 rounds in memory and watch the win-probability distribution build up live. No match records are saved.</p>
 
-<form method="post" class="mb-4">
+<form id="batch-form" method="post" class="mb-4">
   {% csrf_token %}
   <div class="row g-3 align-items-end">
     <div class="col-md-3">
@@ -20,7 +20,7 @@
       {% if form.team_blue.errors %}<div class="text-danger small">{{ form.team_blue.errors }}</div>{% endif %}
     </div>
     <div class="col-md-3">
-      {# SIM-09: arena_map plumbed through BatchSimulator.run / save_games — render the field. #}
+      {# SIM-09: arena_map plumbed through BatchSimulator.run / save_games. #}
       <label class="form-label">{{ form.arena_map.label }}</label>
       {{ form.arena_map }}
       {% if form.arena_map.errors %}<div class="text-danger small">{{ form.arena_map.errors }}</div>{% endif %}
@@ -36,133 +36,398 @@
   </div>
 </form>
 
-{% if results %}
-<hr>
-<div class="d-flex align-items-baseline gap-3 mb-3">
-  <h2 class="mb-0">Results — {{ results.n }} simulations</h2>
-  <span class="text-muted small">completed in {{ elapsed }}s</span>
+{# SIM-10 progress bar — hidden until POST submit. #}
+<div id="batch-progress-container" class="mb-4" style="display:none;">
+  <div class="progress" style="height: 24px;">
+    <div id="batch-progress-bar"
+         class="progress-bar progress-bar-striped progress-bar-animated"
+         role="progressbar"
+         style="width: 0%;">0/0</div>
+  </div>
+  <div id="batch-progress-label" class="text-muted small mt-1">Starting…</div>
 </div>
 
-{# ---- Win probability ---- #}
-<div class="row g-3 mb-4">
-  <div class="col-md-4">
-    <div class="card border-danger">
-      <div class="card-body text-center">
-        <div class="fs-1 fw-bold text-danger">{{ results.red_win_pct|floatformat:1 }}%</div>
-        <div class="text-muted">{{ team_red.name }} win rate</div>
-        <div class="small text-muted">{{ results.red_wins }} W / {{ results.ties }} T / {{ results.blue_wins }} L</div>
+{# SIM-10 error banner. #}
+<div id="batch-error" class="alert alert-danger" style="display:none;"></div>
+
+{# SIM-10 live results — hidden until first snapshot. #}
+<div id="batch-results" style="display:none;">
+  <hr>
+  <div class="d-flex align-items-baseline gap-3 mb-3">
+    <h2 class="mb-0">Results — <span id="batch-results-n">0</span> simulations</h2>
+    <span id="batch-elapsed" class="text-muted small"></span>
+  </div>
+
+  {# ---- Win probability ---- #}
+  <div class="row g-3 mb-4">
+    <div class="col-md-4">
+      <div class="card border-danger">
+        <div class="card-body text-center">
+          <div class="fs-1 fw-bold text-danger"><span id="batch-red-win-pct">0.0</span>%</div>
+          <div class="text-muted"><span class="batch-team-red-name">Red</span> win rate</div>
+          <div class="small text-muted">
+            <span id="batch-red-wins">0</span> W /
+            <span id="batch-red-ties-secondary">0</span> T /
+            <span class="batch-blue-wins-mirror">0</span> L
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card">
+        <div class="card-body text-center">
+          <div class="fs-1 fw-bold"><span id="batch-ties">0</span></div>
+          <div class="text-muted">Ties</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card border-primary">
+        <div class="card-body text-center">
+          <div class="fs-1 fw-bold text-primary"><span id="batch-blue-win-pct">0.0</span>%</div>
+          <div class="text-muted"><span class="batch-team-blue-name">Blue</span> win rate</div>
+          <div class="small text-muted">
+            <span id="batch-blue-wins">0</span> W /
+            <span id="batch-blue-ties-secondary">0</span> T /
+            <span class="batch-red-wins-mirror">0</span> L
+          </div>
+        </div>
       </div>
     </div>
   </div>
-  <div class="col-md-4">
-    <div class="card">
-      <div class="card-body text-center">
-        <div class="fs-1 fw-bold">{{ results.ties }}</div>
-        <div class="text-muted">Ties</div>
-      </div>
+
+  {# ---- Average stats ---- #}
+  <div class="row g-3 mb-4">
+    <div class="col-md-6">
+      <table class="table table-sm table-bordered">
+        <thead class="table-danger"><tr><th colspan="2"><span class="batch-team-red-name">Red</span> averages</th></tr></thead>
+        <tbody>
+          <tr><td>Score</td><td id="batch-avg-red-score">0</td></tr>
+          <tr><td>Survivors</td><td id="batch-avg-red-survivors">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col-md-6">
+      <table class="table table-sm table-bordered">
+        <thead class="table-primary"><tr><th colspan="2"><span class="batch-team-blue-name">Blue</span> averages</th></tr></thead>
+        <tbody>
+          <tr><td>Score</td><td id="batch-avg-blue-score">0</td></tr>
+          <tr><td>Survivors</td><td id="batch-avg-blue-survivors">0</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
-  <div class="col-md-4">
-    <div class="card border-primary">
-      <div class="card-body text-center">
-        <div class="fs-1 fw-bold text-primary">{{ results.blue_win_pct|floatformat:1 }}%</div>
-        <div class="text-muted">{{ team_blue.name }} win rate</div>
-        <div class="small text-muted">{{ results.blue_wins }} W / {{ results.ties }} T / {{ results.red_wins }} L</div>
-      </div>
+
+  {# ---- Map-side advantage (SIM-08) ---- #}
+  <div id="batch-side-advantage" class="row g-3 mb-4" style="display:none;">
+    <div class="col-12">
+      <table class="table table-sm table-bordered mb-1">
+        <thead class="table-secondary">
+          <tr><th colspan="3">Map-side advantage (sides alternated evenly)</th></tr>
+          <tr><th>Side</th><th>Win rate</th><th>Avg score</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="text-danger fw-bold">Red side</span></td>
+            <td><span id="batch-red-side-win-pct">0.0</span>% (<span id="batch-red-side-wins">0</span> W)</td>
+            <td id="batch-avg-red-side-score">0</td>
+          </tr>
+          <tr>
+            <td><span class="text-primary fw-bold">Blue side</span></td>
+            <td><span id="batch-blue-side-win-pct">0.0</span>% (<span id="batch-blue-side-wins">0</span> W)</td>
+            <td id="batch-avg-blue-side-score">0</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="text-muted small mb-0"><span id="batch-side-ties">0</span> side ties. Raw physical-side signal — the per-team results above are side-neutral.</p>
     </div>
   </div>
-</div>
 
-{# ---- Average stats ---- #}
-<div class="row g-3 mb-4">
-  <div class="col-md-6">
-    <table class="table table-sm table-bordered">
-      <thead class="table-danger"><tr><th colspan="2">{{ team_red.name }} averages</th></tr></thead>
-      <tbody>
-        <tr><td>Score</td><td>{{ results.avg_red_score|floatformat:0 }}</td></tr>
-        <tr><td>Survivors</td><td>{{ results.avg_red_survivors|floatformat:2 }}</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <div class="col-md-6">
-    <table class="table table-sm table-bordered">
-      <thead class="table-primary"><tr><th colspan="2">{{ team_blue.name }} averages</th></tr></thead>
-      <tbody>
-        <tr><td>Score</td><td>{{ results.avg_blue_score|floatformat:0 }}</td></tr>
-        <tr><td>Survivors</td><td>{{ results.avg_blue_survivors|floatformat:2 }}</td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
+  {# ---- Score distribution histogram ---- #}
+  <h4>Score distribution</h4>
+  <canvas id="scoreChart" height="100"></canvas>
 
-{# ---- Map-side advantage (SIM-08) ---- #}
-{% if side_advantage %}
-<div class="row g-3 mb-4">
-  <div class="col-12">
-    <table class="table table-sm table-bordered mb-1">
-      <thead class="table-secondary">
-        <tr><th colspan="3">Map-side advantage (sides alternated evenly across {{ side_advantage.n }} games)</th></tr>
-        <tr><th>Side</th><th>Win rate</th><th>Avg score</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><span class="text-danger fw-bold">Red side</span></td>
-          <td>{{ side_advantage.red_side_win_pct|floatformat:1 }}% ({{ side_advantage.red_side_wins }} W)</td>
-          <td>{{ side_advantage.avg_red_side_score|floatformat:0 }}</td>
-        </tr>
-        <tr>
-          <td><span class="text-primary fw-bold">Blue side</span></td>
-          <td>{{ side_advantage.blue_side_win_pct|floatformat:1 }}% ({{ side_advantage.blue_side_wins }} W)</td>
-          <td>{{ side_advantage.avg_blue_side_score|floatformat:0 }}</td>
-        </tr>
-      </tbody>
-    </table>
-    <p class="text-muted small mb-0">{{ side_advantage.side_ties }} side ties. Raw physical-side signal — the per-team results above are side-neutral.</p>
+  {# ---- Save games ---- #}
+  <div id="batch-save-games" style="display:none;">
+    <hr>
+    <h4 class="mb-3">Save games</h4>
+    <p class="text-muted small">
+      Re-run selected games with the exact same random sequence and save them as browsable rounds.
+      <strong>Average</strong> games have scores closest to the mean; <strong>Highlight</strong> games are the most lopsided or unusual.
+    </p>
+    <div class="d-flex flex-wrap gap-3 mb-3">
+      <div class="input-group" style="width:auto">
+        <select id="avgN" class="form-select form-select-sm">
+          <option value="1">1 game</option>
+          <option value="5">5 games</option>
+          <option value="10">10 games</option>
+        </select>
+        <button class="btn btn-outline-secondary btn-sm" onclick="saveGames('avg')">Save Average Game(s)</button>
+      </div>
+      <div class="input-group" style="width:auto">
+        <select id="outlierN" class="form-select form-select-sm">
+          <option value="1">1 game</option>
+          <option value="5">5 games</option>
+          <option value="10">10 games</option>
+        </select>
+        <button class="btn btn-outline-danger btn-sm" onclick="saveGames('outlier')">Save Highlight Game(s)</button>
+      </div>
+    </div>
+    <div id="saveStatus"></div>
   </div>
 </div>
-{% endif %}
-
-{# ---- Score distribution histogram ---- #}
-<h4>Score distribution</h4>
-<canvas id="scoreChart" height="100"></canvas>
-
-{% if has_seeds %}
-<hr>
-<h4 class="mb-3">Save games</h4>
-<p class="text-muted small">
-  Re-run selected games with the exact same random sequence and save them as browsable rounds.
-  <strong>Average</strong> games have scores closest to the mean; <strong>Highlight</strong> games are the most lopsided or unusual.
-</p>
-<div class="d-flex flex-wrap gap-3 mb-3">
-  <div class="input-group" style="width:auto">
-    <select id="avgN" class="form-select form-select-sm">
-      <option value="1">1 game</option>
-      <option value="5">5 games</option>
-      <option value="10">10 games</option>
-    </select>
-    <button class="btn btn-outline-secondary btn-sm" onclick="saveGames('avg')">Save Average Game(s)</button>
-  </div>
-  <div class="input-group" style="width:auto">
-    <select id="outlierN" class="form-select form-select-sm">
-      <option value="1">1 game</option>
-      <option value="5">5 games</option>
-      <option value="10">10 games</option>
-    </select>
-    <button class="btn btn-outline-danger btn-sm" onclick="saveGames('outlier')">Save Highlight Game(s)</button>
-  </div>
-</div>
-<div id="saveStatus"></div>
-{% endif %}
-{% endif %}
 {% endblock %}
 
 {% block extra_scripts %}
-{% if has_seeds %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
+// SIM-10: client-side histogram bin width (was server-side in views.py).
+const BIN_SIZE = 5000;
+// SIM-10: polling cadence (ms).
+const POLL_INTERVAL_MS = 500;
+// SIM-10: status endpoint base. Hard-coded to match the save_batch_status pattern.
+const STATUS_URL_BASE = "/matches/simulate-batch/status/";
 const SAVE_URL = "{% url 'save_batch_games' %}";
 const STATUS_BASE = "/matches/save-batch-status/";
 const CSRF = document.querySelector('[name=csrfmiddlewaretoken]').value;
 
+let teamRedName = "Red";
+let teamBlueName = "Blue";
+let scoreChart = null;
+let pollStartedAt = null;
+let currentJobId = null;
+
+function fmt(n, decimals) {
+  decimals = decimals == null ? 0 : decimals;
+  if (n == null || isNaN(n)) return "0";
+  return Number(n).toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+function setTeamLabels() {
+  document.querySelectorAll('.batch-team-red-name').forEach(el => el.textContent = teamRedName);
+  document.querySelectorAll('.batch-team-blue-name').forEach(el => el.textContent = teamBlueName);
+}
+
+function buildHistogram(redScores, blueScores) {
+  const all = redScores.concat(blueScores);
+  if (!all.length) return { labels: [], red: [], blue: [] };
+  const maxScore = Math.max.apply(null, all);
+  const numBins = Math.max(1, Math.floor(maxScore / BIN_SIZE) + 1);
+  const red = new Array(numBins).fill(0);
+  const blue = new Array(numBins).fill(0);
+  for (let i = 0; i < redScores.length; i++) {
+    red[Math.min(Math.floor(redScores[i] / BIN_SIZE), numBins - 1)] += 1;
+  }
+  for (let i = 0; i < blueScores.length; i++) {
+    blue[Math.min(Math.floor(blueScores[i] / BIN_SIZE), numBins - 1)] += 1;
+  }
+  const labels = [];
+  for (let i = 0; i < numBins; i++) {
+    const b = i * BIN_SIZE;
+    labels.push(b.toLocaleString() + '–' + (b + BIN_SIZE).toLocaleString());
+  }
+  return { labels: labels, red: red, blue: blue };
+}
+
+function paintResults(aggregate) {
+  if (!aggregate) return;
+  document.getElementById('batch-results').style.display = '';
+  document.getElementById('batch-results-n').textContent = aggregate.n || 0;
+
+  document.getElementById('batch-red-win-pct').textContent = fmt(aggregate.red_win_pct, 1);
+  document.getElementById('batch-blue-win-pct').textContent = fmt(aggregate.blue_win_pct, 1);
+  document.getElementById('batch-ties').textContent = aggregate.ties || 0;
+  document.getElementById('batch-red-ties-secondary').textContent = aggregate.ties || 0;
+  document.getElementById('batch-blue-ties-secondary').textContent = aggregate.ties || 0;
+  document.getElementById('batch-red-wins').textContent = aggregate.red_wins || 0;
+  document.getElementById('batch-blue-wins').textContent = aggregate.blue_wins || 0;
+  document.querySelectorAll('.batch-red-wins-mirror').forEach(el => el.textContent = aggregate.red_wins || 0);
+  document.querySelectorAll('.batch-blue-wins-mirror').forEach(el => el.textContent = aggregate.blue_wins || 0);
+
+  document.getElementById('batch-avg-red-score').textContent = fmt(aggregate.avg_red_score, 0);
+  document.getElementById('batch-avg-blue-score').textContent = fmt(aggregate.avg_blue_score, 0);
+  document.getElementById('batch-avg-red-survivors').textContent = fmt(aggregate.avg_red_survivors, 2);
+  document.getElementById('batch-avg-blue-survivors').textContent = fmt(aggregate.avg_blue_survivors, 2);
+
+  // Side advantage block.
+  const sa = aggregate.side_advantage;
+  const saWrap = document.getElementById('batch-side-advantage');
+  if (sa && (aggregate.n || 0) > 0) {
+    saWrap.style.display = '';
+    document.getElementById('batch-red-side-win-pct').textContent = fmt(sa.red_side_win_pct, 1);
+    document.getElementById('batch-blue-side-win-pct').textContent = fmt(sa.blue_side_win_pct, 1);
+    document.getElementById('batch-red-side-wins').textContent = sa.red_side_wins || 0;
+    document.getElementById('batch-blue-side-wins').textContent = sa.blue_side_wins || 0;
+    document.getElementById('batch-avg-red-side-score').textContent = fmt(sa.avg_red_side_score, 0);
+    document.getElementById('batch-avg-blue-side-score').textContent = fmt(sa.avg_blue_side_score, 0);
+    document.getElementById('batch-side-ties').textContent = sa.side_ties || 0;
+  } else {
+    saWrap.style.display = 'none';
+  }
+
+  // Histogram.
+  const hist = buildHistogram(aggregate.red_scores || [], aggregate.blue_scores || []);
+  if (hist.labels.length === 0) {
+    return;
+  }
+  if (scoreChart === null) {
+    scoreChart = new Chart(document.getElementById("scoreChart"), {
+      type: "bar",
+      data: {
+        labels: hist.labels,
+        datasets: [
+          { label: teamRedName, data: hist.red, backgroundColor: "rgba(220,53,69,0.6)", borderColor: "rgba(220,53,69,1)", borderWidth: 1 },
+          { label: teamBlueName, data: hist.blue, backgroundColor: "rgba(13,110,253,0.6)", borderColor: "rgba(13,110,253,1)", borderWidth: 1 },
+        ],
+      },
+      options: {
+        plugins: { legend: { position: "top" } },
+        scales: {
+          x: { title: { display: true, text: "Score range" } },
+          y: { title: { display: true, text: "Number of simulations" }, beginAtZero: true },
+        },
+      },
+    });
+  } else {
+    scoreChart.data.labels = hist.labels;
+    scoreChart.data.datasets[0].label = teamRedName;
+    scoreChart.data.datasets[1].label = teamBlueName;
+    scoreChart.data.datasets[0].data = hist.red;
+    scoreChart.data.datasets[1].data = hist.blue;
+    scoreChart.update("none");
+  }
+}
+
+function updateProgress(completed, total) {
+  const pct = total > 0 ? (completed / total * 100) : 0;
+  const bar = document.getElementById('batch-progress-bar');
+  bar.style.width = pct + '%';
+  bar.textContent = completed + '/' + total;
+  document.getElementById('batch-progress-label').textContent =
+    'Simulating game ' + completed + ' of ' + total + '…';
+}
+
+function poll(jobId) {
+  fetch(STATUS_URL_BASE + jobId + '/')
+    .then(r => {
+      if (r.status === 404) {
+        return r.json().then(data => ({ _http404: true, data: data }));
+      }
+      return r.json().then(data => ({ _http404: false, data: data }));
+    })
+    .then(wrapped => {
+      const data = wrapped.data;
+      if (wrapped._http404 || data.status === 'not_found') {
+        showError('Job expired or not found.');
+        return;
+      }
+      if (data.status === 'running') {
+        updateProgress(data.completed || 0, data.total || 0);
+        if (data.partial) {
+          paintResults(data.partial);
+        }
+        setTimeout(() => poll(jobId), POLL_INTERVAL_MS);
+      } else if (data.status === 'complete') {
+        updateProgress(data.completed || data.total || 0, data.total || 0);
+        if (data.partial) {
+          paintResults(data.partial);
+        }
+        const bar = document.getElementById('batch-progress-bar');
+        bar.classList.remove('progress-bar-striped', 'progress-bar-animated');
+        bar.classList.add('bg-success');
+        const elapsedSeconds = pollStartedAt != null
+          ? ((Date.now() - pollStartedAt) / 1000)
+          : null;
+        if (elapsedSeconds != null) {
+          document.getElementById('batch-progress-label').textContent =
+            'Complete in ' + elapsedSeconds.toFixed(1) + 's';
+          document.getElementById('batch-elapsed').textContent =
+            'completed in ' + elapsedSeconds.toFixed(2) + 's';
+        } else {
+          document.getElementById('batch-progress-label').textContent = 'Complete';
+        }
+        const agg = data.partial || {};
+        const hasSeeds = (agg.avg_seeds && agg.avg_seeds.length) ||
+                         (agg.outlier_seeds && agg.outlier_seeds.length);
+        if (hasSeeds) {
+          document.getElementById('batch-save-games').style.display = '';
+        }
+      } else if (data.status === 'error') {
+        showError(data.error || 'Unknown error.');
+      } else {
+        // Unknown status — keep polling defensively a few times.
+        setTimeout(() => poll(jobId), POLL_INTERVAL_MS);
+      }
+    })
+    .catch(err => {
+      showError('Polling request failed: ' + err);
+    });
+}
+
+function showError(msg) {
+  const banner = document.getElementById('batch-error');
+  banner.textContent = msg;
+  banner.style.display = '';
+  document.getElementById('batch-progress-container').style.display = 'none';
+}
+
+document.getElementById('batch-form').addEventListener('submit', function (ev) {
+  ev.preventDefault();
+  document.getElementById('batch-error').style.display = 'none';
+  const formData = new URLSearchParams();
+  const form = ev.target;
+  const inputs = form.querySelectorAll('input, select, textarea');
+  for (const el of inputs) {
+    if (!el.name) continue;
+    if ((el.type === 'checkbox' || el.type === 'radio') && !el.checked) continue;
+    formData.append(el.name, el.value);
+  }
+  fetch(form.action || window.location.pathname, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'X-CSRFToken': CSRF,
+    },
+    body: formData.toString(),
+  })
+    .then(r => {
+      const ctype = r.headers.get('content-type') || '';
+      if (ctype.indexOf('application/json') !== -1) {
+        return r.json().then(data => ({ _json: true, data: data }));
+      }
+      return r.text().then(text => ({ _json: false, text: text }));
+    })
+    .then(wrapped => {
+      if (!wrapped._json) {
+        // Form validation failure — re-render the page HTML.
+        document.open();
+        document.write(wrapped.text);
+        document.close();
+        return;
+      }
+      const data = wrapped.data;
+      teamRedName = data.team_red_name || 'Red';
+      teamBlueName = data.team_blue_name || 'Blue';
+      setTeamLabels();
+      currentJobId = data.job_id;
+      pollStartedAt = Date.now();
+      // Reset visual state.
+      scoreChart = null;
+      document.getElementById('batch-results').style.display = 'none';
+      document.getElementById('batch-save-games').style.display = 'none';
+      document.getElementById('batch-progress-container').style.display = '';
+      updateProgress(0, data.n || 0);
+      poll(data.job_id);
+    })
+    .catch(err => {
+      showError('Submission failed: ' + err);
+    });
+});
+
+// ---- Save-games polling (unchanged save-flow). ----
 function saveGames(gameType) {
   const n = document.getElementById(gameType + 'N').value;
   const statusDiv = document.getElementById('saveStatus');
@@ -176,17 +441,17 @@ function saveGames(gameType) {
   .then(data => {
     if (data.error) { statusDiv.innerHTML = '<div class="alert alert-danger">' + data.error + '</div>'; return; }
     statusDiv.innerHTML = '<div class="alert alert-info">Saving ' + n + ' game(s)…</div>';
-    poll(data.job_id, statusDiv);
+    pollSave(data.job_id, statusDiv);
   })
   .catch(() => { statusDiv.innerHTML = '<div class="alert alert-danger">Request failed.</div>'; });
 }
 
-function poll(jobId, statusDiv) {
+function pollSave(jobId, statusDiv) {
   fetch(STATUS_BASE + jobId + '/')
   .then(r => r.json())
   .then(data => {
     if (data.status === 'running') {
-      setTimeout(() => poll(jobId, statusDiv), 1500);
+      setTimeout(() => pollSave(jobId, statusDiv), 1500);
     } else if (data.status === 'done') {
       const links = data.round_ids.map(id =>
         '<a href="/matches/game-round/' + id + '/" class="btn btn-sm btn-outline-primary me-1 mb-1">View Round ' + id + '</a>'
@@ -198,32 +463,4 @@ function poll(jobId, statusDiv) {
   });
 }
 </script>
-{% endif %}
-{% if results %}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script>
-(function () {
-  const labels = {{ bin_labels_json|safe }};
-  const redData = {{ red_hist_json|safe }};
-  const blueData = {{ blue_hist_json|safe }};
-  new Chart(document.getElementById("scoreChart"), {
-    type: "bar",
-    data: {
-      labels: labels,
-      datasets: [
-        { label: "{{ team_red.name }}", data: redData, backgroundColor: "rgba(220,53,69,0.6)", borderColor: "rgba(220,53,69,1)", borderWidth: 1 },
-        { label: "{{ team_blue.name }}", data: blueData, backgroundColor: "rgba(13,110,253,0.6)", borderColor: "rgba(13,110,253,1)", borderWidth: 1 },
-      ],
-    },
-    options: {
-      plugins: { legend: { position: "top" } },
-      scales: {
-        x: { title: { display: true, text: "Score range" } },
-        y: { title: { display: true, text: "Number of simulations" }, beginAtZero: true },
-      },
-    },
-  });
-})();
-</script>
-{% endif %}
 {% endblock %}

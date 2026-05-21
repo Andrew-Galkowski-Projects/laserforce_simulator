@@ -30,6 +30,11 @@ urlpatterns = [
         name="movement_heatmap",
     ),
     path("simulate-batch/", views.simulate_batch, name="simulate_batch"),
+    path(
+        "simulate-batch/status/<str:job_id>/",
+        views.batch_simulate_status,
+        name="batch_simulate_status",
+    ),
     path("save-batch-games/", views.save_batch_games, name="save_batch_games"),
     path(
         "save-batch-status/<str:job_id>/",
