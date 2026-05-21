@@ -140,7 +140,12 @@
       "PowerShell(python \"C:\\\\Users\\\\Andrew Galkowski\\\\Desktop\\\\programming\\\\laserforce_simulator\\\\laserforce_simulator\\\\manage.py\" migrate --noinput 2>&1 | Select-Object -Last 10)",
       "PowerShell(powershell -File \"C:\\\\Users\\\\Andrew Galkowski\\\\.claude\\\\skills\\\\chrome-web-testing\\\\scripts\\\\teardown_test_data.ps1\" -MatchIds 24 -RoundIds 66,67)",
       "Bash(git switch *)",
-      "Bash(echo \"EXIT=$?\")"
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(git status *)",
+      "PowerShell(python -m black \"C:\\\\Users\\\\Andrew Galkowski\\\\Desktop\\\\programming\\\\laserforce_simulator\\\\laserforce_simulator\\\\matches\\\\tests\\\\test_res02_sp_metadata.py\" \"C:\\\\Users\\\\Andrew Galkowski\\\\Desktop\\\\programming\\\\laserforce_simulator\\\\laserforce_simulator\\\\matches\\\\tests\\\\views_tests.py\")",
+      "mcp__chrome-devtools__list_pages",
+      "Bash(curl -sf http://127.0.0.1:8765/ -o /dev/null)",
+      "Bash(node *)"
     ]
   }
 }

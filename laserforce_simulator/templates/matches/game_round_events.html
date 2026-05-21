@@ -7,8 +7,10 @@
 {# M-1: events are emitted ONCE as JSON (below) instead of one server- #}
 {# rendered DOM row each. The timeline is windowed client-side; the    #}
 {# charts and the SIM-05 playback engine read the same JSON array, so  #}
-{# the page stays bounded regardless of round length. See views.py     #}
-{# game_round_events and TestM1EventLogWindowing for the JSON contract. #}
+{# the page stays bounded regardless of round length.                  #}
+{# RES-02b: per-chart filter UI + per-player series rebuilt from the   #}
+{# universal actor/target snapshot metadata server-side. The 4 charts  #}
+{# (Shots, Lives, Points, SP) are constructed by a single factory.    #}
 {{ events_data|json_script:"events-data" }}
 {{ players_data|json_script:"players-data" }}
 
@@ -17,6 +19,7 @@
     #timeline-scroll.show-meta .event-metadata { display: block; }
     .evt-row { cursor: pointer; }
     .pb-cur-evt { outline: 2px solid #ffc107; }
+    .chart-filter-dropdown { max-height: 300px; overflow: auto; min-width: 200px; }
 </style>
 
 <div class="mb-4">
@@ -89,7 +92,7 @@
     <div class="col-md-6">
         <div class="card">
             <div class="card-header">
-                <h5 class="mb-0">🎯 Kill Feed</h5>
+                <h5 class="mb-0">Kill Feed</h5>
             </div>
             <div class="card-body" style="max-height: 400px; overflow-y: auto;" id="kill-feed-body"></div>
         </div>
@@ -99,7 +102,7 @@
     <div class="col-md-6">
         <div class="card">
             <div class="card-header">
-                <h5 class="mb-0">📋 Full Event Timeline</h5>
+                <h5 class="mb-0">Full Event Timeline</h5>
             </div>
             <!-- Filters: event types + player filters -->
             <div class="card-body border-bottom bg-light">
@@ -174,7 +177,7 @@
             <!-- Pager: only a bounded window of rows is in the DOM at once -->
             <div class="card-body border-bottom d-flex align-items-center gap-2 py-2">
                 <button id="tl-prev" class="btn btn-sm btn-outline-secondary">&laquo; Newer</button>
-                <small id="tl-pager-label" class="text-muted flex-grow-1 text-center">Showing 0–0 of 0</small>
+                <small id="tl-pager-label" class="text-muted flex-grow-1 text-center">Showing 0-0 of 0</small>
                 <button id="tl-next" class="btn btn-sm btn-outline-secondary">Older &raquo;</button>
             </div>
             <div class="card-body" style="max-height: 400px; overflow-y: auto;" id="timeline-scroll">
@@ -213,33 +216,68 @@
     </div>
 </div>
 
-<!-- Charts: Shots, Lives, Points over time -->
+{# ===================== RES-02b CHART CARDS =====================        #}
+{# Four symmetric stacked cards: Shots, Lives, Points, SP. Each card has #}
+{# its own filter UI (teams / roles / players / overlays + team toggle)   #}
+{# pre-rendered in HTML; the players dropdown body is filled in JS.       #}
+{# A single buildPlayerChart() factory wires each card to its own chart.  #}
+
 <div class="row mt-4">
-    <div class="col-md-4">
+    <div class="col-12">
         <div class="card">
-            <div class="card-header">
-                <h6 class="mb-0">Shots Over Time</h6>
+            <div class="card-header"><h6 class="mb-0">Shots Over Time (per player)</h6></div>
+            <div class="card-body">
+                <div id="shots-overlay-controls" class="mb-3 d-flex flex-wrap align-items-center gap-2"></div>
+                <div style="position: relative; height: 400px;">
+                    <canvas id="chart-shots"></canvas>
+                </div>
             </div>
-            <div class="card-body"><canvas id="chart-shots" height="200"></canvas></div>
-        </div>
-    </div>
-    <div class="col-md-4">
-        <div class="card">
-            <div class="card-header">
-                <h6 class="mb-0">Team Lives Over Time</h6>
-            </div>
-            <div class="card-body"><canvas id="chart-lives" height="200"></canvas></div>
-        </div>
-    </div>
-    <div class="col-md-4">
-        <div class="card">
-            <div class="card-header">
-                <h6 class="mb-0">Points Over Time</h6>
-            </div>
-            <div class="card-body"><canvas id="chart-points" height="200"></canvas></div>
         </div>
     </div>
 </div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header"><h6 class="mb-0">Lives Over Time (per player)</h6></div>
+            <div class="card-body">
+                <div id="lives-overlay-controls" class="mb-3 d-flex flex-wrap align-items-center gap-2"></div>
+                <div style="position: relative; height: 400px;">
+                    <canvas id="chart-lives"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header"><h6 class="mb-0">Points Over Time (per player)</h6></div>
+            <div class="card-body">
+                <div id="points-overlay-controls" class="mb-3 d-flex flex-wrap align-items-center gap-2"></div>
+                <div style="position: relative; height: 400px;">
+                    <canvas id="chart-points"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header"><h6 class="mb-0">Special Points (SP) Over Time (per player)</h6></div>
+            <div class="card-body">
+                <div id="sp-overlay-controls" class="mb-3 d-flex flex-wrap align-items-center gap-2"></div>
+                <div style="position: relative; height: 400px;">
+                    <canvas id="chart-sp"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function () {
@@ -269,14 +307,6 @@
         function nameSpan(name, teamId) {
             return '<span class="' + teamCls(teamId) + '">' + esc(name) + '</span>';
         }
-        // Colorize a player name inside an element by walking ONLY its
-        // text nodes (never markup/attributes), so single-letter names
-        // like "a"/"c" can't collide with injected class="" text. The
-        // split is word-boundary anchored (\b…\b) so a name is wrapped
-        // only as a whole token — never inside another word ("he[a]ls",
-        // "resupply_[a]mmo") and never inside a longer name ("s2" within
-        // "s21"). The pre-M-1 template lacked the \b on the split and so
-        // had both of these latent over-wrap bugs.
         function escRegex(s) {
             return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         }
@@ -321,8 +351,6 @@
         }
 
         // ===== Filtering (operates on data, not the DOM) =====
-        // Preserve the original substring semantics: an event passes a type
-        // filter when its event_type *contains* the checkbox value.
         function passes(ev, types, players) {
             const typeMatch = types.some(t => ev.type.includes(t));
             const playerMatch = players.includes(String(ev.aid)) ||
@@ -331,9 +359,9 @@
         }
 
         let filtered = ALL.slice();
-        let filteredPos = new Map();        // global idx -> position in `filtered`
-        const WIN = 250;                    // rows in the DOM at once (bounded)
-        let winStart = 0;                   // window offset into `filtered`
+        let filteredPos = new Map();
+        const WIN = 250;
+        let winStart = 0;
 
         function recomputeFiltered() {
             const types = checkedValues(typeCheckboxes);
@@ -351,10 +379,6 @@
         const nextBtn = document.getElementById('tl-next');
 
         function rowHtml(ev) {
-            // Plain escaped description; actor/target names are colorized
-            // post-render via the text-node walker (see renderWindow), which
-            // cannot corrupt the injected markup the way a string .replace()
-            // on escaped HTML does for one-character player names.
             const desc = esc(ev.desc);
             let bg = '';
             if (ev.type === 'tag') bg = 'bg-light';
@@ -364,8 +388,14 @@
             let meta = '';
             if (ev.meta && Object.keys(ev.meta).length) {
                 meta = '<small class="text-muted mt-1 event-metadata">' +
-                    Object.entries(ev.meta).map(([k, v]) =>
-                        '<span class="me-2">' + esc(k) + ': ' + esc(v) + '</span>').join('') +
+                    Object.entries(ev.meta).map(([k, v]) => {
+                        // Render arrays/objects as JSON so e.g. `targets` shows
+                        // the per-player affected list instead of "[object Object]".
+                        const valStr = (v !== null && typeof v === 'object')
+                            ? JSON.stringify(v)
+                            : String(v);
+                        return '<span class="me-2">' + esc(k) + ': ' + esc(valStr) + '</span>';
+                    }).join('') +
                     '</small>';
             }
             const pts = ev.pts > 0
@@ -391,15 +421,13 @@
                 : '<div class="text-muted p-3">No events match the current filters.</div>';
             const a = filtered.length ? winStart + 1 : 0;
             const b = Math.min(winStart + WIN, filtered.length);
-            pagerLabel.textContent = 'Showing ' + a + '–' + b + ' of ' + filtered.length;
+            pagerLabel.textContent = 'Showing ' + a + '-' + b + ' of ' + filtered.length;
             prevBtn.disabled = winStart <= 0;
             nextBtn.disabled = b >= filtered.length;
             listEl.querySelectorAll('.evt-row').forEach(row => {
                 const ev = ALL[parseInt(row.dataset.idx)];
                 const descEl = row.querySelector('.event-desc');
                 if (ev && descEl) {
-                    // Actor first, then target (order matters for same-name
-                    // edge cases) — text nodes only, so markup stays intact.
                     if (ev.an) replaceNameInElement(descEl, ev.an, teamCls(ev.at));
                     if (ev.tn) replaceNameInElement(descEl, ev.tn, teamCls(ev.tt));
                 }
@@ -417,17 +445,15 @@
             pbHighlight(false, false);
         }
         typeCheckboxes.forEach(cb => cb.addEventListener('change', applyFilters));
-        // Player checkboxes are generated; delegate the change event.
         playerFiltersEl.addEventListener('change', applyFilters);
         prevBtn.addEventListener('click', () => { winStart -= WIN; renderWindow(); });
         nextBtn.addEventListener('click', () => { winStart += WIN; renderWindow(); });
 
-        // Metadata visibility is CSS-driven — no per-row listeners.
         document.getElementById('toggle-metadata').addEventListener('change', e => {
             scrollEl.classList.toggle('show-meta', e.target.checked);
         });
 
-        // ===== Kill feed (client-rendered, recency-capped) =====
+        // ===== Kill feed =====
         const KF_CAP = 250;
         const kf = ALL.filter(e =>
             e.type === 'tag' || e.type === 'missile' || e.type === 'elimination');
@@ -445,270 +471,494 @@
                 '</span><span class="badge bg-info">+' + e.pts + '</span></div>').join('') ||
             '<div class="text-muted p-2">No kills this round.</div>';
 
-        // ===== Charts (read the full JSON array, like the old DOM scan) =====
-        const chartsRow = document.querySelector('.row.mt-4');
-        const overlayControls = document.createElement('div');
-        overlayControls.className = 'mb-3';
-        overlayControls.innerHTML = `
-            <div class="form-check form-check-inline">
-                <input class="form-check-input overlay-toggle" type="checkbox" id="overlay-elims" value="elimination" checked>
-                <label class="form-check-label" for="overlay-elims">Eliminations</label>
-            </div>
-            <div class="form-check form-check-inline">
-                <input class="form-check-input overlay-toggle" type="checkbox" id="overlay-specials" value="special" checked>
-                <label class="form-check-label" for="overlay-specials">Specials</label>
-            </div>
-            <div class="form-check form-check-inline">
-                <input class="form-check-input overlay-toggle" type="checkbox" id="overlay-nukes" value="nuke_detonated" checked>
-                <label class="form-check-label" for="overlay-nukes">Nukes</label>
-            </div>
-        `;
-        chartsRow.parentNode.insertBefore(overlayControls, chartsRow);
+        // ===================================================================
+        // RES-02b: per-player series build from server snapshots
+        // ===================================================================
+        const playerState = {};                                  // pid -> {shots, lives, points, sp}
+        const seriesByChart = { shots: {}, lives: {}, points: {}, sp: {} };
+        PLAYERS.forEach(p => {
+            const pid = String(p.id);
+            playerState[pid] = {
+                shots: parseInt(p.ss) || 0,
+                lives: parseInt(p.sl) || 0,
+                points: 0,
+                sp: 0,
+            };
+            Object.keys(seriesByChart).forEach(k => {
+                seriesByChart[k][pid] = [{sec: 0, val: playerState[pid][k]}];
+            });
+        });
 
-        const rawEntries = ALL.map(ev => ({
-            t: ev.type,
-            sec: ev.sec,
-            actor: String(ev.aid),
-            target: String(ev.tid),
-            points: ev.pts || 0,
-            meta_actor_role: (ev.meta && ev.meta.actor_role) || '',
-            meta_target_role: (ev.meta && ev.meta.target_role) || '',
-            meta_target_shields: metaInt(ev, 'target_shields'),
-            meta_target_shots_resupplied: metaInt(ev, 'target_shots_resupplied'),
-            meta_target_lives_resupplied: metaInt(ev, 'target_lives_resupplied'),
-            meta_spec_shots_resupplied: metaInt(ev, 'shots_resupplied'),
-            meta_spec_lives_resupplied: metaInt(ev, 'lives_resupplied'),
-            meta_nuke_lives: metaInt(ev, 'lives_taken'),
-        })).sort((a, b) => a.sec - b.sec);
+        function pushIfChanged(pid, key, newVal, sec) {
+            if (newVal === undefined || newVal === null) return;
+            const n = (typeof newVal === 'number') ? newVal : parseInt(newVal);
+            if (Number.isNaN(n)) return;
+            if (playerState[pid][key] === n) return;
+            playerState[pid][key] = n;
+            seriesByChart[key][pid].push({sec: sec, val: n});
+        }
 
-        const bucketSize = 5; // seconds
-        const minSec = rawEntries.length ? rawEntries[0].sec : 0;
-        const maxSec = rawEntries.length ? rawEntries[rawEntries.length - 1].sec : 0;
-        const buckets = [];
-        if (rawEntries.length === 0) buckets.push(0);
-        for (let s = minSec; s <= maxSec + bucketSize; s += bucketSize) buckets.push(s);
-
-        const redPlayers = PLAYERS.filter(p => p.team === 'red');
-        const bluePlayers = PLAYERS.filter(p => p.team === 'blue');
-        const redIds = redPlayers.map(p => String(p.id));
-        const blueIds = bluePlayers.map(p => String(p.id));
-        const redStartingLives = redPlayers.reduce((a, p) => a + (parseInt(p.sl) || 0), 0);
-        const blueStartingLives = bluePlayers.reduce((a, p) => a + (parseInt(p.sl) || 0), 0);
-        const redStartingShots = redPlayers.reduce((a, p) => a + (parseInt(p.ss) || 0), 0);
-        const blueStartingShots = bluePlayers.reduce((a, p) => a + (parseInt(p.ss) || 0), 0);
-
-        const times = buckets;
-        const shotsRed = new Array(buckets.length).fill(redStartingShots);
-        const shotsBlue = new Array(buckets.length).fill(blueStartingShots);
-        const livesRed = new Array(buckets.length).fill(redStartingLives);
-        const livesBlue = new Array(buckets.length).fill(blueStartingLives);
-        const pointsRed = new Array(buckets.length).fill(0);
-        const pointsBlue = new Array(buckets.length).fill(0);
-
-        let curRedLives = redStartingLives, curBlueLives = blueStartingLives;
-        let curRedShots = redStartingShots, curBlueShots = blueStartingShots;
-        let cumRedPoints = 0, cumBluePoints = 0;
-
-        rawEntries.forEach(ev => {
-            const bucketIdx = Math.floor((ev.sec - minSec) / bucketSize);
-            const meta_actor_role = ev.meta_actor_role || '';
-            const meta_target_role = ev.meta_target_role || '';
-            const meta_target_shields = ev.meta_target_shields || 0;
-            const meta_target_shots_resupplied = ev.meta_target_shots_resupplied || 0;
-            const meta_target_lives_resupplied = ev.meta_target_lives_resupplied || 0;
-            const meta_spec_shots_resupplied = ev.meta_spec_shots_resupplied || 0;
-            const meta_spec_lives_resupplied = ev.meta_spec_lives_resupplied || 0;
-            const meta_nuke_lives_taken = ev.meta_nuke_lives || 0;
-
-            if (ev.t === 'tag') {
-                const role_to_max_shields = {
-                    commander: 3, heavy: 3, scout: 1, ammo: 1, medic: 1,
-                };
-                if (redIds.includes(ev.actor)) {
-                    curRedShots -= 1;
-                    cumRedPoints += 100;
-                    cumBluePoints -= 20;
-                    if (meta_target_shields === role_to_max_shields[meta_target_role]) {
-                        curBlueLives = Math.max(0, curBlueLives - 1);
-                    }
-                }
-                if (blueIds.includes(ev.actor)) {
-                    curBlueShots -= 1;
-                    cumBluePoints += 100;
-                    cumRedPoints -= 20;
-                    if (meta_target_shields === role_to_max_shields[meta_target_role]) {
-                        curRedLives = Math.max(0, curRedLives - 1);
-                    }
-                }
+        ALL.forEach(ev => {
+            const sec = ev.sec;
+            const meta = ev.meta || {};
+            const aid = String(ev.aid);
+            const tid = String(ev.tid);
+            if (playerState[aid]) {
+                pushIfChanged(aid, 'shots',  meta.actor_shots,  sec);
+                pushIfChanged(aid, 'lives',  meta.actor_lives,  sec);
+                pushIfChanged(aid, 'points', meta.actor_points, sec);
+                pushIfChanged(aid, 'sp',     meta.sp,           sec);
             }
-
-            if (ev.t === 'missile_hit') {
-                if (redIds.includes(ev.actor)) {
-                    cumRedPoints += 500;
-                    cumBluePoints -= 100;
-                    curBlueLives -= 2;
-                }
-                if (blueIds.includes(ev.actor)) {
-                    cumBluePoints += 500;
-                    cumRedPoints -= 100;
-                    curRedLives -= 2;
-                }
+            if (ev.tid !== -1 && playerState[tid]) {
+                pushIfChanged(tid, 'shots',  meta.target_shots,  sec);
+                pushIfChanged(tid, 'lives',  meta.target_lives,  sec);
+                pushIfChanged(tid, 'points', meta.target_points, sec);
             }
-
-            if (ev.t === 'special') {
-                if (meta_actor_role === 'ammo') {
-                    if (redIds.includes(ev.actor)) curRedShots += meta_spec_shots_resupplied;
-                    if (blueIds.includes(ev.actor)) curBlueShots += meta_spec_shots_resupplied;
-                }
-                if (meta_actor_role === 'medic') {
-                    if (redIds.includes(ev.actor)) curRedLives += meta_spec_lives_resupplied;
-                    if (blueIds.includes(ev.actor)) curBlueLives += meta_spec_lives_resupplied;
-                }
-            }
-
-            if (ev.t === 'miss') {
-                if (redIds.includes(ev.actor)) curRedShots -= 1;
-                if (blueIds.includes(ev.actor)) curBlueShots -= 1;
-            }
-
-            if (ev.t === 'resupply_ammo' && meta_actor_role === 'ammo') {
-                if (redIds.includes(ev.actor)) curRedShots += meta_target_shots_resupplied;
-                if (blueIds.includes(ev.actor)) curBlueShots += meta_target_shots_resupplied;
-            }
-
-            if (ev.t === 'resupply_lives' && meta_actor_role === 'medic') {
-                if (redIds.includes(ev.actor)) curRedLives += meta_target_lives_resupplied;
-                if (blueIds.includes(ev.actor)) curBlueLives += meta_target_lives_resupplied;
-            }
-
-            if (ev.t === 'nuke_detonated') {
-                if (redIds.includes(ev.actor)) {
-                    cumRedPoints += 500;
-                    curBlueLives -= meta_nuke_lives_taken;
-                }
-                if (blueIds.includes(ev.actor)) {
-                    cumBluePoints += 500;
-                    curRedLives -= meta_nuke_lives_taken;
-                }
-            }
-
-            if (ev.t === 'base_capture') {
-                if (redIds.includes(ev.actor)) {
-                    cumRedPoints += 1001;
-                    curRedShots -= 3;
-                }
-                if (blueIds.includes(ev.actor)) {
-                    cumBluePoints += 1001;
-                    curBlueShots -= 3;
-                }
-            }
-
-            for (let i = bucketIdx; i < buckets.length; i++) {
-                shotsRed[i] = curRedShots;
-                shotsBlue[i] = curBlueShots;
-                pointsRed[i] = cumRedPoints;
-                pointsBlue[i] = cumBluePoints;
-                livesRed[i] = curRedLives;
-                livesBlue[i] = curBlueLives;
+            if (Array.isArray(meta.targets)) {
+                meta.targets.forEach(t => {
+                    const pid = String(t.pid);
+                    if (!playerState[pid]) return;
+                    pushIfChanged(pid, 'shots',  t.shots,  sec);
+                    pushIfChanged(pid, 'lives',  t.lives,  sec);
+                    pushIfChanged(pid, 'points', t.points, sec);
+                });
             }
         });
 
-        if (rawEntries.length === 0) {
-            shotsRed[0] = 0; shotsBlue[0] = 0;
-            pointsRed[0] = 0; pointsBlue[0] = 0;
-            livesRed[0] = redStartingLives; livesBlue[0] = blueStartingLives;
+        // ===================================================================
+        // Overlay-event palette (shared by all 4 chart overlay-toggle labels)
+        // ===================================================================
+        const OVERLAY_KIND_STYLE = {
+            elimination:    { color: '#dc3545', label: 'Eliminations' },
+            special:        { color: '#fd7e14', label: 'Specials'     },
+            nuke_detonated: { color: '#6f42c1', label: 'Nukes'        },
+        };
+
+        // Map an event row to (kind, nameForLabel) or null if not an overlay.
+        function overlayKindFor(ev) {
+            if (ev.type === 'elimination') return { kind: 'elimination', label: ev.tn || '' };
+            if (ev.type === 'nuke_detonated') return { kind: 'nuke_detonated', label: ev.an || '' };
+            if (ev.type === 'special') return { kind: 'special', label: ev.an || '' };
+            return null;
         }
 
-        function smooth(arr) {
-            const out = new Array(arr.length).fill(0);
-            const w = 3;
-            for (let i = 0; i < arr.length; i++) {
-                let sum = 0, cnt = 0;
-                for (let j = i - Math.floor(w / 2); j <= i + Math.floor(w / 2); j++) {
-                    if (j >= 0 && j < arr.length) { sum += arr[j]; cnt++; }
-                }
-                out[i] = cnt ? (sum / cnt) : arr[i];
-            }
+        // Pre-compute overlay event list (sec, kind, label) used by every chart's
+        // closure-captured overlayEvents slice (filtered by toggles inside the
+        // factory).
+        const ALL_OVERLAY_EVENTS = ALL.map(ev => {
+            const k = overlayKindFor(ev);
+            return k ? { sec: ev.sec, kind: k.kind, label: k.label } : null;
+        }).filter(Boolean);
+
+        // ===================================================================
+        // Per-player line palette
+        //   Reds:  hues sweeping from a deep red toward orange.
+        //   Blues: hues sweeping from a deep blue toward teal.
+        // Each chart re-uses these so the same player has the same color across
+        // all 4 charts.
+        // ===================================================================
+        const RED_PLAYERS = PLAYERS.filter(p => p.team === 'red');
+        const BLUE_PLAYERS = PLAYERS.filter(p => p.team === 'blue');
+
+        function pickColors(players, baseHue, hueSpread) {
+            const out = {};
+            const n = Math.max(players.length, 1);
+            players.forEach((p, i) => {
+                const h = baseHue + (hueSpread * (i / n));
+                out[String(p.id)] = 'hsl(' + h + ', 70%, 45%)';
+            });
             return out;
         }
-
-        const shotsRedSm = smooth(shotsRed);
-        const shotsBlueSm = smooth(shotsBlue);
-        const livesRedSm = smooth(livesRed);
-        const livesBlueSm = smooth(livesBlue);
-        const pointsRedSm = smooth(pointsRed);
-        const pointsBlueSm = smooth(pointsBlue);
-
-        const labelTimes = times.map(s => {
-            const mm = Math.floor(s / 60).toString().padStart(2, '0');
-            const ss = (s % 60).toString().padStart(2, '0');
-            return `${mm}:${ss}`;
+        const COLOR_RED  = pickColors(RED_PLAYERS,  350, 40);   // ~red -> orange
+        const COLOR_BLUE = pickColors(BLUE_PLAYERS, 210, 40);   // ~blue -> teal
+        const PLAYER_COLOR = Object.assign({}, COLOR_RED, COLOR_BLUE);
+        const PLAYER_TEAM = {};
+        const PLAYER_ROLE = {};
+        const PLAYER_NAME = {};
+        PLAYERS.forEach(p => {
+            const pid = String(p.id);
+            PLAYER_TEAM[pid] = p.team;
+            PLAYER_ROLE[pid] = (p.role || 'scout').toLowerCase();
+            PLAYER_NAME[pid] = p.name || pid;
         });
 
-        function makeLine(ctx, labels, dataSets, opts) {
+        // ===================================================================
+        // makeLine: thin Chart.js constructor wrapper. plugins arg is passed
+        // through to the chart's `plugins:` property (constructor-side, NOT
+        // chart.options.plugins[id]) - this is the RES-02 fix.
+        // ===================================================================
+        function makeLine(ctx, dataSets, opts, plugins) {
+            const baseXScale = {
+                type: 'linear',
+                title: { display: true, text: 'Time (s)' },
+                ticks: {
+                    callback: function(v) {
+                        const mm = Math.floor(v / 60).toString().padStart(2, '0');
+                        const ss = Math.floor(v % 60).toString().padStart(2, '0');
+                        return mm + ':' + ss;
+                    }
+                }
+            };
+            // Object.assign is a shallow merge: passing `opts = {scales:{y:...}}`
+            // would otherwise REPLACE the whole `scales` object and drop the
+            // x-axis config back to Chart.js's `category` default. Build the
+            // merged scales object explicitly so the linear x-axis always wins.
+            const merged = Object.assign({
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { position: 'top', display: true, labels: { boxWidth: 14, padding: 8, font: { size: 11 } } },
+                    tooltip: { callbacks: {
+                        title: function(items) {
+                            if (!items.length) return '';
+                            const sec = items[0].parsed.x;
+                            const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+                            const ss = String(Math.floor(sec % 60)).padStart(2, '0');
+                            return mm + ':' + ss;
+                        }
+                    }}
+                },
+            }, opts || {});
+            merged.scales = Object.assign({ x: baseXScale }, (opts && opts.scales) || {});
+            if (!merged.scales.x) merged.scales.x = baseXScale;
             return new Chart(ctx, {
                 type: 'line',
-                data: { labels: labels, datasets: dataSets },
-                options: Object.assign({ responsive: true, interaction: { mode: 'index', intersect: false }, stacked: false, plugins: { legend: { position: 'top' } } }, opts || {})
+                data: { datasets: dataSets },
+                options: merged,
+                plugins: plugins || []
             });
         }
 
-        const chartShots = makeLine(document.getElementById('chart-shots'), labelTimes, [
-            { label: '{{ round.team_red.name }} Shots', data: shotsRedSm, borderColor: 'rgba(220,53,69,1)', backgroundColor: 'rgba(220,53,69,0.2)', fill: false, tension: 0.3 },
-            { label: '{{ round.team_blue.name }} Shots', data: shotsBlueSm, borderColor: 'rgba(13,110,253,1)', backgroundColor: 'rgba(13,110,253,0.2)', fill: false, tension: 0.3 }
-        ], { scales: { y: { beginAtZero: true } } });
+        // ===================================================================
+        // buildPlayerChart factory
+        //   chartId:      'shots' | 'lives' | 'points' | 'sp'
+        //   container:    DOM element receiving the filter-control children
+        //   title:        chart title (rendered in card header; passed in here
+        //                 only for the players-dropdown / aggregate labels)
+        //   seriesByPid:  per-player series {pid -> [{sec, val}, ...]}
+        //   opts.aggregation: 'sum' | 'avg' — drives the team aggregate overlay
+        //   opts.capValue?:   number — optional dashed horizontal reference line
+        //   opts.yScale:  Chart.js y-axis options
+        // ===================================================================
+        function buildPlayerChart(args) {
+            const chartId      = args.chartId;
+            const container    = args.container;
+            const title        = args.title || chartId;
+            const seriesByPid  = args.seriesByPid;
+            const opts         = args.opts || {};
+            const aggregation  = opts.aggregation || 'sum';
+            const capValue     = (typeof opts.capValue === 'number') ? opts.capValue : null;
+            const yScale       = opts.yScale || { beginAtZero: true };
 
-        const chartLives = makeLine(document.getElementById('chart-lives'), labelTimes, [
-            { label: '{{ round.team_red.name }} Lives', data: livesRedSm, borderColor: 'rgba(220,53,69,1)', backgroundColor: 'rgba(220,53,69,0.2)', fill: false, tension: 0.3 },
-            { label: '{{ round.team_blue.name }} Lives', data: livesBlueSm, borderColor: 'rgba(13,110,253,1)', backgroundColor: 'rgba(13,110,253,0.2)', fill: false, tension: 0.3 }
-        ], { scales: { y: { beginAtZero: true } } });
+            // ---- 1. Pre-render the per-chart filter dropdowns into `container`.
+            container.innerHTML =
+                '<div class="btn-group">' +
+                  '<button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button"' +
+                  ' data-bs-toggle="dropdown" aria-expanded="false">Teams</button>' +
+                  '<div class="dropdown-menu p-3 chart-filter-dropdown" id="' + chartId + '-filter-teams">' +
+                    '<div class="form-check"><input class="form-check-input chart-team-filter" type="checkbox" value="red" id="' + chartId + '-team-red" checked>' +
+                    '<label class="form-check-label" for="' + chartId + '-team-red" style="color:#dc3545;font-weight:bold;">Red</label></div>' +
+                    '<div class="form-check"><input class="form-check-input chart-team-filter" type="checkbox" value="blue" id="' + chartId + '-team-blue" checked>' +
+                    '<label class="form-check-label" for="' + chartId + '-team-blue" style="color:#0d6efd;font-weight:bold;">Blue</label></div>' +
+                  '</div>' +
+                '</div>' +
+                '<div class="btn-group">' +
+                  '<button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button"' +
+                  ' data-bs-toggle="dropdown" aria-expanded="false">Roles</button>' +
+                  '<div class="dropdown-menu p-3 chart-filter-dropdown" id="' + chartId + '-filter-roles">' +
+                    ['commander','heavy','scout','medic','ammo'].map(r =>
+                      '<div class="form-check"><input class="form-check-input chart-role-filter" type="checkbox" value="' + r + '" id="' + chartId + '-role-' + r + '" checked>' +
+                      '<label class="form-check-label" for="' + chartId + '-role-' + r + '">' + r.charAt(0).toUpperCase() + r.slice(1) + '</label></div>'
+                    ).join('') +
+                  '</div>' +
+                '</div>' +
+                '<div class="btn-group">' +
+                  '<button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button"' +
+                  ' data-bs-toggle="dropdown" aria-expanded="false">Players</button>' +
+                  '<div class="dropdown-menu p-3 chart-filter-dropdown" id="' + chartId + '-filter-players">' +
+                    PLAYERS.map(p => {
+                      const pid = String(p.id);
+                      const color = PLAYER_COLOR[pid] || '#000';
+                      return '<div class="form-check">' +
+                             '<input class="form-check-input chart-player-filter" type="checkbox" value="' + pid + '" id="' + chartId + '-player-' + pid + '" checked>' +
+                             '<label class="form-check-label" for="' + chartId + '-player-' + pid + '" style="color:' + color + ';">' + esc(p.name) + ' (' + esc(p.team) + '/' + esc(PLAYER_ROLE[pid]) + ')</label>' +
+                             '</div>';
+                    }).join('') +
+                  '</div>' +
+                '</div>' +
+                '<div class="btn-group">' +
+                  '<button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button"' +
+                  ' data-bs-toggle="dropdown" aria-expanded="false">Overlays</button>' +
+                  '<div class="dropdown-menu p-3 chart-filter-dropdown" id="' + chartId + '-filter-overlays">' +
+                    Object.keys(OVERLAY_KIND_STYLE).map(kind => {
+                      const style = OVERLAY_KIND_STYLE[kind];
+                      return '<div class="form-check">' +
+                             '<input class="form-check-input chart-overlay-filter" type="checkbox" value="' + kind + '" id="' + chartId + '-overlay-' + kind + '" checked>' +
+                             '<label class="form-check-label" for="' + chartId + '-overlay-' + kind + '" style="color:' + style.color + ';font-weight:bold;">' + style.label + '</label>' +
+                             '</div>';
+                    }).join('') +
+                  '</div>' +
+                '</div>' +
+                '<div class="form-check form-check-inline ms-2">' +
+                  '<input class="form-check-input" type="checkbox" id="' + chartId + '-filter-team-aggregate" checked>' +
+                  '<label class="form-check-label" for="' + chartId + '-filter-team-aggregate">Team ' + (aggregation === 'avg' ? 'average' : 'total') + ' overlay</label>' +
+                '</div>';
 
-        const chartPoints = makeLine(document.getElementById('chart-points'), labelTimes, [
-            { label: '{{ round.team_red.name }} Points', data: pointsRedSm, borderColor: 'rgba(220,53,69,1)', backgroundColor: 'rgba(220,53,69,0.2)', fill: false, tension: 0.3 },
-            { label: '{{ round.team_blue.name }} Points', data: pointsBlueSm, borderColor: 'rgba(13,110,253,1)', backgroundColor: 'rgba(13,110,253,0.2)', fill: false, tension: 0.3 }
-        ], { scales: { y: { beginAtZero: true } } });
+            // ---- 2. Build the per-player datasets.
+            const playerDatasets = [];
+            const pidToDatasetIdx = {};
+            PLAYERS.forEach(p => {
+                const pid = String(p.id);
+                const series = seriesByPid[pid] || [];
+                const data = series.map(pt => ({x: pt.sec, y: pt.val}));
+                pidToDatasetIdx[pid] = playerDatasets.length;
+                playerDatasets.push({
+                    label: PLAYER_NAME[pid],
+                    data: data,
+                    borderColor: PLAYER_COLOR[pid] || '#666',
+                    backgroundColor: PLAYER_COLOR[pid] || '#666',
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    pointHoverRadius: 3,
+                    stepped: 'before',
+                    tension: 0,
+                    _pid: pid,
+                    _team: PLAYER_TEAM[pid],
+                    _role: PLAYER_ROLE[pid],
+                });
+            });
 
-        const overlayToggles = document.querySelectorAll('.overlay-toggle');
-        function drawOverlays() {
-            const enabled = checkedValues(overlayToggles);
-            const overlaySecs = rawEntries.filter(e => enabled.includes(e.t)).map(e => e.sec);
-            function makeVLines(chart) {
-                if (chart.__overlayPlugin) chart.options.plugins._overlay_plugin = chart.__overlayPlugin;
-                chart.__overlayPlugin = {
-                    id: '_overlay_plugin',
-                    afterDraw: function (chartInstance) {
-                        const ctx = chartInstance.ctx;
-                        const xScale = chartInstance.scales['x'] || Object.values(chartInstance.scales).find(s => s.isHorizontal);
-                        if (!xScale) return;
-                        const start = times.length ? times[0] : 0;
-                        overlaySecs.forEach(s => {
-                            const bucketIdx = Math.floor((s - start) / bucketSize);
-                            if (bucketIdx < 0 || bucketIdx >= times.length) return;
-                            let x;
-                            try {
-                                x = xScale.getPixelForValue(bucketIdx);
-                            } catch (e) {
-                                const range = xScale.max - xScale.min || 1;
-                                const frac = (bucketIdx - xScale.min) / range;
-                                x = chartInstance.chartArea.left + frac * (chartInstance.chartArea.right - chartInstance.chartArea.left);
-                            }
-                            ctx.save();
-                            ctx.beginPath();
-                            ctx.strokeStyle = 'rgba(255,0,102,0.6)';
-                            ctx.lineWidth = 2;
-                            ctx.moveTo(x, chartInstance.chartArea.top);
-                            ctx.lineTo(x, chartInstance.chartArea.bottom);
-                            ctx.stroke();
-                            ctx.restore();
-                        });
-                    }
-                };
-                chart.options.plugins._overlay_plugin = chart.__overlayPlugin;
-                chart.update();
+            // ---- 3. Aggregate overlay datasets (red + blue, dashed).
+            //         Computed live in applyFilters() from visible per-player
+            //         data; placeholders here.
+            const aggRedIdx = playerDatasets.length;
+            playerDatasets.push({
+                label: (aggregation === 'avg' ? 'Red avg' : 'Red total'),
+                data: [],
+                borderColor: 'rgba(220,53,69,0.95)',
+                backgroundColor: 'rgba(220,53,69,0.1)',
+                borderWidth: 2.5,
+                borderDash: [8, 4],
+                pointRadius: 0,
+                tension: 0,
+                _aggregate: 'red',
+            });
+            const aggBlueIdx = playerDatasets.length;
+            playerDatasets.push({
+                label: (aggregation === 'avg' ? 'Blue avg' : 'Blue total'),
+                data: [],
+                borderColor: 'rgba(13,110,253,0.95)',
+                backgroundColor: 'rgba(13,110,253,0.1)',
+                borderWidth: 2.5,
+                borderDash: [8, 4],
+                pointRadius: 0,
+                tension: 0,
+                _aggregate: 'blue',
+            });
+
+            // ---- 4. Closure-captured overlay events for this chart's plugin.
+            let overlayEvents = ALL_OVERLAY_EVENTS.slice();   // filtered in applyFilters()
+
+            // ---- 5. Inline overlay plugin (one closure per chart).
+            //         RES-02 fix: register via constructor `plugins:` array,
+            //         NOT chart.options.plugins[id].
+            const overlayPlugin = {
+                id: chartId + '_overlay_plugin',
+                afterDatasetsDraw: function(chartInstance) {
+                    if (!overlayEvents.length) return;
+                    const ctx = chartInstance.ctx;
+                    const xScale = chartInstance.scales.x;
+                    const top = chartInstance.chartArea.top;
+                    const bottom = chartInstance.chartArea.bottom;
+                    if (!xScale) return;
+                    overlayEvents.forEach(o => {
+                        const style = OVERLAY_KIND_STYLE[o.kind];
+                        if (!style) return;
+                        const x = xScale.getPixelForValue(o.sec);
+                        if (x < chartInstance.chartArea.left || x > chartInstance.chartArea.right) return;
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.strokeStyle = style.color;
+                        ctx.globalAlpha = 0.55;
+                        ctx.lineWidth = 1.5;
+                        ctx.moveTo(x, top);
+                        ctx.lineTo(x, bottom);
+                        ctx.stroke();
+                        // Rotated player-name label at top of line.
+                        if (o.label) {
+                            ctx.globalAlpha = 0.95;
+                            ctx.fillStyle = style.color;
+                            ctx.font = '10px sans-serif';
+                            ctx.translate(x + 3, top + 4);
+                            ctx.rotate(-Math.PI / 2);
+                            ctx.textAlign = 'right';
+                            ctx.fillText(String(o.label), 0, 0);
+                        }
+                        ctx.restore();
+                    });
+                }
+            };
+
+            // ---- 6. Optional cap (horizontal dashed reference line).
+            const capPlugin = (capValue !== null) ? {
+                id: chartId + '_cap_plugin',
+                afterDatasetsDraw: function(chartInstance) {
+                    const ctx = chartInstance.ctx;
+                    const yScale2 = chartInstance.scales.y;
+                    if (!yScale2) return;
+                    const y = yScale2.getPixelForValue(capValue);
+                    const left = chartInstance.chartArea.left;
+                    const right = chartInstance.chartArea.right;
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.setLineDash([6, 4]);
+                    ctx.strokeStyle = 'rgba(120,120,120,0.85)';
+                    ctx.lineWidth = 1;
+                    ctx.moveTo(left, y);
+                    ctx.lineTo(right, y);
+                    ctx.stroke();
+                    ctx.fillStyle = 'rgba(80,80,80,0.95)';
+                    ctx.font = '10px sans-serif';
+                    ctx.fillText('cap ' + capValue, left + 6, y - 4);
+                    ctx.restore();
+                }
+            } : null;
+
+            // ---- 7. Construct the chart.
+            const ctx = document.getElementById('chart-' + chartId).getContext('2d');
+            const chartOpts = { scales: { y: yScale } };
+            const plugins = capPlugin ? [overlayPlugin, capPlugin] : [overlayPlugin];
+            const chart = makeLine(ctx, playerDatasets, chartOpts, plugins);
+            // makeLine fills in the x-axis (linear, mm:ss ticks). Inject the
+            // caller's y options on top of the baseline.
+            chart.options.scales.y = yScale;
+
+            // ---- 8. applyFilters: re-read checkboxes and update visibility,
+            //         aggregate overlay datasets, and the overlay event list.
+            function readChecked(selectorAll) {
+                return Array.from(container.querySelectorAll(selectorAll))
+                    .filter(n => n.checked).map(n => n.value);
             }
-            [chartShots, chartLives, chartPoints].forEach(makeVLines);
+
+            // Build a union of all observed `sec` values across the (visible
+            // subset of) per-player series. This is the time grid the aggregate
+            // overlay is computed on. We forward-fill each visible player's
+            // value at each grid time (stepped), then sum or average across
+            // same-team visible players.
+            function computeAggregateFor(team, visiblePids) {
+                const teamPids = visiblePids.filter(pid => PLAYER_TEAM[pid] === team);
+                if (!teamPids.length) return [];
+                // Gather sorted unique times from those players' series.
+                const timeSet = new Set();
+                teamPids.forEach(pid => {
+                    (seriesByPid[pid] || []).forEach(pt => timeSet.add(pt.sec));
+                });
+                const times = Array.from(timeSet).sort((a, b) => a - b);
+                // Forward-fill per player.
+                const cursors = {};   // pid -> current series index
+                const lastVals = {};  // pid -> current value
+                teamPids.forEach(pid => {
+                    cursors[pid] = 0;
+                    const s = seriesByPid[pid] || [];
+                    lastVals[pid] = s.length ? s[0].val : 0;
+                });
+                const out = [];
+                times.forEach(t => {
+                    let sum = 0;
+                    let count = 0;
+                    teamPids.forEach(pid => {
+                        const s = seriesByPid[pid] || [];
+                        while (cursors[pid] < s.length && s[cursors[pid]].sec <= t) {
+                            lastVals[pid] = s[cursors[pid]].val;
+                            cursors[pid]++;
+                        }
+                        sum += lastVals[pid];
+                        count++;
+                    });
+                    const y = (aggregation === 'avg' && count > 0) ? (sum / count) : sum;
+                    out.push({ x: t, y: y });
+                });
+                return out;
+            }
+
+            function applyFilters() {
+                const teams    = readChecked('.chart-team-filter');
+                const roles    = readChecked('.chart-role-filter');
+                const players  = readChecked('.chart-player-filter');
+                const overlays = readChecked('.chart-overlay-filter');
+                const aggOn    = container.querySelector('#' + chartId + '-filter-team-aggregate').checked;
+
+                // Per-player dataset visibility.
+                const visiblePids = [];
+                PLAYERS.forEach(p => {
+                    const pid = String(p.id);
+                    const team = PLAYER_TEAM[pid];
+                    const role = PLAYER_ROLE[pid];
+                    const dsIdx = pidToDatasetIdx[pid];
+                    const visible =
+                        teams.indexOf(team) !== -1 &&
+                        roles.indexOf(role) !== -1 &&
+                        players.indexOf(pid) !== -1;
+                    chart.setDatasetVisibility(dsIdx, visible);
+                    if (visible) visiblePids.push(pid);
+                });
+
+                // Aggregate overlay datasets.
+                chart.setDatasetVisibility(aggRedIdx, aggOn);
+                chart.setDatasetVisibility(aggBlueIdx, aggOn);
+                if (aggOn) {
+                    chart.data.datasets[aggRedIdx].data  = computeAggregateFor('red',  visiblePids);
+                    chart.data.datasets[aggBlueIdx].data = computeAggregateFor('blue', visiblePids);
+                } else {
+                    chart.data.datasets[aggRedIdx].data  = [];
+                    chart.data.datasets[aggBlueIdx].data = [];
+                }
+
+                // Overlay events (vertical lines + labels).
+                overlayEvents = ALL_OVERLAY_EVENTS.filter(o => overlays.indexOf(o.kind) !== -1);
+
+                chart.update('none');
+            }
+
+            // Wire change handlers on every checkbox in this card's controls.
+            container.addEventListener('change', applyFilters);
+
+            // Initial paint.
+            applyFilters();
+
+            return { chart: chart, applyFilters: applyFilters };
         }
-        overlayToggles.forEach(t => t.addEventListener('change', drawOverlays));
+
+        // ---- 4 chart instantiations.
+        const chartShots = buildPlayerChart({
+            chartId: 'shots',
+            container: document.getElementById('shots-overlay-controls'),
+            title: 'Shots Over Time',
+            seriesByPid: seriesByChart.shots,
+            opts: { aggregation: 'sum', yScale: { beginAtZero: true } },
+        });
+        const chartLives = buildPlayerChart({
+            chartId: 'lives',
+            container: document.getElementById('lives-overlay-controls'),
+            title: 'Lives Over Time',
+            seriesByPid: seriesByChart.lives,
+            opts: { aggregation: 'sum', yScale: { beginAtZero: true } },
+        });
+        const chartPoints = buildPlayerChart({
+            chartId: 'points',
+            container: document.getElementById('points-overlay-controls'),
+            title: 'Points Over Time',
+            seriesByPid: seriesByChart.points,
+            opts: { aggregation: 'sum', yScale: {} },
+        });
+        const chartSp = buildPlayerChart({
+            chartId: 'sp',
+            container: document.getElementById('sp-overlay-controls'),
+            title: 'Special Points Over Time',
+            seriesByPid: seriesByChart.sp,
+            opts: { aggregation: 'avg', capValue: 99, yScale: { min: 0, max: 99 } },
+        });
 
         // ===== SIM-05 PLAYBACK ENGINE (reads JSON, drives the window) =====
         const MAX_SH = { commander: 3, heavy: 3, scout: 1, medic: 1, ammo: 1 };
@@ -731,13 +981,14 @@
             pbPlayers[id] = {
                 id, name: p.name || id, team: p.team || 'red',
                 role, startLives: sl, startShots: ss, startShields: sh,
-                lives: sl, shots: ss, shields: sh, score: 0,
+                lives: sl, shots: ss, shields: sh, score: 0, sp: 0,
                 lastDownedAt: null, isElim: false,
             };
         });
 
-        // TIME-01 DISPLAY boundary: ev.sec = ts/2 (1 tick = 0.5 s). The whole
-        // playback engine stays in seconds. pbEvts is already chronological.
+        // TIME-01 DISPLAY boundary: ev.sec = ts/2 (1 tick = 0.5 s).
+        // RES-02b: pbEvts also carries actor sp snapshot (when present) so the
+        // playback scoreboard can show SP per player at the current cursor.
         const pbEvts = ALL.map(ev => ({
             idx: ev.idx,
             type: ev.type,
@@ -747,18 +998,21 @@
             points: ev.pts || 0,
             shotsRes: metaInt(ev, 'target_shots_resupplied'),
             livesRes: metaInt(ev, 'target_lives_resupplied'),
+            actorSp: (ev.meta && ev.meta.sp != null) ? parseInt(ev.meta.sp) : null,
         }));
 
         function pbReset() {
             Object.values(pbPlayers).forEach(p => {
                 p.lives = p.startLives; p.shots = p.startShots; p.shields = p.startShields;
-                p.score = 0; p.lastDownedAt = null; p.isElim = false;
+                p.score = 0; p.sp = 0; p.lastDownedAt = null; p.isElim = false;
             });
         }
 
         function pbApply(ev) {
             const a = pbPlayers[ev.actorId], t = pbPlayers[ev.targetId];
             if (a) a.score += ev.points;
+            // RES-02b: read SP snapshot from event metadata for the actor.
+            if (a && ev.actorSp != null) a.sp = ev.actorSp;
             if (ev.type === 'tag') {
                 if (a) a.shots = Math.max(0, a.shots - 1);
                 if (t) {
@@ -816,8 +1070,6 @@
             let cur = null;
             for (const ev of pbEvts) { if (ev.sec <= pbCur) cur = ev; else break; }
             if (!cur) return;
-            // Page the window onto the current event if it's filtered-in but
-            // off-window; if it's filtered out there is simply no row.
             if (!filteredPos.has(cur.idx)) return;
             const fIdx = filteredPos.get(cur.idx);
             if (fIdx < winStart || fIdx >= winStart + WIN) {
@@ -858,13 +1110,14 @@
                     '<td class="' + cc + '">' + esc(p.name) + '<img src="' + (ROLE_ICONS[p.role] || '') + '" alt="' + esc(p.role) + '" title="' + esc(p.role) + '" height="16" class="ms-1" style="vertical-align:middle"></td>' +
                     '<td class="' + cc + ' fw-bold">' + p.score.toLocaleString() + '</td>' +
                     '<td class="' + cc + '">' + livesTxt + '</td>' +
-                    '<td class="' + cc + '">' + p.shots + '</td></tr>';
+                    '<td class="' + cc + '">' + p.shots + '</td>' +
+                    '<td class="' + cc + '">' + p.sp + '</td></tr>';
             }).join('');
             document.getElementById(id).innerHTML =
                 '<div class="d-flex justify-content-between fw-bold text-' + color + ' mb-1">' +
                 '<span>' + esc(teamName) + '</span><span>' + total.toLocaleString() + '</span></div>' +
                 '<table class="table table-sm table-bordered mb-0">' +
-                '<thead class="table-' + color + '"><tr><th>Player</th><th>Score</th><th>Lives</th><th>Shots</th></tr></thead>' +
+                '<thead class="table-' + color + '"><tr><th>Player</th><th>Score</th><th>Lives</th><th>Shots</th><th>SP</th></tr></thead>' +
                 '<tbody>' + rows + '</tbody></table>';
         }
 
@@ -913,11 +1166,10 @@
         // ===== Initial render =====
         recomputeFiltered();
         renderWindow();
-        drawOverlays();
         pbSetTime(0);
     });
 </script>
 <div class="mt-4">
-    <a href="{% url 'game_round_detail' round.id %}" class="btn btn-secondary">← Back to Round Details</a>
+    <a href="{% url 'game_round_detail' round.id %}" class="btn btn-secondary">&larr; Back to Round Details</a>
 </div>
 {% endblock %}

@@ -336,6 +336,42 @@ def _apply_nuke_reaction_flags(all_alive: list, pending_nukes: list) -> None:
                 setattr(p, "reacting_to_nuke", True)
 
 
+# ----------------------------------------------------------------------------
+# RES-02b — Universal event metadata snapshot helpers.
+# Every event_log.append site below uses these to attach post-event actor and
+# (optionally) target resource snapshots to the event metadata. The seam
+# contract (.claude/worktrees/res02b-parity-contract.md) pins the key set.
+# ----------------------------------------------------------------------------
+def _actor_meta(actor) -> dict:
+    """Universal actor snapshot block (post-event values)."""
+    return {
+        "actor_role": actor.role,
+        "actor_shots": actor.final_shots,
+        "actor_lives": actor.final_lives,
+        "actor_points": actor.points_scored,
+        "sp": actor.final_special,
+    }
+
+
+def _target_meta(target) -> dict:
+    """Universal target snapshot block (post-event values)."""
+    return {
+        "target_role": target.role,
+        "target_shots": target.final_shots,
+        "target_lives": target.final_lives,
+        "target_points": target.points_scored,
+    }
+
+
+def _build_meta(actor, target=None, **extras) -> dict:
+    """Build event metadata with actor block, optional target block, and extras."""
+    md = _actor_meta(actor)
+    if target is not None:
+        md.update(_target_meta(target))
+    md.update(extras)
+    return md
+
+
 def _resupply_event_dict(event_type: str, kwargs: dict, tick_second: float) -> dict:
     """Convert kwargs-style resupply emit into the standard event buffer dict.
 
@@ -1032,6 +1068,7 @@ class BatchSimulator:
                     dodge_pct = min(20.0, survival / 5.0)
                     if random.random() * 100 < dodge_pct:
                         if event_log is not None:
+                            # missile_dodge: actor = dodging defender, target = missile-attacker
                             event_log.append(
                                 {
                                     "event_type": "missile_dodge",
@@ -1040,10 +1077,9 @@ class BatchSimulator:
                                     "timestamp": second,
                                     "points_awarded": 0,
                                     "description": f"{lock.defender.name} dodges missile from {lock.attacker.name}",
-                                    "metadata": {
-                                        "actor_role": lock.attacker.role,
-                                        "target_role": lock.defender.role,
-                                    },
+                                    "metadata": _build_meta(
+                                        lock.defender, lock.attacker
+                                    ),
                                 }
                             )
                     else:
@@ -1118,7 +1154,11 @@ class BatchSimulator:
                                         "timestamp": second,
                                         "points_awarded": 0,
                                         "description": f"{r_attacker.name} eliminates {r_defender.name} (reaction)",
-                                        "metadata": {"elimination_action": "reaction"},
+                                        "metadata": _build_meta(
+                                            r_attacker,
+                                            r_defender,
+                                            elimination_action="reaction",
+                                        ),
                                     }
                                 )
                     if event_log is not None:
@@ -1130,11 +1170,9 @@ class BatchSimulator:
                                 "timestamp": second,
                                 "points_awarded": 100,
                                 "description": f"{r_attacker.name} reacts to {r_defender.name}",
-                                "metadata": {
-                                    "actor_role": r_attacker.role,
-                                    "target_role": r_defender.role,
-                                    "is_reaction": True,
-                                },
+                                "metadata": _build_meta(
+                                    r_attacker, r_defender, is_reaction=True
+                                ),
                             }
                         )
                 else:
@@ -1148,7 +1186,9 @@ class BatchSimulator:
                                 "timestamp": second,
                                 "points_awarded": 0,
                                 "description": f"{r_attacker.name} reaction miss on {r_defender.name}",
-                                "metadata": {"is_reaction": True},
+                                "metadata": _build_meta(
+                                    r_attacker, r_defender, is_reaction=True
+                                ),
                             }
                         )
 
@@ -1220,9 +1260,11 @@ class BatchSimulator:
                                         "timestamp": second,
                                         "points_awarded": 0,
                                         "description": f"{fu_attacker.name} eliminates {fu_defender.name} (follow-up)",
-                                        "metadata": {
-                                            "elimination_action": "follow_up_tag"
-                                        },
+                                        "metadata": _build_meta(
+                                            fu_attacker,
+                                            fu_defender,
+                                            elimination_action="follow_up_tag",
+                                        ),
                                     }
                                 )
                     if event_log is not None:
@@ -1234,12 +1276,12 @@ class BatchSimulator:
                                 "timestamp": second,
                                 "points_awarded": 100,
                                 "description": f"{fu_attacker.name} follow-up tags {fu_defender.name}",
-                                "metadata": {
-                                    "actor_role": fu_attacker.role,
-                                    "target_role": fu_defender.role,
-                                    "is_follow_up": True,
-                                    "chain": chain,
-                                },
+                                "metadata": _build_meta(
+                                    fu_attacker,
+                                    fu_defender,
+                                    is_follow_up=True,
+                                    chain=chain,
+                                ),
                             }
                         )
                     if not downed and chain < 2 and fu_defender.final_lives > 0:
@@ -1271,7 +1313,9 @@ class BatchSimulator:
                                 "timestamp": second,
                                 "points_awarded": 0,
                                 "description": f"{fu_attacker.name} follow-up miss on {fu_defender.name}",
-                                "metadata": {"is_follow_up": True},
+                                "metadata": _build_meta(
+                                    fu_attacker, fu_defender, is_follow_up=True
+                                ),
                             }
                         )
 
@@ -1797,11 +1841,11 @@ class BatchSimulator:
                 attacker.shots_missed += 1
                 attacker.last_shot_time = second
                 if event_log is not None:
-                    _miss_hid_meta: dict = {"reason": "hiding"}
+                    _miss_hid_extras: dict = {"reason": "hiding"}
                     # MOVE-03: Overwatch-origin provenance (reuses
                     # event_type="miss"; scoring/accuracy unchanged).
                     if o.get("overwatch", False):
-                        _miss_hid_meta["overwatch"] = True
+                        _miss_hid_extras["overwatch"] = True
                     event_log.append(
                         {
                             "event_type": "miss",
@@ -1810,7 +1854,9 @@ class BatchSimulator:
                             "timestamp": second,
                             "points_awarded": 0,
                             "description": f"{attacker.name} misses {defender.name} (hiding)",
-                            "metadata": _miss_hid_meta,
+                            "metadata": _build_meta(
+                                attacker, defender, **_miss_hid_extras
+                            ),
                         }
                     )
                 continue
@@ -1836,16 +1882,12 @@ class BatchSimulator:
                     _check_medic_under_fire(defender, all_alive, second)
 
                 if event_log is not None:
-                    _tag_meta = {
-                        "actor_role": attacker.role,
-                        "target_role": defender.role,
-                        "target_lives": defender.final_lives,
-                    }
+                    _tag_extras: dict = {}
                     # MOVE-03: mark Overwatch-origin shots so the event carries
                     # provenance. Reuses event_type="tag" — scoring / MVP /
                     # accuracy paths are unchanged (analytics marker only).
                     if o.get("overwatch", False):
-                        _tag_meta["overwatch"] = True
+                        _tag_extras["overwatch"] = True
                     event_log.append(
                         {
                             "event_type": "tag",
@@ -1854,7 +1896,7 @@ class BatchSimulator:
                             "timestamp": second,
                             "points_awarded": 100,
                             "description": f"{attacker.name} tags {defender.name}",
-                            "metadata": _tag_meta,
+                            "metadata": _build_meta(attacker, defender, **_tag_extras),
                         }
                     )
 
@@ -1882,7 +1924,9 @@ class BatchSimulator:
                                     "timestamp": second,
                                     "points_awarded": 0,
                                     "description": f"{defender.name} eliminated by {attacker.name}",
-                                    "metadata": {"elimination_action": "tag"},
+                                    "metadata": _build_meta(
+                                        attacker, defender, elimination_action="tag"
+                                    ),
                                 }
                             )
                 # MECH-06: tag confirms enemy position and status — update memory and broadcast
@@ -1894,11 +1938,11 @@ class BatchSimulator:
                 attacker.shots_missed += 1
                 attacker.last_shot_time = second
                 if event_log is not None:
-                    _miss_meta: dict = {}
+                    _miss_extras: dict = {}
                     # MOVE-03: Overwatch-origin miss provenance (reuses
                     # event_type="miss"; scoring/accuracy unchanged).
                     if o.get("overwatch", False):
-                        _miss_meta["overwatch"] = True
+                        _miss_extras["overwatch"] = True
                     event_log.append(
                         {
                             "event_type": "miss",
@@ -1907,7 +1951,7 @@ class BatchSimulator:
                             "timestamp": second,
                             "points_awarded": 0,
                             "description": f"{attacker.name} misses {defender.name}",
-                            "metadata": _miss_meta,
+                            "metadata": _build_meta(attacker, defender, **_miss_extras),
                         }
                     )
 
@@ -1994,7 +2038,11 @@ class BatchSimulator:
                                     "timestamp": second,
                                     "points_awarded": 0,
                                     "description": f"{r_attacker.name} eliminates {r_defender.name} (reaction)",
-                                    "metadata": {"elimination_action": "reaction"},
+                                    "metadata": _build_meta(
+                                        r_attacker,
+                                        r_defender,
+                                        elimination_action="reaction",
+                                    ),
                                 }
                             )
                 if event_log is not None:
@@ -2006,11 +2054,9 @@ class BatchSimulator:
                             "timestamp": second,
                             "points_awarded": 100,
                             "description": f"{r_attacker.name} reacts to {r_defender.name}",
-                            "metadata": {
-                                "actor_role": r_attacker.role,
-                                "target_role": r_defender.role,
-                                "is_reaction": True,
-                            },
+                            "metadata": _build_meta(
+                                r_attacker, r_defender, is_reaction=True
+                            ),
                         }
                     )
             else:
@@ -2024,7 +2070,9 @@ class BatchSimulator:
                             "timestamp": second,
                             "points_awarded": 0,
                             "description": f"{r_attacker.name} reaction miss on {r_defender.name}",
-                            "metadata": {"is_reaction": True},
+                            "metadata": _build_meta(
+                                r_attacker, r_defender, is_reaction=True
+                            ),
                         }
                     )
 
@@ -2120,7 +2168,11 @@ class BatchSimulator:
                                     "timestamp": second,
                                     "points_awarded": 0,
                                     "description": f"{fu_attacker.name} eliminates {fu_defender.name} (follow-up)",
-                                    "metadata": {"elimination_action": "follow_up_tag"},
+                                    "metadata": _build_meta(
+                                        fu_attacker,
+                                        fu_defender,
+                                        elimination_action="follow_up_tag",
+                                    ),
                                 }
                             )
                 if event_log is not None:
@@ -2132,12 +2184,12 @@ class BatchSimulator:
                             "timestamp": second,
                             "points_awarded": 100,
                             "description": f"{fu_attacker.name} follow-up tags {fu_defender.name}",
-                            "metadata": {
-                                "actor_role": fu_attacker.role,
-                                "target_role": fu_defender.role,
-                                "is_follow_up": True,
-                                "chain": fu["chain"],
-                            },
+                            "metadata": _build_meta(
+                                fu_attacker,
+                                fu_defender,
+                                is_follow_up=True,
+                                chain=fu["chain"],
+                            ),
                         }
                     )
                 if not downed and fu["chain"] < 2 and fu_defender.final_lives > 0:
@@ -2161,7 +2213,9 @@ class BatchSimulator:
                             "timestamp": second,
                             "points_awarded": 0,
                             "description": f"{fu_attacker.name} follow-up miss on {fu_defender.name}",
-                            "metadata": {"is_follow_up": True},
+                            "metadata": _build_meta(
+                                fu_attacker, fu_defender, is_follow_up=True
+                            ),
                         }
                     )
 
@@ -2208,7 +2262,9 @@ class BatchSimulator:
                             "timestamp": second,
                             "points_awarded": 0,
                             "description": f"{defender.name} eliminated by missile from {attacker.name}",
-                            "metadata": {"elimination_action": "missile"},
+                            "metadata": _build_meta(
+                                attacker, defender, elimination_action="missile"
+                            ),
                         }
                     )
             BatchSimulator._record_down(defender, second)
@@ -2231,11 +2287,7 @@ class BatchSimulator:
                         "timestamp": second,
                         "points_awarded": 500,
                         "description": f"{attacker.name} hits {defender.name} with missile",
-                        "metadata": {
-                            "actor_role": attacker.role,
-                            "target_role": defender.role,
-                            "target_lives": defender.final_lives,
-                        },
+                        "metadata": _build_meta(attacker, defender),
                     }
                 )
 
@@ -2261,10 +2313,7 @@ class BatchSimulator:
                         "timestamp": second,
                         "points_awarded": 0,
                         "description": f"{player.name} activates nuke",
-                        "metadata": {
-                            "actor_role": player.role,
-                            "fires_at": second + countdown,
-                        },
+                        "metadata": _build_meta(player, fires_at=second + countdown),
                     }
                 )
             return ("nuke", second + countdown, player)
@@ -2281,16 +2330,22 @@ class BatchSimulator:
                         "timestamp": second,
                         "points_awarded": 0,
                         "description": f"{player.name} activates rapid fire",
-                        "metadata": {"actor_role": player.role},
+                        "metadata": _build_meta(player),
                     }
                 )
         elif player.role == "medic":
             player.final_special -= player.special_cost
             heal_chart = {"commander": 4, "heavy": 3, "scout": 5, "ammo": 2, "medic": 0}
+            # RES-02b: collect affected teammates (excluding the medic actor)
+            # so the event metadata carries per-target post-heal snapshots.
+            healed_mates: list = []
             for mate in all_alive:
                 if mate.team_color == player.team_color and mate.is_active_at(second):
                     amount = heal_chart.get(mate.role, 0)
+                    pre_lives = mate.final_lives
                     mate.final_lives = min(mate.max_lives, mate.final_lives + amount)
+                    if mate is not player:
+                        healed_mates.append((mate, mate.final_lives - pre_lives))
             if event_log is not None:
                 event_log.append(
                     {
@@ -2300,7 +2355,20 @@ class BatchSimulator:
                         "timestamp": second,
                         "points_awarded": 0,
                         "description": f"{player.name} team heal special",
-                        "metadata": {"actor_role": player.role},
+                        "metadata": _build_meta(
+                            player,
+                            targets=[
+                                {
+                                    "pid": m.player_id,
+                                    "name": m.name,
+                                    "lives_delta": delta,
+                                    "shots": m.final_shots,
+                                    "lives": m.final_lives,
+                                    "points": m.points_scored,
+                                }
+                                for m, delta in healed_mates
+                            ],
+                        ),
                     }
                 )
         elif player.role == "ammo":
@@ -2312,10 +2380,16 @@ class BatchSimulator:
                 "medic": 5,
                 "ammo": 0,
             }
+            # RES-02b: collect affected teammates (excluding the ammo actor)
+            # so the event metadata carries per-target post-resupply snapshots.
+            resupplied_mates: list = []
             for mate in all_alive:
                 if mate.team_color == player.team_color and mate.is_active_at(second):
                     amount = shot_chart.get(mate.role, 0)
+                    pre_shots = mate.final_shots
                     mate.final_shots = min(mate.max_shots, mate.final_shots + amount)
+                    if mate is not player:
+                        resupplied_mates.append((mate, mate.final_shots - pre_shots))
             if event_log is not None:
                 event_log.append(
                     {
@@ -2325,7 +2399,20 @@ class BatchSimulator:
                         "timestamp": second,
                         "points_awarded": 0,
                         "description": f"{player.name} team ammo special",
-                        "metadata": {"actor_role": player.role},
+                        "metadata": _build_meta(
+                            player,
+                            targets=[
+                                {
+                                    "pid": m.player_id,
+                                    "name": m.name,
+                                    "shots_delta": delta,
+                                    "shots": m.final_shots,
+                                    "lives": m.final_lives,
+                                    "points": m.points_scored,
+                                }
+                                for m, delta in resupplied_mates
+                            ],
+                        ),
                     }
                 )
         return None
@@ -2334,6 +2421,25 @@ class BatchSimulator:
         if player.is_active_at(second) and player.final_lives > 0:
             player.points_scored += 500
             if event_log is not None:
+                # RES-02b: build per-opp post-detonation snapshots BEFORE the
+                # mutation loop so the detonation special event can carry the
+                # post-event target values, while preserving the historical
+                # emit order (detonation special first, then per-opp eliminations).
+                projected_targets: list = []
+                for opp in opposing_players:
+                    if opp.final_lives <= 0:
+                        continue
+                    lives_taken = min(opp.final_lives, 3)
+                    projected_targets.append(
+                        {
+                            "pid": opp.player_id,
+                            "name": opp.name,
+                            "lives_delta": -lives_taken,
+                            "shots": opp.final_shots,
+                            "lives": opp.final_lives - lives_taken,
+                            "points": opp.points_scored,
+                        }
+                    )
                 event_log.append(
                     {
                         "event_type": "special",
@@ -2342,7 +2448,7 @@ class BatchSimulator:
                         "timestamp": second,
                         "points_awarded": 500,
                         "description": f"{player.name} nuke detonates",
-                        "metadata": {"actor_role": player.role},
+                        "metadata": _build_meta(player, targets=projected_targets),
                     }
                 )
             for opp in opposing_players:
@@ -2365,7 +2471,9 @@ class BatchSimulator:
                                 "timestamp": second,
                                 "points_awarded": 0,
                                 "description": f"{opp.name} eliminated by nuke",
-                                "metadata": {"elimination_action": "nuke"},
+                                "metadata": _build_meta(
+                                    player, opp, elimination_action="nuke"
+                                ),
                             }
                         )
 
@@ -2596,6 +2704,12 @@ class BatchSimulator:
                     new_zone = zone_from_cell(end_cell[0], end_cell[1], spawn_cells)
                 else:
                     new_zone = p.current_zone
+                # Movement events carry only movement-specific metadata. Per-tick
+                # actor snapshots (shots/lives/points/sp) are NOT tracked on the
+                # trail; using the player's end-of-round values here previously
+                # poisoned the per-player chart series (every movement event
+                # stamped the final value, so chart lines jumped to end-of-round
+                # values immediately after spawn).
                 GameEvent.objects.create(
                     game_round=game_round,
                     timestamp=ts,

@@ -221,6 +221,135 @@ class TestM1EventLogWindowing:
         assert resp.context["events_data"] == []
         assert "data-event-type=" not in resp.content.decode()
 
+    # ------------------------------------------------------------------ #
+    # RES-02b — universal per-player snapshot contract on events_data.   #
+    # ------------------------------------------------------------------ #
+    #
+    # RES-02b SUPERSEDES the original RES-02 "MUST NOT carry sp" partition
+    # (`miss`, `resupply_ammo`, `resupply_lives`, `combo_resupply`,
+    # `movement`, `elimination`). EVERY event with an actor now carries the
+    # universal actor block (`actor_role` + `actor_shots`/`actor_lives`/
+    # `actor_points` + `sp`), and every event with a target carries the
+    # target block. The view layer must mirror that universal contract on
+    # each `events_data` row.
+    #
+    # Seam contract: `.claude/worktrees/res02b-parity-contract.md`.
+
+    # Event types that historically carry ``sp`` reliably — kept as a
+    # coverage hint for the sanity assertion below (NOT as a partition).
+    _RES02_SP_TYPES = {"tag", "missile", "special", "base_capture"}
+
+    # Required key sets on `meta` per the universal contract.
+    _ACTOR_BLOCK_KEYS = (
+        "actor_role",
+        "actor_shots",
+        "actor_lives",
+        "actor_points",
+        "sp",
+    )
+    _TARGET_BLOCK_KEYS = (
+        "target_role",
+        "target_shots",
+        "target_lives",
+        "target_points",
+    )
+
+    def test_events_data_carries_sp_on_sp_changing_types_only(self):
+        """RES-02b: every ``events_data`` row carries the universal actor
+        block (``meta.actor_role`` + ``actor_shots``/``actor_lives``/
+        ``actor_points`` + ``sp``) because every row has a non-null actor
+        (``aid`` is always an int, never -1, since ``GameEvent.actor`` is a
+        non-nullable FK). Every row whose ``tid != -1`` additionally
+        carries the target block. ``base_capture`` rows do NOT carry
+        ``meta.special_points`` (RES-02 rename preserved).
+        """
+        gr = self._round_with_events()
+        client = Client()
+        resp = client.get(reverse("game_round_events", kwargs={"round_id": gr.id}))
+        assert resp.status_code == 200
+        events_data = resp.context["events_data"]
+        assert events_data, "fixture round produced no events_data rows"
+
+        sp_seen = {t: 0 for t in self._RES02_SP_TYPES}
+        targeted_rows = 0
+
+        for row in events_data:
+            etype = row["type"]
+            meta = row["meta"]
+            aid = row["aid"]
+            tid = row["tid"]
+
+            # Universal actor block — every row's `aid` is a real int
+            # (GameEvent.actor is a non-nullable FK), so the actor block
+            # is required on every row.
+            assert isinstance(aid, int) and aid != -1, (
+                f"events_data row must carry a real actor id; got aid={aid!r} "
+                f"on row {row!r}"
+            )
+            for key in self._ACTOR_BLOCK_KEYS:
+                assert key in meta, (
+                    f"events_data row of type {etype!r} must carry meta[{key!r}]"
+                    f" per the RES-02b seam contract; meta={meta!r}"
+                )
+            assert isinstance(meta["actor_role"], str), (
+                f"meta.actor_role on row {etype!r} must be str, got "
+                f"{type(meta['actor_role']).__name__}"
+            )
+            assert (
+                isinstance(meta["actor_shots"], int) and meta["actor_shots"] >= 0
+            ), f"meta.actor_shots={meta['actor_shots']!r} must be int >= 0"
+            assert (
+                isinstance(meta["actor_lives"], int) and meta["actor_lives"] >= 0
+            ), f"meta.actor_lives={meta['actor_lives']!r} must be int >= 0"
+            assert isinstance(
+                meta["actor_points"], int
+            ), f"meta.actor_points={meta['actor_points']!r} must be int"
+            assert isinstance(meta["sp"], int), (
+                f"meta.sp on row {etype!r} must be int, got "
+                f"{type(meta['sp']).__name__}"
+            )
+            assert (
+                0 <= meta["sp"] <= 99
+            ), f"meta.sp={meta['sp']!r} out of [0, 99] on {etype!r}"
+
+            # Universal target block — only when tid is a real id.
+            if tid != -1:
+                targeted_rows += 1
+                for key in self._TARGET_BLOCK_KEYS:
+                    assert key in meta, (
+                        f"events_data row of type {etype!r} with tid={tid!r} "
+                        f"must carry meta[{key!r}] per the RES-02b seam "
+                        f"contract; meta={meta!r}"
+                    )
+                assert isinstance(meta["target_role"], str)
+                assert (
+                    isinstance(meta["target_shots"], int) and meta["target_shots"] >= 0
+                )
+                assert (
+                    isinstance(meta["target_lives"], int) and meta["target_lives"] >= 0
+                )
+                assert isinstance(meta["target_points"], int)
+
+            if etype in self._RES02_SP_TYPES:
+                sp_seen[etype] += 1
+                if etype == "base_capture":
+                    assert "special_points" not in meta, (
+                        "base_capture row must rename 'special_points' to "
+                        f"'sp' with no alias; got meta={meta!r}"
+                    )
+
+        # Sanity: the fixture should produce at least one SP-carrying row
+        # and at least one targeted row so the universal assertions above
+        # have bite.
+        assert sum(sp_seen.values()) > 0, (
+            "fixture round produced no SP-carrying events — adjust ROUND_TICKS"
+            " or seed so this assertion has bite"
+        )
+        assert targeted_rows > 0, (
+            "fixture round produced no rows with a target — adjust fixture so "
+            "the target-block assertion has bite"
+        )
+
 
 # ---------------------------------------------------------------------------
 # SIM-09 — batch view threads arena_map through to BatchSimulator + save path
