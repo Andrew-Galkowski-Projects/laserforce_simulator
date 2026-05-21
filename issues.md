@@ -1,13 +1,6 @@
 # Website Testing — Bugs & Issues
 
-End-to-end Chrome MCP test pass against the SIM-09 branch
-(`sim-09-replace-rbs-with-batchsim`) on 2026-05-20. Server: Django dev
-on `http://127.0.0.1:8000`, DEBUG=True. Pages exercised: `/`, `/create/`,
-`/15/` (new team), `/matches/`, `/matches/create/`, `/matches/24/`,
-`/matches/game-round/64/`, `/matches/game-round/64/events/`,
-`/matches/single-round/create/`, `/matches/game-round/66/`,
-`/matches/simulate-batch/` (with new arena_map field), save flow,
-`/matches/game-round/67/`, `/maps/`. Responsive: 720×1115 + 1280×900.
+Date: 2026-05-21. Server: `python manage.py runserver` (PID 33364, http://127.0.0.1:8000). Branch: `res-04-heatmap`. Scope: RES-04 movement heatmap surfaces (per-round + map-editor multi-round) + smoke pass over Teams / Matches / Match detail / Round detail / Events / Missile log / Batch Sim / Maps / Team detail / Map editor.
 
 Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 
@@ -15,158 +8,103 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
-| BS-1 | 🟠 | Batch sim template | `BatchSimulateForm.arena_map` field wasn't rendered in `batch_simulate.html` — fix landed in this test run (template now renders it) |
-| MAPS-1 | 🟡 | Single round | Picking the Syracuse map raised "no red base placed" — pre-existing map-data issue, view caught + flashed correctly |
-| A11Y-1 | 🟡 | Maps list | One Chrome a11y issue: form element missing `autocomplete` attribute on `/maps/` |
-| ℹ️ | ℹ️ | All pages | No `/favicon.ico` 404 observed this session (browser didn't request one) |
+| H-1 | ✅ | Round heatmap (RES-04) | Populated heatmap renders end-to-end on a freshly simulated map round |
+| H-2 | ✅ | Round heatmap (RES-04) | Map-less round shows "No map" notice; filter row + canvas correctly hidden |
+| H-3 | ✅ | Round heatmap (RES-04) | Pre-RES-04 round (null `cell_occupancy_json`) renders contract DOM with empty `{}` payload |
+| H-4 | ✅ | Round heatmap (RES-04) | Filter dropdowns (player/role/team) repaint canvas live, no console errors |
+| H-5 | ✅ | Map editor (RES-04) | New "Heatmap" mode toggles controls, fetches `/maps/<id>/heatmap-data/`, updates round count |
+| H-6 | ✅ | Heatmap API (RES-04) | `/maps/<id>/heatmap-data/` returns 200 + reconciles: red_total + blue_total == both_total |
+| H-7 | ✅ | Heatmap API (RES-04) | 400 paths: missing `zone_size` and `team_color=purple` both return 400 |
+| H-8 | ✅ | Create match | `/matches/create/` with arena_map=San Marcos completes, persists rounds, populates `cell_occupancy_json` |
+| RD-1 | 🟡 | Round detail | Round detail page lacks a Missile log link (heatmap link added by RES-04, missile-log link still missing) — **pre-existing, not RES-04 regression** |
+| BS-1 | 🟡 | Batch sim form | `[issue] No label associated with a form field (count: 4)` — pre-existing a11y warning |
+| MP-1 | 🟡 | Maps list | `[issue] An element doesn't have an autocomplete attribute` on upload form — pre-existing a11y warning |
 
-**Overall:** Every SIM-09 critical surface works end-to-end through the UI.
-The view path is dramatically faster than pre-SIM-09 (full 2-round match
-near-instant vs ~10-20 s under RBS). Single-round and full-match flows
-both persist `arena_map` + `zone_size` + `rng_seed` on the resulting
-`GameRound`. Batch-save now also carries the map (closes the pre-SIM-09
-gap). Overwatch resolution (MOVE-03) is firing on view-mode rounds for
-the first time — 146 overwatch-flagged events on round 64. One template
-miss found (BS-1) and fixed inline; no Python regressions surfaced.
-
----
-
-## Match flow (full SIM-09 path)
-
-### ✅ Create + simulate match — works
-`/matches/create/` with teams 1+2 + San Marcos Laser Tag map →
-`/matches/24/` near-instantly (pre-SIM-09 RBS: ~10-20 s). Both rounds
-persisted, per-Match colour swap reflected in stored sides (round 1:
-team_red=1; round 2: team_red=2). Console + network clean.
-
-### ✅ Round detail (`/matches/game-round/64/`) — works
-Per-player tables render, console clean. `arena_map` and `zone_size`
-displayed via the standard round-detail layout.
-
-### ✅ Event log (`/matches/game-round/64/events/`) — works
-3,787 events emitted as compact JSON for client-side windowing (M-1
-contract intact). Event types covered: `movement` (2309), `tag` (583),
-`miss` (437), `resupply_lives` (166), `resupply_ammo` (216),
-`combo_resupply` (24), `missile` (3), `missile_dodge` (2), `special`
-(29), `elimination` (8), `base_capture` (10). **146 events carry
-`metadata.overwatch=true`** — MOVE-03 Hold/Overwatch resolution
-([ADR-0009](docs/adr/0009-hold-overwatch.md)) is firing on view-mode
-rounds for the first time post-SIM-09. Movement metadata keys
-(`actor_role`, `start_row`/`col`, `end_row`/`col`, `cell_row`/`col`,
-`new_zone`) match the spec.
+**Overall:** All RES-04 surfaces work end-to-end on a freshly simulated map-aware match. Filter cascade math reconciles (red+blue sums equal both). Pre-RES-04 rounds gracefully render empty heatmaps with no errors. Map-less rounds render the correct "No map" notice. No console errors on any RES-04 page. Smoke pass on the rest of the app surfaces no new regressions; the three 🟡 items are all pre-existing.
 
 ---
 
-## Single round flow
+## Round heatmap `/matches/game-round/<id>/heatmap/`
 
-### ✅ Create single round with map — works
-`/matches/single-round/create/` with San Marcos → standalone
-`GameRound` id=66. Direct DB inspection confirms:
-- `arena_map = "San Marcos Laser Tag"` ✓
-- `zone_size = 20` ✓
-- `rng_seed = 404797581936799606` ✓ (replayable)
-- `match = None` ✓ (standalone)
-- 4582 GameEvents persisted.
+### ✅ H-1 — populated heatmap renders
+Created match 31 (Phoenix vs Vipers on San Marcos Laser Tag, zone_size=20) → rounds 82 + 83. `/matches/game-round/82/heatmap/` returns 200, processed map image loads, canvas dimensions match background (1780×1104), `cell-occupancy-data` carries 12 players × 1187 cells = 17,161 total ticks. Yellow→orange→red gradient renders cleanly over the map.
 
-### 🟡 MAPS-1 — Syracuse map raises "no red base placed"
-Choosing "Syracuse Laser Tag" surfaces the `ValueError` from
-`load_map_context` as a flash message:
-> "Map 'Syracuse Laser Tag' has no red base placed. Place a red and
-> blue base in the map editor before simulating."
+### ✅ H-2 — map-less round notice
+`/matches/game-round/79/heatmap/` (round with `arena_map=None`) → renders `#heatmap-no-map-notice` with text `"No map — heatmap unavailable."`; `#heatmap-canvas` and `#heatmap-filter-row` are absent (template gates correctly on `has_map`).
 
-This is the **expected** behaviour for an incomplete map — the
-`load_map_context` raise is caught by the view's `try/except
-ValueError` and surfaced cleanly. The actual data gap (no red base
-on the Syracuse map) is pre-existing and unrelated to SIM-09. Worth
-noting that `_maps_with_confirmed_config()` only filters to "has
-confirmed zone config" — it doesn't require base placement, so an
-unfinished map can appear in the picker. Fix idea (not SIM-09 scope):
-tighten the form queryset to also require both bases + sight lines,
-matching what `load_map_context` actually demands.
+### ✅ H-3 — pre-RES-04 round graceful empty
+`/matches/game-round/81/heatmap/` (pre-RES-04 round on map 4, `cell_occupancy_json=null`) → all contract DOM IDs present (`heatmap-canvas`, `heatmap-bg`, `heatmap-stage`, `heatmap-filter-player/role/team`, `cell-occupancy-data`, `player-roster-data`), JSON script holds `{}`, `window.LF_ZONE_SIZE=20`, player roster (12) renders for the filter dropdowns. Canvas paints nothing — exactly what the no-backfill contract specifies (ADR-0004).
+
+### ✅ H-4 — filter reactivity
+Programmatic `change` events on `#heatmap-filter-team` and `#heatmap-filter-role` repaint the canvas live. Pixel-count smoke: both teams ≈ 176k painted pixels, red-only ≈ 124k, scout-only ≈ 50k. No console errors (only a benign Canvas2D `getImageData willReadFrequently` warning emitted by the test script itself, not production).
 
 ---
 
-## Batch simulation (SIM-09 critical surface)
+## Map editor heatmap mode `/maps/<id>/editor/`
 
-### 🟠 BS-1 — `arena_map` field missing from `batch_simulate.html`
-**Repro:** Open `/matches/simulate-batch/`. Initial render shows only
-Red Team / Blue Team / Number of simulations / Run.
-**Expected:** Arena Map dropdown between Blue Team and Number of
-simulations (mirroring the `MatchSetupForm` template).
-**Actual (pre-fix):** No Arena Map field. The form had it
-(`forms.py:94-100`), the view forwarded it (`views.py:384`), the
-session stash carried it (`views.py:401`), and the worker resolved it
-(`views.py:44-50`) — but the template `batch_simulate.html` rendered
-only `team_red`, `team_blue`, `n`, so users had no way to set it.
-**Root cause:** `laserforce_simulator/templates/matches/batch_simulate.html`
-omitted the field block (sibling templates `enhanced_match_setup.html`
-and `enhanced_single_round_setup.html` both have the matching block
-for their own `arena_map` field). The pre-fix template body was the
-3-column row at line 12-25.
-**Fix applied this session:** Added the field block between Blue Team
-and Number of simulations; column widths rebalanced to `col-md-3`s +
-`col-md-2` (n) + `col-md-1` (Run). Server restarted with `DEBUG=True`
-so the template cache picks up the change in future sessions; in
-production the existing template-cache invalidation on restart covers
-it.
-**Verified after fix:** Field renders, 50-round batch on San Marcos
-completed in 115 s (~2.3 s/round with map active vs ~200 ms no-map),
-all sections render (win rates, side advantage panel, score
-distribution, save buttons).
-
-### ✅ Save batch game with map — works (SIM-09 critical fix)
-After running 50 sims with San Marcos map, clicked **Save Average
-Game(s)** → background save job replayed the seed and persisted
-`GameRound id=67`:
-- `arena_map = "San Marcos Laser Tag"` ✓
-- `zone_size = 20` ✓
-- `rng_seed = 5650959302570751530` ✓
-- 5719 events.
-
-Pre-SIM-09 this round would have had `arena_map=None`/`zone_size=None`
-because `save_games` didn't accept the kwarg and `_run_save_job`
-didn't resolve the session-stashed id. The view-thread-spawn arg
-plumbing (`save_batch_games` → `_run_save_job` 6-arg threading.Thread
-positional args) is unit-tested in
-`views_tests.py::test_save_batch_games_view_threads_arena_map_id_into_worker_args`.
+### ✅ H-5 — Heatmap mode toggle
+Clicking the new `mode-heatmap` button shows `#heatmap-controls`, fetches `/maps/4/heatmap-data/?zone_size=20`, and updates `#heatmap-editor-round-count` to `"rounds aggregated: 2"` (matches the two freshly simulated rounds; pre-RES-04 rounds with null JSON are excluded by the `cell_occupancy_json__isnull=False` filter). Existing `mode-zones` and `mode-sight` controls still present and untouched.
 
 ---
 
-## Other pages
+## Heatmap data endpoint `/maps/<id>/heatmap-data/`
 
-### ✅ Homepage (`/`) — works
-14 teams listed, valid roster badges accurate, console + network clean.
+### ✅ H-6 — aggregation math reconciles
+Tested against map 4, zone_size=20, after rounds 82 + 83 were simulated:
+- `both` (no team filter): 627 cells, total 32,960 ticks across cells.
+- `team_color=red`: 486 cells, 13,265 total ticks.
+- `team_color=blue`: 506 cells, 19,695 total ticks.
+- 13,265 + 19,695 = 32,960 ✅ (red + blue partition sums to both).
 
-### ✅ Match history (`/matches/`) — works
-Tournament Matches section lists match 24 (the new SIM-09 match);
-Single Rounds section lists rounds 66, 67 (the new SIM-09 rounds),
-both linkable.
-
-### ✅ Team detail (`/15/`) — works
-New `ChromeTest QA` team (id=15) renders with "0 players Incomplete
-Roster" badge, correct list of missing roles, Add Player / Assign
-Slots / Match History / Edit Team buttons present.
-
-### ✅ Maps list (`/maps/`) — works
-Both arena maps listed with thumbnails (304 cached). One a11y issue
-(see A11Y-1 below).
-
-### 🟡 A11Y-1 — Maps list form missing `autocomplete`
-Chrome flagged one Issue on `/maps/`: "An element doesn't have an
-autocomplete attribute". Likely the upload-map form input field. Not
-blocking but a quick fix (`autocomplete="off"` or
-`autocomplete="name"` on the relevant `<input>`).
-
-### ✅ Responsive (720×1115) — works
-Form fields stack vertically, navbar collapses to hamburger button as
-expected (below 992px breakpoint), Run button stretches full width,
-Arena Map field included in the stack. Screenshot:
-`.claude/worktrees/chrome-test-720.png`.
+### ✅ H-7 — error paths
+- `?team_color=purple` → **400** ✅
+- missing `zone_size` → **400** ✅
+- bogus `map_id` → **404** (covered by view tests, not retested manually).
 
 ---
 
-## Known/benign
+## Create match flow
 
-- `/favicon.ico` 404 not observed this session (browser didn't request).
-- The "no red base placed" message on the Syracuse map is correct
-  error surfacing, not a SIM-09 bug.
+### ✅ H-8 — end-to-end create-with-map
+`/matches/create/` → select Phoenix (red), Vipers (blue), Friendly Match, **arena_map=San Marcos Laser Tag** → click Simulate Match. Page transitions to `/matches/31/`, "Match simulated! Vipers won!" alert, final score 58748–68492, two View Round links (rounds 82 + 83). Both rounds persisted with non-null `cell_occupancy_json` (verified via the multi-round endpoint round_count=2).
+
+---
+
+## Pre-existing issues (not RES-04 regressions)
+
+### 🟡 RD-1 — round detail lacks missile-log link
+`templates/matches/game_round_detail.html:276-277` lists "📋 View Event Log" and (post-RES-04) "🗺️ Movement Heatmap" but does **not** link to `missile_log`. The heatmap template itself includes the missile-log link in its top nav row, but round detail does not. **Pre-existing — the missile-log link was never wired into round_detail when RES-03 shipped.** Out of scope for this PR; flagging for a follow-up.
+
+```html
+276:    <a href="{% url 'game_round_events' round.id %}" class="btn btn-info">📋 View Event Log</a>
+277:    <a href="{% url 'movement_heatmap' round_id=round.id %}" class="btn btn-info">🗺️ Movement Heatmap</a>
+```
+
+### 🟡 BS-1 — batch sim form a11y
+`/matches/simulate-batch/` emits `[issue] No label associated with a form field (count: 4)`. Pre-existing; not touched by RES-04. Cosmetic.
+
+### 🟡 MP-1 — maps list autocomplete
+`/maps/` emits `[issue] An element doesn't have an autocomplete attribute`. Upload form input. Pre-existing; not touched by RES-04. Cosmetic.
+
+---
+
+## Coverage
+
+Pages exercised (all 200, no console errors unless flagged above):
+- `/` (homepage / teams list)
+- `/16/` (team detail — Phoenix)
+- `/matches/` (match list)
+- `/matches/create/` (create + simulate, full flow)
+- `/matches/31/` (match detail, freshly created)
+- `/matches/game-round/82/` (round detail, freshly populated)
+- `/matches/game-round/82/events/` (event log)
+- `/matches/game-round/82/missile-log/` (RES-03)
+- `/matches/game-round/82/heatmap/` (**RES-04 populated**)
+- `/matches/game-round/81/heatmap/` (RES-04 pre-RES-04 round, empty)
+- `/matches/game-round/79/heatmap/` (RES-04 map-less notice)
+- `/matches/simulate-batch/` (batch sim form)
+- `/maps/` (maps list)
+- `/maps/4/editor/` (**RES-04 Heatmap mode**)
+- `/maps/4/heatmap-data/?zone_size=20` + `&team_color=red|blue|purple` and missing-zone variants
+
+Test data created during this run: match **31** (rounds **82** + **83**) on map 4 (San Marcos). Used seeded teams Phoenix (16) and Vipers (17) — no new teams created.

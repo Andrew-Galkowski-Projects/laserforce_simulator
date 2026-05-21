@@ -39,7 +39,7 @@ The `core` app provides a 2D arena map importer and editor used to configure map
 
 ## Map Editor UI (`templates/maps/map_editor.html`)
 
-Two modes toggled in the top bar:
+Three modes toggled in the top bar:
 
 **Zones & Bases mode**: zone grid overlay on B&W processed image. Click base-type buttons (Red/Blue/Neutral 1–4) then click a cell to place. Clicking the same cell again removes it. Wall brush buttons (None, Low Wall, Windowed Wall, High Wall, Floor) let the user paint cell types 4/5/0/1 directly onto the grid; all wall brush buttons support bulk drag-select (click-drag draws a rectangle, releasing applies the wall type to all non-base cells in the region). When Windowed Wall is selected, a direction picker (N/S/E/W) sets the aperture facing stored in `wall_meta`. When High Wall is selected, a height input (default 1.0) sets the `height` value stored in `wall_meta[r,c]["height"]` for each painted cell. Spawn brush buttons (None, Red Spawn, Blue Spawn, Erase Spawn) overlay semi-transparent colored squares on spawn cells; activating a spawn brush dearms the wall and base brushes. Spawn cells auto-load from the server on zone-size selection and are included in the Save payload only when the user has manually edited them (`spawnEdited` flag). Elevation tools: the **Elevation Brush** lets the user enter a numeric elevation value and paint it onto individual cells (click or drag-select); the **Ramp Tool** lets the user click two cells to linearly interpolate elevation across all cells between them (both use the existing bulk drag-select pattern). "Save Configuration" POSTs `zone_size`, base pixel positions, the full `zones` grid, (when non-empty) `wall_meta` including any `height` entries, and (when non-empty) the `elevation` 2D float array; additionally sends `red_spawn`/`blue_spawn` arrays when user-edited. On zone-size change, `wallMeta`, `elevation`, and spawn cell sets are all reset with a console warning if unsaved placements are discarded.
 
@@ -49,6 +49,8 @@ Two modes toggled in the top bar:
 - *Base view* (dropdown): shows cells that can tag a specific base. Click to add/remove.
 - "Compute Sight Lines" triggers full all-pairs server computation (~0.1–1s depending on zone size).
 - "Save Sight Lines" batches the payload into chunks of 100 keys per POST to avoid the 2.5 MB Django request limit. First batch replaces, subsequent batches merge.
+
+**Heatmap mode (RES-04)**: a third mode toggle alongside Zones & Bases and Sight Lines, driven by the `mode-heatmap` button. Activating Heatmap mode hides the Zones & Bases and Sight Lines control blocks, shows `#heatmap-controls` (a team-color filter dropdown `heatmap-editor-filter-team` with options Both/Red/Blue, plus a `heatmap-editor-round-count` text span), hides the zone-paint and sight-line overlays, and renders a translucent heatmap canvas over `#zone-img`. The JS fetches `GET /maps/<id>/heatmap-data/?zone_size=<currently-selected>&team_color=<filter>` (URL name `map_heatmap_data`, view `core/views.py::map_heatmap_data`), which aggregates `GameRound.cell_occupancy_json` across every round on this map at the selected zone_size — server-side filtering by `team_color` joins the per-player occupancy entries against `PlayerRoundState.team_color` and sums the matching cells (cells whose final sum is `0` are omitted). The round count from the response populates `#heatmap-editor-round-count`. The same canvas-overlay routine is reused by the per-round view at `/matches/game-round/<id>/heatmap/` (see [`matches/CLAUDE.md`](../matches/CLAUDE.md) — **RES-04 movement heatmap**); only the filter set differs (the editor exposes team color only, the round view exposes player/role/team).
 
 ## URLs
 
@@ -66,6 +68,7 @@ Two modes toggled in the top bar:
 /maps/<id>/strong-spots/            → GET: current HeavyStrongSpotsConfig cells (?zone_size=)
 /maps/<id>/strong-spots/save/       → POST: persist user-edited heavy strong spots
 /maps/<id>/spawn-cells/             → GET: red_spawn/blue_spawn lists from confirmed zone_data (no zone_size param — data is per-config)
+/maps/<id>/heatmap-data/            → GET: RES-04 multi-round movement heatmap aggregate (URL name "map_heatmap_data"; required ?zone_size=<n>, optional &team_color=red|blue)
 ```
 
 ## Storage Backend (`core/views.py`)

@@ -373,3 +373,67 @@ class TestFlushToDBExtendedSignature:
         # Default round_number is 1; default match is None (standalone).
         assert gr.match is None
         assert gr.round_number == 1
+
+    def test_flush_to_db_populates_cell_occupancy_json_when_map_active(self):
+        """RES-04: ``_flush_to_db`` writes ``GameRound.cell_occupancy_json``
+        when (and only when) a map is active.
+
+        Active-map round: the field is a non-``None`` dict whose top-level
+        keys are ``str(player_id)`` and whose inner keys are ``"r,c"`` cell
+        strings → int tick counts. Map-less round: the field stays
+        ``None`` (the gate `movement_ctx is not None` is respected).
+        """
+        import re
+
+        # --- Map-active round ---------------------------------------------
+        arena_map, expected_zone_size = _make_minimal_arena_map("Sim09RES04Map")
+        red, _ = make_team_with_slots("Sim09RES04R")
+        blue, _ = make_team_with_slots("Sim09RES04B")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            gr = BatchSimulator().simulate_single_round_detailed(
+                red, blue, arena_map=arena_map
+            )
+        assert gr.arena_map == arena_map
+        assert gr.zone_size == expected_zone_size
+
+        assert gr.cell_occupancy_json is not None, (
+            "RES-04: a map-active round must populate cell_occupancy_json; " "got None"
+        )
+        assert isinstance(gr.cell_occupancy_json, dict), (
+            "cell_occupancy_json must be a dict, got "
+            f"{type(gr.cell_occupancy_json).__name__}"
+        )
+
+        top_key_re = re.compile(r"^\d+$")
+        inner_key_re = re.compile(r"^\d+,\d+$")
+        for player_key, per_cell in gr.cell_occupancy_json.items():
+            assert top_key_re.fullmatch(player_key), (
+                "cell_occupancy_json top-level keys must be str(player_id), "
+                f"got {player_key!r}"
+            )
+            assert isinstance(per_cell, dict), (
+                f"cell_occupancy_json[{player_key!r}] must be a dict, "
+                f"got {type(per_cell).__name__}"
+            )
+            for cell_key, ticks in per_cell.items():
+                assert inner_key_re.fullmatch(cell_key), (
+                    "cell_occupancy_json inner keys must match 'r,c'; got "
+                    f"{cell_key!r}"
+                )
+                assert isinstance(ticks, int), (
+                    "cell_occupancy_json inner values must be int (post-"
+                    f"rounding); got {ticks!r} ({type(ticks).__name__})"
+                )
+
+        # --- Map-less round -----------------------------------------------
+        red_no, _ = make_team_with_slots("Sim09RES04NoMapR")
+        blue_no, _ = make_team_with_slots("Sim09RES04NoMapB")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            gr_no = BatchSimulator().simulate_single_round_detailed(red_no, blue_no)
+        assert gr_no.arena_map is None
+        assert gr_no.cell_occupancy_json is None, (
+            "RES-04 gate regression: a map-less round must leave "
+            "cell_occupancy_json NULL (movement_ctx is None => skip the "
+            "reconstruction step). Got "
+            f"{gr_no.cell_occupancy_json!r}"
+        )

@@ -165,6 +165,11 @@ class GameRound(models.Model):
         ),
     )
 
+    # RES-04: per-round cell occupancy snapshot. Populated by _flush_to_db
+    # when a map is active (movement_ctx is not None); map-less rounds
+    # leave this null. JSON shape: {"<player_id>": {"<r>,<c>": tick_count}}.
+    cell_occupancy_json = models.JSONField(null=True, blank=True, default=None)
+
     # Round results
     red_points = models.IntegerField(default=0)
     blue_points = models.IntegerField(default=0)

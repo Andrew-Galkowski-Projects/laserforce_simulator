@@ -23,6 +23,7 @@
     <div class="btn-group btn-group-sm" role="group">
         <button id="mode-zones" class="btn btn-secondary active">Zones &amp; Bases</button>
         <button id="mode-sight" class="btn btn-secondary">Sight Lines</button>
+        <button id="mode-heatmap" class="btn btn-secondary">Heatmap</button>
     </div>
 
     <button id="save-btn" class="btn btn-success btn-sm">Save Configuration</button>
@@ -126,6 +127,19 @@
     <small id="sight-hint" class="text-muted fst-italic">Switch to this mode to begin.</small>
 </div>
 
+{# Heatmap mode controls #}
+<div id="heatmap-controls" style="display: none;">
+    <label for="heatmap-editor-filter-team" class="me-2">Team:</label>
+    <select id="heatmap-editor-filter-team">
+        <option value="">Both</option>
+        <option value="red">Red</option>
+        <option value="blue">Blue</option>
+    </select>
+    <span id="heatmap-editor-round-count" class="ms-3 text-muted">
+        rounds aggregated: 0
+    </span>
+</div>
+
 <div id="save-alert"       class="alert d-none" role="alert"></div>
 <div id="save-sight-alert" class="alert d-none" role="alert"></div>
 
@@ -157,6 +171,9 @@
                     <canvas id="zone-canvas"
                             style="position:absolute;top:0;left:0;width:100%;height:100%;">
                     </canvas>
+                    <canvas id="heatmap-canvas"
+                            style="position:absolute;top:0;left:0;width:100%;height:100%;display:none;pointer-events:none;">
+                    </canvas>
                 </div>
             </div>
         </div>
@@ -176,6 +193,7 @@ const GET_SPAWN_URL    = "{% url 'get_spawn_cells'     arena_map.pk %}";
 const GET_RANKED_URL   = "{% url 'get_ranked_cells'    arena_map.pk %}";
 const GET_SPOTS_URL    = "{% url 'get_strong_spots'    arena_map.pk %}";
 const SAVE_SPOTS_URL   = "{% url 'save_strong_spots'   arena_map.pk %}";
+const HEATMAP_DATA_URL = "{% url 'map_heatmap_data'    arena_map.pk %}";
 const CSRF_TOKEN       = "{{ csrf_token }}";
 const DEFAULT_ZONE_SIZE= {{ saved_zone_size }};
 
@@ -679,8 +697,12 @@ document.getElementById("mode-zones").addEventListener("click", () => {
     currentMode = "zones";
     document.getElementById("mode-zones").classList.add("active");
     document.getElementById("mode-sight").classList.remove("active");
+    document.getElementById("mode-heatmap").classList.remove("active");
     document.getElementById("zones-controls").classList.remove("d-none");
     document.getElementById("sight-controls").classList.add("d-none");
+    document.getElementById("heatmap-controls").style.display = "none";
+    document.getElementById("heatmap-canvas").style.display = "none";
+    document.getElementById("zone-canvas").style.display = "";
     canvas.style.cursor = selectedBaseType ? "crosshair" : "default";
     selectedCell = null;
     bulkEditMode = false;
@@ -695,8 +717,12 @@ document.getElementById("mode-sight").addEventListener("click", () => {
     currentMode = "sight";
     document.getElementById("mode-zones").classList.remove("active");
     document.getElementById("mode-sight").classList.add("active");
+    document.getElementById("mode-heatmap").classList.remove("active");
     document.getElementById("zones-controls").classList.add("d-none");
     document.getElementById("sight-controls").classList.remove("d-none");
+    document.getElementById("heatmap-controls").style.display = "none";
+    document.getElementById("heatmap-canvas").style.display = "none";
+    document.getElementById("zone-canvas").style.display = "";
     // Dearm any base type
     selectedBaseType = null;
     document.querySelectorAll(".base-btn").forEach(b => b.classList.remove("active"));
@@ -709,6 +735,94 @@ document.getElementById("mode-sight").addEventListener("click", () => {
     zonesBulkDragStart = null;
     canvas.style.cursor = "pointer";
     loadSightLines();
+});
+
+// ── Heatmap mode (RES-04) ──────────────────────────────────────────────────
+function renderHeatmapOverlay(data) {
+    const heatmapCanvas = document.getElementById("heatmap-canvas");
+    const bg = document.getElementById("zone-img");
+    if (!heatmapCanvas || !bg) return;
+
+    const zoneSize = data.zone_size;
+    const cellOccupancy = data.cell_occupancy || {};
+
+    const w = bg.naturalWidth || bg.width;
+    const h = bg.naturalHeight || bg.height;
+    if (!w || !h) return;
+    heatmapCanvas.width = w;
+    heatmapCanvas.height = h;
+
+    const ctx = heatmapCanvas.getContext("2d");
+    ctx.clearRect(0, 0, w, h);
+
+    let maxVal = 0;
+    Object.keys(cellOccupancy).forEach(k => {
+        if (cellOccupancy[k] > maxVal) maxVal = cellOccupancy[k];
+    });
+    if (maxVal <= 0 || !zoneSize || zoneSize <= 0) return;
+
+    Object.keys(cellOccupancy).forEach(cellKey => {
+        const val = cellOccupancy[cellKey];
+        if (val <= 0) return;
+        const parts = cellKey.split(",");
+        const row = parseInt(parts[0], 10);
+        const col = parseInt(parts[1], 10);
+        if (isNaN(row) || isNaN(col)) return;
+        // sqrt compresses dynamic range so mid-traffic cells are visible
+        // even when one hot cell (spawn) dominates the per-cell max.
+        const t = Math.sqrt(Math.min(1, val / maxVal));
+        const hue = 60 * (1 - t);
+        const alpha = 0.45 + 0.45 * t;
+        ctx.fillStyle = "hsla(" + hue + ", 95%, 50%, " + alpha + ")";
+        ctx.fillRect(col * zoneSize, row * zoneSize, zoneSize, zoneSize);
+    });
+}
+
+function loadHeatmapData() {
+    const teamFilter = document.getElementById("heatmap-editor-filter-team").value || "";
+    const zoneSize = select.value;
+    const params = new URLSearchParams();
+    params.set("zone_size", zoneSize);
+    if (teamFilter) params.set("team_color", teamFilter);
+    const url = HEATMAP_DATA_URL + "?" + params.toString();
+
+    fetch(url)
+        .then(r => {
+            if (!r.ok) throw new Error("heatmap fetch failed: " + r.status);
+            return r.json();
+        })
+        .then(data => {
+            const countEl = document.getElementById("heatmap-editor-round-count");
+            if (countEl) {
+                countEl.textContent = "rounds aggregated: " + (data.round_count || 0);
+            }
+            renderHeatmapOverlay(data);
+        })
+        .catch(err => {
+            console.warn("Heatmap data load failed:", err);
+            const countEl = document.getElementById("heatmap-editor-round-count");
+            if (countEl) countEl.textContent = "rounds aggregated: 0";
+        });
+}
+
+document.getElementById("mode-heatmap").addEventListener("click", () => {
+    currentMode = "heatmap";
+    document.getElementById("mode-zones").classList.remove("active");
+    document.getElementById("mode-sight").classList.remove("active");
+    document.getElementById("mode-heatmap").classList.add("active");
+    document.getElementById("zones-controls").classList.add("d-none");
+    document.getElementById("sight-controls").classList.add("d-none");
+    document.getElementById("heatmap-controls").style.display = "";
+    document.getElementById("zone-canvas").style.display = "none";
+    document.getElementById("heatmap-canvas").style.display = "";
+    // Dearm any base type
+    selectedBaseType = null;
+    document.querySelectorAll(".base-btn").forEach(b => b.classList.remove("active"));
+    loadHeatmapData();
+});
+
+document.getElementById("heatmap-editor-filter-team").addEventListener("change", () => {
+    if (currentMode === "heatmap") loadHeatmapData();
 });
 
 // ── Zone size change ───────────────────────────────────────────────────────────
