@@ -13,6 +13,8 @@
 {# (Shots, Lives, Points, SP) are constructed by a single factory.    #}
 {{ events_data|json_script:"events-data" }}
 {{ players_data|json_script:"players-data" }}
+{# RV-02: auto-flagged highlights, rendered client-side into #highlights-list. #}
+{{ highlights_json|json_script:"highlights-data" }}
 
 <style>
     .event-metadata { display: none; }
@@ -87,6 +89,81 @@
     </div>
 </div>
 
+<!-- RV-02: Highlights -->
+<div class="row mb-4" id="highlights-section">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex align-items-center">
+                <h5 class="mb-0">Highlights</h5>
+                <span class="badge bg-warning text-dark ms-2" id="highlights-count"></span>
+            </div>
+            <div class="card-body" style="max-height: 320px; overflow-y: auto;">
+                <div id="highlights-list" class="list-group list-group-flush"></div>
+                <p class="text-muted mb-0" id="highlights-empty">No highlights flagged for this round.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    // RV-02: render the auto-flagged highlights list. Reads #highlights-data
+    // (a flat list of {kind, tick, team, actor, target, points, label}); tick
+    // is raw ticks (TIME-01) — convert to mm:ss (÷2) only here at the display
+    // boundary.
+    var el = document.getElementById("highlights-data");
+    var highlights = el ? JSON.parse(el.textContent) : [];
+    var list = document.getElementById("highlights-list");
+    var empty = document.getElementById("highlights-empty");
+    var count = document.getElementById("highlights-count");
+
+    var KIND_LABEL = {
+        nuke_detonation: "Nuke",
+        nuke_cancelled: "Nuke Cancelled",
+        medic_reset: "Medic Reset",
+        first_elimination: "First Elim",
+        team_elimination: "Team Wipe",
+        base_capture: "Base",
+        scoring_burst: "Scoring Burst",
+    };
+
+    function mmss(tick) {
+        if (tick === null || tick === undefined) { return "--:--"; }
+        var secs = Math.floor(tick / 2);  // ÷2 display boundary (TIME-01)
+        var m = Math.floor(secs / 60);
+        var s = secs % 60;
+        return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+    }
+
+    if (count) { count.textContent = highlights.length; }
+    if (!highlights.length) { return; }
+    if (empty) { empty.style.display = "none"; }
+
+    highlights.forEach(function (h) {
+        var row = document.createElement("div");
+        row.className = "list-group-item d-flex align-items-center";
+        if (h.team === "red") { row.classList.add("border-start", "border-danger", "border-3"); }
+        else if (h.team === "blue") { row.classList.add("border-start", "border-primary", "border-3"); }
+
+        var time = document.createElement("span");
+        time.className = "text-muted me-3 font-monospace";
+        time.textContent = mmss(h.tick);
+
+        var tag = document.createElement("span");
+        tag.className = "badge bg-secondary me-3";
+        tag.textContent = KIND_LABEL[h.kind] || h.kind;
+
+        var label = document.createElement("span");
+        label.textContent = h.label || "";
+
+        row.appendChild(time);
+        row.appendChild(tag);
+        row.appendChild(label);
+        list.appendChild(row);
+    });
+})();
+</script>
+
 <!-- Kill Feed -->
 <div class="row mb-4">
     <div class="col-md-6">
@@ -142,9 +219,19 @@
                                         <label class="form-check-label" for="type-missiled">Missile</label>
                                     </div>
                                     <div class="form-check">
+                                        <input class="form-check-input type-filter" type="checkbox" value="locking"
+                                            id="type-locking" checked>
+                                        <label class="form-check-label" for="type-locking">Missile Lock</label>
+                                    </div>
+                                    <div class="form-check">
                                         <input class="form-check-input type-filter" type="checkbox" value="resupply"
                                             id="type-resupply" checked>
                                         <label class="form-check-label" for="type-resupply">Resupply</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input type-filter" type="checkbox" value="base_capture"
+                                            id="type-base" checked>
+                                        <label class="form-check-label" for="type-base">Base Capture</label>
                                     </div>
                                     <div class="form-check">
                                         <input class="form-check-input type-filter" type="checkbox" value="movement"

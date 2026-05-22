@@ -57,6 +57,14 @@ class PlayerState:
     # column / no migration (PlayerRoundState has no such attr by default —
     # read everywhere via getattr(player, "is_holding", False)).
     is_holding: bool = False
+    # RV-02: Medic reset-chain counter (CONTEXT.md "Medic reset chain").
+    # Incremented in BatchSimulator._record_down (before stamping
+    # last_downed_time) when the player is re-Downed before recovering
+    # (``not is_active_at(second)``); fires a one-shot ``medic_reset`` event
+    # when it reaches 2 for a medic; reset to 0 once the player is fully active
+    # again. Transient — no DB column / no migration. Consumed only for the
+    # highlight; no RNG, no mechanics effect.
+    down_chain_count: int = 0
     last_tagged_id: Optional[str] = None
 
     # missile bookkeeping

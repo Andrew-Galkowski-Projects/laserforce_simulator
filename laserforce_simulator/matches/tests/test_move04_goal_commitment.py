@@ -337,7 +337,7 @@ class TestMove04GoalCommitment:
         # from_action=True (action-driven) — must be cleared.
         p1 = _make_player("red_scout", "red", "scout", cell_row=0, cell_col=0)
         p1._committed_goal = ((5, 5), True, 4)
-        BatchSimulator._record_down(p1, 7)
+        BatchSimulator()._record_down(p1, 7)
         assert (
             p1._committed_goal is None
         ), "action-driven commitment must be cleared on Down"
@@ -345,7 +345,7 @@ class TestMove04GoalCommitment:
         # from_action=False (positioning) — must SURVIVE.
         p2 = _make_player("red_scout", "red", "scout", cell_row=0, cell_col=0)
         p2._committed_goal = ((2, 2), False, 4)
-        BatchSimulator._record_down(p2, 7)
+        BatchSimulator()._record_down(p2, 7)
         assert (
             p2._committed_goal is not None
             and p2._committed_goal[0] == (2, 2)

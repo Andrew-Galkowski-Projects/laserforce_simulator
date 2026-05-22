@@ -189,19 +189,19 @@ class TestRecordDownClearsHold:
         p = _ps("scout")
         p.is_holding = True
         p._path_cache = (("g",), [(0, 1)], (0, 0))
-        BatchSimulator._record_down(p, 12)
+        BatchSimulator()._record_down(p, 12)
         assert getattr(p, "is_holding", False) is False
 
     def test_record_down_still_clears_path_cache(self):
         p = _ps("scout")
         p.is_holding = True
         p._path_cache = (("g",), [(0, 1)], (0, 0))
-        BatchSimulator._record_down(p, 12)
+        BatchSimulator()._record_down(p, 12)
         assert p._path_cache is None
 
     def test_record_down_still_stamps_last_downed_time(self):
         p = _ps("scout")
-        BatchSimulator._record_down(p, 33)
+        BatchSimulator()._record_down(p, 33)
         assert p.last_downed_time == 33
 
 

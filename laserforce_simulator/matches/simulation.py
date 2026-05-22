@@ -1173,6 +1173,13 @@ class BatchSimulator:
         pending_reactions: list[PendingReaction] = []
         eliminated_at = SURVIVED_SENTINEL
 
+        # RV-02: expose the per-run event log + pending-nuke queue to
+        # _record_down (the shared life-loss chokepoint) so it can emit the
+        # medic_reset / nuke_cancelled highlight events at the down tick.
+        # Re-bound each round.
+        self._event_log = event_log
+        self._pending_nukes = pending_nukes
+
         # TIME-01: fully tick-native loop. `tick` is the integer tick index in
         # [0, self.ROUND_TICKS). All internal comparisons, scheduling, uptime
         # accumulation, and timestamps are in ticks. shot_cooldown() still
@@ -1297,7 +1304,7 @@ class BatchSimulator:
                     )
                     if r_defender.shields == 0:
                         r_defender.final_lives = max(0, r_defender.final_lives - 1)
-                        BatchSimulator._record_down(r_defender, second)
+                        self._record_down(r_defender, second)
                         r_defender.shields = r_defender.max_shields
                         if r_defender.final_lives <= 0:
                             r_defender.was_eliminated_at = second
@@ -1405,7 +1412,7 @@ class BatchSimulator:
                     downed = fu_defender.shields == 0
                     if downed:
                         fu_defender.final_lives = max(0, fu_defender.final_lives - 1)
-                        BatchSimulator._record_down(fu_defender, second)
+                        self._record_down(fu_defender, second)
                         fu_defender.shields = fu_defender.max_shields
                         if fu_defender.final_lives <= 0:
                             fu_defender.was_eliminated_at = second
@@ -1487,6 +1494,23 @@ class BatchSimulator:
                         blue_players if n.player.team_color == "red" else red_players
                     )
                     self._complete_nuke(n.player, n.complete_time, opposing, event_log)
+                elif event_log is not None and not n.cancel_logged:
+                    # RV-02: defensive fallback — a nuke that fizzles without
+                    # ever passing through _record_down (no down/disarm site
+                    # logged it) still gets exactly one nuke_cancelled record.
+                    # Normally the down-tick emit already set cancel_logged.
+                    n.cancel_logged = True
+                    event_log.append(
+                        {
+                            "event_type": "nuke_cancelled",
+                            "actor_id": n.player.player_id,
+                            "target_id": None,
+                            "timestamp": n.complete_time,
+                            "points_awarded": 0,
+                            "description": f"{n.player.name} nuke cancelled",
+                            "metadata": _build_meta(n.player),
+                        }
+                    )
 
             # --- alive players this tick ---
             red_alive = [
@@ -1691,6 +1715,8 @@ class BatchSimulator:
                     p.ticks_reset_window += 1
                 else:
                     p.ticks_active += 1
+                    # RV-02: fully active again → the medic reset chain ends.
+                    p.down_chain_count = 0
 
             # --- check for team elimination ---
             red_alive = [p for p in red_players if p.final_lives > 0]
@@ -1785,8 +1811,7 @@ class BatchSimulator:
         multiplier = 2 if chosen == "only_move" else 1
         self._move_player_in_memory(player, second, goal_cell, movement_ctx, multiplier)
 
-    @staticmethod
-    def _record_down(player, second) -> None:
+    def _record_down(self, player, second) -> None:
         """Stamp a life-loss tick and drop the committed A* route.
 
         Centralises the two things every BatchSim life-loss site must do:
@@ -1802,7 +1827,39 @@ class BatchSimulator:
         ends Hold, mirroring how it knocks the player off its committed route.
         Hanging this off the same helper keeps "every life-loss site clears
         the hold" structural rather than per-site review.
+
+        RV-02: also the single chokepoint for the ``medic_reset`` and
+        ``nuke_cancelled`` highlight events. Both consume no RNG and emit only
+        into the per-run event log (``self._event_log``), so seeded games are
+        unchanged. Converted from a ``@staticmethod`` to an instance method so
+        it can reach the per-run event log + pending-nuke queue stashed on
+        ``self`` by ``_simulate_round``.
         """
+        # RV-02 (medic reset chain): detect a re-Down (the medic was knocked
+        # back down before recovering) BEFORE stamping ``last_downed_time``,
+        # which would otherwise flip ``is_active_at``. A fresh Down (fully
+        # recovered / never downed) starts the chain at 1; a re-Down increments
+        # it. Fire ``medic_reset`` once per chain on the 2nd Down of the chain
+        # (the first re-Down) — "downed a 2nd time before coming back up".
+        if player.is_active_at(second):
+            player.down_chain_count = 1
+        else:
+            player.down_chain_count += 1
+        if player.role == "medic" and player.down_chain_count == 2:
+            event_log = getattr(self, "_event_log", None)
+            if event_log is not None:
+                event_log.append(
+                    {
+                        "event_type": "medic_reset",
+                        "actor_id": player.player_id,
+                        "target_id": None,
+                        "timestamp": second,
+                        "points_awarded": 0,
+                        "description": f"{player.name} medic reset (down-chain)",
+                        "metadata": _build_meta(player),
+                    }
+                )
+
         player.last_downed_time = second
         player._path_cache = None
         player.is_holding = False
@@ -1812,6 +1869,30 @@ class BatchSimulator:
         # role/map-derived and stay valid through a respawn, so they survive.
         if player._committed_goal is not None and player._committed_goal[1]:
             player._committed_goal = None
+
+        # RV-02 (nuke cancellation): a Commander Downed/eliminated during its
+        # own nuke's fuse cancels it. Emit ``nuke_cancelled`` here at the
+        # down/disarm tick (single source), de-dup via ``cancel_logged``, and
+        # LEAVE the nuke in ``pending_nukes`` so ``_apply_nuke_reaction_flags``
+        # and ``drain_nukes`` reads are unchanged (no seeded drift).
+        if player.role == "commander":
+            event_log = getattr(self, "_event_log", None)
+            pending_nukes = getattr(self, "_pending_nukes", None)
+            if event_log is not None and pending_nukes:
+                for n in pending_nukes:
+                    if n.player is player and not n.cancel_logged:
+                        n.cancel_logged = True
+                        event_log.append(
+                            {
+                                "event_type": "nuke_cancelled",
+                                "actor_id": player.player_id,
+                                "target_id": None,
+                                "timestamp": second,
+                                "points_awarded": 0,
+                                "description": f"{player.name} nuke cancelled",
+                                "metadata": _build_meta(player),
+                            }
+                        )
 
     def _move_player_in_memory(
         self, player, second, goal_cell, movement_ctx, multiplier: int = 1
@@ -2079,7 +2160,7 @@ class BatchSimulator:
                     ):
                         defender.special_active_until = 0
                     defender.final_lives = max(0, defender.final_lives - 1)
-                    BatchSimulator._record_down(defender, second)
+                    self._record_down(defender, second)
                     defender.shields = defender.max_shields
                     if defender.final_lives <= 0:
                         defender.was_eliminated_at = second
@@ -2195,7 +2276,7 @@ class BatchSimulator:
                 r_defender.shields = max(0, r_defender.shields - r_attacker.shot_power)
                 if r_defender.shields == 0:
                     r_defender.final_lives = max(0, r_defender.final_lives - 1)
-                    BatchSimulator._record_down(r_defender, second)
+                    self._record_down(r_defender, second)
                     r_defender.shields = r_defender.max_shields
                     if r_defender.final_lives <= 0:
                         r_defender.was_eliminated_at = second
@@ -2327,7 +2408,7 @@ class BatchSimulator:
                 downed = fu_defender.shields == 0
                 if downed:
                     fu_defender.final_lives = max(0, fu_defender.final_lives - 1)
-                    BatchSimulator._record_down(fu_defender, second)
+                    self._record_down(fu_defender, second)
                     fu_defender.shields = fu_defender.max_shields
                     if fu_defender.final_lives <= 0:
                         fu_defender.was_eliminated_at = second
@@ -2447,7 +2528,7 @@ class BatchSimulator:
                             ),
                         }
                     )
-            BatchSimulator._record_down(defender, second)
+            self._record_down(defender, second)
             defender.times_missiled += 1
 
             attacker.points_scored += 500
@@ -2643,7 +2724,7 @@ class BatchSimulator:
                     continue
                 lives_taken = min(opp.final_lives, 3)
                 opp.final_lives -= lives_taken
-                BatchSimulator._record_down(opp, second)
+                self._record_down(opp, second)
                 opp.shields = opp.max_shields
                 if opp.role == "commander" and opp.special_active_until > second:
                     opp.special_active_until = 0
@@ -2957,6 +3038,27 @@ class BatchSimulator:
 
             game_round.cell_occupancy_json = occupancy_json
             game_round.save(update_fields=["cell_occupancy_json"])
+
+        # RV-02: build auto-flagged highlights from the in-memory event buffer
+        # + result dict and persist. Runs on every path (map or 3-zone). Pure
+        # function (no RNG); id->name / id->team maps keep it Django-free.
+        from matches.sim_helpers.highlights import build_highlights
+        from matches.sim_helpers.time_constants import TICKS_PER_ROUND
+
+        name_by_id = {
+            p.player_id: p.name for p in red_players + blue_players if p.player_id
+        }
+        team_by_id = {
+            p.player_id: p.team_color for p in red_players + blue_players if p.player_id
+        }
+        game_round.highlights_json = build_highlights(
+            events,
+            result,
+            round_ticks=TICKS_PER_ROUND,
+            name_by_id=name_by_id,
+            team_by_id=team_by_id,
+        )
+        game_round.save(update_fields=["highlights_json"])
 
         return game_round
 

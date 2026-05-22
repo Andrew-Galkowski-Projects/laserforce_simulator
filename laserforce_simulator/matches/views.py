@@ -865,6 +865,9 @@ def game_round_events(request, round_id):
         "events_data": events_data,
         "players_data": players_data,
         "event_summary": game_round.get_event_summary(),
+        # RV-02: auto-flagged highlights (built at round completion). Coalesce
+        # null (pre-RV-02 rounds) to [] so the template/JS always sees a list.
+        "highlights_json": game_round.highlights_json or [],
     }
 
     return render(request, "matches/game_round_events.html", context)

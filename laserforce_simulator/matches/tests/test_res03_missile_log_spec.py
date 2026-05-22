@@ -451,7 +451,7 @@ class TestRes03DownAndRespawn:
         first = [e for e in log if e.get("event_type") == "missiled"]
         assert first, "first resolution must emit a missiled event"
         # Forcing a Down on the attacker should NOT re-emit a missiled row.
-        BatchSimulator._record_down(attacker, second=25)
+        BatchSimulator()._record_down(attacker, second=25)
         second_log = [
             e
             for e in log

@@ -23,6 +23,7 @@ Helper modules used by `BatchSimulator` (the sole simulator post-SIM-09; [ADR-00
 | `_path_cache` | **MOVE-02** transient goal-keyed A* route cache ([ADR-0008](../../docs/adr/0008-path-commitment-via-goal-keyed-cache.md), CONTEXT.md **Path commitment**). `Optional[tuple]`, **default `None`** — either `None` or a `(cached_goal, remaining_cells, anchor)` 3-tuple: `remaining_cells` is the route still to walk, `anchor` is the cell the previous re-step left the player on (used to detect off-route displacement; a legacy 2-tuple with no anchor is tolerated for hand-built test caches). **No DB column / no migration** (mirrors `movement_trail`); default `None` so it is never a required ctor arg and never crosses the parallel-worker process boundary. A fresh per-round `PlayerState` starts uncached (effectively "cleared at round start"); cleared back to `None` at every tag / follow-up / reaction / missile / nuke life-loss site via the shared `BatchSimulator._record_down(player, second)` helper (knocked off-path → recompute). Managed by `pathfinding.astar_advance_cached` |
 | `is_holding` | **MOVE-03** transient bool, **default `False`** (mirrors `is_hiding`; **no DB column / no migration**). Set `True` on a `hold` Action roll — the player is in **Overwatch** (CONTEXT.md) and **Stationary** (joins `is_hiding` / `capture_base` in the `_advance_player` predicate, no **Advance**). **Carries over**: stays `True` until a non-`hold` Action is rolled, or a Down/respawn force-clears it via the shared `BatchSimulator._record_down(player, second)` helper (same hook that drops `_path_cache`, so every life-loss site is covered structurally). [ADR-0009](../../docs/adr/0009-hold-overwatch.md) |
 | `_last_step_cells` | **MOVE-03** transient `list[tuple[int,int]]` (default empty), **no DB column / no migration**. Populated each move tick by `pathfinding.astar_advance_cached` with the committed-route cells it popped this tick (the player's traversed cells this Advance); consumed by the `BatchSimulator` Overwatch resolution step to test whether a mover's traversal crossed any **Hold**ing player's **Line of sight** (the "moved *through* LoS in one Advance" guarantee — the exact intermediate route is otherwise discarded by MOVE-01). Read-only signal; consuming it uses **no RNG**. [ADR-0009](../../docs/adr/0009-hold-overwatch.md) / [ADR-0008](../../docs/adr/0008-path-commitment-via-goal-keyed-cache.md) |
+| `down_chain_count` | **RV-02** transient `int`, **default `0`**, **no DB column / no migration** — the **Medic reset chain** counter (CONTEXT.md). Incremented in `BatchSimulator._record_down` (the static→instance chokepoint) **before** stamping `last_downed_time` when `not is_active_at(second)` (i.e. the player is re-**Down**ed before recovery); fires a one-shot `medic_reset` `GameEvent` when it reaches 2 for a `medic`; reset to `0` in the per-tick active-accounting branch (player recovered). Consumed only for the `medic_reset` highlight — no RNG, no mechanics effect |
 
 ### Uptime breakdown fields
 
@@ -273,6 +274,14 @@ Pure Python, **zero imports** (no Django, no other `sim_helpers` modules). The s
 
 ---
 
+## highlights.py
+
+**RV-02 auto-flag highlights builder.** Pure Python — **no Django imports, no I/O, no RNG**.
+
+**`build_highlights(events, result, *, round_ticks, name_by_id, team_by_id) -> list[dict]`** — scans a round's events and result and returns the per-round **Highlight** list (CONTEXT.md). Inputs: `events` is the **in-memory event-dict buffer** the simulator built during the round (NOT ORM rows); `result` is the round result dict (supplies `team_elimination` via `red_eliminated`/`blue_eliminated` + `eliminated_at`); `round_ticks` is `TICKS_PER_ROUND` (1800); `name_by_id` / `team_by_id` are id→name / id→team maps passed in so the function emits NAME strings and a per-event team while staying pure (an absent id resolves to `None`). Returns a flat list sorted by tick ascending, each record the fixed 7-key shape `{kind, tick, team, actor, target, points, label}`. **Six kinds:** `nuke_detonation` (discriminated by `event_type=="special"` + `metadata["targets"]` + `points_awarded==500`; the activation row is not flagged), `nuke_cancelled`, `medic_reset`, `first_elimination`, `team_elimination` (from `result`, not the `dead` event), `scoring_burst` (forward `[t, t+60)` 60-tick window, maximum single-team gross points; none when there were no point events). **Base captures are not a highlight kind** (routine point-grabs — surfaced in the events-log timeline instead); their points still feed the `scoring_burst` sum. Called by `BatchSimulator._flush_to_db` after the RES-04 `cell_occupancy_json` block, with the result persisted via a second `GameRound.save(update_fields=["highlights_json"])`. The `nuke_cancelled` / `medic_reset` event rows it reads are emitted server-side from the `BatchSimulator._record_down` chokepoint (converted **static → instance** for RV-02). Tested by `matches/tests/test_rv02_highlights.py` — no DB required.
+
+---
+
 ## map_context.py
 
 `MapContext` is a typed `@dataclass` that replaces the former 11-key `movement_ctx` plain dict. It is constructed once per round by `matches.sim_helpers.map_loader.load_map_context` (or the legacy `build_movement_ctx` shim) and passed through the simulation call chain. All callers access it via domain-level methods rather than dict key lookups.
@@ -305,11 +314,13 @@ Typed `@dataclass` classes for the four pending-event queues used by `BatchSimul
 | Class | Fields | Replaces |
 |-------|--------|---------|
 | `PendingMissile` | `complete_time`, `attacker`, `defender` | `(float, player, player)` |
-| `PendingNuke` | `complete_time`, `player` | `(float, player)` |
+| `PendingNuke` | `complete_time`, `player`, `cancel_logged` | `(float, player)` |
 | `PendingFollowup` | `fire_at`, `attacker`, `defender`, `chain_depth` | `(float, player, player, int)` |
 | `PendingReaction` | `fire_at`, `attacker`, `defender` | `(float, player, player)` |
 
 `combat.py::start_missile_lock` returns a `PendingMissile` (was a raw 3-tuple).
+
+**RV-02:** `PendingNuke.cancel_logged: bool = False` is the **Nuke cancellation** de-dup flag (CONTEXT.md). When a Commander with a live pending nuke is **Down**ed/disarmed, the `BatchSimulator._record_down` chokepoint (converted **static → instance** for RV-02) emits a single `nuke_cancelled` `GameEvent` and sets `cancel_logged=True` while **leaving the nuke in `pending_nukes`** — so the MECH-05 nuke-reaction/drain path is unchanged and the drain-else branch only emits when `not cancel_logged` (no double-log, no re-baseline).
 
 ---
 

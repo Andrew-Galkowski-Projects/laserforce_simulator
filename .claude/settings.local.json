@@ -151,7 +151,8 @@
       "Bash(powershell -File .claude/skills/chrome-web-testing/scripts/start_test_server.ps1)",
       "Bash(powershell -File \"/c/Users/Andrew Galkowski/.claude/skills/chrome-web-testing/scripts/start_test_server.ps1\")",
       "Bash(git push *)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:8765/)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:8765/)",
+      "Bash(git commit *)"
     ]
   }
 }
