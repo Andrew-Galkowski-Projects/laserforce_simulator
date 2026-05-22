@@ -1387,6 +1387,26 @@ def _make_state(game_round, player, *, team_color, role, **stats):
 
 
 @pytest.mark.django_db
+class TestBs1BatchFormLabels:
+    """BS-1: every visible field on the batch-sim form must have a label
+    programmatically associated via ``for=`` (a11y — "No label associated
+    with a form field"). The four fields are team_red, team_blue, arena_map,
+    and n.
+    """
+
+    def test_batch_form_labels_have_for_attribute(self):
+        client = Client()
+        resp = client.get(reverse("simulate_batch"))
+        assert resp.status_code == 200
+        html = resp.content.decode()
+        for field_id in ("id_team_red", "id_team_blue", "id_arena_map", "id_n"):
+            assert f'for="{field_id}"' in html, (
+                f"batch-form label for {field_id} must use for= to associate "
+                f"with its field (BS-1 a11y)"
+            )
+
+
+@pytest.mark.django_db
 class TestRd1RoundDetailMissileLink:
     """RD-1: the round-detail page must link to the missile log, alongside the
     existing Event Log and Movement Heatmap links (the link was wired into the

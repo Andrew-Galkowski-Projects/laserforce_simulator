@@ -17,7 +17,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | H-7 | ✅ | Heatmap API (RES-04) | 400 paths: missing `zone_size` and `team_color=purple` both return 400 |
 | H-8 | ✅ | Create match | `/matches/create/` with arena_map=San Marcos completes, persists rounds, populates `cell_occupancy_json` |
 | ~~RD-1~~ | ~~🟡~~ | ~~Round detail~~ | ~~Round detail page lacks a Missile log link (heatmap link added by RES-04, missile-log link still missing) — **pre-existing, not RES-04 regression**~~ _(fixed)_ |
-| BS-1 | 🟡 | Batch sim form | `[issue] No label associated with a form field (count: 4)` — pre-existing a11y warning |
+| ~~BS-1~~ | ~~🟡~~ | ~~Batch sim form~~ | ~~`[issue] No label associated with a form field (count: 4)` — pre-existing a11y warning~~ _(fixed)_ |
 | ~~BS-2~~ | ~~🟠~~ | ~~Batch sim (SIM-11 run)~~ | ~~Re-running a batch without reloading throws Chart.js "Canvas is already in use" — breaks polling, shows stale partial results~~ _(fixed)_ |
 | MP-1 | 🟡 | Maps list | `[issue] An element doesn't have an autocomplete attribute` on upload form — pre-existing a11y warning |
 
@@ -81,7 +81,7 @@ Tested against map 4, zone_size=20, after rounds 82 + 83 were simulated:
 277:    <a href="{% url 'movement_heatmap' round_id=round.id %}" class="btn btn-info">🗺️ Movement Heatmap</a>
 ```
 
-### 🟡 BS-1 — batch sim form a11y
+### ~~🟡 BS-1 — batch sim form a11y~~ _(fixed)_
 `/matches/simulate-batch/` emits `[issue] No label associated with a form field (count: 4)`. Pre-existing; not touched by RES-04. Cosmetic.
 
 ### 🟡 MP-1 — maps list autocomplete
