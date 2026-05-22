@@ -464,6 +464,21 @@ Provide a clearly documented constant dict so weights are adjustable without tou
 Runs `ResourceBasedSimulator` n times, returns aggregate stats (win%, avg score, avg survivors, 
 score distribution histogram). Uses simple in-process threading when the run exceeds ~5 seconds;
 results are not stored as permanent Match records.
+- completed: fully subsumed by the SIM-09/10/11 chain that logically depended on it but was
+  built first (phase-ordered plan, dependent-ordered build). **No code/tests/PR of source** —
+  this entry is a docs-only reconciliation. Every SIM-02 acceptance criterion is met or exceeded:
+  the `POST /matches/simulate-batch/` endpoint exists (`matches/urls.py` → `views.simulate_batch`,
+  URL name `simulate_batch`); `BatchSimulateForm` (`matches/forms.py`) accepts `team_red` / `team_blue`
+  / `n` with the **exact** `N_CHOICES = [("10"),("50"),("100"),("500")]` plus an optional `arena_map`;
+  aggregate stats (win %, avg score, avg survivors, score-distribution histogram) ship via
+  `_aggregate_batch` + client-side binning (DOM ids `batch-red-win-pct`, `batch-avg-red-score`,
+  `batch-avg-red-survivors`, `scoreChart`, …). The "in-process threading when slow" requirement is
+  **exceeded** — SIM-11 wires `workers=_workers_for(n)` (serial for `n < 50`, `ProcessPoolExecutor`
+  capped at 4 for `n >= 50`) into the SIM-10 `run_incremental` progressive path, so large batches scale
+  across cores with a live progress UI rather than a one-shot blocking render. Results are **not**
+  persisted as Match records — the save-games flow (`save_batch_games`) is a separate opt-in. The
+  legacy `ResourceBasedSimulator` named here was removed by SIM-09; the sole engine is `BatchSimulator`.
+  Domain term **Batch run** is already in [CONTEXT.md](CONTEXT.md). No ADR, no migration, no re-baseline.
 
 ### SIM-04 · Simulation confidence display
 Per-player data source label ("40 real games" vs "Role defaults — no history") on simulation summary. 
