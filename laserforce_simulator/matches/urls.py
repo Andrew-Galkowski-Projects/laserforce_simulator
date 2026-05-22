@@ -29,6 +29,11 @@ urlpatterns = [
         views.movement_heatmap,
         name="movement_heatmap",
     ),
+    path(
+        "game-round/<int:round_id>/export/",
+        views.export_round_report,
+        name="export_round_report",
+    ),
     path("compare/", views.compare_rounds, name="compare_rounds"),
     path("simulate-batch/", views.simulate_batch, name="simulate_batch"),
     path(
