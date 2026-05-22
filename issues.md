@@ -18,7 +18,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | H-8 | ✅ | Create match | `/matches/create/` with arena_map=San Marcos completes, persists rounds, populates `cell_occupancy_json` |
 | RD-1 | 🟡 | Round detail | Round detail page lacks a Missile log link (heatmap link added by RES-04, missile-log link still missing) — **pre-existing, not RES-04 regression** |
 | BS-1 | 🟡 | Batch sim form | `[issue] No label associated with a form field (count: 4)` — pre-existing a11y warning |
-| BS-2 | 🟠 | Batch sim (SIM-11 run) | Re-running a batch without reloading throws Chart.js "Canvas is already in use" — breaks polling, shows stale partial results |
+| ~~BS-2~~ | ~~🟠~~ | ~~Batch sim (SIM-11 run)~~ | ~~Re-running a batch without reloading throws Chart.js "Canvas is already in use" — breaks polling, shows stale partial results~~ _(fixed)_ |
 | MP-1 | 🟡 | Maps list | `[issue] An element doesn't have an autocomplete attribute` on upload form — pre-existing a11y warning |
 
 **Overall:** All RES-04 surfaces work end-to-end on a freshly simulated map-aware match. Filter cascade math reconciles (red+blue sums equal both). Pre-RES-04 rounds gracefully render empty heatmaps with no errors. Map-less rounds render the correct "No map" notice. No console errors on any RES-04 page. Smoke pass on the rest of the app surfaces no new regressions; the three 🟡 items are all pre-existing.
@@ -87,7 +87,7 @@ Tested against map 4, zone_size=20, after rounds 82 + 83 were simulated:
 ### 🟡 MP-1 — maps list autocomplete
 `/maps/` emits `[issue] An element doesn't have an autocomplete attribute`. Upload form input. Pre-existing; not touched by RES-04. Cosmetic.
 
-### 🟠 BS-2 — batch sim re-run reuses Chart.js canvas without destroying it
+### ~~🟠 BS-2 — batch sim re-run reuses Chart.js canvas without destroying it~~ _(fixed)_
 Found 2026-05-21 while testing SIM-11 (multi-process batch path) on branch `sim-11-workers-ui-batch`. **Server-side SIM-11 change is not implicated — this is a pre-existing client-side bug in the batch template's polling/render JS.**
 
 Repro: `/matches/simulate-batch/` → run any batch (e.g. n=50) and let it finish → **without reloading the page**, change "Number of simulations" and click Run again. The second run throws:

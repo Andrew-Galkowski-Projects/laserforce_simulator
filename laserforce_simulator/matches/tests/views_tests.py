@@ -1806,3 +1806,34 @@ class TestRv01CompareRounds:
         game_round = _make_round(red, blue)
 
         assert _cumulative_team_points(game_round, red.id) == []
+
+
+@pytest.mark.django_db
+class TestBs2BatchChartReuse:
+    """BS-2: re-running a batch without reloading must not throw Chart.js
+    "Canvas is already in use" — the prior Chart bound to ``#scoreChart``
+    has to be destroyed before a new run re-instantiates on the same canvas.
+
+    Pure-markup regression: the batch template nulls ``scoreChart`` on a new
+    run but, pre-fix, never ``.destroy()``-ed the live instance, so the next
+    ``new Chart(...)`` on the still-bound canvas threw. The robust guard is
+    ``Chart.getChart(<canvas>)?.destroy()`` so any chart attached to the
+    canvas (not just one we tracked) is torn down before reuse.
+    """
+
+    def test_batch_template_destroys_existing_chart_before_reuse(self):
+        client = Client()
+        resp = client.get(reverse("simulate_batch"))
+        assert resp.status_code == 200
+        html = resp.content.decode()
+
+        # The canvas-reuse guard must be present so a second run on the same
+        # page tears down any chart still bound to #scoreChart.
+        assert "Chart.getChart(" in html, (
+            "batch template must call Chart.getChart() to find and destroy a "
+            "live chart on #scoreChart before re-instantiating (BS-2)"
+        )
+        assert ".destroy()" in html, (
+            "batch template must .destroy() the existing Chart.js instance "
+            "before reusing the #scoreChart canvas (BS-2)"
+        )

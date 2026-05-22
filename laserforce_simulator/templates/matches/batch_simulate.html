@@ -414,7 +414,13 @@ document.getElementById('batch-form').addEventListener('submit', function (ev) {
       setTeamLabels();
       currentJobId = data.job_id;
       pollStartedAt = Date.now();
-      // Reset visual state.
+      // Reset visual state. BS-2: tear down any Chart.js instance still bound
+      // to the canvas before a new run re-instantiates on it — otherwise
+      // re-running without reloading throws "Canvas is already in use".
+      const priorChart = scoreChart || Chart.getChart(document.getElementById("scoreChart"));
+      if (priorChart) {
+        priorChart.destroy();
+      }
       scoreChart = null;
       document.getElementById('batch-results').style.display = 'none';
       document.getElementById('batch-save-games').style.display = 'none';
