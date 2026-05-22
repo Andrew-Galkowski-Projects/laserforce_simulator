@@ -1387,6 +1387,49 @@ def _make_state(game_round, player, *, team_color, role, **stats):
 
 
 @pytest.mark.django_db
+class TestBs1BatchFormLabels:
+    """BS-1: every visible field on the batch-sim form must have a label
+    programmatically associated via ``for=`` (a11y — "No label associated
+    with a form field"). The four fields are team_red, team_blue, arena_map,
+    and n.
+    """
+
+    def test_batch_form_labels_have_for_attribute(self):
+        client = Client()
+        resp = client.get(reverse("simulate_batch"))
+        assert resp.status_code == 200
+        html = resp.content.decode()
+        for field_id in ("id_team_red", "id_team_blue", "id_arena_map", "id_n"):
+            assert f'for="{field_id}"' in html, (
+                f"batch-form label for {field_id} must use for= to associate "
+                f"with its field (BS-1 a11y)"
+            )
+
+
+@pytest.mark.django_db
+class TestRd1RoundDetailMissileLink:
+    """RD-1: the round-detail page must link to the missile log, alongside the
+    existing Event Log and Movement Heatmap links (the link was wired into the
+    heatmap template but never into round detail when RES-03 shipped).
+    """
+
+    def test_round_detail_links_to_missile_log(self):
+        red, _ = make_team_with_slots("Rd1Red")
+        blue, _ = make_team_with_slots("Rd1Blue")
+        game_round = _make_round(red, blue)
+
+        client = Client()
+        resp = client.get(
+            reverse("game_round_detail", kwargs={"round_id": game_round.id})
+        )
+        assert resp.status_code == 200
+        missile_url = reverse("missile_log", kwargs={"round_id": game_round.id})
+        assert (
+            missile_url.encode() in resp.content
+        ), "round-detail page must link to the missile log (RD-1)"
+
+
+@pytest.mark.django_db
 class TestRv01CompareRounds:
     """RV-01 — compare two rounds side by side (read-only view + helpers)."""
 
@@ -1809,6 +1852,35 @@ class TestRv01CompareRounds:
 
 
 @pytest.mark.django_db
+class TestBs2BatchChartReuse:
+    """BS-2: re-running a batch without reloading must not throw Chart.js
+    "Canvas is already in use" — the prior Chart bound to ``#scoreChart``
+    has to be destroyed before a new run re-instantiates on the same canvas.
+
+    Pure-markup regression: the batch template nulls ``scoreChart`` on a new
+    run but, pre-fix, never ``.destroy()``-ed the live instance, so the next
+    ``new Chart(...)`` on the still-bound canvas threw. The robust guard is
+    ``Chart.getChart(<canvas>)?.destroy()`` so any chart attached to the
+    canvas (not just one we tracked) is torn down before reuse.
+    """
+
+    def test_batch_template_destroys_existing_chart_before_reuse(self):
+        client = Client()
+        resp = client.get(reverse("simulate_batch"))
+        assert resp.status_code == 200
+        html = resp.content.decode()
+
+        # The canvas-reuse guard must be present so a second run on the same
+        # page tears down any chart still bound to #scoreChart.
+        assert "Chart.getChart(" in html, (
+            "batch template must call Chart.getChart() to find and destroy a "
+            "live chart on #scoreChart before re-instantiating (BS-2)"
+        )
+        assert ".destroy()" in html, (
+            "batch template must .destroy() the existing Chart.js instance "
+            "before reusing the #scoreChart canvas (BS-2)"
+        )
+
 class TestRv03ExportRoundReport:
     """RV-03 — ``export_round_report`` view: GET returns an attachment PDF,
     missing id 404s, non-GET 405s, and both ``is_simulated`` branches render.
