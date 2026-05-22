@@ -13,6 +13,17 @@ A contest between two teams, decided over exactly two **Rounds**; the teams swap
 One 15-minute simulated game within a **Match** (persisted as `GameRound`).
 _Avoid_: "game" (informal — say **Round**), "match" (a Match is the pair, not one round)
 
+**Simulated round**:
+A **Round** produced by the **Simulator**, carrying `GameRound.is_simulated = True` — the provenance distinction that drives the "[Simulated]" watermark on the **Round report** (RV-03). The `is_simulated` `BooleanField(default=True)` is added by RV-03; the simulator paths inherit the default and never set it explicitly, so today *every* persisted Round is a Simulated round (there is no real-game import path yet). The eventual source of truth for provenance is the **Actual game log** pairing: a Round not linked to an `actual_game_log` is simulated (`is_simulated = True`); an imported real-game Round links to its `actual_game_log` and is stored `is_simulated = False` (no watermark). That import path — the `.tdf` parser and the `actual_game_log` link — is **IMPORT-01** (PLAN.md), the first writer of `is_simulated = False`.
+_Avoid_: inferring simulated-vs-real from `rng_seed` presence (a null seed means "predates SIM-07", not "real game") — provenance is the explicit `is_simulated` flag.
+
+**Actual game log**:
+A real Laserforce SM5 game export (a `.tdf` file — UTF-16, tab-separated, sectioned) imported and stored so a **Round** can represent an *actual* game rather than a **Simulated round**. A Round paired with an Actual game log is `is_simulated = False`; the parser and import tool are **IMPORT-01** (PLAN.md, not yet built). Sample logs live in `Screenshots_and_video_examples/sample_games/`.
+_Avoid_: treating an Actual game log as a **Replay** (a Replay re-runs the **Simulator** from an **RNG seed**; an Actual game log is recorded real-world play, never re-simulated).
+
+**Round report**:
+The single-**Round** PDF export at `GET /matches/game-round/<id>/export/` (RV-03) — round summary, scoreboards, per-player table, and resource summary, generated server-side with ReportLab. A **Simulated round** is stamped with a "[Simulated]" watermark; charts are deliberately *not* in the first cut (deferred — see PLAN.md).
+
 **Roster**:
 The six **Players** fielded by a **Team** for a match — one of each role plus one duplicate.
 

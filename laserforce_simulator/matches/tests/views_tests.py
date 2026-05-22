@@ -1880,3 +1880,122 @@ class TestBs2BatchChartReuse:
             "batch template must .destroy() the existing Chart.js instance "
             "before reusing the #scoreChart canvas (BS-2)"
         )
+
+class TestRv03ExportRoundReport:
+    """RV-03 — ``export_round_report`` view: GET returns an attachment PDF,
+    missing id 404s, non-GET 405s, and both ``is_simulated`` branches render.
+
+    Pins the §3 / §8 / §10b view contract from
+    ``.claude/worktrees/rv-03-seam-contract.md``. These build a real saved
+    ``GameRound`` with a handful of ``PlayerRoundState`` rows via the shared
+    ``_make_round`` / ``_make_state`` helpers (no simulator run — DB-cheap and
+    deterministic). The view assembles ``report_data`` from the ORM and hands
+    it to the pure ``build_round_report`` builder; until both the view and the
+    builder land, these tests fail (expected, spec-first).
+    """
+
+    def _saved_round_with_players(self, prefix: str, *, is_simulated: bool = True):
+        """A completed round with two red + two blue players, explicit stats.
+
+        ``is_simulated`` is set after creation so the test does not depend on
+        the field being a ``create()`` kwarg (it has a ``default=True``).
+        """
+        red, red_players = make_team_with_slots(f"{prefix}R")
+        blue, blue_players = make_team_with_slots(f"{prefix}B")
+        game_round = _make_round(red, blue)
+        game_round.red_points = 9000
+        game_round.blue_points = 8500
+        game_round.is_simulated = is_simulated
+        game_round.save()
+        _make_state(
+            game_round,
+            red_players["commander"],
+            team_color="red",
+            role="commander",
+            points_scored=5000,
+            tags_made=10,
+            final_lives=3,
+        )
+        _make_state(
+            game_round,
+            red_players["heavy"],
+            team_color="red",
+            role="heavy",
+            points_scored=4000,
+            tags_made=8,
+            final_lives=2,
+        )
+        _make_state(
+            game_round,
+            blue_players["scout"],
+            team_color="blue",
+            role="scout",
+            points_scored=4500,
+            tags_made=7,
+            final_lives=1,
+        )
+        _make_state(
+            game_round,
+            blue_players["medic"],
+            team_color="blue",
+            role="medic",
+            points_scored=4000,
+            tags_made=2,
+            final_lives=0,
+        )
+        return game_round
+
+    def test_export_url_resolves(self):
+        """The route reverses with a round id (no NoReverseMatch)."""
+        url = reverse("export_round_report", args=[1])
+        assert url == "/matches/game-round/1/export/"
+
+    def test_get_returns_pdf_attachment(self):
+        game_round = self._saved_round_with_players("Rv03Get")
+        client = Client()
+        resp = client.get(reverse("export_round_report", args=[game_round.id]))
+
+        assert resp.status_code == 200
+        assert resp["Content-Type"] == "application/pdf"
+        disposition = resp["Content-Disposition"]
+        assert disposition.startswith('attachment; filename="round-'), (
+            f"Content-Disposition must be an attachment named round-<id>-...; "
+            f"got {disposition!r}"
+        )
+        assert disposition.rstrip().endswith(
+            '.pdf"'
+        ), f"filename must end with .pdf; got {disposition!r}"
+        # The id appears in the filename: round-<id>-...
+        assert f"round-{game_round.id}-" in disposition
+        assert resp.content.startswith(
+            b"%PDF"
+        ), f"response body must be a PDF; got {resp.content[:8]!r}"
+
+    def test_missing_round_id_returns_404(self):
+        client = Client()
+        resp = client.get(reverse("export_round_report", args=[999999]))
+        assert resp.status_code == 404
+
+    def test_post_returns_405(self):
+        game_round = self._saved_round_with_players("Rv03Post")
+        client = Client()
+        resp = client.post(reverse("export_round_report", args=[game_round.id]))
+        assert resp.status_code == 405
+
+    def test_simulated_round_renders_pdf(self):
+        """is_simulated=True (watermark branch) -> 200 + PDF."""
+        game_round = self._saved_round_with_players("Rv03Sim", is_simulated=True)
+        client = Client()
+        resp = client.get(reverse("export_round_report", args=[game_round.id]))
+        assert resp.status_code == 200
+        assert resp["Content-Type"] == "application/pdf"
+        assert resp.content.startswith(b"%PDF")
+
+    def test_non_simulated_round_renders_pdf(self):
+        """is_simulated=False (no-watermark branch) -> 200 + PDF."""
+        game_round = self._saved_round_with_players("Rv03Real", is_simulated=False)
+        client = Client()
+        resp = client.get(reverse("export_round_report", args=[game_round.id]))
+        assert resp.status_code == 200
+        assert resp["Content-Type"] == "application/pdf"
+        assert resp.content.startswith(b"%PDF")

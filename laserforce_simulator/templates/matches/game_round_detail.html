@@ -14,6 +14,9 @@
             Single Round - {{ round.date_played|date:"M d, Y H:i" }}
             {% endif %}
         </p>
+        <a href="{% url 'export_round_report' round.id %}" class="btn btn-outline-primary btn-sm">
+            Export PDF
+        </a>
     </div>
     {% if round.winner %}
     <div class="text-center">

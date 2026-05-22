@@ -1,5 +1,43 @@
 # Website Testing — Bugs & Issues
 
+Date: 2026-05-22. Server: `runserver --noreload` (PID 4708, http://127.0.0.1:8000). Branch: `rv-03-round-report-pdf`. Scope: RV-03 round-report PDF export (round detail "Export PDF" button + `/matches/game-round/<id>/export/` endpoint) + regression smoke over Teams / Matches / Round detail / Events / Batch Sim / Create Match.
+
+Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
+
+## Summary
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| R3-1 | ✅ | Round detail (RV-03) | "Export PDF" button renders on round detail (uid links to `/export/`); no console errors |
+| R3-2 | ✅ | PDF export (RV-03) | Single round 109 → 200 `application/pdf`, `filename="round-109-phoenix-vs-vipers.pdf"`, 5582 bytes, `%PDF-` magic |
+| R3-3 | ✅ | PDF export (RV-03) | Match round 75 → 200 `application/pdf` ("Round N of 2" label path) |
+| R3-4 | ✅ | PDF export (RV-03) | Missing round 999999 → 404 |
+| R3-5 | ✅ | PDF export (RV-03) | Responsive: Export PDF button + scoreboard render cleanly at 720×1115 and 1280×900 |
+| R3-6 | ℹ️ | PDF export (RV-03) | Browser `POST` → **403** (CSRF middleware blocks the unsafe method before the view's 405 guard). Both reject non-GET; the view test asserts 405 via the CSRF-exempt test client. Expected/secure, not a bug. |
+| BS-1 | 🟡 | Batch sim form | `[issue] No label associated with a form field (count: 4)` — **pre-existing** a11y warning, unrelated to RV-03 |
+
+**Overall:** RV-03 works end-to-end in-browser. The export endpoint returns a valid PDF with the correct content-type and attachment filename for both single and match rounds; 404 on missing rounds. The Export PDF button renders correctly on the round detail page at both mobile and desktop widths. No console errors on any RV-03-touched page. Regression smoke (home, matches list, round detail, events charts, batch sim, create match) surfaced no new errors; the lone 🟡 is the pre-existing batch-form a11y warning.
+
+---
+
+## RV-03 round-report PDF export
+
+### ✅ R3-1 — Export PDF button on round detail
+`/matches/game-round/109/` renders an "Export PDF" link (→ `/matches/game-round/109/export/`) directly under the round subtitle. Page loads with zero console messages; all static/role-image requests 200.
+
+### ✅ R3-2 / R3-3 / R3-4 — export endpoint
+Via in-page `fetch`: round 109 (single) → `200`, `content-type: application/pdf`, `content-disposition: attachment; filename="round-109-phoenix-vs-vipers.pdf"`, 5582 bytes, body starts `%PDF-`. Round 75 (match round) → `200 application/pdf`. Round 999999 (missing) → `404`.
+
+### ℹ️ R3-6 — POST returns 403, not 405
+Browser `fetch('/export/', {method:'POST'})` → `403` (Django CSRF middleware rejects the unsafe method before the view's `HttpResponseNotAllowed(["GET"])` runs). The unit test asserts `405` because the Django test client is CSRF-exempt. Both responses reject non-GET; this is expected, secure behaviour — no code change.
+
+### ✅ R3-5 — responsive
+Round detail at 720×1115 (navbar collapses to hamburger, Export PDF button below title, tables horizontally scrollable) and 1280×900 (full navbar, full table) both render the Export PDF button and scoreboards cleanly.
+
+---
+
+# (Previous report) RES-04 movement heatmap
+
 Date: 2026-05-21. Server: `python manage.py runserver` (PID 33364, http://127.0.0.1:8000). Branch: `res-04-heatmap`. Scope: RES-04 movement heatmap surfaces (per-round + map-editor multi-round) + smoke pass over Teams / Matches / Match detail / Round detail / Events / Missile log / Batch Sim / Maps / Team detail / Map editor.
 
 Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note

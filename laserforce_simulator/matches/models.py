@@ -193,6 +193,12 @@ class GameRound(models.Model):
     )
     is_completed = models.BooleanField(default=False)
 
+    # RV-03: whether this round was produced by the simulator (vs a future
+    # real-game import path). Drives the diagonal "[Simulated]" watermark on
+    # the exported PDF report. Existing rows take the default=True (no backfill,
+    # ADR-0004 precedent — rng_seed / cell_occupancy_json / highlights_json).
+    is_simulated = models.BooleanField(default=True)
+
     def __str__(self):
         if self.match:
             return f"{self.team_red.name} vs {self.team_blue.name} - Round {self.round_number}"
