@@ -5,7 +5,7 @@ from unittest.mock import patch
 from django.test import Client
 from django.urls import reverse, NoReverseMatch
 
-from matches.models import GameRound, Match
+from matches.models import GameEvent, GameRound, Match, PlayerRoundState
 from matches.simulation import BatchSimulator
 from matches.tests.conftest import make_team_with_slots
 
@@ -1300,3 +1300,489 @@ class TestSim11RunBatchJobPassesWorkers:
             f"for n={n} (>= 50), workers must equal _workers_for(n)="
             f"{expected!r}; got {kwargs['workers']!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# RV-01 — Compare two rounds side by side.
+#
+# Read-only view at /matches/compare/?round_a=<id>&round_b=<id> rendering a
+# per-player stat-delta table plus a Points-Over-Time overlay for two
+# GameRounds sharing >= 1 team. Seam contract (names are stable):
+#
+#   URL name `compare_rounds`, path `/matches/compare/`, reads `round_a` /
+#   `round_b` from the GET query string.
+#
+#   Helpers in matches/views.py:
+#     - _shared_team_ids(round_a, round_b) -> list[int]
+#     - _player_stat_deltas(round_a, round_b, team_ids) -> list[dict]
+#     - _cumulative_team_points(game_round, team_id) -> list[list]
+#
+# These tests build minimal DB fixtures directly (GameRound +
+# PlayerRoundState + GameEvent) — no simulator runs, no RNG — so the derived
+# values are exact and assertable. They are EXPECTED to fail until the RV-01
+# production code lands (the view/url/helpers do not yet exist).
+# ---------------------------------------------------------------------------
+
+
+# The 12 per-player stat keys the delta table is contracted to expose.
+_RV01_STAT_KEYS = (
+    "points_scored",
+    "mvp",
+    "tags_made",
+    "times_tagged",
+    "accuracy",
+    "final_lives",
+    "resupplies_given",
+    "missiles_landed",
+    "specials_used",
+    "follow_up_shots",
+    "reaction_shots",
+    "combo_resupply_count",
+)
+
+
+def _make_round(team_red, team_blue, round_number=1):
+    """Create a bare completed GameRound for two teams (no simulator run)."""
+    return GameRound.objects.create(
+        team_red=team_red,
+        team_blue=team_blue,
+        round_number=round_number,
+        is_completed=True,
+    )
+
+
+def _make_state(game_round, player, *, team_color, role, **stats):
+    """Create a PlayerRoundState row with explicit stat values.
+
+    Any keyword in ``stats`` is forwarded straight to the model so callers can
+    pin ``points_scored=100``, ``tags_made=5``, etc. without RNG.
+    """
+    return PlayerRoundState.objects.create(
+        game_round=game_round,
+        player=player,
+        team_color=team_color,
+        role=role,
+        **stats,
+    )
+
+
+@pytest.mark.django_db
+class TestRv01CompareRounds:
+    """RV-01 — compare two rounds side by side (read-only view + helpers)."""
+
+    # ------------------------------------------------------------------ #
+    # 1. URL / view routing — compare mode renders a delta table.        #
+    # ------------------------------------------------------------------ #
+    def test_compare_rounds_url_resolves(self):
+        # Should not raise NoReverseMatch.
+        assert reverse("compare_rounds") == "/matches/compare/"
+
+    def test_compare_mode_both_params_shared_team_renders_table(self):
+        red, players_a = make_team_with_slots("Rv01Shared")
+        blue_a, _ = make_team_with_slots("Rv01BlueA")
+        blue_b, _ = make_team_with_slots("Rv01BlueB")
+
+        round_a = _make_round(red, blue_a)
+        round_b = _make_round(red, blue_b)
+        # `red` plays in both rounds → shared team.
+        _make_state(round_a, players_a["commander"], team_color="red", role="commander")
+        _make_state(round_b, players_a["commander"], team_color="red", role="commander")
+
+        client = Client()
+        resp = client.get(
+            reverse("compare_rounds"),
+            {"round_a": round_a.id, "round_b": round_b.id},
+        )
+        assert resp.status_code == 200
+        body = resp.content.decode()
+        # Compare mode renders the delta table (and not just the picker).
+        assert (
+            "compare-deltas" in body or 'id="compare-delta-table"' in body
+        ), "compare mode did not render the per-player delta table"
+
+    def test_match_list_links_to_compare_page(self):
+        # The match list is the entry point to the compare page.
+        client = Client()
+        resp = client.get(reverse("match_list"))
+        assert resp.status_code == 200
+        assert reverse("compare_rounds") in resp.content.decode()
+
+    # ------------------------------------------------------------------ #
+    # 2. Picker mode — no/one param → selects, no delta table.           #
+    # ------------------------------------------------------------------ #
+    def test_picker_mode_no_params_renders_selects(self):
+        client = Client()
+        resp = client.get(reverse("compare_rounds"))
+        assert resp.status_code == 200
+        body = resp.content.decode()
+        assert 'id="compare-select-a"' in body
+        assert 'id="compare-select-b"' in body
+        assert (
+            'id="compare-delta-table"' not in body
+        ), "picker mode must not render the delta table"
+
+    def test_picker_mode_only_one_param_renders_selects(self):
+        red, _ = make_team_with_slots("Rv01OnlyOne")
+        blue, _ = make_team_with_slots("Rv01OnlyOneBlue")
+        round_a = _make_round(red, blue)
+
+        client = Client()
+        resp = client.get(reverse("compare_rounds"), {"round_a": round_a.id})
+        assert resp.status_code == 200
+        body = resp.content.decode()
+        assert 'id="compare-select-a"' in body
+        assert 'id="compare-select-b"' in body
+        assert 'id="compare-delta-table"' not in body
+
+    # ------------------------------------------------------------------ #
+    # 3. 404 — a round id that does not exist.                           #
+    # ------------------------------------------------------------------ #
+    def test_missing_round_a_returns_404(self):
+        red, players = make_team_with_slots("Rv01Missing")
+        blue, _ = make_team_with_slots("Rv01MissingBlue")
+        round_b = _make_round(red, blue)
+        _make_state(round_b, players["commander"], team_color="red", role="commander")
+
+        client = Client()
+        resp = client.get(
+            reverse("compare_rounds"),
+            {"round_a": 9_999_999, "round_b": round_b.id},
+        )
+        assert resp.status_code == 404
+
+    def test_non_numeric_round_id_returns_404(self):
+        # A hand-crafted ?round_a=abc must be a clean 404, not a 500 from the
+        # int() coercion failing inside the ORM query.
+        red, players = make_team_with_slots("Rv01NonNum")
+        blue, _ = make_team_with_slots("Rv01NonNumBlue")
+        round_b = _make_round(red, blue)
+        _make_state(round_b, players["commander"], team_color="red", role="commander")
+
+        client = Client()
+        resp = client.get(
+            reverse("compare_rounds"),
+            {"round_a": "abc", "round_b": round_b.id},
+        )
+        assert resp.status_code == 404
+
+    # ------------------------------------------------------------------ #
+    # 4. Same round (round_a == round_b) → 200, error banner, no table.  #
+    # ------------------------------------------------------------------ #
+    def test_same_round_shows_error_banner_no_table(self):
+        red, players = make_team_with_slots("Rv01Same")
+        blue, _ = make_team_with_slots("Rv01SameBlue")
+        round_a = _make_round(red, blue)
+        _make_state(round_a, players["commander"], team_color="red", role="commander")
+
+        client = Client()
+        resp = client.get(
+            reverse("compare_rounds"),
+            {"round_a": round_a.id, "round_b": round_a.id},
+        )
+        assert resp.status_code == 200
+        body = resp.content.decode()
+        assert (
+            'id="compare-delta-table"' not in body
+        ), "comparing a round against itself must not render a delta table"
+        assert (
+            "alert-warning" in body or "compare-error" in body
+        ), "same-round comparison must surface an error banner"
+
+    # ------------------------------------------------------------------ #
+    # 5. No shared team — four distinct teams → 200, error banner.       #
+    # ------------------------------------------------------------------ #
+    def test_no_shared_team_shows_error_banner_no_table(self):
+        red_a, players_a = make_team_with_slots("Rv01NoShareRA")
+        blue_a, _ = make_team_with_slots("Rv01NoShareBA")
+        red_b, players_b = make_team_with_slots("Rv01NoShareRB")
+        blue_b, _ = make_team_with_slots("Rv01NoShareBB")
+
+        round_a = _make_round(red_a, blue_a)
+        round_b = _make_round(red_b, blue_b)
+        _make_state(round_a, players_a["commander"], team_color="red", role="commander")
+        _make_state(round_b, players_b["commander"], team_color="red", role="commander")
+
+        client = Client()
+        resp = client.get(
+            reverse("compare_rounds"),
+            {"round_a": round_a.id, "round_b": round_b.id},
+        )
+        assert resp.status_code == 200
+        body = resp.content.decode()
+        assert (
+            'id="compare-delta-table"' not in body
+        ), "rounds with no shared team must not render a delta table"
+        assert (
+            "alert-warning" in body or "compare-error" in body
+        ), "no-shared-team comparison must surface an error banner"
+
+    # ------------------------------------------------------------------ #
+    # 9. json_script ids present in compare-mode HTML.                   #
+    # ------------------------------------------------------------------ #
+    def test_compare_mode_emits_json_script_ids(self):
+        red, players = make_team_with_slots("Rv01Json")
+        blue_a, _ = make_team_with_slots("Rv01JsonBA")
+        blue_b, _ = make_team_with_slots("Rv01JsonBB")
+        round_a = _make_round(red, blue_a)
+        round_b = _make_round(red, blue_b)
+        _make_state(
+            round_a,
+            players["commander"],
+            team_color="red",
+            role="commander",
+            points_scored=100,
+        )
+        _make_state(
+            round_b,
+            players["commander"],
+            team_color="red",
+            role="commander",
+            points_scored=250,
+        )
+
+        client = Client()
+        resp = client.get(
+            reverse("compare_rounds"),
+            {"round_a": round_a.id, "round_b": round_b.id},
+        )
+        assert resp.status_code == 200
+        body = resp.content.decode()
+        assert (
+            'id="compare-points-series"' in body
+        ), "compare mode must emit the Points-Over-Time series json_script block"
+        assert (
+            'id="compare-deltas"' in body
+        ), "compare mode must emit the per-player delta json_script block"
+
+    # ------------------------------------------------------------------ #
+    # 6. _shared_team_ids is Side-agnostic.                              #
+    # ------------------------------------------------------------------ #
+    def test_shared_team_ids_is_side_agnostic(self):
+        from matches.views import _shared_team_ids
+
+        team_x, _ = make_team_with_slots("Rv01ShareX")
+        team_y, _ = make_team_with_slots("Rv01ShareY")
+        team_z, _ = make_team_with_slots("Rv01ShareZ")
+
+        # Round A: X red, Y blue.  Round B: X blue, Z red.
+        round_a = _make_round(team_x, team_y)
+        round_b = _make_round(team_z, team_x)
+
+        shared = _shared_team_ids(round_a, round_b)
+        assert shared == [team_x.id], (
+            "X is shared across both rounds even though it played different "
+            f"Sides; got {shared!r}"
+        )
+
+    def test_shared_team_ids_distinct_teams_empty(self):
+        from matches.views import _shared_team_ids
+
+        red_a, _ = make_team_with_slots("Rv01DistRA")
+        blue_a, _ = make_team_with_slots("Rv01DistBA")
+        red_b, _ = make_team_with_slots("Rv01DistRB")
+        blue_b, _ = make_team_with_slots("Rv01DistBB")
+
+        round_a = _make_round(red_a, blue_a)
+        round_b = _make_round(red_b, blue_b)
+
+        assert _shared_team_ids(round_a, round_b) == []
+
+    # ------------------------------------------------------------------ #
+    # 7. _player_stat_deltas row shape + delta == b - a.                 #
+    # ------------------------------------------------------------------ #
+    def test_player_stat_deltas_row_shape_for_player_in_both_rounds(self):
+        from matches.views import _player_stat_deltas
+
+        team_x, players = make_team_with_slots("Rv01DeltaX")
+        blue_a, _ = make_team_with_slots("Rv01DeltaBA")
+        blue_b, _ = make_team_with_slots("Rv01DeltaBB")
+
+        round_a = _make_round(team_x, blue_a)
+        round_b = _make_round(team_x, blue_b)
+        commander = players["commander"]
+
+        # Same player, both rounds, different points (100 → 250 ⇒ delta 150).
+        _make_state(
+            round_a,
+            commander,
+            team_color="red",
+            role="commander",
+            points_scored=100,
+            tags_made=4,
+        )
+        _make_state(
+            round_b,
+            commander,
+            team_color="blue",
+            role="commander",
+            points_scored=250,
+            tags_made=10,
+        )
+
+        rows = _player_stat_deltas(round_a, round_b, [team_x.id])
+        assert len(rows) == 1, f"expected one shared-team player row, got {rows!r}"
+        row = rows[0]
+
+        for key in (
+            "player_id",
+            "name",
+            "role_a",
+            "role_b",
+            "side_a",
+            "side_b",
+            "stats",
+        ):
+            assert key in row, f"delta row missing top-level key {key!r}: {row!r}"
+
+        assert row["player_id"] == commander.id
+        assert row["name"] == commander.name
+        assert row["role_a"] == "commander"
+        assert row["role_b"] == "commander"
+        assert row["side_a"] == "red"
+        assert row["side_b"] == "blue"
+
+        stats = row["stats"]
+        assert set(stats) == set(
+            _RV01_STAT_KEYS
+        ), f"stat key set drifted: {set(stats) ^ set(_RV01_STAT_KEYS)}"
+        for key, cell in stats.items():
+            assert set(cell) == {
+                "a",
+                "b",
+                "delta",
+            }, f"stat cell {key!r} must have keys a/b/delta; got {set(cell)!r}"
+
+        # points_scored: 100 in A, 250 in B → delta 150.
+        ps = stats["points_scored"]
+        assert ps["a"] == 100
+        assert ps["b"] == 250
+        assert ps["delta"] == 150
+
+        # Every present-in-both stat: delta == b - a.
+        for key, cell in stats.items():
+            if cell["a"] is not None and cell["b"] is not None:
+                assert cell["delta"] == cell["b"] - cell["a"], (
+                    f"stat {key!r}: delta {cell['delta']!r} != b - a "
+                    f"({cell['b']!r} - {cell['a']!r})"
+                )
+
+    def test_player_stat_deltas_player_in_only_one_round(self):
+        from matches.views import _player_stat_deltas
+
+        team_x, players = make_team_with_slots("Rv01OneSide")
+        blue_a, _ = make_team_with_slots("Rv01OneSideBA")
+        blue_b, _ = make_team_with_slots("Rv01OneSideBB")
+
+        round_a = _make_round(team_x, blue_a)
+        round_b = _make_round(team_x, blue_b)
+
+        # Heavy appears only in round A.
+        heavy = players["heavy"]
+        _make_state(
+            round_a,
+            heavy,
+            team_color="red",
+            role="heavy",
+            points_scored=80,
+            tags_made=3,
+        )
+
+        rows = _player_stat_deltas(round_a, round_b, [team_x.id])
+        matching = [r for r in rows if r["player_id"] == heavy.id]
+        assert len(matching) == 1, (
+            "a player present in only one round must still appear in the "
+            f"delta table; rows={rows!r}"
+        )
+        row = matching[0]
+
+        # Present in A only → side_b / role_b are None.
+        assert row["role_a"] == "heavy"
+        assert row["side_a"] == "red"
+        assert row["role_b"] is None
+        assert row["side_b"] is None
+
+        # The missing side's stat values + deltas are None.
+        for key, cell in row["stats"].items():
+            assert (
+                cell["b"] is None
+            ), f"stat {key!r}: side B absent so 'b' must be None; got {cell['b']!r}"
+            assert cell["delta"] is None, (
+                f"stat {key!r}: side B absent so 'delta' must be None; "
+                f"got {cell['delta']!r}"
+            )
+        # The present side keeps its real value.
+        assert row["stats"]["points_scored"]["a"] == 80
+
+    # ------------------------------------------------------------------ #
+    # 8. _cumulative_team_points — monotonic running sum, null coalesce. #
+    # ------------------------------------------------------------------ #
+    def test_cumulative_team_points_running_sum_with_null_coalesce(self):
+        from matches.views import _cumulative_team_points
+
+        red, players = make_team_with_slots("Rv01Cum")
+        blue, _ = make_team_with_slots("Rv01CumBlue")
+        game_round = _make_round(red, blue)
+
+        commander = players["commander"]
+        heavy = players["heavy"]
+        # Red-team states so the actors belong to the team being summed.
+        _make_state(game_round, commander, team_color="red", role="commander")
+        _make_state(game_round, heavy, team_color="red", role="heavy")
+
+        # GameEvents at increasing ticks with points_awarded; one None to
+        # confirm coalesce-to-0.
+        GameEvent.objects.create(
+            game_round=game_round,
+            timestamp=10,
+            event_type="tag",
+            actor=commander,
+            points_awarded=100,
+        )
+        # A zero-point event (points_awarded == 0). GameEvent.points_awarded
+        # is NOT NULL with default 0 — the simulator never writes a true NULL —
+        # so the coalesce-to-0 contract is exercised here by a 0-point row that
+        # must not perturb the running cumulative sum.
+        GameEvent.objects.create(
+            game_round=game_round,
+            timestamp=20,
+            event_type="tag",
+            actor=heavy,
+            points_awarded=0,
+        )
+        GameEvent.objects.create(
+            game_round=game_round,
+            timestamp=30,
+            event_type="tag",
+            actor=commander,
+            points_awarded=50,
+        )
+
+        series = _cumulative_team_points(game_round, red.id)
+        assert (
+            isinstance(series, list) and series
+        ), f"expected non-empty list, got {series!r}"
+        # Shape: [[tick, cumulative], ...].
+        for point in series:
+            assert (
+                isinstance(point, list) and len(point) == 2
+            ), f"each series entry must be a [tick, cum] pair; got {point!r}"
+
+        # Cumulative column is monotonic non-decreasing.
+        cumulative = [pt[1] for pt in series]
+        for prev, cur in zip(cumulative, cumulative[1:]):
+            assert cur >= prev, f"cumulative regressed: {prev} → {cur}"
+
+        # Final running total = 100 + 0 (coalesced) + 50 = 150.
+        assert cumulative[-1] == 150, (
+            f"cumulative total should coalesce the null award to 0 and sum to "
+            f"150; got {cumulative!r}"
+        )
+
+    def test_cumulative_team_points_empty_round_returns_empty(self):
+        from matches.views import _cumulative_team_points
+
+        red, _ = make_team_with_slots("Rv01CumEmpty")
+        blue, _ = make_team_with_slots("Rv01CumEmptyBlue")
+        game_round = _make_round(red, blue)
+
+        assert _cumulative_team_points(game_round, red.id) == []
