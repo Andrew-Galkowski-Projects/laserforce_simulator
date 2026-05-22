@@ -1387,6 +1387,29 @@ def _make_state(game_round, player, *, team_color, role, **stats):
 
 
 @pytest.mark.django_db
+class TestRd1RoundDetailMissileLink:
+    """RD-1: the round-detail page must link to the missile log, alongside the
+    existing Event Log and Movement Heatmap links (the link was wired into the
+    heatmap template but never into round detail when RES-03 shipped).
+    """
+
+    def test_round_detail_links_to_missile_log(self):
+        red, _ = make_team_with_slots("Rd1Red")
+        blue, _ = make_team_with_slots("Rd1Blue")
+        game_round = _make_round(red, blue)
+
+        client = Client()
+        resp = client.get(
+            reverse("game_round_detail", kwargs={"round_id": game_round.id})
+        )
+        assert resp.status_code == 200
+        missile_url = reverse("missile_log", kwargs={"round_id": game_round.id})
+        assert (
+            missile_url.encode() in resp.content
+        ), "round-detail page must link to the missile log (RD-1)"
+
+
+@pytest.mark.django_db
 class TestRv01CompareRounds:
     """RV-01 — compare two rounds side by side (read-only view + helpers)."""
 

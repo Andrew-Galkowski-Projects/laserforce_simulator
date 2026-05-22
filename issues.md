@@ -16,7 +16,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | H-6 | ✅ | Heatmap API (RES-04) | `/maps/<id>/heatmap-data/` returns 200 + reconciles: red_total + blue_total == both_total |
 | H-7 | ✅ | Heatmap API (RES-04) | 400 paths: missing `zone_size` and `team_color=purple` both return 400 |
 | H-8 | ✅ | Create match | `/matches/create/` with arena_map=San Marcos completes, persists rounds, populates `cell_occupancy_json` |
-| RD-1 | 🟡 | Round detail | Round detail page lacks a Missile log link (heatmap link added by RES-04, missile-log link still missing) — **pre-existing, not RES-04 regression** |
+| ~~RD-1~~ | ~~🟡~~ | ~~Round detail~~ | ~~Round detail page lacks a Missile log link (heatmap link added by RES-04, missile-log link still missing) — **pre-existing, not RES-04 regression**~~ _(fixed)_ |
 | BS-1 | 🟡 | Batch sim form | `[issue] No label associated with a form field (count: 4)` — pre-existing a11y warning |
 | ~~BS-2~~ | ~~🟠~~ | ~~Batch sim (SIM-11 run)~~ | ~~Re-running a batch without reloading throws Chart.js "Canvas is already in use" — breaks polling, shows stale partial results~~ _(fixed)_ |
 | MP-1 | 🟡 | Maps list | `[issue] An element doesn't have an autocomplete attribute` on upload form — pre-existing a11y warning |
@@ -73,7 +73,7 @@ Tested against map 4, zone_size=20, after rounds 82 + 83 were simulated:
 
 ## Pre-existing issues (not RES-04 regressions)
 
-### 🟡 RD-1 — round detail lacks missile-log link
+### ~~🟡 RD-1 — round detail lacks missile-log link~~ _(fixed)_
 `templates/matches/game_round_detail.html:276-277` lists "📋 View Event Log" and (post-RES-04) "🗺️ Movement Heatmap" but does **not** link to `missile_log`. The heatmap template itself includes the missile-log link in its top nav row, but round detail does not. **Pre-existing — the missile-log link was never wired into round_detail when RES-03 shipped.** Out of scope for this PR; flagging for a follow-up.
 
 ```html

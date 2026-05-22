@@ -274,6 +274,7 @@
     <a href="{% url 'match_list' %}" class="btn btn-secondary">← Back to Matches</a>
     {% endif %}
     <a href="{% url 'game_round_events' round.id %}" class="btn btn-info">📋 View Event Log</a>
+    <a href="{% url 'missile_log' round_id=round.id %}" class="btn btn-info">🚀 Missile Log</a>
     <a href="{% url 'movement_heatmap' round_id=round.id %}" class="btn btn-info">🗺️ Movement Heatmap</a>
     <a href="{% url 'team_match_history' round.team_red.id %}" class="btn btn-outline-primary">
         {{ round.team_red.name }} History</a>
