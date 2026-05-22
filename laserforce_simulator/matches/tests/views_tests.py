@@ -250,6 +250,26 @@ class TestM1EventLogWindowing:
             assert set(p) == self._PLAYER_KEYS
             assert p["team"] in ("red", "blue")
 
+    def test_highlights_json_context_is_a_list(self):
+        """RV-02: the events view exposes ``highlights_json`` as a list
+        (coalesced from the round's persisted field)."""
+        gr = self._round_with_events()
+        client = Client()
+        resp = client.get(reverse("game_round_events", kwargs={"round_id": gr.id}))
+        assert resp.status_code == 200
+        assert isinstance(resp.context["highlights_json"], list)
+
+    def test_highlights_tab_rendered(self):
+        """RV-02: the Highlights tab + json_script block + DOM ids render."""
+        gr = self._round_with_events()
+        client = Client()
+        resp = client.get(reverse("game_round_events", kwargs={"round_id": gr.id}))
+        body = resp.content.decode()
+        assert 'id="highlights-data"' in body, "highlights JSON script block missing"
+        assert 'id="highlights-section"' in body
+        assert 'id="highlights-list"' in body
+        assert 'id="highlights-empty"' in body
+
     def test_empty_round_renders_without_error(self):
         """A round with zero events still renders 200 with an empty list
         (the client must handle the no-events path)."""

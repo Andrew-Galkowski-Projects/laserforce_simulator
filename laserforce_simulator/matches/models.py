@@ -170,6 +170,13 @@ class GameRound(models.Model):
     # leave this null. JSON shape: {"<player_id>": {"<r>,<c>": tick_count}}.
     cell_occupancy_json = models.JSONField(null=True, blank=True, default=None)
 
+    # RV-02: auto-flagged highlights for this round, built by _flush_to_db at
+    # round completion. JSON shape: list of typed records sorted by tick,
+    # {kind, tick, team, actor, target, points, label}. Null for rounds that
+    # predate RV-02 (no backfill, ADR-0004) — drives the events-page
+    # Highlights tab.
+    highlights_json = models.JSONField(null=True, blank=True, default=None)
+
     # Round results
     red_points = models.IntegerField(default=0)
     blue_points = models.IntegerField(default=0)
@@ -691,6 +698,8 @@ class GameEvent(models.Model):
         ("resupply_lives", "Medic Heal"),
         ("elimination", "Player Eliminated"),
         ("team_elimination", "Team Eliminated"),
+        ("nuke_cancelled", "Nuke Cancelled"),
+        ("medic_reset", "Medic Reset"),
     ]
 
     game_round = models.ForeignKey(
@@ -769,5 +778,6 @@ class GameEvent(models.Model):
             "resupply_lives": "💚",
             "elimination": "💀",
             "team_elimination": "☠️",
+            "base_capture": "🚩",
         }
         return icons.get(self.event_type, "•")

@@ -25,6 +25,13 @@ class PendingNuke:
 
     complete_time: float
     player: Any
+    # RV-02: set True once a nuke_cancelled GameEvent has been logged for this
+    # nuke (at the firing Commander's down/disarm tick) so the drain-time
+    # fallback does not emit a duplicate. The nuke is LEFT in pending_nukes so
+    # _apply_nuke_reaction_flags / drain_nukes reads are unchanged (no seeded
+    # drift). Default False keeps PendingNuke(complete_time=..., player=...)
+    # construction unaffected.
+    cancel_logged: bool = False
 
 
 @dataclass

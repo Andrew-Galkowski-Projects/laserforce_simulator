@@ -443,6 +443,8 @@ Points Over Time overlay chart. Rounds must share at least one team.
 ### RV-02 · Auto-flag highlights
 Detect: nuke events, first elimination, largest 30-second point swing, team elimination, base destructions. 
 Show as a "Highlights" tab on the events page. Store results in `GameRound.highlights_json` (new field) at round completion.
+- completed
+- note: per-round **Highlight** (CONTEXT.md) auto-flagging persisted to a new `GameRound.highlights_json` (`JSONField`, null/blank, default `None`, placed after `cell_occupancy_json`) by migration `0027_gameround_highlights_json.py` (an `AddField` for the new column plus an `AlterField` on `gameevent.event_type` adding the two new choices; dep `0026`); **no backfill** — pre-RV-02 rounds stay `null` (the [ADR-0004](docs/adr/0004-simulation-data-is-disposable.md) disposable-data precedent, same as `rng_seed` / `cell_occupancy_json`). The detection logic lives in a **pure builder** `matches/sim_helpers/highlights.py::build_highlights(events, result, *, round_ticks, name_by_id, team_by_id) -> list[dict]` — **pure Python, no Django/IO/RNG** — that consumes the **in-memory event buffer** (NOT ORM rows) plus the round result dict, with `round_ticks=TICKS_PER_ROUND` (1800) and the `name_by_id` / `team_by_id` maps passed in (so the function emits NAME strings + a per-event team while staying pure; an absent id resolves to `None`); it returns a flat list of records sorted by tick ascending, each with the fixed 7-key shape `{kind, tick, team, actor, target, points, label}`. **Six kinds:** `nuke_detonation` (discriminated by `event_type=="special"` + `metadata["targets"]` + `points_awarded==500` — the activation row, `points==0` & `metadata["fires_at"]`, is **not** flagged), `nuke_cancelled`, `medic_reset`, `first_elimination` (first elimination by tick → one record), `team_elimination` (read from `result["red_eliminated"]`/`["blue_eliminated"]` + `["eliminated_at"]`, **NOT** the `dead` event — `team_elimination` is never an emitted `GameEvent` type, the `DEAD` event stays the source-of-truth event), and `scoring_burst` (a **Scoring burst**, CONTEXT.md — the forward `[t, t+60)` 60-tick window with the maximum single-team gross points → one record; none emitted when the round had no point events). **Base captures are deliberately *not* a Highlight kind** — they are routine, frequent point-grabs, so they are surfaced in the events-log timeline (a new **"Base Capture"** type-filter checkbox + `🚩` icon were added; `base_capture` events were persisted all along but the timeline filter had no checkbox and its substring match hid them) rather than the highlight reel; their `points_awarded` still count toward the `scoring_burst`. **Two new server-emitted `GameEvent` types** are added at the `BatchSimulator._record_down` chokepoint, which is converted **static → instance** (`self._record_down`, reading `self._event_log` / `self._pending_nukes` stashed in `_simulate_round`; **7 callsites** converted): `nuke_cancelled` (**Nuke cancellation**, CONTEXT.md — emitted at the down/disarm tick for a Commander with a live pending nuke; the nuke is **left in `pending_nukes`** with a new `PendingNuke.cancel_logged: bool=False` de-dup flag set `True` so the existing MECH-05 nuke-reaction/drain path is unchanged — the drain-else branch emits only when `not cancel_logged` → **no re-baseline**, seeded games are byte-identical) and `medic_reset` (**Medic reset chain**, CONTEXT.md — a Medic re-**Down**ed before recovery; a transient `PlayerState.down_chain_count: int=0`, no DB column, increments in `_record_down` **before** stamping `last_downed_time` when `not is_active_at(second)`, fires the event once when the chain reaches 2 for a `medic`, and resets to 0 in the per-tick active-accounting branch). Both emit dicts carry `points_awarded:0`, `target_id:None`, and `metadata=_build_meta(player)`. The builder is invoked in `BatchSimulator._flush_to_db` (~L2762) after the RES-04 `cell_occupancy_json` block and before the final `return`: it builds `name_by_id` / `team_by_id` from the red+blue players, calls `build_highlights(...)`, sets `game_round.highlights_json`, and persists via a **second** `game_round.save(update_fields=["highlights_json"])` (mirrors the RES-04 second-save pattern). View `game_round_events` adds context key `highlights_json` (`game_round.highlights_json or []`); template `game_round_events.html` exposes it via `{{ highlights_json|json_script:"highlights-data" }}` and renders a client-side **Highlights** tab into DOM ids `highlights-section` / `highlights-list` / `highlights-empty` (mm:ss via the standard `÷2` at the HTML layer, TIME-01). **No URL change** — RV-02 reuses the existing `/matches/game-round/<id>/events/` page (the Highlights tab lives there, no new route). **No simulation mechanics change** (the cancelled nuke is left in the pending queue, no RNG consumed) → **no Score Calibration re-baseline obligation**. Tests: `matches/tests/test_rv02_highlights.py` (NEW — pure builder: the 6 kinds, nuke activation-vs-detonation discrimination, `team_elimination`-from-result, base captures **not** flagged as a highlight, the 60-tick scoring-burst window, id→name/team resolution + absent-id `None`, sort order, empty-input edges), `test_sim09_consolidation.py` (EXTENDED — `_flush_to_db` populates `highlights_json` and the second save, `_record_down` static→instance reshape, `nuke_cancelled` / `medic_reset` emit + de-dup), and `views_tests.py` (EXTENDED — the Highlights render path / context key). Domain terms (Highlight, Scoring burst, Medic reset chain, Nuke cancellation) are in [CONTEXT.md](CONTEXT.md); the nuke-cancelled-event decision is recorded in [ADR-0012](docs/adr/0012-nuke-cancelled-event.md).
 
 ### RV-03 · Export round report as PDF
 `GET /matches/game-round/<id>/export/` — ReportLab (programmatic PDF generation; chosen over WeasyPrint to
@@ -807,3 +809,138 @@ The following were explicitly scoped out and should not be implemented until re-
 - **Goal-recompute throttling** (MOVE-04) — behavioural perf lever (staler goals every *N* ticks);
   out of MOVE-02 scope, opened only if the MOVE-02 path cache alone is insufficient for the
   map-mode perf target
+
+---
+
+## Phase 4 — Highlight Surfacing & Chart Overlays (added 2026-05-21, post-RV-02)
+
+Frontend-only follow-ons that reuse data already persisted/logged by earlier work — no new
+simulation, no migration. Both build on the existing `game_round_events.html` infrastructure
+(M-1 JSON windowing, the SIM-05 playback engine, and the RES-02 `_overlay_plugin` Chart.js v4
+vertical-overlay pattern).
+
+### RV-04 · Highlight overlay on the playback timeline + chart toggle
+Surface the RV-02 **Highlight** list (`GameRound.highlights_json`) in two more places beyond the
+Highlights tab:
+
+- **Playback timeline (SIM-05):** mark each Highlight at its tick on the playback scrubber / event
+  timeline (a coloured pip per `kind`, reusing the `OVERLAY_KIND_STYLE` palette extended for the
+  RV-02 kinds — `nuke_detonation`, `nuke_cancelled`, `medic_reset`, `first_elimination`,
+  `team_elimination`, `scoring_burst`). Clicking a pip jumps playback to that tick;
+  the currently-playing Highlight is indicated. No new backend — `highlights_json` is passed to the
+  page via `json_script` alongside `events_data`.
+- **Chart toggle:** an optional overlay on the four event-page charts (`chart-shots`, `chart-lives`,
+  `chart-points`, `chart-sp`) drawing one vertical line per Highlight, coloured by `kind`, label =
+  kind + player/team — using the **existing** RES-02 `_overlay_plugin` registration path (inline
+  `plugins:` array, `drawOverlays` mutating the closure-captured overlay list). A "Highlights" toggle
+  in the chart filter UI mirrors the existing elimination/special/nuke overlay toggles exactly.
+
+**Scope:** read-only/derived; no model change, no migration, no simulator change. Depends on RV-02
+(`highlights_json`). **Acceptance:** every Highlight in `highlights_json` appears as a timeline pip
+and (when toggled) a chart overlay line at the correct tick; toggling Highlights off restores the
+prior chart appearance; clicking a timeline pip scrubs playback to that Highlight.
+
+### RES-05 · Medic-hits overlay on the event-page charts
+Add **medic hits** as a toggleable overlay on the four event-page charts, reusing the RES-02
+`_overlay_plugin` pattern. The exact definition of "medic hit" is to be pinned during the grill
+(candidates: every `tag` row whose **target** is a **Medic**; the **medic-under-fire alert** moments
+— a Medic tagged 2× within `MEDIC_ALERT_WINDOW_TICKS`; or hits *landed by* a Medic) — the data is
+already in the event log (`tag` rows carry actor/target roles in `metadata`), so this is a
+client-side scan + overlay with no backend change. A "Medic hits" toggle joins the existing chart
+filter toggles.
+
+**Scope:** frontend-only; no model change, no migration, no simulator change. Depends on RES-02
+(chart + overlay-plugin infrastructure). **Acceptance:** toggling "Medic hits" marks each qualifying
+event on the charts at the correct tick and toggling it off restores the prior appearance; the
+definition chosen in the grill is documented in CONTEXT.md if it introduces new domain language.
+
+## Phase 3 — Simulation Mechanics Backlog (added 2026-05-21)
+
+Mechanics and decision-making items captured from working notes. These extend the MECH / MOVE
+families and the role-aware goal selection work (MAP-05). None are scheduled yet — each carries an
+open question or design dependency that must be resolved before implementation. Items are ordered
+roughly by readiness; MECH-07 (goal-selection rework) is intentionally last because its shape is
+still undecided.
+
+### MECH-08 · Reset-timing miss penalty
+Players currently have no notion of *when* a downed enemy will turn back on, so they cannot mistime a
+shot. Add behaviour where a player attempting to tag a reset target can fire **too early** — before
+the target reactivates — and waste the shot. The miss should fall out of imperfect timing rather than
+the existing hit-chance roll.
+
+**Open question:** which stats drive the timing estimate? Candidates already on the model —
+`game_awareness` (already gates the MECH-02 reset filter), `nuke_awareness`/reaction-style stats, and
+possibly a new dedicated stat. Resolve which stat(s) feed the early-fire probability before wiring.
+
+### MECH-09 · Reset re-tag action/goal
+For reset handling, lean on the existing LOS infrastructure (MAP-03) and the per-tick candidate
+filters rather than the abstract zone check. Add an action/goal so a player actively **looks for a
+reset opportunity to re-tag a downed enemy** once it reactivates, using `SightLineConfig` for
+eligibility and the appropriate target filters. Pairs with MECH-08 (timing) and builds on the MECH-02
+`last_tagged_id` reset-target machinery.
+
+### MECH-10 · Follow rule — cap pursuit of downed players
+Medics are dying within ~4 minutes because players follow a downed target indefinitely. Add a
+**follow rule**: a player cannot follow a downed player more than **10 squares along the downed
+player's path**. The path is modelled as a hallway (corridor spread) that starts at the square where
+the player was downed and extends until the player turns back on. Pursuit beyond the 10-square limit
+is disallowed, which should give Medics survivable breathing room.
+
+**Open question:** corridor width / spread of the "hallway" and how it interacts with LOS and walls
+(MAP-07) still needs pinning.
+
+### MECH-11 · Crouch mechanic + stamina cost
+Add a **crouching** mechanic that makes a player un-hittable over a **half wall** (the low-wall type
+from MAP-07). To prevent continuous abuse, crouching **drains stamina** — either disallowing
+sustained crouch outright, or applying a **movement penalty** when stamina is depleted. Touches the
+hit-eligibility path (low walls currently block movement but not sight) and the stamina schedule.
+
+**Open question:** which lever — hard stamina gate vs. movement-penalty-on-empty — and whether
+stamina here reuses the existing proportional stamina schedule or needs a separate pool.
+
+### MECH-12 · High-ground / half-wall sight-line falloff formula
+Rework the high-ground LOS formula (MAP-09) so elevation does **not** grant a clean look at everything
+directly below a half wall. Behaviour: a player on elevation should **not** see the cells directly
+below a half wall unless **close to the wall**. The farther the elevated player stands from the half
+wall, the more of the near sight lines below the wall are removed; farther still removes more. The
+falloff should follow a **triangle-type formula** (sight removed grows with distance from the wall).
+
+**Status:** this is a formula rework of the MAP-09 shoot-over / `SightLineConfig` computation, not a
+new subsystem. Lands in `compute_sight_lines` / `_has_los` (the `can_shoot_over_wall` path).
+
+### MECH-13 · Per-player information table (imperfect information)
+Players currently act on **perfect information**, which is incorrect — each player should decide using
+only what they personally know. Add (or fully wire) a **per-player information table** that informs
+decision-making, so choices are made against believed/last-known state rather than ground truth.
+
+**Status:** a per-player view already exists via the MECH-06 `player_memory` dict (transient, staleness
+thresholds per role). Unclear how much of decision-making actually consults it today — audit current
+usage in goal/target selection, then route remaining perfect-information reads through the table.
+
+### MECH-14 · Memory/comms-driven adaptive role behaviour
+Now that memory (MECH-06) and communication are implemented, players should **change what they do**
+based on new information they receive, rather than following static role scripts. Concrete behaviours
+to encode:
+
+- **Scouts** push in past the Heavy when the Heavy is down.
+- **Commander** takes space when the Heavy is down.
+- **Ammo** can resupply the Heavy for free when the Commander is down.
+
+These are conditional goal/action overrides keyed off teammate-status memory; they extend the MECH-06
+broadcast/memory hooks and feed into the role goal selection (MAP-05 / MECH-07).
+
+### MOVE-05 · Simulation engine de-duplication (refactor)
+`simulation.py` is heavily bloated and contains duplicated logic. Continue the consolidation already
+begun.
+
+**Status:** partially done — `ResourceBasedSimulator` was removed (SIM-09). Several areas still
+**duplicate the tagging-and-related-checks code** (a player tag plus all the associated checks appears
+in more than one place). Extract the shared tag/check path into a single helper so there is one
+implementation. No behavioural change intended; fold any incidental delta into the existing pending
+Score Calibration re-baseline.
+
+### MECH-07 · Role-aware goal-selection rework (MAP-05 follow-up)
+Make changes to role-aware goal selection (MAP-05). Shape is **still being worked out** — scope and
+acceptance criteria are deliberately deferred.
+
+**Status:** TBD — intentionally sequenced **last** in this batch until the design is settled.

@@ -122,6 +122,10 @@ The Commander **Special** that, after a **Fuse window**, eliminates lives across
 **Fuse window**:
 The delay between a **Nuke** being fired and it detonating, during which **Downing** the firing Commander cancels it.
 
+**Nuke cancellation**:
+A **Nuke** that is dropped without detonating because its firing Commander was **Down**ed (**Shields** to zero) or eliminated during the **Fuse window** — the **MECH-05** rule. A Down clears the Commander's `special_active_until`, disarming the pending nuke. Emitted as a discrete `GameEvent(event_type="nuke_cancelled")` at the **Down/disarm tick** (the dramatic "nuke stopped" moment, RV-02), *not* at the would-be detonation tick. The cancelled nuke is **left in the pending queue** (an emit-only flag prevents a duplicate at drain time) so nuke-reaction behaviour is unchanged — RV-02 records the cancellation without altering any mechanic. Before RV-02 the cancellation left only the activation trace in the log and no resolution row. Distinct from a **Nuke** detonation (`event_type="special"`, description "nuke detonates").
+_Avoid_: reading a nuke activation with no detonation as proof of cancellation by inference — the cancellation is server-emitted on its own event row (mirrors the **Locking / Missiled** single-source rule); removing the cancelled nuke from the pending queue at the Down tick (it would change nuke-reaction flags and drift seeded games).
+
 **Rapid Fire**:
 The Scout **Special** that removes the shot-rate cooldown while active.
 
@@ -298,6 +302,19 @@ Re-running a single persisted **Round** from its stored **RNG seed** to reproduc
 **Batch run**:
 Simulating the same two **Teams** N times to sample the outcome distribution (win %, score variance); remains a variance sampler — a fresh random **Master seed** per run unless one is supplied. Applies **Side alternation** so per-team aggregates are not biased by map-side advantage; aggregate keys are **team-position keyed** (`red_*` = the team passed as the `team_red` argument, whichever **Side** it played), with a separate side-advantage breakdown for the raw red/blue-side signal.
 
+### Analytics and review
+
+**Highlight**:
+An auto-flagged notable moment in a **Round**, surfaced on the events-page "Highlights" tab and persisted on `GameRound.highlights_json` at round completion. Six kinds: a **Nuke** detonation, a **Nuke cancellation**, the round's first **Elimination**, a **team Elimination** (a whole **Team** wiped out — the 10,000-point-bonus moment), the single largest 30-second **scoring burst** (the 60-tick window in which **one Team** scored the most points), and a **Medic reset chain** (a Medic re-**Down**ed before recovering). Each Highlight carries its tick (for `÷2`-to-mm:ss display) and the players/team involved. **Base captures are deliberately *not* a Highlight kind** — they are routine, frequent point-grabs (a dozen-plus per round), so they live in the events-log timeline (filterable by the "Base Capture" type) rather than the highlight reel; their points still count toward the **scoring burst**.
+_Avoid_: reading "point swing" as a lead/differential change — it is the gross single-team scoring burst; expecting a per-base-capture Highlight — base captures are surfaced only in the event log.
+
+**Medic reset chain**:
+A **Medic** that is **Down**ed **two or more times in one unbroken recovery chain** — re-Downed while still in the **Respawn cooldown** (tagged in the **Reset window**), before ever returning to fully active. The "spawn-camped medic" moment. The chain count is per-recovery: it resets to zero the moment the Medic returns to fully active, so a Medic Downed twice across the round with a full recovery between is **not** a reset chain. Server-detected at the life-loss chokepoint and emitted as a discrete `GameEvent` so the **Highlight** builder reads it single-source (never reconstructed from tag/elimination rows).
+_Avoid_: counting the Medic's round-cumulative `times_tagged_in_reset_window` as a reset chain — the chain is one unbroken recovery, not a round total.
+
+**Scoring burst**:
+The 30-second (60-tick) sliding window in which a **single Team** scored the most cumulative points — the measure behind the "largest 30-second point swing" **Highlight**. Gross single-team points, *not* a change in the red−blue lead (a deliberate RV-02 choice: a burst is the biggest scoring run, not a momentum reversal).
+
 ## Relationships
 
 - A **Match** has exactly two **Rounds**; a **Round** belongs to one **Match** (or stands alone).
@@ -318,6 +335,9 @@ Simulating the same two **Teams** N times to sample the outcome distribution (wi
 > **Domain expert:** "No — a **Down** costs one **Life** and starts the **Respawn cooldown**. **Elimination** is only when the *last* life goes."
 
 ## Flagged ambiguities
+
+- **"team_elimination" event** — `GameEvent.EVENT_TYPES` declares a `team_elimination` choice, but the simulator **never emits it** (it is dead since at least the BatchSim consolidation). Resolved 2026-05-21 by RV-02: the **team Elimination Highlight** is derived from `GameRound.red_team_eliminated` / `blue_team_eliminated` + `eliminated_at`, **not** from a `team_elimination` event row. Do not assume a `team_elimination` `GameEvent` exists; do not resurrect it for RV-02 (out of scope).
+- **"point swing" vs "scoring burst"** — resolved 2026-05-21 by RV-02: the "largest 30-second point swing" **Highlight** flags the gross **Scoring burst** (most points by *one* Team in any 60-tick window), **not** the largest change in the red−blue lead/differential. "Swing" was ambiguous; the chosen meaning is the scoring run, not a momentum reversal.
 
 - **"zone"** — used loosely for the red/neutral/blue classification, the `zone_size` granularity, the legacy `current_zone`/`zone_fallback` field, and arbitrary map regions. Resolved: **Zone** = the red/neutral/blue territorial classification *only*; the playable grid unit is a **Cell**; `zone_size` is **Zone size** (cell granularity), not a Zone.
 - **"tag" vs "hit" vs "shot"** — resolved: **Shot** = firing once; **Hit** = a Shot that connects; **Tag** = a Hit on a valid enemy that scores. Do not use "tag" for the act of firing or for any Hit.
