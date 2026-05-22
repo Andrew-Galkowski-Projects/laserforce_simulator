@@ -7,9 +7,11 @@ from django.contrib import messages
 from django.db.models import Q
 from django.http import Http404, HttpResponse, HttpResponseNotAllowed, JsonResponse
 from django.urls import reverse
+from django.utils.text import slugify
 from teams.models import Team
 from .models import Match, GameRound, PlayerRoundState, GameEvent
 from .simulation import BatchSimulator
+from .sim_helpers.pdf_report import build_round_report
 from .forms import MatchSetupForm, SingleRoundSetupForm, BatchSimulateForm
 
 # In-process job store for async save operations
@@ -979,3 +981,99 @@ def movement_heatmap(request, round_id: int):
         "processed_image_url": processed_image_url,
     }
     return render(request, "matches/movement_heatmap.html", context)
+
+
+def _player_row(state: PlayerRoundState) -> dict:
+    """RV-03: build one player_row dict (frozen seam-contract key order) from a
+    PlayerRoundState. `mvp` sources the get_mvp property, `accuracy` the
+    get_accuracy property; the other 10 are IntegerFields."""
+    return {
+        "name": state.player.name,
+        "role": state.role,
+        "points_scored": state.points_scored,
+        "mvp": state.get_mvp,
+        "tags_made": state.tags_made,
+        "times_tagged": state.times_tagged,
+        "accuracy": state.get_accuracy,
+        "final_lives": state.final_lives,
+        "resupplies_given": state.resupplies_given,
+        "missiles_landed": state.missiles_landed,
+        "specials_used": state.specials_used,
+        "follow_up_shots": state.follow_up_shots,
+        "reaction_shots": state.reaction_shots,
+        "combo_resupply_count": state.combo_resupply_count,
+    }
+
+
+def _team_totals(player_rows: list[dict], team_points: int) -> dict:
+    """RV-03: summed per-team resource totals plus derived team values."""
+    return {
+        "resupplies_given": sum(p["resupplies_given"] for p in player_rows),
+        "missiles_landed": sum(p["missiles_landed"] for p in player_rows),
+        "specials_used": sum(p["specials_used"] for p in player_rows),
+        "tags_made": sum(p["tags_made"] for p in player_rows),
+        "survivors": sum(1 for p in player_rows if p["final_lives"] > 0),
+        "team_points": team_points,
+    }
+
+
+def export_round_report(request, round_id: int):
+    """RV-03: export a Round-report PDF for one GameRound (GET only).
+
+    Assembles the report_data dict from the ORM (scoreboard ordering mirrors
+    game_round_detail exactly) and hands it to the pure build_round_report
+    builder; the watermark is gated on game_round.is_simulated.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    game_round = get_object_or_404(GameRound, pk=round_id)
+
+    red_states = (
+        game_round.player_states.filter(player__team=game_round.team_red)
+        .select_related("player")
+        .order_by("-points_scored", "role", "player__name")
+    )
+    blue_states = (
+        game_round.player_states.filter(player__team=game_round.team_blue)
+        .select_related("player")
+        .order_by("-points_scored", "role", "player__name")
+    )
+
+    red_players = [_player_row(s) for s in red_states]
+    blue_players = [_player_row(s) for s in blue_states]
+
+    round_label = (
+        f"Round {game_round.round_number} of 2" if game_round.match else "Single Round"
+    )
+    map_name = game_round.arena_map.name if game_round.arena_map_id else None
+    winner_name = game_round.winner.name if game_round.winner_id else None
+
+    report_data = {
+        "round_id": game_round.pk,
+        "round_label": round_label,
+        "date_played": game_round.date_played.strftime("%b %d, %Y %H:%M"),
+        "map_name": map_name,
+        "red_team_name": game_round.team_red.name,
+        "blue_team_name": game_round.team_blue.name,
+        "red_points": game_round.red_points,
+        "blue_points": game_round.blue_points,
+        "red_eliminated": game_round.red_team_eliminated,
+        "blue_eliminated": game_round.blue_team_eliminated,
+        "winner_name": winner_name,
+        "red_players": red_players,
+        "blue_players": blue_players,
+        "red_totals": _team_totals(red_players, game_round.red_points),
+        "blue_totals": _team_totals(blue_players, game_round.blue_points),
+    }
+
+    pdf_bytes = build_round_report(report_data, watermark=game_round.is_simulated)
+
+    red_slug = slugify(game_round.team_red.name) or "red"
+    blue_slug = slugify(game_round.team_blue.name) or "blue"
+
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = (
+        f'attachment; filename="round-{round_id}-{red_slug}-vs-{blue_slug}.pdf"'
+    )
+    return response

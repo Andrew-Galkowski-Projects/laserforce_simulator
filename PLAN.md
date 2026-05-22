@@ -450,6 +450,8 @@ Show as a "Highlights" tab on the events page. Store results in `GameRound.highl
 `GET /matches/game-round/<id>/export/` — ReportLab (programmatic PDF generation; chosen over WeasyPrint to
 avoid template dependency ahead of the Angular migration). Contains round summary, scoreboards, per-player table,
 resource summary. "[Simulated]" watermark on simulator-generated rounds.
+- completed
+- note: single-**Round** PDF export at `GET /matches/game-round/<int:round_id>/export/` (URL name `export_round_report`, view `matches/views.py::export_round_report`), generated server-side with **ReportLab** (programmatic PDF; chosen over WeasyPrint to avoid an HTML-template dependency ahead of the planned Angular migration — added as the unpinned `reportlab>=4.0` line to `laserforce_simulator/requirements.txt`). Provenance is a new **`GameRound.is_simulated`** (`BooleanField(default=True)`; migration `0028_gameround_is_simulated.py`, dep `0027_gameround_highlights_json`, a single `AddField`) — **no backfill** (the [ADR-0004](docs/adr/0004-simulation-data-is-disposable.md) disposable-data precedent, same as `rng_seed` / `cell_occupancy_json` / `highlights_json`); existing rows take the `default=True`, so today *every* persisted Round is a **Simulated round** (CONTEXT.md) and exports with the watermark. The render is a **pure builder** `matches/sim_helpers/pdf_report.py::build_round_report(report_data: dict, *, watermark: bool) -> bytes` — **pure Python, no Django/ORM imports, no settings access, no file I/O beyond an internal `io.BytesIO`, consumes no RNG** — that returns the PDF as `b"%PDF"`-prefixed non-empty bytes and draws a diagonal "[Simulated]" watermark on **every** page (ReportLab `onFirstPage`/`onLaterPages` page callback) gated by the keyword-only `watermark` bool; the view passes `watermark=game_round.is_simulated`. **Watermark testable seam:** ReportLab **compresses page-content streams**, so the literal `[Simulated]` text is **not reliably greppable** in the output bytes — the decision is therefore factored into a tiny pure helper `should_watermark(is_simulated: bool) -> bool` that the page callback consults and tests assert on **directly** (`should_watermark(True) is True`, `False is False`) **without parsing compressed PDF streams** (the byte-level assertions check only the `b"%PDF"` prefix for both branches, never watermark-text presence). The **view is GET-only** (`if request.method != "GET": return HttpResponseNotAllowed(["GET"])` → 405, mirroring the `movement_heatmap` guard), `get_object_or_404(GameRound, pk=round_id)` (→ 404), assembles `report_data` from the ORM, calls the builder, and returns `HttpResponse(pdf_bytes, content_type="application/pdf")` with `Content-Disposition: attachment; filename="round-<id>-<red_slug>-vs-<blue_slug>.pdf"` (the view owns slugification). The seam crosses **one** frozen `report_data` dict: round-summary block (`round_id`, `round_label` = `f"Round {n} of 2"` if `match` else `"Single Round"`, `date_played` pre-formatted by the view + printed verbatim, `map_name` → builder **omits** the map line when `None`, team names/points/eliminated flags, `winner_name` → builder prints `"Tie"` when `None`), plus `red_players` / `blue_players` (ordered `-points_scored, role, player__name` **exactly** mirroring `game_round_detail`). The **per-player table is the RV-01 stat set, single-sourced** — same fixed key order `name, role, points_scored, mvp, tags_made, times_tagged, accuracy, final_lives, resupplies_given, missiles_landed, specials_used, follow_up_shots, reaction_shots, combo_resupply_count` — where **`mvp` reuses the `get_mvp` property** and **`accuracy` reuses the `get_accuracy` property** (NOT the plain `accuracy` property that delegates to `stat_for_simulation`), neither recomputed. A **per-team resource summary** (`red_totals` / `blue_totals`) aggregates `resupplies_given` / `missiles_landed` / `specials_used` / `tags_made` summed over the team's players, `survivors` = count with `final_lives > 0`, and `team_points` from `GameRound.red_points` / `blue_points` (team-level field, **not** summed). Edge cases: empty / early-eliminated round (all-zero stats) renders with zeros and **no crash**; map-less round omits the map line; tie prints "Tie". Entry point: an "Export PDF" link in `templates/matches/game_round_detail.html` (`{% url 'export_round_report' round.id %}`; the Code agent adds the link — no behavioural logic in the template). **Charts/graphs are deliberately deferred to RV-05** (`pdf_charts.py` is a *future* sibling of `pdf_report.py`). The `is_simulated=False` write — the **Actual game log** (CONTEXT.md) `.tdf` import that pairs a Round to a real game — is deferred to **IMPORT-01** (the first writer of `is_simulated=False`; provenance contract locked here at RV-03 planning). **No simulation change, runs no simulation, consumes no RNG → no SIM-07/08 contract interaction and no Score Calibration re-baseline.** Tests: `matches/tests/test_rv03_pdf_report.py` (NEW — pure-unit: `build_round_report` returns `b"%PDF"`-prefixed non-empty bytes for `watermark=True` and `watermark=False`, `should_watermark` truth table, empty/early-eliminated zeroed `report_data` renders without crashing, and a "no Django imports leaked into `pdf_report.py`" defensive check mirroring the RES-04 pattern — hand-built dict literal, **no ORM**) and `matches/tests/views_tests.py` (EXTENDED — GET → 200 + `Content-Type: application/pdf` + `Content-Disposition` shape + `b"%PDF"` body, 404 on missing id, 405 on POST, and both `is_simulated=True` / `False` rounds returning 200 + `b"%PDF"`). Seam contract: [`.claude/worktrees/rv-03-seam-contract.md`](.claude/worktrees/rv-03-seam-contract.md). Domain terms (Round report, Simulated round, Actual game log) are in [CONTEXT.md](CONTEXT.md). **No ADR** — decisions are reversible (a `BooleanField` add + a pure render module).
 
 ### SIM-01 · Document and test action weights
 Add docstrings to every weight function in `weights.py`. Cover weight sums with unit tests. 
@@ -944,3 +946,91 @@ Make changes to role-aware goal selection (MAP-05). Shape is **still being worke
 acceptance criteria are deliberately deferred.
 
 **Status:** TBD — intentionally sequenced **last** in this batch until the design is settled.
+
+---
+
+## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
+
+Three analytics/export follow-ons. They reuse data already persisted by earlier work (per-player
+`PlayerRoundState`, the `GameEvent` log, and the RES-02 SP / shots / lives / points series) and the
+RV-03 ReportLab export. **Decision (locked at planning):** charts are rendered **server-side with
+matplotlib** (pure-Python, no browser, deterministic) rather than capturing the client-side Chart.js
+canvases or printing the page in headless Chrome — keeps the export self-contained and avoids a
+browser dependency ahead of the Angular migration, consistent with RV-03's ReportLab rationale. Both
+PDF items below share a single matplotlib-to-ReportLab rendering helper.
+
+**Shared prerequisite:** add `matplotlib` to `requirements.txt`. A new helper module
+(`matches/sim_helpers/pdf_charts.py`, pure: data series in → PNG bytes / ReportLab `Image` out, no
+ORM, no I/O beyond an in-memory buffer) re-plots each chart series with matplotlib using the
+`Agg` (non-interactive) backend so it runs headless on the server. The chart **data** is the same
+series the events page builds (per-player SP / shots / lives / points over time, sourced from
+`GameEvent` rows — RES-02 contract); the helper does not need Chart.js. Charts won't be pixel-identical
+to the on-screen Chart.js versions, but carry the same data.
+
+### RV-05 · Round report PDF: chart/graph section (extends RV-03)
+Add a **charts section** to the RV-03 PDF (same `GET /matches/game-round/<id>/export/` endpoint — one
+PDF = summary + scoreboards + per-player table + resource summary + **graphs**). Render the same four
+event-page charts (SP, shots, lives, points over time) server-side via the shared
+`pdf_charts.py` helper and embed them as ReportLab `Image` flowables after the existing tables. The
+"[Simulated]" watermark on simulator-generated rounds (RV-03) applies to the chart pages too.
+
+**Depends on:** RV-03 (the export endpoint + ReportLab scaffold must land first; RV-05 amends its
+scope). **Scope:** read-only/derived — no model change, no migration, no simulator change. **Acceptance:**
+the exported PDF contains one rendered graph per event-page chart with the same data as the
+on-screen charts; an empty/early-eliminated round degrades gracefully (axis with no series, no crash);
+the watermark appears on chart pages for simulated rounds.
+
+### HX-02 · Individual performance per round page
+A **single-round, single-player** drilldown — distinct from HX-01, which aggregates a player's career
+across *all* rounds. New page `/matches/game-round/<id>/player/<pid>/` (URL name e.g.
+`round_player_detail`), linked from each player row on the round detail scoreboard
+(`game_round_detail.html`) and from the round events page. Surfaces that player's performance **within
+this one round**: their `PlayerRoundState` stat line (points, MVP, tags made / times tagged, accuracy
+%, final lives, resupplies given, missiles landed, specials used, follow-up / reaction shots, combo
+resupplies), their personal `GameEvent` timeline filtered to events where they are actor or target,
+and their SP / shots / lives curves over the round (the RES-02 series, filtered to this player). If the
+round has a movement heatmap (RES-04 `cell_occupancy_json`), embed this player's per-cell occupancy as
+a mini-heatmap.
+
+**Depends on:** existing `PlayerRoundState` + `GameEvent` data (no new persistence); reuses RES-01
+accuracy, RES-02 SP series, and optionally RES-04 occupancy. **Scope:** read-only/derived — no model
+change, no migration, no simulator change. **Acceptance:** the page renders the correct stat line and
+event timeline for the given (round, player); a player who has no `PlayerRoundState` on the round
+404s; the per-player charts show only that player's series; the round-detail scoreboard links to it.
+
+### HX-03 · Export individual performance as PDF (extends HX-02)
+`GET /matches/game-round/<id>/player/<pid>/export/` — a per-player, single-round PDF stat sheet:
+header (player name, role, team, round), the stat line, the personal event timeline, and the player's
+SP / shots / lives / points graphs rendered server-side via the **same** `pdf_charts.py` helper used by
+RV-05 (one rendering path, reused). "[Simulated]" watermark on simulator-generated rounds, matching
+RV-03 / RV-05.
+
+**Depends on:** HX-02 (the page + its data assembly) and the RV-05 shared chart helper. **Scope:**
+read-only/derived — no model change, no migration, no simulator change. **Acceptance:** the exported
+PDF contains the player's stat line, timeline, and graphs for the one round; an absent
+(round, player) pairing 404s; the watermark appears for simulated rounds.
+
+### IMPORT-01 · Real-game `.tdf` log parser + import tool
+Parse real Laserforce SM5 game logs (the `.tdf` files in `Screenshots_and_video_examples/sample_games/`)
+and import them as `GameRound`s, so the app can store and review *actual* games alongside simulated ones.
+The `.tdf` format is a **UTF-16, tab-separated, sectioned** export: `;0/info`, `;1/mission` (type, desc,
+start, duration), `;2/team` (index, desc, colour), `;3/entity-start` (player/target id, role/battlesuit,
+team, member id), and `;4/event` (time, type code, free-form payload) records. Write a pure parser
+(`.tdf` bytes → structured rounds + events, no Django/ORM, no I/O) and an import tool (management command
+and/or upload view) that maps parsed entities to `Player`/`Team` rows and parsed `;4/event` rows to
+`GameEvent` rows, persisting a `GameRound` linked to an **`actual_game_log`** record.
+
+**Provenance contract (locked at RV-03 planning):** a `GameRound` not paired with an `actual_game_log`
+is `is_simulated = True` (the RV-03 watermark default); an imported round links to its `actual_game_log`
+and is stored with `is_simulated = False` (no watermark). RV-03 adds the `is_simulated` flag now;
+IMPORT-01 adds the `actual_game_log` link and is the first writer of `is_simulated = False`.
+
+**Open design questions (resolve in this task's own grill):** the `actual_game_log` model shape (store
+raw `.tdf` bytes vs. parsed JSON vs. both); how `;4/event` type codes map onto the simulator's
+`GameEvent.event_type` vocabulary (tag / down / resupply / nuke / base-capture — the mapping is the risky
+part and likely lossy); how parsed entities reconcile to existing `Player`/`Team` rows (match by member
+id? create-on-import?); whether real-game ticks/timestamps (the `;4` `time` field is in different units)
+need conversion to the TIME-01 tick model. **Scope:** new persistence (the `actual_game_log` model +
+`is_simulated = False` writes) and a migration. **Acceptance:** both sample `.tdf` files parse without
+error into a reviewable `GameRound` whose scoreboards/event log render in the existing round views, and the
+imported round shows **no** "[Simulated]" watermark on its RV-03 export.
