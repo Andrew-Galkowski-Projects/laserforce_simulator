@@ -456,6 +456,8 @@ resource summary. "[Simulated]" watermark on simulator-generated rounds.
 ### SIM-01 · Document and test action weights
 Add docstrings to every weight function in `weights.py`. Cover weight sums with unit tests. 
 Provide a clearly documented constant dict so weights are adjustable without touching logic code.
+- completed
+- note: documentation + test hardening only — **no behavioural change, no formula/value change, no migration, no Score Calibration re-baseline, no CONTEXT.md term, no ADR**. (1) **Constant extraction:** the action-weight baseline `[70, 30, 0, 0, 0, 0, 0, 0, 0]` is moved out of `combat.plan_action` (was a stranded magic literal at `combat.py:~293`) into a NEW documented public module constant `BASELINE_ACTION_WEIGHTS` in `matches/sim_helpers/weights.py`; `plan_action` now does `weights = list(BASELINE_ACTION_WEIGHTS)` (copy, never mutate). This is the SIM-01 "adjustable without touching logic code" deliverable — the **constant dict** the story asks for is the existing per-role dicts (`_MEDIC` / `_AMMO` / `_SCOUT` / `_HEAVY` / `_COMMANDER`, which postdate the SIM-01 plan text and already drive every per-role tuning) **plus** this baseline constant, the one remaining tunable that still lived in logic code. (2) **Docstrings** added to all 5 role weight fns (`_get_medic_weights`, `_get_ammo_weights`, `_get_scout_weights`, `_get_heavy_weights`, `_get_commander_weights`) stating baseline totals, the situational-block order, and the non-negative invariant; per-key inline comments added to the 5 const dicts. (3) **Tests** (`matches/tests/test_weights.py`): migrated from a mixed 7-slot/9-slot fixture set to a SINGLE 9-slot fixture sourced from `BASELINE_ACTION_WEIGHTS` (legacy 7-slot `_BASE` / `_ACTION_IDX` deleted); existing sum/vector assertions widened to 9 elements with NO value change (hold redistribution is zero-sum, `request_resupply` = 0 at baseline). New regression test `test_plan_action_never_emits_negative_weight` builds in-memory `PlayerState` objects (no DB) and asserts `plan_action` never hands a negative weight to `random.choices` across 5 roles × ~10 targeted edge states; the medic-`+5`-capture (the known pre-existing failure) and Scout-`xfail` cases kept as-is with sharpened docstrings. Seam contract: [`.claude/worktrees/sim-01-seam-contract.md`](.claude/worktrees/sim-01-seam-contract.md).
 
 ### SIM-02 · Batch simulation mode
 `POST /matches/simulate-batch/` — accepts `red_team_id`, `blue_team_id`, `n` (10/50/100/500). 
@@ -1034,3 +1036,32 @@ need conversion to the TIME-01 tick model. **Scope:** new persistence (the `actu
 `is_simulated = False` writes) and a migration. **Acceptance:** both sample `.tdf` files parse without
 error into a reviewable `GameRound` whose scoreboards/event log render in the existing round views, and the
 imported round shows **no** "[Simulated]" watermark on its RV-03 export.
+
+### SIM-12 · Clamp negative action weights before `random.choices`
+Discovered during the SIM-01 grill/review (May 2026). `combat.plan_action` builds the 9-slot weight
+vector and feeds it straight to `random.choices` **without clamping per-element negatives to 0**. CPython's
+`random.choices` only raises when the *total* weight is ≤ 0 — it does **not** reject an individual negative
+weight; instead the negative bucket becomes unreachable in the cumulative-weight bisect **and silently skews
+the neighbouring buckets' probabilities**. Several role branches legitimately emit one negative slot today:
+Heavy/Commander `only_move` while missiles remain (`25/15 → 5` after the MOVE-03 hold draw, then `−15`
+missile cost → `−10`/`−5`), Heavy `only_move` while capturing (`5 − 10 = −5`), and Scout `tag_player` when
+shots-critical with no ammo ally (`_SCOUT["seek_no_ammo_tag"]=50` > post-baseline tag `40` → `−10`). So the
+action distribution on those ticks is subtly wrong, not crashing. SIM-01 deliberately left this **unfixed**
+(it is a behavioural change, not a documentation change) and pinned only the true non-raising invariant
+(`test_plan_action_never_raises_*` / `test_plan_action_total_weight_is_positive` in `test_weights.py`).
+
+**Scope:** add a single non-negative clamp on the final weight vector in `plan_action` (e.g.
+`weights = [max(0, x) for x in weights]`) immediately before `random.choices`, *after*
+`apply_decision_making_spread` and the cooldown/stamina post-processing. Decide in this task's grill whether
+the clamp belongs in `plan_action` (one site, covers all roles) or pushed back into the role functions /
+helper subtraction sites (more surgical but many sites). **Tests:** convert the role-function-layer
+`test_scout_shots_critical_tag_goes_negative_xfail` from `xfail` to a real assertion once the clamp lands at
+the right layer (or keep it documenting the raw role-fn output and add a new `plan_action`-layer test that
+the vector handed to `random.choices` has **every element ≥ 0**, not just total > 0 — strengthening the
+SIM-01 `total > 0` invariant). Also pin the three known negative-emitting branches (Heavy missile, Heavy
+capture, Scout shots-critical) so the clamp is regression-guarded per branch.
+
+**This re-baselines seeded outcomes** (the corrected probabilities shift which Action is rolled on the
+affected ticks) — fold it into the single pending post-MOVE-01 Score Calibration re-baseline; do **not**
+create a separate re-baseline obligation. No migration, no new domain term, no ADR (a one-line clamp is
+reversible and unsurprising).

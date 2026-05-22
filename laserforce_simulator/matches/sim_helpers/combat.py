@@ -23,6 +23,7 @@ from .mechanics import (
 from .pathfinding import choose_goal_cell
 from .pending_events import PendingMissileLock
 from .weights import (
+    BASELINE_ACTION_WEIGHTS,
     _get_medic_weights,
     _get_ammo_weights,
     _get_scout_weights,
@@ -290,7 +291,8 @@ def plan_action(
     """
     # MOVE-03: 9-slot action array — index 8 is the new ``hold`` Action
     # (Overwatch). Per-role weight redistribution is applied in weights.py.
-    weights = [70, 30, 0, 0, 0, 0, 0, 0, 0]
+    # Copy the module constant — plan_action mutates the list in place.
+    weights = list(BASELINE_ACTION_WEIGHTS)
 
     # MECH-06 wired: teamwork bias in pathfinding._goal_from_role; communication
     # broadcast in simulation.py tick loop; memory updated from LOS + global broadcasts.

@@ -1881,6 +1881,8 @@ class TestBs2BatchChartReuse:
             "before reusing the #scoreChart canvas (BS-2)"
         )
 
+
+@pytest.mark.django_db
 class TestRv03ExportRoundReport:
     """RV-03 — ``export_round_report`` view: GET returns an attachment PDF,
     missing id 404s, non-GET 405s, and both ``is_simulated`` branches render.
