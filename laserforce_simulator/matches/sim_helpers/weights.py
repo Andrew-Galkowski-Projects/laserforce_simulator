@@ -5,137 +5,154 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 _MEDIC = dict(
-    baseline_tag=-65,
-    baseline_cz=-30,
-    baseline_hide=+30,
-    baseline_resupply=+65,
+    baseline_tag=-65,  # opening tag_player delta (70 -> 5)
+    baseline_cz=-30,  # opening only_move delta (30 -> 0)
+    baseline_hide=+30,  # opening hide delta (0 -> 30)
+    baseline_resupply=+65,  # opening resupply_ally delta (0 -> 65)
     # MOVE-03: Medic does not Overwatch (it heals, not holds).
-    baseline_hold=0,
-    baseline_hold_source="tag_player",
-    support_capture_gain=5,
-    support_capture_resupply_cost=5,
+    baseline_hold=0,  # no hold weight (Medic stays support-focused)
+    baseline_hold_source="tag_player",  # unused while baseline_hold == 0
+    support_capture_gain=5,  # capture_base bump when a base is capturable
+    support_capture_resupply_cost=5,  # resupply_ally cost paid for that bump
     low_lives_threshold=3,  # fixed life count (not a percentage)
-    low_lives_hide_cost=30,
-    low_lives_resupply_gain=30,
-    not_active_resupply_cost=60,
-    endgame_capture_gain=40,
-    endgame_resupply_cost=40,
-    special_per_ally=20,
+    low_lives_hide_cost=30,  # hide cut when low on lives
+    low_lives_resupply_gain=30,  # resupply_ally bump when low on lives
+    not_active_resupply_cost=60,  # resupply_ally drained while downed
+    endgame_capture_gain=40,  # capture_base bump in the endgame rush
+    endgame_resupply_cost=40,  # resupply_ally cost paid for that rush
+    special_per_ally=20,  # use_special bump per active ally
 )
 
 _AMMO = dict(
-    baseline_tag=-25,
-    baseline_cz=-30,
-    baseline_resupply=+55,
+    baseline_tag=-25,  # opening tag_player delta (70 -> 45)
+    baseline_cz=-30,  # opening only_move delta (30 -> 0)
+    baseline_resupply=+55,  # opening resupply_ally delta (0 -> 55)
     # MOVE-03: +20 to hold, drawn from tag_player. Post-baseline tag = 70 - 25
     # = 45; 45 - 20 = 25 (>= 0, OK).
-    baseline_hold=+20,
-    baseline_hold_source="tag_player",
-    support_capture_gain=5,
-    support_capture_resupply_cost=5,
-    low_lives_threshold=3,
-    low_lives_diff_zone_resupply_cost=50,
-    low_lives_same_zone_resupply_cost=30,
-    low_lives_same_zone_hide_gain=30,
-    low_lives_fallback_resupply_cost=50,
-    low_lives_fallback_hide_gain=50,
-    low_lives_tag_cost=20,
-    low_lives_resupply_gain=20,
-    special_per_ally=20,
-    endgame_capture_gain=40,
-    endgame_resupply_cost=40,
+    baseline_hold=+20,  # hold weight (drawn from tag_player)
+    baseline_hold_source="tag_player",  # source slot for the hold weight
+    support_capture_gain=5,  # capture_base bump when a base is capturable
+    support_capture_resupply_cost=5,  # resupply_ally cost paid for that bump
+    low_lives_threshold=3,  # fixed life count triggering the low-lives block
+    low_lives_diff_zone_resupply_cost=50,  # resupply_ally cut, medic in other zone
+    low_lives_same_zone_resupply_cost=30,  # resupply_ally cut, medic same zone
+    low_lives_same_zone_hide_gain=30,  # hide bump, medic same zone
+    low_lives_fallback_resupply_cost=50,  # resupply_ally cut, no medic (heavy/none)
+    low_lives_fallback_hide_gain=50,  # hide bump, no medic fallback
+    low_lives_tag_cost=20,  # tag_player cut when low on lives
+    low_lives_resupply_gain=20,  # resupply_ally bump when low on lives
+    special_per_ally=20,  # use_special bump per active ally
+    endgame_capture_gain=40,  # capture_base bump in the endgame rush
+    endgame_resupply_cost=40,  # resupply_ally cost paid for that rush
 )
 
 _SCOUT = dict(
-    baseline_tag=-30,
-    baseline_cz=+30,
+    baseline_tag=-30,  # opening tag_player delta (70 -> 40)
+    baseline_cz=+30,  # opening only_move delta (30 -> 60)
     # MOVE-03: +10 to hold, drawn from only_move. Post-baseline only_move =
     # 30 + 30 = 60; 60 - 10 = 50 (>= 0, OK).
-    baseline_hold=+10,
-    baseline_hold_source="only_move",
-    critical_pct=0.3,
-    base_capture_gain=20,
-    base_capture_tag_cost=20,
-    seek_diff_tag=30,
-    seek_diff_cz=30,
-    seek_same_cz=20,
-    seek_same_tag=20,
-    seek_same_hide=40,
-    seek_base_capture_gain=40,
-    seek_base_tag_cost=20,
-    seek_base_cz_cost=20,
-    seek_no_ally_tag=30,
-    seek_no_ally_hide=30,
-    seek_no_ammo_tag=50,
-    seek_no_ammo_hide=50,
-    not_active_cz_cap=10,
-    endgame_capture_gain=30,
-    endgame_tag_cost=30,
+    baseline_hold=+10,  # hold weight (drawn from only_move)
+    baseline_hold_source="only_move",  # source slot for the hold weight
+    critical_pct=0.3,  # lives/shots fraction that triggers seek-ally blocks
+    base_capture_gain=20,  # capture_base bump when a base is capturable
+    base_capture_tag_cost=20,  # tag_player cost paid for that bump
+    seek_diff_tag=30,  # tag_player cut, ally in a different zone
+    seek_diff_cz=30,  # only_move bump, ally in a different zone
+    seek_same_cz=20,  # only_move cut, ally in same zone
+    seek_same_tag=20,  # tag_player cut, ally in same zone
+    seek_same_hide=40,  # hide bump, ally in same zone
+    seek_base_capture_gain=40,  # capture_base bump, no ally but base capturable
+    seek_base_tag_cost=20,  # tag_player cost for that capture bump
+    seek_base_cz_cost=20,  # only_move cost for that capture bump
+    seek_no_ally_tag=30,  # tag_player cut, no ally (lives block)
+    seek_no_ally_hide=30,  # hide bump, no ally (lives block)
+    seek_no_ammo_tag=50,  # tag_player cut, no ammo ally (shots block)
+    seek_no_ammo_hide=50,  # hide bump, no ammo ally (shots block)
+    not_active_cz_cap=10,  # max idle tag weight redirected to only_move when downed
+    endgame_capture_gain=30,  # capture_base bump in the endgame rush
+    endgame_tag_cost=30,  # tag_player cost paid for that rush
 )
 
 _HEAVY = dict(
-    baseline_cz=-5,
-    baseline_hide=+5,
+    baseline_cz=-5,  # opening only_move delta (30 -> 25)
+    baseline_hide=+5,  # opening hide delta (0 -> 5)
     # MOVE-03: +20 to hold, drawn from only_move. Post-baseline only_move =
     # 30 - 5 = 25; 25 - 20 = 5 (>= 0, OK).
-    baseline_hold=+20,
-    baseline_hold_source="only_move",
-    critical_pct=0.3,
-    missile_cz_cost=15,
-    missile_gain=15,
-    base_capture_gain=30,
-    base_capture_tag_cost=20,
-    base_capture_cz_cost=10,
-    seek_diff_tag=30,
-    seek_diff_cz=30,
-    seek_same_cz=10,
-    seek_same_tag=20,
-    seek_same_hide=30,
-    seek_base_capture_gain=40,
-    seek_base_tag_cost=20,
-    seek_base_cz_cost=20,
-    seek_no_ally_tag=30,
-    seek_no_ally_hide=30,
-    seek_no_ammo_tag=50,
-    seek_no_ammo_hide=50,
-    not_active_tag_cost=70,
-    endgame_capture_gain=30,
-    endgame_tag_cost=30,
+    baseline_hold=+20,  # hold weight (drawn from only_move)
+    baseline_hold_source="only_move",  # source slot for the hold weight
+    critical_pct=0.3,  # lives/shots fraction that triggers seek-ally blocks
+    missile_cz_cost=15,  # only_move cost while missiles remain
+    missile_gain=15,  # missile_player bump while missiles remain
+    base_capture_gain=30,  # capture_base bump when a base is capturable
+    base_capture_tag_cost=20,  # tag_player cost paid for that bump
+    base_capture_cz_cost=10,  # only_move cost paid for that bump
+    seek_diff_tag=30,  # tag_player cut, ally in a different zone
+    seek_diff_cz=30,  # only_move bump, ally in a different zone
+    seek_same_cz=10,  # only_move cut, ally in same zone
+    seek_same_tag=20,  # tag_player cut, ally in same zone
+    seek_same_hide=30,  # hide bump, ally in same zone
+    seek_base_capture_gain=40,  # capture_base bump, no ally but base capturable
+    seek_base_tag_cost=20,  # tag_player cost for that capture bump
+    seek_base_cz_cost=20,  # only_move cost for that capture bump
+    seek_no_ally_tag=30,  # tag_player cut, no ally (lives block)
+    seek_no_ally_hide=30,  # hide bump, no ally (lives block)
+    seek_no_ammo_tag=50,  # tag_player cut, no ammo ally (shots block)
+    seek_no_ammo_hide=50,  # hide bump, no ammo ally (shots block)
+    not_active_tag_cost=70,  # tag_player drained while downed
+    endgame_capture_gain=30,  # capture_base bump in the endgame rush
+    endgame_tag_cost=30,  # tag_player cost paid for that rush
 )
 
 _COMMANDER = dict(
-    baseline_tag=+10,
-    baseline_cz=-15,
+    baseline_tag=+10,  # opening tag_player delta (70 -> 80)
+    baseline_cz=-15,  # opening only_move delta (30 -> 15)
     # MOVE-03: +10 to hold, drawn from only_move. Post-baseline only_move =
     # 30 - 15 = 15; 15 - 10 = 5 (>= 0, OK).
-    baseline_hold=+10,
-    baseline_hold_source="only_move",
-    critical_pct=0.3,
-    missile_cz_cost=15,
-    missile_gain=15,
-    base_capture_gain=50,
-    base_capture_tag_cost=40,
-    base_capture_cz_cost=10,
-    base_early_bonus=20,
-    base_early_threshold=300,
-    seek_diff_tag=30,
-    seek_diff_cz=30,
-    seek_same_cz=10,
-    seek_same_tag=20,
-    seek_same_hide=30,
-    seek_base_capture_gain=40,
-    seek_base_tag_cost=20,
-    seek_base_cz_cost=20,
-    seek_no_ally_tag=30,
-    seek_no_ally_hide=30,
-    seek_no_ammo_tag=50,
-    seek_no_ammo_hide=50,
-    not_active_tag_cost=70,
-    special_base=100,
-    special_per_enemy=20,
-    endgame_capture_gain=30,
-    endgame_tag_cost=30,
+    baseline_hold=+10,  # hold weight (drawn from only_move)
+    baseline_hold_source="only_move",  # source slot for the hold weight
+    critical_pct=0.3,  # lives/shots fraction that triggers seek-ally blocks
+    missile_cz_cost=15,  # only_move cost while missiles remain
+    missile_gain=15,  # missile_player bump while missiles remain
+    base_capture_gain=50,  # capture_base bump when a base is capturable
+    base_capture_tag_cost=40,  # tag_player cost paid for that bump
+    base_capture_cz_cost=10,  # only_move cost paid for that bump
+    base_early_bonus=20,  # extra capture/tag swing before base_early_threshold
+    base_early_threshold=300,  # seconds-domain cutoff for the early bonus
+    seek_diff_tag=30,  # tag_player cut, ally in a different zone
+    seek_diff_cz=30,  # only_move bump, ally in a different zone
+    seek_same_cz=10,  # only_move cut, ally in same zone
+    seek_same_tag=20,  # tag_player cut, ally in same zone
+    seek_same_hide=30,  # hide bump, ally in same zone
+    seek_base_capture_gain=40,  # capture_base bump, no ally but base capturable
+    seek_base_tag_cost=20,  # tag_player cost for that capture bump
+    seek_base_cz_cost=20,  # only_move cost for that capture bump
+    seek_no_ally_tag=30,  # tag_player cut, no ally (lives block)
+    seek_no_ally_hide=30,  # hide bump, no ally (lives block)
+    seek_no_ammo_tag=50,  # tag_player cut, no ammo ally (shots block)
+    seek_no_ammo_hide=50,  # hide bump, no ammo ally (shots block)
+    not_active_tag_cost=70,  # tag_player drained while downed
+    special_base=100,  # base use_special weight when the nuke gate opens
+    special_per_enemy=20,  # use_special reduction per enemy in zone
+    endgame_capture_gain=30,  # capture_base bump in the endgame rush
+    endgame_tag_cost=30,  # tag_player cost paid for that rush
 )
+
+
+# ---------------------------------------------------------------------------
+# Baseline action weights — the starting weight vector before any role
+# adjustment.  ``plan_action`` copies this list (it mutates in place) and each
+# role weight function applies its deltas on top.  Adjust these numbers to
+# retune the opening behaviour without touching any logic code.
+#
+# The 9 entries map by index to the action array (see ``_ACTION_IDX`` /
+# ``_CHOICES`` in combat.py):
+#   0 tag_player        5 resupply_ally
+#   1 only_move         6 missile_player
+#   2 hide              7 request_resupply
+#   3 capture_base      8 hold
+#   4 use_special
+# ---------------------------------------------------------------------------
+BASELINE_ACTION_WEIGHTS = [70, 30, 0, 0, 0, 0, 0, 0, 0]
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +425,28 @@ def _get_medic_weights(
     second: float,
     time_domain: str = "seconds",
 ) -> list[int]:
+    """Compute the Medic action weights in place from ``_MEDIC`` and return them.
+
+    Baseline after role adjustment (before situational modifiers):
+    ``tag_player=5, only_move=0, hide=30, resupply_ally=65, hold=0`` — Medic
+    never holds (no Overwatch source), staying support-focused.
+
+    Situational blocks, in application order (only the ones Medic calls):
+    baseline -> hold baseline -> support capture incentive -> low-lives
+    (stop tagging, dump tag weight into resupply) -> support special -> not-active
+    (downed; drains ``resupply_ally``, watches for an allied heavy) -> endgame
+    rush -> ``resupply_synergy`` stat scaling on ``resupply_ally`` -> request
+    resupply (shots only) -> MECH-04 nuke reaction (tag weight -> resupply) ->
+    MECH-06 score broadcast.
+
+    Invariant (production): ``plan_action`` needs only the *total* weight > 0,
+    which is all ``random.choices`` enforces — it tolerates an unreachable
+    negative bucket and raises only when the total is <= 0. Most slots stay
+    >= 0; a few branches deliberately drive one slot negative (Heavy/Commander
+    ``only_move`` while missiles remain, Heavy capture, Scout ``tag_player``
+    when shots-critical), which is harmless. See ``test_plan_action_*`` in
+    test_weights.py.
+    """
     w, c, i = weights, _MEDIC, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
@@ -460,6 +499,28 @@ def _get_ammo_weights(
     second: float,
     time_domain: str = "seconds",
 ) -> list[int]:
+    """Compute the Ammo action weights in place from ``_AMMO`` and return them.
+
+    Baseline after role adjustment (before situational modifiers):
+    ``tag_player=25, only_move=0, resupply_ally=55, hold=20`` — the hold weight
+    is drawn from ``tag_player`` (45 - 20 = 25).
+
+    Situational blocks, in application order (only the ones Ammo calls):
+    baseline -> hold baseline -> support capture incentive -> low-lives
+    (seek the medic, else a heavy; cut tag, boost resupply) -> support special
+    -> not-active (downed; pools and zeroes ``tag_player`` + ``resupply_ally``,
+    watches for an allied heavy) -> endgame rush -> ``resupply_synergy`` stat
+    scaling on ``resupply_ally`` -> request resupply (lives only) -> MECH-04
+    nuke reaction (tag weight -> resupply) -> MECH-06 score broadcast.
+
+    Invariant (production): ``plan_action`` needs only the *total* weight > 0,
+    which is all ``random.choices`` enforces — it tolerates an unreachable
+    negative bucket and raises only when the total is <= 0. Most slots stay
+    >= 0; a few branches deliberately drive one slot negative (Heavy/Commander
+    ``only_move`` while missiles remain, Heavy capture, Scout ``tag_player``
+    when shots-critical), which is harmless. See ``test_plan_action_*`` in
+    test_weights.py.
+    """
     w, c, i = weights, _AMMO, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
@@ -529,6 +590,28 @@ def _get_scout_weights(
     second: float,
     time_domain: str = "seconds",
 ) -> list[int]:
+    """Compute the Scout action weights in place from ``_SCOUT`` and return them.
+
+    Baseline after role adjustment (before situational modifiers):
+    ``tag_player=40, only_move=50, hold=10`` — the hold weight is drawn from
+    ``only_move`` (60 - 10 = 50).
+
+    Situational blocks, in application order (only the ones Scout calls):
+    baseline -> hold baseline -> capture incentive (when a base is capturable)
+    -> lives-critical seek (medic; no fallback ally) -> shots-critical seek
+    (ammo; ``no_resource``) -> use_special (when special is charged and idle)
+    -> not-active (downed; zero ``tag_player``, ~20% to ``only_move`` capped,
+    rest to ``hide``) -> endgame rush -> request resupply (either resource) ->
+    MECH-06 score broadcast.
+
+    Invariant (production): ``plan_action`` needs only the *total* weight > 0,
+    which is all ``random.choices`` enforces — it tolerates an unreachable
+    negative bucket and raises only when the total is <= 0. Most slots stay
+    >= 0; a few branches deliberately drive one slot negative (Heavy/Commander
+    ``only_move`` while missiles remain, Heavy capture, Scout ``tag_player``
+    when shots-critical), which is harmless. See ``test_plan_action_*`` in
+    test_weights.py.
+    """
     w, c, i = weights, _SCOUT, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
@@ -583,6 +666,28 @@ def _get_heavy_weights(
     second: float,
     time_domain: str = "seconds",
 ) -> list[int]:
+    """Compute the Heavy action weights in place from ``_HEAVY`` and return them.
+
+    Baseline after role adjustment (before situational modifiers):
+    ``tag_player=70, only_move=5, hide=5, hold=20`` — the hold weight is drawn
+    from ``only_move`` (25 - 20 = 5).
+
+    Situational blocks, in application order (only the ones Heavy calls):
+    baseline -> hold baseline -> missile incentive (while missiles remain) ->
+    capture incentive (when a base is capturable) -> lives-critical seek (medic,
+    ammo fallback) -> shots-critical seek (ammo; ``no_resource``) -> not-active
+    (downed; drains ``tag_player``, ``always_escape`` to ``only_move``) ->
+    endgame rush -> request resupply (either resource) -> MECH-06 score
+    broadcast.
+
+    Invariant (production): ``plan_action`` needs only the *total* weight > 0,
+    which is all ``random.choices`` enforces — it tolerates an unreachable
+    negative bucket and raises only when the total is <= 0. Most slots stay
+    >= 0; a few branches deliberately drive one slot negative (Heavy/Commander
+    ``only_move`` while missiles remain, Heavy capture, Scout ``tag_player``
+    when shots-critical), which is harmless. See ``test_plan_action_*`` in
+    test_weights.py.
+    """
     w, c, i = weights, _HEAVY, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
@@ -662,6 +767,30 @@ def _get_commander_weights(
     second: float,
     time_domain: str = "seconds",
 ) -> list[int]:
+    """Compute the Commander action weights in place from ``_COMMANDER``.
+
+    Baseline after role adjustment (before situational modifiers):
+    ``tag_player=80, only_move=15, hold=10`` — the hold weight is drawn from
+    ``only_move`` (15 - 10 = 5).
+
+    Situational blocks, in application order (only the ones Commander calls):
+    baseline -> hold baseline -> missile incentive (while missiles remain) ->
+    capture incentive (with an early-game capture/tag bonus before
+    ``base_early_threshold``) -> lives-critical seek (medic, ammo fallback) ->
+    shots-critical seek (ammo; ``no_resource``) -> nuke special (gated by
+    ``_commander_nuke_gate`` on SP/awareness; weight reduced per enemy in zone)
+    -> not-active (downed; drains ``tag_player``, watches for an allied medic)
+    -> endgame rush -> request resupply (either resource) -> MECH-06 score
+    broadcast.
+
+    Invariant (production): ``plan_action`` needs only the *total* weight > 0,
+    which is all ``random.choices`` enforces — it tolerates an unreachable
+    negative bucket and raises only when the total is <= 0. Most slots stay
+    >= 0; a few branches deliberately drive one slot negative (Heavy/Commander
+    ``only_move`` while missiles remain, Heavy capture, Scout ``tag_player``
+    when shots-critical), which is harmless. See ``test_plan_action_*`` in
+    test_weights.py.
+    """
     w, c, i = weights, _COMMANDER, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
