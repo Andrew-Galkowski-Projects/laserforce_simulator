@@ -166,3 +166,17 @@ class DeleteMapViewTests(TestCase):
         arena_map = self._make_map("Listed")
         response = self.client.get("/maps/")
         self.assertContains(response, f"/maps/{arena_map.pk}/delete/")
+
+
+class MapListUploadFormTests(TestCase):
+    """MP-1: the upload form's text input must carry an autocomplete attribute
+    so the page does not trip the "element doesn't have an autocomplete
+    attribute" a11y issue.
+    """
+
+    def test_map_name_input_has_autocomplete_attribute(self) -> None:
+        response = self.client.get("/maps/")
+        self.assertContains(response, 'id="map-name"')
+        # The text input must declare autocomplete (a map name is not
+        # autofillable user data, so "off" is the right value).
+        self.assertContains(response, 'autocomplete="off"')

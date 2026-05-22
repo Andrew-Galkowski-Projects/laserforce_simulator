@@ -19,7 +19,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ~~RD-1~~ | ~~🟡~~ | ~~Round detail~~ | ~~Round detail page lacks a Missile log link (heatmap link added by RES-04, missile-log link still missing) — **pre-existing, not RES-04 regression**~~ _(fixed)_ |
 | ~~BS-1~~ | ~~🟡~~ | ~~Batch sim form~~ | ~~`[issue] No label associated with a form field (count: 4)` — pre-existing a11y warning~~ _(fixed)_ |
 | ~~BS-2~~ | ~~🟠~~ | ~~Batch sim (SIM-11 run)~~ | ~~Re-running a batch without reloading throws Chart.js "Canvas is already in use" — breaks polling, shows stale partial results~~ _(fixed)_ |
-| MP-1 | 🟡 | Maps list | `[issue] An element doesn't have an autocomplete attribute` on upload form — pre-existing a11y warning |
+| ~~MP-1~~ | ~~🟡~~ | ~~Maps list~~ | ~~`[issue] An element doesn't have an autocomplete attribute` on upload form — pre-existing a11y warning~~ _(fixed)_ |
 
 **Overall:** All RES-04 surfaces work end-to-end on a freshly simulated map-aware match. Filter cascade math reconciles (red+blue sums equal both). Pre-RES-04 rounds gracefully render empty heatmaps with no errors. Map-less rounds render the correct "No map" notice. No console errors on any RES-04 page. Smoke pass on the rest of the app surfaces no new regressions; the three 🟡 items are all pre-existing.
 
@@ -84,7 +84,7 @@ Tested against map 4, zone_size=20, after rounds 82 + 83 were simulated:
 ### ~~🟡 BS-1 — batch sim form a11y~~ _(fixed)_
 `/matches/simulate-batch/` emits `[issue] No label associated with a form field (count: 4)`. Pre-existing; not touched by RES-04. Cosmetic.
 
-### 🟡 MP-1 — maps list autocomplete
+### ~~🟡 MP-1 — maps list autocomplete~~ _(fixed)_
 `/maps/` emits `[issue] An element doesn't have an autocomplete attribute`. Upload form input. Pre-existing; not touched by RES-04. Cosmetic.
 
 ### ~~🟠 BS-2 — batch sim re-run reuses Chart.js canvas without destroying it~~ _(fixed)_
