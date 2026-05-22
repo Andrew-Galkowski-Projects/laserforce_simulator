@@ -1119,3 +1119,184 @@ class TestSim10SessionHandoverWritesOnceOnComplete:
             "save_batch_games regression: save_games was never called "
             "from the unaltered session entry"
         )
+
+
+# ---------------------------------------------------------------------------
+# SIM-11 — wire ``workers=`` into the UI batch path.
+#
+# Pinned by `.claude/worktrees/sim-11-seam-contract.md` §2 (the 19-row
+# ``(n, cpu_count, expected)`` table) and §4 (the test boundary). Two new
+# classes:
+#   - ``TestSim11WorkersFor`` — every row of the locked table is a
+#     parametrised case against the pure ``_workers_for(n)`` helper.
+#   - ``TestSim11RunBatchJobPassesWorkers`` — drives ``_run_batch_job``
+#     synchronously with ``matches.views.BatchSimulator`` patched to a
+#     ``MagicMock`` and asserts the call site adds ``workers=_workers_for(n)``
+#     to ``run_incremental(...)``. The other kwargs (``arena_map`` /
+#     ``master_seed``) are SIM-09 / SIM-10 contracts and are NOT re-pinned
+#     here (see §2 of the seam contract).
+# ---------------------------------------------------------------------------
+
+
+class TestSim11WorkersFor:
+    """SIM-11 §2 — every row of the locked ``(n, cpu_count, expected)`` table
+    is a parametrised case against the module-level helper
+    ``matches.views._workers_for``.
+
+    The helper is a pure function of ``n`` and the live ``os.cpu_count()``;
+    we patch ``os.cpu_count`` (which the helper reads via ``os.cpu_count()``)
+    rather than ``matches.views.os.cpu_count`` — both targets are equivalent
+    in CPython since ``import os`` binds the same module object, but
+    patching ``os.cpu_count`` is the simpler form and is the one the seam
+    contract names. No DB / no ``Client`` / no ``RequestFactory`` — pure unit.
+    """
+
+    @pytest.mark.parametrize(
+        "n,cpu_count,expected",
+        [
+            # n < 50 → 1 regardless of cpu_count (early return, no
+            # cpu_count read).
+            (0, 1, 1),
+            (0, 4, 1),
+            (0, 16, 1),
+            (1, 4, 1),
+            (10, 4, 1),
+            (49, 4, 1),
+            (49, 16, 1),
+            # n >= 50 → min(os.cpu_count() or 1, 4).
+            (50, 1, 1),
+            (50, 2, 2),
+            (50, 4, 4),
+            (50, 8, 4),
+            (50, 16, 4),
+            (100, 4, 4),
+            (500, 8, 4),
+            (1000, 64, 4),
+            # os.cpu_count() is None → `or 1` fallback (CPython contract:
+            # `os.cpu_count()` may return None on some platforms).
+            (50, None, 1),
+            (1000, None, 1),
+            # Defensive: negative n behaves as small n (workers=1).
+            # Production form-validation guards against negative n, but the
+            # lock pins the helper's behaviour at the boundary.
+            (-1, 4, 1),
+            (-100, 16, 1),
+        ],
+    )
+    def test_workers_for_table(self, monkeypatch, n, cpu_count, expected):
+        import os as _os
+        from matches.views import _workers_for
+
+        monkeypatch.setattr(_os, "cpu_count", lambda: cpu_count)
+        assert _workers_for(n) == expected, (
+            f"_workers_for({n!r}) with os.cpu_count()={cpu_count!r} "
+            f"returned {_workers_for(n)!r}, expected {expected!r}"
+        )
+
+
+@pytest.mark.django_db
+class TestSim11RunBatchJobPassesWorkers:
+    """SIM-11 §3 / §4 — ``_run_batch_job`` adds exactly one kwarg
+    (``workers=_workers_for(n)``) to its
+    ``BatchSimulator().run_incremental(...)`` call.
+
+    We patch ``matches.views.BatchSimulator`` (NOT
+    ``matches.simulation.BatchSimulator``) because ``_run_batch_job`` reads
+    the symbol via ``from .simulation import BatchSimulator`` at module
+    load, so the bound name at the call site is ``matches.views.BatchSimulator``.
+
+    The patched simulator's ``run_incremental`` returns ``iter([])`` so the
+    ``for snap in ...`` loop in ``_run_batch_job`` exits immediately and the
+    function writes its terminal ``status="complete"`` block under
+    ``_JOBS_LOCK``. We then sniff ``call_args.kwargs["workers"]`` — no other
+    kwarg is asserted.
+    """
+
+    def _populate_initial_job(self, job_id, n, team_red_id, team_blue_id):
+        """Mirror the initial-write shape ``simulate_batch`` performs before
+        spawning the daemon thread (SIM-10 contract — see
+        ``matches/views.py:115`` comment "Initial entry was inserted under
+        the lock in ``simulate_batch`` before this thread started").
+        """
+        from matches.views import _BATCH_JOBS, _JOBS_LOCK
+
+        with _JOBS_LOCK:
+            _BATCH_JOBS[job_id] = {
+                "status": "running",
+                "completed": 0,
+                "total": n,
+                "partial": None,
+                "error": None,
+                "team_red_id": team_red_id,
+                "team_blue_id": team_blue_id,
+                "arena_map_id": None,
+            }
+
+    def test_run_batch_job_passes_workers_one_for_small_n(self):
+        """For ``n = 10`` (< 50), ``_workers_for(n)`` is ``1`` regardless of
+        CPU count — the call site passes ``workers=1``.
+        """
+        from unittest.mock import MagicMock
+        from matches.views import _run_batch_job
+
+        red, _ = make_team_with_slots("Sim11SmallR")
+        blue, _ = make_team_with_slots("Sim11SmallB")
+        job_id = "sim11-small-job"
+        n = 10
+        self._populate_initial_job(job_id, n, red.id, blue.id)
+
+        mock_simulator_cls = MagicMock()
+        mock_simulator_cls.return_value.run_incremental.return_value = iter([])
+
+        with patch("matches.views.BatchSimulator", mock_simulator_cls):
+            _run_batch_job(job_id, red.id, blue.id, n, None, None)
+
+        run_incremental = mock_simulator_cls.return_value.run_incremental
+        assert run_incremental.call_count == 1, (
+            f"expected exactly one run_incremental call, got "
+            f"{run_incremental.call_count}"
+        )
+        kwargs = run_incremental.call_args.kwargs
+        assert (
+            "workers" in kwargs
+        ), f"_run_batch_job dropped the workers kwarg; kwargs={kwargs!r}"
+        assert (
+            kwargs["workers"] == 1
+        ), f"for n={n} (< 50), workers must be 1; got {kwargs['workers']!r}"
+
+    def test_run_batch_job_passes_workers_helper_value_for_large_n(self):
+        """For ``n = 50`` (>= 50), ``_workers_for(n)`` resolves the live
+        ``os.cpu_count()`` (capped at 4) — the call site passes that exact
+        value. We import ``_workers_for`` and use it to compute the expected
+        value rather than hard-coding ``4`` so the assertion passes on any
+        CI box regardless of CPU count.
+        """
+        from unittest.mock import MagicMock
+        from matches.views import _run_batch_job, _workers_for
+
+        red, _ = make_team_with_slots("Sim11LargeR")
+        blue, _ = make_team_with_slots("Sim11LargeB")
+        job_id = "sim11-large-job"
+        n = 50
+        self._populate_initial_job(job_id, n, red.id, blue.id)
+
+        mock_simulator_cls = MagicMock()
+        mock_simulator_cls.return_value.run_incremental.return_value = iter([])
+
+        with patch("matches.views.BatchSimulator", mock_simulator_cls):
+            _run_batch_job(job_id, red.id, blue.id, n, None, None)
+
+        run_incremental = mock_simulator_cls.return_value.run_incremental
+        assert run_incremental.call_count == 1, (
+            f"expected exactly one run_incremental call, got "
+            f"{run_incremental.call_count}"
+        )
+        kwargs = run_incremental.call_args.kwargs
+        assert (
+            "workers" in kwargs
+        ), f"_run_batch_job dropped the workers kwarg; kwargs={kwargs!r}"
+        expected = _workers_for(n)
+        assert kwargs["workers"] == expected, (
+            f"for n={n} (>= 50), workers must equal _workers_for(n)="
+            f"{expected!r}; got {kwargs['workers']!r}"
+        )

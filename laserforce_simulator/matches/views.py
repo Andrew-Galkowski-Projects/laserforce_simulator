@@ -1,3 +1,4 @@
+import os
 import threading
 import uuid
 
@@ -68,6 +69,22 @@ def _run_save_job(
         django.db.close_old_connections()
 
 
+def _workers_for(n: int) -> int:
+    """SIM-11: n-aware fixed default for the UI batch path.
+
+    Returns ``1`` for ``n < 50`` (small batches: process-pool spawn cost on
+    Windows dominates the parallel gain) and ``min(os.cpu_count() or 1, 4)``
+    for ``n >= 50`` (cap at 4 workers — the test runner / CI box may report
+    far more, and we don't need more than 4 here). The 50-game threshold
+    and the 4-worker cap are tunable constants living in this function body
+    (no module-level constants), mirroring the 25/50 placement in
+    ``_chunk_size_for``.
+    """
+    if n < 50:
+        return 1
+    return min(os.cpu_count() or 1, 4)
+
+
 def _run_batch_job(
     job_id: str,
     team_red_id: int,
@@ -109,6 +126,7 @@ def _run_batch_job(
             team_blue,
             n,
             arena_map=arena_map,
+            workers=_workers_for(n),
             master_seed=master_seed,
         ):
             with _JOBS_LOCK:

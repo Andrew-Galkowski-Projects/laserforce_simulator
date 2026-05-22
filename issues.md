@@ -18,6 +18,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | H-8 | ✅ | Create match | `/matches/create/` with arena_map=San Marcos completes, persists rounds, populates `cell_occupancy_json` |
 | RD-1 | 🟡 | Round detail | Round detail page lacks a Missile log link (heatmap link added by RES-04, missile-log link still missing) — **pre-existing, not RES-04 regression** |
 | BS-1 | 🟡 | Batch sim form | `[issue] No label associated with a form field (count: 4)` — pre-existing a11y warning |
+| BS-2 | 🟠 | Batch sim (SIM-11 run) | Re-running a batch without reloading throws Chart.js "Canvas is already in use" — breaks polling, shows stale partial results |
 | MP-1 | 🟡 | Maps list | `[issue] An element doesn't have an autocomplete attribute` on upload form — pre-existing a11y warning |
 
 **Overall:** All RES-04 surfaces work end-to-end on a freshly simulated map-aware match. Filter cascade math reconciles (red+blue sums equal both). Pre-RES-04 rounds gracefully render empty heatmaps with no errors. Map-less rounds render the correct "No map" notice. No console errors on any RES-04 page. Smoke pass on the rest of the app surfaces no new regressions; the three 🟡 items are all pre-existing.
@@ -85,6 +86,21 @@ Tested against map 4, zone_size=20, after rounds 82 + 83 were simulated:
 
 ### 🟡 MP-1 — maps list autocomplete
 `/maps/` emits `[issue] An element doesn't have an autocomplete attribute`. Upload form input. Pre-existing; not touched by RES-04. Cosmetic.
+
+### 🟠 BS-2 — batch sim re-run reuses Chart.js canvas without destroying it
+Found 2026-05-21 while testing SIM-11 (multi-process batch path) on branch `sim-11-workers-ui-batch`. **Server-side SIM-11 change is not implicated — this is a pre-existing client-side bug in the batch template's polling/render JS.**
+
+Repro: `/matches/simulate-batch/` → run any batch (e.g. n=50) and let it finish → **without reloading the page**, change "Number of simulations" and click Run again. The second run throws:
+
+```
+Polling request failed: Error: Canvas is already in use. Chart with ID '0' must be destroyed before the canvas with ID 'scoreChart' can be reused.
+```
+
+Effect: polling aborts, the score-distribution chart fails to re-render, and the results panel shows **stale/partial data** (observed "Results — 1 simulations" with the previous run's "completed in 11.13s" still shown while the new n=10 run was in flight). Reloading the page first and running once works fine (verified n=50 and n=10 both render cleanly on a fresh load with no console errors).
+
+Cause: the Chart.js instance bound to `#scoreChart` is created on each run but the prior instance is never `.destroy()`-ed (nor is `Chart.getChart(canvas)` checked) before re-instantiating. Fix: destroy/replace the existing chart instance (and reset the results DOM) at the start of each new run before the first poll repaints the canvas.
+
+Likely lives in the batch template's inline polling script — `templates/matches/batch_simulate.html` (or whatever JS owns `scoreChart`); not yet pinpointed to a line.
 
 ---
 
