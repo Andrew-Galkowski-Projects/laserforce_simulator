@@ -169,6 +169,7 @@ Read-only DRF endpoints registered under `/api/`:
 /matches/game-round/<id>/events/     → event timeline/filtering
 /matches/game-round/<id>/missile-log/ → RES-03 missile usage log (URL name "missile_log")
 /matches/game-round/<id>/heatmap/    → RES-04 per-round movement heatmap (URL name "movement_heatmap")
+/matches/compare/?round_a=&round_b= → RV-01 side-by-side round comparison (URL name "compare_rounds")
 /matches/team/<id>/history/          → team win/loss history
 /matches/simulate-batch/             → run N in-memory simulations
 /matches/simulate-batch/status/<job_id>/ → SIM-10 batch-simulate job status JSON (URL name "batch_simulate_status")
@@ -205,6 +206,33 @@ Per-round **Cell occupancy** snapshots ship via two surfaces driven from a singl
 **Multi-round aggregate** lives **inside the existing map editor** as a third mode toggle alongside Zones & Bases and Sight Lines (see [`core/CLAUDE.md`](../../laserforce_simulator/core/CLAUDE.md)). Driven by `core/views.py::map_heatmap_data` at `/maps/<int:map_id>/heatmap-data/` (URL name `map_heatmap_data`); GET only (405 on non-GET), required `zone_size` int query param (400 `"zone_size required"` when missing), optional `team_color` ∈ {`"red"`, `"blue"`} (400 `"invalid team_color"` on any other non-empty value). Filtering is **server-side on `team_color` only** — the view joins `GameRound.cell_occupancy_json` against `PlayerRoundState.team_color` to drop non-matching players, then sums the remaining `"r,c"` → ticks entries. Response shape `{"cell_occupancy": {"r,c": int}, "zone_size": int, "rows": int, "cols": int, "round_count": int}` with cells whose final sum is `0` omitted (matches the per-round file format). The editor view exposes **no** per-player or per-role dropdowns — those are single-round only.
 
 **Single-source contract.** Per-player JSON is the only persisted form; team-color / role / per-player aggregates are **always derived at view time** via `PlayerRoundState` (the editor view server-side, the round view client-side via `player_roster`). Same seed + Orientation + rosters + map ⇒ identical `cell_occupancy_json` — reconstruction consumes no RNG and reads only the deterministic movement trail + A* route, so the SIM-07/08 contract extends to the new field. **No simulation behaviour change** → **no Score Calibration re-baseline obligation**. Locked names (model field, migration, pure function, view names + URLs, JSON ids, DOM ids, test files) are pinned by the seam contract at [`.claude/worktrees/res-04-seam-contract.md`](../../.claude/worktrees/res-04-seam-contract.md). **No ADR** — decisions are reversible (the column is a `JSONField` add; the cache is regenerable). **Scope-out:** no backfill, no time-window slicing, no PNG/PDF/CSV export, no JS unit tests, no new `MapContext` accessor.
+
+## RV-01 round comparison
+
+A single read-only view `compare_rounds(request)` (`matches/views.py`) at `path("compare/", views.compare_rounds, name="compare_rounds")` compares two `GameRound`s that share at least one team. It reads `round_a` / `round_b` from `request.GET` (query params, **not** URL kwargs — so the picker is reachable with no params). **No model change, no migration** — pure read-only/derived; **consumes no RNG**, runs no simulation, so it is outside the SIM-07/08 contract and triggers no Score Calibration re-baseline. Tests live in `matches/views_tests.py`.
+
+**Four modes**, surfaced via the `mode` context key:
+- **picker** — either param missing → render the two-`<select>` chooser (HTTP 200).
+- **404** — a supplied id doesn't resolve (`get_object_or_404`).
+- **error** — `round_a == round_b`, or the two rounds share no team → `mode="error"` + `error_message` (HTTP 200; the picker re-renders above the banner).
+- **full compare** — delta table + overlay chart (HTTP 200).
+
+**"Shares a team" is Side-agnostic Team-id overlap:** `{a.team_red_id, a.team_blue_id} & {b.team_red_id, b.team_blue_id}` — a team that played red in round A and blue in round B still pairs (Orientation-independent). The delta-table rows pair `PlayerRoundState` **by `player_id`**, so the same human is compared to themselves across both rounds regardless of Side.
+
+**Module-level helpers** in `matches/views.py` (pure beyond the rounds handed in):
+- `_shared_team_ids(round_a, round_b) -> list[int]` — the set-intersection above as a list.
+- `_player_stat_deltas(round_a, round_b, team_ids) -> list[dict]` — one row per player on a shared team, shape `{player_id, name, role_a, role_b, side_a, side_b, stats: {<stat>: {a, b, delta}}}` where **`delta = b - a`**; the whole `delta` (and the absent side's `a`/`b`) is **`None` when that player has no `PlayerRoundState` on one of the rounds** (joined the roster between rounds).
+- `_cumulative_team_points(game_round, team_id) -> list[list]` — `[[tick, cum_points]]` running totals from that team's `GameEvent` rows, **coalescing the nullable `GameEvent.points_awarded` to 0** so non-scoring events don't break the cumulative sum.
+
+The delta table is the **extended** stat set in a fixed key order, exposed as the `stat_keys` context key (single source of truth for the template loop): `points_scored, mvp, tags_made, times_tagged, accuracy, final_lives, resupplies_given, missiles_landed, specials_used, follow_up_shots, reaction_shots, combo_resupply_count`. **`mvp` reuses the existing `PlayerRoundState.get_mvp` property** and **`accuracy` reuses the existing `get_accuracy` property** (RES-01) — neither is recomputed in the view.
+
+The **Points-Over-Time** overlay is `points_series` = one entry **per shared team** `{team_id, team_name, a: [[tick, cum]], b: [[tick, cum]]}` (round A solid, round B dashed), built from `_cumulative_team_points`. Timestamps are raw **ticks** through the view/JSON boundary; any mm:ss display applies the standard `÷2` filter at the HTML layer (TIME-01).
+
+**Context keys:** `round_a, round_b, all_rounds` (`GameRound.objects.select_related("team_red", "team_blue").order_by("-id")` — populates both picker `<select>`s), `mode, error_message, stat_keys, deltas, points_series`.
+
+**Template** `templates/matches/compare_rounds.html`: two `<select>` controls (DOM ids `compare-select-a` / `compare-select-b`), the error banner, the delta table (green = positive delta / red = negative, neutral when `delta is None`), and a Chart.js overlay fed by two `json_script` blocks (DOM ids `compare-points-series` and `compare-deltas`).
+
+**Entry point:** a "Compare Rounds" button in the `match_list.html` header (`/matches/`) links to the picker; deep links (`?round_a=&round_b=`) also work directly.
 
 ## Tests
 

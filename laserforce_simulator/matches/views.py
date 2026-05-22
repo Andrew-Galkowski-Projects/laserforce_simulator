@@ -5,7 +5,7 @@ import uuid
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.db.models import Q
-from django.http import HttpResponseNotAllowed, JsonResponse
+from django.http import Http404, HttpResponse, HttpResponseNotAllowed, JsonResponse
 from django.urls import reverse
 from teams.models import Team
 from .models import Match, GameRound, PlayerRoundState, GameEvent
@@ -154,6 +154,217 @@ def _run_batch_job(
             _BATCH_JOBS[job_id].update({"status": "error", "error": str(exc)})
     finally:
         django.db.close_old_connections()
+
+
+# RV-01: ordered stat keys for the round-comparison delta table. `mvp` and
+# `accuracy` are computed from properties; every other key is a same-named
+# PlayerRoundState IntegerField.
+_COMPARE_STAT_KEYS: list[str] = [
+    "points_scored",
+    "mvp",
+    "tags_made",
+    "times_tagged",
+    "accuracy",
+    "final_lives",
+    "resupplies_given",
+    "missiles_landed",
+    "specials_used",
+    "follow_up_shots",
+    "reaction_shots",
+    "combo_resupply_count",
+]
+
+# Stat keys that map directly to same-named PlayerRoundState IntegerFields.
+_COMPARE_FIELD_STAT_KEYS: list[str] = [
+    "points_scored",
+    "tags_made",
+    "times_tagged",
+    "final_lives",
+    "resupplies_given",
+    "missiles_landed",
+    "specials_used",
+    "follow_up_shots",
+    "reaction_shots",
+    "combo_resupply_count",
+]
+
+
+def _shared_team_ids(round_a: GameRound, round_b: GameRound) -> list[int]:
+    """RV-01: sorted list of Team ids present in both rounds, ignoring Side.
+
+    A team counts as shared whether it played red in one round and blue in the
+    other — the comparison is by team identity, not physical Side.
+    """
+    ids_a = {round_a.team_red_id, round_a.team_blue_id}
+    ids_b = {round_b.team_red_id, round_b.team_blue_id}
+    return sorted(ids_a & ids_b)
+
+
+def _stat_values(ps: PlayerRoundState) -> dict:
+    """RV-01: extract the ordered comparison stats from one PlayerRoundState.
+
+    `mvp` reads the `get_mvp` property (float), `accuracy` the `get_accuracy`
+    property (int percent, divide-by-zero guarded); all other keys are the
+    same-named IntegerField.
+    """
+    values: dict = {"mvp": ps.get_mvp, "accuracy": ps.get_accuracy}
+    for key in _COMPARE_FIELD_STAT_KEYS:
+        values[key] = getattr(ps, key)
+    return values
+
+
+def _player_stat_deltas(
+    round_a: GameRound, round_b: GameRound, team_ids: list[int]
+) -> list[dict]:
+    """RV-01: per-player stat-delta rows for the two rounds, paired by player.
+
+    Only players whose ``player.team_id`` is in ``team_ids`` are included.
+    Rows are paired by ``player_id``; a player present in only one round yields
+    a row whose missing side's ``role_*``/``side_*`` and per-stat value are
+    ``None`` (and the delta ``None``). ``delta = b - a`` when both sides exist.
+    Rows are ordered by name.
+    """
+    team_id_set = set(team_ids)
+
+    def _states_for(game_round: GameRound) -> dict[int, PlayerRoundState]:
+        return {
+            ps.player_id: ps
+            for ps in game_round.player_states.select_related("player").all()
+            if ps.player.team_id in team_id_set
+        }
+
+    states_a = _states_for(round_a)
+    states_b = _states_for(round_b)
+
+    rows: list[dict] = []
+    for player_id in set(states_a) | set(states_b):
+        ps_a = states_a.get(player_id)
+        ps_b = states_b.get(player_id)
+        name = (ps_a or ps_b).player.name
+
+        values_a = _stat_values(ps_a) if ps_a is not None else None
+        values_b = _stat_values(ps_b) if ps_b is not None else None
+
+        stats: dict = {}
+        for key in _COMPARE_STAT_KEYS:
+            a_val = values_a[key] if values_a is not None else None
+            b_val = values_b[key] if values_b is not None else None
+            delta = (
+                (b_val - a_val) if (a_val is not None and b_val is not None) else None
+            )
+            stats[key] = {"a": a_val, "b": b_val, "delta": delta}
+
+        rows.append(
+            {
+                "player_id": player_id,
+                "name": name,
+                "role_a": ps_a.role if ps_a is not None else None,
+                "role_b": ps_b.role if ps_b is not None else None,
+                "side_a": ps_a.team_color if ps_a is not None else None,
+                "side_b": ps_b.team_color if ps_b is not None else None,
+                "stats": stats,
+                # Template-friendly ordered view of ``stats`` (Django templates
+                # cannot do dynamic dict lookup by a variable key). Additive —
+                # the contracted ``stats`` dict above is unchanged and remains
+                # the JSON source of truth.
+                "cells": [stats[key] for key in _COMPARE_STAT_KEYS],
+            }
+        )
+
+    rows.sort(key=lambda row: row["name"])
+    return rows
+
+
+def _cumulative_team_points(game_round: GameRound, team_id: int) -> list[list]:
+    """RV-01: cumulative points-over-time series for one team in one round.
+
+    Walks the round's events for actors on ``team_id`` ordered by timestamp,
+    accumulating ``points_awarded`` (NULL coalesced to 0). Returns
+    ``[[tick, cumulative_points], ...]``; an empty event set yields ``[]``.
+    """
+    series: list[list] = []
+    cumulative = 0
+    events = (
+        game_round.events.filter(actor__team_id=team_id)
+        .order_by("timestamp")
+        .values_list("timestamp", "points_awarded")
+    )
+    for timestamp, points_awarded in events:
+        cumulative += points_awarded or 0
+        series.append([timestamp, cumulative])
+    return series
+
+
+def compare_rounds(request) -> HttpResponse:
+    """RV-01: read-only side-by-side comparison of two GameRounds.
+
+    Reads ``round_a``/``round_b`` GET params. Missing/empty → picker mode.
+    Both present → fetch each (404 on invalid or non-numeric id); same round or
+    no shared team → error mode (200). Distinct rounds sharing >=1 team → full
+    comparison.
+    """
+    all_rounds = GameRound.objects.select_related("team_red", "team_blue").order_by(
+        "-id"
+    )
+
+    raw_a = request.GET.get("round_a")
+    raw_b = request.GET.get("round_b")
+
+    context = {
+        "round_a": None,
+        "round_b": None,
+        "all_rounds": all_rounds,
+        "mode": "picker",
+        "error_message": None,
+        "stat_keys": _COMPARE_STAT_KEYS,
+        "deltas": None,
+        "points_series": None,
+    }
+
+    if not raw_a or not raw_b:
+        return render(request, "matches/compare_rounds.html", context)
+
+    # Coerce here so a non-numeric param (?round_a=abc) is a clean 404 rather
+    # than a 500 from int() failing inside the ORM query.
+    try:
+        id_a, id_b = int(raw_a), int(raw_b)
+    except (TypeError, ValueError):
+        raise Http404("Invalid round id")
+
+    round_a = get_object_or_404(GameRound, id=id_a)
+    round_b = get_object_or_404(GameRound, id=id_b)
+    context["round_a"] = round_a
+    context["round_b"] = round_b
+
+    if round_a.id == round_b.id:
+        context["mode"] = "error"
+        context["error_message"] = "Pick two different rounds to compare."
+        return render(request, "matches/compare_rounds.html", context)
+
+    team_ids = _shared_team_ids(round_a, round_b)
+    if not team_ids:
+        context["mode"] = "error"
+        context["error_message"] = (
+            "These rounds share no team, so there is nothing to compare."
+        )
+        return render(request, "matches/compare_rounds.html", context)
+
+    points_series = []
+    for team_id in team_ids:
+        team = Team.objects.get(id=team_id)
+        points_series.append(
+            {
+                "team_id": team_id,
+                "team_name": team.name,
+                "a": _cumulative_team_points(round_a, team_id),
+                "b": _cumulative_team_points(round_b, team_id),
+            }
+        )
+
+    context["mode"] = "compare"
+    context["deltas"] = _player_stat_deltas(round_a, round_b, team_ids)
+    context["points_series"] = points_series
+    return render(request, "matches/compare_rounds.html", context)
 
 
 def match_list(request):

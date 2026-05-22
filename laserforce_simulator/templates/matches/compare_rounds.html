@@ -1,0 +1,198 @@
+{% extends 'base.html' %}
+
+{% block title %}Compare Rounds{% endblock %}
+
+{% block content %}
+{# RV-01: read-only side-by-side comparison of two GameRounds. The view emits #}
+{# the per-team Points-Over-Time series and the delta rows once as JSON via   #}
+{# json_script; the Chart.js overlay reads compare-points-series from the DOM #}
+{# exactly as game_round_events.html reads its events-data block.             #}
+
+<div class="mb-4">
+    <h1>Compare Rounds</h1>
+    <p class="text-muted">Pick two rounds that share at least one team to see a per-player stat delta and a points-over-time overlay.</p>
+</div>
+
+<!-- Round picker -->
+<form method="get" action="{% url 'compare_rounds' %}" class="card mb-4">
+    <div class="card-body">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-5">
+                <label for="compare-select-a" class="form-label">Round A</label>
+                <select class="form-select" id="compare-select-a" name="round_a">
+                    <option value="">-- Select a round --</option>
+                    {% for r in all_rounds %}
+                        <option value="{{ r.id }}"{% if round_a and r.id == round_a.id %} selected{% endif %}>
+                            #{{ r.id }} - {{ r.team_red.name }} vs {{ r.team_blue.name }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-5">
+                <label for="compare-select-b" class="form-label">Round B</label>
+                <select class="form-select" id="compare-select-b" name="round_b">
+                    <option value="">-- Select a round --</option>
+                    {% for r in all_rounds %}
+                        <option value="{{ r.id }}"{% if round_b and r.id == round_b.id %} selected{% endif %}>
+                            #{{ r.id }} - {{ r.team_red.name }} vs {{ r.team_blue.name }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary w-100">Compare</button>
+            </div>
+        </div>
+    </div>
+</form>
+
+{% if mode == "error" %}
+    <div class="alert alert-warning" role="alert">{{ error_message }}</div>
+{% endif %}
+
+{% if mode == "compare" %}
+    {{ points_series|json_script:"compare-points-series" }}
+    {{ deltas|json_script:"compare-deltas" }}
+
+    <!-- Per-player stat-delta table -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">Player Stat Deltas</h5>
+            <small class="text-muted">Each cell shows Round A &rarr; Round B with the change (B &minus; A). Green = up, red = down.</small>
+        </div>
+        <div class="card-body table-responsive">
+            <table class="table table-sm table-bordered align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Player</th>
+                        <th>Side A</th>
+                        <th>Role A</th>
+                        <th>Side B</th>
+                        <th>Role B</th>
+                        {% for key in stat_keys %}
+                            <th>{{ key }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in deltas %}
+                        <tr>
+                            <td class="fw-bold">{{ row.name }}</td>
+                            <td>{{ row.side_a|default:"—" }}</td>
+                            <td>{{ row.role_a|default:"—" }}</td>
+                            <td>{{ row.side_b|default:"—" }}</td>
+                            <td>{{ row.role_b|default:"—" }}</td>
+                            {% for cell in row.cells %}
+                                <td class="
+                                    {% if cell.delta is None %}table-light text-muted
+                                    {% elif cell.delta > 0 %}table-success
+                                    {% elif cell.delta < 0 %}table-danger
+                                    {% endif %}">
+                                    {% if cell.a is None and cell.b is None %}
+                                        &mdash;
+                                    {% else %}
+                                        <span>{{ cell.a|default_if_none:"–" }} &rarr; {{ cell.b|default_if_none:"–" }}</span>
+                                        {% if cell.delta is not None %}
+                                            <small class="d-block">
+                                                {% if cell.delta > 0 %}+{% endif %}{{ cell.delta }}
+                                            </small>
+                                        {% endif %}
+                                    {% endif %}
+                                </td>
+                            {% endfor %}
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Points-over-time overlay -->
+    <div class="card mb-4">
+        <div class="card-header"><h5 class="mb-0">Points Over Time</h5></div>
+        <div class="card-body">
+            <p class="text-muted small mb-3">Solid = Round A, dashed = Round B. One color pair per shared team.</p>
+            <div style="position: relative; height: 400px;">
+                <canvas id="compare-points-chart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            // RV-01: read the per-team series once from the JSON block (never
+            // from the DOM table), mirroring game_round_events.html.
+            const SERIES = JSON.parse(
+                document.getElementById('compare-points-series').textContent);
+
+            // Distinct base hue per shared team; round A solid, round B dashed.
+            const TEAM_HUES = [210, 350, 130, 45, 280, 175];
+
+            const datasets = [];
+            SERIES.forEach((s, i) => {
+                const hue = TEAM_HUES[i % TEAM_HUES.length];
+                const color = 'hsl(' + hue + ', 70%, 45%)';
+                datasets.push({
+                    label: s.team_name + ' (A)',
+                    data: s.a.map(pt => ({ x: pt[0], y: pt[1] })),
+                    borderColor: color,
+                    backgroundColor: color,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    stepped: 'before',
+                    tension: 0,
+                });
+                datasets.push({
+                    label: s.team_name + ' (B)',
+                    data: s.b.map(pt => ({ x: pt[0], y: pt[1] })),
+                    borderColor: color,
+                    backgroundColor: color,
+                    borderWidth: 2,
+                    borderDash: [8, 4],
+                    pointRadius: 0,
+                    stepped: 'before',
+                    tension: 0,
+                });
+            });
+
+            // ticks -> mm:ss (1 tick = 0.5 s), matching the events-page boundary.
+            function tickToMmss(tick) {
+                const sec = tick / 2;
+                const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+                const ss = String(Math.floor(sec % 60)).padStart(2, '0');
+                return mm + ':' + ss;
+            }
+
+            const ctx = document.getElementById('compare-points-chart').getContext('2d');
+            new Chart(ctx, {
+                type: 'line',
+                data: { datasets: datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            title: { display: true, text: 'Time' },
+                            ticks: { callback: function (v) { return tickToMmss(v); } },
+                        },
+                        y: { beginAtZero: true, title: { display: true, text: 'Cumulative points' } },
+                    },
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: {
+                            callbacks: {
+                                title: function (items) {
+                                    return items.length ? tickToMmss(items[0].parsed.x) : '';
+                                },
+                            },
+                        },
+                    },
+                },
+            });
+        });
+    </script>
+{% endif %}
+{% endblock %}
