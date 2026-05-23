@@ -249,6 +249,36 @@ _HX01_TO_BENCHMARK_STAT: dict[str, str] = {
     "avg_accuracy_pct": "accuracy",
 }
 
+# HX-01b — frozen 15-entry stat row spec for the per-role table.
+# Each entry: (key, label, benchmark_stat | None).
+#
+# Rows 0-4 are the 5 HX-01 display stats in their current order. Rows 5-14
+# are STAT_KEYS (`teams/role_benchmarks.py:18`) in declaration order, skipping
+# `points_scored` and `accuracy` (already covered at rows 0 and 3 via
+# `_HX01_TO_BENCHMARK_STAT`).
+#
+# The `key` field is the row identifier used in DOM ids verbatim - mixed
+# namespace (HX-01 display keys for rows 0-4, STAT_KEYS names for rows 5-14)
+# is intentional and locked. Tests pin the order and labels; see
+# `.claude/worktrees/hx-01b-seam-contract.md`.
+_HX01B_STAT_ROW_SPEC: tuple[tuple[str, str, str | None], ...] = (
+    ("avg_points", "Avg points", "points_scored"),
+    ("tag_ratio", "Tag ratio", None),
+    ("avg_survival_ticks", "Avg survival", None),
+    ("avg_accuracy_pct", "Avg accuracy", "accuracy"),
+    ("avg_sp_earned", "Avg SP earned", None),
+    ("mvp", "MVP score", "mvp"),
+    ("tags_made", "Tags made", "tags_made"),
+    ("times_tagged", "Times tagged", "times_tagged"),
+    ("final_lives", "Final lives", "final_lives"),
+    ("resupplies_given", "Resupplies given", "resupplies_given"),
+    ("missiles_landed", "Missiles landed", "missiles_landed"),
+    ("specials_used", "Specials used", "specials_used"),
+    ("follow_up_shots", "Follow-up shots", "follow_up_shots"),
+    ("reaction_shots", "Reaction shots", "reaction_shots"),
+    ("combo_resupply_count", "Combo resupplies", "combo_resupply_count"),
+)
+
 
 def _coerce_threshold(raw: str | None, default: int = 5) -> int:
     """Parse the ``?threshold=`` query param.
@@ -370,8 +400,53 @@ def _build_per_role_overlay(
                 filtered, player_id, subject_value, qualified
             )
 
+        # HX-01b - additively build the 15-entry ordered `stat_rows` list.
+        # Rows 0-4 (HX-01 5 keys) pull `player_value` from the existing
+        # `row` dict; rows 5-14 (10 net-new STAT_KEYS) call
+        # `compute_career_stat_for_role` against the same
+        # `player_role_rounds` slice already built above.
+        stat_rows: list[dict] = []
+        for key, label, bench_stat in _HX01B_STAT_ROW_SPEC:
+            if key in row:
+                player_value = float(row[key])
+            else:
+                player_value = float(
+                    compute_career_stat_for_role(player_role_rounds, bench_stat)
+                )
+
+            if bench_stat is None:
+                benchmark: dict | None = None
+            else:
+                samples = samples_by_key.get((role, bench_stat), [])
+                if min_rounds > 0:
+                    filtered = [
+                        (pid, val)
+                        for pid, val in samples
+                        if role_thresholds.get(pid, 0) >= min_rounds
+                    ]
+                else:
+                    filtered = list(samples)
+                # `player_value` was already computed as the same
+                # `compute_career_stat_for_role(player_role_rounds, bench_stat)`
+                # call above for net-new rows; for HX-01 rows it matches
+                # `row[key]` which is sum/sum-aggregated identically. Reuse it
+                # so the helper isn't called twice per row.
+                benchmark = player_position(
+                    filtered, player_id, player_value, qualified
+                )
+
+            stat_rows.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "player_value": player_value,
+                    "benchmark": benchmark,
+                }
+            )
+
         enriched = dict(row)
         enriched["benchmarks_by_stat"] = benchmarks_by_stat
+        enriched["stat_rows"] = stat_rows
         out.append(enriched)
     return out
 
