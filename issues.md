@@ -56,3 +56,23 @@ Date: 2026-05-23. Server: `runserver 127.0.0.1:8765 --noreload`. Branch: `hx-02-
 | HX2-7 | ℹ️ | Empty-state notice | `benchmark-no-data-notice` + "no benchmark data yet" substring NOT in the rendered HTML on this DB (which has seeded rounds). Empty-state path is covered by `test_role_benchmarks_view.py::TestRoleBenchmarksView` in the test suite. |
 
 **Overall:** HX-02 works at the server / template / URL layer. The new `/players/benchmarks/` page renders all 5 role tables with all 60 expected (role, stat) rows; query-param coercion (`?threshold=abc` → 5, `?threshold=-5` → 0, `?display=garbage` → mean) is exercised end-to-end; the extended player career page surfaces the locked benchmark cells per HX-01 display stat with the `benchmark-na` placeholder class on unmapped stats and the `need N+ rounds` substring on unqualified players; the `role-benchmarks-link` button on the player page reverses to `/players/benchmarks/`. The simulator hook + signal registration cause no regression on any sibling page hit. Client-side JS (no Chart.js on this page, just a static form) is not exercised by HTTP smoke — residual JS-init risk is small (no Chart.js init code on the benchmarks page; the existing trend chart on the player page is unchanged from HX-01).
+
+---
+
+# HX-01b career page 12-stat benchmark extension smoke (2026-05-23)
+
+Branch: `hx-01b-12-stat-benchmark`. Scope: per-role table on `/players/<int:player_id>/stats/` pivots from one wide row-per-role table to a `<section id="career-per-role-table">` wrapper containing one `<table id="career-per-role-table-{role}">` per role actually played, each with 15 rows (5 HX-01 + 10 STAT_KEYS net-new).
+
+## Summary
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| HX1b-1 | ✅ | Career page (populated) | `/players/78/stats/` (Phoenix Commander, 31 rounds, commander-only) → 200; 1 nested `<table id="career-per-role-table-commander">` inside `<section id="career-per-role-table">`; 15 `<tr>` rows; first row id `career-stat-row-commander-avg_points`, last row id `career-stat-row-commander-combo_resupply_count` (matches locked order) |
+| HX1b-2 | ✅ | New stat labels | All 10 net-new labels (`MVP score`, `Tags made`, `Times tagged`, `Final lives`, `Resupplies given`, `Missiles landed`, `Specials used`, `Follow-up shots`, `Reaction shots`, `Combo resupplies`) render in the page body |
+| HX1b-3 | ✅ | Benchmark cells | 12 benchmark-backed rows show numeric Mean / Median / Δ / Percentile / n; 3 HX-01-only rows (`tag_ratio`, `avg_survival_ticks`, `avg_sp_earned`) show `<td class="benchmark-na">—</td>` placeholders |
+| HX1b-4 | ✅ | Below-threshold UX | `/players/78/stats/?threshold=50` → 12 occurrences of `need 50+ rounds` substring (12 benchmark-backed rows × 1 role played); exact match to the seam's locked count |
+| HX1b-5 | ✅ | Homepage regression | `/` (team list) renders 200 with zero console errors and no failed network requests |
+| HX1b-6 | 🔴→✅ | Template comment leak (fixed during smoke) | Initial implementation used a multi-line `{# … #}` Django comment around the section block. Django `{# #}` is **single-line only**; the multi-line form leaks as literal text. The leaked text contained the substring `<table>` (in the comment body), which the HTML parser interpreted as a real open tag, causing the browser to push the real per-role `<table>` element OUT of the `<section>` wrapper at parse time. Fixed by collapsing the comment to a single line; `<section>` now correctly contains the per-role tables (verified by `wrapper.querySelectorAll('table[id^="career-per-role-table-"]').length === 1`). Pre-fix screenshot was not saved; post-fix screenshot at `.claude/worktrees/hx-01b-career-15rows.png`. |
+| HX1b-7 | 🟡 | Pre-existing comment leak (HX-02, out of scope) | `templates/teams/player_career_stats.html:50-51` carries a pre-existing multi-line `{# HX-02: threshold + display toggle ... #}` Django comment that leaks as literal text on the rendered page (visible as `(# HX-02: threshold + display toggle ... #)` above the filter form). Same root cause as HX1b-6 but in pre-HX-01b code. Cosmetic only; not a regression introduced by this task. Recommended drive-by fix in a future commit. |
+
+**Overall:** HX-01b renders correctly end-to-end after the comment-leak fix. The pivot to a section-wrapped per-role table layout works as locked; 15 rows render in the locked order with the locked labels; the 12 benchmark-backed rows render numeric overlay cells while the 3 HX-01-only rows render the `benchmark-na —` placeholders; the below-threshold "need N+ rounds" substring renders exactly 12 times per role table (matching test (e)'s assertion). One pre-existing multi-line `{# #}` leak in HX-02 code logged at HX1b-7, out of scope.

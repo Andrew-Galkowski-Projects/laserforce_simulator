@@ -246,3 +246,207 @@ class TestPlayerCareerStatsExtended(TestCase):
         # The page must mention the threshold-related "need" copy.
         self.assertIn("need ", body.lower())
         self.assertIn("5", body)
+
+    # ----------------------------------------------------------------------
+    # HX-01b — extend the per-role table from 5 rows to 15 (5 HX-01 + 10
+    # STAT_KEYS net-new). Pinned to
+    # `.claude/worktrees/hx-01b-seam-contract.md`.
+    # ----------------------------------------------------------------------
+
+    def test_stat_rows_is_15_entry_ordered_list_per_role(self) -> None:
+        """Each per_role_with_benchmarks row carries a 15-entry stat_rows list."""
+        team, player = _make_player("HX01b A", "HX01b A Player")
+        _make_round_state(player, team, role="commander", points_scored=500)
+
+        url = reverse("player_career_stats", args=[player.id])
+        response = self.client.get(url + "?threshold=0")
+        rows = response.context["per_role_with_benchmarks"]
+        self.assertTrue(len(rows) >= 1)
+        cmdr = next(r for r in rows if r["role"] == "commander")
+        self.assertIn("stat_rows", cmdr)
+        self.assertIsInstance(cmdr["stat_rows"], list)
+        self.assertEqual(len(cmdr["stat_rows"]), 15)
+
+    def test_stat_rows_order_is_locked(self) -> None:
+        """The 15-entry key sequence is pinned verbatim by the seam contract."""
+        team, player = _make_player("HX01b B", "HX01b B Player")
+        _make_round_state(player, team, role="commander", points_scored=500)
+
+        expected_keys = [
+            "avg_points",
+            "tag_ratio",
+            "avg_survival_ticks",
+            "avg_accuracy_pct",
+            "avg_sp_earned",
+            "mvp",
+            "tags_made",
+            "times_tagged",
+            "final_lives",
+            "resupplies_given",
+            "missiles_landed",
+            "specials_used",
+            "follow_up_shots",
+            "reaction_shots",
+            "combo_resupply_count",
+        ]
+
+        url = reverse("player_career_stats", args=[player.id])
+        response = self.client.get(url + "?threshold=0")
+        rows = response.context["per_role_with_benchmarks"]
+        cmdr = next(r for r in rows if r["role"] == "commander")
+        self.assertEqual([s["key"] for s in cmdr["stat_rows"]], expected_keys)
+
+    def test_stat_rows_labels_are_locked(self) -> None:
+        """The 15-entry user-visible labels are pinned by the seam contract."""
+        team, player = _make_player("HX01b Labels", "HX01b Labels Player")
+        _make_round_state(player, team, role="commander", points_scored=500)
+
+        expected_labels = [
+            "Avg points",
+            "Tag ratio",
+            "Avg survival",
+            "Avg accuracy",
+            "Avg SP earned",
+            "MVP score",
+            "Tags made",
+            "Times tagged",
+            "Final lives",
+            "Resupplies given",
+            "Missiles landed",
+            "Specials used",
+            "Follow-up shots",
+            "Reaction shots",
+            "Combo resupplies",
+        ]
+
+        url = reverse("player_career_stats", args=[player.id])
+        response = self.client.get(url + "?threshold=0")
+        rows = response.context["per_role_with_benchmarks"]
+        cmdr = next(r for r in rows if r["role"] == "commander")
+        self.assertEqual([s["label"] for s in cmdr["stat_rows"]], expected_labels)
+
+    def test_hx01_only_rows_carry_none_benchmark(self) -> None:
+        """Rows 1, 2, 4 (tag_ratio, avg_survival_ticks, avg_sp_earned) → benchmark=None.
+
+        These 3 HX-01-only derived stats have no STAT_KEYS counterpart and
+        render `—` placeholder cells in the template.
+        """
+        team, player = _make_player("HX01b C", "HX01b C Player")
+        _make_round_state(player, team, role="commander", points_scored=500)
+
+        url = reverse("player_career_stats", args=[player.id])
+        response = self.client.get(url + "?threshold=0")
+        rows = response.context["per_role_with_benchmarks"]
+        cmdr = next(r for r in rows if r["role"] == "commander")
+        stat_rows = cmdr["stat_rows"]
+        # Index 1 = tag_ratio; index 2 = avg_survival_ticks; index 4 = avg_sp_earned.
+        for idx, expected_key in (
+            (1, "tag_ratio"),
+            (2, "avg_survival_ticks"),
+            (4, "avg_sp_earned"),
+        ):
+            self.assertEqual(stat_rows[idx]["key"], expected_key)
+            self.assertIsNone(stat_rows[idx]["benchmark"])
+
+    def test_net_new_rows_subject_value_matches_compute_career_stat_for_role(
+        self,
+    ) -> None:
+        """Player value for the 10 net-new rows equals compute_career_stat_for_role.
+
+        Uses the view's `_round_dict_from_state` to build the same 18-key
+        round-dict the view feeds the pure module, then asserts each
+        stat_rows[i]["player_value"] matches a direct call to
+        compute_career_stat_for_role on the same dicts.
+        """
+        from teams.role_benchmarks import compute_career_stat_for_role
+        from teams.views import _round_dict_from_state
+
+        team, player = _make_player("HX01b D", "HX01b D Player")
+        _make_round_state(
+            player,
+            team,
+            role="heavy",
+            points_scored=400,
+            tags_made=10,
+            times_tagged=2,
+            shots_missed=3,
+            final_lives=8,
+            missiles_landed=2,
+            follow_up_shots=1,
+        )
+        _make_round_state(
+            player,
+            team,
+            role="heavy",
+            points_scored=600,
+            tags_made=15,
+            times_tagged=4,
+            shots_missed=5,
+            final_lives=6,
+            missiles_landed=1,
+            follow_up_shots=2,
+        )
+
+        url = reverse("player_career_stats", args=[player.id])
+        response = self.client.get(url + "?threshold=0")
+        rows = response.context["per_role_with_benchmarks"]
+        heavy = next(r for r in rows if r["role"] == "heavy")
+        stat_rows = heavy["stat_rows"]
+
+        # Build the same round-dict list the view used.
+        states = PlayerRoundState.objects.filter(
+            player=player, role="heavy"
+        ).select_related("game_round")
+        player_role_rounds = [_round_dict_from_state(s) for s in states]
+
+        # Rows 5-14 are the 10 STAT_KEYS net-new rows.
+        for idx in range(5, 15):
+            stat = stat_rows[idx]
+            expected = float(
+                compute_career_stat_for_role(player_role_rounds, stat["key"])
+            )
+            self.assertAlmostEqual(
+                stat["player_value"],
+                expected,
+                places=5,
+                msg=f"stat_rows[{idx}] (key={stat['key']}) player_value drift",
+            )
+
+    def test_below_threshold_subject_renders_need_n_rounds_on_all_12_benchmarked_rows(
+        self,
+    ) -> None:
+        """Single-round subject at threshold=5 → 12 'need 5+ rounds' substrings.
+
+        The 15-row table for the one role played has 12 benchmark-backed
+        rows (5 HX-01 minus the 3 HX-01-only + 10 STAT_KEYS = 12); each
+        unqualified cell renders the locked substring once.
+        """
+        team, player = _make_player("HX01b E", "HX01b E Player")
+        _make_round_state(player, team, role="commander", points_scored=300)
+
+        url = reverse("player_career_stats", args=[player.id])
+        response = self.client.get(url + "?threshold=5")
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode()
+        # 12 benchmark-backed rows × 1 role played × 1 occurrence each.
+        self.assertGreaterEqual(body.count("need 5+ rounds"), 12)
+
+    def test_per_role_table_dom_ids_present_per_role_played(self) -> None:
+        """Section wrapper + one <table id=...> per role actually played."""
+        team, player = _make_player("HX01b F", "HX01b F Player")
+        _make_round_state(player, team, role="commander", points_scored=400)
+        _make_round_state(player, team, role="heavy", points_scored=600)
+
+        url = reverse("player_career_stats", args=[player.id])
+        response = self.client.get(url + "?threshold=0")
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode()
+        # Wrapper section preserves the HX-01-locked id.
+        self.assertIn('id="career-per-role-table"', body)
+        # One per-role table per role the subject played.
+        self.assertIn('id="career-per-role-table-commander"', body)
+        self.assertIn('id="career-per-role-table-heavy"', body)
+        # Roles NOT played → no table id.
+        self.assertNotIn('id="career-per-role-table-scout"', body)
+        self.assertNotIn('id="career-per-role-table-medic"', body)
+        self.assertNotIn('id="career-per-role-table-ammo"', body)
