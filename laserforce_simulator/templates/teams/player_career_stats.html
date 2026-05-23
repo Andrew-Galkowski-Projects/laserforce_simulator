@@ -6,7 +6,16 @@
 
 {% block content %}
 <div class="container mt-4">
-    <h1>{{ player.name }} <small class="text-muted">— {{ player.team.name }}</small></h1>
+    <div class="d-flex justify-content-between align-items-center">
+        <h1>{{ player.name }} <small class="text-muted">— {{ player.team.name }}</small></h1>
+        <a
+            href="{% url 'role_benchmarks' %}"
+            class="btn btn-outline-primary"
+            id="role-benchmarks-link"
+        >
+            Role benchmarks
+        </a>
+    </div>
     <p>Total rounds: <strong>{{ total_rounds }}</strong></p>
 
     {% if not has_rounds %}
@@ -14,7 +23,7 @@
             No rounds played yet.
         </div>
     {% else %}
-        {# Career totals row — 6 metrics #}
+        {# Career totals row — 6 metrics (HX-01) #}
         <table class="table" id="career-totals-table">
             <thead>
                 <tr>
@@ -38,29 +47,124 @@
             </tbody>
         </table>
 
-        {# Per-role table — only roles actually played #}
+        {# HX-02: threshold + display toggle (per-page scope; same DOM IDs
+           as the standalone /players/benchmarks/ page). #}
+        <form method="get" id="benchmark-filter-form" class="form-inline mb-3">
+            <label for="benchmark-threshold-input" class="mr-2">
+                Min rounds in role:
+            </label>
+            <input
+                type="number"
+                min="0"
+                name="threshold"
+                value="{{ min_rounds }}"
+                id="benchmark-threshold-input"
+                class="form-control mr-3"
+            />
+
+            <label for="benchmark-display-toggle" class="mr-2">Show:</label>
+            <select
+                name="display"
+                id="benchmark-display-toggle"
+                class="form-control mr-3"
+            >
+                <option value="mean" {% if display == "mean" %}selected{% endif %}>Mean</option>
+                <option value="median" {% if display == "median" %}selected{% endif %}>Median</option>
+            </select>
+
+            <button type="submit" class="btn btn-primary">Apply</button>
+        </form>
+
+        {# Per-role table — only roles actually played, now with HX-02
+           benchmark overlay cells per row. #}
         <table class="table" id="career-per-role-table">
             <thead>
                 <tr>
                     <th>Role</th>
                     <th>Games</th>
                     <th>Avg points</th>
+                    <th>Avg points · benchmark</th>
                     <th>Tag ratio</th>
+                    <th>Tag ratio · benchmark</th>
                     <th>Avg survival</th>
+                    <th>Avg survival · benchmark</th>
                     <th>Avg accuracy</th>
+                    <th>Avg accuracy · benchmark</th>
                     <th>Avg SP earned</th>
+                    <th>Avg SP earned · benchmark</th>
                 </tr>
             </thead>
             <tbody>
-                {% for row in per_role %}
+                {% for row in per_role_with_benchmarks %}
                 <tr>
                     <td>{{ row.role|title }}</td>
                     <td>{{ row.games }}</td>
+
+                    {# avg_points — benchmark-backed (maps to points_scored) #}
                     <td>{{ row.avg_points|floatformat:1 }}</td>
+                    {% with bench=row.benchmarks_by_stat.avg_points %}
+                    <td>
+                        <span id="benchmark-{{ row.role }}-avg_points-mean">
+                            {% if bench.benchmark_mean is None %}—{% else %}{{ bench.benchmark_mean|floatformat:1 }}{% endif %}
+                        </span>
+                        /
+                        <span id="benchmark-{{ row.role }}-avg_points-median">
+                            {% if bench.benchmark_median is None %}—{% else %}{{ bench.benchmark_median|floatformat:1 }}{% endif %}
+                        </span>
+                        <span id="benchmark-{{ row.role }}-avg_points-delta">
+                            {% if bench.qualified %}
+                                ({% if bench.delta_mean >= 0 %}+{% endif %}{{ bench.delta_mean|floatformat:1 }})
+                            {% else %}
+                                — (need {{ min_rounds }}+ rounds)
+                            {% endif %}
+                        </span>
+                        <span id="benchmark-{{ row.role }}-avg_points-percentile">
+                            {% if bench.percentile is None %}{% else %}p{{ bench.percentile }}{% endif %}
+                        </span>
+                        <span id="benchmark-{{ row.role }}-avg_points-n">
+                            n={{ bench.n }}
+                        </span>
+                    </td>
+                    {% endwith %}
+
+                    {# tag_ratio — no v1 benchmark, placeholder #}
                     <td>{{ row.tag_ratio|floatformat:2 }}</td>
+                    <td class="benchmark-na">—</td>
+
+                    {# avg_survival_ticks — no v1 benchmark, placeholder #}
                     <td>{{ row.avg_survival_ticks|div:2|floatformat:0 }}s</td>
+                    <td class="benchmark-na">—</td>
+
+                    {# avg_accuracy_pct — benchmark-backed (maps to accuracy) #}
                     <td>{{ row.avg_accuracy_pct|floatformat:0 }}%</td>
+                    {% with bench=row.benchmarks_by_stat.avg_accuracy_pct %}
+                    <td>
+                        <span id="benchmark-{{ row.role }}-avg_accuracy_pct-mean">
+                            {% if bench.benchmark_mean is None %}—{% else %}{{ bench.benchmark_mean|floatformat:0 }}%{% endif %}
+                        </span>
+                        /
+                        <span id="benchmark-{{ row.role }}-avg_accuracy_pct-median">
+                            {% if bench.benchmark_median is None %}—{% else %}{{ bench.benchmark_median|floatformat:0 }}%{% endif %}
+                        </span>
+                        <span id="benchmark-{{ row.role }}-avg_accuracy_pct-delta">
+                            {% if bench.qualified %}
+                                ({% if bench.delta_mean >= 0 %}+{% endif %}{{ bench.delta_mean|floatformat:1 }})
+                            {% else %}
+                                — (need {{ min_rounds }}+ rounds)
+                            {% endif %}
+                        </span>
+                        <span id="benchmark-{{ row.role }}-avg_accuracy_pct-percentile">
+                            {% if bench.percentile is None %}{% else %}p{{ bench.percentile }}{% endif %}
+                        </span>
+                        <span id="benchmark-{{ row.role }}-avg_accuracy_pct-n">
+                            n={{ bench.n }}
+                        </span>
+                    </td>
+                    {% endwith %}
+
+                    {# avg_sp_earned — no v1 benchmark, placeholder #}
                     <td>{{ row.avg_sp_earned|floatformat:1 }}</td>
+                    <td class="benchmark-na">—</td>
                 </tr>
                 {% endfor %}
             </tbody>

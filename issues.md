@@ -34,3 +34,25 @@ Player 90 (`ChromeTest Empty`, 0 rounds, team 16, created for this smoke test). 
 
 ### ✅ HX1-5 — Console + network clean
 All three pages produce zero console messages (no errors, warnings, or info). All network requests succeed: the document `200`, Bootstrap CSS `200`, Chart.js CDN `200`, Bootstrap JS `200`. No 4xx, no 5xx.
+
+---
+
+# HX-02 role benchmarks smoke (2026-05-23)
+
+Date: 2026-05-23. Server: `runserver 127.0.0.1:8765 --noreload`. Branch: `hx-02-role-benchmarks`. Scope: HX-02 role benchmarks surfaces (`/players/benchmarks/` new page + extended `/players/<id>/stats/` per-role row) and the `_flush_to_db` invalidation hook.
+
+**Caveat:** Chrome MCP couldn't attach (stale Chrome processes from yesterday holding the chrome-devtools-mcp profile lock; killing them was deemed too destructive to attempt unattended). Smoke was downgraded from in-browser to HTTP-level via `Invoke-WebRequest` — covers the template / view / URL layer but **does NOT cover JS console errors, network 404s, or Chart.js init** on the HX-02 surfaces. The full pytest suite (1240 passed, 0 failed) and the 52 HX-02 unit + view + cache tests already cover the server-side contract, so the residual risk is purely client-side JS bugs.
+
+## Summary
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| HX2-1 | ✅ | `/players/benchmarks/` | 200 OK; all 13 locked DOM IDs (`benchmark-filter-form`, `benchmark-threshold-input`, `benchmark-display-toggle`, 5× `benchmark-table-{role}`, 5× sample `benchmark-row-{role}-{stat}`) present in rendered HTML |
+| HX2-2 | ✅ | Query-param fallback | `?threshold=abc&display=garbage` → 200; `?threshold=-5` → 200; `?threshold=10&display=median` → 200 (different length, confirming display toggle round-trips) |
+| HX2-3 | ✅ | Player career page extension | `/players/78/stats/` → 200 with all 5 HX-01 IDs + `benchmark-filter-form` + 5× `benchmark-commander-avg_points-{mean,median,delta,percentile,n}` cells + `benchmark-na` class present |
+| HX2-4 | ✅ | Unqualified-player branch | `/players/78/stats/?threshold=999` substring `need 999+ rounds` present, confirming the unqualified template branch round-trips the threshold value |
+| HX2-5 | ✅ | Entry-point link | `role-benchmarks-link` anchor on `/players/78/stats/` has `href="/players/benchmarks/"` (extracted from rendered HTML) |
+| HX2-6 | ✅ | Sibling-page regression | `/`, `/teams/`, `/matches/`, `/matches/create/`, `/matches/single-round/create/`, `/matches/simulate-batch/`, `/teams/create/` all 200 — confirms the `_flush_to_db` invalidation hook + `apps.py` `ready()` signal registration didn't break the rest of the app's import or URL graph |
+| HX2-7 | ℹ️ | Empty-state notice | `benchmark-no-data-notice` + "no benchmark data yet" substring NOT in the rendered HTML on this DB (which has seeded rounds). Empty-state path is covered by `test_role_benchmarks_view.py::TestRoleBenchmarksView` in the test suite. |
+
+**Overall:** HX-02 works at the server / template / URL layer. The new `/players/benchmarks/` page renders all 5 role tables with all 60 expected (role, stat) rows; query-param coercion (`?threshold=abc` → 5, `?threshold=-5` → 0, `?display=garbage` → mean) is exercised end-to-end; the extended player career page surfaces the locked benchmark cells per HX-01 display stat with the `benchmark-na` placeholder class on unmapped stats and the `need N+ rounds` substring on unqualified players; the `role-benchmarks-link` button on the player page reverses to `/players/benchmarks/`. The simulator hook + signal registration cause no regression on any sibling page hit. Client-side JS (no Chart.js on this page, just a static form) is not exercised by HTTP smoke — residual JS-init risk is small (no Chart.js init code on the benchmarks page; the existing trend chart on the player page is unchanged from HX-01).

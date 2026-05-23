@@ -17,6 +17,15 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    # Static `benchmarks/` listed first; `<int:...>` already rejects the
+    # literal "benchmarks" but the explicit ordering matches the seam
+    # contract and removes any possibility of a future regex change
+    # silently shadowing it.
+    path(
+        "benchmarks/",
+        views.role_benchmarks,
+        name="role_benchmarks",
+    ),
     path(
         "<int:player_id>/stats/",
         views.player_career_stats,

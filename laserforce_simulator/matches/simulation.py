@@ -3060,6 +3060,15 @@ class BatchSimulator:
         )
         game_round.save(update_fields=["highlights_json"])
 
+        # HX-02: bump the global role-benchmark cache version. bulk_create
+        # skips post_save, so this hook covers the batch save path; the
+        # call is cheap (one cache op) and monotonic — if the surrounding
+        # @transaction.atomic rolls back, the next view request just
+        # re-scans against the new version (invalidation is never wrong).
+        from teams.role_benchmarks_cache import invalidate_role_benchmarks
+
+        invalidate_role_benchmarks()
+
         return game_round
 
 
