@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% load static %}
+{% load team_extras %}  {# for the existing ÷2 tick→second filter (TIME-01) #}
+
+{% block title %}Career Stats - {{ player.name }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>{{ player.name }} <small class="text-muted">— {{ player.team.name }}</small></h1>
+    <p>Total rounds: <strong>{{ total_rounds }}</strong></p>
+
+    {% if not has_rounds %}
+        <div class="alert alert-info" id="career-no-rounds-notice">
+            No rounds played yet.
+        </div>
+    {% else %}
+        {# Career totals row — 6 metrics #}
+        <table class="table" id="career-totals-table">
+            <thead>
+                <tr>
+                    <th>Games</th>
+                    <th>Avg points</th>
+                    <th>Tag ratio</th>
+                    <th>Avg survival</th>
+                    <th>Avg accuracy</th>
+                    <th>Avg SP earned</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>{{ career.games }}</td>
+                    <td>{{ career.avg_points|floatformat:1 }}</td>
+                    <td>{{ career.tag_ratio|floatformat:2 }}</td>
+                    <td>{{ career.avg_survival_ticks|div:2|floatformat:0 }}s</td>
+                    <td>{{ career.avg_accuracy_pct|floatformat:0 }}%</td>
+                    <td>{{ career.avg_sp_earned|floatformat:1 }}</td>
+                </tr>
+            </tbody>
+        </table>
+
+        {# Per-role table — only roles actually played #}
+        <table class="table" id="career-per-role-table">
+            <thead>
+                <tr>
+                    <th>Role</th>
+                    <th>Games</th>
+                    <th>Avg points</th>
+                    <th>Tag ratio</th>
+                    <th>Avg survival</th>
+                    <th>Avg accuracy</th>
+                    <th>Avg SP earned</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in per_role %}
+                <tr>
+                    <td>{{ row.role|title }}</td>
+                    <td>{{ row.games }}</td>
+                    <td>{{ row.avg_points|floatformat:1 }}</td>
+                    <td>{{ row.tag_ratio|floatformat:2 }}</td>
+                    <td>{{ row.avg_survival_ticks|div:2|floatformat:0 }}s</td>
+                    <td>{{ row.avg_accuracy_pct|floatformat:0 }}%</td>
+                    <td>{{ row.avg_sp_earned|floatformat:1 }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        {# Trend chart (Chart.js) #}
+        <canvas id="points-trend-chart"></canvas>
+        {{ trend|json_script:"trend-data" }}
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <script>
+            (function () {
+                const trend = JSON.parse(document.getElementById("trend-data").textContent);
+                const ctx = document.getElementById("points-trend-chart").getContext("2d");
+                new Chart(ctx, {
+                    type: "line",
+                    data: {
+                        labels:   trend.map(p => p[0]),
+                        datasets: [{
+                            label:       "Avg points (rolling 10)",
+                            data:        trend.map(p => p[1]),
+                            borderDash:  [6, 4],
+                            pointRadius: 2,
+                        }],
+                    },
+                    options: {
+                        scales: {
+                            x: { title: { display: true, text: "Round number" } },
+                            y: { title: { display: true, text: "Avg points (rolling 10)" } },
+                        },
+                    },
+                });
+            })();
+        </script>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,6 +1,8 @@
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.core.exceptions import ValidationError
+from matches.models import PlayerRoundState
+from .career_stats import points_trend, summarize, summarize_by_role
 from .models import Team, Player, ROLE_CHOICES, _random_player_profile
 from .forms import TeamForm, PlayerForm, TeamSlotForm
 
@@ -220,3 +222,51 @@ def player_delete(request, team_id, player_id):
     return render(
         request, "teams/player_confirm_delete.html", {"player": player, "team": team}
     )
+
+
+def player_career_stats(request, player_id: int):
+    """Render a player's career stats page (HX-01).
+
+    Aggregates every `PlayerRoundState` for this player into the totals,
+    per-role breakdown, and rolling-mean trend defined in
+    `teams/career_stats.py` (the pure module). The view owns the
+    round-dict assembly so the pure module never sees a Django object.
+    """
+    player = get_object_or_404(Player, pk=player_id)
+
+    states = (
+        PlayerRoundState.objects.filter(player=player)
+        .select_related("game_round")
+        .order_by("game_round__date_played", "game_round_id")
+    )
+
+    rounds = [
+        {
+            "role": s.role,
+            "points_scored": s.points_scored,
+            "tags_made": s.tags_made,
+            "times_tagged": s.times_tagged,
+            "shots_missed": s.shots_missed,
+            "final_special": s.final_special,
+            "specials_used": s.specials_used,
+            "was_eliminated_at": s.was_eliminated_at,
+            "date_played": s.game_round.date_played,
+            "game_round_id": s.game_round_id,
+        }
+        for s in states
+    ]
+
+    career = summarize(rounds)
+    per_role = summarize_by_role(rounds)
+    trend = points_trend(rounds)
+    total_rounds = career["games"]
+
+    context = {
+        "player": player,
+        "total_rounds": total_rounds,
+        "career": career,
+        "per_role": per_role,
+        "trend": trend,
+        "has_rounds": total_rounds > 0,
+    }
+    return render(request, "teams/player_career_stats.html", context)
