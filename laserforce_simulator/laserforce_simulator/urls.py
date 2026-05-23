@@ -26,5 +26,8 @@ urlpatterns = [
     path("teams/", include("teams.urls")),
     path("matches/", include("matches.urls")),
     path("maps/", include("core.urls")),
+    path(
+        "players/", include("teams.player_urls")
+    ),  # HX-01: must be above the "" include
     path("", include("teams.urls")),  # Homepage still goes to teams
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

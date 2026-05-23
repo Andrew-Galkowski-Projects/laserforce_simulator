@@ -47,7 +47,8 @@
                 </div>
                 {% endif %}
 
-                <div class="mt-3 d-flex gap-2">
+                <div class="mt-3 d-flex gap-2 flex-wrap">
+                    <a href="{% url 'player_career_stats' player.id %}" class="btn btn-sm btn-outline-secondary">Career stats</a>
                     <a href="{% url 'player_edit' team.id player.id %}" class="btn btn-sm btn-outline-primary">Edit</a>
                     <a href="{% url 'player_delete' team.id player.id %}" class="btn btn-sm btn-outline-danger">Delete</a>
                 </div>

@@ -326,6 +326,10 @@ _Avoid_: counting the Medic's round-cumulative `times_tagged_in_reset_window` as
 **Scoring burst**:
 The 30-second (60-tick) sliding window in which a **single Team** scored the most cumulative points — the measure behind the "largest 30-second point swing" **Highlight**. Gross single-team points, *not* a change in the red−blue lead (a deliberate RV-02 choice: a burst is the biggest scoring run, not a momentum reversal).
 
+**Tag ratio**:
+A **Player**'s career **Tag**-balance summary: `sum(tags_made) / max(sum(times_tagged), 1)` aggregated across every **Round** the Player appeared in. The career-page analogue of the colloquial "K/D ratio" — "kill" is not domain language here, so the label is **Tag ratio**. Symmetric (Tags landed vs Tags taken), drawn from two stored `PlayerRoundState` counters, and combines cleanly across rounds as sum/sum (not a mean of per-round ratios, which would over-weight low-volume rounds).
+_Avoid_: "K/D ratio" / "kill/death" (no domain "kill"); a mean of per-round `tags_made/times_tagged` ratios (correct form is sum-of-numerators over sum-of-denominators).
+
 ## Relationships
 
 - A **Match** has exactly two **Rounds**; a **Round** belongs to one **Match** (or stands alone).
