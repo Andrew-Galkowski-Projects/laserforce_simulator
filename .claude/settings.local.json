@@ -157,7 +157,8 @@
       "PowerShell(powershell -File \"C:\\\\Users\\\\Andrew Galkowski\\\\.claude\\\\skills\\\\chrome-web-testing\\\\scripts\\\\start_test_server.ps1\")",
       "Bash(powershell -File \"C:/Users/Andrew Galkowski/Desktop/programming/laserforce_simulator/.claude/skills/chrome-web-testing/scripts/start_test_server.ps1\")",
       "Bash(powershell -File \"C:/Users/Andrew Galkowski/.claude/skills/chrome-web-testing/scripts/start_test_server.ps1\")",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:8001/)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:8001/)",
+      "PowerShell(Get-Process *)"
     ]
   }
 }
