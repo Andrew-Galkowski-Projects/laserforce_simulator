@@ -1,10 +1,62 @@
 # Website Testing — Bugs & Issues
 
-Date: 2026-05-22. Server: `runserver --noreload` (http://127.0.0.1:8001). Branch: `hx-01-player-career-stats`. Scope: HX-01 per-player career stats page (`/players/<id>/stats/` + `Career stats` link on `/teams/<id>/player/<id>/`).
+Date: 2026-05-23. Server: `runserver --noreload` (http://127.0.0.1:8000). Branch: `hx-03-head-to-head`. Scope: HX-03 head-to-head record surface (`/matches/h2h/` + entry-point links on `/matches/` and `/matches/team/<id>/history/`).
 
 Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note · ✅ Working
 
 ## Summary
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| HX3-1 | ✅ | H2H picker | `/matches/h2h/` → 200; picker form rendered with all locked DOM ids (`h2h-picker-form`, `h2h-select-a`, `h2h-select-b`, `h2h-provenance`, `h2h-from`, `h2h-to`, `h2h-submit`); 2 teams in dropdowns; console + network clean |
+| HX3-2 | ✅ | H2H picker preselect | `/matches/h2h/?team_a=16` → 200; mode=picker; `#h2h-select-a` value=`"16"` (Phoenix preselected) — confirms the view fix from triage works in-browser |
+| HX3-3 | ✅ | H2H results full | `/matches/h2h/?team_a=16&team_b=17` → 200; all locked DOM ids present (`h2h-match-record` 3-1-0, `h2h-round-record` 10-19-2, `h2h-score-margin` -2521.0, `h2h-team-a-survivors` 2.13, `h2h-team-b-survivors` 2.48, `h2h-top-impactful-a/b`, `h2h-per-map-table`, `h2h-detail-list`); both Chart.js canvases (`h2h-margin-chart`, `h2h-cumulative-wl-chart`) painted (769×480); `h2h-margin-series` json_script parses to 31 valid `[idx, margin]` pairs; `h2h-cumulative-wl-series` parses to 31 valid `[idx, cum]` pairs |
+| HX3-4 | ✅ | H2H error mode | `/matches/h2h/?team_a=16&team_b=16` → 200; `#h2h-error-banner` reads `"Pick two different teams to compare."`; results blocks absent |
+| HX3-5 | ✅ | Entry point — matches list | `/matches/` renders `<a href="/matches/h2h/">View Head-to-Head</a>` |
+| HX3-6 | ✅ | Entry point — team history | Resolved during code-review: `team_match_history` view now builds a deduped `unique_opponents` list; template renders one anchor per opponent in a top "Head-to-Head" card (DOM id `h2h-opponents-bar`); per-row duplicates removed |
+| HX3-7 | ✅ | Console / network | Zero console messages and zero non-2xx network requests across all 5 HX-03 surfaces walked |
+
+**Overall:** HX-03 works end-to-end in-browser. Picker, picker-preselection, full-results, error mode, and both entry points all render with the locked DOM and copy. Charts paint with valid JSON data. One minor finding (HX3-6): the team-history per-opponent link renders one anchor per match row instead of one per unique opponent — small contract drift, cosmetic only, will be addressed in code-review.
+
+---
+
+## HX-03 head-to-head record
+
+### ✅ HX3-1 — `/matches/h2h/` picker render
+Picker form rendered with the locked DOM ids: `h2h-picker-form` (form), `h2h-select-a` + `h2h-select-b` (each with 2 teams + "-- Select a team --" placeholder), `h2h-provenance` (3 options: All / Real only / Simulated only), `h2h-from`, `h2h-to`, `h2h-submit`. Form `action="/matches/h2h/"`, `method="get"`. Console clean (0 messages). Network: 1 request (the document itself, 200). No favicon noise.
+
+### ✅ HX3-2 — `/matches/h2h/?team_a=16` picker preselection
+Page mode is `picker` (no results DOM rendered). `#h2h-select-a` resolved value is `"16"` (Phoenix preselected). `#h2h-select-b` value is `""` (still on the placeholder). Confirms the view fix from triage (resolve Team in picker mode when its id parses cleanly) works in-browser.
+
+### ✅ HX3-3 — `/matches/h2h/?team_a=16&team_b=17` full results
+All locked DOM ids present and populated:
+- `h2h-match-record`: `"3-1-0"` (W-L-T from Match.winner)
+- `h2h-round-record`: `"10-19-2"` (per-Round W-L-T across the unified basket)
+- `h2h-score-margin`: `"-2521.0"` (signed per-Round mean from team_a perspective — team_b dominates)
+- `h2h-team-a-survivors`: `"2.13"`, `h2h-team-b-survivors`: `"2.48"`
+- `h2h-top-impactful-a`: `"Phoenix Commander\n                            MVP 401.8 over 31 rounds"`
+- `h2h-top-impactful-b`: `"Vipers Commander\n                            MVP 436.4 over 31 rounds"`
+- `h2h-per-map-table` (`<table>`), `h2h-detail-list` (`<table>`)
+
+Both Chart.js canvases present and sized 769×480: `h2h-margin-chart`, `h2h-cumulative-wl-chart`. The two `json_script` blocks parse cleanly: `h2h-margin-series` returns 31 `[round_idx, margin]` pairs (first `[1, 6020]`, last `[31, -9140]`); `h2h-cumulative-wl-series` returns 31 `[round_idx, cum_diff]` pairs (first `[1, 1]`, last `[31, -9]`). Console clean (0 messages).
+
+### ✅ HX3-4 — `/matches/h2h/?team_a=16&team_b=16` error mode
+`#h2h-error-banner` rendered with `"Pick two different teams to compare."`. `h2h-match-record` absent (results not rendered). Picker re-renders above the banner.
+
+### ✅ HX3-5 — Entry-point link on `/matches/`
+`/matches/` renders exactly one `<a>` with text `"View Head-to-Head"` and `href="/matches/h2h/"`. Click would land on the picker.
+
+### 🟡 HX3-6 — Entry-point links on `/matches/team/16/history/` are duplicated per match row
+`/matches/team/16/history/` renders **27** copies of `<a href="/matches/h2h/?team_a=16&team_b=17">vs. Vipers — H2H</a>` — one per match row in the history list. Seam contract `.claude/worktrees/hx-03-seam-contract.md` §Entry points specifies *"for each unique opponent the team has faced, add a 'vs. {opponent} — H2H' link"* (one per **unique** opponent, not per row). The current rendering is noisy but functionally correct (each link navigates to the right team-pair URL). Cosmetic; fix during the HX-03 code-review pass before commit. Template at `laserforce_simulator/templates/matches/team_history.html`.
+
+### ✅ HX3-7 — Console / network
+Zero console messages across all 5 HX-03 surfaces walked (`/matches/h2h/`, `?team_a=16`, `?team_a=16&team_b=17`, `?team_a=16&team_b=16`, `/matches/`, `/matches/team/16/history/`). All document loads returned 200; no XHR/fetch failures.
+
+---
+
+## Historic (older runs)
+
+### Original HX-01 entry (preserved for context)
 
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
