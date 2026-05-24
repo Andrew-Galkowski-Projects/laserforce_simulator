@@ -35,6 +35,7 @@ urlpatterns = [
         name="export_round_report",
     ),
     path("compare/", views.compare_rounds, name="compare_rounds"),
+    path("h2h/", views.head_to_head, name="head_to_head"),
     path("simulate-batch/", views.simulate_batch, name="simulate_batch"),
     path(
         "simulate-batch/status/<str:job_id>/",

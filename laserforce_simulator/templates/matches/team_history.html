@@ -45,6 +45,23 @@
 </div>
 
 <!-- Player Statistics -->
+{% if unique_opponents %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Head-to-Head</h5>
+            </div>
+            <div class="card-body" id="h2h-opponents-bar">
+                {% for opp in unique_opponents %}
+                <a href="{% url 'head_to_head' %}?team_a={{ team.id }}&team_b={{ opp.id }}" class="btn btn-sm btn-outline-secondary me-1 mb-1">vs. {{ opp.name }} — H2H</a>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 {% if player_stats %}
 <div class="row mb-4">
     <div class="col-12">

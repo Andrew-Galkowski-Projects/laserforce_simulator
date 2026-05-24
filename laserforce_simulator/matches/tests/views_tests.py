@@ -2001,3 +2001,777 @@ class TestRv03ExportRoundReport:
         assert resp.status_code == 200
         assert resp["Content-Type"] == "application/pdf"
         assert resp.content.startswith(b"%PDF")
+
+
+# ---------------------------------------------------------------------------
+# HX-03 — head-to-head record view
+# ---------------------------------------------------------------------------
+
+
+import json as _json
+from datetime import datetime as _datetime
+
+from django.test import TestCase as _TestCase
+from django.utils import timezone as _timezone
+
+from core.models import ArenaMap as _ArenaMap
+
+
+class TestHx03HeadToHead(_TestCase):
+    """Coverage for ``matches/views.py::head_to_head`` at
+    ``GET /matches/h2h/``.
+
+    Mirrors RV-01's ``compare_rounds`` 4-mode pattern (picker / 404 /
+    error / results); the locked seam contract lives at
+    ``.claude/worktrees/hx-03-seam-contract.md``. Locked test names below
+    are pinned by the **Tests** section of that contract verbatim.
+
+    Each test sets up the rosters via the existing
+    ``conftest.py::make_team_with_slots`` helper and writes real
+    ``Match`` / ``GameRound`` / ``PlayerRoundState`` rows through the
+    ORM (Django ``TestCase`` ⇒ test DB).
+    """
+
+    # ------------------------------------------------------------------ setup
+
+    def _make_two_teams(self):
+        """Return (team_a, players_a, team_b, players_b)."""
+        team_a, players_a = make_team_with_slots("H2hA")
+        team_b, players_b = make_team_with_slots("H2hB")
+        return team_a, players_a, team_b, players_b
+
+    def _make_round(
+        self,
+        *,
+        team_red,
+        team_blue,
+        red_points: int = 100,
+        blue_points: int = 50,
+        match=None,
+        round_number: int = 1,
+        arena_map=None,
+        is_simulated: bool = True,
+    ) -> GameRound:
+        """Create one GameRound and mark it completed so winner resolves."""
+        gr = GameRound.objects.create(
+            match=match,
+            round_number=round_number,
+            team_red=team_red,
+            team_blue=team_blue,
+            red_points=red_points,
+            blue_points=blue_points,
+            arena_map=arena_map,
+            is_simulated=is_simulated,
+            is_completed=True,
+        )
+        return gr
+
+    def _make_match(
+        self,
+        *,
+        team_red,
+        team_blue,
+        red_r1: int = 100,
+        blue_r1: int = 50,
+        red_r2: int = 100,
+        blue_r2: int = 50,
+        is_completed: bool = True,
+    ) -> Match:
+        """Create a Match with two completed Rounds (red wins by default).
+
+        The Match's ``winner`` is computed in ``Match.save()`` from the
+        per-round point fields when ``is_completed`` is True.
+        """
+        match = Match.objects.create(
+            team_red=team_red,
+            team_blue=team_blue,
+            red_round1_points=red_r1,
+            blue_round1_points=blue_r1,
+            red_round2_points=red_r2,
+            blue_round2_points=blue_r2,
+            is_completed=is_completed,
+        )
+        return match
+
+    def _make_player_state(
+        self,
+        *,
+        game_round: GameRound,
+        player,
+        team_color: str,
+        role: str = "commander",
+        final_lives: int = 3,
+    ) -> PlayerRoundState:
+        return PlayerRoundState.objects.create(
+            game_round=game_round,
+            player=player,
+            team_color=team_color,
+            role=role,
+            final_lives=final_lives,
+        )
+
+    # ------------------------------------------------------------------ §1 picker
+
+    def test_picker_mode_both_params_missing_renders_form_200(self):
+        response = self.client.get(reverse("head_to_head"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["mode"], "picker")
+        # Picker form DOM id present.
+        self.assertIn(b"h2h-picker-form", response.content)
+
+    def test_picker_mode_only_team_a_param_renders_form_with_a_preselected_200(
+        self,
+    ):
+        team_a, _, _team_b, _ = self._make_two_teams()
+        response = self.client.get(reverse("head_to_head") + f"?team_a={team_a.id}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["mode"], "picker")
+        # team_a should be carried into the context so the picker re-renders
+        # with the user's prior selection.
+        ctx_team_a = response.context.get("team_a")
+        self.assertIsNotNone(ctx_team_a)
+        self.assertEqual(ctx_team_a.id, team_a.id)
+
+    # ------------------------------------------------------------------ §2 404
+
+    def test_404_when_team_a_id_does_not_resolve(self):
+        _team_a, _, team_b, _ = self._make_two_teams()
+        response = self.client.get(
+            reverse("head_to_head") + f"?team_a=9999999&team_b={team_b.id}"
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_404_when_team_b_id_does_not_resolve(self):
+        team_a, _, _team_b, _ = self._make_two_teams()
+        response = self.client.get(
+            reverse("head_to_head") + f"?team_a={team_a.id}&team_b=9999999"
+        )
+        self.assertEqual(response.status_code, 404)
+
+    # ------------------------------------------------------------------ §3 error
+
+    def test_error_mode_when_team_a_equals_team_b_200_with_error_banner(self):
+        team_a, _, _team_b, _ = self._make_two_teams()
+        response = self.client.get(
+            reverse("head_to_head") + f"?team_a={team_a.id}&team_b={team_a.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["mode"], "error")
+        self.assertIn(b"h2h-error-banner", response.content)
+
+    # ------------------------------------------------------------------ §4 empty history
+
+    def test_empty_history_results_mode_with_h2h_no_games_notice_200(self):
+        """Two valid distinct Teams that have never played each other →
+        results mode with all-zero aggregates and the no-games notice."""
+        team_a, _, team_b, _ = self._make_two_teams()
+        response = self.client.get(
+            reverse("head_to_head") + f"?team_a={team_a.id}&team_b={team_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["mode"], "results")
+        self.assertEqual(response.context["match_record"]["n"], 0)
+        self.assertEqual(response.context["round_record"]["n"], 0)
+        self.assertIn(b"h2h-no-games-notice", response.content)
+
+    # ------------------------------------------------------------------ §5 full results
+
+    def test_full_results_renders_match_record_round_record_margin_survivors_dom_ids(
+        self,
+    ):
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        # One match: team_a wins both rounds → team_a wins the Match.
+        match = self._make_match(
+            team_red=team_a,
+            team_blue=team_b,
+            red_r1=200,
+            blue_r1=100,
+            red_r2=150,
+            blue_r2=120,
+        )
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=200,
+            blue_points=100,
+            match=match,
+            round_number=1,
+        )
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=150,
+            blue_points=120,
+            match=match,
+            round_number=2,
+        )
+        # Drop a couple PlayerRoundStates so survivor math is non-zero.
+        gr1 = match.game_rounds.first()
+        self._make_player_state(
+            game_round=gr1,
+            player=players_a["commander"],
+            team_color="red",
+            role="commander",
+            final_lives=5,
+        )
+        self._make_player_state(
+            game_round=gr1,
+            player=players_b["commander"],
+            team_color="blue",
+            role="commander",
+            final_lives=0,
+        )
+
+        response = self.client.get(
+            reverse("head_to_head") + f"?team_a={team_a.id}&team_b={team_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["mode"], "results")
+        # 1 Match, team_a won.
+        self.assertEqual(response.context["match_record"]["wins"], 1)
+        self.assertEqual(response.context["match_record"]["n"], 1)
+        # 2 Rounds, team_a won both.
+        self.assertEqual(response.context["round_record"]["wins"], 2)
+        self.assertEqual(response.context["round_record"]["n"], 2)
+        # All four headline DOM ids present.
+        for dom_id in (
+            b"h2h-match-record",
+            b"h2h-round-record",
+            b"h2h-score-margin",
+            b"h2h-team-a-survivors",
+            b"h2h-team-b-survivors",
+        ):
+            self.assertIn(dom_id, response.content)
+
+    def test_full_results_renders_per_map_breakdown_table_with_no_map_3_zone_row(
+        self,
+    ):
+        """Three Rounds across map A, map B, and no-map: all 3 rows present
+        and the no-map row is labelled ``No map (3-zone)``."""
+        team_a, _, team_b, _ = self._make_two_teams()
+        map_a = _ArenaMap.objects.create(
+            name="Alpha Arena", img_width=200, img_height=200
+        )
+        map_b = _ArenaMap.objects.create(
+            name="Beta Arena", img_width=200, img_height=200
+        )
+        match = self._make_match(team_red=team_a, team_blue=team_b)
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=50,
+            match=match,
+            round_number=1,
+            arena_map=map_a,
+        )
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=200,
+            blue_points=10,
+            match=match,
+            round_number=2,
+            arena_map=map_b,
+        )
+        # Plus a standalone (no match) Round on no-map.
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=70,
+            blue_points=70,
+            match=None,
+            round_number=1,
+            arena_map=None,
+        )
+
+        response = self.client.get(
+            reverse("head_to_head") + f"?team_a={team_a.id}&team_b={team_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        breakdown = response.context["per_map_breakdown"]
+        self.assertEqual(len(breakdown), 3)
+        # The body contains the per-map-breakdown table DOM id.
+        self.assertIn(b"h2h-per-map-table", response.content)
+        # The no-map row label is the locked literal.
+        labels = {row["arena_map_name"] for row in breakdown}
+        self.assertIn("No map (3-zone)", labels)
+
+    def test_full_results_renders_detail_list_with_unified_match_and_standalone_rounds(
+        self,
+    ):
+        team_a, _, team_b, _ = self._make_two_teams()
+        match = self._make_match(team_red=team_a, team_blue=team_b)
+        # 2 match-rounds + 1 standalone Round.
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=10,
+            match=match,
+            round_number=1,
+        )
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=50,
+            blue_points=80,
+            match=match,
+            round_number=2,
+        )
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=20,
+            blue_points=20,
+            match=None,
+            round_number=1,
+        )
+
+        response = self.client.get(
+            reverse("head_to_head") + f"?team_a={team_a.id}&team_b={team_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        detail = response.context["detail_list"]
+        # 1 Match entry + 1 standalone Round entry = 2 rows minimum.
+        self.assertGreaterEqual(len(detail), 2)
+        kinds = {row["kind"] for row in detail}
+        self.assertIn("match", kinds)
+        self.assertIn("round", kinds)
+        self.assertIn(b"h2h-detail-list", response.content)
+
+    def test_full_results_renders_top_impactful_per_team_dom_ids(self):
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        match = self._make_match(team_red=team_a, team_blue=team_b)
+        gr = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=50,
+            match=match,
+            round_number=1,
+        )
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=50,
+            blue_points=50,
+            match=match,
+            round_number=2,
+        )
+        # One player per team, both with non-zero MVP-relevant counters.
+        self._make_player_state(
+            game_round=gr,
+            player=players_a["commander"],
+            team_color="red",
+            role="commander",
+            final_lives=5,
+        )
+        self._make_player_state(
+            game_round=gr,
+            player=players_b["commander"],
+            team_color="blue",
+            role="commander",
+            final_lives=3,
+        )
+
+        response = self.client.get(
+            reverse("head_to_head") + f"?team_a={team_a.id}&team_b={team_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        # Both per-team DOM ids present (template renders the lines even when
+        # the value is "—" / None — the surrounding wrapper carries the id).
+        self.assertIn(b"h2h-top-impactful-a", response.content)
+        self.assertIn(b"h2h-top-impactful-b", response.content)
+
+    def test_charts_render_canvas_and_json_script_blocks(self):
+        team_a, _, team_b, _ = self._make_two_teams()
+        match = self._make_match(team_red=team_a, team_blue=team_b)
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=80,
+            blue_points=40,
+            match=match,
+            round_number=1,
+        )
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=60,
+            blue_points=60,
+            match=match,
+            round_number=2,
+        )
+
+        response = self.client.get(
+            reverse("head_to_head") + f"?team_a={team_a.id}&team_b={team_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        # The two json_script DOM ids must be present...
+        self.assertIn("h2h-margin-series", body)
+        self.assertIn("h2h-cumulative-wl-series", body)
+        # ...and the canvas DOM ids for the rendered charts.
+        self.assertIn("h2h-margin-chart", body)
+        self.assertIn("h2h-cumulative-wl-chart", body)
+        # And the json_script payloads must be valid JSON.
+        # ``json_script`` wraps content in <script id="...">...</script>.
+        for series_id in ("h2h-margin-series", "h2h-cumulative-wl-series"):
+            marker = f'id="{series_id}"'
+            idx = body.find(marker)
+            self.assertGreater(idx, -1, f"json_script id {series_id} missing")
+            # Locate the JSON body between the tag's end and the closing tag.
+            tag_end = body.find(">", idx) + 1
+            close = body.find("</script>", tag_end)
+            payload = body[tag_end:close].strip()
+            # Should be valid JSON (list or null).
+            _json.loads(payload)
+
+    # ------------------------------------------------------------------ §6 provenance
+
+    def test_provenance_param_real_filters_to_is_simulated_false(self):
+        team_a, _, team_b, _ = self._make_two_teams()
+        # One simulated, one real Round.
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=50,
+            is_simulated=True,
+        )
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=10,
+            blue_points=80,
+            is_simulated=False,
+        )
+
+        response = self.client.get(
+            reverse("head_to_head")
+            + f"?team_a={team_a.id}&team_b={team_b.id}&provenance=real"
+        )
+        self.assertEqual(response.status_code, 200)
+        # Only the real Round survives.
+        self.assertEqual(response.context["round_record"]["n"], 1)
+        # And the surviving Round is the loss (red_points 10 < blue_points 80
+        # from team_a's perspective when team_a is on red).
+        self.assertEqual(response.context["round_record"]["losses"], 1)
+
+    def test_provenance_param_sim_filters_to_is_simulated_true(self):
+        team_a, _, team_b, _ = self._make_two_teams()
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=50,
+            is_simulated=True,
+        )
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=10,
+            blue_points=80,
+            is_simulated=False,
+        )
+
+        response = self.client.get(
+            reverse("head_to_head")
+            + f"?team_a={team_a.id}&team_b={team_b.id}&provenance=sim"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["round_record"]["n"], 1)
+        # The simulated Round is the win.
+        self.assertEqual(response.context["round_record"]["wins"], 1)
+
+    def test_provenance_param_invalid_falls_back_to_all(self):
+        team_a, _, team_b, _ = self._make_two_teams()
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=50,
+            is_simulated=True,
+        )
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=10,
+            blue_points=80,
+            is_simulated=False,
+        )
+
+        response = self.client.get(
+            reverse("head_to_head")
+            + f"?team_a={team_a.id}&team_b={team_b.id}&provenance=garbage"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["provenance"], "all")
+        # Both Rounds counted.
+        self.assertEqual(response.context["round_record"]["n"], 2)
+
+    # ------------------------------------------------------------------ §7 dates
+
+    def test_from_and_to_date_filter_applied_to_rounds_and_matches(self):
+        """Only Rounds whose ``date_played`` falls in the window are kept.
+
+        ``date_played`` is ``auto_now_add``; we cannot easily set it on
+        create, so we update it after the fact. Two Rounds: one we
+        relocate to 2020, one we leave at "now"; the filter
+        ``?from=2025-01-01`` should keep only the "now" Round.
+        """
+        team_a, _, team_b, _ = self._make_two_teams()
+        old = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=10,
+            blue_points=10,
+        )
+        new = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=50,
+        )
+        # Force the old Round's date_played into the past.
+        GameRound.objects.filter(pk=old.pk).update(
+            date_played=_timezone.make_aware(_datetime(2020, 1, 1, 12, 0, 0))
+        )
+
+        response = self.client.get(
+            reverse("head_to_head")
+            + f"?team_a={team_a.id}&team_b={team_b.id}&from=2025-01-01"
+        )
+        self.assertEqual(response.status_code, 200)
+        # Only the "new" Round survives the filter.
+        self.assertEqual(response.context["round_record"]["n"], 1)
+        # Sanity: the only surviving Round is "new" (team_a wins).
+        self.assertEqual(response.context["round_record"]["wins"], 1)
+        # And the surviving Round's id matches the expected one.
+        # (We don't assert on detail_list ordering here; the n=1 above
+        # already pins the filter behaviour. Reference ``new`` to keep
+        # the linter quiet.)
+        self.assertIsNotNone(new.pk)
+
+    def test_invalid_from_date_silently_ignored(self):
+        """Invalid ``from`` date is treated as unbounded on that side."""
+        team_a, _, team_b, _ = self._make_two_teams()
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=50,
+        )
+
+        response = self.client.get(
+            reverse("head_to_head")
+            + f"?team_a={team_a.id}&team_b={team_b.id}&from=not-a-date"
+        )
+        # No 400 / 500; the Round is still counted.
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["round_record"]["n"], 1)
+
+    # ------------------------------------------------------------------ §8 side-agnostic pairing
+
+    def test_side_agnostic_pairing_team_a_red_in_one_match_blue_in_other(self):
+        """team_a plays red in Match 1 and blue in Match 2 — both Matches
+        count toward the H2H record."""
+        team_a, _, team_b, _ = self._make_two_teams()
+        # Match 1: team_a on red.
+        match1 = self._make_match(team_red=team_a, team_blue=team_b)
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=50,
+            match=match1,
+            round_number=1,
+        )
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=80,
+            blue_points=20,
+            match=match1,
+            round_number=2,
+        )
+        # Match 2: team_a on blue (sides flipped). The Match's stored
+        # per-round point fields must match the GameRound rows so
+        # Match.calculate_winner picks team_blue (team_a) as winner.
+        match2 = self._make_match(
+            team_red=team_b,
+            team_blue=team_a,
+            red_r1=10,
+            blue_r1=200,
+            red_r2=30,
+            blue_r2=200,
+        )
+        self._make_round(
+            team_red=team_b,
+            team_blue=team_a,
+            red_points=10,
+            blue_points=200,
+            match=match2,
+            round_number=1,
+        )
+        self._make_round(
+            team_red=team_b,
+            team_blue=team_a,
+            red_points=30,
+            blue_points=200,
+            match=match2,
+            round_number=2,
+        )
+
+        response = self.client.get(
+            reverse("head_to_head") + f"?team_a={team_a.id}&team_b={team_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        # Both Matches counted.
+        self.assertEqual(response.context["match_record"]["n"], 2)
+        # team_a wins both Matches (in match1 they were red and won 100>50
+        # and 80>20; in match2 they were blue and won 200>10 and 200>30).
+        self.assertEqual(response.context["match_record"]["wins"], 2)
+        # All four Rounds counted in the unified basket.
+        self.assertEqual(response.context["round_record"]["n"], 4)
+
+    # ------------------------------------------------------------------ §9 player who switched teams
+
+    def test_player_who_switched_teams_appears_in_both_team_pools_per_round_attribution(
+        self,
+    ):
+        """Same Player has PlayerRoundState rows on both sides across two
+        Rounds — they appear in both per-team most-impactful pools."""
+        team_a, players_a, team_b, _ = self._make_two_teams()
+        # Two Rounds: one with the switcher on team_a's side, one on team_b's.
+        gr_a_side = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=50,
+        )
+        gr_b_side = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=50,
+            blue_points=100,
+        )
+        # The same Player (single id) appears as "red" in gr_a_side and as
+        # "blue" in gr_b_side.
+        switcher = players_a["commander"]
+        self._make_player_state(
+            game_round=gr_a_side,
+            player=switcher,
+            team_color="red",
+            role="commander",
+            final_lives=5,
+        )
+        self._make_player_state(
+            game_round=gr_b_side,
+            player=switcher,
+            team_color="blue",
+            role="commander",
+            final_lives=2,
+        )
+
+        response = self.client.get(
+            reverse("head_to_head") + f"?team_a={team_a.id}&team_b={team_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        # The view computes top_impactful per team — with one player only on
+        # each side, both per-team entries should resolve to that player id.
+        top = response.context["top_impactful"]
+        self.assertIsNotNone(top["team_a"])
+        self.assertIsNotNone(top["team_b"])
+        self.assertEqual(top["team_a"]["player_id"], switcher.id)
+        self.assertEqual(top["team_b"]["player_id"], switcher.id)
+
+    # ------------------------------------------------------------------ §10 match filters
+
+    def test_match_filter_is_completed_true_only(self):
+        """A Match with ``is_completed=False`` is excluded from match_record."""
+        team_a, _, team_b, _ = self._make_two_teams()
+        # One completed Match: team_a wins both rounds.
+        self._make_match(
+            team_red=team_a,
+            team_blue=team_b,
+            red_r1=100,
+            blue_r1=10,
+            red_r2=80,
+            blue_r2=20,
+            is_completed=True,
+        )
+        # One in-progress Match: leave is_completed=False.
+        self._make_match(
+            team_red=team_a,
+            team_blue=team_b,
+            red_r1=0,
+            blue_r1=0,
+            red_r2=0,
+            blue_r2=0,
+            is_completed=False,
+        )
+
+        response = self.client.get(
+            reverse("head_to_head") + f"?team_a={team_a.id}&team_b={team_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        # Only the completed Match contributes.
+        self.assertEqual(response.context["match_record"]["n"], 1)
+
+    def test_match_record_excludes_match_when_provenance_real_and_either_round_is_simulated(
+        self,
+    ):
+        """``provenance=real`` requires BOTH of a Match's Rounds to be real;
+        a Match with one simulated and one real Round is excluded from the
+        match_record."""
+        team_a, _, team_b, _ = self._make_two_teams()
+        # Match A: BOTH rounds real → kept.
+        match_a = self._make_match(team_red=team_a, team_blue=team_b)
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=10,
+            match=match_a,
+            round_number=1,
+            is_simulated=False,
+        )
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=80,
+            blue_points=20,
+            match=match_a,
+            round_number=2,
+            is_simulated=False,
+        )
+        # Match B: one real, one simulated → excluded.
+        match_b = self._make_match(team_red=team_a, team_blue=team_b)
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=10,
+            match=match_b,
+            round_number=1,
+            is_simulated=False,
+        )
+        self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=80,
+            blue_points=20,
+            match=match_b,
+            round_number=2,
+            is_simulated=True,
+        )
+
+        response = self.client.get(
+            reverse("head_to_head")
+            + f"?team_a={team_a.id}&team_b={team_b.id}&provenance=real"
+        )
+        self.assertEqual(response.status_code, 200)
+        # Only Match A survives in match_record.
+        self.assertEqual(response.context["match_record"]["n"], 1)
