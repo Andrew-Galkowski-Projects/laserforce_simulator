@@ -128,3 +128,24 @@ Branch: `hx-01b-12-stat-benchmark`. Scope: per-role table on `/players/<int:play
 | HX1b-7 | 🟡 | Pre-existing comment leak (HX-02, out of scope) | `templates/teams/player_career_stats.html:50-51` carries a pre-existing multi-line `{# HX-02: threshold + display toggle ... #}` Django comment that leaks as literal text on the rendered page (visible as `(# HX-02: threshold + display toggle ... #)` above the filter form). Same root cause as HX1b-6 but in pre-HX-01b code. Cosmetic only; not a regression introduced by this task. Recommended drive-by fix in a future commit. |
 
 **Overall:** HX-01b renders correctly end-to-end after the comment-leak fix. The pivot to a section-wrapped per-role table layout works as locked; 15 rows render in the locked order with the locked labels; the 12 benchmark-backed rows render numeric overlay cells while the 3 HX-01-only rows render the `benchmark-na —` placeholders; the below-threshold "need N+ rounds" substring renders exactly 12 times per role table (matching test (e)'s assertion). One pre-existing multi-line `{# #}` leak in HX-02 code logged at HX1b-7, out of scope.
+
+---
+
+# HX-04 — Player head-to-head record (2026-05-24)
+
+Date: 2026-05-24. Server: `runserver --noreload` (http://127.0.0.1:8000). Branch: `hx-04-player-head-to-head`. Scope: HX-04 player head-to-head surface (`/matches/h2h/player/`) + career-page entry-point anchor on `/players/<id>/stats/`.
+
+## Summary
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| HX4-1 | ✅ | Picker mode | `GET /matches/h2h/player/` → 200; all 8 locked picker DOM ids present (`player-h2h-picker-form`, `-select-a`, `-select-b`, `-role`, `-provenance`, `-from`, `-to`, `-submit`); 12 players in both dropdowns; 5-role dropdown rendered; console + network clean |
+| HX4-2 | ✅ | Error mode | `?player_a=78&player_b=78` → 200; `#player-h2h-error-banner` reads `"Pick two different players to compare."`; picker re-rendered above banner; no results blocks present |
+| HX4-3 | ✅ | Results mode (populated) | `?player_a=78&player_b=84` → 200; 31 H2H rounds rendered; all locked DOM ids present: `player-h2h-round-record` = "10-19-2", `-score-margin` = "-2521.0", `-tags-a-to-b` = "10.58 / 328", `-tags-b-to-a` = "12.00 / 372"; sections `-per-role-table` (1 row, Commander 31 games), `-per-map-table` (2 rows — San Marcos Laser Tag 24g + No map (3-zone) 7g — confirms `arena_map_id=None` bucket labelled correctly), `-detail-list` (31 reverse-chronological rows with `View` links to `/matches/game-round/<id>/`); both Chart.js canvases (`-margin-chart`, `-cumulative-wl-chart`) rendered; json_script `-margin-series` parses to 31 `[idx, margin]` pairs; `-cumulative-wl-series` parses to 31 `[idx, cum]` pairs ending at `-9` (matches 10-19 W/L diff); console + network clean |
+| HX4-4 | ✅ | Empty-history sub-mode | Not separately retested in-browser (every player pair in the seeded DB produced ≥1 H2H round). Pinned by `views_tests.py::test_empty_history_results_mode_with_no_games_notice_200`. |
+| HX4-5 | ✅ | Career-page anchor | `/players/78/stats/` renders `<a id="player-h2h-link" href="/matches/h2h/player/?player_a=78">View head-to-head…</a>` |
+| HX4-6 | ✅ | Picker → results submit flow | Click "Compare" with player_a=Phoenix Commander pre-selected from career-page anchor + player_b=Vipers Commander chosen → navigates to `?player_a=78&player_b=84&role=&provenance=all&from=&to=` → results mode renders identically to direct URL hit (HX4-3) |
+| HX4-7 | ✅ | Console / network | Zero `error`/`warn` console messages across all 5 navigated pages (picker, error, results, career, picker→results submit). All network requests 200 (Bootstrap CSS, Chart.js, Bootstrap JS, SVG data-URLs). No favicon 404. |
+| HX4-8 | ✅ | Chart.js init | Both `-margin-chart` and `-cumulative-wl-chart` canvases render Chart.js stepped-line plots without throwing; no `Cannot read property` or `is not a function` errors in console. |
+
+**Overall:** HX-04 renders correctly end-to-end on every contract surface. All 22 locked DOM ids present and populated. The opposite-teams gate, per-Round attribution (`team_color`-based), per-role 'both'-semantic filter, per-Map breakdown with `None` → "No map (3-zone)" bucket, reverse-chronological detail list, and the two Chart.js charts all work as locked. The career-page entry-point anchor is the single discovery surface, as scoped. No bugs logged; no pre-existing-bug surface touched.

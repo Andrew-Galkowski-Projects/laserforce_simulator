@@ -2775,3 +2775,867 @@ class TestHx03HeadToHead(_TestCase):
         self.assertEqual(response.status_code, 200)
         # Only Match A survives in match_record.
         self.assertEqual(response.context["match_record"]["n"], 1)
+
+
+# ---------------------------------------------------------------------------
+# HX-04 — player head-to-head record view
+# ---------------------------------------------------------------------------
+
+
+class TestHx04PlayerHeadToHead(_TestCase):
+    """Coverage for ``matches/views.py::player_head_to_head`` at
+    ``GET /matches/h2h/player/``.
+
+    Mirrors HX-03 ``TestHx03HeadToHead`` patterns and RV-01's 4-mode
+    layout (picker / 404 / error / results). The locked seam contract
+    lives at ``.claude/worktrees/hx-04-seam-contract.md``. Locked test
+    names below are pinned by the **Tests** section of that contract
+    verbatim.
+    """
+
+    # ------------------------------------------------------------------ setup
+
+    def _make_two_teams(self):
+        """Return (team_a, players_a, team_b, players_b)."""
+        team_a, players_a = make_team_with_slots("Hx04A")
+        team_b, players_b = make_team_with_slots("Hx04B")
+        return team_a, players_a, team_b, players_b
+
+    def _make_round(
+        self,
+        *,
+        team_red,
+        team_blue,
+        red_points: int = 100,
+        blue_points: int = 50,
+        match=None,
+        round_number: int = 1,
+        arena_map=None,
+        is_simulated: bool = True,
+    ) -> GameRound:
+        gr = GameRound.objects.create(
+            match=match,
+            round_number=round_number,
+            team_red=team_red,
+            team_blue=team_blue,
+            red_points=red_points,
+            blue_points=blue_points,
+            arena_map=arena_map,
+            is_simulated=is_simulated,
+            is_completed=True,
+        )
+        return gr
+
+    def _make_match(
+        self,
+        *,
+        team_red,
+        team_blue,
+        red_r1: int = 100,
+        blue_r1: int = 50,
+        red_r2: int = 100,
+        blue_r2: int = 50,
+        is_completed: bool = True,
+    ) -> Match:
+        return Match.objects.create(
+            team_red=team_red,
+            team_blue=team_blue,
+            red_round1_points=red_r1,
+            blue_round1_points=blue_r1,
+            red_round2_points=red_r2,
+            blue_round2_points=blue_r2,
+            is_completed=is_completed,
+        )
+
+    def _make_player_state(
+        self,
+        *,
+        game_round: GameRound,
+        player,
+        team_color: str,
+        role: str = "commander",
+        final_lives: int = 3,
+    ) -> PlayerRoundState:
+        return PlayerRoundState.objects.create(
+            game_round=game_round,
+            player=player,
+            team_color=team_color,
+            role=role,
+            final_lives=final_lives,
+        )
+
+    def _make_tag_event(
+        self,
+        *,
+        game_round: GameRound,
+        actor,
+        target,
+        timestamp: int = 100,
+        points: int = 100,
+    ) -> GameEvent:
+        """Create a tag GameEvent — the row the single-iterate tag query reads."""
+        return GameEvent.objects.create(
+            game_round=game_round,
+            timestamp=timestamp,
+            event_type="tag",
+            actor=actor,
+            target=target,
+            points_awarded=points,
+        )
+
+    # ------------------------------------------------------------------ §1 picker
+
+    def test_picker_mode_both_params_missing_renders_form_200(self):
+        response = self.client.get(reverse("player_head_to_head"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["mode"], "picker")
+        self.assertIn(b"player-h2h-picker-form", response.content)
+
+    def test_picker_mode_only_player_a_param_renders_form_with_a_preselected_200(
+        self,
+    ):
+        _team_a, players_a, _team_b, _ = self._make_two_teams()
+        player_a = players_a["commander"]
+        response = self.client.get(
+            reverse("player_head_to_head") + f"?player_a={player_a.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["mode"], "picker")
+        ctx_player_a = response.context.get("player_a")
+        self.assertIsNotNone(ctx_player_a)
+        self.assertEqual(ctx_player_a.id, player_a.id)
+
+    # ------------------------------------------------------------------ §2 404
+
+    def test_404_when_player_a_id_does_not_resolve(self):
+        _team_a, _, _team_b, players_b = self._make_two_teams()
+        player_b = players_b["commander"]
+        response = self.client.get(
+            reverse("player_head_to_head") + f"?player_a=9999999&player_b={player_b.id}"
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_404_when_player_b_id_does_not_resolve(self):
+        _team_a, players_a, _team_b, _ = self._make_two_teams()
+        player_a = players_a["commander"]
+        response = self.client.get(
+            reverse("player_head_to_head") + f"?player_a={player_a.id}&player_b=9999999"
+        )
+        self.assertEqual(response.status_code, 404)
+
+    # ------------------------------------------------------------------ §3 error
+
+    def test_error_mode_when_player_a_equals_player_b_200_with_error_banner(self):
+        _team_a, players_a, _team_b, _ = self._make_two_teams()
+        player_a = players_a["commander"]
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_a.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["mode"], "error")
+        self.assertIn(b"player-h2h-error-banner", response.content)
+
+    # ------------------------------------------------------------------ §4 empty history
+
+    def test_empty_history_results_mode_with_no_games_notice_200(self):
+        """Two valid distinct Players who have never been on opposite teams →
+        results mode with all-zero aggregates and the no-games notice."""
+        _team_a, players_a, _team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["mode"], "results")
+        self.assertEqual(response.context["round_record"]["n"], 0)
+        self.assertIn(b"player-h2h-no-games-notice", response.content)
+
+    # ------------------------------------------------------------------ §5 full results
+
+    def test_full_results_renders_round_record_score_margin_tag_stats_dom_ids(self):
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        match = self._make_match(
+            team_red=team_a,
+            team_blue=team_b,
+            red_r1=200,
+            blue_r1=100,
+            red_r2=150,
+            blue_r2=120,
+        )
+        gr1 = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=200,
+            blue_points=100,
+            match=match,
+            round_number=1,
+        )
+        gr2 = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=150,
+            blue_points=120,
+            match=match,
+            round_number=2,
+        )
+        # PlayerRoundStates on opposite team_colors → both rounds qualify.
+        self._make_player_state(
+            game_round=gr1, player=player_a, team_color="red", role="commander"
+        )
+        self._make_player_state(
+            game_round=gr1, player=player_b, team_color="blue", role="commander"
+        )
+        self._make_player_state(
+            game_round=gr2, player=player_a, team_color="red", role="commander"
+        )
+        self._make_player_state(
+            game_round=gr2, player=player_b, team_color="blue", role="commander"
+        )
+        # A couple of tag events both directions.
+        self._make_tag_event(game_round=gr1, actor=player_a, target=player_b)
+        self._make_tag_event(game_round=gr1, actor=player_b, target=player_a)
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["mode"], "results")
+        # 2 Rounds, player_a's team won both.
+        self.assertEqual(response.context["round_record"]["wins"], 2)
+        self.assertEqual(response.context["round_record"]["n"], 2)
+        for dom_id in (
+            b"player-h2h-round-record",
+            b"player-h2h-score-margin",
+            b"player-h2h-tags-a-to-b",
+            b"player-h2h-tags-b-to-a",
+        ):
+            self.assertIn(dom_id, response.content)
+
+    def test_full_results_renders_per_role_breakdown_table(self):
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        match = self._make_match(team_red=team_a, team_blue=team_b)
+        gr1 = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=50,
+            match=match,
+            round_number=1,
+        )
+        gr2 = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=80,
+            blue_points=80,
+            match=match,
+            round_number=2,
+        )
+        # Both rounds: player_a as commander, player_b as commander.
+        for gr in (gr1, gr2):
+            self._make_player_state(
+                game_round=gr, player=player_a, team_color="red", role="commander"
+            )
+            self._make_player_state(
+                game_round=gr, player=player_b, team_color="blue", role="commander"
+            )
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        breakdown = response.context["per_role_breakdown"]
+        self.assertGreaterEqual(len(breakdown), 1)
+        self.assertIn(b"player-h2h-per-role-table", response.content)
+
+    def test_full_results_renders_per_map_breakdown_table_with_no_map_3_zone_row(
+        self,
+    ):
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        map_a = _ArenaMap.objects.create(
+            name="Hx04 Arena Alpha", img_width=200, img_height=200
+        )
+        map_b = _ArenaMap.objects.create(
+            name="Hx04 Arena Beta", img_width=200, img_height=200
+        )
+        match = self._make_match(team_red=team_a, team_blue=team_b)
+        gr1 = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=50,
+            match=match,
+            round_number=1,
+            arena_map=map_a,
+        )
+        gr2 = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=200,
+            blue_points=10,
+            match=match,
+            round_number=2,
+            arena_map=map_b,
+        )
+        gr_nomap = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=70,
+            blue_points=70,
+            match=None,
+            round_number=1,
+            arena_map=None,
+        )
+        for gr in (gr1, gr2, gr_nomap):
+            self._make_player_state(
+                game_round=gr, player=player_a, team_color="red", role="commander"
+            )
+            self._make_player_state(
+                game_round=gr, player=player_b, team_color="blue", role="commander"
+            )
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        breakdown = response.context["per_map_breakdown"]
+        self.assertEqual(len(breakdown), 3)
+        self.assertIn(b"player-h2h-per-map-table", response.content)
+        labels = {row["arena_map_name"] for row in breakdown}
+        self.assertIn("No map (3-zone)", labels)
+
+    def test_full_results_renders_detail_list_reverse_chronological(self):
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        # Two rounds, both qualify.
+        gr1 = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=10,
+        )
+        gr2 = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=50,
+            blue_points=80,
+        )
+        for gr in (gr1, gr2):
+            self._make_player_state(
+                game_round=gr, player=player_a, team_color="red", role="commander"
+            )
+            self._make_player_state(
+                game_round=gr, player=player_b, team_color="blue", role="commander"
+            )
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        detail = response.context["detail_list"]
+        # 2 rounds in basket.
+        self.assertGreaterEqual(len(detail), 2)
+        self.assertIn(b"player-h2h-detail-list", response.content)
+        # Reverse chronological: first row's date_played should be >= last row's.
+        first_date = detail[0].get("date_played")
+        last_date = detail[-1].get("date_played")
+        self.assertIsNotNone(first_date)
+        self.assertIsNotNone(last_date)
+        self.assertGreaterEqual(first_date, last_date)
+
+    def test_charts_render_canvas_and_json_script_blocks(self):
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        match = self._make_match(team_red=team_a, team_blue=team_b)
+        gr1 = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=80,
+            blue_points=40,
+            match=match,
+            round_number=1,
+        )
+        gr2 = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=60,
+            blue_points=60,
+            match=match,
+            round_number=2,
+        )
+        for gr in (gr1, gr2):
+            self._make_player_state(
+                game_round=gr, player=player_a, team_color="red", role="commander"
+            )
+            self._make_player_state(
+                game_round=gr, player=player_b, team_color="blue", role="commander"
+            )
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("player-h2h-margin-series", body)
+        self.assertIn("player-h2h-cumulative-wl-series", body)
+        self.assertIn("player-h2h-margin-chart", body)
+        self.assertIn("player-h2h-cumulative-wl-chart", body)
+        # And the json_script payloads must be valid JSON.
+        for series_id in (
+            "player-h2h-margin-series",
+            "player-h2h-cumulative-wl-series",
+        ):
+            marker = f'id="{series_id}"'
+            idx = body.find(marker)
+            self.assertGreater(idx, -1, f"json_script id {series_id} missing")
+            tag_end = body.find(">", idx) + 1
+            close = body.find("</script>", tag_end)
+            payload = body[tag_end:close].strip()
+            _json.loads(payload)
+
+    # ------------------------------------------------------------------ §6 opposite-teams gate
+
+    def test_opposite_teams_gate_excludes_same_team_rounds_from_basket(self):
+        """A Round where both PRSes share team_color must NOT count.
+
+        A Round where the two are on opposite team_colors MUST count.
+        """
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        # Round 1: SAME team_color (both on "red") — excluded.
+        gr_same = self._make_round(
+            team_red=team_a, team_blue=team_b, red_points=100, blue_points=50
+        )
+        self._make_player_state(
+            game_round=gr_same, player=player_a, team_color="red", role="commander"
+        )
+        self._make_player_state(
+            game_round=gr_same, player=player_b, team_color="red", role="commander"
+        )
+        # Round 2: OPPOSITE team_colors — included.
+        gr_opp = self._make_round(
+            team_red=team_a, team_blue=team_b, red_points=80, blue_points=80
+        )
+        self._make_player_state(
+            game_round=gr_opp, player=player_a, team_color="red", role="commander"
+        )
+        self._make_player_state(
+            game_round=gr_opp, player=player_b, team_color="blue", role="commander"
+        )
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        # Only the opposite-team Round contributes.
+        self.assertEqual(response.context["round_record"]["n"], 1)
+
+    # ------------------------------------------------------------------ §7 role filter
+
+    def test_role_param_both_semantic_filters_to_rounds_where_both_played_role(
+        self,
+    ):
+        """``?role=commander`` keeps only Rounds where BOTH players played
+        commander."""
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        # Round 1: both commander → kept.
+        gr_both = self._make_round(
+            team_red=team_a, team_blue=team_b, red_points=100, blue_points=50
+        )
+        self._make_player_state(
+            game_round=gr_both, player=player_a, team_color="red", role="commander"
+        )
+        self._make_player_state(
+            game_round=gr_both, player=player_b, team_color="blue", role="commander"
+        )
+        # Round 2: both heavy → dropped (not commander).
+        gr_heavy = self._make_round(
+            team_red=team_a, team_blue=team_b, red_points=10, blue_points=10
+        )
+        self._make_player_state(
+            game_round=gr_heavy, player=player_a, team_color="red", role="heavy"
+        )
+        self._make_player_state(
+            game_round=gr_heavy, player=player_b, team_color="blue", role="heavy"
+        )
+        # Round 3: only one is commander → dropped.
+        gr_mixed = self._make_round(
+            team_red=team_a, team_blue=team_b, red_points=20, blue_points=30
+        )
+        self._make_player_state(
+            game_round=gr_mixed, player=player_a, team_color="red", role="commander"
+        )
+        self._make_player_state(
+            game_round=gr_mixed, player=player_b, team_color="blue", role="heavy"
+        )
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}&role=commander"
+        )
+        self.assertEqual(response.status_code, 200)
+        # Only the both-commander Round survives.
+        self.assertEqual(response.context["round_record"]["n"], 1)
+
+    def test_role_param_invalid_silently_ignored(self):
+        """An unrecognised ``?role=...`` value is treated as no role filter."""
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        gr = self._make_round(
+            team_red=team_a, team_blue=team_b, red_points=100, blue_points=50
+        )
+        self._make_player_state(
+            game_round=gr, player=player_a, team_color="red", role="commander"
+        )
+        self._make_player_state(
+            game_round=gr, player=player_b, team_color="blue", role="commander"
+        )
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}&role=not-a-role"
+        )
+        self.assertEqual(response.status_code, 200)
+        # The single round still counts (filter no-ops on invalid role).
+        self.assertEqual(response.context["round_record"]["n"], 1)
+
+    # ------------------------------------------------------------------ §8 provenance
+
+    def test_provenance_param_real_filters_to_is_simulated_false(self):
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        gr_sim = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=50,
+            is_simulated=True,
+        )
+        gr_real = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=10,
+            blue_points=80,
+            is_simulated=False,
+        )
+        for gr in (gr_sim, gr_real):
+            self._make_player_state(
+                game_round=gr, player=player_a, team_color="red", role="commander"
+            )
+            self._make_player_state(
+                game_round=gr, player=player_b, team_color="blue", role="commander"
+            )
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}&provenance=real"
+        )
+        self.assertEqual(response.status_code, 200)
+        # Only the real Round survives.
+        self.assertEqual(response.context["round_record"]["n"], 1)
+        # And that Round is the loss (player_a on red, 10 < 80).
+        self.assertEqual(response.context["round_record"]["losses"], 1)
+
+    def test_provenance_param_sim_filters_to_is_simulated_true(self):
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        gr_sim = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=50,
+            is_simulated=True,
+        )
+        gr_real = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=10,
+            blue_points=80,
+            is_simulated=False,
+        )
+        for gr in (gr_sim, gr_real):
+            self._make_player_state(
+                game_round=gr, player=player_a, team_color="red", role="commander"
+            )
+            self._make_player_state(
+                game_round=gr, player=player_b, team_color="blue", role="commander"
+            )
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}&provenance=sim"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["round_record"]["n"], 1)
+        self.assertEqual(response.context["round_record"]["wins"], 1)
+
+    def test_provenance_param_invalid_falls_back_to_all(self):
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        gr_sim = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=50,
+            is_simulated=True,
+        )
+        gr_real = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=10,
+            blue_points=80,
+            is_simulated=False,
+        )
+        for gr in (gr_sim, gr_real):
+            self._make_player_state(
+                game_round=gr, player=player_a, team_color="red", role="commander"
+            )
+            self._make_player_state(
+                game_round=gr, player=player_b, team_color="blue", role="commander"
+            )
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}&provenance=garbage"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["provenance"], "all")
+        self.assertEqual(response.context["round_record"]["n"], 2)
+
+    # ------------------------------------------------------------------ §9 dates
+
+    def test_from_and_to_date_filter_applied_to_rounds(self):
+        """Only Rounds whose ``date_played`` falls in the window are kept."""
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        old = self._make_round(
+            team_red=team_a, team_blue=team_b, red_points=10, blue_points=10
+        )
+        new = self._make_round(
+            team_red=team_a, team_blue=team_b, red_points=100, blue_points=50
+        )
+        for gr in (old, new):
+            self._make_player_state(
+                game_round=gr, player=player_a, team_color="red", role="commander"
+            )
+            self._make_player_state(
+                game_round=gr, player=player_b, team_color="blue", role="commander"
+            )
+        # Force the old Round's date_played into the past.
+        GameRound.objects.filter(pk=old.pk).update(
+            date_played=_timezone.make_aware(_datetime(2020, 1, 1, 12, 0, 0))
+        )
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}&from=2025-01-01"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["round_record"]["n"], 1)
+        self.assertEqual(response.context["round_record"]["wins"], 1)
+        self.assertIsNotNone(new.pk)
+
+    def test_invalid_from_date_silently_ignored(self):
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        gr = self._make_round(
+            team_red=team_a, team_blue=team_b, red_points=100, blue_points=50
+        )
+        self._make_player_state(
+            game_round=gr, player=player_a, team_color="red", role="commander"
+        )
+        self._make_player_state(
+            game_round=gr, player=player_b, team_color="blue", role="commander"
+        )
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}&from=not-a-date"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["round_record"]["n"], 1)
+
+    # ------------------------------------------------------------------ §10 tag direction
+
+    def test_tags_a_to_b_counted_independently_of_tags_b_to_a(self):
+        """An asymmetric tag distribution must surface as asymmetric totals."""
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        gr = self._make_round(
+            team_red=team_a, team_blue=team_b, red_points=100, blue_points=50
+        )
+        self._make_player_state(
+            game_round=gr, player=player_a, team_color="red", role="commander"
+        )
+        self._make_player_state(
+            game_round=gr, player=player_b, team_color="blue", role="commander"
+        )
+        # 3 tags a→b, 1 tag b→a.
+        for ts in (10, 20, 30):
+            self._make_tag_event(
+                game_round=gr, actor=player_a, target=player_b, timestamp=ts
+            )
+        self._make_tag_event(
+            game_round=gr, actor=player_b, target=player_a, timestamp=40
+        )
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        tag_stats = response.context["tag_stats"]
+        self.assertEqual(tag_stats["total_tags_a_to_b"], 3)
+        self.assertEqual(tag_stats["total_tags_b_to_a"], 1)
+
+    # ------------------------------------------------------------------ §11 side-agnostic
+
+    def test_side_agnostic_attribution_via_team_color_not_team_red_blue_ids(self):
+        """A Round where the Team-side relationship is inverted from
+        player_a's stored team must still attribute scores by team_color.
+
+        Setup: team_red = team_a, but player_a played as blue and player_b
+        played as red. The seam dict's ``player_a_team_score`` must equal
+        ``game_round.blue_points`` (NOT red_points) because
+        ``prs_a.team_color == 'blue'``.
+        """
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        # Red wins big; player_a is actually on blue (the losing side).
+        gr = self._make_round(
+            team_red=team_a, team_blue=team_b, red_points=200, blue_points=10
+        )
+        # Inverted: player_a on blue, player_b on red.
+        self._make_player_state(
+            game_round=gr, player=player_a, team_color="blue", role="commander"
+        )
+        self._make_player_state(
+            game_round=gr, player=player_b, team_color="red", role="commander"
+        )
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        # 1 Round in basket, and it must be a LOSS for player_a (10 < 200).
+        self.assertEqual(response.context["round_record"]["n"], 1)
+        self.assertEqual(response.context["round_record"]["losses"], 1)
+        self.assertEqual(response.context["round_record"]["wins"], 0)
+
+    # ------------------------------------------------------------------ §12 career-page anchor
+
+    def test_career_page_renders_player_h2h_link_anchor_with_player_a_prefilled(
+        self,
+    ):
+        """The HX-01 ``/players/<id>/stats/`` page renders a
+        ``player-h2h-link`` anchor whose href carries
+        ``player_a={{ player_a.id }}``."""
+        _team_a, players_a, _team_b, _ = self._make_two_teams()
+        player_a = players_a["commander"]
+        response = self.client.get(
+            reverse("player_career_stats", kwargs={"player_id": player_a.id})
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("player-h2h-link", body)
+        self.assertIn(f"player_a={player_a.id}", body)
+
+    # ------------------------------------------------------------------ §13 standalone match_id
+
+    def test_match_id_none_for_standalone_rounds_in_seam_dicts(self):
+        """A Round with ``match=None`` (standalone) crossing the seam has
+        ``match_id=None`` — surfaced via the detail list row's match_id."""
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        # Standalone Round (no match parent).
+        gr = self._make_round(
+            team_red=team_a,
+            team_blue=team_b,
+            red_points=100,
+            blue_points=50,
+            match=None,
+        )
+        self._make_player_state(
+            game_round=gr, player=player_a, team_color="red", role="commander"
+        )
+        self._make_player_state(
+            game_round=gr, player=player_b, team_color="blue", role="commander"
+        )
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        detail = response.context["detail_list"]
+        self.assertGreaterEqual(len(detail), 1)
+        # The single row in the basket should reflect a None match_id.
+        # The detail-list shape carries match_id explicitly.
+        match_ids = [row.get("match_id") for row in detail]
+        self.assertIn(None, match_ids)
+
+    # ------------------------------------------------------------------ §14 player who switched teams
+
+    def test_player_who_switched_teams_still_pairs_when_on_opposite_team_color(
+        self,
+    ):
+        """player_a originally belongs to team_a. We create a Round where
+        team_red = team_a / team_blue = team_b but player_a (a "team_a"
+        player) actually played as BLUE (the team_b side) and player_b
+        (a "team_b" player) played as RED — i.e. both players switched
+        teams for that Round.
+
+        Side-agnostic-by-team_color: this Round STILL counts, because the
+        gate is "opposite team_colors", not "different home Team FK".
+        """
+        team_a, players_a, team_b, players_b = self._make_two_teams()
+        player_a = players_a["commander"]
+        player_b = players_b["commander"]
+        gr = self._make_round(
+            team_red=team_a, team_blue=team_b, red_points=100, blue_points=50
+        )
+        # Both players "switched sides" for the round: player_a as blue,
+        # player_b as red. They're still on opposite team_colors → counts.
+        self._make_player_state(
+            game_round=gr, player=player_a, team_color="blue", role="commander"
+        )
+        self._make_player_state(
+            game_round=gr, player=player_b, team_color="red", role="commander"
+        )
+
+        response = self.client.get(
+            reverse("player_head_to_head")
+            + f"?player_a={player_a.id}&player_b={player_b.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        # The round still pairs by team_color, regardless of Team FK home.
+        self.assertEqual(response.context["round_record"]["n"], 1)
