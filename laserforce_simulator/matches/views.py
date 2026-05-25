@@ -6,12 +6,12 @@ from datetime import date, datetime
 
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
-from django.db.models import Q
+from django.db.models import Q, QuerySet
 from django.http import Http404, HttpResponse, HttpResponseNotAllowed, JsonResponse
 from django.urls import reverse
 from django.utils.text import slugify
-from teams.models import Team
-from . import h2h_stats
+from teams.models import Team, Player
+from . import h2h_stats, player_h2h_stats
 from .models import Match, GameRound, PlayerRoundState, GameEvent
 from .simulation import BatchSimulator
 from .sim_helpers.pdf_report import build_round_report
@@ -1490,3 +1490,320 @@ def head_to_head(request) -> HttpResponse:
     )
 
     return render(request, "matches/head_to_head.html", context)
+
+
+# ---------------------------------------------------------------------------
+# HX-04: player head-to-head record
+# ---------------------------------------------------------------------------
+
+_VALID_PLAYER_H2H_ROLES: frozenset[str] = frozenset(
+    ("commander", "heavy", "scout", "medic", "ammo")
+)
+
+
+def _player_h2h_rounds_qs(
+    player_a: Player,
+    player_b: Player,
+    provenance: str,
+    date_from: date | None,
+    date_to: date | None,
+):
+    """HX-04: filter ``GameRound`` rows where BOTH players appeared.
+
+    Returns the queryset of ``GameRound`` rows where both ``player_a`` and
+    ``player_b`` have a ``PlayerRoundState`` row, plus the date and
+    provenance filters. NO opposite-teams gate here (that's
+    ``_normalize_player_round``'s job); NO role gate (that's
+    ``_filter_by_role_both``'s job).
+    """
+    qs = (
+        GameRound.objects.filter(player_states__player=player_a)
+        .filter(player_states__player=player_b)
+        .distinct()
+        .select_related("match", "arena_map")
+    )
+    if date_from is not None:
+        qs = qs.filter(date_played__date__gte=date_from)
+    if date_to is not None:
+        qs = qs.filter(date_played__date__lte=date_to)
+    if provenance == "sim":
+        qs = qs.filter(is_simulated=True)
+    elif provenance == "real":
+        qs = qs.filter(is_simulated=False)
+    return qs
+
+
+def _build_player_h2h_tag_counts(
+    rounds_qs: QuerySet[GameRound], player_a_id: int, player_b_id: int
+) -> dict:
+    """HX-04: single-query tag-count lookup keyed by ``round_id``.
+
+    Returns ``{round_id: (a_to_b_count, b_to_a_count)}``. Iterates one
+    flat ``GameEvent.values_list`` query (NOT two ``.annotate(Count())``
+    calls) and groups in Python. Self-tags (defensive — actor == target)
+    are ignored.
+    """
+    rows = GameEvent.objects.filter(
+        game_round__in=rounds_qs,
+        event_type="tag",
+        actor_id__in=(player_a_id, player_b_id),
+        target_id__in=(player_a_id, player_b_id),
+    ).values_list("game_round_id", "actor_id", "target_id")
+
+    counts: dict = {}
+    for round_id, actor_id, target_id in rows:
+        if actor_id == target_id:
+            # Defensive: self-tags are ignored.
+            continue
+        pair = counts.get(round_id)
+        if pair is None:
+            pair = [0, 0]
+            counts[round_id] = pair
+        if actor_id == player_a_id and target_id == player_b_id:
+            pair[0] += 1
+        elif actor_id == player_b_id and target_id == player_a_id:
+            pair[1] += 1
+    return {rid: (pair[0], pair[1]) for rid, pair in counts.items()}
+
+
+def _normalize_player_round(
+    game_round: GameRound,
+    prs_a: PlayerRoundState,
+    prs_b: PlayerRoundState,
+    tag_counts: dict,
+) -> dict | None:
+    """HX-04: build the 12-key per-Round dict from player_a's perspective.
+
+    Returns ``None`` when the two players sat on the same team for this
+    Round (opposite-teams gate — the caller drops ``None`` rows). Scores
+    derive from the Round's ``red_points``/``blue_points`` and each
+    player's per-Round ``team_color``. Tag counts come from the
+    ``tag_counts`` lookup built by ``_build_player_h2h_tag_counts``.
+    """
+    if prs_a.team_color == prs_b.team_color:
+        return None
+
+    if prs_a.team_color == "red":
+        player_a_team_score = game_round.red_points
+    else:
+        player_a_team_score = game_round.blue_points
+    if prs_b.team_color == "red":
+        player_b_team_score = game_round.red_points
+    else:
+        player_b_team_score = game_round.blue_points
+
+    a_to_b, b_to_a = tag_counts.get(game_round.id, (0, 0))
+
+    return {
+        "round_id": game_round.id,
+        "date_played": game_round.date_played,
+        "player_a_team_score": player_a_team_score,
+        "player_b_team_score": player_b_team_score,
+        "tags_a_to_b": a_to_b,
+        "tags_b_to_a": b_to_a,
+        "role_a": prs_a.role,
+        "role_b": prs_b.role,
+        "match_id": game_round.match_id,
+        "arena_map_id": game_round.arena_map_id,
+        "arena_map_name": (
+            game_round.arena_map.name if game_round.arena_map_id else None
+        ),
+        "is_simulated": game_round.is_simulated,
+    }
+
+
+def _filter_by_role_both(rounds_list: list[dict], role: str | None) -> list[dict]:
+    """HX-04: keep rows where BOTH players played the given role.
+
+    Passthrough (returns the list unchanged) when ``role`` is ``None``,
+    empty, or not one of the five SM5 roles (forgiving-fallback per the
+    HX-03 precedent). A valid role with zero matching rounds renders an
+    empty results page — *not* passthrough — so the user sees that this
+    specific matchup did not occur at that role.
+    """
+    if not role or role not in _VALID_PLAYER_H2H_ROLES:
+        return rounds_list
+    return [r for r in rounds_list if r["role_a"] == role and r["role_b"] == role]
+
+
+def _build_player_h2h_detail_list(rounds_list: list[dict]) -> list[dict]:
+    """HX-04: reverse-chronological detail list with display fields.
+
+    Sorted by ``date_played`` desc, then ``round_id`` desc. Each row is
+    ``{round_id, date_played, role_a, role_b, player_a_team_score,
+    player_b_team_score, score_str, tags_a_to_b, tags_b_to_a,
+    winner_label, detail_url, is_simulated}``.
+    """
+    ordered = sorted(
+        rounds_list,
+        key=lambda r: (r["date_played"], r["round_id"]),
+        reverse=True,
+    )
+    out: list[dict] = []
+    for r in ordered:
+        a = r["player_a_team_score"]
+        b = r["player_b_team_score"]
+        if a > b:
+            winner_label = "Player A"
+        elif b > a:
+            winner_label = "Player B"
+        else:
+            winner_label = "Tie"
+        out.append(
+            {
+                "round_id": r["round_id"],
+                "date_played": r["date_played"],
+                "role_a": r["role_a"],
+                "role_b": r["role_b"],
+                "player_a_team_score": a,
+                "player_b_team_score": b,
+                "score_str": f"{a} - {b}",
+                "tags_a_to_b": r["tags_a_to_b"],
+                "tags_b_to_a": r["tags_b_to_a"],
+                "winner_label": winner_label,
+                "detail_url": reverse("game_round_detail", args=[r["round_id"]]),
+                "is_simulated": r["is_simulated"],
+            }
+        )
+    return out
+
+
+def player_head_to_head(request) -> HttpResponse:
+    """HX-04: read-only head-to-head record between two Players.
+
+    Reads ``player_a`` / ``player_b`` from ``request.GET`` plus optional
+    ``role`` / ``provenance`` / ``from`` / ``to`` filters. Routes through
+    four modes (``picker`` / ``404`` / ``error`` / ``results``); empty
+    results render ``mode="results"`` with zeroed aggregates and the
+    ``player-h2h-no-games-notice`` block.
+    """
+    all_players = Player.objects.select_related("team").order_by("team__name", "name")
+    raw_a = request.GET.get("player_a")
+    raw_b = request.GET.get("player_b")
+    role = request.GET.get("role") or None
+    provenance = _parse_provenance(request.GET.get("provenance"))
+    date_from = _parse_date(request.GET.get("from"))
+    date_to = _parse_date(request.GET.get("to"))
+
+    context: dict = {
+        "mode": "picker",
+        "error_message": None,
+        "player_a": None,
+        "player_b": None,
+        "all_players": all_players,
+        "role": role,
+        "provenance": provenance,
+        "date_from": date_from,
+        "date_to": date_to,
+        "round_record": {"wins": 0, "losses": 0, "ties": 0, "n": 0},
+        "score_margin": {"mean_margin": 0.0, "n": 0},
+        "tag_stats": {
+            "avg_tags_a_to_b": 0.0,
+            "avg_tags_b_to_a": 0.0,
+            "total_tags_a_to_b": 0,
+            "total_tags_b_to_a": 0,
+            "n": 0,
+        },
+        "per_role_breakdown": [],
+        "per_map_breakdown": [],
+        "detail_list": [],
+        "margin_series": [],
+        "cumulative_wl_series": [],
+    }
+
+    # Surface the raw ids back into the picker selects so the user's prior
+    # pick stays selected when one side is missing.
+    try:
+        preselect_a = int(raw_a) if raw_a else None
+    except (TypeError, ValueError):
+        preselect_a = None
+    try:
+        preselect_b = int(raw_b) if raw_b else None
+    except (TypeError, ValueError):
+        preselect_b = None
+    context["preselect_a_id"] = preselect_a
+    context["preselect_b_id"] = preselect_b
+
+    if not raw_a or not raw_b:
+        if preselect_a is not None:
+            context["player_a"] = Player.objects.filter(id=preselect_a).first()
+        if preselect_b is not None:
+            context["player_b"] = Player.objects.filter(id=preselect_b).first()
+        return render(request, "matches/player_head_to_head.html", context)
+
+    try:
+        player_a_id = int(raw_a)
+        player_b_id = int(raw_b)
+    except (TypeError, ValueError):
+        raise Http404("Invalid player id")
+
+    player_a = get_object_or_404(Player, id=player_a_id)
+    player_b = get_object_or_404(Player, id=player_b_id)
+    context["player_a"] = player_a
+    context["player_b"] = player_b
+
+    if player_a.id == player_b.id:
+        context["mode"] = "error"
+        context["error_message"] = "Pick two different players to compare."
+        return render(request, "matches/player_head_to_head.html", context)
+
+    rounds_qs = _player_h2h_rounds_qs(
+        player_a, player_b, provenance, date_from, date_to
+    )
+    rounds = list(rounds_qs)
+
+    # Bulk-fetch PlayerRoundState rows for the two players across the basket,
+    # then bucket by (round_id, player_id) so the per-Round normalizer can
+    # look up each player's per-Round state cheaply.
+    states_by_round: dict = {}
+    if rounds:
+        for state in PlayerRoundState.objects.filter(
+            game_round__in=rounds,
+            player_id__in=(player_a.id, player_b.id),
+        ):
+            states_by_round.setdefault(state.game_round_id, {})[state.player_id] = state
+
+    tag_counts = (
+        _build_player_h2h_tag_counts(rounds, player_a.id, player_b.id) if rounds else {}
+    )
+
+    rounds_list: list[dict] = []
+    for gr in rounds:
+        slot = states_by_round.get(gr.id) or {}
+        prs_a = slot.get(player_a.id)
+        prs_b = slot.get(player_b.id)
+        if prs_a is None or prs_b is None:
+            continue
+        row = _normalize_player_round(gr, prs_a, prs_b, tag_counts)
+        if row is None:
+            # Same-team — drop.
+            continue
+        rounds_list.append(row)
+
+    # Role filter (both-semantics; passthrough on None/unknown).
+    rounds_list = _filter_by_role_both(rounds_list, role)
+
+    round_record = player_h2h_stats.compute_round_record(rounds_list)
+    score_margin = player_h2h_stats.compute_score_margin(rounds_list)
+    tag_stats = player_h2h_stats.compute_tag_stats(rounds_list)
+    per_role_breakdown = player_h2h_stats.compute_per_role_breakdown(rounds_list)
+    per_map_breakdown = player_h2h_stats.compute_per_map_breakdown(rounds_list)
+    detail_list = _build_player_h2h_detail_list(rounds_list)
+    margin_series_data = player_h2h_stats.margin_series(rounds_list)
+    cumulative_wl_data = player_h2h_stats.cumulative_wl_series(rounds_list)
+
+    context.update(
+        {
+            "mode": "results",
+            "round_record": round_record,
+            "score_margin": score_margin,
+            "tag_stats": tag_stats,
+            "per_role_breakdown": per_role_breakdown,
+            "per_map_breakdown": per_map_breakdown,
+            "detail_list": detail_list,
+            "margin_series": margin_series_data,
+            "cumulative_wl_series": cumulative_wl_data,
+        }
+    )
+
+    return render(request, "matches/player_head_to_head.html", context)

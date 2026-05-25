@@ -1,0 +1,355 @@
+{% extends 'base.html' %}
+
+{% block title %}Player Head-to-Head Record{% endblock %}
+
+{% block content %}
+{# HX-04: read-only head-to-head record between two Players. The view emits #}
+{# the margin / cumulative-W-L series via json_script; two Chart.js stepped #}
+{# lines read those blocks (mirrors head_to_head.html overlay pattern).     #}
+
+<div class="mb-4">
+    <h1>Player Head-to-Head Record</h1>
+    <p class="text-muted">Pick two players to see their full head-to-head history — round record, score margin, direct-tag exchange, per-role and per-map breakdowns, and the chronological round list.</p>
+</div>
+
+<!-- Picker form -->
+<form id="player-h2h-picker-form" method="get" action="{% url 'player_head_to_head' %}" class="card mb-4">
+    <div class="card-body">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label for="player-h2h-select-a" class="form-label">Player A</label>
+                <select class="form-select" id="player-h2h-select-a" name="player_a">
+                    <option value="">-- Select a player --</option>
+                    {% for p in all_players %}
+                        <option value="{{ p.id }}"{% if player_a and p.id == player_a.id %} selected{% elif preselect_a_id and p.id == preselect_a_id %} selected{% endif %}>{{ p.name }} ({{ p.team.name }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label for="player-h2h-select-b" class="form-label">Player B</label>
+                <select class="form-select" id="player-h2h-select-b" name="player_b">
+                    <option value="">-- Select a player --</option>
+                    {% for p in all_players %}
+                        <option value="{{ p.id }}"{% if player_b and p.id == player_b.id %} selected{% elif preselect_b_id and p.id == preselect_b_id %} selected{% endif %}>{{ p.name }} ({{ p.team.name }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label for="player-h2h-role" class="form-label">Role (both)</label>
+                <select class="form-select" id="player-h2h-role" name="role">
+                    <option value=""{% if not role %} selected{% endif %}>Any</option>
+                    <option value="commander"{% if role == "commander" %} selected{% endif %}>Commander</option>
+                    <option value="heavy"{% if role == "heavy" %} selected{% endif %}>Heavy</option>
+                    <option value="scout"{% if role == "scout" %} selected{% endif %}>Scout</option>
+                    <option value="medic"{% if role == "medic" %} selected{% endif %}>Medic</option>
+                    <option value="ammo"{% if role == "ammo" %} selected{% endif %}>Ammo</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label for="player-h2h-provenance" class="form-label">Provenance</label>
+                <select class="form-select" id="player-h2h-provenance" name="provenance">
+                    <option value="all"{% if provenance == "all" %} selected{% endif %}>All</option>
+                    <option value="real"{% if provenance == "real" %} selected{% endif %}>Real only</option>
+                    <option value="sim"{% if provenance == "sim" %} selected{% endif %}>Simulated only</option>
+                </select>
+            </div>
+            <div class="col-md-1">
+                <label for="player-h2h-from" class="form-label">From</label>
+                <input type="date" class="form-control" id="player-h2h-from" name="from" value="{% if date_from %}{{ date_from|date:'Y-m-d' }}{% endif %}">
+            </div>
+            <div class="col-md-1">
+                <label for="player-h2h-to" class="form-label">To</label>
+                <input type="date" class="form-control" id="player-h2h-to" name="to" value="{% if date_to %}{{ date_to|date:'Y-m-d' }}{% endif %}">
+            </div>
+            <div class="col-md-12 mt-2">
+                <button type="submit" id="player-h2h-submit" class="btn btn-primary">Compare</button>
+            </div>
+        </div>
+    </div>
+</form>
+
+{% if mode == "error" %}
+    <div id="player-h2h-error-banner" class="alert alert-warning" role="alert">{{ error_message }}</div>
+{% endif %}
+
+{% if mode == "results" %}
+    <div class="mb-4">
+        <h2>{{ player_a.name }} vs {{ player_b.name }}</h2>
+    </div>
+
+    {% if round_record.n == 0 %}
+        <div id="player-h2h-no-games-notice" class="alert alert-info" role="alert">
+            No head-to-head rounds found between these two players for the selected filters.
+        </div>
+    {% endif %}
+
+    <!-- Headline aggregates -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h6 class="card-subtitle text-muted">Round record (W-L-T)</h6>
+                    <p id="player-h2h-round-record" class="card-text fs-3 fw-bold mb-0">{{ round_record.wins }}-{{ round_record.losses }}-{{ round_record.ties }}</p>
+                    <small class="text-muted">{{ round_record.n }} round{{ round_record.n|pluralize }}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h6 class="card-subtitle text-muted">Avg score margin (A &minus; B)</h6>
+                    <p id="player-h2h-score-margin" class="card-text fs-3 fw-bold mb-0">{{ score_margin.mean_margin|floatformat:1 }}</p>
+                    <small class="text-muted">over {{ score_margin.n }} round{{ score_margin.n|pluralize }}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h6 class="card-subtitle text-muted">Tags A &rarr; B (avg / total)</h6>
+                    <p id="player-h2h-tags-a-to-b" class="card-text fs-4 fw-bold mb-0">{{ tag_stats.avg_tags_a_to_b|floatformat:2 }} / {{ tag_stats.total_tags_a_to_b }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h6 class="card-subtitle text-muted">Tags B &rarr; A (avg / total)</h6>
+                    <p id="player-h2h-tags-b-to-a" class="card-text fs-4 fw-bold mb-0">{{ tag_stats.avg_tags_b_to_a|floatformat:2 }} / {{ tag_stats.total_tags_b_to_a }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Per-role breakdown -->
+    {% if per_role_breakdown %}
+    <div class="card mb-4">
+        <div class="card-header"><h5 class="mb-0">Per-role breakdown (Player A's role)</h5></div>
+        <div class="card-body table-responsive">
+            <table id="player-h2h-per-role-table" class="table table-sm table-bordered align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Role</th>
+                        <th>Games</th>
+                        <th>W</th>
+                        <th>L</th>
+                        <th>T</th>
+                        <th>Mean margin</th>
+                        <th>Avg tags A&rarr;B</th>
+                        <th>Avg tags B&rarr;A</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in per_role_breakdown %}
+                        <tr>
+                            <td>{{ row.role|title }}</td>
+                            <td>{{ row.games }}</td>
+                            <td>{{ row.wins }}</td>
+                            <td>{{ row.losses }}</td>
+                            <td>{{ row.ties }}</td>
+                            <td>{{ row.mean_margin|floatformat:1 }}</td>
+                            <td>{{ row.avg_tags_a_to_b|floatformat:2 }}</td>
+                            <td>{{ row.avg_tags_b_to_a|floatformat:2 }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div id="player-h2h-per-role-table-empty" class="card mb-4">
+        <div class="card-body text-muted">No per-role data.</div>
+    </div>
+    {% endif %}
+
+    <!-- Per-map breakdown -->
+    {% if per_map_breakdown %}
+    <div class="card mb-4">
+        <div class="card-header"><h5 class="mb-0">Per-map breakdown</h5></div>
+        <div class="card-body table-responsive">
+            <table id="player-h2h-per-map-table" class="table table-sm table-bordered align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Map</th>
+                        <th>Games</th>
+                        <th>W</th>
+                        <th>L</th>
+                        <th>T</th>
+                        <th>Mean margin</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in per_map_breakdown %}
+                        <tr>
+                            <td>{{ row.arena_map_name }}</td>
+                            <td>{{ row.games }}</td>
+                            <td>{{ row.wins }}</td>
+                            <td>{{ row.losses }}</td>
+                            <td>{{ row.ties }}</td>
+                            <td>{{ row.mean_margin|floatformat:1 }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div id="player-h2h-per-map-table-empty" class="card mb-4">
+        <div class="card-body text-muted">No per-map data.</div>
+    </div>
+    {% endif %}
+
+    <!-- Charts: margin & cumulative W-L -->
+    {{ margin_series|json_script:"player-h2h-margin-series" }}
+    {{ cumulative_wl_series|json_script:"player-h2h-cumulative-wl-series" }}
+
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-header"><h6 class="mb-0">Margin per round (A &minus; B)</h6></div>
+                <div class="card-body">
+                    <div style="position: relative; height: 320px;">
+                        <canvas id="player-h2h-margin-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-header"><h6 class="mb-0">Cumulative round W &minus; L (A &minus; B)</h6></div>
+                <div class="card-body">
+                    <div style="position: relative; height: 320px;">
+                        <canvas id="player-h2h-cumulative-wl-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detail list -->
+    {% if detail_list %}
+    <div class="card mb-4">
+        <div class="card-header"><h5 class="mb-0">All H2H rounds</h5></div>
+        <div class="card-body table-responsive">
+            <table id="player-h2h-detail-list" class="table table-sm align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Date</th>
+                        <th>Role A</th>
+                        <th>Role B</th>
+                        <th>Score (A &minus; B)</th>
+                        <th>Tags A&rarr;B</th>
+                        <th>Tags B&rarr;A</th>
+                        <th>Winner</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in detail_list %}
+                        <tr>
+                            <td>{{ row.date_played|date:"Y-m-d H:i" }}</td>
+                            <td>{{ row.role_a|title }}</td>
+                            <td>{{ row.role_b|title }}</td>
+                            <td>{{ row.score_str }}</td>
+                            <td>{{ row.tags_a_to_b }}</td>
+                            <td>{{ row.tags_b_to_a }}</td>
+                            <td>{{ row.winner_label }}</td>
+                            <td><a href="{{ row.detail_url }}" class="btn btn-sm btn-outline-secondary">View</a></td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="card mb-4">
+        <div class="card-body text-muted">No rounds to list.</div>
+    </div>
+    {% endif %}
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            // HX-04: read the two series once from the JSON blocks, mirroring
+            // the head_to_head.html json_script pattern.
+            const MARGIN = JSON.parse(
+                document.getElementById('player-h2h-margin-series').textContent);
+            const CUMWL = JSON.parse(
+                document.getElementById('player-h2h-cumulative-wl-series').textContent);
+
+            const marginCanvas = document.getElementById('player-h2h-margin-chart');
+            if (marginCanvas) {
+                new Chart(marginCanvas.getContext('2d'), {
+                    type: 'line',
+                    data: {
+                        datasets: [
+                            {
+                                label: 'Margin (A − B)',
+                                data: MARGIN.map(pt => ({ x: pt[0], y: pt[1] })),
+                                borderColor: 'hsl(210, 70%, 45%)',
+                                backgroundColor: 'hsl(210, 70%, 45%)',
+                                borderWidth: 2,
+                                pointRadius: 3,
+                                stepped: 'before',
+                                tension: 0,
+                            },
+                            {
+                                label: 'Zero',
+                                data: MARGIN.length
+                                    ? [
+                                        { x: MARGIN[0][0], y: 0 },
+                                        { x: MARGIN[MARGIN.length - 1][0], y: 0 },
+                                    ]
+                                    : [],
+                                borderColor: 'rgba(120, 120, 120, 0.6)',
+                                borderWidth: 1,
+                                borderDash: [4, 4],
+                                pointRadius: 0,
+                            },
+                        ],
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: { type: 'linear', title: { display: true, text: 'Round #' } },
+                            y: { title: { display: true, text: 'Margin' } },
+                        },
+                        plugins: { legend: { position: 'top' } },
+                    },
+                });
+            }
+
+            const cumCanvas = document.getElementById('player-h2h-cumulative-wl-chart');
+            if (cumCanvas) {
+                new Chart(cumCanvas.getContext('2d'), {
+                    type: 'line',
+                    data: {
+                        datasets: [
+                            {
+                                label: 'Cumulative (A wins − B wins)',
+                                data: CUMWL.map(pt => ({ x: pt[0], y: pt[1] })),
+                                borderColor: 'hsl(130, 60%, 40%)',
+                                backgroundColor: 'hsl(130, 60%, 40%)',
+                                borderWidth: 2,
+                                pointRadius: 3,
+                                stepped: 'before',
+                                tension: 0,
+                            },
+                        ],
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: { type: 'linear', title: { display: true, text: 'Round #' } },
+                            y: { title: { display: true, text: 'Cumulative W − L' } },
+                        },
+                        plugins: { legend: { position: 'top' } },
+                    },
+                });
+            }
+        });
+    </script>
+{% endif %}
+{% endblock %}
