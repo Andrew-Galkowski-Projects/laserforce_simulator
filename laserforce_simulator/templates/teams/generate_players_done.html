@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+
+{% block title %}Generation Complete - Laserforce Manager{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Generation complete</h1>
+
+    {% if created_teams %}
+        <h2>Created teams</h2>
+        <ul id="generate-confirm-teams-list">
+            {% for team in created_teams %}
+                <li><a href="{% url 'team_detail' team.id %}">{{ team.name }}</a></li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+
+    {% if free_agent_count %}
+        <div class="alert alert-info" id="generate-confirm-free-agents-notice">
+            <strong>Created
+                <span id="generate-confirm-free-agent-count">{{ free_agent_count }}</span>
+                free-agent players.</strong>
+            They will be visible on the Players tab once it ships (LG-00c).
+        </div>
+    {% endif %}
+
+    <p>
+        <a href="{% url 'team_list' %}" class="btn btn-secondary">Back to Teams</a>
+        <a href="{% url 'generate_players' %}" class="btn btn-outline-primary">Generate more</a>
+    </p>
+</div>
+{% endblock %}

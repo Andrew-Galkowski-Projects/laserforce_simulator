@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+
+{% block title %}Generate Players - Laserforce Manager{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Generate Players</h1>
+    <p>
+        Create randomised Teams and/or Players for testing or league bootstrap.
+        Choose <strong>0</strong> teams to populate the Free-Agents pool, or
+        pick 2–20 teams to build full rosters with optional bench players.
+    </p>
+
+    <form method="post" id="generate-players-form">
+        {% csrf_token %}
+
+        <div class="mb-3">
+            <label for="generate-players-num-teams" class="form-label">Number of teams</label>
+            {{ form.num_teams }}
+            {% if form.num_teams.errors %}
+                <div class="text-danger">{{ form.num_teams.errors }}</div>
+            {% endif %}
+        </div>
+
+        <div class="mb-3">
+            <label for="generate-players-per-team" class="form-label">Players per team</label>
+            {{ form.players_per_team }}
+            <div class="form-text">
+                For teams: 6–9 (or "Random 6–8"). For the free-agent pool
+                (0 teams): 12–100 (or "Random 12–100").
+            </div>
+            {% if form.players_per_team.errors %}
+                <div class="text-danger">{{ form.players_per_team.errors }}</div>
+            {% endif %}
+        </div>
+
+        <div class="row g-2 mb-3">
+            <div class="col-sm-3">
+                <label for="generate-players-mean" class="form-label">Stat mean</label>
+                {{ form.mean }}
+                {% if form.mean.errors %}
+                    <div class="text-danger">{{ form.mean.errors }}</div>
+                {% endif %}
+            </div>
+            <div class="col-sm-3">
+                <label for="generate-players-std-dev" class="form-label">Stat standard deviation</label>
+                {{ form.std_dev }}
+                {% if form.std_dev.errors %}
+                    <div class="text-danger">{{ form.std_dev.errors }}</div>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if form.non_field_errors %}
+            <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+        {% endif %}
+
+        <button type="submit" id="generate-players-submit" class="btn btn-primary">Generate</button>
+        <a href="{% url 'team_list' %}" class="btn btn-secondary">Cancel</a>
+    </form>
+</div>
+{% endblock %}
