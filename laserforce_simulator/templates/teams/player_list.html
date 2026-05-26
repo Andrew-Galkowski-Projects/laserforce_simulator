@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+
+{% block title %}Players{% endblock %}
+
+{% block content %}
+    <h1>Players</h1>
+    <p class="text-muted">{{ paginator.count }} player{{ paginator.count|pluralize }} total</p>
+
+    <form method="get" id="player-list-per-page-form" class="mb-3">
+        {# Carry the current sort + dir through the GET submit so changing #}
+        {# the page size does NOT reset the user's column ordering. #}
+        <input type="hidden" name="sort" value="{{ sort }}">
+        <input type="hidden" name="dir" value="{{ dir }}">
+        <label for="player-list-per-page-select" class="me-2">Show:</label>
+        <select
+            name="per_page"
+            id="player-list-per-page-select"
+            class="form-select d-inline-block w-auto"
+            onchange="this.form.submit()"
+        >
+            {% for size in page_size_options %}
+                <option value="{{ size }}" {% if size == per_page %}selected{% endif %}>{{ size }}</option>
+            {% endfor %}
+        </select>
+        <span class="ms-2 text-muted">per page</span>
+        <noscript>
+            <button type="submit" class="btn btn-sm btn-primary ms-2">Apply</button>
+        </noscript>
+    </form>
+
+    {# Break horizontal-scroll wrapper out of base.html's .container so wide screens use full viewport; calc no-ops at small viewports #}
+    <div class="table-responsive" style="margin-left: calc(-50vw + 50%); margin-right: calc(-50vw + 50%); padding: 0 1rem;">
+        <table class="table table-striped" id="player-list-table">
+            <thead>
+                <tr>
+                    {% for key, label in sort_keys %}
+                        {% if key == sort %}
+                            {% if dir == "asc" %}
+                                <th id="player-list-th-{{ key }}">
+                                    <a href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort={{ key }}&dir=desc">{{ label }} ↑</a>
+                                </th>
+                            {% else %}
+                                <th id="player-list-th-{{ key }}">
+                                    <a href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort={{ key }}&dir=asc">{{ label }} ↓</a>
+                                </th>
+                            {% endif %}
+                        {% else %}
+                            <th id="player-list-th-{{ key }}">
+                                <a href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort={{ key }}&dir=asc">{{ label }}</a>
+                            </th>
+                        {% endif %}
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for player in page_obj %}
+                <tr>
+                    <td><a href="{% url 'player_career_stats' player.id %}">{{ player.name }}</a></td>
+                    <td><a href="{% url 'team_detail' player.team.id %}">{{ player.team.name }}</a></td>
+                    <td>{{ player.preferred_roles|join:", " }}</td>
+                    <td>{{ player.overall_rating|floatformat:1 }}</td>
+                    <td>{{ player.player_awareness }}</td>
+                    <td>{{ player.game_awareness }}</td>
+                    <td>{{ player.resource_awareness }}</td>
+                    <td>{{ player.decision_making }}</td>
+                    <td>{{ player.positioning }}</td>
+                    <td>{{ player.stamina }}</td>
+                    <td>{{ player.speed }}</td>
+                    <td>{{ player.flexibility }}</td>
+                    <td>{{ player.adaptability }}</td>
+                    <td>{{ player.communication }}</td>
+                    <td>{{ player.teamwork }}</td>
+                    <td>{{ player.Offensive_synergy }}</td>
+                    <td>{{ player.defensive_synergy }}</td>
+                    <td>{{ player.midfield_synergy }}</td>
+                    <td>{{ player.resupply_synergy }}</td>
+                    <td>{{ player.resupply_efficiency }}</td>
+                    <td>{{ player.accuracy }}</td>
+                    <td>{{ player.survival }}</td>
+                    <td>{{ player.special_usage }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if page_obj.has_other_pages %}
+        <nav id="player-list-pagination">
+            <ul class="pagination">
+                {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?{{ querystring_without_page }}{% if querystring_without_page %}&{% endif %}page={{ page_obj.previous_page_number }}">Previous</a>
+                    </li>
+                {% endif %}
+                <li class="page-item active">
+                    <span class="page-link">Page {{ page_obj.number }} of {{ paginator.num_pages }}</span>
+                </li>
+                {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?{{ querystring_without_page }}{% if querystring_without_page %}&{% endif %}page={{ page_obj.next_page_number }}">Next</a>
+                    </li>
+                {% endif %}
+            </ul>
+        </nav>
+    {% endif %}
+{% endblock %}

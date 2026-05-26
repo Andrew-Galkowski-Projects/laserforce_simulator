@@ -91,3 +91,38 @@ Date: 2026-05-26. Server: `runserver --noreload` (http://127.0.0.1:8000). Branch
 | LG00b-9 | ℹ️ | Seam-contract drift on URL prefix | The seam contract states "Full URL: `/teams/import/`" in §6/§13, but the project's `urls.py` mounts the `teams` app at `""` not `"teams/"` (every other teams URL renders as `/`, `/create/`, `/generate/` etc). Actual URL is `/import/`. The URL **name** (`import_roster`) and the `path("import/", ...)` entry are both contract-correct — the contract only mis-describes the URL prefix. Functionally fine; reverse works; nav link works. |
 
 **Overall:** LG-00b ships green. All 7 planned smoke-test walks pass in the real browser; the form, the template-download companion view, the per-row error rendering, the happy-path team creation + slot assignment, and the slot-collision rejection all match the seam contract verbatim. Zero console errors and zero non-2xx network requests across the entire walk. Two informational findings logged: LG00b-8 (DB-layer unique-name backstop is the contract's deliberate punt; produces a 500 instead of a row error when triggered) and LG00b-9 (the contract's `/teams/import/` URL prefix wording is off by the project's missing `teams/` mount prefix; the URL itself works correctly).
+
+---
+
+## LG-00c sortable players tab (2026-05-26)
+
+Date: 2026-05-26. Server: `runserver --noreload` (http://127.0.0.1:8765). Branch: `lg-00c-sortable-players-tab`. Scope: the new `/players/` index page — server-side sort via `?sort=&dir=asc|desc`, HX-02 forgiving-fallback validation, pagination (50/page), Players nav link in base.html.
+
+### Summary
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| LG00c-1 | ✅ | Default render | `GET /players/` → 200; 116 players total, 23 columns, 3 pages, active "Team ↑" header, zero console errors, zero non-2xx network requests |
+| LG00c-2 | ✅ | Nav link | "Players" anchor present in `base.html` immediately after "Teams" with id `player-list-nav-link`; reachable from every page |
+| LG00c-3 | ✅ | `overall_rating` desc | `?sort=overall_rating&dir=desc` → annotation orders correctly; first row Alice/Red Phoenix at 68.3; active header "Overall ↓", flip-href `?sort=overall_rating&dir=asc` |
+| LG00c-4 | ✅ | Capital-O alias | `?sort=offensive_synergy&dir=desc` (lowercase URL key) sorts on the capital-O `Offensive_synergy` ORM field; Bayani top at 90; active "Offensive Syn ↓" |
+| LG00c-5 | ✅ | Python-branch `preferred_roles` | `?sort=preferred_roles&dir=asc` → players whose `preferred_roles == ["ammo"]` cluster first (joined string `"ammo"`); within the cluster the secondary `name` tiebreak orders `Anubis ☥`, `Bromatized`, `Dark Knight`; active "Preferred Roles ↑" |
+| LG00c-6 | ✅ | Name + team links | Name cell anchors `<a href="/players/<id>/stats/">`; team cell anchors `<a href="/<team_id>/">` (teams app mounted at root — same `/<id>/` shape LG-00b found in LG00-8 / LG00b-9); Free Agents team links normally with no special-case |
+| LG00c-7 | 🟠 | **Pagination links carry uncoerced invalid params** | `GET /players/?sort=BOGUS&dir=SIDEWAYS&page=2` — view coerces correctly (active header is "Team ↑" reflecting the asc fallback), but the pagination Previous/Next hrefs read `?sort=BOGUS&dir=SIDEWAYS&page=1` / `&page=3`. Header flip-links are clean (built from `querystring_without_sort_dir_page`); only pagination is affected (built from `querystring_without_page`, which preserves the raw uncoerced values). View is safe (re-coerces every request), but the URLs propagate the rubbish until the user changes sort. Fix: rebuild the page-link querystring from the coerced `sort` + `direction` rather than `request.GET.copy()`. |
+
+**Overall:** LG-00c ships green except for LG00c-7. The view's sort/coerce/paginate machinery is correct; the issue is purely a URL-hygiene bug in how the template's page-link querystring is built. Zero console errors, zero non-2xx requests across all 5 URL variants tested. Fixing LG00c-7 inline before commit.
+
+### Responsive smoke (LG-00c, follow-up)
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| LG00c-8 | 🟠 | Layout at wide viewports | At 1920px, the 23-col table was clamped to 1272px by `base.html`'s `.container.mt-4` PLUS a redundant inner `<div class="container mt-4">` in `player_list.html` — ~600px of viewport wasted, table forced into a horizontal-scroll window even though it would have fit. Root cause: nested `.container` capped at Bootstrap's 1320px xxl max-width. Fix: removed the redundant inner container; applied `margin-left: calc(-50vw + 50%); margin-right: calc(-50vw + 50%); padding: 0 1rem;` to the `.table-responsive` so it breaks out of the outer container to span the full viewport. The calc no-ops at small viewports (resolves to ~0 when container width ≈ viewport width). Verified at 720/800/1280/1920/2560px: zero wasted space at every size; table fits at 2560 without scroll, scrolls horizontally only when needed at narrower widths. |
+| LG00c-9 | 🟡 | Template-comment leak | My initial fix used a multi-line `{# ... #}` block which Django renders literally (single-line only — multi-line needs `{% comment %}...{% endcomment %}`). The opening `{# 23 stat columns need ~1975px; break ...` rendered as visible text under the player count. Fix: collapsed to a one-line `{# ... #}` comment. Surfaced by post-fix screenshot — pure visual bug, no test would have caught it. |
+
+**Overall (post-follow-up):** LG-00c ships green. Two follow-up findings from manual responsive smoke; both fixed inline. Re-ran full pytest after the template restructure → 1480 passed (no regressions; the 28 LG-00c tests assert response substrings/context keys, not container nesting, so the restructure is transparent to them).
+
+### Per-page dropdown (LG-00c, follow-up)
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| LG00c-10 | ✅ | Per-page selector | New `?per_page=10\|25\|50\|100` query param + `<select>` dropdown above the table; default 10 (was 50). HX-02-style forgiving-fallback — invalid / out-of-whitelist / non-int values silently coerce to default. Auto-submit on change (`onchange="this.form.submit()"`) with `<noscript>` Apply button fallback. Dropdown carries `sort` + `dir` through hidden inputs so re-paginating does NOT reset the user's column ordering. `per_page` survives across page navigation (in `querystring_without_page`) AND across column-header re-sorts (in `querystring_without_sort_dir_page`). Verified in-browser at 1600px: default `?per_page=10` renders 10 rows / 12 pages; dropdown switch to 50 auto-submits to `?sort=team&dir=asc&per_page=50` rendering 50 rows / 3 pages; Next-link carries `per_page=50`; Name-column re-sort link carries `per_page=50`. Invalid `?per_page=BOGUS&sort=BOGUS&dir=SIDEWAYS` URL → all three coerce to defaults; pagination links read `?per_page=10&sort=team&dir=asc&page=N`. 9 new tests (5 pure-unit on `_coerce_per_page` truth table + 4 view tests on default-10 / each-size-renders / select-marks-active / per-page-carries-in-links); 1 existing test renamed (`test_default_pagination_is_10_per_page` was `test_pagination_renders_50_per_page`); 2 existing tests updated to either pass `per_page=50` (preserves their 51-player fixture intent) or shrink the fixture to 15 (page-1-only assertions). Full pytest: 1489 passed (was 1480 → +9). |

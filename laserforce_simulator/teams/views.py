@@ -2,7 +2,9 @@ import csv
 import io
 import random
 
+from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.db import transaction
+from django.db.models import F
 from django.http import HttpResponse
 from django.shortcuts import render, get_object_or_404, redirect
 from django.views.decorators.http import require_GET
@@ -337,6 +339,108 @@ def _coerce_display(raw: str | None, default: str = "mean") -> str:
     if raw in ("mean", "median"):
         return raw
     return default
+
+
+# LG-00c — sortable Players tab. The frozen 22-entry ORM whitelist
+# (URL key → ORM target) plus the `preferred_roles` Python-side
+# sentinel (handled in a separate branch of `player_list`) gives 23
+# total accepted sort keys. See `.claude/worktrees/lg-00c-seam-contract.md`.
+_SORT_KEYS: dict[str, str] = {
+    "name": "name",
+    "team": "team__name",
+    "overall_rating": "overall_rating_db",
+    "player_awareness": "player_awareness",
+    "game_awareness": "game_awareness",
+    "resource_awareness": "resource_awareness",
+    "decision_making": "decision_making",
+    "positioning": "positioning",
+    "stamina": "stamina",
+    "speed": "speed",
+    "flexibility": "flexibility",
+    "adaptability": "adaptability",
+    "communication": "communication",
+    "teamwork": "teamwork",
+    "offensive_synergy": "Offensive_synergy",
+    "defensive_synergy": "defensive_synergy",
+    "midfield_synergy": "midfield_synergy",
+    "resupply_synergy": "resupply_synergy",
+    "resupply_efficiency": "resupply_efficiency",
+    "accuracy": "accuracy",
+    "survival": "survival",
+    "special_usage": "special_usage",
+}
+
+# LG-00c — 23-entry column display spec (single source of truth for
+# both `<th>` headers and per-row `<td>` cells). The 23rd entry is the
+# `preferred_roles` Python-side sentinel.
+_SORT_KEYS_DISPLAY: tuple[tuple[str, str], ...] = (
+    ("name", "Name"),
+    ("team", "Team"),
+    ("preferred_roles", "Preferred Roles"),
+    ("overall_rating", "Overall"),
+    ("player_awareness", "Player Aware"),
+    ("game_awareness", "Game Aware"),
+    ("resource_awareness", "Resource Aware"),
+    ("decision_making", "Decision"),
+    ("positioning", "Positioning"),
+    ("stamina", "Stamina"),
+    ("speed", "Speed"),
+    ("flexibility", "Flexibility"),
+    ("adaptability", "Adaptability"),
+    ("communication", "Communication"),
+    ("teamwork", "Teamwork"),
+    ("offensive_synergy", "Offensive Syn"),
+    ("defensive_synergy", "Defensive Syn"),
+    ("midfield_synergy", "Midfield Syn"),
+    ("resupply_synergy", "Resupply Syn"),
+    ("resupply_efficiency", "Resupply Eff"),
+    ("accuracy", "Accuracy"),
+    ("survival", "Survival"),
+    ("special_usage", "Special Usage"),
+)
+
+_VALID_DIRS: tuple[str, str] = ("asc", "desc")
+_VALID_PAGE_SIZES: tuple[int, ...] = (10, 25, 50, 100)
+_DEFAULT_PAGE_SIZE: int = 10
+
+
+def _coerce_sort(raw: str | None, default: str = "team") -> str:
+    """LG-00c — invalid / missing → default.
+
+    Accepted: every key in ``_SORT_KEYS`` plus the literal
+    ``"preferred_roles"`` sentinel (handled in a separate branch of
+    the view).
+    """
+    if raw in _SORT_KEYS or raw == "preferred_roles":
+        return raw
+    return default
+
+
+def _coerce_dir(raw: str | None, default: str = "asc") -> str:
+    """LG-00c — only ``"asc"`` / ``"desc"`` accepted; everything else
+    → default.
+
+    Case-sensitive: ``"ASC"`` falls back to the default (mirrors
+    HX-02's ``_coerce_display`` casing discipline).
+    """
+    if raw in _VALID_DIRS:
+        return raw
+    return default
+
+
+def _coerce_per_page(raw: str | None, default: int = _DEFAULT_PAGE_SIZE) -> int:
+    """LG-00c — invalid / out-of-whitelist / non-int → default.
+
+    Accepted: only the integer values in ``_VALID_PAGE_SIZES``. Strings
+    are parsed via ``int()``; anything that fails or lands outside the
+    whitelist falls back to the default (mirrors HX-02's
+    ``_coerce_threshold`` discipline).
+    """
+    try:
+        val = int(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        return default
+    return val if val in _VALID_PAGE_SIZES else default
 
 
 def _round_dict_from_state(state: PlayerRoundState) -> dict:
@@ -1111,3 +1215,90 @@ def import_roster_template(request):
     response = HttpResponse(buf.getvalue(), content_type="text/csv")
     response["Content-Disposition"] = 'attachment; filename="roster_template.csv"'
     return response
+
+
+def player_list(request):
+    """LG-00c — sortable, paginated index of every Player.
+
+    Server-side sort via ``?sort=&dir=asc|desc`` and page size via
+    ``?per_page=10|25|50|100`` (default 10). Forgiving-fallback
+    validation (invalid / missing → defaults). Includes players on the
+    Free Agents Team.
+    """
+    sort = _coerce_sort(request.GET.get("sort"))
+    direction = _coerce_dir(request.GET.get("dir"))
+    per_page = _coerce_per_page(request.GET.get("per_page"))
+
+    qs = Player.objects.select_related("team").annotate(
+        overall_rating_db=(
+            F("player_awareness")
+            + F("game_awareness")
+            + F("resource_awareness")
+            + F("decision_making")
+            + F("positioning")
+            + F("stamina")
+            + F("speed")
+            + F("flexibility")
+            + F("adaptability")
+            + F("communication")
+            + F("teamwork")
+            + F("Offensive_synergy")
+            + F("defensive_synergy")
+            + F("midfield_synergy")
+            + F("resupply_synergy")
+            + F("resupply_efficiency")
+            + F("accuracy")
+            + F("survival")
+            + F("special_usage")
+        )
+        / 19.0
+    )
+
+    if sort == "preferred_roles":
+        rows = list(qs)
+        rows.sort(
+            key=lambda p: (",".join(p.preferred_roles or []), p.name),
+            reverse=(direction == "desc"),
+        )
+        paginator = Paginator(rows, per_page)
+    else:
+        prefix = "" if direction == "asc" else "-"
+        qs = qs.order_by(prefix + _SORT_KEYS[sort], "name")
+        paginator = Paginator(qs, per_page)
+
+    page_raw = request.GET.get("page", 1)
+    try:
+        page_obj = paginator.page(page_raw)
+    except (EmptyPage, PageNotAnInteger):
+        page_obj = paginator.page(1)
+
+    # Build querystring helpers for the template from COERCED values so
+    # invalid `?sort=BOGUS&dir=SIDEWAYS` does not survive in pagination
+    # links (LG00c-7 fix; raw ``request.GET.copy()`` would propagate the
+    # uncoerced rubbish even though the view itself handles it safely).
+    qs_no_page = request.GET.copy()
+    qs_no_page.pop("page", None)
+    qs_no_page["sort"] = sort
+    qs_no_page["dir"] = direction
+    qs_no_page["per_page"] = str(per_page)
+    querystring_without_page = qs_no_page.urlencode()
+
+    qs_no_sort_dir_page = request.GET.copy()
+    qs_no_sort_dir_page.pop("page", None)
+    qs_no_sort_dir_page.pop("sort", None)
+    qs_no_sort_dir_page.pop("dir", None)
+    qs_no_sort_dir_page["per_page"] = str(per_page)
+    querystring_without_sort_dir_page = qs_no_sort_dir_page.urlencode()
+
+    context = {
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "sort": sort,
+        "dir": direction,
+        "per_page": per_page,
+        "page_size_options": _VALID_PAGE_SIZES,
+        "sort_keys": _SORT_KEYS_DISPLAY,
+        "querystring_without_page": querystring_without_page,
+        "querystring_without_sort_dir_page": querystring_without_sort_dir_page,
+    }
+    return render(request, "teams/player_list.html", context)
