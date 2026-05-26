@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+
+{% block title %}Import Roster - Laserforce Manager{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Import Roster from CSV</h1>
+    <p>
+        Upload a roster CSV (max 1000 rows). Required columns:
+        team, name, role, age, started_playing_age, total_games,
+        home_site, height. Stat columns are optional (default 50).
+        <a href="{% url 'import_roster_template' %}" id="roster-import-template-link">Download a template CSV</a>.
+    </p>
+
+    <form method="post" enctype="multipart/form-data" id="roster-import-form">
+        {% csrf_token %}
+        <div class="mb-3">
+            <label for="roster-import-file" class="form-label">Roster CSV</label>
+            {{ form.csv_file }}
+            {% if form.csv_file.errors %}
+                <div class="text-danger">{{ form.csv_file.errors }}</div>
+            {% endif %}
+        </div>
+
+        {% if errors %}
+            <div class="alert alert-danger" id="roster-import-errors-summary">
+                {% for err in errors %}<p>{{ err }}</p>{% endfor %}
+            </div>
+        {% endif %}
+
+        {% if row_errors %}
+            <ul id="roster-import-errors" class="alert alert-danger">
+                {% for err in row_errors %}
+                    <li id="roster-import-error-{{ err.row_num }}-{% if err.field %}{{ err.field }}{% else %}row{% endif %}">
+                        Row {{ err.row_num }}{% if err.field %} (field: {{ err.field }}){% endif %}: {{ err.message }}
+                    </li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        <button type="submit" id="roster-import-submit" class="btn btn-primary">Import</button>
+        <a href="{% url 'team_list' %}" class="btn btn-secondary">Cancel</a>
+    </form>
+</div>
+{% endblock %}

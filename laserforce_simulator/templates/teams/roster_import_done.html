@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+
+{% block title %}Roster Import Complete - Laserforce Manager{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Import complete</h1>
+
+    <div id="roster-import-confirm-summary">
+        Imported <strong>{{ player_count }}</strong> players across
+        <strong>{{ row_count }}</strong> rows.
+    </div>
+
+    {% if created_teams %}
+        <h2>Created teams</h2>
+        <ul id="roster-import-confirm-teams-list">
+            {% for team in created_teams %}
+                <li><a href="{% url 'team_detail' team.id %}">{{ team.name }}</a></li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+
+    {% if appended_teams %}
+        <h2>Appended to existing teams</h2>
+        <ul id="roster-import-confirm-appended-list">
+            {% for team in appended_teams %}
+                <li><a href="{% url 'team_detail' team.id %}">{{ team.name }}</a></li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+
+    <p>
+        <a href="{% url 'team_list' %}" class="btn btn-secondary">Back to Teams</a>
+        <a href="{% url 'import_roster' %}" class="btn btn-outline-primary">Import another</a>
+    </p>
+</div>
+{% endblock %}

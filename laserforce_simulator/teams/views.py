@@ -1,7 +1,11 @@
+import csv
+import io
 import random
 
 from django.db import transaction
+from django.http import HttpResponse
 from django.shortcuts import render, get_object_or_404, redirect
+from django.views.decorators.http import require_GET
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from matches.models import PlayerRoundState
@@ -15,11 +19,25 @@ from .models import (
     _random_player_profile,
     get_free_agents_team,
 )
-from .forms import TeamForm, PlayerForm, TeamSlotForm, GenerateLeagueForm
+from .forms import (
+    TeamForm,
+    PlayerForm,
+    TeamSlotForm,
+    GenerateLeagueForm,
+    RosterImportForm,
+)
 from .player_generator import (
     assign_slots,
     draw_preferred_roles,
     draw_stats,
+)
+from .roster_importer import (
+    ALL_COLUMNS,
+    ParsedRoster,
+    RosterImportError,
+    RowError,
+    SLOT_LIMITS,
+    parse_roster_csv,
 )
 from .role_benchmarks import (
     ROLES,
@@ -829,3 +847,267 @@ def generate_players(request):
             "free_agent_count": free_agent_count,
         },
     )
+
+
+# LG-00b roster import ----------------------------------------------------
+
+
+def _check_db_slot_collisions(parsed: ParsedRoster) -> None:
+    """Raise :class:`RosterImportError` if any imported row would collide
+    with an already-filled slot on an existing ``Team``.
+
+    Iterates ``parsed.by_team`` in CSV-encounter order. Teams that do not
+    yet exist cannot collide (they'll be created later by
+    :func:`_apply_roster`). For existing teams, a non-Scout role collides
+    when ``team.slot_<role> is not None``; Scouts collide when both
+    Scout slots are already filled and the CSV asks for more.
+    """
+
+    # `Team.name` is not DB-unique (so `.in_bulk(field_name="name")` would
+    # reject it), but it is unique by convention in this code path — the
+    # `.first()` precedent would have collapsed any duplicates the same way.
+    # One query for all referenced teams; the dict picks the most-recent row
+    # for any accidentally-duplicate name.
+    teams_by_name: dict[str, Team] = {
+        t.name: t for t in Team.objects.filter(name__in=list(parsed.by_team))
+    }
+
+    errors: list[RowError] = []
+    for team_name, rows in parsed.by_team.items():
+        team = teams_by_name.get(team_name)
+        if team is None:
+            continue
+
+        # Track in-call simulated assignments so multiple Scouts on the
+        # same team don't all race for the first free slot.
+        scout_free = [team.slot_scout_1 is None, team.slot_scout_2 is None]
+
+        for row in rows:
+            if row.role == "scout":
+                # Find the next free Scout slot.
+                if not any(scout_free):
+                    existing_names = [
+                        s.name
+                        for s in (team.slot_scout_1, team.slot_scout_2)
+                        if s is not None
+                    ]
+                    filled_label = " / ".join(existing_names) or "<unknown>"
+                    errors.append(
+                        RowError(
+                            row_num=row.row_num,
+                            field="role",
+                            message=(
+                                f"Team '{team_name}' Scout slots already "
+                                f"filled by player(s) '{filled_label}'"
+                            ),
+                        )
+                    )
+                    continue
+                # Mark the first free Scout slot as taken in our shadow.
+                for i, free in enumerate(scout_free):
+                    if free:
+                        scout_free[i] = False
+                        break
+            else:
+                slot_key = f"slot_{row.role}"
+                current = getattr(team, slot_key, None)
+                if current is not None:
+                    errors.append(
+                        RowError(
+                            row_num=row.row_num,
+                            field="role",
+                            message=(
+                                f"Team '{team_name}' slot '{slot_key}' "
+                                f"already filled by player '{current.name}'"
+                            ),
+                        )
+                    )
+
+    if errors:
+        raise RosterImportError(errors)
+
+
+def _apply_roster(
+    parsed: ParsedRoster,
+) -> tuple[list[Team], list[Team], int]:
+    """Persist ``parsed`` to the DB and return the audit tuple.
+
+    Returns ``(created_teams, appended_teams, player_count)``:
+      - ``created_teams`` — Teams newly created during this call, in
+        CSV-encounter order.
+      - ``appended_teams`` — pre-existing Teams that received new
+        Players, in CSV-encounter order. A Team appears in exactly one
+        of the two lists per call.
+      - ``player_count`` — total Players created (equals ``len(parsed.rows)``).
+    """
+
+    created_teams: list[Team] = []
+    appended_teams: list[Team] = []
+    player_count = 0
+
+    for team_name, rows in parsed.by_team.items():
+        team, was_created = Team.objects.get_or_create(name=team_name)
+        if was_created:
+            created_teams.append(team)
+        else:
+            appended_teams.append(team)
+
+        for row in rows:
+            player = Player.objects.create(
+                team=team,
+                name=row.name,
+                preferred_roles=row.preferred_roles,
+                **row.profile,
+                **row.stats,
+            )
+            player_count += 1
+
+            if row.role == "scout":
+                if team.slot_scout_1 is None:
+                    team.slot_scout_1 = player
+                else:
+                    team.slot_scout_2 = player
+            else:
+                setattr(team, f"slot_{row.role}", player)
+
+        team.save()
+
+    return created_teams, appended_teams, player_count
+
+
+@transaction.atomic
+def import_roster(request):
+    """LG-00b roster-import surface.
+
+    ``GET`` → render the form (status 200). ``POST`` → validate the form,
+    decode the upload, call :func:`parse_roster_csv`, run the DB
+    slot-collision pre-check, and create / append Teams and Players
+    inside a single transaction. On ANY error, render the form page with
+    the error list (status 200) and roll back writes via
+    :func:`transaction.set_rollback`.
+    """
+
+    if request.method == "POST":
+        form = RosterImportForm(request.POST, request.FILES)
+        if form.is_valid():
+            try:
+                parsed = parse_roster_csv(form.cleaned_data["csv_file"])
+                _check_db_slot_collisions(parsed)
+                created, appended, player_count = _apply_roster(parsed)
+            except RosterImportError as exc:
+                transaction.set_rollback(True)
+                return render(
+                    request,
+                    "teams/roster_import.html",
+                    {
+                        "form": form,
+                        "errors": [str(exc)],
+                        "row_errors": exc.errors,
+                    },
+                )
+            return render(
+                request,
+                "teams/roster_import_done.html",
+                {
+                    "created_teams": created,
+                    "appended_teams": appended,
+                    "player_count": player_count,
+                    "row_count": len(parsed.rows),
+                },
+            )
+    else:
+        form = RosterImportForm()
+
+    return render(
+        request,
+        "teams/roster_import.html",
+        {"form": form, "errors": [], "row_errors": []},
+    )
+
+
+# Two example rows demonstrating: (a) team grouping (both rows on
+# "Red Phoenix"), (b) comma-split preferred_roles cell ("scout,medic"),
+# and (c) a quoted CSV cell containing a comma. ``csv.writer`` auto-
+# quotes the cell — never hand-format CSV here.
+_ROSTER_TEMPLATE_ROWS: tuple[tuple[str, ...], ...] = (
+    (
+        "Red Phoenix",
+        "Alice",
+        "commander",
+        "28",
+        "16",
+        "120",
+        "Ultrazone Chicago",
+        "5'7\"",
+        "commander",
+        "75",
+        "70",
+        "65",
+        "80",
+        "72",
+        "68",
+        "74",
+        "66",
+        "71",
+        "78",
+        "80",
+        "82",
+        "55",
+        "60",
+        "50",
+        "60",
+        "65",
+        "72",
+        "55",
+    ),
+    (
+        "Red Phoenix",
+        "Bob",
+        "scout",
+        "24",
+        "18",
+        "85",
+        "Ultrazone Chicago",
+        "5'10\"",
+        "scout,medic",
+        "60",
+        "62",
+        "58",
+        "70",
+        "65",
+        "80",
+        "85",
+        "78",
+        "72",
+        "65",
+        "68",
+        "55",
+        "62",
+        "60",
+        "58",
+        "55",
+        "82",
+        "75",
+        "60",
+    ),
+)
+
+
+@require_GET
+def import_roster_template(request):
+    """GET-only download of the canonical roster CSV template.
+
+    Returns the header row in :data:`ALL_COLUMNS` order plus two example
+    data rows, serialised via :class:`csv.writer` so a comma inside a
+    quoted cell (``"scout,medic"``) is encoded correctly.
+    """
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(ALL_COLUMNS)
+    for row in _ROSTER_TEMPLATE_ROWS:
+        writer.writerow(row)
+
+    response = HttpResponse(buf.getvalue(), content_type="text/csv")
+    response["Content-Disposition"] = 'attachment; filename="roster_template.csv"'
+    return response

@@ -292,3 +292,40 @@ class TeamSlotForm(forms.ModelForm):
                 # (and server-side validation is reachable past the browser).
                 self.fields[field_name].required = False
                 self.fields[field_name].widget.attrs["class"] = "form-select"
+
+
+class RosterImportForm(forms.Form):
+    """LG-00b roster-import form: single CSV file upload.
+
+    ``clean_csv_file`` decodes the upload as UTF-8 (BOM tolerated via
+    ``utf-8-sig``) and stores the decoded text on
+    ``cleaned_data["csv_file"]`` so the view consumes a ``str``, not an
+    ``UploadedFile``. Row-cap enforcement is the pure parser's job; this
+    form only enforces the defensive byte ceiling.
+    """
+
+    MAX_UPLOAD_BYTES = 2 * 1024 * 1024  # 2 MiB — comfortably > 1000 rows.
+
+    csv_file = forms.FileField(
+        label="Roster CSV",
+        widget=forms.ClearableFileInput(
+            attrs={
+                "id": "roster-import-file",
+                "accept": ".csv,text/csv",
+                "class": "form-control",
+            }
+        ),
+    )
+
+    def clean_csv_file(self):
+        uploaded = self.cleaned_data["csv_file"]
+        if uploaded.size > self.MAX_UPLOAD_BYTES:
+            raise forms.ValidationError(
+                f"CSV file is too large (max {self.MAX_UPLOAD_BYTES} bytes)"
+            )
+        raw = uploaded.read()
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise forms.ValidationError("CSV file must be UTF-8 encoded") from exc
+        return text

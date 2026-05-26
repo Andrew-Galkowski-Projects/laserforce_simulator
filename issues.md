@@ -69,3 +69,25 @@ Date: 2026-05-26. Server: `runserver --noreload` (http://127.0.0.1:8000). Branch
 
 ### ℹ️ A3-9 — Dev needs Redis or EAGER
 Running `python manage.py runserver 8000 --noreload` without either (a) a Redis broker reachable at `localhost:6379` or (b) `LF_CELERY_EAGER=1` in the env returns 500 on POST `/matches/simulate-batch/` with `redis.exceptions.ConnectionError: Error 10061 connecting to localhost:6379`. This is the documented behaviour from ADR-0013 — Celery + Redis is the production execution path, and the local-dev story requires either spinning up Redis or opting into the in-process EAGER fallback. After setting `LF_CELERY_EAGER=1` and restarting, every flow above worked first try. `settings.py` automatically swaps both broker and backend to in-memory (`memory://` / `cache+memory://`) whenever EAGER is on, so EAGER dev mode needs no Redis whatsoever.
+
+---
+
+## LG-00b roster import from CSV (2026-05-26)
+
+Date: 2026-05-26. Server: `runserver --noreload` (http://127.0.0.1:8000). Branch: `lg-00b-roster-import`. Scope: the LG-00b roster-import surface — `/import/`, `/import/template.csv`, and the team_list entry-point link.
+
+### Summary
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| LG00b-1 | ✅ | Team list entry point | "Import Roster" link present on `/teams/` between "Generate Players" and "Create New Team"; reverses to `/import/` (teams app is mounted at root) |
+| LG00b-2 | ✅ | Import form page | `GET /import/` 200; all locked DOM ids present (`roster-import-form`, `roster-import-file`, `roster-import-submit`, `roster-import-template-link`); zero console errors; zero network failures |
+| LG00b-3 | ✅ | Template CSV download | `GET /import/template.csv` 200 + `Content-Type: text/csv` + `Content-Disposition: attachment; filename="roster_template.csv"`; header row = 28 columns in `ALL_COLUMNS` order with capital-O `Offensive_synergy`; 2 example data rows (Red Phoenix Alice commander + Bob scout with quoted `"scout,medic"` cell) |
+| LG00b-4 | ✅ | Empty submit | Submitting the form with no file selected triggers the browser-native `required` validation ("Please select a file"); no POST sent |
+| LG00b-5 | ✅ | Malformed CSV → row error | POST with `role=captain` → 200, `roster-import-errors` ul rendered, `roster-import-error-1-role` `<li>` id, message `"role 'captain' is not one of ['ammo', 'commander', 'heavy', 'medic', 'scout']"` |
+| LG00b-6 | ✅ | Template upload → happy path | POST the downloaded template CSV → 200, confirmation page with `roster-import-confirm-summary` ("Imported **2** players across **2** rows") and `roster-import-confirm-teams-list` containing `<a href="/22/">Red Phoenix</a>`; `/22/` team detail renders both players with Alice in `slot_commander` and Bob in `slot_scout_1` |
+| LG00b-7 | ✅ | Slot collision rejection | Re-uploading the same template CSV against the now-existing Red Phoenix → 200, `roster-import-error-1-role` rendered with the locked-clarity message `"Team 'Red Phoenix' slot 'slot_commander' already filled by player 'Alice'"`; no new players written |
+| LG00b-8 | 🟡 | Unique-name DB backstop | A row whose `(team, name)` matches an **existing** Player on an existing Team would NOT be caught by `_check_db_slot_collisions` (the pre-check only verifies slot FK occupancy, not name uniqueness). Such a row reaches `_apply_roster` and triggers an `IntegrityError` from the `Player.unique_together = ["team", "name"]` constraint; `@transaction.atomic` correctly rolls back so no partial state persists, but the user sees a Django 500 page rather than a friendly row-level `roster-import-error-N-name` rejection. Out of scope per seam contract §12 ("`unique_together` enforces this at the DB layer as a hard backstop") — flagging for future polish. Reproducer: pre-create `(Red Phoenix, Alice)` with a non-Commander role so the slot pre-check passes, then POST a CSV with a row whose `(team, name) == (Red Phoenix, Alice)`. |
+| LG00b-9 | ℹ️ | Seam-contract drift on URL prefix | The seam contract states "Full URL: `/teams/import/`" in §6/§13, but the project's `urls.py` mounts the `teams` app at `""` not `"teams/"` (every other teams URL renders as `/`, `/create/`, `/generate/` etc). Actual URL is `/import/`. The URL **name** (`import_roster`) and the `path("import/", ...)` entry are both contract-correct — the contract only mis-describes the URL prefix. Functionally fine; reverse works; nav link works. |
+
+**Overall:** LG-00b ships green. All 7 planned smoke-test walks pass in the real browser; the form, the template-download companion view, the per-row error rendering, the happy-path team creation + slot assignment, and the slot-collision rejection all match the seam contract verbatim. Zero console errors and zero non-2xx network requests across the entire walk. Two informational findings logged: LG00b-8 (DB-layer unique-name backstop is the contract's deliberate punt; produces a 500 instead of a row error when triggered) and LG00b-9 (the contract's `/teams/import/` URL prefix wording is off by the project's missing `teams/` mount prefix; the URL itself works correctly).
