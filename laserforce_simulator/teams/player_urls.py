@@ -31,4 +31,5 @@ urlpatterns = [
         views.player_career_stats,
         name="player_career_stats",
     ),
+    path("", views.player_list, name="player_list"),
 ]
