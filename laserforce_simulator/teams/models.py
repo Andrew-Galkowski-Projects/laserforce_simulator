@@ -35,11 +35,28 @@ ROLE_CHOICES = [
 ]
 
 
+class TeamManager(models.Manager):
+    """Default manager for `Team`, plus `regular()` which excludes the
+    reserved Free Agents Team.
+
+    LG-00: the Free Agents Team is identified by the magic name
+    ``"Free Agents"`` only (no schema flag). `Team.objects.all()` still
+    includes it; call sites that want only competitive Teams use
+    `Team.objects.regular()` instead.
+    """
+
+    def regular(self):
+        """All Teams except the reserved Free Agents Team."""
+        return self.exclude(name="Free Agents")
+
+
 class Team(models.Model):
     name = models.CharField(max_length=100)
     created_date = models.DateTimeField(auto_now_add=True)
     wins = models.IntegerField(default=0)
     losses = models.IntegerField(default=0)
+
+    objects = TeamManager()
 
     slot_commander = models.ForeignKey(
         "Player", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
@@ -172,6 +189,21 @@ class Team(models.Model):
                 errors.append(f"{player.name} does not belong to this team")
 
         return errors
+
+
+def get_free_agents_team() -> "Team":
+    """Return the singleton Free Agents Team, creating it on first call.
+
+    The Free Agents Team is identified by the magic name ``"Free Agents"``
+    (no `is_system` flag). Idempotent — subsequent calls return the same
+    `Team` row.
+
+    Used by the LG-00 generation flow's ``num_teams = 0`` branch to deposit
+    generated players who are not assigned to a regular Team. The row has no
+    slot FKs filled, so `is_valid_roster` returns False by design.
+    """
+    team, _created = Team.objects.get_or_create(name="Free Agents")
+    return team
 
 
 class Player(models.Model):

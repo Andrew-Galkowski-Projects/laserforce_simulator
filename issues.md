@@ -48,5 +48,24 @@ After the polling JS observes `complete`, the page DOM transitions correctly: `#
 ### ✅ A3-8 — Console + network clean
 After the EAGER-mode restart, every API-03 XHR returned 200. Zero `error`/`warn` console messages on the batch-simulate page during the full POST → poll → save → poll cycle. No favicon noise.
 
+## LG-00 player generation flow
+
+Date: 2026-05-26. Server: `runserver --noreload` (http://127.0.0.1:8000). Branch: `lg-00-player-generation`. Scope: the new `/teams/generate/` surface, the Free Agents pool, the team-list filter, and cross-field form validation.
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| LG00-1 | ✅ | Entry point | `/teams/` renders the new `generate-players-link` "Generate Players" button in the header, sibling to "Create New Team" |
+| LG00-2 | ✅ | Form render | `GET /teams/generate/` 200 — all 4 fields present (`generate-players-num-teams` 22 options incl. `Random (2–10)`, `generate-players-per-team` 98 options spanning 6–9 + 12–100 + both random markers, `generate-players-mean` default 50, `generate-players-std-dev` default 15, `generate-players-submit` Generate button) |
+| LG00-3 | ✅ | Teams branch | `POST num_teams=3 / players_per_team=6 / mean=50 / std_dev=15` → 200 confirmation page lists 3 created Teams (Onyx Owls #18, Echo Eagles #19, Tempest Titans #20), all with clickable detail links, zero console errors, only CDN network requests |
+| LG00-4 | ✅ | Free-agents branch | `POST num_teams=0 / players_per_team=20` → 200 confirmation page shows "Created 20 free-agent players" + LG-00c deferral notice; no `Created teams` section rendered (correct — empty list suppressed by template `{% if %}`) |
+| LG00-5 | ✅ | Free Agents filter | After creating free-agents, `/teams/` body still does NOT contain `"Free Agents"` — `Team.objects.regular()` excludes the system Team correctly (verified via `evaluate_script` body scan) |
+| LG00-6 | ✅ | Cross-field validation (pool side) | `POST num_teams=0 / players_per_team=8` → 200, body contains literal `"Players per team must be 12–100"` (en-dash); form re-renders, no Teams or Players created |
+| LG00-7 | ✅ | Cross-field validation (team side) | `POST num_teams=5 / players_per_team=50` → 200, body contains `"Players per team must be 6–9"` (en-dash); form re-renders, no Teams or Players created |
+| LG00-8 | ℹ️ | URL prefix quirk | Team detail links rendered as `href="/<id>/"` not `href="/teams/<id>/"` — the root urlconf includes `teams.urls` twice (at `/teams/` and at `""`); Django's `reverse('team_detail')` picks the LAST registered prefix (the homepage include). `test_post_response_is_confirmation_page_with_team_links` was updated to use `reverse()` rather than hardcoding `/teams/<id>/`. Behaviour-correct (both URLs still serve the same view); test was over-specific |
+
+**Overall:** LG-00 ships green. All seven planned checkpoints pass in the real browser; the form, the two output modes, the free-agents filter, and the cross-field error strings all match the seam contract verbatim. No regressions in console / network. One blast-radius test was updated honestly (LG00-8) — see §8 Step 8 triage above for the diff.
+
+---
+
 ### ℹ️ A3-9 — Dev needs Redis or EAGER
 Running `python manage.py runserver 8000 --noreload` without either (a) a Redis broker reachable at `localhost:6379` or (b) `LF_CELERY_EAGER=1` in the env returns 500 on POST `/matches/simulate-batch/` with `redis.exceptions.ConnectionError: Error 10061 connecting to localhost:6379`. This is the documented behaviour from ADR-0013 — Celery + Redis is the production execution path, and the local-dev story requires either spinning up Redis or opting into the in-process EAGER fallback. After setting `LF_CELERY_EAGER=1` and restarting, every flow above worked first try. `settings.py` automatically swaps both broker and backend to in-memory (`memory://` / `cache+memory://`) whenever EAGER is on, so EAGER dev mode needs no Redis whatsoever.

@@ -1,11 +1,26 @@
+import random
+
+from django.db import transaction
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from matches.models import PlayerRoundState
 from matches.sim_helpers.score_calculator import calculate_mvp
 from .career_stats import points_trend, summarize, summarize_by_role
-from .models import Team, Player, ROLE_CHOICES, _random_player_profile
-from .forms import TeamForm, PlayerForm, TeamSlotForm
+from .constants import TEAM_NAMES, PLAYER_NAMES
+from .models import (
+    Team,
+    Player,
+    ROLE_CHOICES,
+    _random_player_profile,
+    get_free_agents_team,
+)
+from .forms import TeamForm, PlayerForm, TeamSlotForm, GenerateLeagueForm
+from .player_generator import (
+    assign_slots,
+    draw_preferred_roles,
+    draw_stats,
+)
 from .role_benchmarks import (
     ROLES,
     STAT_KEYS,
@@ -17,8 +32,12 @@ from .role_benchmarks_cache import get_all_benchmark_data
 
 
 def team_list(request):
-    """Display all teams with their roster status"""
-    teams = Team.objects.all().prefetch_related("players")
+    """Display all teams with their roster status.
+
+    LG-00: excludes the reserved Free Agents Team via the new
+    ``Team.objects.regular()`` manager method.
+    """
+    teams = Team.objects.regular().prefetch_related("players")
     return render(request, "teams/team_list.html", {"teams": teams})
 
 
@@ -563,3 +582,250 @@ def role_benchmarks(request):
         "any_data": any_data,
     }
     return render(request, "teams/role_benchmarks.html", context)
+
+
+# LG-00 helpers -----------------------------------------------------------
+
+
+def _pop_unique_name(
+    pool: list[str], fallback: str, name_exists: "callable[[str], bool]"
+) -> str:
+    """Pop the next name from ``pool``, deduping against existing rows.
+
+    ``name_exists`` is a callable taking a candidate string and returning
+    True if it collides with a persisted row in the relevant scope (Team
+    name globally, or Player name within a specific Team). On pool
+    exhaustion, falls back to ``f"{fallback} #{n}"`` with the same dedupe.
+    On collision with an in-pool candidate, appends ``" #2"``, ``" #3"``,
+    ... until a free name is found.
+    """
+    if pool:
+        candidate = pool.pop()
+    else:
+        # Pool exhausted — synthesize a name based on the last entry.
+        n = 1
+        while True:
+            candidate = f"{fallback} #{n}"
+            if not name_exists(candidate):
+                return candidate
+            n += 1
+
+    if not name_exists(candidate):
+        return candidate
+    k = 2
+    while True:
+        suffixed = f"{candidate} #{k}"
+        if not name_exists(suffixed):
+            return suffixed
+        k += 1
+
+
+def _team_name_exists(name: str) -> bool:
+    return Team.objects.filter(name=name).exists()
+
+
+def _player_name_exists_on_team(team: Team) -> "callable[[str], bool]":
+    """Return a closure asserting Player-name uniqueness within ``team``."""
+
+    def _exists(name: str) -> bool:
+        return Player.objects.filter(team=team, name=name).exists()
+
+    return _exists
+
+
+def _resolve_count_marker(raw: str, marker: str, low: int, high: int) -> int:
+    """Resolve a `random_*` marker via stdlib ``random.randint``, else ``int(raw)``."""
+    if raw == marker:
+        return random.randint(low, high)
+    return int(raw)
+
+
+def _build_player_kwargs(rng: random.Random, mean: int, std_dev: int) -> dict:
+    """Assemble the kwargs dict (profile + stats + preferred_roles) for one Player."""
+    profile = _random_player_profile()
+    profile.pop("name", None)  # caller supplies the name
+    stats = draw_stats(rng, mean, std_dev)
+    preferred = draw_preferred_roles(rng)
+    return {"preferred_roles": preferred, **profile, **stats}
+
+
+def _assign_team_slots(team: Team, created_players: list[Player]) -> None:
+    """Run greedy slot assignment + back-fill leftovers for ``team``.
+
+    Mutates ``team`` in memory (setattr on the slot FKs); caller is
+    responsible for ``team.save()`` after this returns.
+    """
+    preferred_roles_per_player = [p.preferred_roles for p in created_players[:6]]
+    slot_assignment = assign_slots(preferred_roles_per_player)
+
+    # Indices NOT assigned to any slot — back-fill `None`-valued slot keys
+    # in ascending player-index order.
+    assigned_indices = {idx for idx in slot_assignment.values() if idx is not None}
+    leftover_iter = iter(
+        i for i in range(min(6, len(created_players))) if i not in assigned_indices
+    )
+
+    for slot_key, player_idx in slot_assignment.items():
+        if player_idx is None:
+            try:
+                player_idx = next(leftover_iter)
+            except StopIteration:
+                # Fewer than 6 players available — leave the slot unfilled
+                # (pure function returns None for the unreachable slots).
+                continue
+        setattr(team, f"slot_{slot_key}", created_players[player_idx])
+
+
+def _generate_teams(
+    num_teams: int,
+    players_per_team: int,
+    *,
+    rng: random.Random,
+    mean: int,
+    std_dev: int,
+    team_names_pool: list[str],
+    player_names_pool: list[str],
+) -> list[Team]:
+    """Create ``num_teams`` new Teams, each with ``players_per_team`` Players.
+
+    The first 6 players in each Team fill the SM5 slot FKs via greedy
+    preferred-role matching (with leftover back-fill); players 7+ remain
+    on the bench. Each Player is created with ``Player.objects.create``
+    so PKs are available for slot FK assignment.
+    """
+    team_fallback = TEAM_NAMES[-1] if TEAM_NAMES else "Team"
+    player_fallback = PLAYER_NAMES[-1] if PLAYER_NAMES else "Player"
+    created_teams: list[Team] = []
+
+    for _team_idx in range(num_teams):
+        team_name = _pop_unique_name(team_names_pool, team_fallback, _team_name_exists)
+        team = Team.objects.create(name=team_name)
+        team_name_exists = _player_name_exists_on_team(team)
+
+        created_players: list[Player] = []
+        for _player_idx in range(players_per_team):
+            player_name = _pop_unique_name(
+                player_names_pool, player_fallback, team_name_exists
+            )
+            player = Player.objects.create(
+                team=team,
+                name=player_name,
+                **_build_player_kwargs(rng, mean, std_dev),
+            )
+            created_players.append(player)
+
+        _assign_team_slots(team, created_players)
+        team.save()
+        created_teams.append(team)
+
+    return created_teams
+
+
+def _generate_free_agents(
+    players_per_team: int,
+    *,
+    rng: random.Random,
+    mean: int,
+    std_dev: int,
+    player_names_pool: list[str],
+) -> int:
+    """Create ``players_per_team`` Players on the reserved Free Agents Team.
+
+    Players land in the pool via ``bulk_create`` — the Free-Agents branch
+    has no per-Player slot-FK step, so PKs after creation are not needed,
+    and one INSERT replaces N. Returns the count actually created.
+    """
+    free_agents = get_free_agents_team()
+    player_fallback = PLAYER_NAMES[-1] if PLAYER_NAMES else "Player"
+    name_exists = _player_name_exists_on_team(free_agents)
+
+    unsaved: list[Player] = []
+    for _player_idx in range(players_per_team):
+        player_name = _pop_unique_name(player_names_pool, player_fallback, name_exists)
+        unsaved.append(
+            Player(
+                team=free_agents,
+                name=player_name,
+                **_build_player_kwargs(rng, mean, std_dev),
+            )
+        )
+    Player.objects.bulk_create(unsaved)
+    return len(unsaved)
+
+
+@transaction.atomic
+def generate_players(request):
+    """LG-00 player/team generation surface.
+
+    GET → render `templates/teams/generate_players.html` with an empty form.
+    POST → validate the form; on success, resolve the `random_*` markers,
+    generate the Teams (or the Free Agents pool) inside a single
+    transaction, and re-render `templates/teams/generate_players_done.html`
+    directly (no redirect, no session round-trip). On invalid form,
+    re-render the form page with errors (status 200).
+    """
+    if request.method == "GET":
+        return render(
+            request,
+            "teams/generate_players.html",
+            {"form": GenerateLeagueForm()},
+        )
+
+    form = GenerateLeagueForm(request.POST)
+    if not form.is_valid():
+        return render(request, "teams/generate_players.html", {"form": form})
+
+    num_teams = _resolve_count_marker(
+        form.cleaned_data["num_teams"], "random_2_10", 2, 10
+    )
+    ppt_raw = form.cleaned_data["players_per_team"]
+    if ppt_raw == "random_team":
+        players_per_team = random.randint(6, 8)
+    elif ppt_raw == "random_pool":
+        players_per_team = random.randint(12, 100)
+    else:
+        players_per_team = int(ppt_raw)
+    mean = form.cleaned_data["mean"]
+    std_dev = form.cleaned_data["std_dev"]
+
+    # Two RNG sources in deliberate split: ``rng`` (a private ``random.Random``)
+    # is the only RNG passed into the pure ``player_generator`` module so its
+    # stat-draw / role-draw seam stays deterministic when callers seed it.
+    # The view's own ``random.shuffle`` / ``random.randint`` calls are purely
+    # presentation-layer (name-pool order, "Random (...)" marker resolution)
+    # and never cross the pure-module boundary.
+    rng = random.Random()
+    team_names_pool = list(TEAM_NAMES)
+    random.shuffle(team_names_pool)
+    player_names_pool = list(PLAYER_NAMES)
+    random.shuffle(player_names_pool)
+
+    if num_teams >= 1:
+        created_teams = _generate_teams(
+            num_teams,
+            players_per_team,
+            rng=rng,
+            mean=mean,
+            std_dev=std_dev,
+            team_names_pool=team_names_pool,
+            player_names_pool=player_names_pool,
+        )
+        free_agent_count = 0
+    else:
+        created_teams = []
+        free_agent_count = _generate_free_agents(
+            players_per_team,
+            rng=rng,
+            mean=mean,
+            std_dev=std_dev,
+            player_names_pool=player_names_pool,
+        )
+
+    return render(
+        request,
+        "teams/generate_players_done.html",
+        {
+            "created_teams": created_teams,
+            "free_agent_count": free_agent_count,
+        },
+    )
