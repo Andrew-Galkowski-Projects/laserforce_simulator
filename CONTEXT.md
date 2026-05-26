@@ -313,6 +313,20 @@ Re-running a single persisted **Round** from its stored **RNG seed** to reproduc
 **Batch run**:
 Simulating the same two **Teams** N times to sample the outcome distribution (win %, score variance); remains a variance sampler — a fresh random **Master seed** per run unless one is supplied. Applies **Side alternation** so per-team aggregates are not biased by map-side advantage; aggregate keys are **team-position keyed** (`red_*` = the team passed as the `team_red` argument, whichever **Side** it played), with a separate side-advantage breakdown for the raw red/blue-side signal.
 
+### Async execution
+
+**Job**:
+A long-running unit of background work wrapped in async execution machinery so its caller does not block. Submitted via POST (returns a **Job id**), then polled via GET against the **Job id** until the **Job status** is terminal. Two kinds today: a **Batch run job** (simulate N games, surface progressive aggregates from `BatchSimulator.run_incremental`) and a **Save-games job** (replay a list of `(seed, flipped)` pairs from a prior Batch run and persist them as `GameRound` rows). Both share one execution path: the UI POSTs at `/matches/simulate-batch/` and `/matches/save-games/` and the REST POST at `/api/simulate-batch/` all enqueue Celery tasks and return a Job id. Backed by **Celery + Redis** in production; tests run the task synchronously via `CELERY_TASK_ALWAYS_EAGER = True`.
+_Avoid_: calling an in-process thread driving any of the above flows a "Job" (pre-API-03 SIM-10 used `_BATCH_JOBS` / `_SAVE_JOBS` for in-process dicts; both patterns are retired by API-03 and the term is now formalised on Celery); calling a single foreground **Round** persistence call a "Job" (that is `simulate_match` / `simulate_single_round_detailed`, transactional inline work).
+
+**Job id**:
+The opaque string returned by the POST endpoint and used to poll a **Job**'s status. A Celery task id (UUID) in production; the same string lives in the URL of `GET /matches/simulate-batch/status/<job_id>/` and `GET /api/simulate-batch/<job_id>/`. Expires from the result backend after **1 hour** (`CELERY_RESULT_EXPIRES = 3600`); polling an expired Job id resolves to **Job status** `running` (the Celery `PENDING` fallback for unknown ids — indistinguishable from "never submitted").
+_Avoid_: deriving a Job id from inputs (it is random); persisting one (it is ephemeral, lost on backend expiry).
+
+**Job status**:
+One of `running` | `complete` | `error`. The canonical surface across both the UI polling JSON and the REST polling JSON. **Mapped from Celery's native task states at the view boundary**: `PENDING` / `STARTED` / `PROGRESS` → `running`; `SUCCESS` → `complete`; `FAILURE` / `REVOKED` → `error`. The mapped vocabulary predates API-03 (SIM-10's `_BATCH_JOBS` dict used the same three values) and is preserved deliberately so the existing polling UI JS keeps working unchanged.
+_Avoid_: exposing raw Celery states (`PENDING`, `SUCCESS`, …) in the polling JSON — the mapped values are the public contract.
+
 ### Analytics and review
 
 **Highlight**:

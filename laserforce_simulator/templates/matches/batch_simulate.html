@@ -196,6 +196,9 @@ let teamBlueName = "Blue";
 let scoreChart = null;
 let pollStartedAt = null;
 let currentJobId = null;
+let currentTeamRedId = null;
+let currentTeamBlueId = null;
+let currentArenaMapId = null;
 
 function fmt(n, decimals) {
   decimals = decimals == null ? 0 : decimals;
@@ -311,19 +314,15 @@ function updateProgress(completed, total) {
 }
 
 function poll(jobId) {
-  fetch(STATUS_URL_BASE + jobId + '/')
-    .then(r => {
-      if (r.status === 404) {
-        return r.json().then(data => ({ _http404: true, data: data }));
-      }
-      return r.json().then(data => ({ _http404: false, data: data }));
-    })
-    .then(wrapped => {
-      const data = wrapped.data;
-      if (wrapped._http404 || data.status === 'not_found') {
-        showError('Job expired or not found.');
-        return;
-      }
+  const params = new URLSearchParams();
+  if (currentTeamRedId != null) params.append('team_red_id', currentTeamRedId);
+  if (currentTeamBlueId != null) params.append('team_blue_id', currentTeamBlueId);
+  if (currentArenaMapId != null) params.append('arena_map_id', currentArenaMapId);
+  const qs = params.toString();
+  const url = STATUS_URL_BASE + jobId + '/' + (qs ? ('?' + qs) : '');
+  fetch(url)
+    .then(r => r.json())
+    .then(data => {
       if (data.status === 'running') {
         updateProgress(data.completed || 0, data.total || 0);
         if (data.partial) {
@@ -413,6 +412,9 @@ document.getElementById('batch-form').addEventListener('submit', function (ev) {
       teamBlueName = data.team_blue_name || 'Blue';
       setTeamLabels();
       currentJobId = data.job_id;
+      currentTeamRedId = data.team_red_id != null ? data.team_red_id : null;
+      currentTeamBlueId = data.team_blue_id != null ? data.team_blue_id : null;
+      currentArenaMapId = data.arena_map_id != null ? data.arena_map_id : null;
       pollStartedAt = Date.now();
       // Reset visual state. BS-2: tear down any Chart.js instance still bound
       // to the canvas before a new run re-instantiates on it — otherwise
@@ -458,7 +460,7 @@ function pollSave(jobId, statusDiv) {
   .then(data => {
     if (data.status === 'running') {
       setTimeout(() => pollSave(jobId, statusDiv), 1500);
-    } else if (data.status === 'done') {
+    } else if (data.status === 'complete') {
       const links = data.round_ids.map(id =>
         '<a href="/matches/game-round/' + id + '/" class="btn btn-sm btn-outline-primary me-1 mb-1">View Round ' + id + '</a>'
       ).join('');

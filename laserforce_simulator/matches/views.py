@@ -1,9 +1,7 @@
-import os
-import threading
-import uuid
 from collections import defaultdict
 from datetime import date, datetime
 
+from celery.result import AsyncResult
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.db.models import Q, QuerySet
@@ -16,149 +14,93 @@ from .models import Match, GameRound, PlayerRoundState, GameEvent
 from .simulation import BatchSimulator
 from .sim_helpers.pdf_report import build_round_report
 from .forms import MatchSetupForm, SingleRoundSetupForm, BatchSimulateForm
-
-# In-process job store for async save operations
-_SAVE_JOBS: dict = {}
-# SIM-10: in-process job store for async batch-simulate operations; shares
-# the existing _JOBS_LOCK (no new lock).
-_BATCH_JOBS: dict = {}
-_JOBS_LOCK = threading.Lock()
+from .tasks import save_games_task, simulate_batch_task
 
 
-def _run_save_job(
-    job_id: str,
-    team_red_id: int,
-    team_blue_id: int,
-    seeds,
-    n: int,
-    arena_map_id: int | None,
-) -> None:
-    """Background thread: replay and persist n games, then update job status.
+def _celery_state_to_job_status(state: str) -> str:
+    """Map a Celery native state to the public SIM-10 vocabulary."""
+    if state == "SUCCESS":
+        return "complete"
+    if state in ("FAILURE", "REVOKED"):
+        return "error"
+    # PENDING / STARTED / PROGRESS / RETRY / anything else → keep polling.
+    return "running"
 
-    SIM-08: ``seeds`` is a list of ``[seed, flipped]`` pairs (session-stashed
-    as JSON-safe lists). ``BatchSimulator.save_games`` unpacks each pair and
-    persists the actual simulated sides.
 
-    SIM-09: ``arena_map_id`` (``None`` for the 3-zone fallback) is resolved
-    to an ``ArenaMap`` here and forwarded so the saved rounds carry the
-    same map metadata batch-side simulation ran under. A stale id (the
-    map was deleted between simulation and save) is treated as ``None``.
-    """
-    import django.db
-    from core.models import ArenaMap
-
+def int_or_none(raw: str | None) -> int | None:
+    """Coerce a request GET param to int; return None on missing/invalid."""
+    if raw is None or raw == "":
+        return None
     try:
-        team_red = Team.objects.get(id=team_red_id)
-        team_blue = Team.objects.get(id=team_blue_id)
-        if arena_map_id is not None:
-            try:
-                arena_map = ArenaMap.objects.get(id=arena_map_id)
-            except ArenaMap.DoesNotExist:
-                arena_map = None
-        else:
-            arena_map = None
-        game_rounds = BatchSimulator().save_games(
-            team_red, team_blue, seeds, n, arena_map=arena_map
-        )
-        round_ids = [gr.id for gr in game_rounds]
-        with _JOBS_LOCK:
-            _SAVE_JOBS[job_id] = {
-                "status": "done",
-                "round_ids": round_ids,
-                "error": None,
-            }
-    except Exception as exc:
-        with _JOBS_LOCK:
-            _SAVE_JOBS[job_id] = {"status": "error", "round_ids": [], "error": str(exc)}
-    finally:
-        django.db.close_old_connections()
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
 
 
-def _workers_for(n: int) -> int:
-    """SIM-11: n-aware fixed default for the UI batch path.
-
-    Returns ``1`` for ``n < 50`` (small batches: process-pool spawn cost on
-    Windows dominates the parallel gain) and ``min(os.cpu_count() or 1, 4)``
-    for ``n >= 50`` (cap at 4 workers — the test runner / CI box may report
-    far more, and we don't need more than 4 here). The 50-game threshold
-    and the 4-worker cap are tunable constants living in this function body
-    (no module-level constants), mirroring the 25/50 placement in
-    ``_chunk_size_for``.
-    """
-    if n < 50:
-        return 1
-    return min(os.cpu_count() or 1, 4)
-
-
-def _run_batch_job(
-    job_id: str,
-    team_red_id: int,
-    team_blue_id: int,
-    n: int,
+def build_batch_status_response(
+    async_result: AsyncResult,
+    *,
+    team_red_id: int | None,
+    team_blue_id: int | None,
     arena_map_id: int | None,
-    master_seed: int | None,
-) -> None:
-    """Background thread: iterate ``BatchSimulator.run_incremental``, updating
-    ``_BATCH_JOBS[job_id]`` with the latest snapshot after each yield. On
-    success sets ``status='complete'``; on exception sets ``status='error'``
-    with ``str(exc)``.
+) -> dict:
+    """Build the polling JSON dict for a batch job from an AsyncResult."""
+    state = async_result.state
+    status = _celery_state_to_job_status(state)
 
-    SIM-10: mirrors ``_run_save_job`` (try / ``with _JOBS_LOCK`` writes /
-    ``finally: django.db.close_old_connections()``). Resolves the team and
-    map FKs once at thread start; a stale ``arena_map_id`` (deleted between
-    POST and thread start) is treated as ``None`` exactly like
-    ``_run_save_job``.
+    completed = 0
+    total = 0
+    partial: dict | None = None
+    error: str | None = None
 
-    The production POST passes ``master_seed=None`` — the parameter is
-    plumbed through for test pinning.
-    """
-    import django.db
-    from core.models import ArenaMap
+    if state == "PROGRESS":
+        info = async_result.info or {}
+        if isinstance(info, dict):
+            completed = int(info.get("completed", 0) or 0)
+            total = int(info.get("total", 0) or 0)
+            partial = info.get("aggregate")
+    elif state == "SUCCESS":
+        result = async_result.result or {}
+        if isinstance(result, dict):
+            n_val = int(result.get("n", 0) or 0)
+            completed = n_val
+            total = n_val
+            partial = result
+    elif state in ("FAILURE", "REVOKED"):
+        info = async_result.info
+        if info is not None:
+            error = str(info)
 
-    try:
-        team_red = Team.objects.get(id=team_red_id)
-        team_blue = Team.objects.get(id=team_blue_id)
-        if arena_map_id is not None:
-            try:
-                arena_map = ArenaMap.objects.get(id=arena_map_id)
-            except ArenaMap.DoesNotExist:
-                arena_map = None
-        else:
-            arena_map = None
+    return {
+        "status": status,
+        "completed": completed,
+        "total": total,
+        "partial": partial,
+        "error": error,
+        "team_red_id": team_red_id,
+        "team_blue_id": team_blue_id,
+        "arena_map_id": arena_map_id,
+    }
 
-        for snap in BatchSimulator().run_incremental(
-            team_red,
-            team_blue,
-            n,
-            arena_map=arena_map,
-            workers=_workers_for(n),
-            master_seed=master_seed,
-        ):
-            with _JOBS_LOCK:
-                # Initial entry was inserted under the lock in
-                # ``simulate_batch`` before this thread started; no
-                # ``get(default={})`` fallback is needed.
-                _BATCH_JOBS[job_id].update(
-                    {
-                        "status": "running",
-                        "completed": snap["completed"],
-                        "partial": snap["aggregate"],
-                    }
-                )
 
-        with _JOBS_LOCK:
-            _BATCH_JOBS[job_id].update(
-                {
-                    "status": "complete",
-                    "completed": n,
-                    "error": None,
-                }
-            )
-    except Exception as exc:
-        with _JOBS_LOCK:
-            _BATCH_JOBS[job_id].update({"status": "error", "error": str(exc)})
-    finally:
-        django.db.close_old_connections()
+def _build_save_status_response(async_result: AsyncResult) -> dict:
+    """Build the polling JSON dict for a save job from an AsyncResult."""
+    state = async_result.state
+    status = _celery_state_to_job_status(state)
+
+    round_ids: list[int] = []
+    error: str | None = None
+
+    if state == "SUCCESS":
+        result = async_result.result or {}
+        if isinstance(result, dict):
+            round_ids = list(result.get("round_ids", []) or [])
+    elif state in ("FAILURE", "REVOKED"):
+        info = async_result.info
+        if info is not None:
+            error = str(info)
+
+    return {"status": status, "error": error, "round_ids": round_ids}
 
 
 # RV-01: ordered stat keys for the round-comparison delta table. `mvp` and
@@ -682,11 +624,11 @@ def team_match_history(request, team_id):
 
 
 def simulate_batch(request):
-    """Run N in-memory simulations asynchronously (SIM-10).
+    """Run N in-memory simulations asynchronously via Celery (API-03).
 
-    GET → render the form. POST → validate, dispatch a background batch-sim
-    job, and return JSON ``{job_id, team_red_id, team_red_name,
-    team_blue_id, team_blue_name, arena_map_id, n}``. The client polls
+    GET → render the form. POST → validate, enqueue a Celery batch-sim task,
+    and return JSON ``{job_id, team_red_id, team_red_name, team_blue_id,
+    team_blue_name, arena_map_id, n}``. The client polls
     :func:`batch_simulate_status` for progress and final aggregate.
     """
     form = BatchSimulateForm(request.POST or None)
@@ -698,45 +640,34 @@ def simulate_batch(request):
         n = int(form.cleaned_data["n"])
 
         if team_red == team_blue:
-            messages.error(request, "A team cannot play against itself!")
-            return render(request, "matches/batch_simulate.html", context)
+            return JsonResponse(
+                {"detail": "A team cannot play against itself!"}, status=400
+            )
 
         for team, label in [(team_red, team_red.name), (team_blue, team_blue.name)]:
             errors = team.roster_errors
             if errors:
-                messages.error(
-                    request, f"{label} has an invalid roster: {'; '.join(errors)}"
+                return JsonResponse(
+                    {"detail": (f"{label} has an invalid roster: {'; '.join(errors)}")},
+                    status=400,
                 )
-                return render(request, "matches/batch_simulate.html", context)
 
         arena_map = form.cleaned_data.get("arena_map")
         arena_map_id = arena_map.id if arena_map else None
         team_red_id = team_red.id
         team_blue_id = team_blue.id
 
-        job_id = str(uuid.uuid4())
-        with _JOBS_LOCK:
-            _BATCH_JOBS[job_id] = {
-                "status": "running",
-                "completed": 0,
-                "total": n,
-                "partial": None,
-                "error": None,
-                "team_red_id": team_red_id,
-                "team_blue_id": team_blue_id,
-                "arena_map_id": arena_map_id,
-            }
-
-        thread = threading.Thread(
-            target=_run_batch_job,
-            args=(job_id, team_red_id, team_blue_id, n, arena_map_id, None),
-            daemon=True,
+        async_result = simulate_batch_task.delay(
+            team_red_id=team_red_id,
+            team_blue_id=team_blue_id,
+            n=n,
+            arena_map_id=arena_map_id,
+            master_seed=None,
         )
-        thread.start()
 
         return JsonResponse(
             {
-                "job_id": job_id,
+                "job_id": async_result.id,
                 "team_red_id": team_red_id,
                 "team_red_name": team_red.name,
                 "team_blue_id": team_blue_id,
@@ -750,42 +681,51 @@ def simulate_batch(request):
 
 
 def batch_simulate_status(request, job_id):
-    """SIM-10: return JSON status of a batch-simulate job.
+    """API-03: return JSON status of a batch-simulate job from Celery.
 
     On the FIRST poll observing ``status == "complete"`` (guarded by a
     ``job_id`` marker inside ``request.session["batch_seeds"]``) also copies
     avg/outlier seeds into ``request.session`` so the existing
     :func:`save_batch_games` flow keeps working unchanged.
 
-    Mirrors :func:`save_batch_status` — GET-by-convention (no method guard),
-    returns ``JsonResponse({"status": "not_found"}, status=404)`` if the job
-    is unknown.
+    ``team_red_id`` / ``team_blue_id`` / ``arena_map_id`` are carried by the
+    JS poll as URL query params (POST response stashes them client-side).
     """
-    with _JOBS_LOCK:
-        if job_id not in _BATCH_JOBS:
-            return JsonResponse({"status": "not_found"}, status=404)
-        # Copy under the lock so the caller can serialise without races.
-        job = dict(_BATCH_JOBS[job_id])
+    async_result = AsyncResult(job_id)
+    team_red_id = int_or_none(request.GET.get("team_red_id"))
+    team_blue_id = int_or_none(request.GET.get("team_blue_id"))
+    arena_map_id = int_or_none(request.GET.get("arena_map_id"))
 
-    if job.get("status") == "complete":
+    response = build_batch_status_response(
+        async_result,
+        team_red_id=team_red_id,
+        team_blue_id=team_blue_id,
+        arena_map_id=arena_map_id,
+    )
+
+    # SIM-10 session handover guard — preserved verbatim from the
+    # pre-API-03 view. The "first poll observing complete" semantics
+    # are unchanged; only the source of `aggregate` is now
+    # async_result.result instead of _BATCH_JOBS[job_id]["partial"].
+    if response["status"] == "complete":
         existing = request.session.get("batch_seeds") or {}
         if existing.get("job_id") != job_id:
-            agg = job.get("partial") or {}
+            agg = response.get("partial") or {}
             request.session["batch_seeds"] = {
                 "job_id": job_id,
-                "team_red_id": job.get("team_red_id"),
-                "team_blue_id": job.get("team_blue_id"),
-                "arena_map_id": job.get("arena_map_id"),
+                "team_red_id": team_red_id,
+                "team_blue_id": team_blue_id,
+                "arena_map_id": arena_map_id,
                 "avg_seeds": agg.get("avg_seeds", []),
                 "outlier_seeds": agg.get("outlier_seeds", []),
             }
             request.session.modified = True
 
-    return JsonResponse(job)
+    return JsonResponse(response)
 
 
 def save_batch_games(request):
-    """Start an async save of selected batch games; returns JSON {job_id}."""
+    """Start an async save of selected batch games via Celery; returns JSON {job_id}."""
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
 
@@ -805,33 +745,20 @@ def save_batch_games(request):
 
     arena_map_id = seeds_data.get("arena_map_id")
 
-    job_id = str(uuid.uuid4())
-    with _JOBS_LOCK:
-        _SAVE_JOBS[job_id] = {"status": "running", "round_ids": [], "error": None}
-
-    thread = threading.Thread(
-        target=_run_save_job,
-        args=(
-            job_id,
-            seeds_data["team_red_id"],
-            seeds_data["team_blue_id"],
-            seeds,
-            n,
-            arena_map_id,
-        ),
-        daemon=True,
+    async_result = save_games_task.delay(
+        team_red_id=seeds_data["team_red_id"],
+        team_blue_id=seeds_data["team_blue_id"],
+        seeds=seeds,
+        n=n,
+        arena_map_id=arena_map_id,
     )
-    thread.start()
-    return JsonResponse({"job_id": job_id})
+    return JsonResponse({"job_id": async_result.id})
 
 
 def save_batch_status(request, job_id):
-    """Return JSON status of a save job."""
-    with _JOBS_LOCK:
-        job = dict(_SAVE_JOBS.get(job_id, {}))
-    if not job:
-        return JsonResponse({"status": "not_found"}, status=404)
-    return JsonResponse(job)
+    """Return JSON status of a save job from Celery."""
+    async_result = AsyncResult(job_id)
+    return JsonResponse(_build_save_status_response(async_result))
 
 
 def game_round_events(request, round_id):

@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import sys
 from pathlib import Path
 
 import dj_database_url
@@ -141,6 +142,37 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
 }
+
+# --- API-03: Celery + Redis (ADR-0013) ---
+# Auto-detect pytest: pytest-django loads Django settings during plugin
+# init, BEFORE conftest.py can set LF_CELERY_EAGER=1, so the env-var-only
+# contract from seam §7 doesn't fire in time. Detecting via sys.modules
+# guarantees EAGER + in-memory broker/backend are active for every test
+# run without requiring a Redis broker in CI.
+_running_under_pytest = "pytest" in sys.modules
+CELERY_TASK_ALWAYS_EAGER = _running_under_pytest or config(
+    "LF_CELERY_EAGER", default=False, cast=bool
+)
+# When EAGER is on (tests, or dev opting into in-process mode), broker /
+# backend must be in-memory — no Redis required. Otherwise read both from
+# env (Upstash in production).
+CELERY_BROKER_URL = (
+    "memory://"
+    if CELERY_TASK_ALWAYS_EAGER
+    else config("CELERY_BROKER_URL", default="redis://localhost:6379/0")
+)
+CELERY_RESULT_BACKEND = (
+    "cache+memory://"
+    if CELERY_TASK_ALWAYS_EAGER
+    else config("CELERY_RESULT_BACKEND", default="redis://localhost:6379/0")
+)
+CELERY_RESULT_EXPIRES = 3600  # 1 hour, per PLAN.md
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TIMEZONE = "UTC"
+CELERY_TASK_EAGER_PROPAGATES = True
+CELERY_TASK_STORE_EAGER_RESULT = True
 
 
 # Cloudflare R2 credentials — all four must be present to activate remote storage
