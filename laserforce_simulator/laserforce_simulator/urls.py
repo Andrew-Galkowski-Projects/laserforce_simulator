@@ -25,6 +25,7 @@ urlpatterns = [
     path("api/", include("laserforce_simulator.api_urls")),
     path("teams/", include("teams.urls")),
     path("matches/", include("matches.urls")),
+    path("seasons/", include("matches.season_urls")),
     path("maps/", include("core.urls")),
     path(
         "players/", include("teams.player_urls")

@@ -1,5 +1,6 @@
 from datetime import datetime
-from django.db import models
+from django.core.exceptions import ValidationError
+from django.db import models, transaction
 from teams.models import Team, Player
 from matches.sim_helpers.role_constants import MAX_LIVES, MAX_SHOTS, ROLE_STATS
 from matches.sim_helpers.time_constants import (
@@ -51,6 +52,15 @@ class Match(models.Model):
         blank=True,
         related_name="won_matches",
         on_delete=models.SET_NULL,
+    )
+    # LG-01: optional FK to a Season. Sandbox Matches stay season=NULL.
+    # SET_NULL — deleting a Season must NOT cascade-delete its Matches.
+    season = models.ForeignKey(
+        "matches.Season",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="matches",
     )
     is_completed = models.BooleanField(default=False)
 
@@ -787,3 +797,224 @@ class GameEvent(models.Model):
             "base_capture": "🚩",
         }
         return icons.get(self.event_type, "•")
+
+
+# ====================================================================
+# LG-01 — League / Season foundation
+# ====================================================================
+
+
+class League(models.Model):
+    """A League — the container for a sequence of Seasons.
+
+    See ADR-0014 for the model decision. The active-Season invariant
+    (≤1 non-completed Season per League) is enforced on the Season
+    side via ``Season.clean``.
+    """
+
+    MODE_CHOICES = (
+        ("sandbox", "Sandbox"),
+        ("league", "League"),
+        ("multiplayer", "Multiplayer"),
+    )
+    STATE_CHOICES = (
+        ("active", "Active"),
+        ("archived", "Archived"),
+    )
+
+    name = models.CharField(max_length=100)
+    mode = models.CharField(max_length=16, choices=MODE_CHOICES, default="league")
+    state = models.CharField(max_length=16, choices=STATE_CHOICES, default="active")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return self.name
+
+    @property
+    def active_season(self) -> "Season | None":
+        """The single non-completed Season in this League, or None.
+
+        Returns the most-recently-created non-completed Season
+        (excludes Seasons in state ``completed``). The active-Season
+        invariant (≤1 non-completed Season per League, enforced by
+        ``Season.clean``) guarantees this is well-defined.
+        """
+        return self.seasons.exclude(state="completed").order_by("-id").first()
+
+
+class Season(models.Model):
+    """A Season inside a League — one schedulable round-robin run.
+
+    State machine: ``draft → active → completed``. The active-Season
+    invariant (``clean``) ensures at most one non-completed Season
+    lives in a given League at any time. See ADR-0014 for the model
+    decision and ADR-0015 for the schedule-on-demand algorithm.
+    """
+
+    STATE_CHOICES = (
+        ("draft", "Draft"),
+        ("active", "Active"),
+        ("completed", "Completed"),
+    )
+    SCHEDULE_FORMAT_CHOICES = (("single_round_robin", "Single round-robin"),)
+
+    league = models.ForeignKey(
+        League,
+        on_delete=models.CASCADE,
+        related_name="seasons",
+    )
+    name = models.CharField(max_length=100)
+    start_date = models.DateField()  # required, no default
+    teams = models.ManyToManyField(
+        "teams.Team",
+        related_name="enrolled_seasons",
+    )
+    state = models.CharField(max_length=16, choices=STATE_CHOICES, default="draft")
+    schedule_format = models.CharField(
+        max_length=32,
+        choices=SCHEDULE_FORMAT_CHOICES,
+        default="single_round_robin",
+    )
+    starting_team_ids_json = models.JSONField(null=True, blank=True, default=None)
+    champion_team = models.ForeignKey(
+        "teams.Team",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="seasons_won",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"{self.league.name} — {self.name}"
+
+    def clean(self) -> None:
+        """Validate the active-Season invariant.
+
+        Raises ``django.core.exceptions.ValidationError`` if saving
+        would yield more than one non-``completed`` Season in this
+        League. Excludes ``self`` so re-saving an existing active
+        Season does not trip the check against itself.
+        """
+        conflicting = (
+            Season.objects.filter(league=self.league)
+            .exclude(state="completed")
+            .exclude(pk=self.pk)
+        )
+        if self.state != "completed" and conflicting.exists():
+            raise ValidationError(
+                "Only one non-completed Season is allowed per League."
+            )
+
+    @transaction.atomic
+    def start_season(self) -> None:
+        """draft -> active transition.
+
+        Validates ``self.teams.count() >= 2``. Snapshots
+        ``starting_team_ids_json = sorted([t.id for t in
+        self.teams.all()])`` (ascending). Sets ``state="active"``;
+        saves.
+        """
+        if self.teams.count() < 2:
+            raise ValidationError(
+                "A Season requires at least 2 enrolled teams to start."
+            )
+        self.starting_team_ids_json = sorted(t.id for t in self.teams.all())
+        self.state = "active"
+        self.save()
+
+    @transaction.atomic
+    def complete_if_finished(self) -> None:
+        """active -> completed (idempotent).
+
+        No-op if ``self.state != "active"``. Builds the deterministic
+        fixture list via ``generate_schedule`` and compares against
+        persisted ``GameRound``s (Side-agnostic match on
+        ``frozenset({team_red_id, team_blue_id})`` + ``round_number``).
+        When every fixture has a matching played Round, flips
+        ``state="completed"`` and stamps ``champion_team`` to the
+        rank-1 row of ``compute_standings``.
+        """
+        if self.state != "active":
+            return
+        if not self._is_finished():
+            return
+        self._stamp_champion()
+
+    def _is_finished(self) -> bool:
+        """True iff every fixture in this Season has a persisted GameRound.
+
+        Side-agnostic match on ``frozenset({team_red_id, team_blue_id})``
+        + ``round_number``. Returns False on degenerate inputs
+        (snapshot < 2 team ids) so a malformed active Season never
+        auto-completes.
+        """
+        from .schedule_generator import generate_schedule
+
+        team_ids = self.starting_team_ids_json or []
+        if len(team_ids) < 2:
+            return False
+
+        fixtures = generate_schedule(team_ids, self.schedule_format)
+        if not fixtures:
+            return False
+
+        rounds_qs = GameRound.objects.filter(match__season=self).select_related("match")
+        played_keys: set[tuple[frozenset[int], int]] = set()
+        for game_round in rounds_qs:
+            match = game_round.match
+            if match is None or match.team_red_id is None or match.team_blue_id is None:
+                continue
+            played_keys.add(
+                (
+                    frozenset({match.team_red_id, match.team_blue_id}),
+                    game_round.round_number,
+                )
+            )
+
+        for fixture in fixtures:
+            key = (
+                frozenset({fixture.team_a_id, fixture.team_b_id}),
+                fixture.round_number,
+            )
+            if key not in played_keys:
+                return False
+        return True
+
+    def _stamp_champion(self) -> None:
+        """Flip ``state="completed"`` and stamp ``champion_team``.
+
+        Computes Standings via ``compute_standings`` over the Season's
+        completed Matches (the 8-key dict shape that mirrors what
+        ``season_standings`` view builds) and writes the rank-1 row's
+        team as the Season champion. No-op if Standings is empty
+        (defensive; the caller — ``complete_if_finished`` — should have
+        already verified fixtures are all played).
+        """
+        from .standings import compute_standings
+
+        team_ids = self.starting_team_ids_json or []
+        matches_qs = Match.objects.filter(season=self, is_completed=True)
+        completed_matches: list[dict] = []
+        for match in matches_qs:
+            completed_matches.append(
+                {
+                    "match_id": match.id,
+                    "team_red_id": match.team_red_id,
+                    "team_blue_id": match.team_blue_id,
+                    "winner_team_id": match.winner_id,
+                    "red_rounds_won": match.red_rounds_won,
+                    "blue_rounds_won": match.blue_rounds_won,
+                    "red_total_points": match.red_total_points,
+                    "blue_total_points": match.blue_total_points,
+                }
+            )
+        enrolled_teams = list(
+            Team.objects.filter(id__in=team_ids).values_list("id", "name")
+        )
+        rows = compute_standings(completed_matches, enrolled_teams)
+        if not rows:
+            return
+        self.state = "completed"
+        self.champion_team = Team.objects.get(pk=rows[0].team_id)
+        self.save()

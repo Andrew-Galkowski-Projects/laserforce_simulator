@@ -1039,6 +1039,174 @@ class BatchSimulator:
         )
 
     # ------------------------------------------------------------------ #
+    # LG-01 — Season-scheduled round simulation
+    # ------------------------------------------------------------------ #
+
+    @transaction.atomic
+    def simulate_scheduled_round(
+        self,
+        season,
+        team_a,
+        team_b,
+        round_number: int,
+        *,
+        arena_map=None,
+    ) -> "GameRound":
+        """Simulate one Round of a Season Match.
+
+        LG-01 pure orchestration over the existing per-Round
+        simulator. The two-Round Match progresses one Round at a
+        time:
+
+        * Round 1: find-or-create the Match (Side-agnostic lookup)
+          and persist ``GameRound(round_number=1)``. ``Match`` stays
+          ``is_completed=False`` so ``calculate_winner`` does not
+          fire yet.
+        * Round 2: find the existing Match Side-agnostically;
+          simulate with **args reversed** (``team_red=team_b,
+          team_blue=team_a`` — mirrors ``simulate_match``'s per-Match
+          colour swap byte-for-byte); persist
+          ``GameRound(round_number=2)``; set ``match.is_completed=True``
+          and save so the ``save`` override triggers
+          ``calculate_winner``.
+
+        After persistence (either round), call
+        ``season.complete_if_finished()`` so the Season auto-
+        transitions to ``completed`` when the final fixture lands.
+
+        Raises:
+            ValueError: if ``season.state != "active"``.
+            ValueError: if ``round_number not in (1, 2)``.
+            ValueError: if ``round_number == 2`` and no existing
+                Match found for these teams in this Season.
+        """
+        if season.state != "active":
+            raise ValueError(
+                f"Season must be active to simulate; got state={season.state!r}"
+            )
+        if round_number not in (1, 2):
+            raise ValueError(f"round_number must be 1 or 2; got {round_number!r}")
+
+        movement_ctx, zone_size = load_map_context(arena_map)
+
+        # Side-agnostic Match lookup (the team that played red in one
+        # round may play blue in the other — the per-Match colour
+        # swap is applied at round 2). Two ORM queries, first match
+        # wins.
+        match = (
+            Match.objects.filter(season=season)
+            .filter(team_red=team_a, team_blue=team_b)
+            .first()
+        ) or (
+            Match.objects.filter(season=season)
+            .filter(team_red=team_b, team_blue=team_a)
+            .first()
+        )
+
+        # =============== Round 1 ===============
+        if round_number == 1:
+            if match is None:
+                match = Match.objects.create(
+                    season=season,
+                    team_red=team_a,
+                    team_blue=team_b,
+                    is_completed=False,
+                )
+
+            game_round = self._simulate_and_flush_round(
+                team_a,
+                team_b,
+                match=match,
+                round_number=1,
+                movement_ctx=movement_ctx,
+                arena_map=arena_map,
+                zone_size=zone_size,
+            )
+
+            self._persist_round_results(
+                match, game_round, round_number=1, swapped=False
+            )
+            match.save()  # is_completed stays False; no calculate_winner yet
+            season.complete_if_finished()
+            return game_round
+
+        # =============== Round 2 ===============
+        if match is None:
+            raise ValueError(
+                "No round 1 Match found for season="
+                f"{getattr(season, 'id', None)!r} team_a={team_a!r} "
+                f"team_b={team_b!r}; play round 1 first"
+            )
+
+        # Per-Match colour swap: pass the rosters reversed so the
+        # stored GameRound reflects which team physically played red
+        # this round.
+        game_round = self._simulate_and_flush_round(
+            team_b,
+            team_a,
+            match=match,
+            round_number=2,
+            movement_ctx=movement_ctx,
+            arena_map=arena_map,
+            zone_size=zone_size,
+        )
+
+        self._persist_round_results(match, game_round, round_number=2, swapped=True)
+        match.is_completed = True
+        match.save()  # triggers calculate_winner via the save override
+        season.complete_if_finished()
+        return game_round
+
+    def _persist_round_results(
+        self,
+        match: "Match",
+        game_round: "GameRound",
+        *,
+        round_number: int,
+        swapped: bool,
+    ) -> None:
+        """Map one Round's outcome onto the Match's team-position-keyed columns.
+
+        ``round_number`` selects which `*_roundN_*` columns to write.
+        ``swapped`` is ``True`` iff the simulator was invoked with the
+        team args reversed (the per-Match colour swap of round 2): when
+        swapped, the GameRound's physical red side is team_b (the
+        Match's `team_blue`), so red↔blue columns and elimination flags
+        are crossed when written back to the Match. This is the single
+        source of truth for the round-1/round-2 mapping.
+        """
+        if swapped:
+            red_points = game_round.blue_points
+            blue_points = game_round.red_points
+            red_eliminated = game_round.blue_team_eliminated
+            blue_eliminated = game_round.red_team_eliminated
+        else:
+            red_points = game_round.red_points
+            blue_points = game_round.blue_points
+            red_eliminated = game_round.red_team_eliminated
+            blue_eliminated = game_round.blue_team_eliminated
+
+        if round_number == 1:
+            match.red_round1_points = red_points
+            match.blue_round1_points = blue_points
+            match.red_round1_eliminated = red_eliminated
+            match.blue_round1_eliminated = blue_eliminated
+            match.round1_eliminated_at = game_round.eliminated_at
+        else:
+            match.red_round2_points = red_points
+            match.blue_round2_points = blue_points
+            match.red_round2_eliminated = red_eliminated
+            match.blue_round2_eliminated = blue_eliminated
+            match.round2_eliminated_at = game_round.eliminated_at
+
+        # Elimination bonus is symmetric: a team being eliminated this
+        # round awards the bonus to its opponent's side of the Match.
+        if red_eliminated:
+            match.blue_bonus_points += self.elimination_bonus
+        if blue_eliminated:
+            match.red_bonus_points += self.elimination_bonus
+
+    # ------------------------------------------------------------------ #
     # Internal round simulation
     # ------------------------------------------------------------------ #
 

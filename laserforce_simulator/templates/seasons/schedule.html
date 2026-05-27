@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}{{ season.league.name }} — {{ season.name }} — Schedule{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item">{{ season.league.name }}</li>
+            <li class="breadcrumb-item active" aria-current="page">{{ season.name }}</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1 class="mb-0">Schedule</h1>
+        <div>
+            <a class="btn btn-outline-primary btn-sm" href="{% url 'season_standings' season.id %}">Standings</a>
+        </div>
+    </div>
+
+    <div id="season-schedule-table">
+        {% if matchdays|length == 0 %}
+            <div id="season-schedule-empty" class="alert alert-warning">
+                No fixtures scheduled — at least 2 enrolled teams are required.
+            </div>
+        {% else %}
+            {% for md in matchdays %}
+                <section id="season-schedule-matchday-{{ md.matchday }}" class="mb-4">
+                    <h3>Matchday {{ md.matchday }} <small class="text-muted">— {{ md.date|date:"Y-m-d" }}</small></h3>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered">
+                            <thead>
+                                <tr>
+                                    <th>Round</th>
+                                    <th>Home</th>
+                                    <th>Away</th>
+                                    <th class="text-end">Result</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for fixture in md.fixtures %}
+                                    <tr>
+                                        <td>R{{ fixture.round_number }}</td>
+                                        <td>
+                                            {% if fixture.team_a %}
+                                                <a href="{% url 'team_detail' fixture.team_a.id %}">{{ fixture.team_a.name }}</a>
+                                            {% else %}
+                                                <span class="text-muted">(team {{ fixture.team_a_id }})</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if fixture.team_b %}
+                                                <a href="{% url 'team_detail' fixture.team_b.id %}">{{ fixture.team_b.name }}</a>
+                                            {% else %}
+                                                <span class="text-muted">(team {{ fixture.team_b_id }})</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-end">
+                                            {% if fixture.played %}
+                                                {% if fixture.game_round_id %}
+                                                    <a href="{% url 'game_round_detail' fixture.game_round_id %}">{{ fixture.red_score }}–{{ fixture.blue_score }}</a>
+                                                {% else %}
+                                                    {{ fixture.red_score }}–{{ fixture.blue_score }}
+                                                {% endif %}
+                                            {% else %}
+                                                <span class="text-muted">Unplayed</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            {% endfor %}
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
