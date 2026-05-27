@@ -9,6 +9,11 @@ from . import views
 
 urlpatterns = [
     path(
+        "<int:season_id>/",
+        views.season_dashboard,
+        name="season_dashboard",
+    ),
+    path(
         "<int:season_id>/standings/",
         views.season_standings,
         name="season_standings",

@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}{{ league.name }} — League{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div id="league-dashboard-header" class="d-flex justify-content-between align-items-center mb-3">
+        <h1 class="mb-0">{{ league.name }}</h1>
+        <div>
+            {% if season_mode == "none" %}
+                <span id="league-dashboard-state-badge" class="badge bg-secondary text-uppercase">No Season</span>
+            {% else %}
+                <span id="league-dashboard-state-badge" class="badge bg-primary text-uppercase">{{ season_mode }}</span>
+            {% endif %}
+            <button id="league-dashboard-action-button" class="btn btn-outline-primary btn-sm ms-2" disabled data-action-state="{{ action_button_state }}">{{ action_button_label }}</button>
+        </div>
+    </div>
+
+    {% if displayed_season %}
+        <p class="text-muted">{{ displayed_season.name }}</p>
+    {% endif %}
+
+    {% if season_mode == "none" %}
+        <div id="league-dashboard-no-season-notice" class="alert alert-info">
+            No Season exists for this League yet.
+        </div>
+    {% endif %}
+
+    {% if season_mode == "draft" or season_mode == "active" or season_mode == "completed" %}
+        <div id="league-dashboard-standings-snippet" class="card mb-3">
+            <div class="card-header"><strong>Top standings</strong></div>
+            <ul class="list-group list-group-flush">
+                {% for row, team in standings_snippet %}
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>{{ row.rank }}. {% if team %}{{ team.name }}{% else %}(unknown){% endif %}</span>
+                        <span>{{ row.league_points }} pts</span>
+                    </li>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+
+    {% if season_mode == "active" or season_mode == "completed" %}
+        <div id="league-dashboard-next-round" class="card mb-3">
+            <div class="card-header"><strong>Next round</strong></div>
+            <div class="card-body">
+                {% if next_fixture %}
+                    <p class="mb-1">Matchday {{ next_fixture.matchday }} · Round {{ next_fixture.round_number }}</p>
+                    <p class="mb-1">{{ next_fixture.team_a_name }} vs {{ next_fixture.team_b_name }}</p>
+                    <p class="mb-0 text-muted">{{ next_fixture.date|date:"Y-m-d" }}</p>
+                {% else %}
+                    <p class="mb-0">All fixtures played</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div id="league-dashboard-round-count" class="card mb-3">
+            <div class="card-body">
+                <strong>Rounds played:</strong> {{ round_count_completed }} / {{ round_count_total }}
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-4">
+                <div id="league-dashboard-leaders-points" class="card mb-3">
+                    <div class="card-header"><strong>Points per game</strong></div>
+                    <ul class="list-group list-group-flush">
+                        {% for row in leaders_points %}
+                            <li class="list-group-item d-flex justify-content-between">
+                                <a href="/players/{{ row.player_id }}/career-stats/">{{ row.player_name }}</a>
+                                <span>{{ row.value|floatformat:2 }}</span>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div id="league-dashboard-leaders-tags" class="card mb-3">
+                    <div class="card-header"><strong>Tags per game</strong></div>
+                    <ul class="list-group list-group-flush">
+                        {% for row in leaders_tags %}
+                            <li class="list-group-item d-flex justify-content-between">
+                                <a href="/players/{{ row.player_id }}/career-stats/">{{ row.player_name }}</a>
+                                <span>{{ row.value|floatformat:2 }}</span>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div id="league-dashboard-leaders-ratio" class="card mb-3">
+                    <div class="card-header"><strong>Tag ratio</strong></div>
+                    <ul class="list-group list-group-flush">
+                        {% for row in leaders_ratio %}
+                            <li class="list-group-item d-flex justify-content-between">
+                                <a href="/players/{{ row.player_id }}/career-stats/">{{ row.player_name }}</a>
+                                <span>{{ row.value|floatformat:2 }}</span>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <p><a href="/leagues/{{ league.id }}/leaders/">View all leaders</a></p>
+    {% endif %}
+</div>
+{% endblock %}
