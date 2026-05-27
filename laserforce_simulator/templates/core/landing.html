@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}Laserforce Manager{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">Laserforce Manager</h1>
+
+<section id="mode-picker" class="mb-5">
+    <div class="row row-cols-1 row-cols-md-3 g-3">
+        <div class="col">
+            <a id="mode-card-sandbox"
+               class="card h-100 text-decoration-none text-reset"
+               href="{% url 'team_list' %}">
+                <div class="card-body">
+                    <h5 class="card-title">Sandbox</h5>
+                    <p class="card-text text-muted">
+                        Quick one-off matches with custom teams.
+                    </p>
+                </div>
+            </a>
+        </div>
+        <div class="col">
+            <a id="mode-card-league"
+               class="card h-100 text-decoration-none text-reset"
+               href="{% url 'league_list' %}">
+                <div class="card-body">
+                    <h5 class="card-title">Single-player League</h5>
+                    <p class="card-text text-muted">
+                        Run a multi-Season campaign against the CPU.
+                    </p>
+                </div>
+            </a>
+        </div>
+        <div class="col">
+            <div id="mode-card-multiplayer"
+                 class="card h-100 opacity-50"
+                 aria-disabled="true">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        Multiplayer
+                        <span class="badge bg-secondary">Coming soon</span>
+                    </h5>
+                    <p class="card-text text-muted">
+                        Play against other humans online.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+{% if in_progress_leagues %}
+<section id="in-progress-leagues">
+    <h2 class="mb-3">In Progress</h2>
+    <div class="row row-cols-1 row-cols-md-3 g-3">
+        {% for league in in_progress_leagues %}
+        <div class="col">
+            <a id="in-progress-league-card-{{ league.id }}"
+               class="card h-100 text-decoration-none text-reset"
+               href="/leagues/{{ league.id }}/">
+                <div class="card-body">
+                    <h5 class="card-title">{{ league.name }}</h5>
+                    <p class="card-text">
+                        {% if league.active_season %}
+                            Season: {{ league.active_season.name }}
+                        {% else %}
+                            No active season
+                        {% endif %}
+                    </p>
+                    <span class="state-badge badge bg-primary">{{ league.state }}</span>
+                </div>
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+{% endblock %}

@@ -8,6 +8,7 @@ from django.contrib import messages
 from django.db.models.fields.files import FieldFile
 from django.http import (
     FileResponse,
+    HttpResponse,
     HttpResponseBadRequest,
     HttpResponseNotAllowed,
     JsonResponse,
@@ -796,4 +797,20 @@ def map_heatmap_data(request, map_id: int):
             "cols": cols,
             "round_count": round_count,
         }
+    )
+
+
+def landing(request) -> HttpResponse:
+    """LG-01a — mode-picker landing page + in-progress League cards.
+
+    Lazy-imports ``League`` inside the function body to mirror the
+    ``map_heatmap_data`` precedent and avoid an apps-loading cycle.
+    """
+    from matches.models import League
+
+    in_progress_leagues = list(League.objects.filter(state="active").order_by("-id"))
+    return render(
+        request,
+        "core/landing.html",
+        {"in_progress_leagues": in_progress_leagues},
     )

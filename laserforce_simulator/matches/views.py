@@ -10,7 +10,7 @@ from django.urls import reverse
 from django.utils.text import slugify
 from teams.models import Team, Player
 from . import h2h_stats, player_h2h_stats
-from .models import Match, GameRound, PlayerRoundState, GameEvent, Season
+from .models import Match, GameRound, PlayerRoundState, GameEvent, Season, League
 from .schedule_generator import generate_schedule
 from .standings import compute_standings
 from .simulation import BatchSimulator
@@ -1932,3 +1932,17 @@ def season_schedule(request, season_id: int) -> HttpResponse:
 
     context = {"season": season, "matchdays": matchdays}
     return render(request, "seasons/schedule.html", context)
+
+
+def league_list(request) -> HttpResponse:
+    """LG-01a — flat list of all Leagues (active + archived sections)."""
+    active_leagues = list(League.objects.filter(state="active").order_by("-id"))
+    archived_leagues = list(League.objects.filter(state="archived").order_by("-id"))
+    return render(
+        request,
+        "leagues/list.html",
+        {
+            "active_leagues": active_leagues,
+            "archived_leagues": archived_leagues,
+        },
+    )
