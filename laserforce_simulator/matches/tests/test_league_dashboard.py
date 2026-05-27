@@ -218,16 +218,16 @@ class TestLeagueDashboardDraftBranch(TestCase):
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
         self.assertEqual(response.context["action_button_label"], "Start Season")
         self.assertEqual(response.context["action_button_state"], "start_season")
-        # `<button disabled` substring (must be on the action button element).
         body = response.content.decode()
+        # LG-01d activated the LG-01c `<button disabled>` placeholder into a
+        # working Start Season POST form. The wrapper id remains for DOM
+        # parity; the Start Season form id is the new functional element.
         self.assertIn('id="league-dashboard-action-button"', body)
-        # The button MUST carry the disabled attribute.
-        idx = body.find('id="league-dashboard-action-button"')
-        # Locate the enclosing element by scanning back to `<` and forward to `>`.
-        start = body.rfind("<", 0, idx)
-        end = body.find(">", idx)
-        element = body[start : end + 1]
-        self.assertIn("disabled", element)
+        self.assertIn('id="league-dashboard-play-start-season"', body)
+        self.assertIn(
+            f'action="/seasons/{response.context["displayed_season"].id}/start-season/"',
+            body,
+        )
 
     def test_draft_standings_snippet_sorted_by_team_name_asc_top_3(self) -> None:
         league = _make_league("LDraftSort")

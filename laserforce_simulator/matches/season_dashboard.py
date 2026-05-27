@@ -14,6 +14,11 @@ Public surface:
 * ``round_progress(fixtures, played_keys)`` — return
   ``(completed, total)`` Round counts where ``completed`` is the number
   of fixtures whose Side-agnostic key appears in ``played_keys``.
+* ``find_next_matchday(fixtures, played_keys)`` — return the matchday
+  number of the first unplayed fixture (LG-01d).
+* ``select_play_fixtures(fixtures, played_keys, max_matchdays)`` —
+  return the unplayed fixtures spanning the next ``max_matchdays``
+  distinct unplayed matchdays; ``None`` returns ALL unplayed (LG-01d).
 
 Frozen import allowlist (the only modules this file may import):
 ``dataclasses``, ``typing``, ``collections``. No Django, no ORM, no
@@ -151,6 +156,91 @@ def find_next_fixture(
         if key not in played_keys:
             return fixture
     return None
+
+
+def find_next_matchday(
+    fixtures: "list",
+    played_keys: "set",
+) -> "Optional[int]":
+    """Return the matchday number of the first unplayed fixture.
+
+    Walks ``fixtures`` in canonical ``generate_schedule(...)`` iteration
+    order (already sorted by ``(matchday, team_a_id)``) and returns the
+    ``matchday`` of the first fixture whose Side-agnostic
+    ``(frozenset({team_a_id, team_b_id}), round_number)`` key is NOT in
+    ``played_keys``.
+
+    Args:
+        fixtures: list of ``ScheduleFixture`` in iteration order.
+        played_keys: set of ``(frozenset({team_red_id, team_blue_id}),
+            round_number)`` tuples for every persisted ``GameRound`` in
+            the Season.
+
+    Returns:
+        The matchday number (1-based, ``int``) of the first unplayed
+        fixture, or ``None`` if every fixture has been played (or the
+        input is empty).
+    """
+    for fixture in fixtures:
+        key = (
+            frozenset({fixture.team_a_id, fixture.team_b_id}),
+            fixture.round_number,
+        )
+        if key not in played_keys:
+            return fixture.matchday
+    return None
+
+
+def select_play_fixtures(
+    fixtures: "list",
+    played_keys: "set",
+    max_matchdays: "Optional[int]",
+) -> "list":
+    """Return the unplayed fixtures spanning the next ``max_matchdays``
+    distinct unplayed matchdays starting at ``find_next_matchday``.
+
+    Args:
+        fixtures: list of ``ScheduleFixture`` in canonical iteration
+            order.
+        played_keys: as in ``find_next_matchday``.
+        max_matchdays: if an ``int``, return only fixtures whose
+            ``matchday`` is among the next ``max_matchdays`` distinct
+            unplayed matchdays from the canonical sweep. If ``None``,
+            return ALL unplayed fixtures (Play Until End of Season).
+
+    Returns:
+        The unplayed fixtures in canonical iteration order. Empty list
+        when ``fixtures`` is empty or every fixture has been played.
+    """
+    if not fixtures:
+        return []
+
+    selected: list = []
+    distinct_matchdays: list[int] = []
+
+    for fixture in fixtures:
+        key = (
+            frozenset({fixture.team_a_id, fixture.team_b_id}),
+            fixture.round_number,
+        )
+        if key in played_keys:
+            continue
+
+        if max_matchdays is None:
+            selected.append(fixture)
+            continue
+
+        # max_matchdays is an int. Track distinct unplayed matchdays in
+        # iteration order; accept fixtures whose matchday is in the set,
+        # add new matchdays only while we have headroom.
+        if fixture.matchday in distinct_matchdays:
+            selected.append(fixture)
+        elif len(distinct_matchdays) < max_matchdays:
+            distinct_matchdays.append(fixture.matchday)
+            selected.append(fixture)
+        # else: skip — past our matchday budget.
+
+    return selected
 
 
 def round_progress(

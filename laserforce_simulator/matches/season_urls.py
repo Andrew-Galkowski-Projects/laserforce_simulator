@@ -14,6 +14,31 @@ urlpatterns = [
         name="season_dashboard",
     ),
     path(
+        "<int:season_id>/start-season/",
+        views.start_season,
+        name="start_season",
+    ),
+    path(
+        "<int:season_id>/play-week/",
+        views.play_week,
+        name="play_week",
+    ),
+    path(
+        "<int:season_id>/play-two-months/",
+        views.play_two_months,
+        name="play_two_months",
+    ),
+    path(
+        "<int:season_id>/play-until-end/",
+        views.play_until_end,
+        name="play_until_end",
+    ),
+    path(
+        "<int:season_id>/play-status/<str:job_id>/",
+        views.play_status,
+        name="play_status",
+    ),
+    path(
         "<int:season_id>/standings/",
         views.season_standings,
         name="season_standings",
