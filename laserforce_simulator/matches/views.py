@@ -1,6 +1,7 @@
 import random
 from collections import defaultdict
 from datetime import date, datetime, timedelta
+from typing import Optional
 
 from celery.result import AsyncResult
 from django.db import transaction
@@ -16,6 +17,12 @@ from teams.views import _generate_teams
 from . import h2h_stats, player_h2h_stats
 from .models import Match, GameRound, PlayerRoundState, GameEvent, Season, League
 from .schedule_generator import generate_schedule
+from .season_dashboard import (
+    LeaderRow,
+    compute_leaders,
+    find_next_fixture,
+    round_progress,
+)
 from .standings import compute_standings
 from .simulation import BatchSimulator
 from .sim_helpers.pdf_report import build_round_report
@@ -2007,3 +2014,288 @@ def league_create(request) -> HttpResponse:
     season.teams.add(*created_teams)
 
     return redirect("season_standings", season_id=season.id)
+
+
+# ---------------------------------------------------------------------------
+# LG-01c — League / Season dashboard
+# ---------------------------------------------------------------------------
+
+
+def _build_dashboard_context(
+    displayed_season: Optional[Season], season_mode: str
+) -> dict:
+    """Shared body context for the League and Season dashboards.
+
+    Returns the 11-key body context dict described by the LG-01c seam
+    contract. Branches on ``season_mode`` to materialise the standings
+    snippet, next-fixture dict, round count, leader snippets, and the
+    placeholder action-button label / state.
+    """
+    standings_snippet: list = []
+    next_fixture: Optional[dict] = None
+    round_count_completed = 0
+    round_count_total = 0
+    leaders_points: list[LeaderRow] = []
+    leaders_tags: list[LeaderRow] = []
+    leaders_ratio: list[LeaderRow] = []
+
+    if season_mode == "none":
+        action_button_label = "No Season"
+        action_button_state = "none"
+    elif season_mode == "draft":
+        action_button_label = "Start Season"
+        action_button_state = "start_season"
+
+        # Zero-filled top-3 standings preview: teams sorted by name asc.
+        teams = sorted(displayed_season.teams.all(), key=lambda t: t.name)
+        top_teams = teams[:3]
+        for index, team in enumerate(top_teams):
+            row = {
+                "team_id": team.id,
+                "matches_played": 0,
+                "wins": 0,
+                "losses": 0,
+                "ties": 0,
+                "league_points": 0,
+                "round_wins": 0,
+                "total_score": 0,
+                "rank": index + 1,
+            }
+            standings_snippet.append((row, team))
+    else:
+        # season_mode in {"active", "completed"}.
+        if season_mode == "active":
+            action_button_label = "Play Next"
+            action_button_state = "play_next"
+        else:
+            action_button_label = "Start Next Season"
+            action_button_state = "start_next_season"
+
+        # --- Standings snippet (real compute_standings, top 3) --------
+        completed_qs = Match.objects.filter(season=displayed_season, is_completed=True)
+        completed_matches: list[dict] = []
+        for match in completed_qs:
+            completed_matches.append(
+                {
+                    "match_id": match.id,
+                    "team_red_id": match.team_red_id,
+                    "team_blue_id": match.team_blue_id,
+                    "winner_team_id": match.winner_id,
+                    "red_rounds_won": match.red_rounds_won,
+                    "blue_rounds_won": match.blue_rounds_won,
+                    "red_total_points": match.red_total_points,
+                    "blue_total_points": match.blue_total_points,
+                }
+            )
+
+        if displayed_season.starting_team_ids_json is not None:
+            team_ids = list(displayed_season.starting_team_ids_json)
+        else:
+            team_ids = sorted(t.id for t in displayed_season.teams.all())
+
+        enrolled_teams = list(
+            Team.objects.filter(id__in=team_ids).values_list("id", "name")
+        )
+        rows = compute_standings(completed_matches, enrolled_teams)
+        teams_by_id = Team.objects.in_bulk(team_ids)
+        top_rows = rows[:3]
+        snippet_rows: list = []
+        for row in top_rows:
+            row_dict = {
+                "team_id": row.team_id,
+                "matches_played": row.matches_played,
+                "wins": row.wins,
+                "losses": row.losses,
+                "ties": row.ties,
+                "league_points": row.league_points,
+                "round_wins": row.round_wins,
+                "total_score": row.total_score,
+                "rank": row.rank,
+            }
+            snippet_rows.append((row_dict, teams_by_id.get(row.team_id)))
+        standings_snippet = snippet_rows
+
+        # --- Schedule + next fixture + round progress -----------------
+        if len(team_ids) >= 2:
+            fixtures = generate_schedule(team_ids, displayed_season.schedule_format)
+        else:
+            fixtures = []
+
+        rounds_qs = GameRound.objects.filter(
+            match__season=displayed_season
+        ).select_related("match")
+        played_keys: set = set()
+        for game_round in rounds_qs:
+            match = game_round.match
+            if match is None or match.team_red_id is None or match.team_blue_id is None:
+                continue
+            played_keys.add(
+                (
+                    frozenset({match.team_red_id, match.team_blue_id}),
+                    game_round.round_number,
+                )
+            )
+
+        round_count_completed, round_count_total = round_progress(fixtures, played_keys)
+
+        fixture = find_next_fixture(fixtures, played_keys)
+        if fixture is not None:
+            fixture_teams = Team.objects.in_bulk([fixture.team_a_id, fixture.team_b_id])
+            team_a = fixture_teams.get(fixture.team_a_id)
+            team_b = fixture_teams.get(fixture.team_b_id)
+            fixture_date = displayed_season.start_date + timedelta(
+                days=(fixture.matchday - 1) * 7
+            )
+            next_fixture = {
+                "matchday": fixture.matchday,
+                "round_number": fixture.round_number,
+                "team_a_id": fixture.team_a_id,
+                "team_a_name": team_a.name if team_a is not None else "",
+                "team_b_id": fixture.team_b_id,
+                "team_b_name": team_b.name if team_b is not None else "",
+                "date": fixture_date,
+            }
+
+        # --- Leaders snippets ----------------------------------------
+        prs_qs = (
+            PlayerRoundState.objects.filter(game_round__match__season=displayed_season)
+            .select_related(
+                "player",
+                "game_round__match",
+                "game_round__team_red",
+                "game_round__team_blue",
+            )
+            .order_by("id")
+        )
+        player_rounds: list[dict] = []
+        for prs in prs_qs:
+            game_round = prs.game_round
+            if prs.team_color == "red":
+                team = game_round.team_red
+            elif prs.team_color == "blue":
+                team = game_round.team_blue
+            else:
+                team = None
+            player_rounds.append(
+                {
+                    "player_id": prs.player_id,
+                    "player_name": prs.player.name,
+                    "role": prs.role,
+                    "team_id": team.id if team is not None else 0,
+                    "team_name": team.name if team is not None else "",
+                    "tags_made": prs.tags_made,
+                    "times_tagged": prs.times_tagged,
+                    "points_scored": prs.points_scored,
+                }
+            )
+
+        leaders_points = compute_leaders(player_rounds, "points_per_game", limit=3)
+        leaders_tags = compute_leaders(player_rounds, "tags_per_game", limit=3)
+        leaders_ratio = compute_leaders(player_rounds, "tag_ratio", limit=3)
+
+    return {
+        "displayed_season": displayed_season,
+        "season_mode": season_mode,
+        "standings_snippet": standings_snippet,
+        "next_fixture": next_fixture,
+        "round_count_completed": round_count_completed,
+        "round_count_total": round_count_total,
+        "leaders_points": leaders_points,
+        "leaders_tags": leaders_tags,
+        "leaders_ratio": leaders_ratio,
+        "action_button_label": action_button_label,
+        "action_button_state": action_button_state,
+    }
+
+
+def league_dashboard(request, league_id: int) -> HttpResponse:
+    """LG-01c — Dashboard for a single League.
+
+    Picks one Season to display (active > most-recent completed > none),
+    renders state badge + placeholder action button + top-3 standings +
+    next round + round count + three leaders snippets.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    league = get_object_or_404(League, pk=league_id)
+
+    active = league.active_season
+    if active is not None:
+        displayed_season = active
+        season_mode = "draft" if active.state == "draft" else "active"
+    else:
+        completed_recent = (
+            league.seasons.filter(state="completed").order_by("-id").first()
+        )
+        if completed_recent is not None:
+            displayed_season = completed_recent
+            season_mode = "completed"
+        else:
+            displayed_season = None
+            season_mode = "none"
+
+    body = _build_dashboard_context(displayed_season, season_mode)
+    context = {"league": league, **body}
+    return render(request, "leagues/dashboard.html", context)
+
+
+def season_dashboard(request, season_id: int) -> HttpResponse:
+    """LG-01c — Dashboard for a single Season.
+
+    Same body surface as the League dashboard plus a sidebar with live
+    links to standings / schedule and disabled placeholders for Teams /
+    History.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    season = get_object_or_404(Season, pk=season_id)
+    displayed_season = season
+    season_mode = season.state
+
+    body = _build_dashboard_context(displayed_season, season_mode)
+    sidebar_links = [
+        {
+            "key": "overview",
+            "label": "Overview",
+            "url": None,
+            "disabled": False,
+            "active": True,
+        },
+        {
+            "key": "standings",
+            "label": "Standings",
+            "url": reverse("season_standings", args=[season.id]),
+            "disabled": False,
+            "active": False,
+        },
+        {
+            "key": "schedule",
+            "label": "Schedule",
+            "url": reverse("season_schedule", args=[season.id]),
+            "disabled": False,
+            "active": False,
+        },
+        {
+            "key": "teams",
+            "label": "Teams",
+            "url": None,
+            "disabled": True,
+            "active": False,
+        },
+        {
+            "key": "history",
+            "label": "History",
+            "url": None,
+            "disabled": True,
+            "active": False,
+        },
+    ]
+    context = {
+        "season": season,
+        **body,
+        "sidebar_active": "overview",
+        "sidebar_links": sidebar_links,
+    }
+    return render(request, "seasons/dashboard.html", context)

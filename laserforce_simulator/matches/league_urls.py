@@ -8,5 +8,6 @@ from . import views
 
 urlpatterns = [
     path("create/", views.league_create, name="league_create"),
+    path("<int:league_id>/", views.league_dashboard, name="league_dashboard"),
     path("", views.league_list, name="league_list"),
 ]
