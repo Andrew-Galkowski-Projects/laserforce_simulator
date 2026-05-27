@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from celery.result import AsyncResult
 from django.shortcuts import render, get_object_or_404, redirect
@@ -10,7 +10,9 @@ from django.urls import reverse
 from django.utils.text import slugify
 from teams.models import Team, Player
 from . import h2h_stats, player_h2h_stats
-from .models import Match, GameRound, PlayerRoundState, GameEvent
+from .models import Match, GameRound, PlayerRoundState, GameEvent, Season
+from .schedule_generator import generate_schedule
+from .standings import compute_standings
 from .simulation import BatchSimulator
 from .sim_helpers.pdf_report import build_round_report
 from .forms import MatchSetupForm, SingleRoundSetupForm, BatchSimulateForm
@@ -1734,3 +1736,199 @@ def player_head_to_head(request) -> HttpResponse:
     )
 
     return render(request, "matches/player_head_to_head.html", context)
+
+
+# ====================================================================
+# LG-01 — Season views
+# ====================================================================
+
+
+def _compute_team_overall(team: Team) -> float:
+    """Mean ``overall_rating`` over a team's six active-roster players.
+
+    Returns ``0.0`` when the team has no slots filled (e.g. the Free
+    Agents Team) so the draft-preview sort never trips on an empty
+    iterable. Used only by the LG-01 draft-preview ordering on
+    ``season_standings``.
+    """
+    actives = team.active_players
+    if not actives:
+        return 0.0
+    return sum(p.overall_rating for p in actives) / len(actives)
+
+
+def season_standings(request, season_id: int) -> HttpResponse:
+    """LG-01 — Standings page for a Season.
+
+    Draft preview: when ``season.state == "draft"`` the page lists the
+    enrolled teams sorted by computed ``team_overall`` (mean of the 6
+    active-roster players' ``overall_rating``, 0.0 when no slots are
+    filled), then by team name. Rows are emitted as zeroed
+    ``StandingsRow``-shaped dicts so the template renders the same 9
+    columns whether or not the Season has started.
+
+    Active / completed: aggregates the Season's completed Matches via
+    ``compute_standings``.
+    """
+    season = get_object_or_404(Season, pk=season_id)
+
+    is_draft_preview = season.state == "draft"
+    rows: list = []
+    teams_by_id: dict[int, Team] = {}
+
+    if is_draft_preview:
+        teams = list(season.teams.all())
+        teams.sort(key=lambda t: (-_compute_team_overall(t), t.name))
+        teams_by_id = {t.id: t for t in teams}
+        for index, team in enumerate(teams):
+            rows.append(
+                {
+                    "team_id": team.id,
+                    "matches_played": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "ties": 0,
+                    "league_points": 0,
+                    "round_wins": 0,
+                    "total_score": 0,
+                    "rank": index + 1,
+                }
+            )
+    else:
+        completed_qs = Match.objects.filter(season=season, is_completed=True)
+        completed_matches: list[dict] = []
+        for match in completed_qs:
+            completed_matches.append(
+                {
+                    "match_id": match.id,
+                    "team_red_id": match.team_red_id,
+                    "team_blue_id": match.team_blue_id,
+                    "winner_team_id": match.winner_id,
+                    "red_rounds_won": match.red_rounds_won,
+                    "blue_rounds_won": match.blue_rounds_won,
+                    "red_total_points": match.red_total_points,
+                    "blue_total_points": match.blue_total_points,
+                }
+            )
+
+        if season.starting_team_ids_json is not None:
+            team_ids = list(season.starting_team_ids_json)
+        else:
+            team_ids = sorted(t.id for t in season.teams.all())
+
+        enrolled_teams = list(
+            Team.objects.filter(id__in=team_ids).values_list("id", "name")
+        )
+        rows = compute_standings(completed_matches, enrolled_teams)
+        teams_by_id = {t.id: t for t in Team.objects.filter(id__in=team_ids)}
+
+    def _row_team_id(row) -> int:
+        if hasattr(row, "team_id"):
+            return row.team_id
+        return row["team_id"]
+
+    rows_with_teams = [(row, teams_by_id.get(_row_team_id(row))) for row in rows]
+
+    context = {
+        "season": season,
+        "rows": rows,
+        "rows_with_teams": rows_with_teams,
+        "is_draft_preview": is_draft_preview,
+    }
+    return render(request, "seasons/standings.html", context)
+
+
+def season_schedule(request, season_id: int) -> HttpResponse:
+    """LG-01 — Schedule page for a Season.
+
+    Renders the deterministic fixture list from ``generate_schedule``
+    with persisted ``GameRound``s overlaid. Fixtures are grouped by
+    matchday; the display date for matchday ``n`` is
+    ``season.start_date + (n - 1) * 7 days``.
+    """
+    season = get_object_or_404(Season, pk=season_id)
+
+    if season.state == "draft":
+        team_ids = sorted(t.id for t in season.teams.all())
+    else:
+        team_ids = list(season.starting_team_ids_json or [])
+
+    if len(team_ids) < 2:
+        # Cannot generate a schedule with fewer than 2 teams — render
+        # an empty schedule with the empty-state notice.
+        context = {"season": season, "matchdays": []}
+        return render(request, "seasons/schedule.html", context)
+
+    fixtures = generate_schedule(team_ids, season.schedule_format)
+
+    teams_by_id: dict[int, Team] = {
+        t.id: t for t in Team.objects.filter(id__in=team_ids)
+    }
+
+    # Index played GameRounds by (frozenset of team ids, round_number).
+    rounds_qs = GameRound.objects.filter(match__season=season).select_related("match")
+    played_by_key: dict[tuple[frozenset[int], int], GameRound] = {}
+    for game_round in rounds_qs:
+        match = game_round.match
+        if match is None or match.team_red_id is None or match.team_blue_id is None:
+            continue
+        key = (
+            frozenset({match.team_red_id, match.team_blue_id}),
+            game_round.round_number,
+        )
+        played_by_key[key] = game_round
+
+    # Build per-fixture dicts.
+    per_fixture: list[dict] = []
+    for fixture in fixtures:
+        key = (
+            frozenset({fixture.team_a_id, fixture.team_b_id}),
+            fixture.round_number,
+        )
+        game_round = played_by_key.get(key)
+        if game_round is not None:
+            played = True
+            game_round_id = game_round.id
+            red_score = game_round.red_points
+            blue_score = game_round.blue_points
+        else:
+            played = False
+            game_round_id = None
+            red_score = None
+            blue_score = None
+
+        fixture_date = season.start_date + timedelta(days=(fixture.matchday - 1) * 7)
+        per_fixture.append(
+            {
+                "matchday": fixture.matchday,
+                "round_number": fixture.round_number,
+                "team_a_id": fixture.team_a_id,
+                "team_b_id": fixture.team_b_id,
+                "team_a": teams_by_id.get(fixture.team_a_id),
+                "team_b": teams_by_id.get(fixture.team_b_id),
+                "played": played,
+                "game_round_id": game_round_id,
+                "red_score": red_score,
+                "blue_score": blue_score,
+                "date": fixture_date,
+            }
+        )
+
+    # Group by matchday in matchday-asc order.
+    matchdays: list[dict] = []
+    grouped: dict[int, list[dict]] = defaultdict(list)
+    for f in per_fixture:
+        grouped[f["matchday"]].append(f)
+    for matchday in sorted(grouped.keys()):
+        matchday_fixtures = grouped[matchday]
+        matchday_date = matchday_fixtures[0]["date"]
+        matchdays.append(
+            {
+                "matchday": matchday,
+                "date": matchday_date,
+                "fixtures": matchday_fixtures,
+            }
+        )
+
+    context = {"season": season, "matchdays": matchdays}
+    return render(request, "seasons/schedule.html", context)
