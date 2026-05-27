@@ -7,5 +7,6 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    path("create/", views.league_create, name="league_create"),
     path("", views.league_list, name="league_list"),
 ]

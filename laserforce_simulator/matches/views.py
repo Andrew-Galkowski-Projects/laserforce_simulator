@@ -1,21 +1,30 @@
+import random
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
 from celery.result import AsyncResult
+from django.db import transaction
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.db.models import Q, QuerySet
 from django.http import Http404, HttpResponse, HttpResponseNotAllowed, JsonResponse
 from django.urls import reverse
 from django.utils.text import slugify
+from teams.constants import PLAYER_NAMES, TEAM_NAMES
 from teams.models import Team, Player
+from teams.views import _generate_teams
 from . import h2h_stats, player_h2h_stats
 from .models import Match, GameRound, PlayerRoundState, GameEvent, Season, League
 from .schedule_generator import generate_schedule
 from .standings import compute_standings
 from .simulation import BatchSimulator
 from .sim_helpers.pdf_report import build_round_report
-from .forms import MatchSetupForm, SingleRoundSetupForm, BatchSimulateForm
+from .forms import (
+    MatchSetupForm,
+    SingleRoundSetupForm,
+    BatchSimulateForm,
+    CreateLeagueForm,
+)
 from .tasks import save_games_task, simulate_batch_task
 
 
@@ -1946,3 +1955,55 @@ def league_list(request) -> HttpResponse:
             "archived_leagues": archived_leagues,
         },
     )
+
+
+@transaction.atomic
+def league_create(request) -> HttpResponse:
+    """LG-01b — Create-League flow.
+
+    GET renders the empty form; POST validates the form, generates
+    ``num_teams`` Teams (each with 6 Players) via the LG-00 generator,
+    creates the League + draft Season, enrols the new Teams, and
+    redirects to the Season standings view.
+    """
+    if request.method != "POST":
+        return render(
+            request,
+            "leagues/create.html",
+            {"form": CreateLeagueForm()},
+        )
+
+    form = CreateLeagueForm(request.POST)
+    if not form.is_valid():
+        return render(request, "leagues/create.html", {"form": form})
+
+    cleaned = form.cleaned_data
+    rng = random.Random()
+    team_names_pool = list(TEAM_NAMES)
+    player_names_pool = list(PLAYER_NAMES)
+
+    created_teams = _generate_teams(
+        cleaned["num_teams"],
+        6,
+        rng=rng,
+        mean=cleaned["mean"],
+        std_dev=cleaned["std_dev"],
+        team_names_pool=team_names_pool,
+        player_names_pool=player_names_pool,
+    )
+
+    league = League.objects.create(
+        name=cleaned["league_name"],
+        mode="league",
+        state="active",
+    )
+    season = Season.objects.create(
+        league=league,
+        name=cleaned["season_name"],
+        start_date=cleaned["start_date"],
+        state="draft",
+        schedule_format=cleaned["schedule_format"],
+    )
+    season.teams.add(*created_teams)
+
+    return redirect("season_standings", season_id=season.id)
