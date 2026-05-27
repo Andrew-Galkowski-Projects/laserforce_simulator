@@ -19,6 +19,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path, include
+from core import views as core_views
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -26,9 +27,10 @@ urlpatterns = [
     path("teams/", include("teams.urls")),
     path("matches/", include("matches.urls")),
     path("seasons/", include("matches.season_urls")),
+    path("leagues/", include("matches.league_urls")),
     path("maps/", include("core.urls")),
     path(
         "players/", include("teams.player_urls")
     ),  # HX-01: must be above the "" include
-    path("", include("teams.urls")),  # Homepage still goes to teams
+    path("", core_views.landing, name="landing"),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

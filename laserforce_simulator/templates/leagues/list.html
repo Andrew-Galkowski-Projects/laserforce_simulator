@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Leagues{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1>Leagues</h1>
+    <a id="league-create-link" class="btn btn-primary" href="/leagues/create/">Create League</a>
+</div>
+
+{% if active_leagues %}
+<h2>Active</h2>
+<table id="league-list-active-table" class="table table-striped">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>State</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for league in active_leagues %}
+        <tr>
+            <td><a href="/leagues/{{ league.id }}/">{{ league.name }}</a></td>
+            <td><span class="state-badge badge bg-primary">{{ league.state }}</span></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+{% if archived_leagues %}
+<h2>Archived</h2>
+<table id="league-list-archived-table" class="table table-striped">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>State</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for league in archived_leagues %}
+        <tr>
+            <td><a href="/leagues/{{ league.id }}/">{{ league.name }}</a></td>
+            <td><span class="state-badge badge bg-secondary">{{ league.state }}</span></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+{% if not active_leagues and not archived_leagues %}
+<div id="league-list-empty-notice" class="alert alert-info">
+    No Leagues yet.
+</div>
+{% endif %}
+{% endblock %}

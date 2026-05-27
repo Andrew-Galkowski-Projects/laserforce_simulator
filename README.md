@@ -142,8 +142,9 @@ Action weights live in `matches/sim_helpers/weights.py` and shift dynamically ba
 
 | URL | Description |
 |-----|-------------|
-| `/` | Team list (homepage) |
+| `/` | Mode-picker landing (Sandbox / Single-player League / Multiplayer — Coming soon) + in-progress Leagues |
 | `/teams/` | Team & player management |
+| `/leagues/` | Single-player League list (active + archived) |
 | `/matches/` | Match list and creation |
 | `/matches/create/` | Create a full 2-round match |
 | `/matches/single-round/create/` | Create a standalone game round |

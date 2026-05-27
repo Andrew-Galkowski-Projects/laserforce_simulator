@@ -126,3 +126,25 @@ Date: 2026-05-26. Server: `runserver --noreload` (http://127.0.0.1:8765). Branch
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
 | LG00c-10 | ✅ | Per-page selector | New `?per_page=10\|25\|50\|100` query param + `<select>` dropdown above the table; default 10 (was 50). HX-02-style forgiving-fallback — invalid / out-of-whitelist / non-int values silently coerce to default. Auto-submit on change (`onchange="this.form.submit()"`) with `<noscript>` Apply button fallback. Dropdown carries `sort` + `dir` through hidden inputs so re-paginating does NOT reset the user's column ordering. `per_page` survives across page navigation (in `querystring_without_page`) AND across column-header re-sorts (in `querystring_without_sort_dir_page`). Verified in-browser at 1600px: default `?per_page=10` renders 10 rows / 12 pages; dropdown switch to 50 auto-submits to `?sort=team&dir=asc&per_page=50` rendering 50 rows / 3 pages; Next-link carries `per_page=50`; Name-column re-sort link carries `per_page=50`. Invalid `?per_page=BOGUS&sort=BOGUS&dir=SIDEWAYS` URL → all three coerce to defaults; pagination links read `?per_page=10&sort=team&dir=asc&page=N`. 9 new tests (5 pure-unit on `_coerce_per_page` truth table + 4 view tests on default-10 / each-size-renders / select-marks-active / per-page-carries-in-links); 1 existing test renamed (`test_default_pagination_is_10_per_page` was `test_pagination_renders_50_per_page`); 2 existing tests updated to either pass `per_page=50` (preserves their 51-player fixture intent) or shrink the fixture to 15 (page-1-only assertions). Full pytest: 1489 passed (was 1480 → +9). |
+
+---
+
+## LG-01a mode picker landing + /leagues/ list
+
+Date: 2026-05-26. Server: `runserver --noreload` (http://127.0.0.1:8000). Branch: `lg-01a-mode-picker-landing`. Scope: new `/` landing (mode picker + in-progress League cards) and `/leagues/` index (active + archived tables, Create button).
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| LG01a-1 | ✅ | `/` empty state | `GET /` with zero Leagues → 200; 3 mode cards render (Sandbox / Single-player League / Multiplayer); `in-progress-leagues` section omitted entirely (no empty notice); zero console errors; only the doc + Bootstrap CSS/JS network requests (all 200). |
+| LG01a-2 | ✅ | `/leagues/` empty state | `GET /leagues/` with zero Leagues → 200; "Leagues" h1, "Create League" anchor present, "No Leagues yet." notice present; active/archived tables omitted; zero console errors. |
+| LG01a-3 | ✅ | Landing populated | Seeded 3 ChromeTest Leagues (Alpha id=6 active w/ Season 1; Bravo id=7 active no Season; Charlie id=8 archived). `GET /` shows "In Progress" section with Bravo card FIRST and Alpha SECOND (sorted `-id` confirmed in DOM). Bravo subtitle reads "No active season"; Alpha subtitle reads "Season: Season 1". Both cards link to `/leagues/<id>/` (deferred broken — LG-01c). Charlie (archived) NOT rendered on landing. |
+| LG01a-4 | ✅ | `/leagues/` populated | `GET /leagues/` renders Active table (Bravo, then Alpha — `-id` sort) AND Archived table (Charlie). Each row name links to `/leagues/<id>/`. Empty notice absent. `state-badge` cells visible per row. |
+| LG01a-5 | ✅ | Navbar brand → landing | Navbar `⚡ Laserforce Manager` brand href is `/` (verified via snapshot). Was `/teams/` pre-LG-01a. |
+| LG01a-6 | ✅ | Navbar Leagues nav link | New `<a id="leagues-nav-link">Leagues</a>` is the FIRST item in `navbar-nav` (before Teams). Verified on every page visited. |
+| LG01a-7 | ✅ | Sandbox card click | Click on `mode-card-sandbox` navigated to `/teams/` (matches `{% url 'team_list' %}` reverse — `team_list` correctly resolves to `/teams/` now that the duplicate-mount-at-root has been removed). |
+| LG01a-8 | ✅ | Multiplayer card disabled | `mode-card-multiplayer` rendered as a NON-anchor (no `<a>` wrapping it in the a11y snapshot — only a heading), visible "Coming soon" badge present, `aria-disabled="true"` in markup, visibly greyed via `opacity-50`. Clicking does nothing (no href). |
+| LG01a-9 | ℹ️ | Deferred `/leagues/<id>/` 404 | `GET /leagues/6/` → 404 cleanly (no template exception, no console errors). Known broken until LG-01c lands — scope-acknowledged in the seam contract. |
+| LG01a-10 | ℹ️ | Deferred `/leagues/create/` 404 | `GET /leagues/create/` → 404 cleanly. Known broken until LG-01b lands — scope-acknowledged. |
+| LG01a-11 | ✅ | Responsive mobile | 720×1115 screenshot: navbar collapses to hamburger toggler; 3 mode cards stack vertically; "In Progress" cards stack vertically. No layout overflow, no horizontal scroll. |
+
+**Overall:** LG-01a ships green. Landing + `/leagues/` index both render the empty AND populated states cleanly; `-id` sort verified in DOM order; mode-card click + navbar surfaces work; the two intentionally-deferred links (`/leagues/<id>/` to LG-01c, `/leagues/create/` to LG-01b) 404 cleanly without server-side exceptions, matching the seam-contract scope decision. Full pytest pre-smoke: 1602 passed, 1 xfailed, 1 xpassed (no regressions; +22 new LG-01a tests vs the pre-branch 1580).

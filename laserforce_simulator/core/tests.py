@@ -180,3 +180,168 @@ class MapListUploadFormTests(TestCase):
         # The text input must declare autocomplete (a map name is not
         # autofillable user data, so "off" is the right value).
         self.assertContains(response, 'autocomplete="off"')
+
+
+# ---------------------------------------------------------------------------
+# LG-01a — Landing view tests (mode picker + in-progress Leagues)
+# ---------------------------------------------------------------------------
+
+import re
+from datetime import date
+
+from django.urls import reverse
+
+
+class TestLandingView(TestCase):
+    """LG-01a — ``core.views.landing`` mode-picker landing page.
+
+    Pinned by the LG-01a seam contract; DOM ids and link semantics are
+    locked. The view is read-only and renders one of two states:
+    (a) empty in-progress section (no active Leagues), or
+    (b) one card per active League sorted ``-id``.
+    """
+
+    def _make_active_league(self, name: str = "Active League"):
+        from matches.models import League
+
+        return League.objects.create(name=name, state="active")
+
+    def _make_archived_league(self, name: str = "Archived League"):
+        from matches.models import League
+
+        return League.objects.create(name=name, state="archived")
+
+    def _attach_season(self, league, name: str = "Season 1"):
+        from matches.models import Season
+
+        return Season.objects.create(
+            league=league, name=name, start_date=date(2026, 1, 1)
+        )
+
+    def test_landing_get_returns_200_with_default_context(self) -> None:
+        response = self.client.get(reverse("landing"))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("in_progress_leagues", response.context)
+        # Iterable — list / queryset both work for the template loop.
+        iter(response.context["in_progress_leagues"])
+
+    def test_landing_renders_three_mode_card_dom_ids(self) -> None:
+        response = self.client.get(reverse("landing"))
+        self.assertContains(response, 'id="mode-card-sandbox"')
+        self.assertContains(response, 'id="mode-card-league"')
+        self.assertContains(response, 'id="mode-card-multiplayer"')
+
+    def test_landing_sandbox_card_links_to_team_list(self) -> None:
+        response = self.client.get(reverse("landing"))
+        body = response.content.decode()
+        match = re.search(r'<a[^>]*id="mode-card-sandbox"[^>]*href="([^"]+)"', body)
+        # Fallback: href may come before id attribute.
+        if match is None:
+            match = re.search(r'<a[^>]*href="([^"]+)"[^>]*id="mode-card-sandbox"', body)
+        self.assertIsNotNone(
+            match, "mode-card-sandbox anchor with href not found in body"
+        )
+        self.assertEqual(match.group(1), reverse("team_list"))
+
+    def test_landing_league_card_links_to_league_list(self) -> None:
+        response = self.client.get(reverse("landing"))
+        body = response.content.decode()
+        match = re.search(r'<a[^>]*id="mode-card-league"[^>]*href="([^"]+)"', body)
+        if match is None:
+            match = re.search(r'<a[^>]*href="([^"]+)"[^>]*id="mode-card-league"', body)
+        self.assertIsNotNone(
+            match, "mode-card-league anchor with href not found in body"
+        )
+        self.assertEqual(match.group(1), reverse("league_list"))
+
+    def test_landing_multiplayer_card_is_non_anchor_with_coming_soon_badge(
+        self,
+    ) -> None:
+        response = self.client.get(reverse("landing"))
+        body = response.content.decode()
+        # (a) DOM id present.
+        self.assertIn('id="mode-card-multiplayer"', body)
+        # (b) NOT wrapped in <a> — no <a ... id="mode-card-multiplayer">.
+        self.assertIsNone(
+            re.search(r'<a[^>]*id="mode-card-multiplayer"', body),
+            "mode-card-multiplayer must not be an anchor",
+        )
+        # (c) Coming soon badge text present.
+        self.assertIn("Coming soon", body)
+        # (d) aria-disabled="true" on the multiplayer card.
+        self.assertIn('aria-disabled="true"', body)
+
+    def test_landing_omits_in_progress_section_when_no_active_leagues(
+        self,
+    ) -> None:
+        response = self.client.get(reverse("landing"))
+        self.assertNotContains(response, 'id="in-progress-leagues"')
+
+    def test_landing_lists_active_leagues_as_cards_sorted_by_id_desc(
+        self,
+    ) -> None:
+        l1 = self._make_active_league("League One")
+        l2 = self._make_active_league("League Two")
+        response = self.client.get(reverse("landing"))
+        body = response.content.decode()
+        id1 = f'id="in-progress-league-card-{l1.id}"'
+        id2 = f'id="in-progress-league-card-{l2.id}"'
+        self.assertIn(id1, body)
+        self.assertIn(id2, body)
+        # Sorted by -id: L2 appears before L1.
+        self.assertLess(body.index(id2), body.index(id1))
+
+    def test_landing_in_progress_card_links_to_deferred_league_detail_url(
+        self,
+    ) -> None:
+        league = self._make_active_league("Linked League")
+        response = self.client.get(reverse("landing"))
+        # Deferred broken link to LG-01c — raw URL string.
+        self.assertContains(response, f'href="/leagues/{league.id}/"')
+
+    def test_landing_in_progress_card_shows_active_season_name_when_present(
+        self,
+    ) -> None:
+        league = self._make_active_league("With Season")
+        self._attach_season(league, name="Season 1")
+        response = self.client.get(reverse("landing"))
+        self.assertContains(response, "Season: Season 1")
+
+    def test_landing_in_progress_card_shows_no_active_season_subtitle_when_absent(
+        self,
+    ) -> None:
+        self._make_active_league("Seasonless")
+        response = self.client.get(reverse("landing"))
+        self.assertContains(response, "No active season")
+
+    def test_landing_excludes_archived_leagues_from_in_progress_section(
+        self,
+    ) -> None:
+        la = self._make_active_league("Active LA")
+        lz = self._make_archived_league("Archived LZ")
+        response = self.client.get(reverse("landing"))
+        body = response.content.decode()
+        self.assertIn(f'id="in-progress-league-card-{la.id}"', body)
+        self.assertNotIn(f'id="in-progress-league-card-{lz.id}"', body)
+
+    def test_root_url_reverses_to_landing_view(self) -> None:
+        self.assertEqual(reverse("landing"), "/")
+
+    def test_base_html_navbar_brand_links_to_landing_and_leagues_nav_link_present(
+        self,
+    ) -> None:
+        """Navbar regression — placed here (per the contract's choice
+        clause). The brand href must be ``/`` and the Leagues nav link
+        must be present in any view extending ``base.html``.
+        """
+        response = self.client.get(reverse("landing"))
+        body = response.content.decode()
+        # Leagues nav-link id present.
+        self.assertIn('id="leagues-nav-link"', body)
+        # Brand href is "/" — parse the navbar-brand anchor.
+        match = re.search(r'class="navbar-brand"[^>]*href="([^"]+)"', body)
+        if match is None:
+            # Fallback: href may come before class attribute.
+            match = re.search(r'href="([^"]+)"[^>]*class="navbar-brand"', body)
+        self.assertIsNotNone(match, "navbar-brand anchor with href not found in body")
+        self.assertEqual(match.group(1), "/")
