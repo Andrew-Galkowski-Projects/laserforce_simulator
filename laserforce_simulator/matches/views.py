@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from celery.result import AsyncResult
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
@@ -22,6 +23,7 @@ from .season_dashboard import (
     compute_leaders,
     find_next_fixture,
     round_progress,
+    select_play_fixtures,
 )
 from .standings import compute_standings
 from .simulation import BatchSimulator
@@ -32,7 +34,7 @@ from .forms import (
     BatchSimulateForm,
     CreateLeagueForm,
 )
-from .tasks import save_games_task, simulate_batch_task
+from .tasks import play_season_task, save_games_task, simulate_batch_task
 
 
 def _celery_state_to_job_status(state: str) -> str:
@@ -2236,7 +2238,12 @@ def league_dashboard(request, league_id: int) -> HttpResponse:
             season_mode = "none"
 
     body = _build_dashboard_context(displayed_season, season_mode)
-    context = {"league": league, **body}
+    context = {
+        "league": league,
+        **body,
+        "play_error": None,
+        "play_job_id": None,
+    }
     return render(request, "leagues/dashboard.html", context)
 
 
@@ -2297,5 +2304,245 @@ def season_dashboard(request, season_id: int) -> HttpResponse:
         **body,
         "sidebar_active": "overview",
         "sidebar_links": sidebar_links,
+        "play_error": None,
+        "play_job_id": None,
     }
     return render(request, "seasons/dashboard.html", context)
+
+
+# ---------------------------------------------------------------------------
+# LG-01d — Play Season views + helper
+# ---------------------------------------------------------------------------
+
+
+def _season_sidebar_links(season: Season) -> list[dict]:
+    """LG-01c sidebar shape, reused on LG-01d error re-render paths."""
+    return [
+        {
+            "key": "overview",
+            "label": "Overview",
+            "url": None,
+            "disabled": False,
+            "active": True,
+        },
+        {
+            "key": "standings",
+            "label": "Standings",
+            "url": reverse("season_standings", args=[season.id]),
+            "disabled": False,
+            "active": False,
+        },
+        {
+            "key": "schedule",
+            "label": "Schedule",
+            "url": reverse("season_schedule", args=[season.id]),
+            "disabled": False,
+            "active": False,
+        },
+        {
+            "key": "teams",
+            "label": "Teams",
+            "url": None,
+            "disabled": True,
+            "active": False,
+        },
+        {
+            "key": "history",
+            "label": "History",
+            "url": None,
+            "disabled": True,
+            "active": False,
+        },
+    ]
+
+
+def _render_season_dashboard_error(
+    request: "HttpRequest", season: Season, play_error: str
+) -> HttpResponse:
+    """LG-01d — re-render the Season dashboard with ``play_error`` set."""
+    season_mode = season.state
+    body = _build_dashboard_context(season, season_mode)
+    context = {
+        "season": season,
+        **body,
+        "sidebar_active": "overview",
+        "sidebar_links": _season_sidebar_links(season),
+        "play_error": play_error,
+        "play_job_id": None,
+    }
+    return render(request, "seasons/dashboard.html", context, status=400)
+
+
+def start_season(request, season_id: int) -> HttpResponse:
+    """LG-01d — POST entry point for the ``draft → active`` transition.
+
+    POST only. Idempotent on the "already active" double-submit race —
+    a ``ValidationError`` whose message contains the substring
+    ``"non-completed"`` (the LG-01 ``Season.clean()`` wording) is
+    swallowed and the user is redirected to the dashboard. Any other
+    ``ValidationError`` re-renders the Season dashboard with
+    ``play_error`` populated and HTTP 400.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    season = get_object_or_404(Season, pk=season_id)
+
+    try:
+        season.start_season()
+    except ValidationError as exc:
+        messages_list = getattr(exc, "messages", None) or [str(exc)]
+        joined = " ".join(messages_list)
+        season.refresh_from_db()
+        if "non-completed" in joined or season.state == "active":
+            return redirect("season_dashboard", season_id=season.id)
+        return _render_season_dashboard_error(request, season, str(exc))
+
+    return redirect("season_dashboard", season_id=season.id)
+
+
+def play_week(request, season_id: int) -> HttpResponse:
+    """LG-01d — POST entry point for Play One Week (one matchday).
+
+    Sync, single ``@transaction.atomic`` wrapping every Round in the
+    next unplayed matchday. On a Season already finished (no unplayed
+    fixtures) ⇒ idempotent 302 redirect. On a non-``active`` Season ⇒
+    400 + ``play_error``.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    season = get_object_or_404(Season, pk=season_id)
+
+    if season.state != "active":
+        return _render_season_dashboard_error(
+            request,
+            season,
+            f"Season must be active to play; got state={season.state!r}",
+        )
+
+    try:
+        with transaction.atomic():
+            fixtures = generate_schedule(
+                season.starting_team_ids_json or [], season.schedule_format
+            )
+            played_keys = {
+                (
+                    frozenset({gr.match.team_red_id, gr.match.team_blue_id}),
+                    gr.round_number,
+                )
+                for gr in GameRound.objects.filter(match__season=season).select_related(
+                    "match"
+                )
+            }
+            to_play = select_play_fixtures(fixtures, played_keys, 1)
+            if not to_play:
+                return redirect("season_dashboard", season_id=season.id)
+            team_ids = {f.team_a_id for f in to_play} | {f.team_b_id for f in to_play}
+            team_by_id = Team.objects.in_bulk(team_ids)
+            for fixture in to_play:
+                team_a = team_by_id[fixture.team_a_id]
+                team_b = team_by_id[fixture.team_b_id]
+                BatchSimulator().simulate_scheduled_round(
+                    season, team_a, team_b, fixture.round_number
+                )
+    except (ValidationError, ValueError) as exc:
+        return _render_season_dashboard_error(request, season, str(exc))
+
+    return redirect("season_dashboard", season_id=season.id)
+
+
+def play_two_months(request, season_id: int) -> HttpResponse:
+    """LG-01d — POST entry point for the Play Two Months async run.
+
+    Validates the Season is ``active`` (else 400 + ``play_error``), then
+    enqueues ``play_season_task.delay(season_id, max_matchdays=8)`` and
+    returns ``JsonResponse({"job_id", "season_id"}, status=202)``.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    season = get_object_or_404(Season, pk=season_id)
+
+    if season.state != "active":
+        return _render_season_dashboard_error(
+            request,
+            season,
+            f"Season must be active to play; got state={season.state!r}",
+        )
+
+    result = play_season_task.delay(season.id, max_matchdays=8)
+    return JsonResponse({"job_id": result.id, "season_id": season.id}, status=202)
+
+
+def play_until_end(request, season_id: int) -> HttpResponse:
+    """LG-01d — POST entry point for the Play Until End of Season async run."""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    season = get_object_or_404(Season, pk=season_id)
+
+    if season.state != "active":
+        return _render_season_dashboard_error(
+            request,
+            season,
+            f"Season must be active to play; got state={season.state!r}",
+        )
+
+    result = play_season_task.delay(season.id, max_matchdays=None)
+    return JsonResponse({"job_id": result.id, "season_id": season.id}, status=202)
+
+
+def _build_play_status_response(
+    async_result: AsyncResult,
+    *,
+    season_id: int,
+) -> dict:
+    """Assemble the locked 5-key polling JSON for a Play Season job.
+
+    Returns ``{"status", "completed", "total", "error", "season_id"}``
+    per the LG-01d seam contract §3.
+    """
+    state = async_result.state
+    status = _celery_state_to_job_status(state)
+
+    completed = 0
+    total = 0
+    error: str | None = None
+
+    if state == "PROGRESS":
+        info = async_result.info or {}
+        if isinstance(info, dict):
+            completed = int(info.get("completed", 0) or 0)
+            total = int(info.get("total", 0) or 0)
+    elif state == "SUCCESS":
+        result = async_result.result or {}
+        if isinstance(result, dict):
+            completed = int(result.get("completed", 0) or 0)
+            total = int(result.get("total", 0) or 0)
+    elif state in ("FAILURE", "REVOKED"):
+        info = async_result.info
+        if info is not None:
+            error = str(info)
+
+    return {
+        "status": status,
+        "completed": completed,
+        "total": total,
+        "error": error,
+        "season_id": season_id,
+    }
+
+
+def play_status(request, season_id: int, job_id: str) -> JsonResponse:
+    """LG-01d — Shared polling endpoint for both async play tasks.
+
+    GET only. Returns the locked 5-key polling JSON. The URL kwarg
+    ``season_id`` is authoritative; any ``?season_id=`` query param is
+    the carry pattern but the URL kwarg wins on disagreement.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    async_result = AsyncResult(job_id)
+    return JsonResponse(_build_play_status_response(async_result, season_id=season_id))

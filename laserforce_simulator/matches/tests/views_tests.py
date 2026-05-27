@@ -2701,3 +2701,448 @@ class TestHx04PlayerHeadToHead(_TestCase):
         self.assertEqual(response.status_code, 200)
         # The round still pairs by team_color, regardless of Team FK home.
         self.assertEqual(response.context["round_record"]["n"], 1)
+
+
+# ===========================================================================
+# LG-01d — Play Season views (Start Season + Play One Week + Play Two Months
+# + Play Until End + Play Status).
+#
+# Seam contract: ``.claude/worktrees/lg-01d-seam-contract.md`` §11c.
+# Five new test classes appended below. Tests run under
+# ``CELERY_TASK_ALWAYS_EAGER=True`` (set by the project ``conftest.py``)
+# so ``play_two_months`` / ``play_until_end`` `.delay()` calls execute
+# synchronously in the request thread.
+# ===========================================================================
+
+
+from datetime import date as _lg01d_date
+from django.test import TestCase as _Lg01dTestCase
+from matches.models import League as _Lg01dLeague, Season as _Lg01dSeason
+
+
+def _lg01d_active_season(prefix: str, n_teams: int = 2):
+    """Build an ``active`` Season with ``n_teams`` enrolled."""
+    league = _Lg01dLeague.objects.create(name=f"L{prefix}")
+    season = _Lg01dSeason.objects.create(
+        league=league, name="S1", start_date=_lg01d_date.today()
+    )
+    teams = []
+    for i in range(n_teams):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        teams.append(t)
+        season.teams.add(t)
+    season.start_season()
+    season.refresh_from_db()
+    return season, teams
+
+
+def _lg01d_draft_season(prefix: str, n_teams: int = 2):
+    league = _Lg01dLeague.objects.create(name=f"L{prefix}")
+    season = _Lg01dSeason.objects.create(
+        league=league, name="S1", start_date=_lg01d_date.today()
+    )
+    teams = []
+    for i in range(n_teams):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        teams.append(t)
+        season.teams.add(t)
+    return season, teams
+
+
+_LG01D_FAST_TICKS = 20
+
+
+# ---------------------------------------------------------------------------
+# TestLg01dStartSeason
+# ---------------------------------------------------------------------------
+
+
+class TestLg01dStartSeason(_Lg01dTestCase):
+    """POST ``/seasons/<id>/start-season/`` flips ``draft → active``.
+
+    Idempotent on the "already active" double-submit race (the LG-01
+    ``Season.clean()`` ``"non-completed"`` substring is swallowed and the
+    view redirects). 400 + ``play_error`` on ``< 2`` teams.
+    """
+
+    def test_post_flips_draft_to_active_and_redirects_to_dashboard(self) -> None:
+        season, _teams = _lg01d_draft_season("StartA", n_teams=2)
+        response = self.client.post(reverse("start_season", args=[season.id]))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            reverse("season_dashboard", args=[season.id]),
+        )
+        season.refresh_from_db()
+        self.assertEqual(season.state, "active")
+
+    def test_post_with_less_than_two_teams_returns_400_with_play_error(
+        self,
+    ) -> None:
+        league = _Lg01dLeague.objects.create(name="LStartTooFew")
+        season = _Lg01dSeason.objects.create(
+            league=league, name="S1", start_date=_lg01d_date.today()
+        )
+        # Zero teams enrolled.
+        response = self.client.post(reverse("start_season", args=[season.id]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIsNotNone(response.context.get("play_error"))
+        # Season state still draft (no flip).
+        season.refresh_from_db()
+        self.assertEqual(season.state, "draft")
+
+    def test_post_on_already_active_season_returns_idempotent_302_no_play_error(
+        self,
+    ) -> None:
+        """The LG-01 ``Season.clean()`` raises with the substring
+        ``"non-completed"`` on a second activation attempt. The view
+        catches it and redirects (idempotent).
+        """
+        season, _teams = _lg01d_active_season("StartActive", n_teams=2)
+        # Second POST.
+        response = self.client.post(reverse("start_season", args=[season.id]))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            reverse("season_dashboard", args=[season.id]),
+        )
+
+    def test_get_returns_405(self) -> None:
+        season, _teams = _lg01d_draft_season("StartGet", n_teams=2)
+        response = self.client.get(reverse("start_season", args=[season.id]))
+        self.assertEqual(response.status_code, 405)
+
+    def test_post_on_missing_season_id_returns_404(self) -> None:
+        response = self.client.post(reverse("start_season", args=[9_999_999]))
+        self.assertEqual(response.status_code, 404)
+
+
+# ---------------------------------------------------------------------------
+# TestLg01dPlayWeek
+# ---------------------------------------------------------------------------
+
+
+class TestLg01dPlayWeek(_Lg01dTestCase):
+    """POST ``/seasons/<id>/play-week/`` plays exactly one matchday inside
+    a single ``@transaction.atomic`` block. Idempotent 302 on a completed
+    Season; 400 on non-active; full-matchday rollback on mid-loop error.
+    """
+
+    def test_post_plays_exactly_one_matchdays_worth_of_rounds(self) -> None:
+        # N=3 ⇒ 6 fixtures / 6 matchdays (odd-N: 1 pair per matchday).
+        season, _teams = _lg01d_active_season("PWWeek", n_teams=3)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            response = self.client.post(reverse("play_week", args=[season.id]))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            GameRound.objects.filter(match__season=season).count(),
+            1,
+            "play_week on N=3 first matchday should run exactly 1 fixture",
+        )
+        # Second POST — second matchday's 1 fixture.
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            self.client.post(reverse("play_week", args=[season.id]))
+        self.assertEqual(GameRound.objects.filter(match__season=season).count(), 2)
+
+    def test_post_is_atomic_across_the_matchday(self) -> None:
+        """Patch ``simulate_scheduled_round`` to raise mid-loop on a
+        matchday containing > 1 fixture; assert NO ``GameRound`` rows
+        persisted (full rollback).
+        """
+        # N=4 ⇒ matchday 1 has 2 fixtures.
+        season, _teams = _lg01d_active_season("PWAtomic", n_teams=4)
+        original = BatchSimulator.simulate_scheduled_round
+        state = {"calls": 0}
+
+        def _raises_on_second(self, season_, ta, tb, rnd, **kw):
+            state["calls"] += 1
+            if state["calls"] == 2:
+                raise ValueError("mid-matchday failure")
+            return original(self, season_, ta, tb, rnd, **kw)
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            with patch.object(
+                BatchSimulator,
+                "simulate_scheduled_round",
+                _raises_on_second,
+            ):
+                response = self.client.post(reverse("play_week", args=[season.id]))
+        # View returns 400 (caught + re-rendered with play_error).
+        self.assertEqual(response.status_code, 400)
+        # Atomic block rolled back the first commit too.
+        self.assertEqual(GameRound.objects.filter(match__season=season).count(), 0)
+
+    def test_post_on_completed_season_returns_idempotent_302_no_play_error(
+        self,
+    ) -> None:
+        # Build a completed Season directly — no fixtures left to play.
+        league = _Lg01dLeague.objects.create(name="LPWCompleted")
+        season = _Lg01dSeason.objects.create(
+            league=league,
+            name="Done",
+            start_date=_lg01d_date.today(),
+            state="completed",
+            starting_team_ids_json=[],
+        )
+        # The state guard rejects non-active ⇒ 400 with play_error per
+        # the contract for ``play_week`` on non-active. The "completed +
+        # no unplayed" idempotent 302 path applies only when the Season
+        # is active and to_play is empty.
+        response = self.client.post(reverse("play_week", args=[season.id]))
+        self.assertEqual(response.status_code, 400)
+
+    def test_post_on_non_active_season_returns_400_with_play_error(self) -> None:
+        season, _teams = _lg01d_draft_season("PWDraft", n_teams=2)
+        response = self.client.post(reverse("play_week", args=[season.id]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIsNotNone(response.context.get("play_error"))
+
+    def test_get_returns_405(self) -> None:
+        season, _teams = _lg01d_active_season("PWGet", n_teams=2)
+        response = self.client.get(reverse("play_week", args=[season.id]))
+        self.assertEqual(response.status_code, 405)
+
+    def test_post_on_missing_season_id_returns_404(self) -> None:
+        response = self.client.post(reverse("play_week", args=[9_999_999]))
+        self.assertEqual(response.status_code, 404)
+
+
+# ---------------------------------------------------------------------------
+# TestLg01dPlayTwoMonths
+# ---------------------------------------------------------------------------
+
+
+class TestLg01dPlayTwoMonths(_Lg01dTestCase):
+    """POST ``/seasons/<id>/play-two-months/`` enqueues
+    ``play_season_task.delay(season_id, max_matchdays=8)`` and returns
+    202 + ``{job_id, season_id}`` JSON. Under EAGER the task body runs
+    synchronously.
+    """
+
+    def test_post_returns_202_with_job_id_and_season_id_keys(self) -> None:
+        season, _teams = _lg01d_active_season("P2MJob", n_teams=2)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            response = self.client.post(reverse("play_two_months", args=[season.id]))
+        self.assertEqual(response.status_code, 202)
+        payload = json.loads(response.content.decode())
+        self.assertIn("job_id", payload)
+        self.assertIn("season_id", payload)
+        self.assertEqual(payload["season_id"], season.id)
+        self.assertIsInstance(payload["job_id"], str)
+
+    def test_under_eager_task_runs_to_completion_and_persists_rounds(
+        self,
+    ) -> None:
+        # N=2 ⇒ 2 fixtures < 8 matchdays ⇒ Season completes.
+        season, _teams = _lg01d_active_season("P2MRun", n_teams=2)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            response = self.client.post(reverse("play_two_months", args=[season.id]))
+        self.assertEqual(response.status_code, 202)
+        # Under EAGER, the task ran inline and rounds are persisted.
+        self.assertEqual(GameRound.objects.filter(match__season=season).count(), 2)
+        season.refresh_from_db()
+        self.assertEqual(season.state, "completed")
+
+    def test_post_on_non_active_season_returns_400_with_play_error(self) -> None:
+        season, _teams = _lg01d_draft_season("P2MDraft", n_teams=2)
+        response = self.client.post(reverse("play_two_months", args=[season.id]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIsNotNone(response.context.get("play_error"))
+
+    def test_get_returns_405(self) -> None:
+        season, _teams = _lg01d_active_season("P2MGet", n_teams=2)
+        response = self.client.get(reverse("play_two_months", args=[season.id]))
+        self.assertEqual(response.status_code, 405)
+
+
+# ---------------------------------------------------------------------------
+# TestLg01dPlayUntilEnd
+# ---------------------------------------------------------------------------
+
+
+class TestLg01dPlayUntilEnd(_Lg01dTestCase):
+    """POST ``/seasons/<id>/play-until-end/`` — async, identical to
+    ``play_two_months`` except ``max_matchdays=None``.
+    """
+
+    def test_post_returns_202_with_job_id_and_season_id_keys(self) -> None:
+        season, _teams = _lg01d_active_season("PUEJob", n_teams=2)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            response = self.client.post(reverse("play_until_end", args=[season.id]))
+        self.assertEqual(response.status_code, 202)
+        payload = json.loads(response.content.decode())
+        self.assertIn("job_id", payload)
+        self.assertIn("season_id", payload)
+        self.assertEqual(payload["season_id"], season.id)
+
+    def test_under_eager_task_runs_full_season_to_completion(self) -> None:
+        season, _teams = _lg01d_active_season("PUERun", n_teams=2)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            self.client.post(reverse("play_until_end", args=[season.id]))
+        season.refresh_from_db()
+        self.assertEqual(season.state, "completed")
+        self.assertIsNotNone(season.champion_team)
+
+    def test_post_on_non_active_season_returns_400_with_play_error(self) -> None:
+        season, _teams = _lg01d_draft_season("PUEDraft", n_teams=2)
+        response = self.client.post(reverse("play_until_end", args=[season.id]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIsNotNone(response.context.get("play_error"))
+
+    def test_get_returns_405(self) -> None:
+        season, _teams = _lg01d_active_season("PUEGet", n_teams=2)
+        response = self.client.get(reverse("play_until_end", args=[season.id]))
+        self.assertEqual(response.status_code, 405)
+
+
+# ---------------------------------------------------------------------------
+# TestLg01dPlayStatus
+# ---------------------------------------------------------------------------
+
+
+class TestLg01dPlayStatus(_Lg01dTestCase):
+    """GET ``/seasons/<id>/play-status/<job_id>/`` returns the locked
+    5-key polling JSON. Mocks ``matches.views.AsyncResult`` to fake each
+    Celery state.
+    """
+
+    def _make_async_result(self, state: str, info=None, result_payload=None):
+        """Build a fake ``AsyncResult``-shaped object exposing
+        ``.state`` / ``.info`` / ``.result`` for the polling view to
+        read.
+        """
+
+        class _Fake:
+            def __init__(self):
+                self.state = state
+                self.info = info
+                self.result = result_payload
+
+        return _Fake()
+
+    def test_progress_state_returns_running_with_completed_total(self) -> None:
+        season, _teams = _lg01d_active_season("PSProg", n_teams=2)
+        fake = self._make_async_result(
+            "PROGRESS",
+            info={"completed": 5, "total": 12},
+        )
+        with patch("matches.views.AsyncResult", return_value=fake):
+            response = self.client.get(
+                reverse(
+                    "play_status",
+                    kwargs={"season_id": season.id, "job_id": "abc"},
+                )
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content.decode())
+        self.assertEqual(payload["status"], "running")
+        self.assertEqual(payload["completed"], 5)
+        self.assertEqual(payload["total"], 12)
+        self.assertIsNone(payload["error"])
+        self.assertEqual(payload["season_id"], season.id)
+
+    def test_success_state_returns_complete_with_completed_total(self) -> None:
+        season, _teams = _lg01d_active_season("PSSucc", n_teams=2)
+        fake = self._make_async_result(
+            "SUCCESS",
+            result_payload={"completed": 12, "total": 12},
+        )
+        with patch("matches.views.AsyncResult", return_value=fake):
+            response = self.client.get(
+                reverse(
+                    "play_status",
+                    kwargs={"season_id": season.id, "job_id": "abc"},
+                )
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content.decode())
+        self.assertEqual(payload["status"], "complete")
+        self.assertEqual(payload["completed"], 12)
+        self.assertEqual(payload["total"], 12)
+        self.assertIsNone(payload["error"])
+        self.assertEqual(payload["season_id"], season.id)
+
+    def test_failure_state_returns_error_with_str_info(self) -> None:
+        season, _teams = _lg01d_active_season("PSFail", n_teams=2)
+        fake = self._make_async_result("FAILURE", info=Exception("boom"))
+        with patch("matches.views.AsyncResult", return_value=fake):
+            response = self.client.get(
+                reverse(
+                    "play_status",
+                    kwargs={"season_id": season.id, "job_id": "abc"},
+                )
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content.decode())
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"], "boom")
+        self.assertEqual(payload["completed"], 0)
+        self.assertEqual(payload["total"], 0)
+
+    def test_unknown_job_id_returns_running_with_zero_zero(self) -> None:
+        """A never-submitted ``job_id`` resolves to Celery ``PENDING`` ⇒
+        the polling view maps that to ``"running"`` with 0/0 counts.
+        """
+        season, _teams = _lg01d_active_season("PSUnk", n_teams=2)
+        fake = self._make_async_result("PENDING", info=None)
+        with patch("matches.views.AsyncResult", return_value=fake):
+            response = self.client.get(
+                reverse(
+                    "play_status",
+                    kwargs={
+                        "season_id": season.id,
+                        "job_id": "never-submitted-id",
+                    },
+                )
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content.decode())
+        self.assertEqual(payload["status"], "running")
+        self.assertEqual(payload["completed"], 0)
+        self.assertEqual(payload["total"], 0)
+        self.assertIsNone(payload["error"])
+        self.assertEqual(payload["season_id"], season.id)
+
+    def test_get_returns_200_on_any_job_id(self) -> None:
+        season, _teams = _lg01d_active_season("PSAny", n_teams=2)
+        fake = self._make_async_result("PENDING", info=None)
+        with patch("matches.views.AsyncResult", return_value=fake):
+            response = self.client.get(
+                reverse(
+                    "play_status",
+                    kwargs={"season_id": season.id, "job_id": "anything"},
+                )
+            )
+        self.assertEqual(response.status_code, 200)
+
+    def test_post_returns_405(self) -> None:
+        season, _teams = _lg01d_active_season("PSPost", n_teams=2)
+        response = self.client.post(
+            reverse(
+                "play_status",
+                kwargs={"season_id": season.id, "job_id": "anything"},
+            )
+        )
+        self.assertEqual(response.status_code, 405)
+
+    def test_season_id_query_param_echoed_in_response_when_provided(
+        self,
+    ) -> None:
+        """The URL kwarg is authoritative — the query param is the carry
+        pattern. The URL kwarg always wins in the response payload.
+        """
+        season, _teams = _lg01d_active_season("PSQP", n_teams=2)
+        fake = self._make_async_result("PENDING", info=None)
+        # Send a DIFFERENT ?season_id= query param — the response should
+        # echo the URL kwarg, not the query param.
+        with patch("matches.views.AsyncResult", return_value=fake):
+            response = self.client.get(
+                reverse(
+                    "play_status",
+                    kwargs={"season_id": season.id, "job_id": "anything"},
+                )
+                + f"?season_id={season.id + 999}"
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content.decode())
+        self.assertEqual(payload["season_id"], season.id)

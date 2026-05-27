@@ -85,3 +85,77 @@ def save_games_task(
         return {"round_ids": [gr.id for gr in game_rounds]}
     finally:
         django.db.close_old_connections()
+
+
+@shared_task(bind=True, name="matches.play_season")
+def play_season_task(
+    self,
+    season_id: int,
+    max_matchdays: int | None = None,
+) -> dict:
+    """LG-01d — Drive the Play Two Months / Play Until End async run.
+
+    Loads the Season, materialises fixtures via ``generate_schedule``,
+    builds ``played_keys`` from persisted ``GameRound``s, calls the pure
+    ``select_play_fixtures(fixtures, played_keys, max_matchdays)`` to
+    decide which Rounds to play, then loops calling
+    ``BatchSimulator().simulate_scheduled_round(...)`` per fixture with
+    a ``self.update_state(state="PROGRESS", meta={"completed": k+1,
+    "total": n})`` after each Round.
+
+    Per-Round commits — the task body has NO outer ``@transaction.atomic``
+    wrapper. ``simulate_scheduled_round`` is already
+    ``@transaction.atomic`` so each Round is its own transactional unit.
+    A mid-loop exception propagates (Celery records ``FAILURE``); every
+    completed Round survives because it was its own atomic commit. See
+    ADR-0016 for the load-bearing decision.
+
+    Returns:
+        ``{"completed": n, "total": n}`` on success (``n = len(to_play)``).
+    """
+    import django.db
+
+    try:
+        from matches.models import GameRound, Season
+        from matches.schedule_generator import generate_schedule
+        from matches.season_dashboard import select_play_fixtures
+        from matches.simulation import BatchSimulator
+        from teams.models import Team
+
+        season = Season.objects.get(id=season_id)
+
+        fixtures = generate_schedule(
+            season.starting_team_ids_json or [], season.schedule_format
+        )
+        played_keys = {
+            (
+                frozenset({gr.match.team_red_id, gr.match.team_blue_id}),
+                gr.round_number,
+            )
+            for gr in GameRound.objects.filter(match__season=season).select_related(
+                "match"
+            )
+        }
+        to_play = select_play_fixtures(fixtures, played_keys, max_matchdays)
+        n = len(to_play)
+
+        if n == 0:
+            return {"completed": 0, "total": 0}
+
+        team_ids = {f.team_a_id for f in to_play} | {f.team_b_id for f in to_play}
+        team_by_id = Team.objects.in_bulk(team_ids)
+
+        for k, fixture in enumerate(to_play):
+            team_a = team_by_id[fixture.team_a_id]
+            team_b = team_by_id[fixture.team_b_id]
+            BatchSimulator().simulate_scheduled_round(
+                season, team_a, team_b, fixture.round_number
+            )
+            self.update_state(
+                state="PROGRESS",
+                meta={"completed": k + 1, "total": n},
+            )
+
+        return {"completed": n, "total": n}
+    finally:
+        django.db.close_old_connections()
