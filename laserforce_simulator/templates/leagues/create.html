@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}Create League{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Create League</h1>
+    <p>
+        Generate a new League with auto-rostered Teams and a draft Season.
+        Pick the team count and stat distribution, then start the Season
+        from its standings page.
+    </p>
+
+    <form method="post" id="league-create-form">
+        {% csrf_token %}
+
+        <div class="mb-3">
+            <label for="league-create-league-name" class="form-label">League name</label>
+            {{ form.league_name }}
+            {{ form.league_name.errors }}
+        </div>
+
+        <div class="mb-3">
+            <label for="league-create-season-name" class="form-label">Season name</label>
+            {{ form.season_name }}
+            {{ form.season_name.errors }}
+        </div>
+
+        <div class="mb-3">
+            <label for="league-create-start-date" class="form-label">Start date</label>
+            {{ form.start_date }}
+            {{ form.start_date.errors }}
+        </div>
+
+        <div class="mb-3">
+            <label for="league-create-num-teams" class="form-label">Number of teams</label>
+            {{ form.num_teams }}
+            {{ form.num_teams.errors }}
+        </div>
+
+        <div class="mb-3">
+            <label for="league-create-schedule-format" class="form-label">Schedule format</label>
+            {{ form.schedule_format }}
+            <div class="form-text">
+                Only single round-robin is supported in this release.
+            </div>
+            {{ form.schedule_format.errors }}
+        </div>
+
+        <div class="row g-2 mb-3">
+            <div class="col-sm-3">
+                <label for="league-create-mean" class="form-label">Stat mean</label>
+                {{ form.mean }}
+                {{ form.mean.errors }}
+            </div>
+            <div class="col-sm-3">
+                <label for="league-create-std-dev" class="form-label">Stat standard deviation</label>
+                {{ form.std_dev }}
+                {{ form.std_dev.errors }}
+            </div>
+        </div>
+
+        {% if form.non_field_errors %}
+            <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+        {% endif %}
+
+        <button type="submit" id="league-create-submit" class="btn btn-primary">Create League</button>
+        <a href="/leagues/" class="btn btn-secondary">Cancel</a>
+    </form>
+</div>
+{% endblock %}
