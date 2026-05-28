@@ -1,6 +1,7 @@
 import math as _math
 import random
 import logging
+from dataclasses import asdict
 from typing import Iterator, Optional
 from django.db import transaction
 from .models import GameEvent, Match, GameRound, PlayerRoundState
@@ -234,8 +235,10 @@ def _apply_score_broadcast(
     ResourceBasedSimulator passes its seconds-domain cadence (180) explicitly so
     its internal behaviour stays byte-identical.
     """
-    red_pts = sum(p.points_scored for p in all_alive if p.team_color == "red")
-    blue_pts = sum(p.points_scored for p in all_alive if p.team_color == "blue")
+    red_pts = sum(p.counters.points_scored for p in all_alive if p.team_color == "red")
+    blue_pts = sum(
+        p.counters.points_scored for p in all_alive if p.team_color == "blue"
+    )
     if red_pts > blue_pts:
         winning_team = "red"
     elif blue_pts > red_pts:
@@ -1641,8 +1644,8 @@ class BatchSimulator:
                 if accounted < TICKS_PER_ROUND:
                     p.ticks_active += TICKS_PER_ROUND - accounted
 
-        red_points = sum(p.points_scored for p in red_players)
-        blue_points = sum(p.points_scored for p in blue_players)
+        red_points = sum(p.counters.points_scored for p in red_players)
+        blue_points = sum(p.counters.points_scored for p in blue_players)
         red_survivors = sum(1 for p in red_players if p.final_lives > 0)
         blue_survivors = sum(1 for p in blue_players if p.final_lives > 0)
         result = {
@@ -1948,9 +1951,9 @@ class BatchSimulator:
         # result='miss' from the caller.
         if attacker.is_active_at(second) and defender.is_taggable_at(second):
             if not defender.is_active_at(second) and defender.is_taggable_at(second):
-                defender.times_tagged_in_reset_window += 1
+                defender.counters.times_tagged_in_reset_window += 1
             defender.shields = defender.max_shields
-            defender.points_scored -= 100
+            defender.counters.points_scored -= 100
             defender.final_lives = max(0, defender.final_lives - 2)
             if defender.final_lives <= 0:
                 defender.was_eliminated_at = second
@@ -1959,12 +1962,12 @@ class BatchSimulator:
                         attacker, defender, int(second), action="missile"
                     )
             record_down(defender, second, ctx)
-            defender.times_missiled += 1
+            defender.counters.times_missiled += 1
 
-            attacker.points_scored += 500
-            attacker.missile_points += 500
+            attacker.counters.points_scored += 500
+            attacker.counters.missile_points += 500
             attacker.final_missiles -= 1
-            attacker.missiles_landed += 1
+            attacker.counters.missiles_landed += 1
             if attacker.role != "heavy":
                 attacker.final_special = min(
                     attacker.max_special, attacker.final_special + 2
@@ -1985,7 +1988,7 @@ class BatchSimulator:
             and player.is_active_at(second)
         ):
             return None
-        player.specials_used += 1
+        player.counters.specials_used += 1
         if player.role == "commander":
             player.final_special -= player.special_cost
             # TIME-01: nuke fuse is 4-7 s -> 8-14 ticks (tick-native).
@@ -2035,7 +2038,7 @@ class BatchSimulator:
                                 "lives_delta": delta,
                                 "shots": m.final_shots,
                                 "lives": m.final_lives,
-                                "points": m.points_scored,
+                                "points": m.counters.points_scored,
                             }
                             for m, delta in healed_mates
                         ],
@@ -2073,7 +2076,7 @@ class BatchSimulator:
                                 "shots_delta": delta,
                                 "shots": m.final_shots,
                                 "lives": m.final_lives,
-                                "points": m.points_scored,
+                                "points": m.counters.points_scored,
                             }
                             for m, delta in resupplied_mates
                         ],
@@ -2089,7 +2092,7 @@ class BatchSimulator:
         ctx: RoundContext | None = None,
     ):
         if player.is_active_at(second) and player.final_lives > 0:
-            player.points_scored += 500
+            player.counters.points_scored += 500
             if ctx is not None:
                 # RES-02b: build per-opp post-detonation snapshots BEFORE the
                 # mutation loop so the detonation special event can carry the
@@ -2107,7 +2110,7 @@ class BatchSimulator:
                             "lives_delta": -lives_taken,
                             "shots": opp.final_shots,
                             "lives": opp.final_lives - lives_taken,
-                            "points": opp.points_scored,
+                            "points": opp.counters.points_scored,
                         }
                     )
                 ctx.events.special(
@@ -2306,24 +2309,21 @@ class BatchSimulator:
                 opposing_base_destroyed=p.opposing_base_destroyed,
                 special_active_until=p.special_active_until or 0,
                 is_hiding=p.is_hiding,
-                points_scored=p.points_scored,
-                tags_made=p.tags_made,
                 final_medic_hits=p.medic_hits,
-                shots_missed=p.shots_missed,
-                times_tagged=p.times_tagged,
-                times_missiled=p.times_missiled,
-                missiles_landed=p.missiles_landed,
-                missile_points=p.missile_points,
-                resupplies_given=p.resupplies_given,
-                combo_resupply_count=p.combo_resupply_count,
-                specials_used=p.specials_used,
-                times_tagged_in_reset_window=p.times_tagged_in_reset_window,
-                follow_up_shots=p.follow_up_shots,
-                reaction_shots=p.reaction_shots,
                 ticks_active=p.ticks_active,
                 ticks_not_targetable=p.ticks_not_targetable,
                 ticks_reset_window=p.ticks_reset_window,
                 was_eliminated_at=p.was_eliminated_at,
+                # 18 counter columns splatted from PlayerCounters (ADR-0018):
+                # points_scored, tags_made, shots_missed, times_tagged,
+                # specials_used, own_specials_cancelled, enemy_nuke_cancels,
+                # ally_nuke_cancels, medic_lives_removed_from_nuke,
+                # lives_lost_to_nukes, missiles_landed, times_missiled,
+                # resupplies_given, combo_resupply_count,
+                # times_tagged_in_reset_window, follow_up_shots,
+                # reaction_shots, missile_points. The 5 nuke counters are
+                # always 0 today (no simulator writer); behaviour-neutral.
+                **asdict(p.counters),
             )
 
         # Create GameEvent rows

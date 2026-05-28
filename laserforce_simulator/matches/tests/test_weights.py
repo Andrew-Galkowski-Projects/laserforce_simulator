@@ -734,7 +734,13 @@ def _make_player_state(role, **kwargs):
     defaults to 5 (missiles exhausted) so the Heavy/Commander missile branch does
     not fire unless a test opts in; the missile-available branch is exercised by
     the explicit ``missiles_landed=0`` edge state below.
+
+    Counter kwargs (``missiles_landed`` and friends) are routed through
+    ``PlayerCounters`` per ADR-0018.
     """
+    from matches.sim_helpers.player_counters import PlayerCounters
+
+    counter_fields = set(PlayerCounters.__dataclass_fields__)
     defaults = dict(
         tag_id=f"red_{role}",
         name=role.title(),
@@ -750,7 +756,11 @@ def _make_player_state(role, **kwargs):
         missiles_landed=5,
     )
     defaults.update(kwargs)
-    return PlayerState(**defaults)
+    counter_kwargs = {k: defaults.pop(k) for k in list(defaults) if k in counter_fields}
+    state = PlayerState(**defaults)
+    for name, value in counter_kwargs.items():
+        setattr(state.counters, name, value)
+    return state
 
 
 # Targeted edge states. Each value is a dict of PlayerState kwarg overrides.

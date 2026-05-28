@@ -442,9 +442,11 @@ class TestStructuralInvariants(_SeededRoundMixin):
         _, red_players, blue_players = self._run_round("T01Struct")
         for p in red_players + blue_players:
             assert (
-                p.points_scored >= 0
-            ), f"{p.tag_id} points_scored={p.points_scored} < 0"
-            assert p.tags_made >= 0, f"{p.tag_id} tags_made={p.tags_made} < 0"
+                p.counters.points_scored >= 0
+            ), f"{p.tag_id} points_scored={p.counters.points_scored} < 0"
+            assert (
+                p.counters.tags_made >= 0
+            ), f"{p.tag_id} tags_made={p.counters.tags_made} < 0"
 
     def test_eliminations_per_team_within_roster_size(self):
         _, red_players, blue_players = self._run_round("T01StructElim")

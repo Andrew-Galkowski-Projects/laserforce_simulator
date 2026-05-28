@@ -43,12 +43,17 @@ from typing import Optional
 
 
 def _actor_meta(actor) -> dict:
-    """5-key actor-snapshot block: role / shots / lives / points / sp."""
+    """5-key actor-snapshot block: role / shots / lives / points / sp.
+
+    Reads ``actor.counters.points_scored`` (the in-memory PlayerCounters
+    bundle introduced by ADR-0018 candidate); analytics readers on the
+    PRS side use the flat ``prs.points_scored`` column unchanged.
+    """
     return {
         "actor_role": actor.role,
         "actor_shots": actor.final_shots,
         "actor_lives": actor.final_lives,
-        "actor_points": actor.points_scored,
+        "actor_points": actor.counters.points_scored,
         "sp": actor.final_special,
     }
 
@@ -59,7 +64,7 @@ def _target_meta(target) -> dict:
         "target_role": target.role,
         "target_shots": target.final_shots,
         "target_lives": target.final_lives,
-        "target_points": target.points_scored,
+        "target_points": target.counters.points_scored,
     }
 
 

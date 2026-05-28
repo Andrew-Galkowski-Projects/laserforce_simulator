@@ -202,12 +202,12 @@ class Command(BaseCommand):
                     red_roster, blue_roster, movement_ctx=movement_ctx
                 )
                 for p in red_players + blue_players:
-                    role_scores[p.role].append(p.points_scored)
-                    role_tags[p.role].append(p.tags_made)
-                    role_tagged[p.role].append(p.times_tagged)
-                    role_missile_pts[p.role].append(p.missile_points)
+                    role_scores[p.role].append(p.counters.points_scored)
+                    role_tags[p.role].append(p.counters.tags_made)
+                    role_tagged[p.role].append(p.counters.times_tagged)
+                    role_missile_pts[p.role].append(p.counters.missile_points)
                     role_reset_window_tags[p.role].append(
-                        p.times_tagged_in_reset_window
+                        p.counters.times_tagged_in_reset_window
                     )
                     # TIME-01: PlayerState now accumulates tick-valued uptime;
                     # aggregate in ticks, divide by 2 at the display boundary.
@@ -220,8 +220,8 @@ class Command(BaseCommand):
                         else 0
                     )
                     role_ticks_dead[p.role].append(dead)
-                    role_follow_up_shots[p.role].append(p.follow_up_shots)
-                    role_reaction_shots[p.role].append(p.reaction_shots)
+                    role_follow_up_shots[p.role].append(p.counters.follow_up_shots)
+                    role_reaction_shots[p.role].append(p.counters.reaction_shots)
 
         # ── Score summary ────────────────────────────────────────────────────
         self.stdout.write(

@@ -450,7 +450,7 @@ def attempt_resupply(
 ) -> None:
     """Apply a resupply action from tagger to teammate.
 
-    Mutates tagger.resupplies_given and the teammate's resource counters.
+    Mutates tagger.counters.resupplies_given and the teammate's resource counters.
     Clears any active commander nuke (special_active_until) on the teammate
     when resupplied.
 
@@ -468,7 +468,7 @@ def attempt_resupply(
         if teammate.role == "commander" and teammate.special_active_until > second:
             teammate.special_active_until = 0
         tagger.last_tagged_id = teammate.tag_id_key
-        tagger.resupplies_given += 1
+        tagger.counters.resupplies_given += 1
         ctx.events.resupply_ammo(tagger, teammate, second, amount=amount)
     elif (
         tagger.role == "medic"
@@ -484,7 +484,7 @@ def attempt_resupply(
         if teammate.role == "commander" and teammate.special_active_until > second:
             teammate.special_active_until = 0
         tagger.last_tagged_id = teammate.tag_id_key
-        tagger.resupplies_given += 1
+        tagger.counters.resupplies_given += 1
         ctx.events.resupply_lives(tagger, teammate, second, amount=amount)
 
 
@@ -526,7 +526,7 @@ def capture_base(
             player.neutral_base_destroyed = True
         else:
             player.opposing_base_destroyed = True
-        player.points_scored += 1001
+        player.counters.points_scored += 1001
         if player.role != "heavy":
             player.final_special = min(player.max_special, player.final_special + 5)
         ctx.events.base_capture(
@@ -535,7 +535,7 @@ def capture_base(
             base_id=base_id,
             metadata_extras={
                 "shots_remaining": player.final_shots,
-                "points_scored": player.points_scored,
+                "points_scored": player.counters.points_scored,
             },
         )
         return True
@@ -557,7 +557,7 @@ def award_bases(
     if player.final_lives <= 0:
         return
     if not player.neutral_base_destroyed:
-        player.points_scored += 1001
+        player.counters.points_scored += 1001
         player.neutral_base_destroyed = True
         ctx.events.base_capture(
             player,
@@ -566,7 +566,7 @@ def award_bases(
             description=f"{player.name} awarded neutral base",
         )
     if not player.opposing_base_destroyed:
-        player.points_scored += 1001
+        player.counters.points_scored += 1001
         player.opposing_base_destroyed = True
         opp_base_id = 14 if player.team_color == "red" else 13
         ctx.events.base_capture(

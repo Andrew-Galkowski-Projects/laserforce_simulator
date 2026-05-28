@@ -192,7 +192,7 @@ def resolve_resupply_requests(
                 attempt_resupply(medic, requestor, second, ctx=ctx)
                 requestor.last_downed_time = saved_downed_time
                 attempt_resupply(ammo, requestor, second, ctx=ctx)
-                requestor.combo_resupply_count += 1
+                requestor.counters.combo_resupply_count += 1
                 medic.last_shot_time = second
                 ammo.last_shot_time = second
                 # RES-02b: combo_resupply carries the medic actor +

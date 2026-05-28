@@ -937,10 +937,10 @@ class TestMap04BaseInteraction:
                 "blue": frozenset({"9,9", "9,8"}),  # player is at 5,5 — not in range
             }
         )
-        initial_points = player.points_scored
+        initial_points = player.counters.points_scored
         BatchSimulator()._capture_base(player, 14, movement_ctx=ctx)
         assert (
-            player.points_scored == initial_points
+            player.counters.points_scored == initial_points
         ), "Capture should be blocked when out of range"
 
     def test_batch_capture_base_succeeds_when_in_range(self):
@@ -950,7 +950,7 @@ class TestMap04BaseInteraction:
         player = self._make_player("red_cmd", "red", cell_row=9, cell_col=9)
         ctx = self._make_ctx({"blue": frozenset({"9,9", "9,8"})})
         BatchSimulator()._capture_base(player, 14, movement_ctx=ctx)
-        assert player.points_scored == 1001
+        assert player.counters.points_scored == 1001
 
     def test_batch_capture_base_no_map_still_captures(self):
         """BatchSimulator._capture_base falls back to unconditional capture when no ctx."""
@@ -958,7 +958,7 @@ class TestMap04BaseInteraction:
 
         player = self._make_player("red_cmd", "red", cell_row=None, cell_col=None)
         BatchSimulator()._capture_base(player, 14, movement_ctx=None)
-        assert player.points_scored == 1001
+        assert player.counters.points_scored == 1001
 
 
 @pytest.mark.django_db
