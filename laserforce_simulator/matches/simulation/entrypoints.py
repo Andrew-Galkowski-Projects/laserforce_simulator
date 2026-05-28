@@ -1,24 +1,25 @@
-import math as _math
-import random
+"""``BatchSimulator`` — public simulator class and batch-execution glue.
+
+The class is the sole simulator post-SIM-09; it carries the public surface
+every caller depends on (``simulate_match``, ``simulate_single_round_detailed``,
+``simulate_scheduled_round``, ``run``, ``run_incremental``, ``save_games``,
+``replay_round``). Per-tick mechanics live in ``round_loop`` and ORM
+serialisation lives in ``persistence``; both are called from this module.
+
+The module-level ``random`` import is the canonical patch target —
+``patch("matches.simulation.random.randint")`` resolves through the
+``__init__.py`` re-export to the very ``random`` module the entrypoints
+methods use, so tests keep working.
+"""
+
 import logging
-from dataclasses import asdict
+import random
 from typing import Iterator, Optional
+
 from django.db import transaction
-from .models import GameEvent, Match, GameRound, PlayerRoundState
-from .sim_helpers.mechanics import shot_cooldown
-from .sim_helpers.pathfinding import (
-    astar_advance,
-    astar_advance_cached,
-    cells_to_move,
-    choose_goal_cell,
-)
-from .sim_helpers.combat import (
-    _NEUTRAL_BASE_TYPES,
-    _can_tag_through_windowed_wall,
-    _get_los_targets,
-    _get_base_interaction,
-    elevation_hit_modifier,
-    _elevation_hit_modifier,
+
+from ..models import Match, GameRound
+from ..sim_helpers.combat import (
     plan_action,
     attempt_resupply as _attempt_resupply_shared,
     capture_base as _capture_base_shared,
@@ -26,323 +27,49 @@ from .sim_helpers.combat import (
     start_missile_lock as _start_missile_lock_shared,
     tick_missile_lock as _tick_missile_lock_shared,
 )
-from .sim_helpers.pending_events import (
+from ..sim_helpers.down import record_down
+from ..sim_helpers.event_log import EventLog
+from ..sim_helpers.map_loader import (
+    load_map_context,
+    zone_from_cell,
+)
+from ..sim_helpers.mechanics import shot_cooldown
+from ..sim_helpers.pathfinding import (
+    astar_advance_cached,
+    cells_to_move,
+    choose_goal_cell,
+)
+from ..sim_helpers.pending_events import (
     PendingMissileLock,
     PendingNuke,
     PendingFollowup,
     PendingReaction,
 )
-from .sim_helpers.down import record_down
-from .sim_helpers.event_log import EventLog
-from .sim_helpers.round_context import RoundContext
-from .sim_helpers.shot import (
+from ..sim_helpers.resupply_queue import resolve_resupply_requests
+from ..sim_helpers.role_constants import ROLE_STATS
+from ..sim_helpers.round_context import RoundContext
+from ..sim_helpers.shot import (
     SHOT_KIND_FOLLOW_UP,
     SHOT_KIND_INITIAL,
     SHOT_KIND_OVERWATCH,
     SHOT_KIND_REACTION,
     resolve_shot,
 )
-from .sim_helpers.spawn_assigner import assign_spawn_cells
-from .sim_helpers.map_loader import (
-    load_map_context,
-    zone_from_cell,
-)
-from .sim_helpers.resupply_queue import resolve_resupply_requests
-from .sim_helpers.time_constants import (
-    MEDIC_UNDER_FIRE_WINDOW_TICKS,
-    SCORE_BROADCAST_PERIOD_TICKS,
+from ..sim_helpers.spawn_assigner import assign_spawn_cells
+from ..sim_helpers.time_constants import (
     SURVIVED_SENTINEL,
     TEAM_ELIM_BONUS_CUTOFF_TICKS,
     TICKS_PER_ROUND,
 )
 
-
-def _str_tag_id(player) -> str:
-    """Return a consistent string tag ID for memory system usage.
-
-    PlayerState objects have a string ``tag_id`` field directly.
-    PlayerRoundState objects use ``string_tag_id`` property (added in MECH-06).
-    """
-    string_tag = getattr(player, "string_tag_id", None)
-    if string_tag is not None:
-        return string_tag
-    return str(getattr(player, "tag_id", f"{player.team_color}_{player.role}"))
-
-
-def _observe_lives(observer, seen) -> int | None:
-    """Roll to observe seen player's current lives based on observer's resource_awareness.
-
-    Chance = min(75, resource_awareness/4 + (resource_awareness/100) * (1-lives_ratio) * 50).
-    At ra=100, lives_ratio=0.05 the chance is ~72.5%; at lives_ratio=0 it caps at 75%.
-    Returns current lives on success, None on failure.
-    """
-    ra = getattr(observer, "resource_awareness", 50)
-    max_lives = getattr(seen, "max_lives", getattr(seen, "starting_lives", 1))
-    lives_ratio = seen.final_lives / max(1, max_lives)
-    base_pct = ra / 4.0
-    enemy_low_factor = max(0.0, 1.0 - lives_ratio) * (ra / 100.0)
-    chance = min(75.0, base_pct + enemy_low_factor * 50.0)
-    if random.random() * 100 < chance:
-        return seen.final_lives
-    return None
-
-
-def _update_player_memory(observer, seen_players: list, second: float) -> bool:
-    """MECH-06: update observer's memory with directly observed players.
-
-    Cell, role, and status are always recorded. Current lives are added when the
-    observer wins a resource_awareness roll (see _observe_lives).
-
-    Returns True if any entry was new or had a changed cell or status — i.e. the
-    memory actually gained information worth broadcasting to teammates.
-    """
-    observer_memory = getattr(observer, "player_memory", None)
-    if observer_memory is None:
-        observer.player_memory = {}
-        observer_memory = observer.player_memory
-    changed = False
-    for seen in seen_players:
-        if seen.cell_row is not None:
-            tag_id = _str_tag_id(seen)
-            new_cell = (seen.cell_row, seen.cell_col)
-            if not seen.is_taggable_at(second):
-                status = "downed"
-            elif not seen.is_active_at(second):
-                status = "reset_window"
-            else:
-                status = "active"
-            existing = observer_memory.get(tag_id)
-            if (
-                existing is None
-                or existing.get("cell") != new_cell
-                or existing.get("status") != status
-            ):
-                changed = True
-            entry: dict = {
-                "cell": new_cell,
-                "timestamp": second,
-                "role": seen.role,
-                "status": status,
-            }
-            observed_lives = _observe_lives(observer, seen)
-            if observed_lives is not None:
-                entry["lives"] = observed_lives
-            observer_memory[tag_id] = entry
-    return changed
-
-
-def _broadcast_communication(
-    actor,
-    all_alive: list,
-    movement_ctx,
-    second: float,
-) -> None:
-    """MECH-06: per-tick communication broadcast.
-
-    Rolls actor.communication / 100 probability. On success, shares actor's memory
-    entries for enemy players with all living allies within the communication range
-    (Euclidean half-diagonal of the map).
-    """
-    communication = getattr(actor, "communication", 0)
-    if communication <= 0:
-        return
-    if random.random() * 100 >= communication:
-        return
-
-    # Compute communication range from map dimensions
-    if movement_ctx is not None:
-        zone_data = (
-            movement_ctx.get_zone_data()
-            if hasattr(movement_ctx, "get_zone_data")
-            else movement_ctx.get("zone_data")
-        )
-        if zone_data:
-            rows = len(zone_data)
-            cols = len(zone_data[0]) if rows else 0
-            comm_range = _math.sqrt(rows**2 + cols**2) / 2.0
-        else:
-            comm_range = float("inf")
-    else:
-        comm_range = float("inf")
-
-    actor_r = actor.cell_row
-    actor_c = actor.cell_col
-    actor_team = actor.team_color
-    actor_memory = getattr(actor, "player_memory", None)
-    if not actor_memory:
-        return
-
-    # Filter to enemy-only memory entries, then pick the single highest-priority one.
-    # Priority order (most tactically important first): heavy → commander → medic → ammo → scout
-    _COMM_ROLE_PRIORITY = {
-        "heavy": 0,
-        "commander": 1,
-        "medic": 2,
-        "ammo": 3,
-        "scout": 4,
-    }
-    enemy_color = "blue" if actor_team == "red" else "red"
-    best_tag_id = None
-    best_entry = None
-    best_priority = len(_COMM_ROLE_PRIORITY)
-    for tag_id, entry in actor_memory.items():
-        if not (isinstance(tag_id, str) and tag_id.startswith(enemy_color)):
-            continue
-        priority = _COMM_ROLE_PRIORITY.get(
-            entry.get("role", ""), len(_COMM_ROLE_PRIORITY)
-        )
-        if priority < best_priority:
-            best_priority = priority
-            best_tag_id = tag_id
-            best_entry = entry
-    if best_entry is None:
-        return
-
-    for ally in all_alive:
-        if ally.team_color != actor_team or ally is actor:
-            continue
-        if ally.cell_row is None or ally.cell_col is None:
-            continue
-        # Check distance
-        if actor_r is not None and actor_c is not None:
-            dist = _math.sqrt(
-                (ally.cell_row - actor_r) ** 2 + (ally.cell_col - actor_c) ** 2
-            )
-            if dist > comm_range:
-                continue
-        ally_memory = getattr(ally, "player_memory", None)
-        if ally_memory is None:
-            ally.player_memory = {}
-            ally_memory = ally.player_memory
-        existing = ally_memory.get(best_tag_id)
-        if existing is None or best_entry["timestamp"] > existing["timestamp"]:
-            ally_memory[best_tag_id] = dict(best_entry)
-
-
-def _apply_score_broadcast(
-    all_alive: list,
-    second: float,
-    period: int = SCORE_BROADCAST_PERIOD_TICKS,
-) -> None:
-    """MECH-06: every ``period`` time-units, compute which team is winning and
-    update score_broadcast_state.
-
-    Stores {"winning_team": "red"|"blue"|"tied", "timestamp": second} on each
-    player. Players whose score_broadcast_next <= second get the update.
-
-    TIME-01: ``period`` is the broadcast cadence in the caller's time domain.
-    BatchSimulator (tick-native) uses the default SCORE_BROADCAST_PERIOD_TICKS;
-    ResourceBasedSimulator passes its seconds-domain cadence (180) explicitly so
-    its internal behaviour stays byte-identical.
-    """
-    red_pts = sum(p.counters.points_scored for p in all_alive if p.team_color == "red")
-    blue_pts = sum(
-        p.counters.points_scored for p in all_alive if p.team_color == "blue"
-    )
-    if red_pts > blue_pts:
-        winning_team = "red"
-    elif blue_pts > red_pts:
-        winning_team = "blue"
-    else:
-        winning_team = "tied"
-
-    for player in all_alive:
-        next_broadcast = getattr(player, "score_broadcast_next", period)
-        if second >= next_broadcast:
-            player.score_broadcast_state = {
-                "winning_team": winning_team,
-                "timestamp": second,
-            }
-            player.score_broadcast_next = next_broadcast + period
-
-
-def _apply_nuke_activation_broadcast(
-    commander,
-    target_team_players: list,
-    second: float,
-) -> None:
-    """MECH-06: when a nuke is activated, all alive enemy-team players learn the
-    Commander's current cell via memory update.
-    """
-    if commander.cell_row is None:
-        return
-    cmd_tag = _str_tag_id(commander)
-    for p in target_team_players:
-        if p.final_lives <= 0:
-            continue
-        p_memory = getattr(p, "player_memory", None)
-        if p_memory is None:
-            p.player_memory = {}
-            p_memory = p.player_memory
-        p_memory[cmd_tag] = {
-            "cell": (commander.cell_row, commander.cell_col),
-            "timestamp": second,
-            "role": "commander",
-        }
-
-
-def _check_medic_under_fire(
-    medic,
-    all_alive: list,
-    second: float,
-    window: int = MEDIC_UNDER_FIRE_WINDOW_TICKS,
-) -> None:
-    """MECH-06: when a Medic is hit 2× within ``window``, alert all living teammates.
-
-    Appends current second to medic.medic_hit_times, trims entries older than
-    ``window``, and if ≥ 2 hits remain, updates all alive teammates' memory
-    with the medic's cell.
-
-    TIME-01: ``window`` is in the caller's time domain. BatchSimulator uses the
-    default MEDIC_UNDER_FIRE_WINDOW_TICKS; ResourceBasedSimulator passes its
-    seconds-domain window (12) explicitly so its behaviour stays byte-identical.
-    """
-    hit_times = getattr(medic, "medic_hit_times", None)
-    if hit_times is None:
-        medic.medic_hit_times = []
-        hit_times = medic.medic_hit_times
-    hit_times.append(second)
-    # Trim entries older than the window
-    medic.medic_hit_times = [t for t in hit_times if second - t <= window]
-    if len(medic.medic_hit_times) >= 2 and medic.cell_row is not None:
-        medic_tag = _str_tag_id(medic)
-        for p in all_alive:
-            if p.team_color != medic.team_color or p is medic:
-                continue
-            if p.final_lives <= 0:
-                continue
-            p_memory = getattr(p, "player_memory", None)
-            if p_memory is None:
-                p.player_memory = {}
-                p_memory = p.player_memory
-            p_memory[medic_tag] = {
-                "cell": (medic.cell_row, medic.cell_col),
-                "timestamp": second,
-                "role": "medic",
-            }
-
-
-def _apply_nuke_reaction_flags(all_alive: list, pending_nukes: list) -> None:
-    """MECH-04: reset then set reacting_to_nuke for all alive players each tick.
-
-    Caches game_awareness and player_awareness once per player so repeated
-    @property calls (which hit stat_for_simulation) don't multiply with the
-    number of pending nukes.
-    """
-    for p in all_alive:
-        setattr(p, "reacting_to_nuke", False)
-    if not pending_nukes:
-        return
-    awareness = {id(p): (p.game_awareness, p.player_awareness) for p in all_alive}
-    for pending_nuke in pending_nukes:
-        target_color = "blue" if pending_nuke.player.team_color == "red" else "red"
-        for p in all_alive:
-            if p.team_color != target_color:
-                continue
-            ga, pa = awareness[id(p)]
-            if random.random() < (ga + pa) / 200.0:
-                setattr(p, "reacting_to_nuke", True)
-
+from . import persistence
+from .round_loop import (
+    _apply_nuke_activation_broadcast,
+    _apply_nuke_reaction_flags,
+    _apply_score_broadcast,
+    _broadcast_communication,
+    _update_player_memory,
+)
 
 # NOTE: ``_actor_meta`` / ``_target_meta`` / ``_build_meta`` are gone —
 # the EventLog candidate moved the RES-02b universal metadata-snapshot
@@ -356,8 +83,6 @@ def _apply_nuke_reaction_flags(all_alive: list, pending_nukes: list) -> None:
 # now own the wire-shape; helpers take ``ctx`` directly.
 
 
-from matches.sim_helpers.role_constants import ROLE_STATS
-
 # Module logger
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -365,7 +90,8 @@ logging.basicConfig(level=logging.DEBUG)
 
 # _elevation_hit_modifier, elevation_hit_modifier, _can_tag_through_windowed_wall,
 # _get_los_targets, _get_base_interaction, and _NEUTRAL_BASE_TYPES are imported
-# from sim_helpers/combat.py above and re-exported here for backward compatibility.
+# from sim_helpers/combat.py and re-exported via __init__.py for backward
+# compatibility.
 
 
 class _PlayerData:
@@ -1171,7 +897,7 @@ class BatchSimulator:
         zone_data: list[list[int]] | None = None,
         team_spawn_pools: dict | None = None,
     ):
-        from .sim_helpers.player_state import PlayerState
+        from ..sim_helpers.player_state import PlayerState
 
         default_zone = 0 if team_color == "red" else 2
         base_spawn = spawn_cells.get(team_color) if spawn_cells else None
@@ -2228,7 +1954,6 @@ class BatchSimulator:
             saved.append(gr)
         return saved
 
-    @transaction.atomic
     def _flush_to_db(
         self,
         team_red,
@@ -2240,232 +1965,32 @@ class BatchSimulator:
         *,
         rng_seed: int | None = None,
         movement_ctx=None,
-        match: "Match | None" = None,
+        match=None,
         round_number: int = 1,
         arena_map=None,
         zone_size: int | None = None,
     ):
-        """Write a replayed in-memory round to DB as a ``GameRound``.
+        """Thin delegator onto :func:`persistence.flush_to_db`.
 
-        MOVE-01: ``movement_ctx`` (optional) is used only to resolve each
-        movement step's end-cell zone for the compact movement GameEvents
-        flushed from each player's ``movement_trail``. When ``None`` the
-        per-move ``new_zone`` falls back to the player's final zone.
-
-        SIM-09: ``match`` / ``round_number`` allow the same flush path to
-        persist either a standalone round (default: ``match=None``,
-        ``round_number=1``) or the two rounds of a full Match (via
-        ``simulate_match``). ``arena_map`` / ``zone_size`` are persisted on
-        ``GameRound`` so saved batch / match / single-round games all carry
-        the same map metadata.
+        Preserves the historical method-on-class call site (every caller
+        in this module + the SIM-09 view-path helpers + ``save_games``)
+        while the ORM serialisation body lives in the
+        ``persistence`` sibling module. The
+        ``@transaction.atomic`` decorator stays on the persistence
+        function so the persistence boundary is unchanged.
         """
-        from teams.models import Player as PlayerModel
-
-        game_round = GameRound.objects.create(
+        return persistence.flush_to_db(
+            team_red,
+            team_blue,
+            result,
+            red_players,
+            blue_players,
+            events,
+            role_starting_resources=self.ROLE_STARTING_RESOURCES,
+            rng_seed=rng_seed,
+            movement_ctx=movement_ctx,
             match=match,
             round_number=round_number,
-            team_red=team_red,
-            team_blue=team_blue,
-            red_points=result["red_points"],
-            blue_points=result["blue_points"],
-            red_team_eliminated=result["red_eliminated"],
-            blue_team_eliminated=result["blue_eliminated"],
-            eliminated_at=result["eliminated_at"],
-            is_completed=True,
-            rng_seed=rng_seed,
             arena_map=arena_map,
             zone_size=zone_size,
         )
-        # Trigger winner calculation
-        game_round.save()
-
-        # Build id → Player ORM object map (one query)
-        all_pids = [p.player_id for p in red_players + blue_players if p.player_id]
-        players_by_id = {p.id: p for p in PlayerModel.objects.filter(id__in=all_pids)}
-
-        # Create PlayerRoundState rows
-        for p in red_players + blue_players:
-            player_obj = players_by_id.get(p.player_id)
-            if not player_obj:
-                continue
-            PlayerRoundState.objects.create(
-                game_round=game_round,
-                player=player_obj,
-                team_color=p.team_color,
-                role=p.role,
-                zone_fallback=p.current_zone,
-                cell_row=p.cell_row,
-                cell_col=p.cell_col,
-                shields=p.shields,
-                starting_lives=p.starting_lives,
-                starting_shots=p.starting_shots,
-                starting_special=0,
-                starting_missiles=self.ROLE_STARTING_RESOURCES[p.role]["missiles"],
-                final_lives=p.final_lives,
-                final_shots=p.final_shots,
-                final_special=p.final_special,
-                final_missiles=p.final_missiles,
-                neutral_base_destroyed=p.neutral_base_destroyed,
-                opposing_base_destroyed=p.opposing_base_destroyed,
-                special_active_until=p.special_active_until or 0,
-                is_hiding=p.is_hiding,
-                final_medic_hits=p.medic_hits,
-                ticks_active=p.ticks_active,
-                ticks_not_targetable=p.ticks_not_targetable,
-                ticks_reset_window=p.ticks_reset_window,
-                was_eliminated_at=p.was_eliminated_at,
-                # 18 counter columns splatted from PlayerCounters (ADR-0018):
-                # points_scored, tags_made, shots_missed, times_tagged,
-                # specials_used, own_specials_cancelled, enemy_nuke_cancels,
-                # ally_nuke_cancels, medic_lives_removed_from_nuke,
-                # lives_lost_to_nukes, missiles_landed, times_missiled,
-                # resupplies_given, combo_resupply_count,
-                # times_tagged_in_reset_window, follow_up_shots,
-                # reaction_shots, missile_points. The 5 nuke counters are
-                # always 0 today (no simulator writer); behaviour-neutral.
-                **asdict(p.counters),
-            )
-
-        # Create GameEvent rows
-        for ev in events:
-            actor_obj = players_by_id.get(ev["actor_id"])
-            if not actor_obj:
-                continue
-            target_obj = (
-                players_by_id.get(ev.get("target_id")) if ev.get("target_id") else None
-            )
-            GameEvent.objects.create(
-                game_round=game_round,
-                timestamp=ev["timestamp"],
-                event_type=ev["event_type"],
-                actor=actor_obj,
-                target=target_obj,
-                points_awarded=ev.get("points_awarded", 0),
-                description=ev.get("description", ""),
-                metadata=ev.get("metadata", {}),
-            )
-
-        # MOVE-01: flush each player's compact movement trail to movement
-        # GameEvents (start cell + end cell + timestamp). Mirrors RBS
-        # movement-event semantics; the exact intermediate route is recomputed
-        # at replay by re-running deterministic A* start->end (not stored).
-        spawn_cells = movement_ctx.get_spawn_cells() if movement_ctx else None
-        for p in red_players + blue_players:
-            actor_obj = players_by_id.get(p.player_id)
-            if not actor_obj:
-                continue
-            for start_cell, end_cell, ts in p.movement_trail:
-                if spawn_cells is not None:
-                    new_zone = zone_from_cell(end_cell[0], end_cell[1], spawn_cells)
-                else:
-                    new_zone = p.current_zone
-                # Movement events carry only movement-specific metadata. Per-tick
-                # actor snapshots (shots/lives/points/sp) are NOT tracked on the
-                # trail; using the player's end-of-round values here previously
-                # poisoned the per-player chart series (every movement event
-                # stamped the final value, so chart lines jumped to end-of-round
-                # values immediately after spawn).
-                GameEvent.objects.create(
-                    game_round=game_round,
-                    timestamp=ts,
-                    event_type="movement",
-                    actor=actor_obj,
-                    target=None,
-                    points_awarded=0,
-                    description=f"{p.name} moves to cell ({end_cell[0]}, {end_cell[1]})",
-                    metadata={
-                        "actor_role": p.role,
-                        "start_row": start_cell[0],
-                        "start_col": start_cell[1],
-                        "end_row": end_cell[0],
-                        "end_col": end_cell[1],
-                        "cell_row": end_cell[0],
-                        "cell_col": end_cell[1],
-                        "new_zone": new_zone,
-                    },
-                )
-
-        # RES-04: cell-occupancy snapshot. Only populated when a map is active
-        # (movement_ctx is not None); map-less rounds leave cell_occupancy_json
-        # null. The map-active gate is required because reconstruct_cell_occupancy
-        # needs an A* adjacency dict.
-        if movement_ctx is not None:
-            from matches.sim_helpers.cell_occupancy import reconstruct_cell_occupancy
-            from matches.sim_helpers.time_constants import TICKS_PER_ROUND
-
-            adj = movement_ctx.get_adjacency()
-            elevation_data = movement_ctx.elevation_grid  # may be None — that's fine
-
-            occupancy_json: dict[str, dict[str, int]] = {}
-            for p in red_players + blue_players:
-                if not p.player_id:
-                    continue
-                spawn_cell = (
-                    p.movement_trail[0][0]
-                    if p.movement_trail
-                    else (p.cell_row, p.cell_col)
-                )
-                # Skip players who never had a cell position (no map, edge case).
-                if spawn_cell[0] is None or spawn_cell[1] is None:
-                    continue
-
-                per_cell = reconstruct_cell_occupancy(
-                    movement_trail=p.movement_trail,
-                    spawn_cell=spawn_cell,
-                    round_ticks=TICKS_PER_ROUND,
-                    eliminated_at=p.was_eliminated_at,
-                    adj=adj,
-                    elevation_data=elevation_data,
-                )
-
-                occupancy_json[str(p.player_id)] = {
-                    f"{r},{c}": ticks for (r, c), ticks in per_cell.items()
-                }
-
-            game_round.cell_occupancy_json = occupancy_json
-            game_round.save(update_fields=["cell_occupancy_json"])
-
-        # RV-02: build auto-flagged highlights from the in-memory event buffer
-        # + result dict and persist. Runs on every path (map or 3-zone). Pure
-        # function (no RNG); id->name / id->team maps keep it Django-free.
-        from matches.sim_helpers.highlights import build_highlights
-        from matches.sim_helpers.time_constants import TICKS_PER_ROUND
-
-        name_by_id = {
-            p.player_id: p.name for p in red_players + blue_players if p.player_id
-        }
-        team_by_id = {
-            p.player_id: p.team_color for p in red_players + blue_players if p.player_id
-        }
-        game_round.highlights_json = build_highlights(
-            events,
-            result,
-            round_ticks=TICKS_PER_ROUND,
-            name_by_id=name_by_id,
-            team_by_id=team_by_id,
-        )
-        game_round.save(update_fields=["highlights_json"])
-
-        # HX-02: bump the global role-benchmark cache version. bulk_create
-        # skips post_save, so this hook covers the batch save path; the
-        # call is cheap (one cache op) and monotonic — if the surrounding
-        # @transaction.atomic rolls back, the next view request just
-        # re-scans against the new version (invalidation is never wrong).
-        from teams.role_benchmarks_cache import invalidate_role_benchmarks
-
-        invalidate_role_benchmarks()
-
-        return game_round
-
-
-# ---------------------------------------------------------------------------
-# Parallel worker helpers live in matches.sim_helpers.parallel_worker, which
-# has no top-level Django imports so it is safe to import inside a spawned
-# worker process before django.setup() has been called.
-#
-# Re-exported here for backward-compat with any external callers.
-# ---------------------------------------------------------------------------
-from matches.sim_helpers.parallel_worker import (  # noqa: E402
-    batch_round_worker as _batch_worker,
-    worker_django_init as _worker_django_init,
-)
