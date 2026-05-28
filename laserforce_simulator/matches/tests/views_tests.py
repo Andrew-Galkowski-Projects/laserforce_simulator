@@ -716,7 +716,8 @@ class TestRv01CompareRounds:
     # 7. _player_stat_deltas row shape + delta == b - a.                 #
     # ------------------------------------------------------------------ #
     def test_player_stat_deltas_row_shape_for_player_in_both_rounds(self):
-        from matches.views import _player_stat_deltas
+        from matches.round_comparison import player_stat_deltas
+        from matches.views import _comparison_row
 
         team_x, players = make_team_with_slots("Rv01DeltaX")
         blue_a, _ = make_team_with_slots("Rv01DeltaBA")
@@ -744,7 +745,18 @@ class TestRv01CompareRounds:
             tags_made=10,
         )
 
-        rows = _player_stat_deltas(round_a, round_b, [team_x.id])
+        team_id_set = {team_x.id}
+        rows_a = [
+            _comparison_row(ps)
+            for ps in round_a.player_states.select_related("player").all()
+            if ps.player.team_id in team_id_set
+        ]
+        rows_b = [
+            _comparison_row(ps)
+            for ps in round_b.player_states.select_related("player").all()
+            if ps.player.team_id in team_id_set
+        ]
+        rows = player_stat_deltas(rows_a, rows_b)
         assert len(rows) == 1, f"expected one shared-team player row, got {rows!r}"
         row = rows[0]
 
@@ -792,7 +804,8 @@ class TestRv01CompareRounds:
                 )
 
     def test_player_stat_deltas_player_in_only_one_round(self):
-        from matches.views import _player_stat_deltas
+        from matches.round_comparison import player_stat_deltas
+        from matches.views import _comparison_row
 
         team_x, players = make_team_with_slots("Rv01OneSide")
         blue_a, _ = make_team_with_slots("Rv01OneSideBA")
@@ -812,7 +825,18 @@ class TestRv01CompareRounds:
             tags_made=3,
         )
 
-        rows = _player_stat_deltas(round_a, round_b, [team_x.id])
+        team_id_set = {team_x.id}
+        rows_a = [
+            _comparison_row(ps)
+            for ps in round_a.player_states.select_related("player").all()
+            if ps.player.team_id in team_id_set
+        ]
+        rows_b = [
+            _comparison_row(ps)
+            for ps in round_b.player_states.select_related("player").all()
+            if ps.player.team_id in team_id_set
+        ]
+        rows = player_stat_deltas(rows_a, rows_b)
         matching = [r for r in rows if r["player_id"] == heavy.id]
         assert len(matching) == 1, (
             "a player present in only one round must still appear in the "
@@ -3205,3 +3229,96 @@ class TestLg01fLg01dSessionWrites(_Lg01dTestCase):
                 )
             )
         self.assertEqual(self.client.session["last_league_id"], season.league_id)
+
+
+@pytest.mark.django_db
+class TestPlayerRowEliminationSemantic:
+    """Regression coverage for the ``_player_row`` ``is_eliminated`` /
+    ``eliminated_timestamp`` carryover, lifted from the deleted
+    ``teams/tests/test_template_filters.py``.
+
+    Pre-TIME-01 the survived sentinel was tick 900; a hardcoded ``val > 900``
+    check on the round-detail page wrongly painted second-half eliminations as
+    survivors. TIME-01 raised the sentinel to ``SURVIVED_SENTINEL = 1801``;
+    the deleted template filter encoded the corrected rule; the rule now lives
+    inside ``matches.views._player_row``. These tests pin the boundary cases
+    against the dict the HTML template renders so a future regression on the
+    sentinel value is caught at the view-builder layer, not at visual review.
+    """
+
+    def _state_with_eliminated_at(self, ts):
+        from teams.models import Player, Team
+
+        team = Team.objects.create(name=f"PlayerRowElim-{ts!r}")
+        player = Player.objects.create(team=team, name="Test", height="6'0\"")
+        gr = GameRound.objects.create(
+            team_red=team, team_blue=team, round_number=1, is_completed=True
+        )
+        return _make_state(
+            gr,
+            player,
+            team_color="red",
+            role="scout",
+            was_eliminated_at=ts,
+            final_lives=0 if (ts < 1801 and ts != 0) else 5,
+        )
+
+    def test_survived_full_round_sentinel_carries_false(self):
+        """``was_eliminated_at = 1801`` (SURVIVED_SENTINEL) ⇒ is_eliminated=False."""
+        from matches.views import _player_row
+
+        ps = self._state_with_eliminated_at(1801)
+        row = _player_row(ps)
+        assert row["is_eliminated"] is False
+        assert row["eliminated_timestamp"] == ""
+
+    def test_eliminated_in_first_half_carries_true(self):
+        """``was_eliminated_at = 478`` ⇒ is_eliminated=True with MM:SS string."""
+        from matches.views import _player_row
+
+        ps = self._state_with_eliminated_at(478)
+        row = _player_row(ps)
+        assert row["is_eliminated"] is True
+        assert row["eliminated_timestamp"] != ""
+
+    def test_eliminated_in_second_half_carries_true(self):
+        """Regression: pre-TIME-01 the ``> 900`` check wrongly survived this
+        tick. ``was_eliminated_at = 1277`` is the broken-case fixture (Round 80
+        Vipers Heavy).
+        """
+        from matches.views import _player_row
+
+        ps = self._state_with_eliminated_at(1277)
+        row = _player_row(ps)
+        assert row["is_eliminated"] is True
+
+    def test_eliminated_at_old_threshold_carries_true(self):
+        """Pre-fix boundary: ``val == 920`` was wrongly treated as survived
+        because 920 > 900. Round 80 had a Vipers Scout-A at tick 920.
+        """
+        from matches.views import _player_row
+
+        ps = self._state_with_eliminated_at(920)
+        row = _player_row(ps)
+        assert row["is_eliminated"] is True
+
+    def test_eliminated_just_below_sentinel_carries_true(self):
+        """``was_eliminated_at = 1800`` is the last legal elimination tick of
+        a 1800-tick round — must still be treated as eliminated.
+        """
+        from matches.views import _player_row
+
+        ps = self._state_with_eliminated_at(1800)
+        row = _player_row(ps)
+        assert row["is_eliminated"] is True
+
+    def test_zero_eliminated_at_carries_false(self):
+        """``was_eliminated_at = 0`` is the legacy "never set" sentinel — must
+        be treated as not-eliminated to avoid false-positives on old rounds.
+        """
+        from matches.views import _player_row
+
+        ps = self._state_with_eliminated_at(0)
+        row = _player_row(ps)
+        assert row["is_eliminated"] is False
+        assert row["eliminated_timestamp"] == ""

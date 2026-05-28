@@ -41,20 +41,20 @@
             <div class="card-body">
                 <div class="row text-center">
                     <div class="col-3">
-                        <h5>{% if blue_performances|count_survivors < 1 %} {{ round.red_points|add:10000 }}({{ 10000 }})
+                        <h5>{% if blue_eliminated %} {{ round.red_points|add:10000 }}({{ 10000 }})
                                 {% else%} {{ round.red_points }} {% endif %} </h5>
                                 <small>Points</small>
                     </div>
                     <div class="col-3">
-                        <h5>{{ red_performances|length }}</h5>
+                        <h5>{{ red_players|length }}</h5>
                         <small>Players</small>
                     </div>
                     <div class="col-3">
-                        <h5>{{ red_performances|count_survivors }}</h5>
+                        <h5>{{ red_survivors }}</h5>
                         <small>Survivors</small>
                     </div>
                     <div class="col-3">
-                        {% if red_performances|count_survivors < 1 %} <span class="badge bg-success">Eliminated!</span>
+                        {% if red_eliminated %} <span class="badge bg-success">Eliminated!</span>
                             {% else %}
                             <span class="badge bg-secondary">-</span>
                             {% endif %}
@@ -90,17 +90,17 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for perf in red_performances %}
-                    <tr {% if perf|is_eliminated %}class="table-danger" {% endif %}>
-                        <td>{{ perf.player.name }}</td>
+                    {% for perf in red_players %}
+                    <tr {% if perf.is_eliminated %}class="table-danger" {% endif %}>
+                        <td>{{ perf.name }}</td>
                         <td>
-                            {% if perf.was_eliminated_at and perf.was_eliminated_at < 1801 %}
+                            {% if perf.is_eliminated %}
                             {{ perf.eliminated_timestamp }} {% else %} <span class="text-success">●</span>
                                 {% endif %}
                         </td>
                         <td>{% with ri=perf.role|add:".png" %}<img src="{% static ri %}" alt="{{ perf.role|capfirst }}" title="{{ perf.role|capfirst }}" height="22" style="vertical-align:middle">{% endwith %}</td>
                         <td>{{ perf.points_scored }}</td>
-                        <td>{{ perf.get_mvp }}</td>
+                        <td>{{ perf.mvp }}</td>
                         <td>{{ perf.final_lives }}</td>
                         <td>{{ perf.final_shots }}</td>
                         <td>{{perf.tags_made|div:perf.times_tagged|floatformat:2 }}
@@ -113,9 +113,9 @@
                             {% else %}
                             {{ perf.final_medic_hits }} {% endif %}
                         </td>
-                        <td>{{ perf.specific_tags|length }}</td>
+                        <td>{{ perf.specific_tags_count }}</td>
                         <td>
-                            {{ perf.get_accuracy }}%
+                            {{ perf.accuracy }}%
                         </td>
 
                         <td> {{ perf.specials_used|mul_int:perf.special_cost }}/
@@ -136,20 +136,20 @@
             <div class="card-body">
                 <div class="row text-center">
                     <div class="col-3">
-                        <h5>{% if red_performances|count_survivors < 1 %} {{ round.blue_points|add:10000 }}({{ 10000 }})
+                        <h5>{% if red_eliminated %} {{ round.blue_points|add:10000 }}({{ 10000 }})
                                 {% else%} {{ round.blue_points }} {% endif %} </h5>
                                 <small>Points</small>
                     </div>
                     <div class="col-3">
-                        <h5>{{ blue_performances|length }}</h5>
+                        <h5>{{ blue_players|length }}</h5>
                         <small>Players</small>
                     </div>
                     <div class="col-3">
-                        <h5>{{ blue_performances|count_survivors }}</h5>
+                        <h5>{{ blue_survivors }}</h5>
                         <small>Survivors</small>
                     </div>
                     <div class="col-3">
-                        {% if blue_performances|count_survivors < 1 %} <span class="badge bg-success">Eliminated!</span>
+                        {% if blue_eliminated %} <span class="badge bg-success">Eliminated!</span>
                             {% else %}
                             <span class="badge bg-secondary">-</span>
                             {% endif %}
@@ -182,17 +182,17 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for perf in blue_performances %}
-                    <tr {% if perf|is_eliminated %}class="table-danger" {% endif %}>
-                        <td>{{ perf.player.name }}</td>
+                    {% for perf in blue_players %}
+                    <tr {% if perf.is_eliminated %}class="table-danger" {% endif %}>
+                        <td>{{ perf.name }}</td>
                         <td>
-                            {% if perf.was_eliminated_at and perf.was_eliminated_at < 1801 %}
+                            {% if perf.is_eliminated %}
                             {{ perf.eliminated_timestamp }} {% else %} <span class="text-success">●</span>
                                 {% endif %}
                         </td>
                         <td>{% with ri=perf.role|add:".png" %}<img src="{% static ri %}" alt="{{ perf.role|capfirst }}" title="{{ perf.role|capfirst }}" height="22" style="vertical-align:middle">{% endwith %}</td>
                         <td>{{ perf.points_scored }}</td>
-                        <td>{{ perf.get_mvp }}</td>
+                        <td>{{ perf.mvp }}</td>
                         <td>{{ perf.final_lives }}</td>
                         <td>{{ perf.final_shots }}</td>
                         <td>{{perf.tags_made|div:perf.times_tagged|floatformat:2 }}
@@ -205,9 +205,9 @@
                             {% else %}
                             {{ perf.final_medic_hits }} {% endif %}
                         </td>
-                        <td>{{ perf.specific_tags|length }}</td>
+                        <td>{{ perf.specific_tags_count }}</td>
                         <td>
-                            {{ perf.get_accuracy }}%
+                            {{ perf.accuracy }}%
                         </td>
 
                         <td> {{ perf.specials_used|mul_int:perf.special_cost }}/
@@ -233,9 +233,9 @@
                     <div class="col-md-6">
                         <h6>{{ round.team_red.name }} Resources</h6>
                         <ul class="list-unstyled">
-                            {% for perf in red_performances %}
+                            {% for perf in red_players %}
                             <li>
-                                <strong>{{ perf.player.name }}:</strong>
+                                <strong>{{ perf.name }}:</strong>
                                 {{ perf.tags_made }}/{{ perf.shots_used }} hit/total,
                                 {{ perf.specials_used|mul_int:perf.special_cost }}/
                                 {{ perf.specials_used|mul_int:perf.special_cost|add:0|add:perf.final_special }}
@@ -250,9 +250,9 @@
                     <div class="col-md-6">
                         <h6>{{ round.team_blue.name }} Resources</h6>
                         <ul class="list-unstyled">
-                            {% for perf in blue_performances %}
+                            {% for perf in blue_players %}
                             <li>
-                                <strong>{{ perf.player.name }}:</strong>
+                                <strong>{{ perf.name }}:</strong>
                                 {{ perf.tags_made }}/{{ perf.shots_used }} hit/total,
                                 {{ perf.specials_used|mul_int:perf.special_cost }}/
                                 {{ perf.specials_used|mul_int:perf.special_cost|add:0|add:perf.final_special }}

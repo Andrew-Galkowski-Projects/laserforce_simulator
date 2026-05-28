@@ -1,7 +1,5 @@
 from django import template
 
-from matches.sim_helpers.time_constants import SURVIVED_SENTINEL
-
 register = template.Library()
 
 
@@ -89,49 +87,3 @@ def count_attr_false(iterable, attr_name):
         return count
     except Exception:
         return 0
-
-
-@register.filter
-def count_survivors(iterable):
-    """Count items in iterable where the player is alive (final_lives > 0).
-
-    This replaces older checks that relied on a boolean `was_eliminated` field.
-    """
-    try:
-        count = 0
-        for item in iterable:
-            try:
-                if getattr(item, "final_lives", 1) > 0:
-                    count += 1
-            except Exception:
-                continue
-        return count
-    except Exception:
-        return 0
-
-
-@register.filter
-def is_eliminated(item):
-    """Return True if the given player round state represents an eliminated player.
-
-    Uses `was_eliminated_at` when present, otherwise falls back to `final_lives == 0`.
-    """
-    try:
-        # Prefer explicit timestamp field if present. The TIME-01 sentinel
-        # (SURVIVED_SENTINEL = 1801 ticks; was 901 pre-TIME-01) marks a
-        # player who survived the full round. Anything in [1, 1800] is an
-        # actual elimination tick — including the second half of the round,
-        # which the pre-TIME-01 `val > 900` check wrongly excluded.
-        ts = getattr(item, "was_eliminated_at", None)
-        if ts is not None:
-            try:
-                val = int(ts)
-                if val >= SURVIVED_SENTINEL or val == 0:
-                    return False
-                return True
-            except Exception:
-                return False
-        # Fallback to final_lives
-        return getattr(item, "final_lives", 1) <= 0
-    except Exception:
-        return False

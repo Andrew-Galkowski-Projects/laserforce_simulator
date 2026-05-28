@@ -23,7 +23,13 @@ from django.utils.text import slugify
 from teams.constants import PLAYER_NAMES, TEAM_NAMES
 from teams.models import Team, Player
 from teams.views import _generate_teams
-from . import h2h_stats, player_h2h_stats
+from . import (
+    h2h_stats,
+    missile_log_stats,
+    player_h2h_stats,
+    round_comparison,
+    round_summary,
+)
 from .models import Match, GameRound, PlayerRoundState, GameEvent, Season, League
 from .schedule_generator import generate_schedule
 from .season_dashboard import (
@@ -131,39 +137,6 @@ def _build_save_status_response(async_result: AsyncResult) -> dict:
     return {"status": status, "error": error, "round_ids": round_ids}
 
 
-# RV-01: ordered stat keys for the round-comparison delta table. `mvp` and
-# `accuracy` are computed from properties; every other key is a same-named
-# PlayerRoundState IntegerField.
-_COMPARE_STAT_KEYS: list[str] = [
-    "points_scored",
-    "mvp",
-    "tags_made",
-    "times_tagged",
-    "accuracy",
-    "final_lives",
-    "resupplies_given",
-    "missiles_landed",
-    "specials_used",
-    "follow_up_shots",
-    "reaction_shots",
-    "combo_resupply_count",
-]
-
-# Stat keys that map directly to same-named PlayerRoundState IntegerFields.
-_COMPARE_FIELD_STAT_KEYS: list[str] = [
-    "points_scored",
-    "tags_made",
-    "times_tagged",
-    "final_lives",
-    "resupplies_given",
-    "missiles_landed",
-    "specials_used",
-    "follow_up_shots",
-    "reaction_shots",
-    "combo_resupply_count",
-]
-
-
 def _shared_team_ids(round_a: GameRound, round_b: GameRound) -> list[int]:
     """RV-01: sorted list of Team ids present in both rounds, ignoring Side.
 
@@ -175,99 +148,45 @@ def _shared_team_ids(round_a: GameRound, round_b: GameRound) -> list[int]:
     return sorted(ids_a & ids_b)
 
 
-def _stat_values(ps: PlayerRoundState) -> dict:
-    """RV-01: extract the ordered comparison stats from one PlayerRoundState.
+def _comparison_row(ps: PlayerRoundState) -> dict:
+    """RV-01: build one per-PlayerRoundState comparison-row dict (16 keys).
 
-    `mvp` reads the `get_mvp` property (float), `accuracy` the `get_accuracy`
-    property (int percent, divide-by-zero guarded); all other keys are the
-    same-named IntegerField.
+    The 12 ``COMPARE_STAT_KEYS`` are flat at the top level so
+    ``round_comparison.stat_values`` can pick them up directly.
     """
-    values: dict = {"mvp": ps.get_mvp, "accuracy": ps.get_accuracy}
-    for key in _COMPARE_FIELD_STAT_KEYS:
-        values[key] = getattr(ps, key)
-    return values
-
-
-def _player_stat_deltas(
-    round_a: GameRound, round_b: GameRound, team_ids: list[int]
-) -> list[dict]:
-    """RV-01: per-player stat-delta rows for the two rounds, paired by player.
-
-    Only players whose ``player.team_id`` is in ``team_ids`` are included.
-    Rows are paired by ``player_id``; a player present in only one round yields
-    a row whose missing side's ``role_*``/``side_*`` and per-stat value are
-    ``None`` (and the delta ``None``). ``delta = b - a`` when both sides exist.
-    Rows are ordered by name.
-    """
-    team_id_set = set(team_ids)
-
-    def _states_for(game_round: GameRound) -> dict[int, PlayerRoundState]:
-        return {
-            ps.player_id: ps
-            for ps in game_round.player_states.select_related("player").all()
-            if ps.player.team_id in team_id_set
-        }
-
-    states_a = _states_for(round_a)
-    states_b = _states_for(round_b)
-
-    rows: list[dict] = []
-    for player_id in set(states_a) | set(states_b):
-        ps_a = states_a.get(player_id)
-        ps_b = states_b.get(player_id)
-        name = (ps_a or ps_b).player.name
-
-        values_a = _stat_values(ps_a) if ps_a is not None else None
-        values_b = _stat_values(ps_b) if ps_b is not None else None
-
-        stats: dict = {}
-        for key in _COMPARE_STAT_KEYS:
-            a_val = values_a[key] if values_a is not None else None
-            b_val = values_b[key] if values_b is not None else None
-            delta = (
-                (b_val - a_val) if (a_val is not None and b_val is not None) else None
-            )
-            stats[key] = {"a": a_val, "b": b_val, "delta": delta}
-
-        rows.append(
-            {
-                "player_id": player_id,
-                "name": name,
-                "role_a": ps_a.role if ps_a is not None else None,
-                "role_b": ps_b.role if ps_b is not None else None,
-                "side_a": ps_a.team_color if ps_a is not None else None,
-                "side_b": ps_b.team_color if ps_b is not None else None,
-                "stats": stats,
-                # Template-friendly ordered view of ``stats`` (Django templates
-                # cannot do dynamic dict lookup by a variable key). Additive —
-                # the contracted ``stats`` dict above is unchanged and remains
-                # the JSON source of truth.
-                "cells": [stats[key] for key in _COMPARE_STAT_KEYS],
-            }
-        )
-
-    rows.sort(key=lambda row: row["name"])
-    return rows
+    return {
+        "player_id": ps.player_id,
+        "name": ps.player.name,
+        "role": ps.role,
+        "team_color": ps.team_color,
+        "points_scored": ps.points_scored,
+        "mvp": ps.get_mvp,
+        "tags_made": ps.tags_made,
+        "times_tagged": ps.times_tagged,
+        "accuracy": ps.get_accuracy,
+        "final_lives": ps.final_lives,
+        "resupplies_given": ps.resupplies_given,
+        "missiles_landed": ps.missiles_landed,
+        "specials_used": ps.specials_used,
+        "follow_up_shots": ps.follow_up_shots,
+        "reaction_shots": ps.reaction_shots,
+        "combo_resupply_count": ps.combo_resupply_count,
+    }
 
 
 def _cumulative_team_points(game_round: GameRound, team_id: int) -> list[list]:
     """RV-01: cumulative points-over-time series for one team in one round.
 
+    Thin ORM-fetch adapter over ``round_comparison.cumulative_team_points``.
     Walks the round's events for actors on ``team_id`` ordered by timestamp,
-    accumulating ``points_awarded`` (NULL coalesced to 0). Returns
-    ``[[tick, cumulative_points], ...]``; an empty event set yields ``[]``.
+    accumulating ``points_awarded`` (NULL coalesced to 0).
     """
-    series: list[list] = []
-    cumulative = 0
     events = (
         game_round.events.filter(actor__team_id=team_id)
         .order_by("timestamp")
         .values_list("timestamp", "points_awarded")
     )
-    for timestamp, points_awarded in events:
-        cumulative += points_awarded or 0
-        series.append([timestamp, cumulative])
-    return series
+    return round_comparison.cumulative_team_points(events)
 
 
 def compare_rounds(request) -> HttpResponse:
@@ -291,7 +210,7 @@ def compare_rounds(request) -> HttpResponse:
         "all_rounds": all_rounds,
         "mode": "picker",
         "error_message": None,
-        "stat_keys": _COMPARE_STAT_KEYS,
+        "stat_keys": list(round_comparison.COMPARE_STAT_KEYS),
         "deltas": None,
         "points_series": None,
     }
@@ -336,8 +255,20 @@ def compare_rounds(request) -> HttpResponse:
             }
         )
 
+    team_id_set = set(team_ids)
+    rows_a = [
+        _comparison_row(ps)
+        for ps in round_a.player_states.select_related("player").all()
+        if ps.player.team_id in team_id_set
+    ]
+    rows_b = [
+        _comparison_row(ps)
+        for ps in round_b.player_states.select_related("player").all()
+        if ps.player.team_id in team_id_set
+    ]
+
     context["mode"] = "compare"
-    context["deltas"] = _player_stat_deltas(round_a, round_b, team_ids)
+    context["deltas"] = round_comparison.player_stat_deltas(rows_a, rows_b)
     context["points_series"] = points_series
     return render(request, "matches/compare_rounds.html", context)
 
@@ -391,26 +322,36 @@ def match_detail(request, match_id):
 
 
 def game_round_detail(request, round_id):
-    """Display detailed single round results with player performance"""
+    """Display detailed single round results with player performance.
+
+    Materialises the same 28-key **Round scoreboard** dict the
+    ``export_round_report`` PDF consumes (CONTEXT.md, ``Round scoreboard``)
+    so the HTML scoreboard and the PDF scoreboard cannot drift.
+    """
     game_round = get_object_or_404(GameRound, id=round_id)
 
-    # Get player performances grouped by team
-    red_performances = (
+    red_states = (
         game_round.player_states.filter(player__team=game_round.team_red)
         .select_related("player")
         .order_by("-points_scored", "role", "player__name")
     )
-
-    blue_performances = (
+    blue_states = (
         game_round.player_states.filter(player__team=game_round.team_blue)
         .select_related("player")
         .order_by("-points_scored", "role", "player__name")
     )
 
+    red_players = [_player_row(s) for s in red_states]
+    blue_players = [_player_row(s) for s in blue_states]
+
     context = {
         "round": game_round,
-        "red_performances": red_performances,
-        "blue_performances": blue_performances,
+        "red_players": red_players,
+        "blue_players": blue_players,
+        "red_survivors": round_summary.survivor_count(red_players),
+        "blue_survivors": round_summary.survivor_count(blue_players),
+        "red_eliminated": round_summary.team_eliminated(red_players),
+        "blue_eliminated": round_summary.team_eliminated(blue_players),
     }
 
     return render(request, "matches/game_round_detail.html", context)
@@ -853,59 +794,32 @@ def game_round_events(request, round_id):
 def missile_log(request, round_id):
     """RES-03: render the per-round missile usage log.
 
-    Filters ``GameEvent`` rows to the ``locking`` / ``missiled`` event-type
-    pair (the post-RES-03 split of the legacy ``"missile"`` event), then
-    computes a view-side fired / hit / efficiency summary. Friendly-fire
-    hits count as hits.
+    Materialises one dict per ``GameEvent(event_type="missiled")`` row and
+    hands them to ``missile_log_stats.summarize_missile_log`` for the
+    fired / hit / efficiency summary plus flat display rows (no ORM ref
+    leaks through to the template). Friendly-fire hits count as hits.
     """
     game_round = get_object_or_404(GameRound, id=round_id)
 
-    events = list(
-        GameEvent.objects.filter(
-            game_round=game_round,
-            event_type__in=["locking", "missiled"],
-        )
-        .select_related("actor", "target")
-        .order_by("timestamp")
-    )
+    events_qs = GameEvent.objects.filter(
+        game_round=game_round,
+        event_type="missiled",
+    ).order_by("timestamp")
+    events = [
+        {
+            "timestamp": e.timestamp,
+            "metadata": e.metadata or {},
+            "description": e.description,
+            "points_awarded": e.points_awarded or 0,
+        }
+        for e in events_qs
+    ]
 
-    # Only missiled rows render in the table; locking events are kept for
-    # the count surface (and for any future "fired but never resolved"
-    # column).
-    missiled_events = [e for e in events if e.event_type == "missiled"]
-
-    fired = len(missiled_events)
-    hit = sum(1 for e in missiled_events if (e.metadata or {}).get("result") == "hit")
-    efficiency = (hit / fired * 100.0) if fired else 0.0
-
-    # Pre-compute display-friendly rows so the template stays declarative.
-    rows = []
-    for ev in missiled_events:
-        meta = ev.metadata or {}
-        ts = ev.timestamp or 0
-        seconds_total = int(ts) // 2
-        minutes = seconds_total // 60
-        seconds = seconds_total % 60
-        mmss = f"{minutes:02d}:{seconds:02d}"
-        friendly = bool(meta.get("friendly_fire"))
-        rows.append(
-            {
-                "event": ev,
-                "timestamp_mmss": mmss,
-                "actor_role": meta.get("actor_role", ""),
-                "target_role": meta.get("target_role", ""),
-                "result": meta.get("result", ""),
-                "friendly_fire": friendly,
-                "row_class": "missile-row friendly-fire" if friendly else "missile-row",
-            }
-        )
+    summary = missile_log_stats.summarize_missile_log(events)
 
     context = {
         "round": game_round,
-        "rows": rows,
-        "fired": fired,
-        "hit": hit,
-        "efficiency": efficiency,
+        **summary,
     }
     return render(request, "matches/missile_log.html", context)
 
@@ -959,36 +873,56 @@ def movement_heatmap(request, round_id: int):
 
 
 def _player_row(state: PlayerRoundState) -> dict:
-    """RV-03: build one player_row dict (frozen seam-contract key order) from a
-    PlayerRoundState. `mvp` sources the get_mvp property, `accuracy` the
-    get_accuracy property; the other 10 are IntegerFields."""
+    """Build one **Round scoreboard** row dict (CONTEXT.md, frozen 28-key shape
+    pinned by ``round_summary.PLAYER_ROW_KEYS``).
+
+    Both ``game_round_detail`` (HTML) and ``export_round_report`` (PDF) consume
+    this dict, so the two surfaces cannot drift. The PDF deliberately renders
+    a 14-key subset; the HTML renders 27 of 28 (``team_color`` is implicit
+    from the table heading).
+    """
+    ts = state.was_eliminated_at
+    # Match the pre-flip `is_eliminated` filter semantic exactly: `ts == 0` is
+    # the legacy "never set" sentinel (not red), `ts >= 1801` is the TIME-01
+    # SURVIVED_SENTINEL (not red), `ts is None` falls back to final_lives.
+    if ts is None:
+        is_elim = state.final_lives <= 0
+        ts_display = ""
+    elif ts == 0 or ts >= 1801:
+        is_elim = False
+        ts_display = ""
+    else:
+        is_elim = True
+        ts_display = state.eliminated_timestamp()
     return {
         "name": state.player.name,
         "role": state.role,
+        "team_color": state.team_color,
+        "was_eliminated_at": ts,
+        "eliminated_timestamp": ts_display,
+        "is_eliminated": is_elim,
+        "final_lives": state.final_lives,
         "points_scored": state.points_scored,
         "mvp": state.get_mvp,
         "tags_made": state.tags_made,
         "times_tagged": state.times_tagged,
         "accuracy": state.get_accuracy,
-        "final_lives": state.final_lives,
-        "resupplies_given": state.resupplies_given,
+        "final_shots": state.final_shots,
+        "final_special": state.final_special,
+        "shots_used": state.shots_used,
+        "missiles_used": state.missiles_used,
+        "starting_missiles": state.starting_missiles,
         "missiles_landed": state.missiles_landed,
-        "specials_used": state.specials_used,
+        "times_missiled": state.times_missiled,
+        "final_medic_hits": state.final_medic_hits,
+        "medic_lives_removed_from_nuke": state.medic_lives_removed_from_nuke,
         "follow_up_shots": state.follow_up_shots,
         "reaction_shots": state.reaction_shots,
+        "resupplies_given": state.resupplies_given,
+        "specials_used": state.specials_used,
         "combo_resupply_count": state.combo_resupply_count,
-    }
-
-
-def _team_totals(player_rows: list[dict], team_points: int) -> dict:
-    """RV-03: summed per-team resource totals plus derived team values."""
-    return {
-        "resupplies_given": sum(p["resupplies_given"] for p in player_rows),
-        "missiles_landed": sum(p["missiles_landed"] for p in player_rows),
-        "specials_used": sum(p["specials_used"] for p in player_rows),
-        "tags_made": sum(p["tags_made"] for p in player_rows),
-        "survivors": sum(1 for p in player_rows if p["final_lives"] > 0),
-        "team_points": team_points,
+        "specific_tags_count": len(state.specific_tags or {}),
+        "special_cost": state.special_cost,
     }
 
 
@@ -1038,8 +972,8 @@ def export_round_report(request, round_id: int):
         "winner_name": winner_name,
         "red_players": red_players,
         "blue_players": blue_players,
-        "red_totals": _team_totals(red_players, game_round.red_points),
-        "blue_totals": _team_totals(blue_players, game_round.blue_points),
+        "red_totals": round_summary.team_totals(red_players, game_round.red_points),
+        "blue_totals": round_summary.team_totals(blue_players, game_round.blue_points),
     }
 
     pdf_bytes = build_round_report(report_data, watermark=game_round.is_simulated)

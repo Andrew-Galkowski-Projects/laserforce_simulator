@@ -61,8 +61,8 @@
                 <td>{{ row.target_role }}</td>
                 <td>{{ row.result }}</td>
                 <td>{% if row.friendly_fire %}yes{% else %}no{% endif %}</td>
-                <td>{{ row.event.description }}</td>
-                <td>{{ row.event.points_awarded }}</td>
+                <td>{{ row.description }}</td>
+                <td>{{ row.points }}</td>
             </tr>
             {% empty %}
             <tr>
