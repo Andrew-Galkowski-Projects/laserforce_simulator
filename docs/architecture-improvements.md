@@ -15,12 +15,15 @@ Seam contract: [`.claude/worktrees/round-analytics-seam-contract.md`](../.claude
 - **Solution** — Extract `matches/round_analytics.py` and `matches/round_comparison.py`. View becomes ORM-fetch → pure module → render.
 - **Benefits** — **Locality**: a future second consumer (PDF, REST, dashboard widget) reuses the aggregator instead of copying. **Test surface**: pure-function tests with `list[dict]` fixtures, no `RequestFactory` ceremony. **Leverage**: the **Round report** PDF (`pdf_report.py`) and the HTML detail view could share per-player table logic.
 
-## 2. `role_benchmarks_cache.py` straddles two seams
+## 2. `role_benchmarks_cache.py` mixes ORM materialisation with caching — **DESIGNED (2026-05-28)**
 
-- **Files** — `teams/role_benchmarks.py` (pure), `teams/role_benchmarks_cache.py` (Django-coupled), plus the `post_save` signal on `Season`.
-- **Problem** — `role_benchmarks_cache.py` is the only "pure analytics" module that imports Django. Cache invalidation is split across a signal handler defined elsewhere. The cache path and the in-process path are two **adapters** — the seam is real, but it's placed inside the module instead of above it.
-- **Solution** — Push the cache call up to the view layer (`cache.get_or_set("role_benchmarks", compute_benchmarks)`) or into a thin `cache_helpers.py`. Move the `Season` invalidation signal next to the cache key definition.
-- **Benefits** — `role_benchmarks.py` becomes Django-free like its six siblings. **Locality** of cache policy (key, TTL, invalidation) ends up next to its callers.
+Original framing was inaccurate: the module is 309 lines and does **three** things — ORM scan, `_MvpAdapter` materialisation (so `calculate_mvp` can run without ORM access), and caching. The "push cache to view layer" idea doesn't apply because the scan is unavoidable (every consumer needs the full materialised result), so the cache structurally belongs behind a single function.
+
+**Solution** — Split the materialisation out into a new `teams/role_benchmarks_orm.py` (Django but uncached). The cache module shrinks to ~140 lines and owns *only* the caching policy: version key, key shape, `cache.get_many`, `transaction.on_commit` invalidation. ORM coupling is intrinsic to the role-benchmark surface (the population must scan every `PlayerRoundState`); making it explicit in module structure is the depth win.
+
+- **Files (before)** — `teams/role_benchmarks_cache.py` (309 lines), `teams/signals.py` (unchanged), `matches/simulation.py` lazy hook (unchanged).
+- **Files (after)** — `teams/role_benchmarks_orm.py` (NEW, ~180 lines: `_MvpAdapter` / `_MvpGameRound` / `_PLAYER_STATE_FIELDS` / `compute_benchmarks_uncached`), `teams/role_benchmarks_cache.py` (~140 lines: version key, key helpers, `invalidate_role_benchmarks`, `get_all_benchmark_data`, `get_role_benchmark_samples`).
+- **Benefits** — **Locality**: cache policy (key, version, on_commit) sits next to its callers; ORM scan + adapter live in their own module. **Leverage**: a future uncached caller (admin diagnostic, CLI script, fixture) imports `compute_benchmarks_uncached` directly with no cache-backend dependency. **Test surface**: ORM tests cover the materialisation in isolation; cache tests cover cache-policy invariants without touching the scan.
 
 ## 3. `tick_engine.py` is a locked shallow module
 
