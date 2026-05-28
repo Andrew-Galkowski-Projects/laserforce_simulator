@@ -25,12 +25,13 @@ Original framing was inaccurate: the module is 309 lines and does **three** thin
 - **Files (after)** — `teams/role_benchmarks_orm.py` (NEW, ~180 lines: `_MvpAdapter` / `_MvpGameRound` / `_PLAYER_STATE_FIELDS` / `compute_benchmarks_uncached`), `teams/role_benchmarks_cache.py` (~140 lines: version key, key helpers, `invalidate_role_benchmarks`, `get_all_benchmark_data`, `get_role_benchmark_samples`).
 - **Benefits** — **Locality**: cache policy (key, version, on_commit) sits next to its callers; ORM scan + adapter live in their own module. **Leverage**: a future uncached caller (admin diagnostic, CLI script, fixture) imports `compute_benchmarks_uncached` directly with no cache-backend dependency. **Test surface**: ORM tests cover the materialisation in isolation; cache tests cover cache-policy invariants without touching the scan.
 
-## 3. `tick_engine.py` is a locked shallow module
+## 3. `tick_engine.py` is a locked shallow module — **COMPLETED**
 
-- **Files** — `matches/sim_helpers/tick_engine.py` (~83 lines, three near-identical `drain_*` functions).
-- **Problem** — Each `drain_*` is a 3-line list partition by tick comparison. Deletion test concentrates nothing — inlining costs ~25 lines and reads more naturally in context. The genuine depth lives one layer down in `pending_events.py`.
-- **Solution** — Inline the three drains into `BatchSimulator._simulate_round`; delete `tick_engine.py`. Keep `pending_events.py`.
-- **Benefits** — One fewer module to navigate; tick loop becomes one place to read. **Caveat:** the file is pinned by the SIM-09 seam contract — confirm the contract was about *names*, not the file.
+Inlined the three `drain_*` functions into `BatchSimulator._simulate_round` (six lines added at the three call sites — each `drain_X(pending, second)` becomes a two-line list-comprehension partition); deleted `matches/sim_helpers/tick_engine.py` (83 lines); dropped the import block from `simulation.py`. The SIM-09 caveat resolved: no actual seam contract file exists — only doc references describing the module, which are now removed. `sim_helpers/CLAUDE.md` and `matches/CLAUDE.md` updated accordingly. Behaviour-neutral; no migration, no ADR.
+
+- **Files (before)** — `matches/sim_helpers/tick_engine.py` (83 lines), `matches/simulation.py` (3 `drain_*` call sites + a 5-line import block).
+- **Files (after)** — `matches/sim_helpers/tick_engine.py` deleted; `matches/simulation.py` carries the partitions inline (6 lines added, 5-line import block removed; net ≈ +1 line at the simulator, −83 from the package).
+- **Benefits** — One fewer module to navigate; the tick loop is now one place to read. **Locality** of the partition logic next to the resolution logic it feeds.
 
 ## 4. LG-01 League/Season views form a sub-app that hasn't been split out — **COMPLETED**
 

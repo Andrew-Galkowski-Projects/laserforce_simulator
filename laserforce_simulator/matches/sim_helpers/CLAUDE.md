@@ -380,7 +380,7 @@ Pure Python, **zero imports** (no Django, no other `sim_helpers` modules). The s
 | `GOAL_RECOMPUTE_PERIOD_TICKS` | `4` | MOVE-04 **Goal commitment** cadence (2 s) — steady-state `choose_goal_cell` recompute period; reactive overrides bypass this and run every tick. Phase is **expiry-based** per-player (`expires_at_tick = tick + N`), **not** a global `tick % N == 0`. See [ADR-0010](../../docs/adr/0010-goal-commitment-via-tick-cadence-throttling.md) |
 | staleness | `120` / `30` | MECH-06 memory staleness — Heavy/Medic/Ammo `120`, Scout/Commander `30` (60 s / 15 s) |
 
-(Other constants follow the same pattern, e.g. the medic-under-fire alert window.) Imported by `weights.py` (endgame rush, score broadcast), `tick_engine.py`, `pathfinding.py` (`_STALE_THRESHOLD`), `player_state.py`, and `BatchSimulator` — all now consume tick-valued constants from here rather than inline numeric literals.
+(Other constants follow the same pattern, e.g. the medic-under-fire alert window.) Imported by `weights.py` (endgame rush, score broadcast), `pathfinding.py` (`_STALE_THRESHOLD`), `player_state.py`, and `BatchSimulator` — all now consume tick-valued constants from here rather than inline numeric literals.
 
 ---
 
@@ -440,16 +440,9 @@ Typed `@dataclass` classes for the four pending-event queues used by `BatchSimul
 
 ---
 
-## tick_engine.py
+## Pending-event drain (inlined)
 
-Drain/split helpers for the four pending-event queues. `BatchSimulator` calls these at the start of each tick instead of duplicating the filter pattern inline.
-
-- `drain_missiles(pending, second) -> (ready, still)` — splits by `PendingMissile.complete_time`.
-- `drain_nukes(pending, second) -> (ready, still)` — splits by `PendingNuke.complete_time`.
-- `drain_reactions(pending, second) -> (ready, still)` — splits by `PendingReaction.fire_at`.
-- `drain_followups(pending, second) -> (ready, still)` — splits by `PendingFollowup.fire_at`.
-
-All return `(ready_now, still_pending)` typed lists. Resolution logic (what to do with ready items) stays in the simulator. Post-TIME-01 the `second` cursor argument and the `complete_time`/`fire_at` fields it splits on are tick-valued; the split arithmetic is unit-agnostic.
+The `drain_*` helpers that previously lived in `tick_engine.py` were three-line list partitions by tick comparison (`item.complete_time <= second` / `item.fire_at <= second`). Inlined into `BatchSimulator._simulate_round` as deepening candidate #3 (May 2026) — the module was a shallow Adapter (one line per drain at the call site, three near-identical functions in the module) so removing it costs ~6 lines at the call site and reads more naturally next to the resolution logic it feeds. Resolution behaviour (what happens to ready items) stays in the simulator and is unchanged.
 
 ### Parallel batch workers (SIM-07 / SIM-08)
 
