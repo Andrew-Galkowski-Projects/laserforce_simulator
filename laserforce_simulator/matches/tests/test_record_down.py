@@ -231,7 +231,7 @@ class TestRecordDownMedicReset(unittest.TestCase):
             down_chain_count=1,
         )
         p.final_special = 17
-        p.points_scored = 230
+        p.counters.points_scored = 230
         record_down(p, tick=10, ctx=_ctx(event_log=events))
         evt = [e for e in events if e["event_type"] == "medic_reset"][0]
         md = evt["metadata"]
@@ -314,7 +314,7 @@ class TestRecordDownNukeCancellation(unittest.TestCase):
         events: list = []
         cmdr = _player(role="commander")
         cmdr.final_special = 99
-        cmdr.points_scored = 500
+        cmdr.counters.points_scored = 500
         nuke = PendingNuke(complete_time=120, player=cmdr)
         record_down(cmdr, tick=115, ctx=_ctx(event_log=events, pending_nukes=[nuke]))
         evt = [e for e in events if e["event_type"] == "nuke_cancelled"][0]

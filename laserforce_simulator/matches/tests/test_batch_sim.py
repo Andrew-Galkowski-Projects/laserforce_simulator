@@ -305,7 +305,7 @@ class TestBatchSimulatorFollowUps:
             )
 
         assert len(pending_fu) == 0
-        assert attacker.follow_up_shots == 2
+        assert attacker.counters.follow_up_shots == 2
 
     def test_high_defender_awareness_suppresses_follow_up(self):
         sim = BatchSimulator()
@@ -2100,7 +2100,9 @@ class TestBugfixMedicHitsTracked:
             pending_followups=[],
             pending_reactions=[],
         )
-        assert attacker.tags_made >= 1, "fixture must produce a hit (accuracy=100)"
+        assert (
+            attacker.counters.tags_made >= 1
+        ), "fixture must produce a hit (accuracy=100)"
         assert attacker.medic_hits == 1, (
             f"tagging a medic must bump medic_hits; got " f"{attacker.medic_hits}"
         )

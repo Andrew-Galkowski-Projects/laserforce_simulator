@@ -482,7 +482,7 @@ class TestResolveResupplyRequests(unittest.TestCase):
         self.assertIn("combo_resupply", event_types)
         self.assertIn("resupply_lives", event_types)
         self.assertIn("resupply_ammo", event_types)
-        self.assertEqual(requestor.combo_resupply_count, 1)
+        self.assertEqual(requestor.counters.combo_resupply_count, 1)
 
     # --- Test 4: Both supports, combo roll fails ---
 

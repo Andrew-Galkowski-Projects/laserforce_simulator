@@ -153,10 +153,10 @@ class TestResolveShotInitial(unittest.TestCase):
         ctx = _ctx(all_alive=[attacker, defender])
         with _patch_hit(), _patch_see_through_hide():
             resolve_shot(attacker, defender, tick=5, kind=SHOT_KIND_INITIAL, ctx=ctx)
-        self.assertEqual(attacker.tags_made, 1)
-        self.assertEqual(attacker.points_scored, 100)
-        self.assertEqual(defender.points_scored, -20)
-        self.assertEqual(defender.times_tagged, 1)
+        self.assertEqual(attacker.counters.tags_made, 1)
+        self.assertEqual(attacker.counters.points_scored, 100)
+        self.assertEqual(defender.counters.points_scored, -20)
+        self.assertEqual(defender.counters.times_tagged, 1)
 
     def test_hit_consumes_attacker_shot(self) -> None:
         attacker = _player(role="scout", accuracy=99, final_shots=20)
@@ -225,8 +225,8 @@ class TestResolveShotInitial(unittest.TestCase):
         ctx = _ctx(all_alive=[attacker, defender])
         with _patch_miss(), _patch_see_through_hide():
             resolve_shot(attacker, defender, tick=5, kind=SHOT_KIND_INITIAL, ctx=ctx)
-        self.assertEqual(attacker.shots_missed, 1)
-        self.assertEqual(attacker.tags_made, 0)
+        self.assertEqual(attacker.counters.shots_missed, 1)
+        self.assertEqual(attacker.counters.tags_made, 0)
 
     def test_miss_emits_miss_event(self) -> None:
         attacker = _player(role="scout", accuracy=0, player_id=1, name="A")
@@ -257,7 +257,7 @@ class TestResolveShotInitial(unittest.TestCase):
         self.assertFalse(outcome.hit)
         self.assertFalse(outcome.downed)
         # miss_hid still costs the shot and increments shots_missed
-        self.assertEqual(attacker.shots_missed, 1)
+        self.assertEqual(attacker.counters.shots_missed, 1)
         self.assertEqual(attacker.final_shots, 19)
 
     def test_miss_hid_emits_miss_event_with_reason(self) -> None:
@@ -412,7 +412,7 @@ class TestResolveShotFollowUp(unittest.TestCase):
                 ctx=ctx,
                 chain_depth=1,
             )
-        self.assertEqual(attacker.follow_up_shots, 1)
+        self.assertEqual(attacker.counters.follow_up_shots, 1)
 
     def test_follow_up_metadata_carries_chain_and_flag(self) -> None:
         attacker = _player(role="scout", accuracy=99)
@@ -516,7 +516,7 @@ class TestResolveShotReaction(unittest.TestCase):
         ctx = _ctx(all_alive=[attacker, defender])
         with _patch_hit(), _patch_see_through_hide():
             resolve_shot(attacker, defender, tick=5, kind=SHOT_KIND_REACTION, ctx=ctx)
-        self.assertEqual(attacker.reaction_shots, 1)
+        self.assertEqual(attacker.counters.reaction_shots, 1)
 
     def test_reaction_metadata_carries_is_reaction_flag(self) -> None:
         attacker = _player(role="scout", accuracy=99)

@@ -55,7 +55,7 @@ def _player(
         final_special=final_special,
         player_id=player_id,
     )
-    p.points_scored = points_scored
+    p.counters.points_scored = points_scored
     return p
 
 

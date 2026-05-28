@@ -57,7 +57,13 @@ _BASE = [70, 30, 0, 0, 0, 0, 0]
 
 
 def _ps(role: str, team_color: str = "red", **kwargs) -> PlayerState:
-    """Build a PlayerState with sensible defaults for STAT-03 unit tests."""
+    """Build a PlayerState with sensible defaults for STAT-03 unit tests.
+
+    Counter kwargs are routed through ``PlayerCounters`` per ADR-0018.
+    """
+    from matches.sim_helpers.player_counters import PlayerCounters
+
+    counter_fields = set(PlayerCounters.__dataclass_fields__)
     defaults = dict(
         tag_id=f"{team_color}_{role}",
         name=f"{team_color} {role}",
@@ -75,7 +81,11 @@ def _ps(role: str, team_color: str = "red", **kwargs) -> PlayerState:
         special_usage=50,
     )
     defaults.update(kwargs)
-    return PlayerState(**defaults)
+    counter_kwargs = {k: defaults.pop(k) for k in list(defaults) if k in counter_fields}
+    state = PlayerState(**defaults)
+    for name, value in counter_kwargs.items():
+        setattr(state.counters, name, value)
+    return state
 
 
 def _fresh() -> list:

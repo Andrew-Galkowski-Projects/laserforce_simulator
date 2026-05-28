@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
+from matches.sim_helpers.player_counters import PlayerCounters
 from matches.sim_helpers.role_constants import (
     MAX_LIVES as _MAX_LIVES,
     MAX_SHOTS as _MAX_SHOTS,
@@ -67,9 +68,6 @@ class PlayerState:
     down_chain_count: int = 0
     last_tagged_id: Optional[str] = None
 
-    # missile bookkeeping
-    missiles_landed: int = 0
-
     # base bookkeeping
     neutral_base_destroyed: bool = False
     opposing_base_destroyed: bool = False
@@ -77,22 +75,16 @@ class PlayerState:
     # DB identity — populated by _make_players so _flush_to_db can resolve FKs
     player_id: int = 0
 
-    # aggregate stats for batch results
-    points_scored: int = 0
-    tags_made: int = 0
+    # 18 per-round counter accumulators (see sim_helpers/player_counters.py).
+    # Writers say ``player.counters.tags_made += 1``; ``_flush_to_db`` splats the
+    # whole bundle via ``**asdict(p.counters)``. See ADR-0018.
+    counters: PlayerCounters = field(default_factory=PlayerCounters)
+
     # Hits landed on an enemy Medic. Drives PlayerRoundState.final_medic_hits
-    # (flushed at round end) and the MVP bonus in score_calculator.
+    # (flushed at round end) and the MVP bonus in score_calculator. Not in
+    # PlayerCounters because the PRS-side column is named ``final_medic_hits``,
+    # not ``medic_hits`` — keeping the rename adapter local to ``_flush_to_db``.
     medic_hits: int = 0
-    times_tagged: int = 0
-    shots_missed: int = 0
-    times_missiled: int = 0
-    resupplies_given: int = 0
-    combo_resupply_count: int = 0
-    specials_used: int = 0
-    times_tagged_in_reset_window: int = 0
-    missile_points: int = 0
-    follow_up_shots: int = 0
-    reaction_shots: int = 0
     last_shot_time: float = -99.0  # transient; tracks shot cooldown enforcement
     last_chosen_action: str = ""  # action chosen in previous tick; guides movement goal
 
@@ -198,7 +190,7 @@ class PlayerState:
 
     @property
     def missiles_used(self) -> int:
-        return self.missiles_landed
+        return self.counters.missiles_landed
 
     @property
     def can_use_special(self) -> bool:

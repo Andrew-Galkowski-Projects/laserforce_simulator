@@ -38,17 +38,17 @@ def score_round_worker(args: tuple) -> list[dict]:
     return [
         {
             "role": p.role,
-            "points_scored": p.points_scored,
-            "tags_made": p.tags_made,
-            "times_tagged": p.times_tagged,
-            "missile_points": p.missile_points,
-            "times_tagged_in_reset_window": p.times_tagged_in_reset_window,
+            "points_scored": p.counters.points_scored,
+            "tags_made": p.counters.tags_made,
+            "times_tagged": p.counters.times_tagged,
+            "missile_points": p.counters.missile_points,
+            "times_tagged_in_reset_window": p.counters.times_tagged_in_reset_window,
             "ticks_active": p.ticks_active,
             "ticks_not_targetable": p.ticks_not_targetable,
             "ticks_reset_window": p.ticks_reset_window,
             "was_eliminated_at": p.was_eliminated_at,
-            "follow_up_shots": p.follow_up_shots,
-            "reaction_shots": p.reaction_shots,
+            "follow_up_shots": p.counters.follow_up_shots,
+            "reaction_shots": p.counters.reaction_shots,
         }
         for p in red_players + blue_players
     ]

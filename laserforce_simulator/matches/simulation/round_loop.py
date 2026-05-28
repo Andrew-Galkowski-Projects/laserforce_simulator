@@ -206,8 +206,10 @@ def _apply_score_broadcast(
     ResourceBasedSimulator passes its seconds-domain cadence (180) explicitly so
     its internal behaviour stays byte-identical.
     """
-    red_pts = sum(p.points_scored for p in all_alive if p.team_color == "red")
-    blue_pts = sum(p.points_scored for p in all_alive if p.team_color == "blue")
+    red_pts = sum(p.counters.points_scored for p in all_alive if p.team_color == "red")
+    blue_pts = sum(
+        p.counters.points_scored for p in all_alive if p.team_color == "blue"
+    )
     if red_pts > blue_pts:
         winning_team = "red"
     elif blue_pts > red_pts:

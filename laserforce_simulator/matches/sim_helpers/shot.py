@@ -219,7 +219,7 @@ def resolve_shot(
     if defender.is_hiding and random.random() > 0.5:
         if attacker.role != "ammo":
             attacker.final_shots = max(0, attacker.final_shots - 1)
-        attacker.shots_missed += 1
+        attacker.counters.shots_missed += 1
         attacker.last_shot_time = tick
         ctx.events.miss(
             attacker,
@@ -254,9 +254,9 @@ def resolve_shot(
 
     # ── Phase 4. Kind-specific counter ───────────────────────────────
     if kind == SHOT_KIND_FOLLOW_UP:
-        attacker.follow_up_shots += 1
+        attacker.counters.follow_up_shots += 1
     elif kind == SHOT_KIND_REACTION:
-        attacker.reaction_shots += 1
+        attacker.counters.reaction_shots += 1
 
     # ── Phase 5. Decrement final_shots (uniform Ammo non-decrement) ──
     if attacker.role != "ammo":
@@ -270,19 +270,19 @@ def resolve_shot(
 
     if hit:
         # ── Phase 7. Hit cascade ─────────────────────────────────────
-        attacker.tags_made += 1
+        attacker.counters.tags_made += 1
         if defender.role == "medic":
             attacker.medic_hits += 1
         if attacker.role != "heavy":
             attacker.final_special = min(
                 attacker.max_special, attacker.final_special + 1
             )
-        attacker.points_scored += 100
+        attacker.counters.points_scored += 100
         attacker.last_tagged_id = defender.tag_id
-        defender.times_tagged += 1
-        defender.points_scored -= 20
+        defender.counters.times_tagged += 1
+        defender.counters.points_scored -= 20
         if not defender.is_active_at(tick) and defender.is_taggable_at(tick):
-            defender.times_tagged_in_reset_window += 1
+            defender.counters.times_tagged_in_reset_window += 1
         defender.shields = max(0, defender.shields - attacker.shot_power)
         downed = defender.shields == 0
         if downed:
@@ -319,7 +319,7 @@ def resolve_shot(
             _broadcast_communication(attacker, ctx.all_alive, ctx.movement_ctx, tick)
     else:
         # ── Phase 8. Miss ────────────────────────────────────────────
-        attacker.shots_missed += 1
+        attacker.counters.shots_missed += 1
         ctx.events.miss(attacker, defender, tick, kind=kind, chain_depth=chain_depth)
 
     # ── Phase 9. Schedule reaction (skipped when kind == REACTION;

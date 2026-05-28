@@ -1370,8 +1370,8 @@ class BatchSimulator:
                 if accounted < TICKS_PER_ROUND:
                     p.ticks_active += TICKS_PER_ROUND - accounted
 
-        red_points = sum(p.points_scored for p in red_players)
-        blue_points = sum(p.points_scored for p in blue_players)
+        red_points = sum(p.counters.points_scored for p in red_players)
+        blue_points = sum(p.counters.points_scored for p in blue_players)
         red_survivors = sum(1 for p in red_players if p.final_lives > 0)
         blue_survivors = sum(1 for p in blue_players if p.final_lives > 0)
         result = {
@@ -1677,9 +1677,9 @@ class BatchSimulator:
         # result='miss' from the caller.
         if attacker.is_active_at(second) and defender.is_taggable_at(second):
             if not defender.is_active_at(second) and defender.is_taggable_at(second):
-                defender.times_tagged_in_reset_window += 1
+                defender.counters.times_tagged_in_reset_window += 1
             defender.shields = defender.max_shields
-            defender.points_scored -= 100
+            defender.counters.points_scored -= 100
             defender.final_lives = max(0, defender.final_lives - 2)
             if defender.final_lives <= 0:
                 defender.was_eliminated_at = second
@@ -1688,12 +1688,12 @@ class BatchSimulator:
                         attacker, defender, int(second), action="missile"
                     )
             record_down(defender, second, ctx)
-            defender.times_missiled += 1
+            defender.counters.times_missiled += 1
 
-            attacker.points_scored += 500
-            attacker.missile_points += 500
+            attacker.counters.points_scored += 500
+            attacker.counters.missile_points += 500
             attacker.final_missiles -= 1
-            attacker.missiles_landed += 1
+            attacker.counters.missiles_landed += 1
             if attacker.role != "heavy":
                 attacker.final_special = min(
                     attacker.max_special, attacker.final_special + 2
@@ -1714,7 +1714,7 @@ class BatchSimulator:
             and player.is_active_at(second)
         ):
             return None
-        player.specials_used += 1
+        player.counters.specials_used += 1
         if player.role == "commander":
             player.final_special -= player.special_cost
             # TIME-01: nuke fuse is 4-7 s -> 8-14 ticks (tick-native).
@@ -1764,7 +1764,7 @@ class BatchSimulator:
                                 "lives_delta": delta,
                                 "shots": m.final_shots,
                                 "lives": m.final_lives,
-                                "points": m.points_scored,
+                                "points": m.counters.points_scored,
                             }
                             for m, delta in healed_mates
                         ],
@@ -1802,7 +1802,7 @@ class BatchSimulator:
                                 "shots_delta": delta,
                                 "shots": m.final_shots,
                                 "lives": m.final_lives,
-                                "points": m.points_scored,
+                                "points": m.counters.points_scored,
                             }
                             for m, delta in resupplied_mates
                         ],
@@ -1818,7 +1818,7 @@ class BatchSimulator:
         ctx: RoundContext | None = None,
     ):
         if player.is_active_at(second) and player.final_lives > 0:
-            player.points_scored += 500
+            player.counters.points_scored += 500
             if ctx is not None:
                 # RES-02b: build per-opp post-detonation snapshots BEFORE the
                 # mutation loop so the detonation special event can carry the
@@ -1836,7 +1836,7 @@ class BatchSimulator:
                             "lives_delta": -lives_taken,
                             "shots": opp.final_shots,
                             "lives": opp.final_lives - lives_taken,
-                            "points": opp.points_scored,
+                            "points": opp.counters.points_scored,
                         }
                     )
                 ctx.events.special(

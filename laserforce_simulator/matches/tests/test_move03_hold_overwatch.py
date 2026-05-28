@@ -627,5 +627,5 @@ class TestOverwatchEventProvenance:
         assert ev["event_type"] == "tag", "Overwatch hit reuses event_type 'tag'"
         assert ev["points_awarded"] == 100, "Overwatch tag scores the normal +100"
         assert ev["metadata"].get("overwatch") is True
-        assert holder.points_scored == 100
-        assert enemy.points_scored == -20
+        assert holder.counters.points_scored == 100
+        assert enemy.counters.points_scored == -20

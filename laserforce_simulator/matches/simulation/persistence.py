@@ -13,6 +13,8 @@ HX-02 ``invalidate_role_benchmarks()`` cache bump at the tail. The
 ``@transaction.atomic`` decorator is preserved on the function itself.
 """
 
+from dataclasses import asdict
+
 from django.db import transaction
 
 from ..models import GameEvent, GameRound, PlayerRoundState
@@ -104,24 +106,15 @@ def flush_to_db(
             opposing_base_destroyed=p.opposing_base_destroyed,
             special_active_until=p.special_active_until or 0,
             is_hiding=p.is_hiding,
-            points_scored=p.points_scored,
-            tags_made=p.tags_made,
             final_medic_hits=p.medic_hits,
-            shots_missed=p.shots_missed,
-            times_tagged=p.times_tagged,
-            times_missiled=p.times_missiled,
-            missiles_landed=p.missiles_landed,
-            missile_points=p.missile_points,
-            resupplies_given=p.resupplies_given,
-            combo_resupply_count=p.combo_resupply_count,
-            specials_used=p.specials_used,
-            times_tagged_in_reset_window=p.times_tagged_in_reset_window,
-            follow_up_shots=p.follow_up_shots,
-            reaction_shots=p.reaction_shots,
             ticks_active=p.ticks_active,
             ticks_not_targetable=p.ticks_not_targetable,
             ticks_reset_window=p.ticks_reset_window,
             was_eliminated_at=p.was_eliminated_at,
+            # 18 counter columns splatted from PlayerCounters (ADR-0018).
+            # The 5 nuke counters are 0 today (no simulator writer); the
+            # model defaults match so this is behaviour-neutral.
+            **asdict(p.counters),
         )
 
     # Create GameEvent rows
