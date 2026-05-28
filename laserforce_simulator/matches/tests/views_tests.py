@@ -3026,7 +3026,7 @@ class TestLg01dPlayUntilEnd(_Lg01dTestCase):
 
 class TestLg01dPlayStatus(_Lg01dTestCase):
     """GET ``/seasons/<id>/play-status/<job_id>/`` returns the locked
-    5-key polling JSON. Mocks ``matches.views.AsyncResult`` to fake each
+    5-key polling JSON. Mocks ``matches.league_views.AsyncResult`` to fake each
     Celery state.
     """
 
@@ -3050,7 +3050,7 @@ class TestLg01dPlayStatus(_Lg01dTestCase):
             "PROGRESS",
             info={"completed": 5, "total": 12},
         )
-        with patch("matches.views.AsyncResult", return_value=fake):
+        with patch("matches.league_views.AsyncResult", return_value=fake):
             response = self.client.get(
                 reverse(
                     "play_status",
@@ -3071,7 +3071,7 @@ class TestLg01dPlayStatus(_Lg01dTestCase):
             "SUCCESS",
             result_payload={"completed": 12, "total": 12},
         )
-        with patch("matches.views.AsyncResult", return_value=fake):
+        with patch("matches.league_views.AsyncResult", return_value=fake):
             response = self.client.get(
                 reverse(
                     "play_status",
@@ -3089,7 +3089,7 @@ class TestLg01dPlayStatus(_Lg01dTestCase):
     def test_failure_state_returns_error_with_str_info(self) -> None:
         season, _teams = _lg01d_active_season("PSFail", n_teams=2)
         fake = self._make_async_result("FAILURE", info=Exception("boom"))
-        with patch("matches.views.AsyncResult", return_value=fake):
+        with patch("matches.league_views.AsyncResult", return_value=fake):
             response = self.client.get(
                 reverse(
                     "play_status",
@@ -3109,7 +3109,7 @@ class TestLg01dPlayStatus(_Lg01dTestCase):
         """
         season, _teams = _lg01d_active_season("PSUnk", n_teams=2)
         fake = self._make_async_result("PENDING", info=None)
-        with patch("matches.views.AsyncResult", return_value=fake):
+        with patch("matches.league_views.AsyncResult", return_value=fake):
             response = self.client.get(
                 reverse(
                     "play_status",
@@ -3130,7 +3130,7 @@ class TestLg01dPlayStatus(_Lg01dTestCase):
     def test_get_returns_200_on_any_job_id(self) -> None:
         season, _teams = _lg01d_active_season("PSAny", n_teams=2)
         fake = self._make_async_result("PENDING", info=None)
-        with patch("matches.views.AsyncResult", return_value=fake):
+        with patch("matches.league_views.AsyncResult", return_value=fake):
             response = self.client.get(
                 reverse(
                     "play_status",
@@ -3159,7 +3159,7 @@ class TestLg01dPlayStatus(_Lg01dTestCase):
         fake = self._make_async_result("PENDING", info=None)
         # Send a DIFFERENT ?season_id= query param — the response should
         # echo the URL kwarg, not the query param.
-        with patch("matches.views.AsyncResult", return_value=fake):
+        with patch("matches.league_views.AsyncResult", return_value=fake):
             response = self.client.get(
                 reverse(
                     "play_status",
@@ -3221,7 +3221,7 @@ class TestLg01fLg01dSessionWrites(_Lg01dTestCase):
             info = None
             result = None
 
-        with patch("matches.views.AsyncResult", return_value=_Fake()):
+        with patch("matches.league_views.AsyncResult", return_value=_Fake()):
             self.client.get(
                 reverse(
                     "play_status",

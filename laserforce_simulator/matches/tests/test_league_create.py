@@ -293,7 +293,7 @@ class TestSeamWithGenerateTeams(TestCase):
         # model-side patch.
         try:
             with patch(
-                "matches.views.Season.objects.create",
+                "matches.league_views.Season.objects.create",
                 side_effect=Exception("boom"),
             ):
                 with self.assertRaises(Exception):

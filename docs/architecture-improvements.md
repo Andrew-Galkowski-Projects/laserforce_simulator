@@ -6,7 +6,7 @@ Domain vocabulary follows [CONTEXT.md](../CONTEXT.md).
 
 ---
 
-## 1. Round analytics helpers trapped in `matches/views.py` — **DESIGNED (2026-05-28)**
+## 1. Round analytics helpers trapped in `matches/views.py` — **COMPLETED (#90)**
 
 Seam contract: [`.claude/worktrees/round-analytics-seam-contract.md`](../.claude/worktrees/round-analytics-seam-contract.md). Scope widened from "extract `_player_row` + `_team_totals` + missile summary + comparison helpers" to **also flip `game_round_detail.html` to render from the same dict the PDF uses**, crystallising the new domain term **Round scoreboard** (CONTEXT.md, `### Analytics and review`). Three new pure modules (`matches/round_summary.py` — 28-key `PLAYER_ROW_KEYS`, `matches/round_comparison.py`, `matches/missile_log_stats.py`), three new pure-unit test files, two custom template filters (`count_survivors`, `is_eliminated`) deleted. Behaviour-neutral; no migration, no ADR.
 
@@ -15,7 +15,7 @@ Seam contract: [`.claude/worktrees/round-analytics-seam-contract.md`](../.claude
 - **Solution** — Extract `matches/round_analytics.py` and `matches/round_comparison.py`. View becomes ORM-fetch → pure module → render.
 - **Benefits** — **Locality**: a future second consumer (PDF, REST, dashboard widget) reuses the aggregator instead of copying. **Test surface**: pure-function tests with `list[dict]` fixtures, no `RequestFactory` ceremony. **Leverage**: the **Round report** PDF (`pdf_report.py`) and the HTML detail view could share per-player table logic.
 
-## 2. `role_benchmarks_cache.py` mixes ORM materialisation with caching — **DESIGNED (2026-05-28)**
+## 2. `role_benchmarks_cache.py` mixes ORM materialisation with caching — **COMPLETED (#91)**
 
 Original framing was inaccurate: the module is 309 lines and does **three** things — ORM scan, `_MvpAdapter` materialisation (so `calculate_mvp` can run without ORM access), and caching. The "push cache to view layer" idea doesn't apply because the scan is unavoidable (every consumer needs the full materialised result), so the cache structurally belongs behind a single function.
 
