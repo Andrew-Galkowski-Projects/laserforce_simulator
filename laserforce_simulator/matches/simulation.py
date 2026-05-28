@@ -37,6 +37,7 @@ from .sim_helpers.pending_events import (
     PendingReaction,
 )
 from .sim_helpers.down import record_down
+from .sim_helpers.event_log import EventLog
 from .sim_helpers.round_context import RoundContext
 from .sim_helpers.shot import (
     SHOT_KIND_FOLLOW_UP,
@@ -345,61 +346,16 @@ def _apply_nuke_reaction_flags(all_alive: list, pending_nukes: list) -> None:
                 setattr(p, "reacting_to_nuke", True)
 
 
-# ----------------------------------------------------------------------------
-# RES-02b — Universal event metadata snapshot helpers.
-# Every event_log.append site below uses these to attach post-event actor and
-# (optionally) target resource snapshots to the event metadata. The seam
-# contract (.claude/worktrees/res02b-parity-contract.md) pins the key set.
-# ----------------------------------------------------------------------------
-def _actor_meta(actor) -> dict:
-    """Universal actor snapshot block (post-event values)."""
-    return {
-        "actor_role": actor.role,
-        "actor_shots": actor.final_shots,
-        "actor_lives": actor.final_lives,
-        "actor_points": actor.points_scored,
-        "sp": actor.final_special,
-    }
-
-
-def _target_meta(target) -> dict:
-    """Universal target snapshot block (post-event values)."""
-    return {
-        "target_role": target.role,
-        "target_shots": target.final_shots,
-        "target_lives": target.final_lives,
-        "target_points": target.points_scored,
-    }
-
-
-def _build_meta(actor, target=None, **extras) -> dict:
-    """Build event metadata with actor block, optional target block, and extras."""
-    md = _actor_meta(actor)
-    if target is not None:
-        md.update(_target_meta(target))
-    md.update(extras)
-    return md
-
-
-def _resupply_event_dict(event_type: str, kwargs: dict, tick_second: float) -> dict:
-    """Convert kwargs-style resupply emit into the standard event buffer dict.
-
-    For single resupply events (resupply_lives/ammo) the adapter in _do_resupply
-    passes actor=support, target=requestor.  For combo_resupply only requestor is
-    passed (no actor kwarg); actor_id is resolved from the requestor kwarg instead.
-    """
-    actor = kwargs.get("actor") or kwargs.get("requestor")
-    target = kwargs.get("target")
-    ts = kwargs.get("second", tick_second)
-    return {
-        "event_type": event_type,
-        "actor_id": actor.player_id if actor is not None else None,
-        "target_id": target.player_id if target is not None else None,
-        "timestamp": int(ts),
-        "points_awarded": 0,
-        "description": f"resupply request: {event_type}",
-        "metadata": kwargs.get("metadata", {}),
-    }
+# NOTE: ``_actor_meta`` / ``_target_meta`` / ``_build_meta`` are gone —
+# the EventLog candidate moved the RES-02b universal metadata-snapshot
+# helpers into ``sim_helpers.event_log`` as private to the EventLog
+# class (single source of truth for the GameEvent-dict shape).
+#
+# NOTE: ``_resupply_event_dict`` and the resupply-side ``_batch_emit`` lambda
+# inside ``_simulate_round`` are gone — the EventLog candidate collapsed the
+# resupply_queue ↔ simulation callable seam. The resupply verbs
+# (``ctx.events.resupply_lives`` / ``.resupply_ammo`` / ``.combo_resupply``)
+# now own the wire-shape; helpers take ``ctx`` directly.
 
 
 from matches.sim_helpers.role_constants import ROLE_STATS
@@ -1347,8 +1303,18 @@ class BatchSimulator:
         # ``self._pending_nukes``) that record_down used to reach via
         # ``getattr(self, ...)``; that hack is structurally unnecessary now
         # that ctx carries the references.
+        # EventLog wraps the caller-provided ``event_log`` list so the
+        # 18 inline ``event_log.append({...})`` sites in this module
+        # keep working until step 8 retires them; until then,
+        # ``event_log`` (local list) and ``ctx.events.entries`` are
+        # the same list. On the batch path (``event_log is None``)
+        # the EventLog is the null-object variant (persist=False).
+        if event_log is None:
+            events_log = EventLog(persist=False)
+        else:
+            events_log = EventLog(persist=True, buffer=event_log)
         ctx = RoundContext(
-            event_log=event_log,
+            events=events_log,
             pending_nukes=pending_nukes,
             pending_followups=pending_followups,
             pending_reactions=pending_reactions,
@@ -1379,49 +1345,22 @@ class BatchSimulator:
                     survival = getattr(lock.defender, "survival", 50)
                     dodge_pct = min(20.0, survival / 5.0)
                     if random.random() * 100 < dodge_pct:
-                        if event_log is not None:
-                            # missile_dodge: actor = dodging defender, target = missile-attacker
-                            event_log.append(
-                                {
-                                    "event_type": "missile_dodge",
-                                    "actor_id": lock.defender.player_id,
-                                    "target_id": lock.attacker.player_id,
-                                    "timestamp": int(second),
-                                    "points_awarded": 0,
-                                    "description": f"{lock.defender.name} dodges missile from {lock.attacker.name}",
-                                    "metadata": _build_meta(
-                                        lock.defender, lock.attacker
-                                    ),
-                                }
-                            )
-                            # RES-03: also emit a 'missiled' resolution row so
-                            # the missile log records this fired missile as a
-                            # miss (dodged).
-                            event_log.append(
-                                {
-                                    "event_type": "missiled",
-                                    "actor_id": lock.attacker.player_id,
-                                    "target_id": lock.defender.player_id,
-                                    "timestamp": int(second),
-                                    "points_awarded": 0,
-                                    "description": (
-                                        f"{lock.attacker.name} misses "
-                                        f"{lock.defender.name} with missile"
-                                    ),
-                                    "metadata": _build_meta(
-                                        lock.attacker,
-                                        lock.defender,
-                                        result="miss",
-                                        friendly_fire=bool(
-                                            lock.attacker.team_color
-                                            == lock.defender.team_color
-                                        ),
-                                    ),
-                                }
-                            )
+                        ctx.events.missile_dodge(lock.defender, lock.attacker, second)
+                        # RES-03: also emit a 'missiled' resolution row so
+                        # the missile log records this fired missile as a
+                        # miss (dodged).
+                        ctx.events.missiled(
+                            lock.attacker,
+                            lock.defender,
+                            second,
+                            result="miss",
+                            friendly_fire=(
+                                lock.attacker.team_color == lock.defender.team_color
+                            ),
+                        )
                     else:
                         self._complete_missile(
-                            lock.attacker, lock.defender, second, event_log, ctx
+                            lock.attacker, lock.defender, second, ctx
                         )
                 # "miss": missile already consumed, no further action
             pending_missile_locks = still_locking_b
@@ -1466,26 +1405,14 @@ class BatchSimulator:
                     opposing = (
                         blue_players if n.player.team_color == "red" else red_players
                     )
-                    self._complete_nuke(
-                        n.player, n.complete_time, opposing, event_log, ctx
-                    )
-                elif event_log is not None and not n.cancel_logged:
+                    self._complete_nuke(n.player, n.complete_time, opposing, ctx)
+                elif not n.cancel_logged:
                     # RV-02: defensive fallback — a nuke that fizzles without
                     # ever passing through record_down (no down/disarm site
                     # logged it) still gets exactly one nuke_cancelled record.
                     # Normally the down-tick emit already set cancel_logged.
                     n.cancel_logged = True
-                    event_log.append(
-                        {
-                            "event_type": "nuke_cancelled",
-                            "actor_id": n.player.player_id,
-                            "target_id": None,
-                            "timestamp": n.complete_time,
-                            "points_awarded": 0,
-                            "description": f"{n.player.name} nuke cancelled",
-                            "metadata": _build_meta(n.player),
-                        }
-                    )
+                    ctx.events.nuke_cancelled(n.player, n.complete_time)
 
             # --- alive players this tick ---
             red_alive = [
@@ -1553,7 +1480,7 @@ class BatchSimulator:
                 ptype = plan["type"]
                 actor = plan["actor"]
                 if ptype in ("resupply_ammo", "resupply_lives"):
-                    self._attempt_resupply(actor, plan["target"], second, event_log)
+                    self._attempt_resupply(actor, plan["target"], second, ctx)
                 elif ptype == "request_resupply":
                     batch_resupply_requestors.append(actor)
                 elif ptype == "only_move":
@@ -1579,26 +1506,25 @@ class BatchSimulator:
                     self._capture_base(
                         actor,
                         plan["base_id"],
-                        event_log,
+                        ctx,
                         second,
                         movement_ctx=plan.get("movement_ctx"),
                     )
                 elif ptype == "missile":
-                    # RES-03: emit a 'locking' event on lock start by routing
-                    # event_log.append through the helper's emit_event seam.
+                    # RES-03: emit a 'locking' event on lock start via the
+                    # ctx.events.locking verb (collapsed from the legacy
+                    # emit_event callable seam by the EventLog candidate).
                     scheduled = self._start_missile_lock(
                         actor,
                         plan["target"],
                         second,
                         movement_ctx,
-                        emit_event=(
-                            event_log.append if event_log is not None else None
-                        ),
+                        ctx=ctx,
                     )
                     if scheduled:
                         pending_missile_locks.append(scheduled)
                 elif ptype == "use_special":
-                    scheduled = self._use_special(actor, second, all_alive, event_log)
+                    scheduled = self._use_special(actor, second, all_alive, ctx)
                     if scheduled and scheduled[0] == "nuke":
                         pending_nukes.append(
                             PendingNuke(complete_time=scheduled[1], player=scheduled[2])
@@ -1651,19 +1577,15 @@ class BatchSimulator:
             )
 
             if batch_resupply_requestors:
-
-                def _batch_emit(event_type: str, **kwargs) -> None:
-                    if event_log is not None:
-                        event_log.append(
-                            _resupply_event_dict(event_type, kwargs, second)
-                        )
-
+                # EventLog candidate: the legacy ``_batch_emit`` lambda
+                # and ``_resupply_event_dict`` adapter are gone — the
+                # helper takes ``ctx`` and emits through the verbs.
                 resolve_resupply_requests(
                     batch_resupply_requestors,
                     all_alive,
                     second,
                     movement_ctx,
-                    emit_event=_batch_emit,
+                    ctx=ctx,
                 )
 
             if tag_attempts:
@@ -1702,10 +1624,10 @@ class BatchSimulator:
                 eliminated_at = second
                 if not red_alive:
                     for p in blue_alive:
-                        self._award_bases(p, event_log, second)
+                        self._award_bases(p, ctx, second)
                 if not blue_alive:
                     for p in red_alive:
-                        self._award_bases(p, event_log, second)
+                        self._award_bases(p, ctx, second)
                 break
 
         # TIME-01: guarantee uptime reconciles to exactly TICKS_PER_ROUND per
@@ -1946,8 +1868,12 @@ class BatchSimulator:
         initial-tag path (MOVE-03 / ADR-0009).
         """
         if ctx is None:
+            if event_log is None:
+                events_log = EventLog(persist=False)
+            else:
+                events_log = EventLog(persist=True, buffer=event_log)
             ctx = RoundContext(
-                event_log=event_log,
+                events=events_log,
                 pending_nukes=[],
                 pending_followups=(
                     pending_followups if pending_followups is not None else []
@@ -1964,9 +1890,8 @@ class BatchSimulator:
             )
             resolve_shot(a["attacker"], a["defender"], second, kind=kind, ctx=ctx)
 
-    def _attempt_resupply(self, tagger, teammate, second, event_log=None):
-        emit = event_log.append if event_log is not None else None
-        _attempt_resupply_shared(tagger, teammate, second, emit_event=emit)
+    def _attempt_resupply(self, tagger, teammate, second, ctx: RoundContext):
+        _attempt_resupply_shared(tagger, teammate, second, ctx=ctx)
 
     def _change_zone(self, player, towards=None):
         if player.current_zone == 1:
@@ -1977,20 +1902,39 @@ class BatchSimulator:
             player.current_zone = 1
 
     def _capture_base(
-        self, player, base_id, event_log=None, second=0, movement_ctx=None
+        self,
+        player,
+        base_id,
+        ctx: RoundContext | None = None,
+        second=0,
+        movement_ctx=None,
     ):
-        emit = event_log.append if event_log is not None else None
-        _capture_base_shared(player, base_id, second, movement_ctx, emit_event=emit)
+        # ``ctx`` defaults to a fresh null-context for direct test
+        # callsites (e.g. ``BatchSimulator()._capture_base(player, 14,
+        # movement_ctx=ctx)`` in test_map.py) that don't care about
+        # emits and want minimal setup.
+        if ctx is None:
+            ctx = RoundContext()
+        _capture_base_shared(player, base_id, second, movement_ctx, ctx=ctx)
 
-    def _award_bases(self, player, event_log=None, second=0):
-        emit = event_log.append if event_log is not None else None
-        _award_bases_shared(player, second, emit_event=emit)
+    def _award_bases(self, player, ctx: RoundContext | None = None, second=0):
+        if ctx is None:
+            ctx = RoundContext()
+        _award_bases_shared(player, second, ctx=ctx)
 
     def _start_missile_lock(
-        self, attacker, defender, second, movement_ctx=None, *, emit_event=None
+        self,
+        attacker,
+        defender,
+        second,
+        movement_ctx=None,
+        *,
+        ctx: RoundContext | None = None,
     ):
+        if ctx is None:
+            ctx = RoundContext()
         return _start_missile_lock_shared(
-            attacker, defender, second, movement_ctx, emit_event=emit_event
+            attacker, defender, second, movement_ctx, ctx=ctx
         )
 
     def _complete_missile(
@@ -1998,7 +1942,6 @@ class BatchSimulator:
         attacker,
         defender,
         second,
-        event_log=None,
         ctx: RoundContext | None = None,
     ):
         # RES-03: always emit a 'missiled' resolution event when the missile
@@ -2013,19 +1956,9 @@ class BatchSimulator:
             defender.final_lives = max(0, defender.final_lives - 2)
             if defender.final_lives <= 0:
                 defender.was_eliminated_at = second
-                if event_log is not None:
-                    event_log.append(
-                        {
-                            "event_type": "elimination",
-                            "actor_id": attacker.player_id,
-                            "target_id": defender.player_id,
-                            "timestamp": int(second),
-                            "points_awarded": 0,
-                            "description": f"{defender.name} eliminated by missile from {attacker.name}",
-                            "metadata": _build_meta(
-                                attacker, defender, elimination_action="missile"
-                            ),
-                        }
+                if ctx is not None:
+                    ctx.events.elimination(
+                        attacker, defender, int(second), action="missile"
                     )
             record_down(defender, second, ctx)
             defender.times_missiled += 1
@@ -2038,27 +1971,16 @@ class BatchSimulator:
                 attacker.final_special = min(
                     attacker.max_special, attacker.final_special + 2
                 )
-            if event_log is not None:
-                event_log.append(
-                    {
-                        "event_type": "missiled",
-                        "actor_id": attacker.player_id,
-                        "target_id": defender.player_id,
-                        "timestamp": int(second),
-                        "points_awarded": 500,
-                        "description": f"{attacker.name} hits {defender.name} with missile",
-                        "metadata": _build_meta(
-                            attacker,
-                            defender,
-                            result="hit",
-                            friendly_fire=bool(
-                                attacker.team_color == defender.team_color
-                            ),
-                        ),
-                    }
+            if ctx is not None:
+                ctx.events.missiled(
+                    attacker,
+                    defender,
+                    int(second),
+                    result="hit",
+                    friendly_fire=(attacker.team_color == defender.team_color),
                 )
 
-    def _use_special(self, player, second, all_alive, event_log=None):
+    def _use_special(self, player, second, all_alive, ctx: RoundContext | None = None):
         if not (
             player.can_use_special
             and player.final_lives > 0
@@ -2071,34 +1993,23 @@ class BatchSimulator:
             # TIME-01: nuke fuse is 4-7 s -> 8-14 ticks (tick-native).
             countdown = random.randint(8, 14)
             player.special_active_until = second + countdown
-            if event_log is not None:
-                event_log.append(
-                    {
-                        "event_type": "special",
-                        "actor_id": player.player_id,
-                        "target_id": None,
-                        "timestamp": second,
-                        "points_awarded": 0,
-                        "description": f"{player.name} activates nuke",
-                        "metadata": _build_meta(player, fires_at=second + countdown),
-                    }
+            if ctx is not None:
+                ctx.events.special(
+                    player,
+                    second,
+                    description=f"{player.name} activates nuke",
+                    metadata_extras={"fires_at": second + countdown},
                 )
             return ("nuke", second + countdown, player)
         elif player.role == "scout":
             player.final_special -= player.special_cost
             # TIME-01: rapid fire lasts the whole round (tick-native sentinel).
             player.special_active_until = TICKS_PER_ROUND
-            if event_log is not None:
-                event_log.append(
-                    {
-                        "event_type": "special",
-                        "actor_id": player.player_id,
-                        "target_id": None,
-                        "timestamp": second,
-                        "points_awarded": 0,
-                        "description": f"{player.name} activates rapid fire",
-                        "metadata": _build_meta(player),
-                    }
+            if ctx is not None:
+                ctx.events.special(
+                    player,
+                    second,
+                    description=f"{player.name} activates rapid fire",
                 )
         elif player.role == "medic":
             player.final_special -= player.special_cost
@@ -2113,30 +2024,24 @@ class BatchSimulator:
                     mate.final_lives = min(mate.max_lives, mate.final_lives + amount)
                     if mate is not player:
                         healed_mates.append((mate, mate.final_lives - pre_lives))
-            if event_log is not None:
-                event_log.append(
-                    {
-                        "event_type": "special",
-                        "actor_id": player.player_id,
-                        "target_id": None,
-                        "timestamp": second,
-                        "points_awarded": 0,
-                        "description": f"{player.name} team heal special",
-                        "metadata": _build_meta(
-                            player,
-                            targets=[
-                                {
-                                    "pid": m.player_id,
-                                    "name": m.name,
-                                    "lives_delta": delta,
-                                    "shots": m.final_shots,
-                                    "lives": m.final_lives,
-                                    "points": m.points_scored,
-                                }
-                                for m, delta in healed_mates
-                            ],
-                        ),
-                    }
+            if ctx is not None:
+                ctx.events.special(
+                    player,
+                    second,
+                    description=f"{player.name} team heal special",
+                    metadata_extras={
+                        "targets": [
+                            {
+                                "pid": m.player_id,
+                                "name": m.name,
+                                "lives_delta": delta,
+                                "shots": m.final_shots,
+                                "lives": m.final_lives,
+                                "points": m.points_scored,
+                            }
+                            for m, delta in healed_mates
+                        ],
+                    },
                 )
         elif player.role == "ammo":
             player.final_special -= player.special_cost
@@ -2157,30 +2062,24 @@ class BatchSimulator:
                     mate.final_shots = min(mate.max_shots, mate.final_shots + amount)
                     if mate is not player:
                         resupplied_mates.append((mate, mate.final_shots - pre_shots))
-            if event_log is not None:
-                event_log.append(
-                    {
-                        "event_type": "special",
-                        "actor_id": player.player_id,
-                        "target_id": None,
-                        "timestamp": second,
-                        "points_awarded": 0,
-                        "description": f"{player.name} team ammo special",
-                        "metadata": _build_meta(
-                            player,
-                            targets=[
-                                {
-                                    "pid": m.player_id,
-                                    "name": m.name,
-                                    "shots_delta": delta,
-                                    "shots": m.final_shots,
-                                    "lives": m.final_lives,
-                                    "points": m.points_scored,
-                                }
-                                for m, delta in resupplied_mates
-                            ],
-                        ),
-                    }
+            if ctx is not None:
+                ctx.events.special(
+                    player,
+                    second,
+                    description=f"{player.name} team ammo special",
+                    metadata_extras={
+                        "targets": [
+                            {
+                                "pid": m.player_id,
+                                "name": m.name,
+                                "shots_delta": delta,
+                                "shots": m.final_shots,
+                                "lives": m.final_lives,
+                                "points": m.points_scored,
+                            }
+                            for m, delta in resupplied_mates
+                        ],
+                    },
                 )
         return None
 
@@ -2189,12 +2088,11 @@ class BatchSimulator:
         player,
         second,
         opposing_players,
-        event_log=None,
         ctx: RoundContext | None = None,
     ):
         if player.is_active_at(second) and player.final_lives > 0:
             player.points_scored += 500
-            if event_log is not None:
+            if ctx is not None:
                 # RES-02b: build per-opp post-detonation snapshots BEFORE the
                 # mutation loop so the detonation special event can carry the
                 # post-event target values, while preserving the historical
@@ -2214,16 +2112,12 @@ class BatchSimulator:
                             "points": opp.points_scored,
                         }
                     )
-                event_log.append(
-                    {
-                        "event_type": "special",
-                        "actor_id": player.player_id,
-                        "target_id": None,
-                        "timestamp": second,
-                        "points_awarded": 500,
-                        "description": f"{player.name} nuke detonates",
-                        "metadata": _build_meta(player, targets=projected_targets),
-                    }
+                ctx.events.special(
+                    player,
+                    second,
+                    description=f"{player.name} nuke detonates",
+                    points=500,
+                    metadata_extras={"targets": projected_targets},
                 )
             for opp in opposing_players:
                 if opp.final_lives <= 0:
@@ -2236,20 +2130,8 @@ class BatchSimulator:
                     opp.special_active_until = 0
                 if opp.final_lives <= 0:
                     opp.was_eliminated_at = second
-                    if event_log is not None:
-                        event_log.append(
-                            {
-                                "event_type": "elimination",
-                                "actor_id": player.player_id,
-                                "target_id": opp.player_id,
-                                "timestamp": second,
-                                "points_awarded": 0,
-                                "description": f"{opp.name} eliminated by nuke",
-                                "metadata": _build_meta(
-                                    player, opp, elimination_action="nuke"
-                                ),
-                            }
-                        )
+                    if ctx is not None:
+                        ctx.events.elimination(player, opp, second, action="nuke")
 
     # ------------------------------------------------------------------ #
     # Seed-based exact replay and DB persistence

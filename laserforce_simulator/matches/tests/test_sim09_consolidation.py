@@ -517,10 +517,11 @@ class TestRV02NukeCancelled:
     """
 
     def _ctx(self, pending_nukes=None):
+        from matches.sim_helpers.event_log import EventLog
         from matches.sim_helpers.round_context import RoundContext
 
         return RoundContext(
-            event_log=[],
+            events=EventLog(persist=True),
             pending_nukes=pending_nukes if pending_nukes is not None else [],
             pending_followups=[],
             pending_reactions=[],
@@ -542,7 +543,7 @@ class TestRV02NukeCancelled:
         cmd.final_lives -= 1  # mimic the life-loss at the callsite
         record_down(cmd, 105, ctx)
 
-        cancels = [e for e in ctx.event_log if e["event_type"] == "nuke_cancelled"]
+        cancels = [e for e in ctx.events.entries if e["event_type"] == "nuke_cancelled"]
         assert len(cancels) == 1
         assert cancels[0]["actor_id"] == 7
         assert cancels[0]["timestamp"] == 105
@@ -560,7 +561,7 @@ class TestRV02NukeCancelled:
         record_down(cmd, 105, ctx)
         record_down(cmd, 106, ctx)  # already cancel_logged → no second event
 
-        assert self._count(ctx.event_log, "nuke_cancelled") == 1
+        assert self._count(ctx.events.entries, "nuke_cancelled") == 1
 
     def test_commander_without_pending_nuke_emits_nothing(self):
         from matches.sim_helpers.down import record_down
@@ -569,7 +570,7 @@ class TestRV02NukeCancelled:
         ctx = self._ctx()
         cmd.final_lives -= 1
         record_down(cmd, 105, ctx)
-        assert self._count(ctx.event_log, "nuke_cancelled") == 0
+        assert self._count(ctx.events.entries, "nuke_cancelled") == 0
 
 
 class TestRV02MedicReset:
@@ -578,10 +579,11 @@ class TestRV02MedicReset:
     between downs does not."""
 
     def _ctx(self):
+        from matches.sim_helpers.event_log import EventLog
         from matches.sim_helpers.round_context import RoundContext
 
         return RoundContext(
-            event_log=[],
+            events=EventLog(persist=True),
             pending_nukes=[],
             pending_followups=[],
             pending_reactions=[],
@@ -600,12 +602,12 @@ class TestRV02MedicReset:
 
         medic.final_lives -= 1
         record_down(medic, 100, ctx)  # fresh down (active) → chain 1, no emit
-        assert self._count(ctx.event_log) == 0
+        assert self._count(ctx.events.entries) == 0
 
         medic.final_lives -= 1
         record_down(medic, 105, ctx)  # re-down within RESPAWN window → chain 2
 
-        resets = [e for e in ctx.event_log if e["event_type"] == "medic_reset"]
+        resets = [e for e in ctx.events.entries if e["event_type"] == "medic_reset"]
         assert len(resets) == 1
         assert resets[0]["actor_id"] == 9
         assert resets[0]["timestamp"] == 105
@@ -621,7 +623,7 @@ class TestRV02MedicReset:
         medic.final_lives -= 1
         record_down(medic, 200, ctx)  # fully recovered (200-100 >> RESPAWN) → fresh
 
-        assert self._count(ctx.event_log) == 0
+        assert self._count(ctx.events.entries) == 0
 
     def test_non_medic_chain_does_not_emit_medic_reset(self):
         from matches.sim_helpers.down import record_down
@@ -632,4 +634,4 @@ class TestRV02MedicReset:
         record_down(scout, 100, ctx)
         scout.final_lives -= 1
         record_down(scout, 105, ctx)  # chain reaches 2 but role != medic
-        assert self._count(ctx.event_log) == 0
+        assert self._count(ctx.events.entries) == 0

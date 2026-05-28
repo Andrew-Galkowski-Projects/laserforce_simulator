@@ -23,6 +23,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from matches.sim_helpers.event_log import EventLog
 from matches.sim_helpers.pending_events import PendingFollowup, PendingReaction
 from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.round_context import RoundContext
@@ -89,7 +90,7 @@ def _player(
 
 def _ctx(*, all_alive: list | None = None) -> RoundContext:
     return RoundContext(
-        event_log=[],
+        events=EventLog(persist=True),
         pending_nukes=[],
         pending_followups=[],
         pending_reactions=[],
@@ -99,7 +100,7 @@ def _ctx(*, all_alive: list | None = None) -> RoundContext:
 
 
 def _events_by_type(ctx: RoundContext, etype: str) -> list:
-    return [e for e in ctx.event_log if e["event_type"] == etype]
+    return [e for e in ctx.events.entries if e["event_type"] == etype]
 
 
 # RNG patch helpers. ``hit_chance = (70 + acc - surv)``; with acc=99,
@@ -279,7 +280,7 @@ class TestResolveShotInitial(unittest.TestCase):
             attacker, defender, tick=5, kind=SHOT_KIND_INITIAL, ctx=ctx
         )
         self.assertFalse(outcome.hit)
-        self.assertEqual(ctx.event_log, [])
+        self.assertEqual(ctx.events.entries, [])
 
     def test_invalid_gate_dead_defender_no_event(self) -> None:
         attacker = _player(role="scout", final_shots=20)
@@ -289,7 +290,7 @@ class TestResolveShotInitial(unittest.TestCase):
             attacker, defender, tick=5, kind=SHOT_KIND_INITIAL, ctx=ctx
         )
         self.assertFalse(outcome.hit)
-        self.assertEqual(ctx.event_log, [])
+        self.assertEqual(ctx.events.entries, [])
 
 
 # ---------------------------------------------------------------------------
@@ -619,7 +620,7 @@ class TestResolveShotOverwatch(unittest.TestCase):
             len(ctx.pending_reactions) > 0
             or any(
                 e["event_type"] == "tag" and e["metadata"].get("is_reaction")
-                for e in ctx.event_log
+                for e in ctx.events.entries
             )
         )
 
@@ -646,7 +647,7 @@ class TestResolveShotOverwatch(unittest.TestCase):
         # produced a second tag event.
         chained = (
             len(ctx.pending_followups) > 0
-            or sum(1 for e in ctx.event_log if e["event_type"] == "tag") >= 2
+            or sum(1 for e in ctx.events.entries if e["event_type"] == "tag") >= 2
         )
         self.assertTrue(chained)
 

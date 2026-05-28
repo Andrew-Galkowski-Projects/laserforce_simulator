@@ -2,13 +2,60 @@
 
 Helper modules used by `BatchSimulator` (the sole simulator post-SIM-09; [ADR-0002](../../../docs/adr/0002-two-simulation-engines.md) superseded) in `matches/simulation.py`. Mostly pure Python — `map_loader.py` is the one exception, lazy-importing Django ORM models for its arena-map queries.
 
+## event_log.py
+
+The **single source of truth for the `GameEvent`-dict shape**. Lands as deepening candidate #2 — collapses the 23+ inline `event_log.append({...})` sites that were scattered across `simulation.py`, `shot.py`, `down.py`, `combat.py`, and `resupply_queue.py`. Pure Python, no Django imports. Pinned by the seam contract at [`.claude/worktrees/event-log-seam-contract.md`](../../../.claude/worktrees/event-log-seam-contract.md).
+
+**`EventLog` class** — null-object-pattern event recorder. `__slots__` for per-round allocation cheapness.
+
+| API | Purpose |
+|-----|---------|
+| `EventLog(*, persist=True, buffer=None)` | Constructor. `persist=False` ⇒ null-object (each verb early-returns). `buffer=<list>` is a transitional shim letting the caller's pre-existing list and the internal storage reference the same list (used by `simulation.py` during the candidate-#2 migration; removable once `_simulate_round` is refactored to read `events.entries` directly) |
+| `events.entries` | The live `list[dict]` of recorded events (NOT a copy). Consumed by `BatchSimulator._flush_to_db` to construct `GameEvent` rows |
+| `iter(events)` / `len(events)` | Convenience for iteration / length |
+| `repr(events)` | Distinguishes `persist` vs `null` modes |
+
+**13 per-event-type verbs** — each emits one entry into `self._entries` (or no-ops when `persist=False`). Verb signatures:
+
+| Verb | Signature | event_type | points | Description (varies by kind) |
+|---|---|---|---|---|
+| `tag` | `(attacker, defender, tick, *, kind="initial", chain_depth=0)` | `"tag"` | 100 | `"X tags Y"` / `"X follow-up tags Y"` / `"X reacts to Y"` (overwatch reuses initial wording) |
+| `miss` | `(attacker, defender, tick, *, kind="initial", chain_depth=0, reason=None)` | `"miss"` | 0 | `"X misses Y"` / `"X misses Y (hiding)"` / `"X follow-up miss on Y"` / `"X reaction miss on Y"` |
+| `elimination` | `(attacker, defender, tick, *, action="tag")` | `"elimination"` | 0 | `"Y eliminated by X"` / `"X eliminates Y (follow-up)"` / `"X eliminates Y (reaction)"` / `"Y eliminated by missile from X"` / `"Y eliminated by nuke"` |
+| `nuke_cancelled` | `(commander, tick)` | `"nuke_cancelled"` | 0 | `"X nuke cancelled"` |
+| `medic_reset` | `(medic, tick)` | `"medic_reset"` | 0 | `"X medic reset (down-chain)"` |
+| `special` | `(actor, tick, *, description, points=0, metadata_extras=None)` | `"special"` | per-arg | caller passes the description (nuke activation, detonation, rapid fire, team heal, team ammo) |
+| `locking` | `(attacker, defender, tick)` | `"locking"` | 0 | `"X locks on Y"` |
+| `missiled` | `(attacker, defender, tick, *, result, friendly_fire)` | `"missiled"` | 500 if hit else 0 | `"X hits Y with missile"` / `"X misses Y with missile"` |
+| `missile_dodge` | `(defender, attacker, tick)` | `"missile_dodge"` | 0 | `"Y dodges missile from X"` (defender as actor, attacker as target) |
+| `resupply_lives` | `(supporter, requestor, tick, *, amount=None)` | `"resupply_lives"` | 0 | `"X heals Y"` |
+| `resupply_ammo` | `(supporter, requestor, tick, *, amount=None)` | `"resupply_ammo"` | 0 | `"X resupplies Y"` |
+| `combo_resupply` | `(requestor, medic, ammo, tick)` | `"combo_resupply"` | 0 | `"medic combo-resupplies requestor"` — actor=medic by convention, target=requestor, metadata extras = `medic_tag` / `ammo_tag` |
+| `base_capture` | `(actor, tick, *, base_id, points=1001, description=None, metadata_extras=None)` | `"base_capture"` | per-arg | default `"X captures base neutral/opposing"`; caller passes custom description for end-of-round awarded variants |
+
+**Private internals** (not exposed):
+- `_actor_meta(actor)` — the 5-key RES-02b actor-snapshot block (`actor_role`, `actor_shots`, `actor_lives`, `actor_points`, `sp`)
+- `_target_meta(target)` — the 4-key target-snapshot block (`target_role`, `target_shots`, `target_lives`, `target_points`)
+- `_build_meta(actor, target=None, **extras)` — composes actor + optional target + extras
+- `_kind_extras(kind, chain_depth)` — kind → metadata-flag translation for tag/miss verbs (`is_follow_up`/`chain`, `is_reaction`, `overwatch`)
+
+These were duplicated three times pre-refactor (in `simulation.py`, `shot.py`, `down.py`, plus copies in `combat.py` and `resupply_queue.py`) — now one private set inside EventLog. No public re-export; if a future caller needs the metadata-block shape, that's a signal to add a new verb.
+
+**Wire-format normalization.** Pre-refactor, resupply descriptions diverged by code path: `combat.py::attempt_resupply` produced `"X heals Y"` / `"X resupplies Y"`; the `resupply_queue.py` route went through `_resupply_event_dict` and ended up as `"resupply request: resupply_lives"`. EventLog standardizes on the combat.py wording for all paths.
+
+**Movement events stay off the EventLog.** `event_type="movement"` rows are written directly to `GameEvent` at `_flush_to_db` time from `PlayerState.movement_trail` (MOVE-01 / RES-04). No `movement` verb.
+
+**Behaviour-neutral.** Zero RNG consumed. Dict shape is byte-identical to pre-refactor literals. Seeded games byte-identical. **No new Score Calibration re-baseline.**
+
+**Tests:** `matches/tests/test_event_log.py` — 59 pure-unit tests across 17 classes (per-verb output shape, null-log no-op, iteration/length contracts, RES-03 four-key missile metadata, combo_resupply tag-id metadata, three `base_capture` description variants, `TestNoDjangoImportsLeaked` defensive check).
+
 ## round_context.py
 
 Pure Python, zero imports beyond stdlib (mirrors `time_constants.py` discipline). `RoundContext` is a `@dataclass` bundling the six per-round mutable references the tick loop threads through:
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `event_log` | `Optional[list]` | Per-round event-dict buffer; `None` on the batch path (no persistence requested). `resolve_shot` appends `tag` / `miss` / `elimination` rows; `record_down` appends `medic_reset` / `nuke_cancelled` rows |
+| `events` | `EventLog` | Per-round event recorder (single source of truth for the `GameEvent`-dict shape — see `event_log.py` above). Always non-None: `EventLog(persist=False)` is the null-object batch-path variant. `resolve_shot` calls `ctx.events.tag/.miss/.elimination`; `record_down` calls `ctx.events.medic_reset/.nuke_cancelled`. Field renamed from `event_log: Optional[list]` by the EventLog candidate; default is `EventLog(persist=False)` for test-factory simplicity |
 | `pending_nukes` | `list[PendingNuke]` | Live nuke queue; read by `record_down` for the RV-02 nuke-cancellation emit |
 | `pending_followups` | `list[PendingFollowup]` | Written by `resolve_shot` when a hit chains a deferred follow-up |
 | `pending_reactions` | `list[PendingReaction]` | Written by `resolve_shot` when a tag/miss provokes a deferred reaction |
@@ -28,17 +75,17 @@ Built once in `BatchSimulator._simulate_round` after the four pending-event queu
 3. **Clear `player._path_cache = None`** (MOVE-02 — knocked off committed route).
 4. **Clear `player.is_holding = False`** (MOVE-03 — Down ends Overwatch).
 5. **Clear `player._committed_goal = None`** iff `_committed_goal[1]` (the `from_action_driven` flag) is True (MOVE-04 — positioning goals survive a Down).
-6. **RV-02 nuke_cancelled.** Commander only: scan `ctx.pending_nukes`; for each nuke whose `player is` this Commander and `cancel_logged` is False, emit one `nuke_cancelled` event and set `cancel_logged = True`. The nuke is LEFT in the queue (MECH-05 — drain path is structurally unchanged).
+6. **RV-02 nuke_cancelled.** Commander only: scan `ctx.pending_nukes`; for each nuke whose `player is` this Commander and `cancel_logged` is False, emit one `nuke_cancelled` event via `ctx.events.nuke_cancelled(commander, tick)` and set `cancel_logged = True`. The nuke is LEFT in the queue (MECH-05 — drain path is structurally unchanged).
 
-**Does NOT touch `final_lives` or `shields`** — those mutations happen at the caller (tag / follow-up / reaction / missile / nuke). Callers: `sim_helpers.shot.resolve_shot` (the primary site — every shot-driven life loss), `BatchSimulator._complete_missile`, `BatchSimulator._complete_nuke`. `ctx` is typed `Optional[RoundContext]` for compatibility with legacy/test callsites that exercise the resolver without a per-round context (mirroring the pre-refactor `getattr(self, "_event_log", None)` defensiveness); `ctx is None` skips the emits and the nuke scan but still does the state mutations.
+**Does NOT touch `final_lives` or `shields`** — those mutations happen at the caller (tag / follow-up / reaction / missile / nuke). Callers: `sim_helpers.shot.resolve_shot` (the primary site — every shot-driven life loss), `BatchSimulator._complete_missile`, `BatchSimulator._complete_nuke`. `ctx` is typed `Optional[RoundContext]` for compatibility with legacy/test callsites that exercise the resolver without a per-round context; `ctx is None` skips the verb emits and the nuke scan but still does the state mutations.
 
-`_actor_meta(actor) -> dict` is a private helper returning the 5-key actor-snapshot block (`actor_role`, `actor_shots`, `actor_lives`, `actor_points`, `sp`) attached to every `record_down` event row. Mirrors `simulation._actor_meta` byte-for-byte; consolidation pending in the EventLog deepening candidate.
+EventLog candidate: the medic_reset and nuke_cancelled emits route through `ctx.events.medic_reset(medic, tick)` / `ctx.events.nuke_cancelled(commander, tick)` verbs (the legacy `_actor_meta` helper here is gone — EventLog owns the metadata shape).
 
 **Tests:** `matches/tests/test_record_down.py` — 28 pure-unit tests across 4 classes pinning all six behaviours, no DB required.
 
 ## shot.py
 
-`resolve_shot(attacker, defender, tick, *, kind, ctx, chain_depth=0) -> ShotOutcome` is the **wide Shot resolver** — the single Shot → Hit → Tag → Down → Elimination ladder consumed by all four call-site `kind` s. Pure free function; sim_helpers imports only (`combat._elevation_hit_modifier`, `down.record_down`, `mechanics.shot_cooldown`, `pending_events`, `round_context`, `time_constants.TICK_SECONDS`); the MECH-06 side-effect helpers (`_check_medic_under_fire`, `_update_player_memory`, `_broadcast_communication`) are **lazy-imported** from `matches.simulation` at the hit-emit site to avoid a circular import (the EventLog deepening candidate will move them into sim_helpers).
+`resolve_shot(attacker, defender, tick, *, kind, ctx, chain_depth=0) -> ShotOutcome` is the **wide Shot resolver** — the single Shot → Hit → Tag → Down → Elimination ladder consumed by all four call-site `kind` s. Pure free function; sim_helpers imports only (`combat._elevation_hit_modifier`, `down.record_down`, `mechanics.shot_cooldown`, `pending_events`, `round_context`, `time_constants.TICK_SECONDS`); the MECH-06 side-effect helpers (`_check_medic_under_fire`, `_update_player_memory`, `_broadcast_communication`) are **lazy-imported** from `matches.simulation` at the hit-emit site to avoid a circular import. EventLog candidate retired the local `_actor_meta` / `_target_meta` / `_build_meta` / `_kind_extras` / `_emit_*` helpers — emits now route through `ctx.events.tag(...)` / `.miss(...)` / `.elimination(...)`; only the shot-specific `_elimination_action(kind)` (kind → action-string translation) and `_cooldown_ticks(player, tick)` (the seconds→ticks helper) remain private to shot.py.
 
 **Public surface:**
 - `SHOT_KIND_INITIAL = "initial"`, `SHOT_KIND_FOLLOW_UP = "follow_up"`, `SHOT_KIND_REACTION = "reaction"`, `SHOT_KIND_OVERWATCH = "overwatch"` — the four call-site kinds.
@@ -291,13 +338,15 @@ Shared combat resolution used by `BatchSimulator` (the sole simulator post-SIM-0
 
 **`plan_action(player, all_alive, second, movement_ctx=None, *, save_player=None) -> list`** — Returns a list of planned action dicts for the player at this tick. Updates `player.last_chosen_action`; clears `is_hiding` (calling `save_player(player)` when provided). Used by `BatchSimulator`'s per-tick loop.
 
-**`attempt_resupply(tagger, teammate, second, *, emit_event=None) -> None`** — Applies a resupply: Ammo restores shots, Medic restores lives (per `_AMMO_CHART`/`_MEDIC_CHART`). Cancels any active special on the teammate. Nuke-cancel stat tracking is the caller's responsibility.
+EventLog candidate: all four combat helpers below dropped their `emit_event=None` callable kwarg and now take a required `ctx: RoundContext`. They call `ctx.events.*` verbs directly. The local `_actor_meta` / `_target_meta` / `_build_meta` copies that used to live here are gone — EventLog owns the metadata shape.
 
-**`capture_base(player, base_id, second, movement_ctx=None, *, emit_event=None) -> bool`** — Range-checks the player's cell against `base_sight_data`, deducts 3 shots, awards 1001 pts, and updates `neutral_base_destroyed` / `opposing_base_destroyed`. Returns `True` on success.
+**`attempt_resupply(tagger, teammate, second, *, ctx) -> None`** — Applies a resupply: Ammo restores shots, Medic restores lives (per `_AMMO_CHART`/`_MEDIC_CHART`). Cancels any active special on the teammate. Emits via `ctx.events.resupply_ammo(...)` / `.resupply_lives(...)`.
 
-**`award_bases(player, second, *, emit_event=None) -> None`** — Awards any uncaptured bases to a surviving player at round end.
+**`capture_base(player, base_id, second, movement_ctx=None, *, ctx) -> bool`** — Range-checks the player's cell against `base_sight_data`, deducts 3 shots, awards 1001 pts, and updates `neutral_base_destroyed` / `opposing_base_destroyed`. Emits via `ctx.events.base_capture(..., metadata_extras={"shots_remaining": ..., "points_scored": ...})`. Returns `True` on success.
 
-**`start_missile_lock(attacker, defender, second, *, emit_event=None) -> PendingMissile | None`** — Rolls dodge (45% chance); returns a `PendingMissile(complete_time, attacker, defender)` on success, `None` on dodge or invalid state.
+**`award_bases(player, second, *, ctx) -> None`** — Awards any uncaptured bases to a surviving player at round end. Emits via `ctx.events.base_capture(..., description="X awarded neutral/opposing base")`.
+
+**`start_missile_lock(attacker, defender, second, *, ctx) -> PendingMissileLock | None`** — Validates state and requires initial LOS; consumes one missile. Emits via `ctx.events.locking(attacker, defender, second)`. Returns the pending lock on success.
 
 ---
 
@@ -431,15 +480,18 @@ Tests: `matches/tests/test_spawn_assigner.py` — 15 unit tests, no DB required.
 
 End-of-tick resupply fulfillment. Called by `BatchSimulator` after all players have chosen their action for the tick. No Django imports — operates on duck-typed player state objects.
 
+EventLog candidate: dropped the `emit_event=None` callable kwarg (and the local `_actor_meta`/`_target_meta`/`_build_meta` copies + the `_do_resupply` dict-vs-kwargs adapter — all dead). Helper takes a required `ctx: RoundContext` and emits via verbs.
+
 ### Public function
 
-**`resolve_resupply_requests(requestors, all_alive, second, movement_ctx, *, emit_event=None) -> None`** — Processes all players whose `last_chosen_action == "request_resupply"` for the current tick. Mutates player state in-place; emits `GameEvent`-compatible dicts via the optional `emit_event` callable.
+**`resolve_resupply_requests(requestors, all_alive, second, movement_ctx, *, ctx) -> None`** — Processes all players whose `last_chosen_action == "request_resupply"` for the current tick. Mutates player state in-place; emits via `ctx.events.resupply_lives/.resupply_ammo` (inside `attempt_resupply`) and `ctx.events.combo_resupply` (at the combo-fire site).
 
 Parameters:
 - `requestors` — iterable of players whose action this tick was `request_resupply`.
 - `all_alive` — all currently alive players (both teams); used to find candidate supporters.
 - `second` — current simulation timestamp; used for cooldown checks and event timestamps.
 - `movement_ctx` — `MapContext | None`; LOS checks use `movement_ctx.can_see` when a map is active, fall back to same-zone when `None`.
+- `ctx` — `RoundContext` carrying the `EventLog` for all emits.
 - `emit_event` — optional callable `(event_dict) -> None`; when provided, a `GameEvent`-compatible dict is emitted for every resupply resolved.
 
 ### Private helpers

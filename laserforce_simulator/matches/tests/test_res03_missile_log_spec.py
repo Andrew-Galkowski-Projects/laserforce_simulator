@@ -241,12 +241,17 @@ class TestRes03FriendlyFireFlag:
 
         sim = BatchSimulator()
 
+        from matches.sim_helpers.event_log import EventLog
+        from matches.sim_helpers.round_context import RoundContext
+
         # Cross-team — friendly_fire should be False.
         attacker_x = _ps("red")
         defender_x = _ps("blue", role="scout")
-        log_x: list[dict] = []
-        sim._complete_missile(attacker_x, defender_x, second=10, event_log=log_x)
-        missileds_x = [e for e in log_x if e.get("event_type") == "missiled"]
+        ctx_x = RoundContext(events=EventLog(persist=True))
+        sim._complete_missile(attacker_x, defender_x, second=10, ctx=ctx_x)
+        missileds_x = [
+            e for e in ctx_x.events.entries if e.get("event_type") == "missiled"
+        ]
         assert (
             missileds_x
         ), "no missiled event emitted for cross-team missile resolution"
@@ -257,9 +262,11 @@ class TestRes03FriendlyFireFlag:
         # Same-team — friendly_fire should be True.
         attacker_f = _ps("red")
         defender_f = _ps("red", role="scout")
-        log_f: list[dict] = []
-        sim._complete_missile(attacker_f, defender_f, second=10, event_log=log_f)
-        missileds_f = [e for e in log_f if e.get("event_type") == "missiled"]
+        ctx_f = RoundContext(events=EventLog(persist=True))
+        sim._complete_missile(attacker_f, defender_f, second=10, ctx=ctx_f)
+        missileds_f = [
+            e for e in ctx_f.events.entries if e.get("event_type") == "missiled"
+        ]
         assert missileds_f, "no missiled event emitted for same-team missile resolution"
         assert (
             missileds_f[0]["metadata"]["friendly_fire"] is True
@@ -390,10 +397,15 @@ class TestRes03DownAndRespawn:
             final_shots=20,
         )
 
-        log: list[dict] = []
         # The simulator must emit a 'locking' event at lock start; routing
         # the emit through the start_missile_lock helper is the natural seam.
-        lock = start_missile_lock(attacker, defender, second=10, emit_event=log.append)
+        # EventLog candidate: ctx.events.locking is the verb that emits.
+        from matches.sim_helpers.event_log import EventLog
+        from matches.sim_helpers.round_context import RoundContext
+
+        ctx = RoundContext(events=EventLog(persist=True))
+        log = ctx.events.entries  # transitional shim; same list for asserts
+        lock = start_missile_lock(attacker, defender, second=10, ctx=ctx)
         assert lock is not None, "lock setup failed — adjust fixture state"
         # Now eliminate the attacker before the lock resolves.
         attacker.final_lives = 0
@@ -445,9 +457,13 @@ class TestRes03DownAndRespawn:
             final_lives=10,
             final_shots=20,
         )
-        log: list[dict] = []
+        from matches.sim_helpers.event_log import EventLog
+        from matches.sim_helpers.round_context import RoundContext
+
+        ctx = RoundContext(events=EventLog(persist=True))
+        log = ctx.events.entries  # alias the live list for the legacy asserts
         sim = BatchSimulator()
-        sim._complete_missile(attacker, defender, second=20, event_log=log)
+        sim._complete_missile(attacker, defender, second=20, ctx=ctx)
         first = [e for e in log if e.get("event_type") == "missiled"]
         assert first, "first resolution must emit a missiled event"
         # Forcing a Down on the attacker should NOT re-emit a missiled row.

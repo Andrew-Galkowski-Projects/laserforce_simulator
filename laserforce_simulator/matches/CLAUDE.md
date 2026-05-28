@@ -156,6 +156,33 @@ The one-pass-per-shot interleaving (hit roll → mutate → reaction roll → fo
 - `matches/tests/test_shot_resolver.py` — 49 pure-unit tests across 8 classes covering all 10 phases × 4 kinds (`TestResolveShotInitial`, `TestResolveShotAmmoUniformity`, `TestResolveShotHideUniformity`, `TestResolveShotFollowUp`, `TestResolveShotReaction`, `TestResolveShotOverwatch`, `TestResolveShotDownChain`, `TestResolveShotSpecialPoints`). RNG patched via `matches.sim_helpers.shot.random.randint` / `.random` for deterministic hit/miss/hide control.
 - Pre-existing tests in `test_move03_hold_overwatch.py`, `test_move04_goal_commitment.py`, `test_sim09_consolidation.py`, and `test_res03_missile_log_spec.py` migrated to call `sim_helpers.down.record_down(player, tick, ctx)` instead of the now-deleted `BatchSimulator._record_down` instance method.
 
+## EventLog consolidation
+
+A single `EventLog` class owns the `GameEvent`-dict shape — replaces the **23+ inline `event_log.append({...})` sites** that were previously scattered across `simulation.py`, `sim_helpers/shot.py`, `sim_helpers/down.py`, `sim_helpers/combat.py`, and `sim_helpers/resupply_queue.py` (each duplicating the 7-key dict shape and the 5-key actor / 4-key target metadata blocks). Lands as deepening candidate #2 (May 2026), completing the picture the shot-resolver consolidation started.
+
+**Why it existed.** The pre-refactor code had **three** distinct emit patterns: (1) inline 7-key dict literals in `simulation.py` (18 sites) and `shot.py`/`down.py` private `_emit_*` helpers, (2) an `emit_event=None` callable kwarg seam in `combat.py` / `resupply_queue.py` (one adapter wired to `event_log.append`), and (3) a `_resupply_event_dict` adapter in `simulation.py` that converted the kwargs-style emit calls from `resupply_queue.py` back into the dict shape. Three copies of `_actor_meta` / `_target_meta` / `_build_meta` (each module's "local" version) sat behind it all. Per LANGUAGE.md: *one adapter = hypothetical seam; two adapters = real seam* — the callable seam was one adapter; EventLog promotes it to a real one.
+
+**New module.**
+- `sim_helpers/event_log.py` — `EventLog` class with **13 per-event-type verbs** (`tag`, `miss`, `elimination`, `nuke_cancelled`, `medic_reset`, `special`, `locking`, `missiled`, `missile_dodge`, `resupply_lives`, `resupply_ammo`, `combo_resupply`, `base_capture`) + `entries: list[dict]` read API + `__iter__` + `__len__` + `__repr__`. The **null-object pattern**: `EventLog(persist=True)` records every emit into `self._entries`; `EventLog(persist=False)` is the silent no-op variant. Every emit site is one unguarded line (`ctx.events.tag(...)`) — the legacy `if event_log is not None:` guards delete from all 23 sites. EventLog OWNS metadata construction — callers never see `_actor_meta` / `_target_meta` / the 7-key dict shape.
+
+**Field rename on `RoundContext`.** `event_log: Optional[list]` → `events: EventLog` (always non-None). Callers read `ctx.events` (the EventLog) and `ctx.events.entries` (the underlying list, for `_flush_to_db` consumption and test inspection). A transitional `EventLog(persist=True, buffer=<list>)` shim lets the simulator's local `event_log: list` parameter and `ctx.events.entries` share the same list — fully removable as a follow-up.
+
+**Collapsed callable seam in `combat.py` / `resupply_queue.py`.** The four `combat.py` helpers (`attempt_resupply`, `capture_base`, `award_bases`, `start_missile_lock`) and `resupply_queue.resolve_resupply_requests` drop their `emit_event=None` kwarg and take a required `ctx: RoundContext`. They call `ctx.events.*` verbs directly. The `_resupply_event_dict` adapter, the `_batch_emit` lambda inside `_simulate_round`, and the `_do_resupply` dict-vs-kwargs bridge inside `resupply_queue.py` all delete.
+
+**Movement events stay off the EventLog.** `event_type="movement"` rows are written directly to `GameEvent` at `_flush_to_db` time from `PlayerState.movement_trail` (MOVE-01 / RES-04 — the trail is the in-memory source). No `movement` verb on EventLog.
+
+**Wire-format normalization.** One pre-existing inconsistency repaired in passing: the `simulation.py::_attempt_resupply` route produced descriptions like `"X heals Y"` / `"X resupplies Y"` (combat.py wording); the `resupply_queue.py` route went through the `_resupply_event_dict` adapter and produced `"resupply request: resupply_lives"`. EventLog standardizes on the combat.py wording for all paths — a clear improvement; no test asserted on the old adapter wording.
+
+**Behaviour-neutral.** Zero RNG consumed by EventLog verbs; the dict shape is byte-identical to the pre-refactor 7-key literals; metadata schemas (5-key actor block, 4-key target block, kind-specific extras) preserved. Seeded games are **byte-identical** — `_flush_to_db`, `build_highlights`, `game_round_events.html`, the missile-log view, and every existing analytics reader keep working unchanged. **No new Score Calibration re-baseline obligation** (the shot-resolver consolidation's pending re-baseline carries through). The strong-team win% calibration test's ≥ 55% threshold from the shot-resolver consolidation needs no further adjustment.
+
+**File-line reductions.** Net **+430 / −806 lines** across 11 modified files (despite adding a 580-line new module). Significant production-code shrinkage: `combat.py` (-100), `simulation.py` (-200), `resupply_queue.py` (-60), `shot.py` (-90), `down.py` (-40). The 3 metadata-helper triples (in `simulation.py`, `shot.py`, `down.py`, `combat.py`, `resupply_queue.py`) collapse to one private set inside EventLog.
+
+**Seam contract.** [`.claude/worktrees/event-log-seam-contract.md`](../../.claude/worktrees/event-log-seam-contract.md) pins the locked names (`EventLog`, `events`, the 13 verb signatures), the call-site map, the wire-format normalization, and the behavior-neutrality claim.
+
+**Tests.**
+- `matches/tests/test_event_log.py` — 59 pure-unit tests across 17 classes pinning each verb's output shape, the null-log behaviour, iteration, the `entries` live-list contract, the RES-03 four-key missile metadata contract, the medic_tag/ammo_tag combo_resupply metadata, and the `base_capture` three-description variants. No DB required.
+- Pre-existing tests in `test_record_down.py`, `test_shot_resolver.py`, `test_sim09_consolidation.py`, `test_mech01_resupply.py`, `test_res03_missile_log_spec.py` migrated from raw `event_log: list` access (and the `emit_event=` callable kwarg) to `RoundContext(events=EventLog(persist=True))` + `ctx.events.entries` (or for resupply tests, the new `ctx=` kwarg + `target_id`-based event filtering).
+
 ## Score Calibration Targets
 
 Used by `score_averages` to measure simulation accuracy against real-world averages:

@@ -77,163 +77,29 @@ class ShotOutcome:
 
 
 # ---------------------------------------------------------------------------
-# Private metadata builders (mirror ``simulation._actor_meta`` /
-# ``_target_meta`` / ``_build_meta`` byte-for-byte; consolidation pending
-# in the EventLog deepening candidate).
+# Kind → elimination_action translation. The EventLog candidate moved the
+# metadata builders (_actor_meta / _target_meta / _build_meta) and the kind
+# flag translation (_kind_extras) into sim_helpers/event_log.py — they are
+# the single owner of the GameEvent-dict shape now. Only this shot-resolver-
+# specific kind → elimination_action mapping stays here: it's a domain
+# concept of the Shot module, not the EventLog (the EventLog takes a
+# pre-translated ``action=...`` string).
 # ---------------------------------------------------------------------------
-
-
-def _actor_meta(actor) -> dict:
-    return {
-        "actor_role": actor.role,
-        "actor_shots": actor.final_shots,
-        "actor_lives": actor.final_lives,
-        "actor_points": actor.points_scored,
-        "sp": actor.final_special,
-    }
-
-
-def _target_meta(target) -> dict:
-    return {
-        "target_role": target.role,
-        "target_shots": target.final_shots,
-        "target_lives": target.final_lives,
-        "target_points": target.points_scored,
-    }
-
-
-def _build_meta(actor, target=None, **extras) -> dict:
-    md = _actor_meta(actor)
-    if target is not None:
-        md.update(_target_meta(target))
-    md.update(extras)
-    return md
-
-
-# ---------------------------------------------------------------------------
-# Private kind-specific metadata flags
-# ---------------------------------------------------------------------------
-
-
-def _kind_extras(kind: str, chain_depth: int) -> dict:
-    """Metadata flags for the per-kind event row.
-
-    INITIAL    : no extra
-    FOLLOW_UP  : is_follow_up=True, chain=<chain_depth>
-    REACTION   : is_reaction=True
-    OVERWATCH  : overwatch=True
-    """
-    if kind == SHOT_KIND_FOLLOW_UP:
-        return {"is_follow_up": True, "chain": chain_depth}
-    if kind == SHOT_KIND_REACTION:
-        return {"is_reaction": True}
-    if kind == SHOT_KIND_OVERWATCH:
-        return {"overwatch": True}
-    return {}
 
 
 def _elimination_action(kind: str) -> str:
-    """``elimination_action`` metadata for the elimination event.
+    """Translate SHOT_KIND_* to the elimination_action string the
+    EventLog ``elimination`` verb expects.
 
-    Per the seam contract: OVERWATCH maps to ``"tag"`` (not
-    ``"overwatch"``); only the initiating overwatch shot is flagged
-    on tag/miss events, not on its elimination row.
+    Per the shot-resolver seam contract: OVERWATCH maps to ``"tag"``
+    (not ``"overwatch"``); only the initiating overwatch shot is
+    flagged on tag/miss events, not on its elimination row.
     """
     if kind == SHOT_KIND_FOLLOW_UP:
         return "follow_up_tag"
     if kind == SHOT_KIND_REACTION:
         return "reaction"
     return "tag"  # INITIAL and OVERWATCH both map here
-
-
-# ---------------------------------------------------------------------------
-# Private emit helpers
-# ---------------------------------------------------------------------------
-
-
-def _emit_tag(
-    ctx: RoundContext, attacker, defender, tick: int, kind: str, chain_depth: int
-) -> None:
-    if ctx.event_log is None:
-        return
-    extras = _kind_extras(kind, chain_depth)
-    if kind == SHOT_KIND_FOLLOW_UP:
-        desc = f"{attacker.name} follow-up tags {defender.name}"
-    elif kind == SHOT_KIND_REACTION:
-        desc = f"{attacker.name} reacts to {defender.name}"
-    else:
-        desc = f"{attacker.name} tags {defender.name}"
-    ctx.event_log.append(
-        {
-            "event_type": "tag",
-            "actor_id": attacker.player_id,
-            "target_id": defender.player_id,
-            "timestamp": tick,
-            "points_awarded": 100,
-            "description": desc,
-            "metadata": _build_meta(attacker, defender, **extras),
-        }
-    )
-
-
-def _emit_miss(
-    ctx: RoundContext,
-    attacker,
-    defender,
-    tick: int,
-    kind: str,
-    chain_depth: int,
-    *,
-    reason: str | None = None,
-) -> None:
-    if ctx.event_log is None:
-        return
-    extras = _kind_extras(kind, chain_depth)
-    if reason is not None:
-        extras["reason"] = reason
-        desc = f"{attacker.name} misses {defender.name} ({reason})"
-    elif kind == SHOT_KIND_FOLLOW_UP:
-        desc = f"{attacker.name} follow-up miss on {defender.name}"
-    elif kind == SHOT_KIND_REACTION:
-        desc = f"{attacker.name} reaction miss on {defender.name}"
-    else:
-        desc = f"{attacker.name} misses {defender.name}"
-    ctx.event_log.append(
-        {
-            "event_type": "miss",
-            "actor_id": attacker.player_id,
-            "target_id": defender.player_id,
-            "timestamp": tick,
-            "points_awarded": 0,
-            "description": desc,
-            "metadata": _build_meta(attacker, defender, **extras),
-        }
-    )
-
-
-def _emit_elimination(
-    ctx: RoundContext, attacker, defender, tick: int, kind: str
-) -> None:
-    if ctx.event_log is None:
-        return
-    action = _elimination_action(kind)
-    if kind == SHOT_KIND_FOLLOW_UP:
-        desc = f"{attacker.name} eliminates {defender.name} (follow-up)"
-    elif kind == SHOT_KIND_REACTION:
-        desc = f"{attacker.name} eliminates {defender.name} (reaction)"
-    else:
-        desc = f"{defender.name} eliminated by {attacker.name}"
-    ctx.event_log.append(
-        {
-            "event_type": "elimination",
-            "actor_id": attacker.player_id,
-            "target_id": defender.player_id,
-            "timestamp": tick,
-            "points_awarded": 0,
-            "description": desc,
-            "metadata": _build_meta(attacker, defender, elimination_action=action),
-        }
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +221,14 @@ def resolve_shot(
             attacker.final_shots = max(0, attacker.final_shots - 1)
         attacker.shots_missed += 1
         attacker.last_shot_time = tick
-        _emit_miss(ctx, attacker, defender, tick, kind, chain_depth, reason="hiding")
+        ctx.events.miss(
+            attacker,
+            defender,
+            tick,
+            kind=kind,
+            chain_depth=chain_depth,
+            reason="hiding",
+        )
         return ShotOutcome(False, False, False)
 
     # ── Phase 3. Hit roll ─────────────────────────────────────────────
@@ -421,8 +294,10 @@ def resolve_shot(
             eliminated = defender.final_lives <= 0
             if eliminated:
                 defender.was_eliminated_at = tick
-                _emit_elimination(ctx, attacker, defender, tick, kind)
-        _emit_tag(ctx, attacker, defender, tick, kind, chain_depth)
+                ctx.events.elimination(
+                    attacker, defender, tick, action=_elimination_action(kind)
+                )
+        ctx.events.tag(attacker, defender, tick, kind=kind, chain_depth=chain_depth)
 
         # MECH-06 side effects: medic-under-fire alert + memory update +
         # broadcast. Lazy-imported from simulation.py to keep shot.py
@@ -445,7 +320,7 @@ def resolve_shot(
     else:
         # ── Phase 8. Miss ────────────────────────────────────────────
         attacker.shots_missed += 1
-        _emit_miss(ctx, attacker, defender, tick, kind, chain_depth)
+        ctx.events.miss(attacker, defender, tick, kind=kind, chain_depth=chain_depth)
 
     # ── Phase 9. Schedule reaction (skipped when kind == REACTION;
     #            also skipped on FOLLOW_UP — the pre-refactor follow-up
