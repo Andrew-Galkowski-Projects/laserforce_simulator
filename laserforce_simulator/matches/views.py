@@ -5,6 +5,7 @@ from typing import Optional
 
 from celery.result import AsyncResult
 from django.core.exceptions import ValidationError
+from django.core.paginator import Paginator
 from django.db import transaction
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
@@ -1796,6 +1797,7 @@ def season_standings(request, season_id: int) -> HttpResponse:
     ``compute_standings``.
     """
     season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
 
     is_draft_preview = season.state == "draft"
     rows: list = []
@@ -1854,11 +1856,22 @@ def season_standings(request, season_id: int) -> HttpResponse:
 
     rows_with_teams = [(row, teams_by_id.get(_row_team_id(row))) for row in rows]
 
+    league = season.league
+    sidebar_displayed_season = (
+        league.active_season
+        or league.seasons.filter(state="completed").order_by("-id").first()
+    )
+    sidebar_links = _build_league_sidebar_links(
+        league, sidebar_displayed_season, "standings"
+    )
+
     context = {
         "season": season,
         "rows": rows,
         "rows_with_teams": rows_with_teams,
         "is_draft_preview": is_draft_preview,
+        "sidebar_active": "standings",
+        "sidebar_links": sidebar_links,
     }
     return render(request, "seasons/standings.html", context)
 
@@ -1872,6 +1885,16 @@ def season_schedule(request, season_id: int) -> HttpResponse:
     ``season.start_date + (n - 1) * 7 days``.
     """
     season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
+
+    league = season.league
+    sidebar_displayed_season = (
+        league.active_season
+        or league.seasons.filter(state="completed").order_by("-id").first()
+    )
+    sidebar_links = _build_league_sidebar_links(
+        league, sidebar_displayed_season, "schedule"
+    )
 
     if season.state == "draft":
         team_ids = sorted(t.id for t in season.teams.all())
@@ -1881,7 +1904,12 @@ def season_schedule(request, season_id: int) -> HttpResponse:
     if len(team_ids) < 2:
         # Cannot generate a schedule with fewer than 2 teams — render
         # an empty schedule with the empty-state notice.
-        context = {"season": season, "matchdays": []}
+        context = {
+            "season": season,
+            "matchdays": [],
+            "sidebar_active": "schedule",
+            "sidebar_links": sidebar_links,
+        }
         return render(request, "seasons/schedule.html", context)
 
     fixtures = generate_schedule(team_ids, season.schedule_format)
@@ -1955,7 +1983,12 @@ def season_schedule(request, season_id: int) -> HttpResponse:
             }
         )
 
-    context = {"season": season, "matchdays": matchdays}
+    context = {
+        "season": season,
+        "matchdays": matchdays,
+        "sidebar_active": "schedule",
+        "sidebar_links": sidebar_links,
+    }
     return render(request, "seasons/schedule.html", context)
 
 
@@ -2217,6 +2250,288 @@ def _build_dashboard_context(
     }
 
 
+# ---------------------------------------------------------------------------
+# LG-01f — League history + sidebar helpers
+# ---------------------------------------------------------------------------
+
+
+_LG01F_PER_PAGE_OPTIONS: tuple[int, ...] = (10, 25, 50, 100)
+
+
+def _pick_displayed_season(league: League) -> Season | None:
+    """LG-01f — the Season the sidebar's live LEAGUE entries target.
+
+    Active Season takes precedence; fallback to the most-recent completed
+    Season; ``None`` when the League has zero Seasons. Single-sourced so
+    the 5 League-context views and the league-history view agree on
+    which Season the sidebar's Standings / Schedule links resolve to.
+    """
+    active = league.active_season
+    if active is not None:
+        return active
+    return league.seasons.filter(state="completed").order_by("-id").first()
+
+
+def _coerce_per_page(raw: str | None, default: int = 10) -> int:
+    """LG-01f — coerce ``?per_page=`` to one of the whitelisted values.
+
+    Whitelist is ``(10, 25, 50, 100)``. Any other value (``None``,
+    non-digit strings, negative, zero, > 100, not in the whitelist)
+    ⇒ return ``default``.
+    """
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if value in _LG01F_PER_PAGE_OPTIONS:
+        return value
+    return default
+
+
+def _coerce_page(raw: str | None, default: int = 1) -> int:
+    """LG-01f — coerce ``?page=`` to a positive int.
+
+    Non-digit / non-positive / missing ⇒ ``default``. Django's
+    ``Paginator.get_page(...)`` further clamps a too-large value to the
+    last page silently.
+    """
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if value < 1:
+        return default
+    return value
+
+
+def _build_league_sidebar_links(
+    league: League,
+    displayed_season: Season | None,
+    sidebar_active: str | None,
+) -> list[dict]:
+    """LG-01f — build the 14-entry League sidebar list (top / LEAGUE / TEAM / PLAYERS).
+
+    Live entries:
+        * top.dashboard ⇒ ``league_dashboard``.
+        * league.standings / league.schedule ⇒ the displayed Season's
+          standings / schedule when ``displayed_season is not None``,
+          else disabled.
+        * league.history ⇒ ``league_history``.
+
+    All other entries are disabled placeholders for LG-02+.
+    """
+    if displayed_season is not None:
+        standings_url: str | None = reverse(
+            "season_standings", args=[displayed_season.id]
+        )
+        schedule_url: str | None = reverse(
+            "season_schedule", args=[displayed_season.id]
+        )
+    else:
+        standings_url = None
+        schedule_url = None
+
+    raw_entries: list[tuple[str, str, str, str | None]] = [
+        (
+            "top",
+            "dashboard",
+            "Dashboard",
+            reverse("league_dashboard", args=[league.id]),
+        ),
+        ("league", "standings", "Standings", standings_url),
+        ("league", "schedule", "Schedule", schedule_url),
+        ("league", "playoffs", "Playoffs", None),
+        ("league", "finances", "Finances", None),
+        ("league", "history", "History", reverse("league_history", args=[league.id])),
+        ("league", "power_rankings", "Power Rankings", None),
+        ("team", "roster", "Roster", None),
+        ("team", "schedule_team", "Schedule", None),
+        ("team", "finances_team", "Finances", None),
+        ("team", "history_team", "History", None),
+        ("players", "free_agents", "Free Agents", None),
+        ("players", "trade", "Trade", None),
+        ("players", "trading_block", "Trading Block", None),
+    ]
+
+    out: list[dict] = []
+    for section, key, label, url in raw_entries:
+        out.append(
+            {
+                "key": key,
+                "label": label,
+                "section": section,
+                "url": url,
+                "disabled": url is None,
+                "active": key == sidebar_active,
+            }
+        )
+    return out
+
+
+def _build_history_row(
+    season: Season,
+    teams_by_id: dict[int, Team],
+    *,
+    is_in_progress: bool,
+) -> dict:
+    """LG-01f — build one row of the League History table.
+
+    Returns a dict with the 11 frozen keys described by the seam
+    contract. ``None`` values render as ``"—"`` in the template.
+    Consumes the pre-fetched ``season.matches.all()`` prefetch cache
+    and the pre-built ``teams_by_id`` lookup so this helper issues
+    zero queries.
+    """
+    matches_list_in: list[dict] = []
+    for match in season.matches.all():
+        if not match.is_completed:
+            continue
+        matches_list_in.append(
+            {
+                "match_id": match.id,
+                "team_red_id": match.team_red_id,
+                "team_blue_id": match.team_blue_id,
+                "winner_team_id": match.winner_id,
+                "red_rounds_won": match.red_rounds_won,
+                "blue_rounds_won": match.blue_rounds_won,
+                "red_total_points": match.red_total_points,
+                "blue_total_points": match.blue_total_points,
+            }
+        )
+    matches_played = len(matches_list_in)
+
+    if season.starting_team_ids_json is not None:
+        team_ids_for_season = list(season.starting_team_ids_json)
+        teams_enrolled = len(team_ids_for_season)
+    else:
+        team_ids_for_season = sorted(t.id for t in season.teams.all())
+        teams_enrolled = len(team_ids_for_season)
+
+    enrolled_teams: list[tuple[int, str]] = []
+    for tid in team_ids_for_season:
+        team_obj = teams_by_id.get(tid)
+        enrolled_teams.append((tid, team_obj.name if team_obj is not None else ""))
+
+    standings = compute_standings(matches_list_in, enrolled_teams)
+
+    top_three: list = [
+        teams_by_id.get(standings[i].team_id) if i < len(standings) else None
+        for i in range(3)
+    ]
+
+    if is_in_progress:
+        champion: Team | None = None
+    else:
+        champion = season.champion_team
+        if champion is None and standings:
+            champion = teams_by_id.get(standings[0].team_id)
+
+    if len(standings) >= 2:
+        runner_up = teams_by_id.get(standings[1].team_id)
+    else:
+        runner_up = None
+
+    return {
+        "season_id": season.id,
+        "season_name": season.name,
+        "season_url": reverse("season_dashboard", args=[season.id]),
+        "start_date": season.start_date,
+        "teams_enrolled": teams_enrolled,
+        "matches_played": matches_played,
+        "champion": champion,
+        "runner_up": runner_up,
+        "tournament_champion": None,
+        "top_three": top_three,
+        "is_in_progress": is_in_progress,
+    }
+
+
+def league_history(request: HttpRequest, league_id: int) -> HttpResponse:
+    """LG-01f — League History page.
+
+    Read-only paginated table of every Season in ``league_id``. The
+    in-progress Season (if any) is pinned at the top of the table with
+    an "In progress" badge in the Champion cell and live standings in
+    the top-3 cells. Completed Seasons paginate newest-first by id.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    league = get_object_or_404(League, pk=league_id)
+
+    seasons_qs = (
+        league.seasons.select_related("champion_team")
+        .prefetch_related("matches", "teams")
+        .filter(state__in=["active", "draft", "completed"])
+        .order_by("-id")
+    )
+    seasons = list(seasons_qs)
+
+    team_ids: set[int] = set()
+    for s in seasons:
+        team_ids.update(s.starting_team_ids_json or [])
+        if s.state in {"active", "draft"}:
+            team_ids.update(t.id for t in s.teams.all())
+    teams_by_id = Team.objects.in_bulk(team_ids)
+
+    in_progress_season = next(
+        (s for s in seasons if s.state in {"active", "draft"}),
+        None,
+    )
+    completed_seasons = [s for s in seasons if s.state == "completed"]
+
+    per_page = _coerce_per_page(request.GET.get("per_page"), default=10)
+    paginator = Paginator(completed_seasons, per_page)
+    page_obj = paginator.get_page(_coerce_page(request.GET.get("page"), default=1))
+
+    in_progress_row = (
+        _build_history_row(in_progress_season, teams_by_id, is_in_progress=True)
+        if in_progress_season is not None
+        else None
+    )
+    completed_rows = [
+        _build_history_row(s, teams_by_id, is_in_progress=False)
+        for s in page_obj.object_list
+    ]
+
+    request.session["last_league_id"] = league.id
+
+    # Reuse the already-materialised in-memory lists (no extra queries).
+    displayed_season = in_progress_season or (
+        completed_seasons[0] if completed_seasons else None
+    )
+    sidebar_links = _build_league_sidebar_links(league, displayed_season, "history")
+
+    # Carry every querystring param EXCEPT ``page`` across page navigation
+    # (LG-00c precedent — survives future filter / sort additions).
+    qs = request.GET.copy()
+    qs.pop("page", None)
+    pagination_querystring = qs.urlencode()
+
+    context = {
+        "league": league,
+        "in_progress_row": in_progress_row,
+        "completed_rows": completed_rows,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "per_page": per_page,
+        "per_page_options": _LG01F_PER_PAGE_OPTIONS,
+        "pagination_querystring": pagination_querystring,
+        "sidebar_links": sidebar_links,
+        "sidebar_active": "history",
+    }
+    return render(request, "leagues/history.html", context)
+
+
+# ---------------------------------------------------------------------------
+# LG-01c — Dashboards (continued)
+# ---------------------------------------------------------------------------
+
+
 def league_dashboard(request, league_id: int) -> HttpResponse:
     """LG-01c — Dashboard for a single League.
 
@@ -2228,26 +2543,25 @@ def league_dashboard(request, league_id: int) -> HttpResponse:
         return HttpResponseNotAllowed(["GET"])
 
     league = get_object_or_404(League, pk=league_id)
+    request.session["last_league_id"] = league.id
 
-    active = league.active_season
-    if active is not None:
-        displayed_season = active
-        season_mode = "draft" if active.state == "draft" else "active"
+    displayed_season = _pick_displayed_season(league)
+    if displayed_season is None:
+        season_mode = "none"
+    elif displayed_season.state == "draft":
+        season_mode = "draft"
+    elif displayed_season.state == "completed":
+        season_mode = "completed"
     else:
-        completed_recent = (
-            league.seasons.filter(state="completed").order_by("-id").first()
-        )
-        if completed_recent is not None:
-            displayed_season = completed_recent
-            season_mode = "completed"
-        else:
-            displayed_season = None
-            season_mode = "none"
+        season_mode = "active"
 
     body = _build_dashboard_context(displayed_season, season_mode)
+    sidebar_links = _build_league_sidebar_links(league, displayed_season, "dashboard")
     context = {
         "league": league,
         **body,
+        "sidebar_active": "dashboard",
+        "sidebar_links": sidebar_links,
         "play_error": None,
         "play_job_id": None,
     }
@@ -2265,51 +2579,19 @@ def season_dashboard(request, season_id: int) -> HttpResponse:
         return HttpResponseNotAllowed(["GET"])
 
     season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
     displayed_season = season
     season_mode = season.state
 
     body = _build_dashboard_context(displayed_season, season_mode)
-    sidebar_links = [
-        {
-            "key": "overview",
-            "label": "Overview",
-            "url": None,
-            "disabled": False,
-            "active": True,
-        },
-        {
-            "key": "standings",
-            "label": "Standings",
-            "url": reverse("season_standings", args=[season.id]),
-            "disabled": False,
-            "active": False,
-        },
-        {
-            "key": "schedule",
-            "label": "Schedule",
-            "url": reverse("season_schedule", args=[season.id]),
-            "disabled": False,
-            "active": False,
-        },
-        {
-            "key": "teams",
-            "label": "Teams",
-            "url": None,
-            "disabled": True,
-            "active": False,
-        },
-        {
-            "key": "history",
-            "label": "History",
-            "url": None,
-            "disabled": True,
-            "active": False,
-        },
-    ]
+    league = season.league
+    sidebar_links = _build_league_sidebar_links(
+        league, _pick_displayed_season(league), None
+    )
     context = {
         "season": season,
         **body,
-        "sidebar_active": "overview",
+        "sidebar_active": None,
         "sidebar_links": sidebar_links,
         "play_error": None,
         "play_job_id": None,
@@ -2322,49 +2604,8 @@ def season_dashboard(request, season_id: int) -> HttpResponse:
 # ---------------------------------------------------------------------------
 
 
-def _season_sidebar_links(season: Season) -> list[dict]:
-    """LG-01c sidebar shape, reused on LG-01d error re-render paths."""
-    return [
-        {
-            "key": "overview",
-            "label": "Overview",
-            "url": None,
-            "disabled": False,
-            "active": True,
-        },
-        {
-            "key": "standings",
-            "label": "Standings",
-            "url": reverse("season_standings", args=[season.id]),
-            "disabled": False,
-            "active": False,
-        },
-        {
-            "key": "schedule",
-            "label": "Schedule",
-            "url": reverse("season_schedule", args=[season.id]),
-            "disabled": False,
-            "active": False,
-        },
-        {
-            "key": "teams",
-            "label": "Teams",
-            "url": None,
-            "disabled": True,
-            "active": False,
-        },
-        {
-            "key": "history",
-            "label": "History",
-            "url": None,
-            "disabled": True,
-            "active": False,
-        },
-    ]
-
-
 def _render_season_dashboard_error(
-    request: "HttpRequest", season: Season, play_error: str
+    request: HttpRequest, season: Season, play_error: str
 ) -> HttpResponse:
     """LG-01d — re-render the Season dashboard with ``play_error`` set."""
     season_mode = season.state
@@ -2372,8 +2613,10 @@ def _render_season_dashboard_error(
     context = {
         "season": season,
         **body,
-        "sidebar_active": "overview",
-        "sidebar_links": _season_sidebar_links(season),
+        "sidebar_active": None,
+        "sidebar_links": _build_league_sidebar_links(
+            season.league, _pick_displayed_season(season.league), None
+        ),
         "play_error": play_error,
         "play_job_id": None,
     }
@@ -2394,6 +2637,7 @@ def start_season(request, season_id: int) -> HttpResponse:
         return HttpResponseNotAllowed(["POST"])
 
     season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
 
     try:
         season.start_season()
@@ -2420,6 +2664,7 @@ def play_week(request, season_id: int) -> HttpResponse:
         return HttpResponseNotAllowed(["POST"])
 
     season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
 
     if season.state != "active":
         return _render_season_dashboard_error(
@@ -2470,6 +2715,7 @@ def play_two_months(request, season_id: int) -> HttpResponse:
         return HttpResponseNotAllowed(["POST"])
 
     season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
 
     if season.state != "active":
         return _render_season_dashboard_error(
@@ -2488,6 +2734,7 @@ def play_until_end(request, season_id: int) -> HttpResponse:
         return HttpResponseNotAllowed(["POST"])
 
     season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
 
     if season.state != "active":
         return _render_season_dashboard_error(
@@ -2551,6 +2798,9 @@ def play_status(request, season_id: int, job_id: str) -> JsonResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
+    season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
+
     async_result = AsyncResult(job_id)
     return JsonResponse(_build_play_status_response(async_result, season_id=season_id))
 
@@ -2581,6 +2831,7 @@ def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
         return HttpResponseNotAllowed(["POST"])
 
     league = get_object_or_404(League, pk=league_id)
+    request.session["last_league_id"] = league.id
 
     if league.active_season is not None:
         return redirect("season_dashboard", season_id=league.active_season.id)

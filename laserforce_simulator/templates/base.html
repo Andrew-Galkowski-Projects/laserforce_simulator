@@ -17,7 +17,16 @@
             </button>
             <div class="collapse navbar-collapse" id="mainNav">
                 <div class="navbar-nav ms-auto">
-                    <a class="nav-link" id="leagues-nav-link" href="{% url 'league_list' %}">Leagues</a>
+                    <div class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" id="leagues-nav-link" href="{% url 'league_list' %}" role="button" data-bs-toggle="dropdown" aria-expanded="false">League ▾</a>
+                        <ul class="dropdown-menu" aria-labelledby="leagues-nav-link">
+                            <li><span class="dropdown-item disabled">Standings</span></li>
+                            <li><span class="dropdown-item disabled">Playoffs</span></li>
+                            <li><span class="dropdown-item disabled">Finances</span></li>
+                            <li><a class="dropdown-item" id="league-history-topbar-link" href="{{ top_bar_history_url }}">History</a></li>
+                            <li><span class="dropdown-item disabled">Power Rankings</span></li>
+                        </ul>
+                    </div>
                     <a class="nav-link" href="{% url 'team_list' %}">Teams</a>
                     <a class="nav-link" id="player-list-nav-link" href="{% url 'player_list' %}">Players</a>
                     <a class="nav-link" href="{% url 'match_list' %}">Matches</a>

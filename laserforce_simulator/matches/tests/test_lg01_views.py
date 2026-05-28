@@ -141,3 +141,69 @@ class TestSeasonScheduleView(TestCase):
         r = self.client.get(reverse("season_schedule", args=[season.id]))
         self.assertEqual(r.status_code, 200)
         self.assertIn(b"season-schedule-table", r.content)
+
+
+# ---------------------------------------------------------------------------
+# TestLg01fStandingsScheduleWiring (LG-01f — appended per seam contract §9f)
+#
+# Append sidebar + session-write assertions to the LG-01 standings + schedule
+# views.
+# ---------------------------------------------------------------------------
+
+
+class TestLg01fStandingsScheduleWiring(TestCase):
+    """LG-01f — Standings + Schedule pages include the 14-entry sidebar
+    partial with the correct ``sidebar_active`` literal AND write
+    ``request.session["last_league_id"]``.
+    """
+
+    # season_standings ---------------------------------------------------
+
+    def test_standings_lg01f_sidebar_partial_rendered(self) -> None:
+        _league, season = _make_active_season("LfStPart")
+        response = self.client.get(reverse("season_standings", args=[season.id]))
+        self.assertContains(response, 'id="league-sidebar"')
+
+    def test_standings_lg01f_sidebar_active_is_standings(self) -> None:
+        _league, season = _make_active_season("LfStActive")
+        response = self.client.get(reverse("season_standings", args=[season.id]))
+        body = response.content.decode()
+        idx = body.find('id="sidebar-league-standings"')
+        self.assertGreaterEqual(idx, 0)
+        start = body.rfind("<", 0, idx)
+        end = body.find(">", idx)
+        element = body[start : end + 1]
+        self.assertIn("active", element)
+
+    def test_standings_lg01f_session_write_last_league_id(self) -> None:
+        _league, season = _make_active_season("LfStSess")
+        self.client.get(reverse("season_standings", args=[season.id]))
+        self.assertEqual(self.client.session["last_league_id"], season.league_id)
+
+    # season_schedule ----------------------------------------------------
+
+    def test_schedule_lg01f_sidebar_partial_rendered(self) -> None:
+        _league, season = _make_active_season("LfScPart")
+        response = self.client.get(reverse("season_schedule", args=[season.id]))
+        self.assertContains(response, 'id="league-sidebar"')
+
+    def test_schedule_lg01f_sidebar_active_is_league_schedule(self) -> None:
+        _league, season = _make_active_season("LfScActive")
+        response = self.client.get(reverse("season_schedule", args=[season.id]))
+        body = response.content.decode()
+        idx = body.find('id="sidebar-league-schedule"')
+        self.assertGreaterEqual(idx, 0)
+        start = body.rfind("<", 0, idx)
+        end = body.find(">", idx)
+        element = body[start : end + 1]
+        self.assertIn("active", element)
+        # Exactly one active entry across the sidebar.
+        links = response.context["sidebar_links"]
+        active_entries = [e for e in links if e["active"]]
+        self.assertEqual(len(active_entries), 1)
+        self.assertEqual(active_entries[0]["key"], "schedule")
+
+    def test_schedule_lg01f_session_write_last_league_id(self) -> None:
+        _league, season = _make_active_season("LfScSess")
+        self.client.get(reverse("season_schedule", args=[season.id]))
+        self.assertEqual(self.client.session["last_league_id"], season.league_id)

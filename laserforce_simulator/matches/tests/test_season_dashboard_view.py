@@ -13,7 +13,6 @@ rows — LG-01c runs NO simulation, so the simulator is never entered.
 
 from __future__ import annotations
 
-import re
 from datetime import date
 
 from django.test import TestCase
@@ -159,16 +158,16 @@ class TestSeasonDashboardStateMatrix(TestCase):
     def test_draft_renders_all_locked_dom_ids(self) -> None:
         _league, season, _teams = _make_league_and_draft_season("Matrix1")
         response = self.client.get(reverse("season_dashboard", args=[season.id]))
-        # Always-present DOM ids.
+        # Always-present DOM ids. LG-01f superseded the LG-01c
+        # ``season-dashboard-sidebar*`` ids (the 5-entry season-scoped
+        # sidebar is replaced wholesale by the 14-entry league-scoped
+        # sidebar partial — see ADR-0017); ``TestLg01fSidebarRendered``
+        # below covers the new ``league-sidebar`` / ``sidebar-{section}-{key}``
+        # ids and asserts the obsolete LG-01c ids are absent.
         for dom_id in (
             "season-dashboard-header",
             "season-dashboard-state-badge",
             "season-dashboard-action-button",
-            "season-dashboard-sidebar",
-            "season-dashboard-sidebar-standings",
-            "season-dashboard-sidebar-schedule",
-            "season-dashboard-sidebar-teams",
-            "season-dashboard-sidebar-history",
             "season-dashboard-standings-snippet",
         ):
             self.assertContains(response, f'id="{dom_id}"')
@@ -185,15 +184,13 @@ class TestSeasonDashboardStateMatrix(TestCase):
     def test_active_renders_all_locked_dom_ids(self) -> None:
         _league, season, _teams = _make_active_season("Matrix2")
         response = self.client.get(reverse("season_dashboard", args=[season.id]))
+        # LG-01f removed the LG-01c ``season-dashboard-sidebar*`` ids
+        # (ADR-0017); the new ``league-sidebar`` ids are asserted by
+        # ``TestLg01fSidebarRendered``.
         for dom_id in (
             "season-dashboard-header",
             "season-dashboard-state-badge",
             "season-dashboard-action-button",
-            "season-dashboard-sidebar",
-            "season-dashboard-sidebar-standings",
-            "season-dashboard-sidebar-schedule",
-            "season-dashboard-sidebar-teams",
-            "season-dashboard-sidebar-history",
             "season-dashboard-standings-snippet",
             "season-dashboard-next-round",
             "season-dashboard-round-count",
@@ -206,15 +203,13 @@ class TestSeasonDashboardStateMatrix(TestCase):
     def test_completed_renders_all_locked_dom_ids(self) -> None:
         _league, season = _make_completed_season_with_match("Matrix3")
         response = self.client.get(reverse("season_dashboard", args=[season.id]))
+        # LG-01f removed the LG-01c ``season-dashboard-sidebar*`` ids
+        # (ADR-0017); the new ``league-sidebar`` ids are asserted by
+        # ``TestLg01fSidebarRendered``.
         for dom_id in (
             "season-dashboard-header",
             "season-dashboard-state-badge",
             "season-dashboard-action-button",
-            "season-dashboard-sidebar",
-            "season-dashboard-sidebar-standings",
-            "season-dashboard-sidebar-schedule",
-            "season-dashboard-sidebar-teams",
-            "season-dashboard-sidebar-history",
             "season-dashboard-standings-snippet",
             "season-dashboard-next-round",
             "season-dashboard-round-count",
@@ -256,76 +251,10 @@ class TestSeasonDashboardStateMatrix(TestCase):
 
 
 # ---------------------------------------------------------------------------
-# TestSeasonDashboardSidebar
+# (LG-01f — deleted TestSeasonDashboardSidebar; the LG-01c 5-entry sidebar
+# assertions are obsolete under the 14-entry shape. New LG-01f sidebar
+# assertions live in the appended TestLg01fSidebarRendered class below.)
 # ---------------------------------------------------------------------------
-
-
-class TestSeasonDashboardSidebar(TestCase):
-    """5-entry sidebar shape + per-entry link/span rule."""
-
-    def test_sidebar_links_has_five_entries_in_pinned_order(self) -> None:
-        _league, season, _teams = _make_league_and_draft_season("Sidebar1")
-        response = self.client.get(reverse("season_dashboard", args=[season.id]))
-        links = response.context["sidebar_links"]
-        self.assertEqual(len(links), 5)
-        keys = [entry["key"] for entry in links]
-        self.assertEqual(
-            keys, ["overview", "standings", "schedule", "teams", "history"]
-        )
-
-    def test_sidebar_active_is_overview(self) -> None:
-        _league, season, _teams = _make_league_and_draft_season("Sidebar2")
-        response = self.client.get(reverse("season_dashboard", args=[season.id]))
-        self.assertEqual(response.context["sidebar_active"], "overview")
-
-    def test_sidebar_standings_link_reverses_to_season_standings_url(self) -> None:
-        _league, season, _teams = _make_league_and_draft_season("Sidebar3")
-        response = self.client.get(reverse("season_dashboard", args=[season.id]))
-        expected = reverse("season_standings", args=[season.id])
-        self.assertContains(response, f'href="{expected}"')
-
-    def test_sidebar_schedule_link_reverses_to_season_schedule_url(self) -> None:
-        _league, season, _teams = _make_league_and_draft_season("Sidebar4")
-        response = self.client.get(reverse("season_dashboard", args=[season.id]))
-        expected = reverse("season_schedule", args=[season.id])
-        self.assertContains(response, f'href="{expected}"')
-
-    def test_sidebar_teams_renders_as_disabled_span_no_href(self) -> None:
-        _league, season, _teams = _make_league_and_draft_season("Sidebar5")
-        response = self.client.get(reverse("season_dashboard", args=[season.id]))
-        body = response.content.decode()
-        # Locate the teams sidebar entry and confirm it is rendered as a
-        # <span>, NOT an <a href>.
-        m = re.search(r'<([a-z]+)\b[^>]*id="season-dashboard-sidebar-teams"', body)
-        self.assertIsNotNone(m, "season-dashboard-sidebar-teams id not found")
-        self.assertEqual(
-            m.group(1),
-            "span",
-            f"sidebar-teams must be a <span>, found <{m.group(1)}>",
-        )
-        # Defensive — make sure no `href=` shows up on this element's tag.
-        idx = body.find('id="season-dashboard-sidebar-teams"')
-        start = body.rfind("<", 0, idx)
-        end = body.find(">", idx)
-        element = body[start : end + 1]
-        self.assertNotIn("href=", element)
-
-    def test_sidebar_history_renders_as_disabled_span_no_href(self) -> None:
-        _league, season, _teams = _make_league_and_draft_season("Sidebar6")
-        response = self.client.get(reverse("season_dashboard", args=[season.id]))
-        body = response.content.decode()
-        m = re.search(r'<([a-z]+)\b[^>]*id="season-dashboard-sidebar-history"', body)
-        self.assertIsNotNone(m, "season-dashboard-sidebar-history id not found")
-        self.assertEqual(
-            m.group(1),
-            "span",
-            f"sidebar-history must be a <span>, found <{m.group(1)}>",
-        )
-        idx = body.find('id="season-dashboard-sidebar-history"')
-        start = body.rfind("<", 0, idx)
-        end = body.find(">", idx)
-        element = body[start : end + 1]
-        self.assertNotIn("href=", element)
 
 
 # ---------------------------------------------------------------------------
@@ -465,3 +394,86 @@ class TestLg01eDashboardWiring(TestCase):
         _league, season, _teams = _make_active_season("LE1eActive")
         response = self.client.get(reverse("season_dashboard", args=[season.id]))
         self.assertNotContains(response, 'id="season-dashboard-next-season-form"')
+
+
+# ---------------------------------------------------------------------------
+# TestLg01fSidebarRendered (LG-01f — appended per seam contract §9e)
+# ---------------------------------------------------------------------------
+
+
+class TestLg01fSidebarRendered(TestCase):
+    """LG-01f — the season dashboard now renders the 14-entry sidebar
+    partial with ``sidebar_active=None`` (no entry matches the season
+    dashboard). LG-01c-locked DOM ids (``season-dashboard-sidebar*``) ARE
+    REMOVED.
+    """
+
+    def test_season_dashboard_renders_sidebar_partial(self) -> None:
+        _league, season, _teams = _make_league_and_draft_season("LfSbPart")
+        response = self.client.get(reverse("season_dashboard", args=[season.id]))
+        self.assertContains(response, 'id="league-sidebar"')
+
+    def test_sidebar_active_is_none_no_entry_active(self) -> None:
+        _league, season, _teams = _make_league_and_draft_season("LfSbActive")
+        response = self.client.get(reverse("season_dashboard", args=[season.id]))
+        self.assertIsNone(response.context["sidebar_active"])
+        for entry in response.context["sidebar_links"]:
+            self.assertFalse(entry["active"])
+
+    def test_sidebar_links_has_14_entries(self) -> None:
+        _league, season, _teams = _make_league_and_draft_season("LfSb14")
+        response = self.client.get(reverse("season_dashboard", args=[season.id]))
+        self.assertEqual(len(response.context["sidebar_links"]), 14)
+
+    def test_lg01c_sidebar_dom_ids_are_absent(self) -> None:
+        _league, season, _teams = _make_league_and_draft_season("LfSbOld")
+        response = self.client.get(reverse("season_dashboard", args=[season.id]))
+        for obsolete in (
+            "season-dashboard-sidebar",
+            "season-dashboard-sidebar-standings",
+            "season-dashboard-sidebar-schedule",
+            "season-dashboard-sidebar-teams",
+            "season-dashboard-sidebar-history",
+        ):
+            self.assertNotContains(response, f'id="{obsolete}"')
+
+    def test_lg01c_sidebar_id_prefix_substring_is_absent(self) -> None:
+        """Sentinel: prevent the LG-01c-old IDs from leaking back even
+        if a future template uses a different attribute style (e.g.
+        ``class="season-dashboard-sidebar"`` or a comment containing the
+        literal). LG-01f superseded the entire ``season-dashboard-sidebar``
+        DOM-id namespace per ADR-0017 — no rendered HTML on the season
+        dashboard should contain that prefix substring at all.
+        """
+        _league, season, _teams = _make_league_and_draft_season("LfSbSent")
+        response = self.client.get(reverse("season_dashboard", args=[season.id]))
+        self.assertNotIn(
+            b"season-dashboard-sidebar",
+            response.content,
+            msg=(
+                "LG-01c sidebar markup leaked back into the rendered HTML; "
+                "the entire `season-dashboard-sidebar` namespace was "
+                "superseded by LG-01f (ADR-0017)."
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestLg01fSessionWrite (LG-01f — appended per seam contract §9e)
+# ---------------------------------------------------------------------------
+
+
+class TestLg01fSessionWrite(TestCase):
+    """LG-01f — the season dashboard writes
+    ``request.session["last_league_id"] = season.league_id`` after the
+    404 guard.
+    """
+
+    def test_get_writes_last_league_id_to_session(self) -> None:
+        _league, season, _teams = _make_league_and_draft_season("LfSessW")
+        self.client.get(reverse("season_dashboard", args=[season.id]))
+        self.assertEqual(self.client.session["last_league_id"], season.league_id)
+
+    def test_404_does_not_write_session(self) -> None:
+        self.client.get(reverse("season_dashboard", args=[99999]))
+        self.assertNotIn("last_league_id", self.client.session)

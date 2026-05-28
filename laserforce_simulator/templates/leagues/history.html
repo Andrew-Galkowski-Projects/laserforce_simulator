@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}{{ league.name }} — History{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
+        <h1 class="mb-3">{{ league.name }} — History</h1>
+
+        {% if not in_progress_row and not completed_rows %}
+            <div id="league-history-empty-notice" class="alert alert-info">
+                No Seasons yet — start a new Season to populate the history table.
+            </div>
+        {% else %}
+            <div class="table-responsive">
+                <table id="league-history-table" class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th>Season</th>
+                            <th>Start date</th>
+                            <th class="text-end">Teams enrolled</th>
+                            <th class="text-end">Matches played</th>
+                            <th>Champion</th>
+                            <th>Runner-Up</th>
+                            <th>Tournament Champion</th>
+                            <th>1st place</th>
+                            <th>2nd place</th>
+                            <th>3rd place</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if in_progress_row %}
+                            <tr id="league-history-in-progress-row" class="in-progress-row table-warning">
+                                <td><a href="{{ in_progress_row.season_url }}">{{ in_progress_row.season_name }}</a></td>
+                                <td>{{ in_progress_row.start_date|date:"Y-m-d" }}</td>
+                                <td class="text-end">{{ in_progress_row.teams_enrolled }}</td>
+                                <td class="text-end">{{ in_progress_row.matches_played }}</td>
+                                <td><span class="in-progress badge bg-warning text-dark">In progress</span></td>
+                                <td>{% if in_progress_row.runner_up %}{{ in_progress_row.runner_up.name }}{% else %}—{% endif %}</td>
+                                <td>—</td>
+                                <td>{% with t1=in_progress_row.top_three.0 %}{% if t1 %}{{ t1.name }}{% else %}—{% endif %}{% endwith %}</td>
+                                <td>{% with t2=in_progress_row.top_three.1 %}{% if t2 %}{{ t2.name }}{% else %}—{% endif %}{% endwith %}</td>
+                                <td>{% with t3=in_progress_row.top_three.2 %}{% if t3 %}{{ t3.name }}{% else %}—{% endif %}{% endwith %}</td>
+                            </tr>
+                        {% endif %}
+                        {% for row in completed_rows %}
+                            <tr id="league-history-row-{{ row.season_id }}">
+                                <td><a href="{{ row.season_url }}">{{ row.season_name }}</a></td>
+                                <td>{{ row.start_date|date:"Y-m-d" }}</td>
+                                <td class="text-end">{{ row.teams_enrolled }}</td>
+                                <td class="text-end">{{ row.matches_played }}</td>
+                                <td>{% if row.champion %}{{ row.champion.name }}{% else %}—{% endif %}</td>
+                                <td>{% if row.runner_up %}{{ row.runner_up.name }}{% else %}—{% endif %}</td>
+                                <td>—</td>
+                                <td>{% with t1=row.top_three.0 %}{% if t1 %}{{ t1.name }}{% else %}—{% endif %}{% endwith %}</td>
+                                <td>{% with t2=row.top_three.1 %}{% if t2 %}{{ t2.name }}{% else %}—{% endif %}{% endwith %}</td>
+                                <td>{% with t3=row.top_three.2 %}{% if t3 %}{{ t3.name }}{% else %}—{% endif %}{% endwith %}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <form id="league-history-per-page-form" method="get" class="d-inline-block mb-3">
+                <label for="league-history-per-page-select" class="form-label me-2">Per page:</label>
+                <select id="league-history-per-page-select" name="per_page" class="form-select form-select-sm d-inline-block w-auto" onchange="this.form.submit()">
+                    {% for option in per_page_options %}
+                        <option value="{{ option }}"{% if option == per_page %} selected{% endif %}>{{ option }}</option>
+                    {% endfor %}
+                </select>
+                <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">Update</button></noscript>
+            </form>
+
+            {% if paginator.num_pages > 1 %}
+                <nav id="league-history-pagination" aria-label="League history pagination">
+                    <ul class="pagination">
+                        {% if page_obj.has_previous %}
+                            <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if pagination_querystring %}&{{ pagination_querystring }}{% endif %}">Previous</a></li>
+                        {% else %}
+                            <li class="page-item disabled"><span class="page-link">Previous</span></li>
+                        {% endif %}
+                        {% for num in paginator.page_range %}
+                            {% if num == page_obj.number %}
+                                <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+                            {% else %}
+                                <li class="page-item"><a class="page-link" href="?page={{ num }}{% if pagination_querystring %}&{{ pagination_querystring }}{% endif %}">{{ num }}</a></li>
+                            {% endif %}
+                        {% endfor %}
+                        {% if page_obj.has_next %}
+                            <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}{% if pagination_querystring %}&{{ pagination_querystring }}{% endif %}">Next</a></li>
+                        {% else %}
+                            <li class="page-item disabled"><span class="page-link">Next</span></li>
+                        {% endif %}
+                    </ul>
+                </nav>
+            {% endif %}
+        {% endif %}
+    </main>
+</div>
+{% endblock %}

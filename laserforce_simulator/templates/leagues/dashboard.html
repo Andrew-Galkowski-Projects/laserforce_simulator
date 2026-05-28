@@ -3,7 +3,9 @@
 {% block title %}{{ league.name }} — League{% endblock %}
 
 {% block content %}
-<div class="container mt-4">
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
     <div id="league-dashboard-header" class="d-flex justify-content-between align-items-center mb-3">
         <h1 class="mb-0">{{ league.name }}</h1>
         <div>
@@ -155,6 +157,7 @@
 
         <p><a href="/leagues/{{ league.id }}/leaders/">View all leaders</a></p>
     {% endif %}
+    </main>
 </div>
 
 {% if action_button_state == "play_next" %}

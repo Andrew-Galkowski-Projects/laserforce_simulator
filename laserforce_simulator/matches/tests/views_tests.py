@@ -3146,3 +3146,62 @@ class TestLg01dPlayStatus(_Lg01dTestCase):
         self.assertEqual(response.status_code, 200)
         payload = json.loads(response.content.decode())
         self.assertEqual(payload["season_id"], season.id)
+
+
+# ===========================================================================
+# LG-01f — session-write extension tests for the LG-01d Play Season views.
+#
+# Seam contract: ``.claude/worktrees/lg-01f-seam-contract.md`` §9g — one
+# session-write assertion per LG-01d view: start_season / play_week /
+# play_two_months / play_until_end / play_status.
+# ===========================================================================
+
+
+class TestLg01fLg01dSessionWrites(_Lg01dTestCase):
+    """LG-01f — each LG-01d view writes
+    ``request.session["last_league_id"] = season.league_id`` after the
+    404 guard. ``play_status`` writes on every poll.
+    """
+
+    def test_lg01f_start_season_writes_last_league_id(self) -> None:
+        season, _teams = _lg01d_draft_season("LfStartS", n_teams=2)
+        self.client.post(reverse("start_season", args=[season.id]))
+        self.assertEqual(self.client.session["last_league_id"], season.league_id)
+
+    def test_lg01f_play_week_writes_last_league_id(self) -> None:
+        season, _teams = _lg01d_active_season("LfPWk", n_teams=2)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            self.client.post(reverse("play_week", args=[season.id]))
+        self.assertEqual(self.client.session["last_league_id"], season.league_id)
+
+    def test_lg01f_play_two_months_writes_last_league_id(self) -> None:
+        season, _teams = _lg01d_active_season("LfP2M", n_teams=2)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            self.client.post(reverse("play_two_months", args=[season.id]))
+        self.assertEqual(self.client.session["last_league_id"], season.league_id)
+
+    def test_lg01f_play_until_end_writes_last_league_id(self) -> None:
+        season, _teams = _lg01d_active_season("LfPUE", n_teams=2)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            self.client.post(reverse("play_until_end", args=[season.id]))
+        self.assertEqual(self.client.session["last_league_id"], season.league_id)
+
+    def test_lg01f_play_status_writes_last_league_id(self) -> None:
+        """``play_status`` is a polling endpoint — the session write
+        fires on every poll so ``last_league_id`` stays fresh.
+        """
+        season, _teams = _lg01d_active_season("LfPSt", n_teams=2)
+
+        class _Fake:
+            state = "PENDING"
+            info = None
+            result = None
+
+        with patch("matches.views.AsyncResult", return_value=_Fake()):
+            self.client.get(
+                reverse(
+                    "play_status",
+                    kwargs={"season_id": season.id, "job_id": "anything"},
+                )
+            )
+        self.assertEqual(self.client.session["last_league_id"], season.league_id)
