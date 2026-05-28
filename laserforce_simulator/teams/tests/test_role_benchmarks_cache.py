@@ -1,6 +1,8 @@
-"""HX-02 — Cache-invalidation tests for ``teams/role_benchmarks_cache.py``.
+"""Cache-policy tests for ``teams/role_benchmarks_cache.py``.
 
-Pins:
+Pins (cache layer only — ORM-materialisation tests live in
+``test_role_benchmarks_orm.py``):
+
 - ``invalidate_role_benchmarks`` lazily initialises ``role_benchmark_version``
   then increments monotonically.
 - ``PlayerRoundState`` post_save / post_delete signals call
@@ -9,8 +11,9 @@ Pins:
   ``bulk_create`` path skips post_save, so the explicit hook is
   necessary).
 - A stale read after a mutation reflects the new data end-to-end.
-- ``_populate_all_caches`` is called exactly once per version on
-  consecutive ``get_all_benchmark_data()`` calls.
+- ``compute_benchmarks_uncached`` is called exactly once per version on
+  consecutive ``get_all_benchmark_data()`` calls — the cache absorbs the
+  second probe.
 
 Each class is wrapped in ``@override_settings`` to pin a clean
 LOCATION; ``cache.clear()`` runs in ``setUp``.
@@ -287,26 +290,27 @@ class TestStaleReadInvalidated(TestCase):
 )
 class TestFillOnMissOnce(TestCase):
     """Two consecutive ``get_all_benchmark_data()`` calls at the same
-    version → ``_populate_all_caches`` runs exactly once.
+    version → the ORM-layer scan runs exactly once. The cache absorbs the
+    second probe via ``cache.get_many``.
     """
 
     def setUp(self) -> None:
         cache.clear()
 
-    def test_populate_called_exactly_once(self) -> None:
+    def test_uncached_compute_called_exactly_once(self) -> None:
         # Prime the version so the first lookup probes a defined key.
         with self.captureOnCommitCallbacks(execute=True):
             invalidate_role_benchmarks()
-        from teams import role_benchmarks_cache as cache_mod
+        from teams import role_benchmarks_orm as orm_mod
 
-        real_populate = cache_mod._populate_all_caches
+        real_compute = orm_mod.compute_benchmarks_uncached
         call_count = {"n": 0}
 
-        def _spy(version: int):
+        def _spy():
             call_count["n"] += 1
-            return real_populate(version)
+            return real_compute()
 
-        with mock.patch.object(cache_mod, "_populate_all_caches", _spy):
+        with mock.patch.object(orm_mod, "compute_benchmarks_uncached", _spy):
             get_all_benchmark_data()
             get_all_benchmark_data()
 
