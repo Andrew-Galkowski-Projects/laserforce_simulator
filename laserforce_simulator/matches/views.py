@@ -9,7 +9,14 @@ from django.db import transaction
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.db.models import Q, QuerySet
-from django.http import Http404, HttpResponse, HttpResponseNotAllowed, JsonResponse
+from django.http import (
+    Http404,
+    HttpRequest,
+    HttpResponse,
+    HttpResponseBadRequest,
+    HttpResponseNotAllowed,
+    JsonResponse,
+)
 from django.urls import reverse
 from django.utils.text import slugify
 from teams.constants import PLAYER_NAMES, TEAM_NAMES
@@ -2546,3 +2553,59 @@ def play_status(request, season_id: int, job_id: str) -> JsonResponse:
 
     async_result = AsyncResult(job_id)
     return JsonResponse(_build_play_status_response(async_result, season_id=season_id))
+
+
+@transaction.atomic
+def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
+    """LG-01e — POST entry point for the Start Next Season action.
+
+    Creates a fresh ``draft`` Season inside ``league_id`` with copied
+    teams from the latest completed Season's snapshot, an auto-generated
+    name, and a Jan-1-next-year start date. Redirects to the new
+    Season's dashboard on success.
+
+    Guards (in order):
+        1. 405 on non-POST.
+        2. 404 on missing League.
+        3. 302 redirect to ``season_dashboard`` of ``league.active_season``
+           when a non-completed Season already exists (active-Season
+           guard — idempotent on double-submit; the UI hides the
+           button when a Season is in progress, but a stray POST
+           lands the user on the in-progress Season's dashboard).
+        4. 400 ``HttpResponseBadRequest("No completed Season in this League.")``
+           when no completed Season exists (defensive — should never
+           fire because the LG-01c button only shows when displayed
+           Season is completed).
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    league = get_object_or_404(League, pk=league_id)
+
+    if league.active_season is not None:
+        return redirect("season_dashboard", season_id=league.active_season.id)
+
+    all_seasons = list(league.seasons.all())
+    completed = [s for s in all_seasons if s.state == "completed"]
+    if not completed:
+        return HttpResponseBadRequest("No completed Season in this League.")
+    latest_completed = max(completed, key=lambda s: s.id)
+
+    name = f"Season {len(all_seasons) + 1}"
+    start_date = date(latest_completed.start_date.year + 1, 1, 1)
+    schedule_format = latest_completed.schedule_format
+
+    new_season = Season.objects.create(
+        league=league,
+        name=name,
+        start_date=start_date,
+        schedule_format=schedule_format,
+        state="draft",
+    )
+
+    team_ids = latest_completed.starting_team_ids_json or []
+    if team_ids:
+        teams_qs = Team.objects.filter(id__in=team_ids)
+        new_season.teams.add(*teams_qs)
+
+    return redirect("season_dashboard", season_id=new_season.id)
