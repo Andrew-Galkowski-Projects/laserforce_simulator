@@ -32,12 +32,13 @@ Original framing was inaccurate: the module is 309 lines and does **three** thin
 - **Solution** — Inline the three drains into `BatchSimulator._simulate_round`; delete `tick_engine.py`. Keep `pending_events.py`.
 - **Benefits** — One fewer module to navigate; tick loop becomes one place to read. **Caveat:** the file is pinned by the SIM-09 seam contract — confirm the contract was about *names*, not the file.
 
-## 4. LG-01 League/Season views form a sub-app that hasn't been split out
+## 4. LG-01 League/Season views form a sub-app that hasn't been split out — **COMPLETED**
 
-- **Files** — `matches/views.py` lines ~1800–2862: 13 endpoints (`league_list`, `league_create`, `league_dashboard`, `league_history`, `next_season`, `season_standings`, `season_schedule`, `season_dashboard_view`, `start_season`, `play_week`, `play_two_months`, `play_until_end`, `play_status`) + 20+ `_`-prefixed orchestration helpers. ~900 lines.
-- **Problem** — A coherent feature stack (League/Season lifecycle) with its own URLs, pure modules, and session model — but the view layer sits in the same file as `match_list` and `head_to_head`. The interface is well-defined; the implementation is in the wrong file.
-- **Solution** — Move the 13 endpoints + helpers to `matches/league_views.py`. URL configs already point at named callables — low-risk move.
-- **Benefits** — `matches/views.py` drops to ~1900 lines, recognisably "match CRUD + analytics + batch jobs". **AI-navigability**: league-only changes touch one file instead of grepping 2862 lines.
+Moved 21 endpoints (the LG-01..LG-01f stack — `league_list`, `league_create`, `league_dashboard`, `league_history`, `next_season`, `season_standings`, `season_schedule`, `season_dashboard`, `start_season`, `play_week`, `play_two_months`, `play_until_end`, `play_status`) plus 8 `_`-prefixed orchestration helpers (`_compute_team_overall`, `_build_dashboard_context`, `_pick_displayed_season`, `_coerce_per_page`, `_coerce_page`, `_build_league_sidebar_links`, `_build_history_row`, `_render_season_dashboard_error`, `_build_play_status_response`) into the new `matches/league_views.py` (~1144 lines). `matches/views.py` shrank from 2796 → 1679 lines (−1117). URL configs repointed to `league_views.*`; URL names unchanged. `_celery_state_to_job_status` stays in `views.py` (shared with batch/save status paths) and is imported by `league_views.py`. Behaviour-neutral; no migration, no ADR.
+
+- **Files (before)** — `matches/views.py` (2796 lines).
+- **Files (after)** — `matches/views.py` (1679 lines, "match CRUD + analytics + batch jobs"), `matches/league_views.py` (NEW, 1144 lines).
+- **Benefits** — **Locality**: league-only changes touch one file instead of grepping 2800 lines. **AI-navigability**: the file's purpose is recognisable at a glance. **Test surface**: unchanged — test patches re-pointed at `matches.league_views.*`.
 
 ## 5. Collapse `PlayerRoundState` counters into a derived view
 
