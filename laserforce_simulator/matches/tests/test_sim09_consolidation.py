@@ -508,55 +508,68 @@ class TestRV02HighlightsFlush:
 class TestRV02NukeCancelled:
     """RV-02: a Commander Downed during its nuke's fuse emits exactly one
     ``nuke_cancelled`` event at the down tick, leaves the nuke in the pending
-    queue, and never double-emits. Exercises the ``_record_down`` chokepoint
-    directly (the deterministic life-loss path)."""
+    queue, and never double-emits. Exercises the ``record_down`` chokepoint
+    directly (the deterministic life-loss path).
 
-    def _sim(self):
-        sim = BatchSimulator()
-        sim._event_log = []
-        sim._pending_nukes = []
-        return sim
+    Shot-resolver consolidation: ``record_down`` is now a pure function
+    on ``sim_helpers.down``; the per-test ``RoundContext`` carries the
+    event log + pending nuke queue that the legacy self-stash held.
+    """
+
+    def _ctx(self, pending_nukes=None):
+        from matches.sim_helpers.round_context import RoundContext
+
+        return RoundContext(
+            event_log=[],
+            pending_nukes=pending_nukes if pending_nukes is not None else [],
+            pending_followups=[],
+            pending_reactions=[],
+            all_alive=[],
+            movement_ctx=None,
+        )
 
     def _count(self, log, etype):
         return sum(1 for e in log if e["event_type"] == etype)
 
     def test_down_during_fuse_emits_once_and_leaves_nuke_queued(self):
+        from matches.sim_helpers.down import record_down
         from matches.sim_helpers.pending_events import PendingNuke
 
-        sim = self._sim()
         cmd = _rv02_player("commander", "red", pid=7)
         pn = PendingNuke(complete_time=120, player=cmd)
-        sim._pending_nukes.append(pn)
+        ctx = self._ctx(pending_nukes=[pn])
 
         cmd.final_lives -= 1  # mimic the life-loss at the callsite
-        sim._record_down(cmd, 105)
+        record_down(cmd, 105, ctx)
 
-        cancels = [e for e in sim._event_log if e["event_type"] == "nuke_cancelled"]
+        cancels = [e for e in ctx.event_log if e["event_type"] == "nuke_cancelled"]
         assert len(cancels) == 1
         assert cancels[0]["actor_id"] == 7
         assert cancels[0]["timestamp"] == 105
         assert pn.cancel_logged is True
-        assert pn in sim._pending_nukes, "cancelled nuke must stay in pending_nukes"
+        assert pn in ctx.pending_nukes, "cancelled nuke must stay in pending_nukes"
 
     def test_no_double_emit_on_second_down(self):
+        from matches.sim_helpers.down import record_down
         from matches.sim_helpers.pending_events import PendingNuke
 
-        sim = self._sim()
         cmd = _rv02_player("commander", "red", pid=7)
-        sim._pending_nukes.append(PendingNuke(complete_time=120, player=cmd))
+        ctx = self._ctx(pending_nukes=[PendingNuke(complete_time=120, player=cmd)])
 
         cmd.final_lives -= 1
-        sim._record_down(cmd, 105)
-        sim._record_down(cmd, 106)  # already cancel_logged → no second event
+        record_down(cmd, 105, ctx)
+        record_down(cmd, 106, ctx)  # already cancel_logged → no second event
 
-        assert self._count(sim._event_log, "nuke_cancelled") == 1
+        assert self._count(ctx.event_log, "nuke_cancelled") == 1
 
     def test_commander_without_pending_nuke_emits_nothing(self):
-        sim = self._sim()
+        from matches.sim_helpers.down import record_down
+
         cmd = _rv02_player("commander", "red")
+        ctx = self._ctx()
         cmd.final_lives -= 1
-        sim._record_down(cmd, 105)
-        assert self._count(sim._event_log, "nuke_cancelled") == 0
+        record_down(cmd, 105, ctx)
+        assert self._count(ctx.event_log, "nuke_cancelled") == 0
 
 
 class TestRV02MedicReset:
@@ -564,47 +577,59 @@ class TestRV02MedicReset:
     chain) emits exactly one ``medic_reset``; a Medic that fully recovers
     between downs does not."""
 
-    def _sim(self):
-        sim = BatchSimulator()
-        sim._event_log = []
-        sim._pending_nukes = []
-        return sim
+    def _ctx(self):
+        from matches.sim_helpers.round_context import RoundContext
+
+        return RoundContext(
+            event_log=[],
+            pending_nukes=[],
+            pending_followups=[],
+            pending_reactions=[],
+            all_alive=[],
+            movement_ctx=None,
+        )
 
     def _count(self, log):
         return sum(1 for e in log if e["event_type"] == "medic_reset")
 
     def test_redown_within_cooldown_emits_once(self):
-        sim = self._sim()
+        from matches.sim_helpers.down import record_down
+
+        ctx = self._ctx()
         medic = _rv02_player("medic", "blue", lives=3, pid=9)
 
         medic.final_lives -= 1
-        sim._record_down(medic, 100)  # fresh down (active) → chain 1, no emit
-        assert self._count(sim._event_log) == 0
+        record_down(medic, 100, ctx)  # fresh down (active) → chain 1, no emit
+        assert self._count(ctx.event_log) == 0
 
         medic.final_lives -= 1
-        sim._record_down(medic, 105)  # re-down within RESPAWN window → chain 2
+        record_down(medic, 105, ctx)  # re-down within RESPAWN window → chain 2
 
-        resets = [e for e in sim._event_log if e["event_type"] == "medic_reset"]
+        resets = [e for e in ctx.event_log if e["event_type"] == "medic_reset"]
         assert len(resets) == 1
         assert resets[0]["actor_id"] == 9
         assert resets[0]["timestamp"] == 105
 
     def test_recovered_between_downs_does_not_emit(self):
-        sim = self._sim()
+        from matches.sim_helpers.down import record_down
+
+        ctx = self._ctx()
         medic = _rv02_player("medic", "blue", lives=3)
 
         medic.final_lives -= 1
-        sim._record_down(medic, 100)
+        record_down(medic, 100, ctx)
         medic.final_lives -= 1
-        sim._record_down(medic, 200)  # fully recovered (200-100 >> RESPAWN) → fresh
+        record_down(medic, 200, ctx)  # fully recovered (200-100 >> RESPAWN) → fresh
 
-        assert self._count(sim._event_log) == 0
+        assert self._count(ctx.event_log) == 0
 
     def test_non_medic_chain_does_not_emit_medic_reset(self):
-        sim = self._sim()
+        from matches.sim_helpers.down import record_down
+
+        ctx = self._ctx()
         scout = _rv02_player("scout", "red", lives=3)
         scout.final_lives -= 1
-        sim._record_down(scout, 100)
+        record_down(scout, 100, ctx)
         scout.final_lives -= 1
-        sim._record_down(scout, 105)  # chain reaches 2 but role != medic
-        assert self._count(sim._event_log) == 0
+        record_down(scout, 105, ctx)  # chain reaches 2 but role != medic
+        assert self._count(ctx.event_log) == 0

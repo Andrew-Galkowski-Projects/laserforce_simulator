@@ -36,6 +36,15 @@ from .sim_helpers.pending_events import (
     PendingFollowup,
     PendingReaction,
 )
+from .sim_helpers.down import record_down
+from .sim_helpers.round_context import RoundContext
+from .sim_helpers.shot import (
+    SHOT_KIND_FOLLOW_UP,
+    SHOT_KIND_INITIAL,
+    SHOT_KIND_OVERWATCH,
+    SHOT_KIND_REACTION,
+    resolve_shot,
+)
 from .sim_helpers.spawn_assigner import assign_spawn_cells
 from .sim_helpers.map_loader import (
     load_map_context,
@@ -47,7 +56,6 @@ from .sim_helpers.time_constants import (
     SCORE_BROADCAST_PERIOD_TICKS,
     SURVIVED_SENTINEL,
     TEAM_ELIM_BONUS_CUTOFF_TICKS,
-    TICK_SECONDS,
     TICKS_PER_ROUND,
 )
 
@@ -452,15 +460,6 @@ def _precompute_roster(roster) -> list:
         }
         result.append((role, _PlayerData(player_model.id, player_model.name, stats)))
     return result
-
-
-def _cooldown_ticks(player, tick) -> int:
-    """TIME-01: shot_cooldown() returns SECONDS (0.0 / 0.5 / 1.0). The
-    tick-native BatchSimulator schedules pending shots at integer tick offsets,
-    so convert the seconds cooldown to whole ticks: 0.0s -> 0, 0.5s -> 1,
-    1.0s -> 2 (round to nearest tick)."""
-    cooldown_seconds = shot_cooldown(player, tick)
-    return int(round(cooldown_seconds / TICK_SECONDS))
 
 
 def _chunk_size_for(n: int) -> int:
@@ -1341,12 +1340,21 @@ class BatchSimulator:
         pending_reactions: list[PendingReaction] = []
         eliminated_at = SURVIVED_SENTINEL
 
-        # RV-02: expose the per-run event log + pending-nuke queue to
-        # _record_down (the shared life-loss chokepoint) so it can emit the
-        # medic_reset / nuke_cancelled highlight events at the down tick.
-        # Re-bound each round.
-        self._event_log = event_log
-        self._pending_nukes = pending_nukes
+        # RoundContext: the per-round mutable-state bundle threaded through
+        # record_down and resolve_shot. Built once here; the all_alive list
+        # is rebound at each tick once it is recomputed. Replaces the RV-02
+        # static→instance self-stash (``self._event_log`` /
+        # ``self._pending_nukes``) that record_down used to reach via
+        # ``getattr(self, ...)``; that hack is structurally unnecessary now
+        # that ctx carries the references.
+        ctx = RoundContext(
+            event_log=event_log,
+            pending_nukes=pending_nukes,
+            pending_followups=pending_followups,
+            pending_reactions=pending_reactions,
+            all_alive=[],
+            movement_ctx=movement_ctx,
+        )
 
         # TIME-01: fully tick-native loop. `tick` is the integer tick index in
         # [0, self.ROUND_TICKS). All internal comparisons, scheduling, uptime
@@ -1413,244 +1421,41 @@ class BatchSimulator:
                             )
                     else:
                         self._complete_missile(
-                            lock.attacker, lock.defender, second, event_log
+                            lock.attacker, lock.defender, second, event_log, ctx
                         )
                 # "miss": missile already consumed, no further action
             pending_missile_locks = still_locking_b
 
             # --- process pending reactions (deferred by shot cooldown) ---
+            # Shot-resolver consolidation: each queued reaction dispatches to
+            # ``resolve_shot`` with ``kind=SHOT_KIND_REACTION``. The resolver
+            # owns the validity gates, hit roll, mutations, Down cascade,
+            # events, and reaction-never-re-reacts policy.
             due_rx, pending_reactions = drain_reactions(pending_reactions, second)
             for rx in due_rx:
-                r_attacker, r_defender = rx.attacker, rx.defender
-                if r_attacker.final_lives <= 0 or r_defender.final_lives <= 0:
-                    continue
-                if not r_attacker.is_active_at(second):
-                    continue
-                if r_attacker.final_shots <= 0 and r_attacker.role != "ammo":
-                    continue
-                r_attacker.reaction_shots += 1
-                r_attacker.last_shot_time = second
-                _rx_elev_mod = _elevation_hit_modifier(
-                    r_attacker.cell_row,
-                    r_attacker.cell_col,
-                    r_defender.cell_row,
-                    r_defender.cell_col,
-                    movement_ctx,
+                resolve_shot(
+                    rx.attacker,
+                    rx.defender,
+                    second,
+                    kind=SHOT_KIND_REACTION,
+                    ctx=ctx,
                 )
-                hit_chance = max(
-                    10,
-                    min(
-                        95,
-                        int(
-                            (70 + r_attacker.accuracy - r_defender.survival)
-                            * _rx_elev_mod
-                            * r_attacker.stamina_hit_modifier
-                        ),
-                    ),
-                )
-                react_hit = random.randint(1, 100) < hit_chance
-                if r_attacker.role != "ammo":
-                    r_attacker.final_shots = max(0, r_attacker.final_shots - 1)
-                if react_hit:
-                    r_attacker.tags_made += 1
-                    if r_defender.role == "medic":
-                        r_attacker.medic_hits += 1
-                    if r_attacker.role != "heavy":
-                        r_attacker.final_special = min(
-                            r_attacker.max_special, r_attacker.final_special + 1
-                        )
-                    r_attacker.points_scored += 100
-                    r_attacker.last_tagged_id = r_defender.tag_id
-                    r_defender.times_tagged += 1
-                    r_defender.points_scored -= 20
-                    if not r_defender.is_active_at(
-                        second
-                    ) and r_defender.is_taggable_at(second):
-                        r_defender.times_tagged_in_reset_window += 1
-                    r_defender.shields = max(
-                        0, r_defender.shields - r_attacker.shot_power
-                    )
-                    if r_defender.shields == 0:
-                        r_defender.final_lives = max(0, r_defender.final_lives - 1)
-                        self._record_down(r_defender, second)
-                        r_defender.shields = r_defender.max_shields
-                        if r_defender.final_lives <= 0:
-                            r_defender.was_eliminated_at = second
-                            if event_log is not None:
-                                event_log.append(
-                                    {
-                                        "event_type": "elimination",
-                                        "actor_id": r_attacker.player_id,
-                                        "target_id": r_defender.player_id,
-                                        "timestamp": second,
-                                        "points_awarded": 0,
-                                        "description": f"{r_attacker.name} eliminates {r_defender.name} (reaction)",
-                                        "metadata": _build_meta(
-                                            r_attacker,
-                                            r_defender,
-                                            elimination_action="reaction",
-                                        ),
-                                    }
-                                )
-                    if event_log is not None:
-                        event_log.append(
-                            {
-                                "event_type": "tag",
-                                "actor_id": r_attacker.player_id,
-                                "target_id": r_defender.player_id,
-                                "timestamp": second,
-                                "points_awarded": 100,
-                                "description": f"{r_attacker.name} reacts to {r_defender.name}",
-                                "metadata": _build_meta(
-                                    r_attacker, r_defender, is_reaction=True
-                                ),
-                            }
-                        )
-                else:
-                    r_attacker.shots_missed += 1
-                    if event_log is not None:
-                        event_log.append(
-                            {
-                                "event_type": "miss",
-                                "actor_id": r_attacker.player_id,
-                                "target_id": r_defender.player_id,
-                                "timestamp": second,
-                                "points_awarded": 0,
-                                "description": f"{r_attacker.name} reaction miss on {r_defender.name}",
-                                "metadata": _build_meta(
-                                    r_attacker, r_defender, is_reaction=True
-                                ),
-                            }
-                        )
 
             # --- process pending follow-ups (deferred by shot cooldown) ---
+            # Each queued follow-up dispatches to ``resolve_shot`` with
+            # ``kind=SHOT_KIND_FOLLOW_UP`` and the carried ``chain_depth``.
+            # The resolver applies the chain cap (``_MAX_CHAIN_DEPTH``) and
+            # the no-victim-reaction policy.
             due_fu, pending_followups = drain_followups(pending_followups, second)
             for fu in due_fu:
-                fu_attacker, fu_defender, chain = (
+                resolve_shot(
                     fu.attacker,
                     fu.defender,
-                    fu.chain_depth,
+                    second,
+                    kind=SHOT_KIND_FOLLOW_UP,
+                    ctx=ctx,
+                    chain_depth=fu.chain_depth,
                 )
-                if fu_attacker.final_lives <= 0 or fu_defender.final_lives <= 0:
-                    continue
-                if fu_attacker.final_shots <= 0 and fu_attacker.role != "ammo":
-                    continue
-                fu_attacker.follow_up_shots += 1
-                fu_attacker.last_shot_time = second
-                _def_fu_elev_mod = _elevation_hit_modifier(
-                    fu_attacker.cell_row,
-                    fu_attacker.cell_col,
-                    fu_defender.cell_row,
-                    fu_defender.cell_col,
-                    movement_ctx,
-                )
-                hit_chance = max(
-                    10,
-                    min(
-                        95,
-                        int(
-                            (70 + fu_attacker.accuracy - fu_defender.survival)
-                            * _def_fu_elev_mod
-                            * fu_attacker.stamina_hit_modifier
-                        ),
-                    ),
-                )
-                fu_hit = random.randint(1, 100) < hit_chance
-                if fu_attacker.role != "ammo":
-                    fu_attacker.final_shots = max(0, fu_attacker.final_shots - 1)
-                if fu_hit:
-                    fu_attacker.tags_made += 1
-                    if fu_defender.role == "medic":
-                        fu_attacker.medic_hits += 1
-                    if fu_attacker.role != "heavy":
-                        fu_attacker.final_special = min(
-                            fu_attacker.max_special, fu_attacker.final_special + 1
-                        )
-                    fu_attacker.points_scored += 100
-                    fu_attacker.last_tagged_id = fu_defender.tag_id
-                    fu_defender.times_tagged += 1
-                    fu_defender.points_scored -= 20
-                    if not fu_defender.is_active_at(
-                        second
-                    ) and fu_defender.is_taggable_at(second):
-                        fu_defender.times_tagged_in_reset_window += 1
-                    fu_defender.shields = max(
-                        0, fu_defender.shields - fu_attacker.shot_power
-                    )
-                    downed = fu_defender.shields == 0
-                    if downed:
-                        fu_defender.final_lives = max(0, fu_defender.final_lives - 1)
-                        self._record_down(fu_defender, second)
-                        fu_defender.shields = fu_defender.max_shields
-                        if fu_defender.final_lives <= 0:
-                            fu_defender.was_eliminated_at = second
-                            if event_log is not None:
-                                event_log.append(
-                                    {
-                                        "event_type": "elimination",
-                                        "actor_id": fu_attacker.player_id,
-                                        "target_id": fu_defender.player_id,
-                                        "timestamp": second,
-                                        "points_awarded": 0,
-                                        "description": f"{fu_attacker.name} eliminates {fu_defender.name} (follow-up)",
-                                        "metadata": _build_meta(
-                                            fu_attacker,
-                                            fu_defender,
-                                            elimination_action="follow_up_tag",
-                                        ),
-                                    }
-                                )
-                    if event_log is not None:
-                        event_log.append(
-                            {
-                                "event_type": "tag",
-                                "actor_id": fu_attacker.player_id,
-                                "target_id": fu_defender.player_id,
-                                "timestamp": second,
-                                "points_awarded": 100,
-                                "description": f"{fu_attacker.name} follow-up tags {fu_defender.name}",
-                                "metadata": _build_meta(
-                                    fu_attacker,
-                                    fu_defender,
-                                    is_follow_up=True,
-                                    chain=chain,
-                                ),
-                            }
-                        )
-                    if not downed and chain < 2 and fu_defender.final_lives > 0:
-                        if fu_defender.player_awareness < random.randint(0, 100):
-                            cd_ticks = _cooldown_ticks(fu_attacker, second)
-                            if cd_ticks == 0:
-                                due_fu.append(
-                                    PendingFollowup(
-                                        second, fu_attacker, fu_defender, chain + 1
-                                    )
-                                )
-                            else:
-                                pending_followups.append(
-                                    PendingFollowup(
-                                        second + cd_ticks,
-                                        fu_attacker,
-                                        fu_defender,
-                                        chain + 1,
-                                    )
-                                )
-                else:
-                    fu_attacker.shots_missed += 1
-                    if event_log is not None:
-                        event_log.append(
-                            {
-                                "event_type": "miss",
-                                "actor_id": fu_attacker.player_id,
-                                "target_id": fu_defender.player_id,
-                                "timestamp": second,
-                                "points_awarded": 0,
-                                "description": f"{fu_attacker.name} follow-up miss on {fu_defender.name}",
-                                "metadata": _build_meta(
-                                    fu_attacker, fu_defender, is_follow_up=True
-                                ),
-                            }
-                        )
 
             # --- process pending nukes (MECH-05: after reactions/followups so tag-cancels land first) ---
             fired_n, pending_nukes = drain_nukes(pending_nukes, second)
@@ -1661,10 +1466,12 @@ class BatchSimulator:
                     opposing = (
                         blue_players if n.player.team_color == "red" else red_players
                     )
-                    self._complete_nuke(n.player, n.complete_time, opposing, event_log)
+                    self._complete_nuke(
+                        n.player, n.complete_time, opposing, event_log, ctx
+                    )
                 elif event_log is not None and not n.cancel_logged:
                     # RV-02: defensive fallback — a nuke that fizzles without
-                    # ever passing through _record_down (no down/disarm site
+                    # ever passing through record_down (no down/disarm site
                     # logged it) still gets exactly one nuke_cancelled record.
                     # Normally the down-tick emit already set cancel_logged.
                     n.cancel_logged = True
@@ -1692,6 +1499,7 @@ class BatchSimulator:
                 if p.final_lives > 0 and p.was_eliminated_at > second
             ]
             all_alive = red_alive + blue_alive
+            ctx.all_alive = all_alive
 
             # MECH-04: mark players reacting to incoming nukes.
             # Runs after drain_nukes so flags apply to still-pending (future) nukes only;
@@ -1867,6 +1675,7 @@ class BatchSimulator:
                     pending_reactions,
                     movement_ctx,
                     all_alive=all_alive,
+                    ctx=ctx,
                 )
 
             # Accumulate uptime AFTER combat resolves (TIME-01: tick-native,
@@ -1979,88 +1788,11 @@ class BatchSimulator:
         multiplier = 2 if chosen == "only_move" else 1
         self._move_player_in_memory(player, second, goal_cell, movement_ctx, multiplier)
 
-    def _record_down(self, player, second) -> None:
-        """Stamp a life-loss tick and drop the committed A* route.
-
-        Centralises the two things every BatchSim life-loss site must do:
-        record ``last_downed_time`` (drives the respawn cooldown) and clear
-        ``_path_cache`` so the next move recomputes (MOVE-02 / ADR-0008 — a
-        Down knocks the player off its committed route). One call site makes
-        "every life-loss site clears the cache" structural rather than
-        something a reviewer must re-verify seven times. Deliberately does
-        *not* touch lives/shields — those differ per site
-        (tag / follow-up / reaction / missile / nuke).
-
-        MOVE-03: also force-clears Overwatch (``is_holding``) — a Down/respawn
-        ends Hold, mirroring how it knocks the player off its committed route.
-        Hanging this off the same helper keeps "every life-loss site clears
-        the hold" structural rather than per-site review.
-
-        RV-02: also the single chokepoint for the ``medic_reset`` and
-        ``nuke_cancelled`` highlight events. Both consume no RNG and emit only
-        into the per-run event log (``self._event_log``), so seeded games are
-        unchanged. Converted from a ``@staticmethod`` to an instance method so
-        it can reach the per-run event log + pending-nuke queue stashed on
-        ``self`` by ``_simulate_round``.
-        """
-        # RV-02 (medic reset chain): detect a re-Down (the medic was knocked
-        # back down before recovering) BEFORE stamping ``last_downed_time``,
-        # which would otherwise flip ``is_active_at``. A fresh Down (fully
-        # recovered / never downed) starts the chain at 1; a re-Down increments
-        # it. Fire ``medic_reset`` once per chain on the 2nd Down of the chain
-        # (the first re-Down) — "downed a 2nd time before coming back up".
-        if player.is_active_at(second):
-            player.down_chain_count = 1
-        else:
-            player.down_chain_count += 1
-        if player.role == "medic" and player.down_chain_count == 2:
-            event_log = getattr(self, "_event_log", None)
-            if event_log is not None:
-                event_log.append(
-                    {
-                        "event_type": "medic_reset",
-                        "actor_id": player.player_id,
-                        "target_id": None,
-                        "timestamp": second,
-                        "points_awarded": 0,
-                        "description": f"{player.name} medic reset (down-chain)",
-                        "metadata": _build_meta(player),
-                    }
-                )
-
-        player.last_downed_time = second
-        player._path_cache = None
-        player.is_holding = False
-        # MOVE-04 / ADR-0010: action-driven committed goals (from_action=True)
-        # drop on a Down — the action that picked them is no longer current.
-        # Positioning goals (from_action=False: step 3 / step 4 / default) are
-        # role/map-derived and stay valid through a respawn, so they survive.
-        if player._committed_goal is not None and player._committed_goal[1]:
-            player._committed_goal = None
-
-        # RV-02 (nuke cancellation): a Commander Downed/eliminated during its
-        # own nuke's fuse cancels it. Emit ``nuke_cancelled`` here at the
-        # down/disarm tick (single source), de-dup via ``cancel_logged``, and
-        # LEAVE the nuke in ``pending_nukes`` so ``_apply_nuke_reaction_flags``
-        # and ``drain_nukes`` reads are unchanged (no seeded drift).
-        if player.role == "commander":
-            event_log = getattr(self, "_event_log", None)
-            pending_nukes = getattr(self, "_pending_nukes", None)
-            if event_log is not None and pending_nukes:
-                for n in pending_nukes:
-                    if n.player is player and not n.cancel_logged:
-                        n.cancel_logged = True
-                        event_log.append(
-                            {
-                                "event_type": "nuke_cancelled",
-                                "actor_id": player.player_id,
-                                "target_id": None,
-                                "timestamp": second,
-                                "points_awarded": 0,
-                                "description": f"{player.name} nuke cancelled",
-                                "metadata": _build_meta(player),
-                            }
-                        )
+    # NOTE: ``_record_down`` is gone — lifted to
+    # ``sim_helpers.down.record_down`` as a pure free function by the
+    # shot-resolver consolidation. All callers now pass ``ctx`` (a
+    # ``RoundContext``) instead of relying on the RV-02 self-stash.
+    # See ``.claude/worktrees/shot-resolver-seam-contract.md``.
 
     def _move_player_in_memory(
         self, player, second, goal_cell, movement_ctx, multiplier: int = 1
@@ -2191,454 +1923,46 @@ class BatchSimulator:
         pending_reactions=None,
         movement_ctx=None,
         all_alive=None,
+        ctx: RoundContext | None = None,
     ):
-        outcomes = []
+        """Thin wrapper: dispatch each per-tick tag attempt to ``resolve_shot``.
+
+        Shot-resolver consolidation: the 450-line per-attempt resolution
+        body (initial-tag + immediate-reaction + immediate-follow-up
+        loops, each duplicating the Shot → Hit → Tag → Down ladder) is
+        gone. ``resolve_shot`` owns the 10 phases, the reaction-roll
+        scheduling at phase 9, and the follow-up-roll chaining at phase
+        10 (recursive when the cooldown rounds to 0 ticks).
+
+        ``ctx`` is the per-round ``RoundContext`` built by
+        ``_simulate_round``. The legacy kwargs (``event_log`` /
+        ``pending_followups`` / ``pending_reactions`` / ``movement_ctx``
+        / ``all_alive``) are still accepted for backward compatibility
+        with tests that call the method directly; when ``ctx`` is not
+        passed, one is synthesised from the legacy kwargs so the
+        ``record_down`` chokepoint and the shot resolver see consistent
+        state. The Overwatch ``kind`` is picked off ``a.get("overwatch")``
+        — Overwatch attempts otherwise dispatch through the same
+        initial-tag path (MOVE-03 / ADR-0009).
+        """
+        if ctx is None:
+            ctx = RoundContext(
+                event_log=event_log,
+                pending_nukes=[],
+                pending_followups=(
+                    pending_followups if pending_followups is not None else []
+                ),
+                pending_reactions=(
+                    pending_reactions if pending_reactions is not None else []
+                ),
+                all_alive=all_alive if all_alive is not None else [],
+                movement_ctx=movement_ctx,
+            )
         for a in attempts:
-            attacker, defender = a["attacker"], a["defender"]
-            # MOVE-03: carry the Overwatch provenance flag from the attempt
-            # into the outcome so the tag/miss event metadata can mark it.
-            overwatch = a.get("overwatch", False)
-            if attacker.final_shots <= 0 or defender.final_lives <= 0:
-                outcomes.append(
-                    {
-                        "attacker": attacker,
-                        "defender": defender,
-                        "result": "invalid",
-                        "overwatch": overwatch,
-                    }
-                )
-                continue
-            if defender.is_hiding and random.random() > 0.5:
-                outcomes.append(
-                    {
-                        "attacker": attacker,
-                        "defender": defender,
-                        "result": "miss_hid",
-                        "overwatch": overwatch,
-                    }
-                )
-                continue
-            elev_mod = _elevation_hit_modifier(
-                attacker.cell_row,
-                attacker.cell_col,
-                defender.cell_row,
-                defender.cell_col,
-                movement_ctx,
+            kind = (
+                SHOT_KIND_OVERWATCH if a.get("overwatch", False) else SHOT_KIND_INITIAL
             )
-            hit_chance = max(
-                10,
-                min(
-                    95,
-                    int(
-                        (70 + attacker.accuracy - defender.survival)
-                        * elev_mod
-                        * attacker.stamina_hit_modifier
-                    ),
-                ),
-            )
-            hit = random.randint(1, 100) < hit_chance
-            outcomes.append(
-                {
-                    "attacker": attacker,
-                    "defender": defender,
-                    "result": "hit" if hit else "miss",
-                    "overwatch": overwatch,
-                }
-            )
-
-        for o in outcomes:
-            attacker, defender = o["attacker"], o["defender"]
-            if o["result"] == "invalid":
-                continue
-            if o["result"] == "miss_hid":
-                if attacker.role != "ammo":
-                    attacker.final_shots = max(0, attacker.final_shots - 1)
-                attacker.shots_missed += 1
-                attacker.last_shot_time = second
-                if event_log is not None:
-                    _miss_hid_extras: dict = {"reason": "hiding"}
-                    # MOVE-03: Overwatch-origin provenance (reuses
-                    # event_type="miss"; scoring/accuracy unchanged).
-                    if o.get("overwatch", False):
-                        _miss_hid_extras["overwatch"] = True
-                    event_log.append(
-                        {
-                            "event_type": "miss",
-                            "actor_id": attacker.player_id,
-                            "target_id": defender.player_id,
-                            "timestamp": second,
-                            "points_awarded": 0,
-                            "description": f"{attacker.name} misses {defender.name} (hiding)",
-                            "metadata": _build_meta(
-                                attacker, defender, **_miss_hid_extras
-                            ),
-                        }
-                    )
-                continue
-
-            if o["result"] == "hit":
-                attacker.tags_made += 1
-                if defender.role == "medic":
-                    attacker.medic_hits += 1
-                if attacker.role != "heavy":
-                    attacker.final_special = min(
-                        attacker.max_special, attacker.final_special + 1
-                    )
-                attacker.points_scored += 100
-                attacker.last_tagged_id = defender.tag_id
-                attacker.final_shots = max(0, attacker.final_shots - 1)
-                attacker.last_shot_time = second
-
-                defender.times_tagged += 1
-                defender.points_scored -= 20
-                defender.shields = max(0, defender.shields - attacker.shot_power)
-                o["downed"] = defender.shields == 0
-
-                # MECH-06: medic-under-fire alert
-                if defender.role == "medic" and all_alive is not None:
-                    _check_medic_under_fire(defender, all_alive, second)
-
-                if event_log is not None:
-                    _tag_extras: dict = {}
-                    # MOVE-03: mark Overwatch-origin shots so the event carries
-                    # provenance. Reuses event_type="tag" — scoring / MVP /
-                    # accuracy paths are unchanged (analytics marker only).
-                    if o.get("overwatch", False):
-                        _tag_extras["overwatch"] = True
-                    event_log.append(
-                        {
-                            "event_type": "tag",
-                            "actor_id": attacker.player_id,
-                            "target_id": defender.player_id,
-                            "timestamp": second,
-                            "points_awarded": 100,
-                            "description": f"{attacker.name} tags {defender.name}",
-                            "metadata": _build_meta(attacker, defender, **_tag_extras),
-                        }
-                    )
-
-                if not defender.is_active_at(second) and defender.is_taggable_at(
-                    second
-                ):
-                    defender.times_tagged_in_reset_window += 1
-                if defender.shields == 0:
-                    if (
-                        defender.role == "commander"
-                        and defender.special_active_until > second
-                    ):
-                        defender.special_active_until = 0
-                    defender.final_lives = max(0, defender.final_lives - 1)
-                    self._record_down(defender, second)
-                    defender.shields = defender.max_shields
-                    if defender.final_lives <= 0:
-                        defender.was_eliminated_at = second
-                        if event_log is not None:
-                            event_log.append(
-                                {
-                                    "event_type": "elimination",
-                                    "actor_id": attacker.player_id,
-                                    "target_id": defender.player_id,
-                                    "timestamp": second,
-                                    "points_awarded": 0,
-                                    "description": f"{defender.name} eliminated by {attacker.name}",
-                                    "metadata": _build_meta(
-                                        attacker, defender, elimination_action="tag"
-                                    ),
-                                }
-                            )
-                # MECH-06: tag confirms enemy position and status — update memory and broadcast
-                if movement_ctx is not None and all_alive is not None:
-                    _update_player_memory(attacker, [defender], second)
-                    _broadcast_communication(attacker, all_alive, movement_ctx, second)
-            else:
-                attacker.final_shots = max(0, attacker.final_shots - 1)
-                attacker.shots_missed += 1
-                attacker.last_shot_time = second
-                if event_log is not None:
-                    _miss_extras: dict = {}
-                    # MOVE-03: Overwatch-origin miss provenance (reuses
-                    # event_type="miss"; scoring/accuracy unchanged).
-                    if o.get("overwatch", False):
-                        _miss_extras["overwatch"] = True
-                    event_log.append(
-                        {
-                            "event_type": "miss",
-                            "actor_id": attacker.player_id,
-                            "target_id": defender.player_id,
-                            "timestamp": second,
-                            "points_awarded": 0,
-                            "description": f"{attacker.name} misses {defender.name}",
-                            "metadata": _build_meta(attacker, defender, **_miss_extras),
-                        }
-                    )
-
-        # Reactions: hit or miss may trigger a player_awareness roll.
-        # Rapid-fire scouts react this tick; everyone else is scheduled for their next eligible shot.
-        immediate_reactions = []
-        for o in outcomes:
-            if o["result"] not in ("hit", "miss"):
-                continue
-            r_reactor = o["defender"]
-            r_target = o["attacker"]
-            if not r_reactor.is_active_at(second) or r_reactor.final_lives <= 0:
-                continue
-            if r_reactor.final_shots <= 0 and r_reactor.role != "ammo":
-                continue
-            if r_target.final_lives <= 0:
-                continue
-            if r_reactor.player_awareness >= random.randint(0, 100):
-                cd_ticks = _cooldown_ticks(r_reactor, second)
-                if cd_ticks == 0:
-                    immediate_reactions.append(
-                        {"attacker": r_reactor, "defender": r_target}
-                    )
-                elif pending_reactions is not None:
-                    pending_reactions.append(
-                        PendingReaction(second + cd_ticks, r_reactor, r_target)
-                    )
-
-        for ra in immediate_reactions:
-            r_attacker = ra["attacker"]
-            r_defender = ra["defender"]
-            if r_defender.final_lives <= 0:
-                continue
-            _imm_rx_elev_mod = _elevation_hit_modifier(
-                r_attacker.cell_row,
-                r_attacker.cell_col,
-                r_defender.cell_row,
-                r_defender.cell_col,
-                movement_ctx,
-            )
-            hit_chance = max(
-                10,
-                min(
-                    95,
-                    int(
-                        (70 + r_attacker.accuracy - r_defender.survival)
-                        * _imm_rx_elev_mod
-                        * r_attacker.stamina_hit_modifier
-                    ),
-                ),
-            )
-            react_hit = random.randint(1, 100) < hit_chance
-            r_attacker.reaction_shots += 1
-            r_attacker.last_shot_time = second
-            if r_attacker.role != "ammo":
-                r_attacker.final_shots = max(0, r_attacker.final_shots - 1)
-            if react_hit:
-                r_attacker.tags_made += 1
-                if r_defender.role == "medic":
-                    r_attacker.medic_hits += 1
-                if r_attacker.role != "heavy":
-                    r_attacker.final_special = min(
-                        r_attacker.max_special, r_attacker.final_special + 1
-                    )
-                r_attacker.points_scored += 100
-                r_attacker.last_tagged_id = r_defender.tag_id
-                r_defender.times_tagged += 1
-                r_defender.points_scored -= 20
-                if not r_defender.is_active_at(second) and r_defender.is_taggable_at(
-                    second
-                ):
-                    r_defender.times_tagged_in_reset_window += 1
-                r_defender.shields = max(0, r_defender.shields - r_attacker.shot_power)
-                if r_defender.shields == 0:
-                    r_defender.final_lives = max(0, r_defender.final_lives - 1)
-                    self._record_down(r_defender, second)
-                    r_defender.shields = r_defender.max_shields
-                    if r_defender.final_lives <= 0:
-                        r_defender.was_eliminated_at = second
-                        if event_log is not None:
-                            event_log.append(
-                                {
-                                    "event_type": "elimination",
-                                    "actor_id": r_attacker.player_id,
-                                    "target_id": r_defender.player_id,
-                                    "timestamp": second,
-                                    "points_awarded": 0,
-                                    "description": f"{r_attacker.name} eliminates {r_defender.name} (reaction)",
-                                    "metadata": _build_meta(
-                                        r_attacker,
-                                        r_defender,
-                                        elimination_action="reaction",
-                                    ),
-                                }
-                            )
-                if event_log is not None:
-                    event_log.append(
-                        {
-                            "event_type": "tag",
-                            "actor_id": r_attacker.player_id,
-                            "target_id": r_defender.player_id,
-                            "timestamp": second,
-                            "points_awarded": 100,
-                            "description": f"{r_attacker.name} reacts to {r_defender.name}",
-                            "metadata": _build_meta(
-                                r_attacker, r_defender, is_reaction=True
-                            ),
-                        }
-                    )
-            else:
-                r_attacker.shots_missed += 1
-                if event_log is not None:
-                    event_log.append(
-                        {
-                            "event_type": "miss",
-                            "actor_id": r_attacker.player_id,
-                            "target_id": r_defender.player_id,
-                            "timestamp": second,
-                            "points_awarded": 0,
-                            "description": f"{r_attacker.name} reaction miss on {r_defender.name}",
-                            "metadata": _build_meta(
-                                r_attacker, r_defender, is_reaction=True
-                            ),
-                        }
-                    )
-
-        # Follow-up tags: if a hit did NOT down the defender (shields still > 0 after
-        # the shot), the attacker may fire again. A hit that takes shields to 0 is
-        # never eligible — a heavy one-shotting a commander never generates follow-ups.
-        # Rapid-fire scouts fire this tick; everyone else is scheduled for their next eligible shot.
-        immediate_follow_ups = []
-        for o in outcomes:
-            if o["result"] != "hit" or o.get("downed", False):
-                continue
-            if o["defender"].final_lives <= 0:
-                continue
-            if o["attacker"].final_shots <= 0 and o["attacker"].role != "ammo":
-                continue
-            if o["defender"].player_awareness < random.randint(0, 100):
-                cd_ticks = _cooldown_ticks(o["attacker"], second)
-                if cd_ticks == 0:
-                    immediate_follow_ups.append(
-                        {
-                            "attacker": o["attacker"],
-                            "defender": o["defender"],
-                            "chain": 1,
-                        }
-                    )
-                elif pending_followups is not None:
-                    pending_followups.append(
-                        PendingFollowup(
-                            second + cd_ticks, o["attacker"], o["defender"], 1
-                        )
-                    )
-
-        for fu in immediate_follow_ups:
-            fu_attacker = fu["attacker"]
-            fu_defender = fu["defender"]
-            if fu_defender.final_lives <= 0:
-                continue
-            if fu_attacker.final_shots <= 0 and fu_attacker.role != "ammo":
-                continue
-            _imm_fu_elev_mod = _elevation_hit_modifier(
-                fu_attacker.cell_row,
-                fu_attacker.cell_col,
-                fu_defender.cell_row,
-                fu_defender.cell_col,
-                movement_ctx,
-            )
-            hit_chance = max(
-                10,
-                min(
-                    95,
-                    int(
-                        (70 + fu_attacker.accuracy - fu_defender.survival)
-                        * _imm_fu_elev_mod
-                        * fu_attacker.stamina_hit_modifier
-                    ),
-                ),
-            )
-            fu_hit = random.randint(1, 100) < hit_chance
-            fu_attacker.follow_up_shots += 1
-            fu_attacker.last_shot_time = second
-            if fu_attacker.role != "ammo":
-                fu_attacker.final_shots = max(0, fu_attacker.final_shots - 1)
-            if fu_hit:
-                fu_attacker.tags_made += 1
-                if fu_defender.role == "medic":
-                    fu_attacker.medic_hits += 1
-                if fu_attacker.role != "heavy":
-                    fu_attacker.final_special = min(
-                        fu_attacker.max_special, fu_attacker.final_special + 1
-                    )
-                fu_attacker.points_scored += 100
-                fu_attacker.last_tagged_id = fu_defender.tag_id
-                fu_defender.times_tagged += 1
-                fu_defender.points_scored -= 20
-                if not fu_defender.is_active_at(second) and fu_defender.is_taggable_at(
-                    second
-                ):
-                    fu_defender.times_tagged_in_reset_window += 1
-                fu_defender.shields = max(
-                    0, fu_defender.shields - fu_attacker.shot_power
-                )
-                downed = fu_defender.shields == 0
-                if downed:
-                    fu_defender.final_lives = max(0, fu_defender.final_lives - 1)
-                    self._record_down(fu_defender, second)
-                    fu_defender.shields = fu_defender.max_shields
-                    if fu_defender.final_lives <= 0:
-                        fu_defender.was_eliminated_at = second
-                        if event_log is not None:
-                            event_log.append(
-                                {
-                                    "event_type": "elimination",
-                                    "actor_id": fu_attacker.player_id,
-                                    "target_id": fu_defender.player_id,
-                                    "timestamp": second,
-                                    "points_awarded": 0,
-                                    "description": f"{fu_attacker.name} eliminates {fu_defender.name} (follow-up)",
-                                    "metadata": _build_meta(
-                                        fu_attacker,
-                                        fu_defender,
-                                        elimination_action="follow_up_tag",
-                                    ),
-                                }
-                            )
-                if event_log is not None:
-                    event_log.append(
-                        {
-                            "event_type": "tag",
-                            "actor_id": fu_attacker.player_id,
-                            "target_id": fu_defender.player_id,
-                            "timestamp": second,
-                            "points_awarded": 100,
-                            "description": f"{fu_attacker.name} follow-up tags {fu_defender.name}",
-                            "metadata": _build_meta(
-                                fu_attacker,
-                                fu_defender,
-                                is_follow_up=True,
-                                chain=fu["chain"],
-                            ),
-                        }
-                    )
-                if not downed and fu["chain"] < 2 and fu_defender.final_lives > 0:
-                    if fu_defender.player_awareness < random.randint(0, 100):
-                        # rapid-fire: chain immediately in this loop
-                        immediate_follow_ups.append(
-                            {
-                                "attacker": fu_attacker,
-                                "defender": fu_defender,
-                                "chain": fu["chain"] + 1,
-                            }
-                        )
-            else:
-                fu_attacker.shots_missed += 1
-                if event_log is not None:
-                    event_log.append(
-                        {
-                            "event_type": "miss",
-                            "actor_id": fu_attacker.player_id,
-                            "target_id": fu_defender.player_id,
-                            "timestamp": second,
-                            "points_awarded": 0,
-                            "description": f"{fu_attacker.name} follow-up miss on {fu_defender.name}",
-                            "metadata": _build_meta(
-                                fu_attacker, fu_defender, is_follow_up=True
-                            ),
-                        }
-                    )
+            resolve_shot(a["attacker"], a["defender"], second, kind=kind, ctx=ctx)
 
     def _attempt_resupply(self, tagger, teammate, second, event_log=None):
         emit = event_log.append if event_log is not None else None
@@ -2669,7 +1993,14 @@ class BatchSimulator:
             attacker, defender, second, movement_ctx, emit_event=emit_event
         )
 
-    def _complete_missile(self, attacker, defender, second, event_log=None):
+    def _complete_missile(
+        self,
+        attacker,
+        defender,
+        second,
+        event_log=None,
+        ctx: RoundContext | None = None,
+    ):
         # RES-03: always emit a 'missiled' resolution event when the missile
         # reaches resolution (gate below filters by active/taggable just like
         # the legacy path). result='hit' here; the dodge/los-broken paths emit
@@ -2696,7 +2027,7 @@ class BatchSimulator:
                             ),
                         }
                     )
-            self._record_down(defender, second)
+            record_down(defender, second, ctx)
             defender.times_missiled += 1
 
             attacker.points_scored += 500
@@ -2853,7 +2184,14 @@ class BatchSimulator:
                 )
         return None
 
-    def _complete_nuke(self, player, second, opposing_players, event_log=None):
+    def _complete_nuke(
+        self,
+        player,
+        second,
+        opposing_players,
+        event_log=None,
+        ctx: RoundContext | None = None,
+    ):
         if player.is_active_at(second) and player.final_lives > 0:
             player.points_scored += 500
             if event_log is not None:
@@ -2892,7 +2230,7 @@ class BatchSimulator:
                     continue
                 lives_taken = min(opp.final_lives, 3)
                 opp.final_lives -= lives_taken
-                self._record_down(opp, second)
+                record_down(opp, second, ctx)
                 opp.shields = opp.max_shields
                 if opp.role == "commander" and opp.special_active_until > second:
                     opp.special_active_until = 0

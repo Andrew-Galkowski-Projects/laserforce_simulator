@@ -331,13 +331,18 @@ class TestMove04GoalCommitment:
     # ── (f) Down-clear honours from_action flag ─────────────────────────────
 
     def test_record_down_clears_commitment_iff_from_action_true(self):
-        """_record_down clears commitment only when from_action=True."""
-        from matches.simulation import BatchSimulator
+        """record_down clears commitment only when from_action=True.
+
+        Shot-resolver consolidation lifted ``_record_down`` to
+        ``sim_helpers.down.record_down``; this test now targets the
+        new pure-function entry point.
+        """
+        from matches.sim_helpers.down import record_down
 
         # from_action=True (action-driven) — must be cleared.
         p1 = _make_player("red_scout", "red", "scout", cell_row=0, cell_col=0)
         p1._committed_goal = ((5, 5), True, 4)
-        BatchSimulator()._record_down(p1, 7)
+        record_down(p1, 7, ctx=None)
         assert (
             p1._committed_goal is None
         ), "action-driven commitment must be cleared on Down"
@@ -345,7 +350,7 @@ class TestMove04GoalCommitment:
         # from_action=False (positioning) — must SURVIVE.
         p2 = _make_player("red_scout", "red", "scout", cell_row=0, cell_col=0)
         p2._committed_goal = ((2, 2), False, 4)
-        BatchSimulator()._record_down(p2, 7)
+        record_down(p2, 7, ctx=None)
         assert (
             p2._committed_goal is not None
             and p2._committed_goal[0] == (2, 2)
