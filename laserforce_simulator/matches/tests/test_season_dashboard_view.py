@@ -416,3 +416,52 @@ class TestSeasonDashboardBody(TestCase):
         response = self.client.get(reverse("season_dashboard", args=[season.id]))
         # Raw /seasons/<id>/leaders/ placeholder anchor.
         self.assertContains(response, f'href="/seasons/{season.id}/leaders/"')
+
+
+# ---------------------------------------------------------------------------
+# TestLg01eDashboardWiring (LG-01e — appended per seam contract §7c)
+# ---------------------------------------------------------------------------
+
+
+class TestLg01eDashboardWiring(TestCase):
+    """LG-01e — the ``action_button_state="start_next_season"`` branch on
+    the season dashboard now renders a real ``<form>`` POSTing to
+    ``next_season``. The other two reachable Season-dashboard branches
+    (``draft`` / ``active``) MUST NOT render the
+    ``season-dashboard-next-season-form`` id.
+    """
+
+    def test_completed_renders_next_season_form_with_correct_action_url(
+        self,
+    ) -> None:
+        _league, season = _make_completed_season_with_match("LE1eCompleted")
+        response = self.client.get(reverse("season_dashboard", args=[season.id]))
+        body = response.content.decode()
+        # Locked DOM id.
+        self.assertIn('id="season-dashboard-next-season-form"', body)
+        # Action URL reverses via season.league_id (NOT season.league.id —
+        # the contract asserts the value, which is equal; the contract
+        # pins season.league_id for JOIN-free derivation).
+        expected_action = reverse("next_season", kwargs={"league_id": season.league_id})
+        self.assertIn(f'action="{expected_action}"', body)
+        # method="post" on the form.
+        idx = body.find('id="season-dashboard-next-season-form"')
+        start = body.rfind("<", 0, idx)
+        end = body.find(">", idx)
+        form_element = body[start : end + 1]
+        self.assertIn('method="post"', form_element.lower())
+        # csrf hidden input present.
+        self.assertIn("csrfmiddlewaretoken", body)
+        # Submit button text + data-action-state attribute.
+        self.assertIn("Start Next Season", body)
+        self.assertIn('data-action-state="start_next_season"', body)
+
+    def test_draft_does_not_render_next_season_form(self) -> None:
+        _league, season, _teams = _make_league_and_draft_season("LE1eDraft")
+        response = self.client.get(reverse("season_dashboard", args=[season.id]))
+        self.assertNotContains(response, 'id="season-dashboard-next-season-form"')
+
+    def test_active_does_not_render_next_season_form(self) -> None:
+        _league, season, _teams = _make_active_season("LE1eActive")
+        response = self.client.get(reverse("season_dashboard", args=[season.id]))
+        self.assertNotContains(response, 'id="season-dashboard-next-season-form"')
