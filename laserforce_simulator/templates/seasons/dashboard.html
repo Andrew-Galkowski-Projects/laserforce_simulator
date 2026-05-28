@@ -3,7 +3,9 @@
 {% block title %}{{ season.league.name }} — {{ season.name }}{% endblock %}
 
 {% block content %}
-<div class="container mt-4">
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
     <div id="season-dashboard-header" class="d-flex justify-content-between align-items-center mb-3">
         <h1 class="mb-0">{{ season.league.name }} — {{ season.name }}</h1>
         <div>
@@ -63,31 +65,8 @@
         </div>
     </div>
 
-    <div class="row">
-        <div class="col-md-3">
-            <nav id="season-dashboard-sidebar">
-                <ul class="list-group">
-                    {% for entry in sidebar_links %}
-                        <li class="list-group-item p-0">
-                            {% if entry.key == "overview" %}
-                                <span class="sidebar-link active d-block px-3 py-2">{{ entry.label }}</span>
-                            {% elif entry.key == "standings" %}
-                                <a id="season-dashboard-sidebar-standings" class="sidebar-link d-block px-3 py-2" href="{{ entry.url }}">{{ entry.label }}</a>
-                            {% elif entry.key == "schedule" %}
-                                <a id="season-dashboard-sidebar-schedule" class="sidebar-link d-block px-3 py-2" href="{{ entry.url }}">{{ entry.label }}</a>
-                            {% elif entry.key == "teams" %}
-                                <span id="season-dashboard-sidebar-teams" class="sidebar-link disabled d-block px-3 py-2 text-muted">{{ entry.label }}</span>
-                            {% elif entry.key == "history" %}
-                                <span id="season-dashboard-sidebar-history" class="sidebar-link disabled d-block px-3 py-2 text-muted">{{ entry.label }}</span>
-                            {% endif %}
-                        </li>
-                    {% endfor %}
-                </ul>
-            </nav>
-        </div>
-
-        <div class="col-md-9">
-            <div id="season-dashboard-standings-snippet" class="card mb-3">
+    <div>
+        <div id="season-dashboard-standings-snippet" class="card mb-3">
                 <div class="card-header"><strong>Top standings</strong></div>
                 <ul class="list-group list-group-flush">
                     {% for row, team in standings_snippet %}
@@ -163,8 +142,8 @@
 
                 <p><a href="/seasons/{{ season.id }}/leaders/">View all leaders</a></p>
             {% endif %}
-        </div>
     </div>
+    </main>
 </div>
 
 {% if action_button_state == "play_next" %}

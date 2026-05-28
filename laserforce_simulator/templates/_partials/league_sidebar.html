@@ -1,0 +1,25 @@
+{% comment %}
+LG-01f — League sidebar partial. Iterates `sidebar_links` (14 entries
+in pinned order: 1 top + 6 LEAGUE + 4 TEAM + 3 PLAYERS); section
+headers render as <h6>; disabled entries render as <span>, live as <a>;
+the entry whose `key` matches `sidebar_active` gets an `active` class.
+{% endcomment %}
+<nav id="league-sidebar" class="list-group list-group-flush me-3">
+    {% regroup sidebar_links by section as sections %}
+    {% for section in sections %}
+        {% if section.grouper == "league" %}
+            <h6 class="text-muted text-uppercase small mt-3 mb-1">LEAGUE</h6>
+        {% elif section.grouper == "team" %}
+            <h6 class="text-muted text-uppercase small mt-3 mb-1">TEAM</h6>
+        {% elif section.grouper == "players" %}
+            <h6 class="text-muted text-uppercase small mt-3 mb-1">PLAYERS</h6>
+        {% endif %}
+        {% for entry in section.list %}
+            {% if entry.disabled %}
+                <span id="sidebar-{{ entry.section }}-{{ entry.key }}" class="list-group-item list-group-item-action sidebar-link disabled text-muted{% if entry.active %} active{% endif %}">{{ entry.label }}</span>
+            {% else %}
+                <a id="sidebar-{{ entry.section }}-{{ entry.key }}" href="{{ entry.url }}" class="list-group-item list-group-item-action sidebar-link{% if entry.active %} active{% endif %}">{{ entry.label }}</a>
+            {% endif %}
+        {% endfor %}
+    {% endfor %}
+</nav>

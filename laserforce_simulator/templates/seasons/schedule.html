@@ -3,7 +3,9 @@
 {% block title %}{{ season.league.name }} — {{ season.name }} — Schedule{% endblock %}
 
 {% block content %}
-<div class="container mt-4">
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
     <nav aria-label="breadcrumb">
         <ol class="breadcrumb">
             <li class="breadcrumb-item">{{ season.league.name }}</li>
@@ -75,5 +77,6 @@
             {% endfor %}
         {% endif %}
     </div>
+    </main>
 </div>
 {% endblock %}

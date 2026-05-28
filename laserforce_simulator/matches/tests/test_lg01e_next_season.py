@@ -587,3 +587,32 @@ class TestNextSeasonAtomicity(TestCase):
         # the through table from a failed mid-flow add — defensive).
         prev.refresh_from_db()
         self.assertEqual(prev.teams.count(), pre_prev_m2m_count)
+
+
+# ---------------------------------------------------------------------------
+# TestLg01fNextSeasonSessionWrite (LG-01f — appended per seam contract §9g)
+# ---------------------------------------------------------------------------
+
+
+class TestLg01fNextSeasonSessionWrite(TestCase):
+    """LG-01f — ``next_season`` writes
+    ``request.session["last_league_id"] = league.id`` BEFORE the 302
+    redirect so the session middleware commits the cookie alongside the
+    redirect response.
+    """
+
+    def test_lg01f_session_writes_last_league_id_before_redirect(self) -> None:
+        league = _make_league("LfNxtSess")
+        teams = _make_teams("LfNS", 2)
+        _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        response = self.client.post(
+            reverse("next_season", kwargs={"league_id": league.id})
+        )
+        # 302 redirect AND session has been written.
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.client.session["last_league_id"], league.id)

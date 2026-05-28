@@ -500,3 +500,67 @@ class TestLg01eDashboardWiring(TestCase):
         league = _make_league("LE1eNone")
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
         self.assertNotContains(response, 'id="league-dashboard-next-season-form"')
+
+
+# ---------------------------------------------------------------------------
+# TestLg01fSidebarRendered (LG-01f — appended per seam contract §9d)
+# ---------------------------------------------------------------------------
+
+
+class TestLg01fSidebarRendered(TestCase):
+    """LG-01f — the league dashboard renders the 14-entry sidebar partial
+    with ``sidebar_active="dashboard"`` so the Dashboard entry carries
+    the active class.
+    """
+
+    def test_league_dashboard_renders_sidebar_partial(self) -> None:
+        league = _make_league("LfLDSb")
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertContains(response, 'id="league-sidebar"')
+
+    def test_dashboard_entry_active_class(self) -> None:
+        league = _make_league("LfLDActive")
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        body = response.content.decode()
+        idx = body.find('id="sidebar-top-dashboard"')
+        self.assertGreaterEqual(idx, 0)
+        start = body.rfind("<", 0, idx)
+        end = body.find(">", idx)
+        element = body[start : end + 1]
+        self.assertIn("active", element)
+
+    def test_sidebar_links_has_14_entries(self) -> None:
+        league = _make_league("LfLD14")
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertEqual(len(response.context["sidebar_links"]), 14)
+
+    def test_history_entry_url_targets_this_leagues_history(self) -> None:
+        league = _make_league("LfLDHist")
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        links = response.context["sidebar_links"]
+        history_entry = next(e for e in links if e["key"] == "history")
+        self.assertEqual(
+            history_entry["url"],
+            reverse("league_history", kwargs={"league_id": league.id}),
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestLg01fSessionWrite (LG-01f — appended per seam contract §9d)
+# ---------------------------------------------------------------------------
+
+
+class TestLg01fSessionWrite(TestCase):
+    """LG-01f — the league dashboard writes
+    ``request.session["last_league_id"] = league.id`` after the 404
+    guard.
+    """
+
+    def test_get_writes_last_league_id_to_session(self) -> None:
+        league = _make_league("LfLDSessW")
+        self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertEqual(self.client.session["last_league_id"], league.id)
+
+    def test_404_does_not_write_session(self) -> None:
+        self.client.get(reverse("league_dashboard", args=[99999]))
+        self.assertNotIn("last_league_id", self.client.session)
