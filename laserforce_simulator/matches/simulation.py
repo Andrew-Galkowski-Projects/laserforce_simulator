@@ -25,11 +25,6 @@ from .sim_helpers.combat import (
     start_missile_lock as _start_missile_lock_shared,
     tick_missile_lock as _tick_missile_lock_shared,
 )
-from .sim_helpers.tick_engine import (
-    drain_nukes,
-    drain_reactions,
-    drain_followups,
-)
 from .sim_helpers.pending_events import (
     PendingMissileLock,
     PendingNuke,
@@ -1370,7 +1365,8 @@ class BatchSimulator:
             # ``resolve_shot`` with ``kind=SHOT_KIND_REACTION``. The resolver
             # owns the validity gates, hit roll, mutations, Down cascade,
             # events, and reaction-never-re-reacts policy.
-            due_rx, pending_reactions = drain_reactions(pending_reactions, second)
+            due_rx = [rx for rx in pending_reactions if rx.fire_at <= second]
+            pending_reactions = [rx for rx in pending_reactions if rx.fire_at > second]
             for rx in due_rx:
                 resolve_shot(
                     rx.attacker,
@@ -1385,7 +1381,8 @@ class BatchSimulator:
             # ``kind=SHOT_KIND_FOLLOW_UP`` and the carried ``chain_depth``.
             # The resolver applies the chain cap (``_MAX_CHAIN_DEPTH``) and
             # the no-victim-reaction policy.
-            due_fu, pending_followups = drain_followups(pending_followups, second)
+            due_fu = [fu for fu in pending_followups if fu.fire_at <= second]
+            pending_followups = [fu for fu in pending_followups if fu.fire_at > second]
             for fu in due_fu:
                 resolve_shot(
                     fu.attacker,
@@ -1397,7 +1394,8 @@ class BatchSimulator:
                 )
 
             # --- process pending nukes (MECH-05: after reactions/followups so tag-cancels land first) ---
-            fired_n, pending_nukes = drain_nukes(pending_nukes, second)
+            fired_n = [n for n in pending_nukes if n.complete_time <= second]
+            pending_nukes = [n for n in pending_nukes if n.complete_time > second]
             for n in fired_n:
                 # MECH-05: check both liveness AND that the fuse was not disarmed via tag-cancel
                 nuke_armed = n.player.special_active_until >= n.complete_time
