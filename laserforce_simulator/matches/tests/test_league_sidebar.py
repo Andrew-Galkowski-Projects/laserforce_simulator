@@ -4,7 +4,7 @@
 The seam contract is locked at ``.claude/worktrees/lg-01f-seam-contract.md``
 (§0 names, §5b 14-entry list, §5c helper signature + behaviour, §9b
 class list). The helper is a flat module-level private function imported
-directly via ``from matches.views import _build_league_sidebar_links``.
+directly via ``from matches.league_views import _build_league_sidebar_links``.
 
 The helper reads
 ``league.seasons.filter(state="completed").order_by("-id").first()`` for
@@ -21,7 +21,7 @@ from django.urls import reverse
 
 from matches.models import League, Season
 from matches.tests.conftest import make_team_with_slots
-from matches.views import _build_league_sidebar_links
+from matches.league_views import _build_league_sidebar_links
 
 # ---------------------------------------------------------------------------
 # Helpers
