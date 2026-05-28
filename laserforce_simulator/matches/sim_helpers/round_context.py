@@ -7,16 +7,19 @@ It replaces the RV-02 static->instance stash
 the per-call kwarg sprawl that would otherwise infect every sim_helpers
 function.
 
-Pure Python, zero imports (mirrors ``time_constants.py`` discipline) so
-sim_helpers stays Django-free and the dataclass can be constructed by
-any caller without paying an import cost. Pinned by the seam contract
-at ``.claude/worktrees/shot-resolver-seam-contract.md``.
+Pure Python, no Django imports. Pinned by the seam contracts at
+``.claude/worktrees/shot-resolver-seam-contract.md`` (original) and
+``.claude/worktrees/event-log-seam-contract.md`` (which renamed the
+``event_log: Optional[list]`` field to ``events: EventLog`` and
+introduced the null-object EventLog pattern).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Optional
+from dataclasses import dataclass, field
+from typing import Any
+
+from .event_log import EventLog
 
 
 @dataclass
@@ -29,11 +32,17 @@ class RoundContext:
     ``sim_helpers.shot.resolve_shot`` (the wide-Shot resolver).
 
     Fields:
-        event_log: per-round event-dict buffer; ``None`` on the batch
-            path where no persistence is requested. ``resolve_shot``
-            appends ``tag`` / ``miss`` / ``elimination`` rows here when
-            non-None; ``record_down`` appends ``medic_reset`` /
-            ``nuke_cancelled`` rows here when non-None.
+        events: ``EventLog`` — single source of truth for the
+            ``GameEvent``-dict shape. Always non-None (null-object
+            pattern: ``EventLog(persist=False)`` is the no-op variant
+            used on the batch path). ``resolve_shot`` and
+            ``record_down`` call its per-event-type verbs
+            (``events.tag(...)``, ``events.medic_reset(...)``, etc.)
+            instead of constructing dict literals.
+            Default is ``EventLog(persist=False)`` so test factories
+            can construct ``RoundContext`` without explicitly passing
+            ``events`` when they don't care about emits; tests that
+            want emits build ``EventLog(persist=True)`` explicitly.
         pending_nukes: ``list[PendingNuke]`` — the live nuke queue.
             Read by ``record_down`` for the RV-02 nuke-cancellation
             emit; written by the use-special action dispatch.
@@ -50,9 +59,9 @@ class RoundContext:
             ``None`` on the 3-zone fallback path.
     """
 
-    event_log: Optional[list]
-    pending_nukes: list
-    pending_followups: list
-    pending_reactions: list
-    all_alive: list
-    movement_ctx: Any  # MapContext | None — typed as Any to avoid the import
+    events: EventLog = field(default_factory=lambda: EventLog(persist=False))
+    pending_nukes: list = field(default_factory=list)
+    pending_followups: list = field(default_factory=list)
+    pending_reactions: list = field(default_factory=list)
+    all_alive: list = field(default_factory=list)
+    movement_ctx: Any = None  # MapContext | None — typed as Any to avoid the import

@@ -163,22 +163,26 @@ class TestSupportAvailability(unittest.TestCase):
         return ctx
 
     def _run(self, requestor, support_player, second, movement_ctx):
-        """Run resolve_resupply_requests and return collected events."""
+        """Run resolve_resupply_requests and return collected events.
+
+        EventLog candidate: helper now constructs a ``RoundContext``
+        with a persisting ``EventLog`` and returns its entries (the
+        7-key GameEvent-dict shape — tests assert on ``event_type``,
+        ``actor_id``, ``target_id``).
+        """
+        from matches.sim_helpers.event_log import EventLog
         from matches.sim_helpers.resupply_queue import resolve_resupply_requests
+        from matches.sim_helpers.round_context import RoundContext
 
-        events = []
-
-        def emit(event_type, **kwargs):
-            events.append({"event_type": event_type, **kwargs})
-
+        ctx = RoundContext(events=EventLog(persist=True))
         resolve_resupply_requests(
             [requestor],
             [requestor, support_player],
             second,
             movement_ctx,
-            emit_event=emit,
+            ctx=ctx,
         )
-        return events
+        return ctx.events.entries
 
     def test_available_support_triggers_resupply(self):
         """An alive, in-LOS, shot-stocked, non-cooldown support produces a resupply event."""
@@ -373,25 +377,27 @@ class TestResolveResupplyRequests(unittest.TestCase):
     def _run(
         self, requestors, all_alive, second=100, movement_ctx=None, rng_value=None
     ):
-        """Run the resolver and return emitted events."""
+        """Run the resolver and return emitted events.
+
+        EventLog candidate: helper now constructs a ``RoundContext``
+        with a persisting ``EventLog`` and returns its entries.
+        """
+        from matches.sim_helpers.event_log import EventLog
         from matches.sim_helpers.resupply_queue import resolve_resupply_requests
+        from matches.sim_helpers.round_context import RoundContext
 
-        events = []
-
-        def emit(event_type, **kwargs):
-            events.append({"event_type": event_type, **kwargs})
-
+        ctx = RoundContext(events=EventLog(persist=True))
         if rng_value is not None:
             with patch("random.random", return_value=rng_value):
                 resolve_resupply_requests(
-                    requestors, all_alive, second, movement_ctx, emit_event=emit
+                    requestors, all_alive, second, movement_ctx, ctx=ctx
                 )
         else:
             resolve_resupply_requests(
-                requestors, all_alive, second, movement_ctx, emit_event=emit
+                requestors, all_alive, second, movement_ctx, ctx=ctx
             )
 
-        return events
+        return ctx.events.entries
 
     def _los_ctx(self, can_see=True):
         ctx = MagicMock()
@@ -572,8 +578,14 @@ class TestResolveResupplyRequests(unittest.TestCase):
         Patch random so the roll (0.05 → 5%) falls within the 10% failure window
         → second requestor's support fails → no resupply for second requestor.
         """
-        requestor1 = _ps("heavy", team_color="red", final_lives=5, tag_id="red_heavy")
-        requestor2 = _ps("scout", team_color="red", final_shots=5, tag_id="red_scout")
+        # Distinct player_ids so EventLog event filtering can disambiguate
+        # (the assertion below filters on ``target_id``).
+        requestor1 = _ps(
+            "heavy", team_color="red", final_lives=5, tag_id="red_heavy", player_id=1
+        )
+        requestor2 = _ps(
+            "scout", team_color="red", final_shots=5, tag_id="red_scout", player_id=2
+        )
 
         # Each requestor has their own Medic/Ammo to avoid cross-assignment
         # Use two Medics (same team) — first requestor's Medic has already handled one request
@@ -581,6 +593,7 @@ class TestResolveResupplyRequests(unittest.TestCase):
             "medic",
             team_color="red",
             tag_id="red_medic_1",
+            player_id=3,
             final_shots=30,
             last_downed_time=None,
             last_shot_time=-99.0,
@@ -591,6 +604,7 @@ class TestResolveResupplyRequests(unittest.TestCase):
             "medic",
             team_color="red",
             tag_id="red_medic_2",
+            player_id=4,
             final_shots=30,
             last_downed_time=None,
             last_shot_time=-99.0,
@@ -604,13 +618,11 @@ class TestResolveResupplyRequests(unittest.TestCase):
         # We cannot patch random globally for a multi-call sequence easily, so we collect events
         # and assert that the second requestor received no resupply.
         # Deterministic seed approach: use seed that produces sub-10% roll for stress check.
-        events = []
-
-        def emit(event_type, **kwargs):
-            events.append({"event_type": event_type, **kwargs})
-
+        from matches.sim_helpers.event_log import EventLog
         from matches.sim_helpers.resupply_queue import resolve_resupply_requests
+        from matches.sim_helpers.round_context import RoundContext
 
+        round_ctx = RoundContext(events=EventLog(persist=True))
         # Patch random.random to return 0.05 on every call (below 10% stress threshold)
         with patch("random.random", return_value=0.05):
             resolve_resupply_requests(
@@ -618,14 +630,18 @@ class TestResolveResupplyRequests(unittest.TestCase):
                 all_alive,
                 100,
                 ctx,
-                emit_event=emit,
+                ctx=round_ctx,
             )
 
         # Under stress failure for all supports (random=0.05, failure_pct=10% → fails),
         # the second requestor (scout) should receive no resupply event.
         # The first requestor (heavy) is unaffected (prior_request_count=0, no stress check).
-        # Identify events whose requestor kwarg points to requestor2.
-        requestor2_events = [e for e in events if e.get("requestor") is requestor2]
+        # Identify events whose target_id points to requestor2 (EventLog dict
+        # shape: actor_id=supporter, target_id=requestor for resupply events).
+        events = round_ctx.events.entries
+        requestor2_events = [
+            e for e in events if e.get("target_id") == requestor2.player_id
+        ]
         resupply_types = {"resupply_lives", "resupply_ammo", "combo_resupply"}
         requestor2_resupply = [
             e for e in requestor2_events if e["event_type"] in resupply_types
@@ -652,28 +668,24 @@ class TestResolveResupplyRequests(unittest.TestCase):
         all_alive = [heavy, scout, medic]
         ctx = self._los_ctx(can_see=True)
 
-        emission_order = []
-
-        def emit(event_type, **kwargs):
-            emission_order.append({"event_type": event_type, **kwargs})
-
+        from matches.sim_helpers.event_log import EventLog
         from matches.sim_helpers.resupply_queue import resolve_resupply_requests
+        from matches.sim_helpers.round_context import RoundContext
 
-        resolve_resupply_requests([heavy, scout], all_alive, 100, ctx, emit_event=emit)
+        round_ctx = RoundContext(events=EventLog(persist=True))
+        resolve_resupply_requests([heavy, scout], all_alive, 100, ctx, ctx=round_ctx)
+        emission_order = round_ctx.events.entries
 
         # Find which player's resupply came first in the emission order
-        # The emit call should carry enough context to identify the beneficiary.
-        # We check that the heavy's resupply (if both happened) precedes the scout's.
+        # (EventLog dict shape: target_id is the requestor for resupply events).
         heavy_first = None
         for e in emission_order:
             if e["event_type"] in ("resupply_lives", "resupply_ammo", "combo_resupply"):
-                beneficiary = (
-                    e.get("requestor") or e.get("target") or e.get("beneficiary")
-                )
-                if beneficiary is heavy:
+                target_id = e.get("target_id")
+                if target_id == heavy.player_id:
                     heavy_first = True
                     break
-                elif beneficiary is scout:
+                elif target_id == scout.player_id:
                     heavy_first = False
                     break
 
@@ -807,8 +819,10 @@ class TestResupplyPrioritySplit(unittest.TestCase):
                 last_downed_time=None,
                 last_shot_time=-99.0,
             )
-            events = []
+            from matches.sim_helpers.event_log import EventLog
+            from matches.sim_helpers.round_context import RoundContext
 
+            round_ctx = RoundContext(events=EventLog(persist=True))
             # Patch combo roll to always fail (> 0.95) but 75/25 split roll varies
             # Use random.seed to get a distribution; don't patch the second call
             resolve_resupply_requests(
@@ -816,9 +830,10 @@ class TestResupplyPrioritySplit(unittest.TestCase):
                 [req, med, amm],
                 100,
                 ctx,
-                emit_event=lambda et, **kw: events.append(et),
+                ctx=round_ctx,
             )
-            for et in events:
+            for e in round_ctx.events.entries:
+                et = e["event_type"]
                 if et == "resupply_lives":
                     lives_count += 1
                 elif et == "resupply_ammo":
@@ -866,15 +881,19 @@ class TestResupplyPrioritySplit(unittest.TestCase):
                 resupply_synergy=0,
                 resupply_efficiency=0,
             )
-            events = []
+            from matches.sim_helpers.event_log import EventLog
+            from matches.sim_helpers.round_context import RoundContext
+
+            round_ctx = RoundContext(events=EventLog(persist=True))
             resolve_resupply_requests(
                 [req],
                 [req, med, amm],
                 100,
                 ctx,
-                emit_event=lambda et, **kw: events.append(et),
+                ctx=round_ctx,
             )
-            for et in events:
+            for e in round_ctx.events.entries:
+                et = e["event_type"]
                 if et == "resupply_lives":
                     lives_total += 1
                 elif et == "resupply_ammo":

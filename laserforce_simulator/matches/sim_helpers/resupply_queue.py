@@ -7,46 +7,10 @@ Resolves all request_resupply actions for a single tick.
 from __future__ import annotations
 
 import random
-from typing import Any, Callable, Optional
+from typing import Any
 
 from .mechanics import shot_cooldown
-
-
-# ----------------------------------------------------------------------------
-# RES-02b — Universal event metadata snapshot helpers.
-# Local copies of the helpers in matches/simulation.py to avoid a circular
-# import (simulation imports sim_helpers indirectly). Any change to the
-# helper key set must be made in all three locations.
-# ----------------------------------------------------------------------------
-def _actor_meta(actor) -> dict:
-    """Universal actor snapshot block (post-event values)."""
-    return {
-        "actor_role": actor.role,
-        "actor_shots": actor.final_shots,
-        "actor_lives": actor.final_lives,
-        "actor_points": actor.points_scored,
-        "sp": actor.final_special,
-    }
-
-
-def _target_meta(target) -> dict:
-    """Universal target snapshot block (post-event values)."""
-    return {
-        "target_role": target.role,
-        "target_shots": target.final_shots,
-        "target_lives": target.final_lives,
-        "target_points": target.points_scored,
-    }
-
-
-def _build_meta(actor, target=None, **extras) -> dict:
-    """Build event metadata with actor block, optional target block, and extras."""
-    md = _actor_meta(actor)
-    if target is not None:
-        md.update(_target_meta(target))
-    md.update(extras)
-    return md
-
+from .round_context import RoundContext
 
 # Priority order for the queue sort (lower = higher priority)
 _ROLE_QUEUE_PRIORITY: dict[str, int] = {
@@ -149,7 +113,7 @@ def resolve_resupply_requests(
     second: float,
     movement_ctx: Any,
     *,
-    emit_event: Optional[Callable[..., None]] = None,
+    ctx: RoundContext,
 ) -> None:
     """Resolve all request_resupply actions for a single tick.
 
@@ -163,9 +127,15 @@ def resolve_resupply_requests(
         Current simulation time.
     movement_ctx:
         MapContext or None (for LOS checks).
-    emit_event:
-        Optional callable ``(event_type: str, **kwargs)`` for event recording.
-        kwargs may include: requestor, target, actor, second, metadata.
+    ctx:
+        Per-round context. The single-resupply emit happens inside
+        ``attempt_resupply`` (which now takes ``ctx`` directly); the
+        combo_resupply emit happens here via
+        ``ctx.events.combo_resupply``.
+
+    EventLog candidate: the legacy ``emit_event=None`` callable seam
+    and the ``_do_resupply`` dict-vs-kwargs adapter are gone — both
+    were a one-adapter stand-in for what EventLog now is.
     """
     # Local import to avoid circular dependency:
     # resupply_queue → combat → weights (no back-reference at module level).
@@ -219,31 +189,16 @@ def resolve_resupply_requests(
                 # Save last_downed_time so the second resupply is not blocked by the
                 # reset that attempt_resupply applies to last_downed_time.
                 saved_downed_time = getattr(requestor, "last_downed_time", None)
-                _do_resupply(medic, requestor, second, emit_event, attempt_resupply)
+                attempt_resupply(medic, requestor, second, ctx=ctx)
                 requestor.last_downed_time = saved_downed_time
-                _do_resupply(ammo, requestor, second, emit_event, attempt_resupply)
+                attempt_resupply(ammo, requestor, second, ctx=ctx)
                 requestor.combo_resupply_count += 1
                 medic.last_shot_time = second
                 ammo.last_shot_time = second
-                if emit_event is not None:
-                    # RES-02b: combo_resupply now uniformly carries
-                    # target_id=requestor.player_id (was None) and the
-                    # universal actor/target snapshot blocks. The "actor" is
-                    # one of the two supporters; we pick medic by convention
-                    # (the other supporter is named via the ammo_tag extra).
-                    emit_event(
-                        "combo_resupply",
-                        actor=medic,
-                        target=requestor,
-                        requestor=requestor,
-                        second=second,
-                        metadata=_build_meta(
-                            medic,
-                            requestor,
-                            medic_tag=medic.tag_id_key,
-                            ammo_tag=ammo.tag_id_key,
-                        ),
-                    )
+                # RES-02b: combo_resupply carries the medic actor +
+                # requestor target snapshots + medic_tag/ammo_tag extras
+                # (the EventLog combo_resupply verb owns this shape).
+                ctx.events.combo_resupply(requestor, medic, ammo, second)
                 prior_request_count += 1
                 continue
 
@@ -266,39 +221,6 @@ def resolve_resupply_requests(
             prior_request_count += 1
             continue
 
-        _do_resupply(support, requestor, second, emit_event, attempt_resupply)
+        attempt_resupply(support, requestor, second, ctx=ctx)
         support.last_shot_time = second
         prior_request_count += 1
-
-
-def _do_resupply(
-    support: Any,
-    requestor: Any,
-    second: float,
-    emit_event: Optional[Callable[..., None]],
-    attempt_resupply_fn: Callable[..., None],
-) -> None:
-    """Call attempt_resupply, bridging from its dict-style emit_event to kwargs-style.
-
-    Protocol contract: ``attempt_resupply`` calls ``emit_event(event_dict: dict)``
-    where event_dict has keys ``event_type``, ``actor_id``, ``target_id``, etc.
-    This adapter converts that to the kwargs-style ``emit_event(etype, **kwargs)``
-    used by the outer simulators.  If attempt_resupply's emit_event dict structure
-    changes, update the adapter below to match.
-    """
-    if emit_event is None:
-        attempt_resupply_fn(support, requestor, second, emit_event=None)
-        return
-
-    def _adapter(event_dict: dict) -> None:
-        etype = event_dict.get("event_type", "")
-        emit_event(
-            etype,
-            requestor=requestor,
-            target=requestor,
-            actor=support,
-            second=second,
-            metadata=event_dict.get("metadata", {}),
-        )
-
-    attempt_resupply_fn(support, requestor, second, emit_event=_adapter)

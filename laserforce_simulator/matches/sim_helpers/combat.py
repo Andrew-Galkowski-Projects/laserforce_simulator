@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .map_context import MapContext
 
+from .round_context import RoundContext
 from .mechanics import (
     shot_cooldown,
     choose_tag_target,
@@ -42,38 +43,12 @@ _MEDIC_CHART = {"commander": 4, "heavy": 3, "scout": 5, "ammo": 3}
 
 # ----------------------------------------------------------------------------
 # RES-02b — Universal event metadata snapshot helpers.
-# Local copies of the helpers in matches/simulation.py to avoid a circular
-# import (simulation imports combat). The pair is intentionally duplicated;
-# any change to the helper key set must be made in both places.
+# The local _actor_meta / _target_meta / _build_meta helpers were removed
+# by the EventLog candidate — the GameEvent-dict shape now lives entirely
+# inside ``sim_helpers.event_log.EventLog``. Helpers below take ``ctx:
+# RoundContext`` instead of the legacy ``emit_event`` callable seam and
+# call ``ctx.events.*`` verbs directly.
 # ----------------------------------------------------------------------------
-def _actor_meta(actor) -> dict:
-    """Universal actor snapshot block (post-event values)."""
-    return {
-        "actor_role": actor.role,
-        "actor_shots": actor.final_shots,
-        "actor_lives": actor.final_lives,
-        "actor_points": actor.points_scored,
-        "sp": actor.final_special,
-    }
-
-
-def _target_meta(target) -> dict:
-    """Universal target snapshot block (post-event values)."""
-    return {
-        "target_role": target.role,
-        "target_shots": target.final_shots,
-        "target_lives": target.final_lives,
-        "target_points": target.points_scored,
-    }
-
-
-def _build_meta(actor, target=None, **extras) -> dict:
-    """Build event metadata with actor block, optional target block, and extras."""
-    md = _actor_meta(actor)
-    if target is not None:
-        md.update(_target_meta(target))
-    md.update(extras)
-    return md
 
 
 _ACTION_IDX = {
@@ -471,16 +446,17 @@ def attempt_resupply(
     teammate,
     second: float,
     *,
-    emit_event=None,
+    ctx: RoundContext,
 ) -> None:
     """Apply a resupply action from tagger to teammate.
 
     Mutates tagger.resupplies_given and the teammate's resource counters.
     Clears any active commander nuke (special_active_until) on the teammate
-    when resupplied — nuke-cancel stat tracking (ally_nuke_cancels, etc.) is
-    the caller's responsibility when using ResourceBasedSimulator.
+    when resupplied.
 
-    emit_event: optional callable(event_dict) for event recording.
+    EventLog candidate: takes ``ctx: RoundContext`` and calls
+    ``ctx.events.resupply_ammo(...)`` / ``ctx.events.resupply_lives(...)``
+    directly. Replaces the pre-refactor ``emit_event=None`` callable seam.
     """
     if tagger.role == "ammo" and teammate.is_resupplyable_at(second):
         amount = _AMMO_CHART.get(teammate.role, 5)
@@ -493,18 +469,7 @@ def attempt_resupply(
             teammate.special_active_until = 0
         tagger.last_tagged_id = teammate.tag_id_key
         tagger.resupplies_given += 1
-        if emit_event is not None:
-            emit_event(
-                {
-                    "event_type": "resupply_ammo",
-                    "actor_id": tagger.player_id,
-                    "target_id": teammate.player_id,
-                    "timestamp": second,
-                    "points_awarded": 0,
-                    "description": f"{tagger.name} resupplies {teammate.name}",
-                    "metadata": _build_meta(tagger, teammate, amount=amount),
-                }
-            )
+        ctx.events.resupply_ammo(tagger, teammate, second, amount=amount)
     elif (
         tagger.role == "medic"
         and tagger.final_shots > 0
@@ -520,18 +485,7 @@ def attempt_resupply(
             teammate.special_active_until = 0
         tagger.last_tagged_id = teammate.tag_id_key
         tagger.resupplies_given += 1
-        if emit_event is not None:
-            emit_event(
-                {
-                    "event_type": "resupply_lives",
-                    "actor_id": tagger.player_id,
-                    "target_id": teammate.player_id,
-                    "timestamp": second,
-                    "points_awarded": 0,
-                    "description": f"{tagger.name} heals {teammate.name}",
-                    "metadata": _build_meta(tagger, teammate, amount=amount),
-                }
-            )
+        ctx.events.resupply_lives(tagger, teammate, second, amount=amount)
 
 
 def capture_base(
@@ -540,12 +494,15 @@ def capture_base(
     second: float,
     movement_ctx: "MapContext | None" = None,
     *,
-    emit_event=None,
+    ctx: RoundContext,
 ) -> bool:
     """Attempt to capture a base for player.
 
     Returns True if the capture succeeded, False otherwise.
-    emit_event: optional callable(event_dict) for event recording.
+
+    EventLog candidate: emits via ``ctx.events.base_capture`` with the
+    "active capture" wording and the per-capture metadata extras
+    (shots_remaining, points_scored).
     """
     if movement_ctx is not None and player.cell_row is not None:
         base_sight_data = movement_ctx.base_sight_data
@@ -572,23 +529,15 @@ def capture_base(
         player.points_scored += 1001
         if player.role != "heavy":
             player.final_special = min(player.max_special, player.final_special + 5)
-        if emit_event is not None:
-            emit_event(
-                {
-                    "event_type": "base_capture",
-                    "actor_id": player.player_id,
-                    "target_id": None,
-                    "timestamp": second,
-                    "points_awarded": 1001,
-                    "description": f"{player.name} captures base {'neutral' if base_id == 15 else 'opposing'}",
-                    "metadata": _build_meta(
-                        player,
-                        base_id=base_id,
-                        shots_remaining=player.final_shots,
-                        points_scored=player.points_scored,
-                    ),
-                }
-            )
+        ctx.events.base_capture(
+            player,
+            second,
+            base_id=base_id,
+            metadata_extras={
+                "shots_remaining": player.final_shots,
+                "points_scored": player.points_scored,
+            },
+        )
         return True
     return False
 
@@ -597,44 +546,35 @@ def award_bases(
     player,
     second: float,
     *,
-    emit_event=None,
+    ctx: RoundContext,
 ) -> None:
-    """Award any uncaptured bases to a surviving player at round end."""
+    """Award any uncaptured bases to a surviving player at round end.
+
+    EventLog candidate: emits via ``ctx.events.base_capture`` with
+    awarded-style descriptions ("X awarded neutral base" / "X awarded
+    opposing base") and minimal metadata (base_id only).
+    """
     if player.final_lives <= 0:
         return
     if not player.neutral_base_destroyed:
         player.points_scored += 1001
         player.neutral_base_destroyed = True
-        if emit_event is not None:
-            emit_event(
-                {
-                    "event_type": "base_capture",
-                    "actor_id": player.player_id,
-                    "target_id": None,
-                    "timestamp": second,
-                    "points_awarded": 1001,
-                    "description": f"{player.name} awarded neutral base",
-                    "metadata": _build_meta(player, base_id=15),
-                }
-            )
+        ctx.events.base_capture(
+            player,
+            second,
+            base_id=15,
+            description=f"{player.name} awarded neutral base",
+        )
     if not player.opposing_base_destroyed:
         player.points_scored += 1001
         player.opposing_base_destroyed = True
-        if emit_event is not None:
-            emit_event(
-                {
-                    "event_type": "base_capture",
-                    "actor_id": player.player_id,
-                    "target_id": None,
-                    "timestamp": second,
-                    "points_awarded": 1001,
-                    "description": f"{player.name} awarded opposing base",
-                    "metadata": _build_meta(
-                        player,
-                        base_id=14 if player.team_color == "red" else 13,
-                    ),
-                }
-            )
+        opp_base_id = 14 if player.team_color == "red" else 13
+        ctx.events.base_capture(
+            player,
+            second,
+            base_id=opp_base_id,
+            description=f"{player.name} awarded opposing base",
+        )
 
 
 def start_missile_lock(
@@ -643,7 +583,7 @@ def start_missile_lock(
     second: float,
     movement_ctx: "MapContext | None" = None,
     *,
-    emit_event=None,
+    ctx: RoundContext,
 ) -> "PendingMissileLock | None":
     """Initiate a 3-tick missile lock on defender.
 
@@ -655,10 +595,9 @@ def start_missile_lock(
     tick.  The old 45% instant-dodge is replaced by per-tick LOS checks and a
     survival-based dodge roll at the moment of impact.
 
-    RES-03: on a successful lock start the optional ``emit_event`` callable
-    receives a ``{"event_type": "locking", ...}`` dict so the missile-usage log
-    can render fired-but-not-yet-resolved missiles. Mirrors the ``emit_event``
-    kwarg pattern on ``attempt_resupply`` / ``capture_base``.
+    RES-03 + EventLog candidate: on a successful lock start, emits via
+    ``ctx.events.locking(attacker, defender, second)`` so the missile-log
+    surface can render fired-but-not-yet-resolved missiles.
     """
     if not (
         attacker.is_active_at(second)
@@ -689,20 +628,7 @@ def start_missile_lock(
     # Consume the missile immediately; if the lock breaks the shot is still used
     attacker.final_missiles -= 1
 
-    if emit_event is not None:
-        emit_event(
-            {
-                "event_type": "locking",
-                "actor_id": getattr(attacker, "player_id", None),
-                "target_id": getattr(defender, "player_id", None),
-                "actor": attacker,
-                "target": defender,
-                "timestamp": int(second),
-                "points_awarded": 0,
-                "description": f"{attacker.name} locks on {defender.name}",
-                "metadata": _build_meta(attacker, defender),
-            }
-        )
+    ctx.events.locking(attacker, defender, second)
 
     return PendingMissileLock(
         attacker=attacker,

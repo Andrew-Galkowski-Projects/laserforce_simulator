@@ -27,6 +27,7 @@ from __future__ import annotations
 import unittest
 
 from matches.sim_helpers.down import record_down
+from matches.sim_helpers.event_log import EventLog
 from matches.sim_helpers.pending_events import PendingNuke
 from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.round_context import RoundContext
@@ -79,8 +80,13 @@ def _ctx(
     record_down does NOT touch pending_followups / pending_reactions /
     all_alive / movement_ctx.
     """
+    # Wrap the caller's optional event_log list in an EventLog with
+    # buffer= so test assertions can keep reading ``event_log[i]``
+    # directly (the list and ``ctx.events.entries`` are the same list).
+    if event_log is None:
+        event_log = []
     return RoundContext(
-        event_log=event_log if event_log is not None else [],
+        events=EventLog(persist=True, buffer=event_log),
         pending_nukes=pending_nukes if pending_nukes is not None else [],
         pending_followups=[],
         pending_reactions=[],
@@ -276,7 +282,7 @@ class TestRecordDownMedicReset(unittest.TestCase):
         """Batch path: event_log=None ⇒ no emit, but chain counter still ticks."""
         p = _player(role="medic", last_downed_time=5, down_chain_count=1)
         ctx = _ctx()
-        ctx.event_log = None
+        ctx.events = EventLog(persist=False)
         record_down(p, tick=10, ctx=ctx)
         self.assertEqual(p.down_chain_count, 2)
         # No assertion error — None event_log silently skips emit
@@ -382,18 +388,29 @@ class TestRecordDownNukeCancellation(unittest.TestCase):
         self.assertTrue(nuke_a.cancel_logged)
         self.assertTrue(nuke_b.cancel_logged)
 
-    def test_nuke_cancelled_not_emitted_when_event_log_is_none(self) -> None:
-        """Batch path: event_log=None ⇒ no emit, but cancel_logged still flips."""
+    def test_nuke_cancelled_not_emitted_when_persist_is_false(self) -> None:
+        """Batch path: ``EventLog(persist=False)`` ⇒ no emit row, but
+        ``cancel_logged`` still flips uniformly.
+
+        EventLog candidate behaviour change (deliberate): with the
+        null-object pattern, the verb call is a no-op when
+        ``persist=False`` but the state mutation (``cancel_logged =
+        True``) always runs. This is cleaner than the pre-refactor
+        quirk where the whole nuke-cancel block was gated on
+        ``event_log is not None`` — the dedup flag is per-nuke state,
+        not per-emit-record, and now flips consistently regardless of
+        persistence. No observable downstream impact (the batch path
+        has no second-Down-of-same-Commander-in-saved-game scenario).
+        """
         cmdr = _player(role="commander")
         nuke = PendingNuke(complete_time=120, player=cmdr)
         ctx = _ctx(pending_nukes=[nuke])
-        ctx.event_log = None
+        ctx.events = EventLog(persist=False)
         record_down(cmdr, tick=115, ctx=ctx)
-        # Defensive: with no event_log the cancel-flag CAN be left False
-        # because the dedup is keyed on the emit having happened. We pin the
-        # current (RV-02) behaviour: cancel_logged stays False when there is
-        # no event_log so a later persisted save still has a chance to log.
-        self.assertFalse(nuke.cancel_logged)
+        # No emit row recorded.
+        self.assertEqual(len(ctx.events), 0)
+        # cancel_logged still flips uniformly.
+        self.assertTrue(nuke.cancel_logged)
 
 
 # ---------------------------------------------------------------------------
@@ -415,7 +432,7 @@ class TestRecordDownEventLogNone(unittest.TestCase):
         )
         nuke = PendingNuke(complete_time=120, player=cmdr)
         ctx = _ctx(pending_nukes=[nuke])
-        ctx.event_log = None
+        ctx.events = EventLog(persist=False)
         record_down(cmdr, tick=10, ctx=ctx)
         self.assertEqual(cmdr.last_downed_time, 10)
         self.assertEqual(cmdr.down_chain_count, 2)
