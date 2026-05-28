@@ -183,25 +183,37 @@ class TestIsHoldingCarryOver:
 
 
 class TestRecordDownClearsHold:
-    """ADR-0009 decision 2: the life-loss clear hangs off _record_down."""
+    """ADR-0009 decision 2: the life-loss clear hangs off record_down.
+
+    Shot-resolver consolidation lifted ``_record_down`` to
+    ``sim_helpers.down.record_down`` as a pure function; these tests
+    target the new entry point. The MOVE-03 ``is_holding`` clear is
+    the load-bearing assertion here.
+    """
 
     def test_record_down_clears_is_holding(self):
+        from matches.sim_helpers.down import record_down
+
         p = _ps("scout")
         p.is_holding = True
         p._path_cache = (("g",), [(0, 1)], (0, 0))
-        BatchSimulator()._record_down(p, 12)
+        record_down(p, 12, ctx=None)
         assert getattr(p, "is_holding", False) is False
 
     def test_record_down_still_clears_path_cache(self):
+        from matches.sim_helpers.down import record_down
+
         p = _ps("scout")
         p.is_holding = True
         p._path_cache = (("g",), [(0, 1)], (0, 0))
-        BatchSimulator()._record_down(p, 12)
+        record_down(p, 12, ctx=None)
         assert p._path_cache is None
 
     def test_record_down_still_stamps_last_downed_time(self):
+        from matches.sim_helpers.down import record_down
+
         p = _ps("scout")
-        BatchSimulator()._record_down(p, 33)
+        record_down(p, 33, ctx=None)
         assert p.last_downed_time == 33
 
 

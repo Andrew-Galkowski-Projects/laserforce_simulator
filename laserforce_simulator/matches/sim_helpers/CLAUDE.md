@@ -2,6 +2,70 @@
 
 Helper modules used by `BatchSimulator` (the sole simulator post-SIM-09; [ADR-0002](../../../docs/adr/0002-two-simulation-engines.md) superseded) in `matches/simulation.py`. Mostly pure Python — `map_loader.py` is the one exception, lazy-importing Django ORM models for its arena-map queries.
 
+## round_context.py
+
+Pure Python, zero imports beyond stdlib (mirrors `time_constants.py` discipline). `RoundContext` is a `@dataclass` bundling the six per-round mutable references the tick loop threads through:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `event_log` | `Optional[list]` | Per-round event-dict buffer; `None` on the batch path (no persistence requested). `resolve_shot` appends `tag` / `miss` / `elimination` rows; `record_down` appends `medic_reset` / `nuke_cancelled` rows |
+| `pending_nukes` | `list[PendingNuke]` | Live nuke queue; read by `record_down` for the RV-02 nuke-cancellation emit |
+| `pending_followups` | `list[PendingFollowup]` | Written by `resolve_shot` when a hit chains a deferred follow-up |
+| `pending_reactions` | `list[PendingReaction]` | Written by `resolve_shot` when a tag/miss provokes a deferred reaction |
+| `all_alive` | `list` | Live `PlayerState` list this tick. Consumed by the MECH-06 medic-under-fire alert + memory-broadcast side effects on a hit |
+| `movement_ctx` | `Any` (`MapContext | None`) | Read by `resolve_shot` for elevation / LoS / base-in-range gates; `None` on the 3-zone fallback |
+
+Built once in `BatchSimulator._simulate_round` after the four pending-event queues are initialised; passed to `sim_helpers.down.record_down` and `sim_helpers.shot.resolve_shot`. Replaces the RV-02 static→instance self-stash on `BatchSimulator` (`self._event_log` / `self._pending_nukes`) that the chokepoint used to reach via `getattr(self, ...)`. The `movement_ctx` field is typed `Any` to keep the module Django-free without an import dependency on `MapContext`. See the shot-resolver consolidation in [`matches/CLAUDE.md`](../CLAUDE.md) and the seam contract at [`.claude/worktrees/shot-resolver-seam-contract.md`](../../../.claude/worktrees/shot-resolver-seam-contract.md).
+
+## down.py
+
+`record_down(player, tick, ctx)` is the **single life-loss bookkeeping chokepoint**. Pure free function; no Django imports; the only sibling sim_helper imports are `round_context` and `pending_events`. Lifted from `BatchSimulator._record_down` by the shot-resolver consolidation (May 2026) — the static→instance hack RV-02 introduced is structurally unnecessary now that `event_log` and `pending_nukes` ride on `ctx`.
+
+**Six behaviours, in evaluation order:**
+
+1. **RV-02 medic-reset chain.** `player.is_active_at(tick)` True (fresh Down / fully recovered) ⇒ `down_chain_count = 1`; False (re-Down within the respawn cooldown) ⇒ `down_chain_count += 1`. A Medic at `chain == 2` emits one `medic_reset` event into `ctx.event_log`.
+2. **Stamp `player.last_downed_time = tick`.**
+3. **Clear `player._path_cache = None`** (MOVE-02 — knocked off committed route).
+4. **Clear `player.is_holding = False`** (MOVE-03 — Down ends Overwatch).
+5. **Clear `player._committed_goal = None`** iff `_committed_goal[1]` (the `from_action_driven` flag) is True (MOVE-04 — positioning goals survive a Down).
+6. **RV-02 nuke_cancelled.** Commander only: scan `ctx.pending_nukes`; for each nuke whose `player is` this Commander and `cancel_logged` is False, emit one `nuke_cancelled` event and set `cancel_logged = True`. The nuke is LEFT in the queue (MECH-05 — drain path is structurally unchanged).
+
+**Does NOT touch `final_lives` or `shields`** — those mutations happen at the caller (tag / follow-up / reaction / missile / nuke). Callers: `sim_helpers.shot.resolve_shot` (the primary site — every shot-driven life loss), `BatchSimulator._complete_missile`, `BatchSimulator._complete_nuke`. `ctx` is typed `Optional[RoundContext]` for compatibility with legacy/test callsites that exercise the resolver without a per-round context (mirroring the pre-refactor `getattr(self, "_event_log", None)` defensiveness); `ctx is None` skips the emits and the nuke scan but still does the state mutations.
+
+`_actor_meta(actor) -> dict` is a private helper returning the 5-key actor-snapshot block (`actor_role`, `actor_shots`, `actor_lives`, `actor_points`, `sp`) attached to every `record_down` event row. Mirrors `simulation._actor_meta` byte-for-byte; consolidation pending in the EventLog deepening candidate.
+
+**Tests:** `matches/tests/test_record_down.py` — 28 pure-unit tests across 4 classes pinning all six behaviours, no DB required.
+
+## shot.py
+
+`resolve_shot(attacker, defender, tick, *, kind, ctx, chain_depth=0) -> ShotOutcome` is the **wide Shot resolver** — the single Shot → Hit → Tag → Down → Elimination ladder consumed by all four call-site `kind` s. Pure free function; sim_helpers imports only (`combat._elevation_hit_modifier`, `down.record_down`, `mechanics.shot_cooldown`, `pending_events`, `round_context`, `time_constants.TICK_SECONDS`); the MECH-06 side-effect helpers (`_check_medic_under_fire`, `_update_player_memory`, `_broadcast_communication`) are **lazy-imported** from `matches.simulation` at the hit-emit site to avoid a circular import (the EventLog deepening candidate will move them into sim_helpers).
+
+**Public surface:**
+- `SHOT_KIND_INITIAL = "initial"`, `SHOT_KIND_FOLLOW_UP = "follow_up"`, `SHOT_KIND_REACTION = "reaction"`, `SHOT_KIND_OVERWATCH = "overwatch"` — the four call-site kinds.
+- `_VALID_KINDS = frozenset({...})` — module-private; asserted in `resolve_shot`.
+- `_MAX_CHAIN_DEPTH = 2` — module-private; the follow-up chain cap.
+- `ShotOutcome(hit: bool, downed: bool, eliminated: bool)` — `frozen=True` dataclass; returned by `resolve_shot`. `invalid` / `miss_hid` / plain `miss` all surface as `(False, False, False)`.
+
+**Replaces** the five inline copies of shot resolution that previously lived in `BatchSimulator._resolve_tag_attempts` (initial-tag + immediate-reaction + immediate-follow-up branches) and `_simulate_round` (queued `due_rx` + `due_fu` drains). Each call site now dispatches one line to `resolve_shot`; the immediate-vs-deferred distinction is handled by the resolver via shot-cooldown gating (`cd_ticks == 0` ⇒ recursive `resolve_shot` call; otherwise defer to `ctx.pending_followups` / `ctx.pending_reactions`).
+
+**10 phases** (per the seam contract):
+1. **Validity gate.** `attacker.final_shots > 0 or role == "ammo"`; `defender.final_lives > 0`. Else early return.
+2. **Hide-50%-miss roll** (uniform across all kinds — behaviour change). `defender.is_hiding and random.random() > 0.5` ⇒ `miss_hid`; emit `miss` with `metadata["reason"]="hiding"`, decrement shots (skip for Ammo — uniform), stamp `last_shot_time`, return.
+3. **Hit roll.** `random.randint(1, 100) < clamp(int((70 + acc - surv) * elev_mod * stamina_modifier), 10, 95)`.
+4. **Kind-specific counter.** FOLLOW_UP ⇒ `follow_up_shots += 1`; REACTION ⇒ `reaction_shots += 1`; INITIAL / OVERWATCH ⇒ no counter.
+5. **`final_shots` decrement** — uniform across all kinds; skipped for Ammo (behaviour change — pre-refactor the initial-tag hit/miss branches decremented even for Ammo).
+6. **Stamp `last_shot_time = tick`.**
+7. **On hit.** Counter cascade (`tags_made`, `medic_hits` if defender is Medic, `final_special += 1` if attacker isn't Heavy, `+100`/`−20` points, `last_tagged_id`, `times_tagged`, `times_tagged_in_reset_window`, `shields -= shot_power`). On Down (`shields == 0`): if defender is a Commander mid-fuse clear `special_active_until`, decrement `final_lives`, call `record_down`, reset shields to `max_shields`, and on Elimination (`final_lives == 0`) stamp `was_eliminated_at` + emit `elimination` event with `elimination_action ∈ {"tag", "follow_up_tag", "reaction"}` (OVERWATCH maps to `"tag"`). Emit `tag` event with kind metadata flags (`is_follow_up` + `chain` / `is_reaction` / `overwatch` / no extra for INITIAL). MECH-06 side effects on hit: medic-under-fire alert if defender is Medic, memory update + communication broadcast.
+8. **On miss.** `shots_missed += 1`; emit `miss` event with kind metadata flags.
+9. **Schedule reaction** (Phase 9). Only fired for INITIAL / OVERWATCH (`SHOT_KIND_REACTION` never re-reacts; FOLLOW_UP doesn't provoke reactions per the pre-refactor behaviour). `defender.player_awareness >= random.randint(0, 100)` ⇒ react. `cd_ticks == 0` ⇒ recursive `resolve_shot(..., kind=SHOT_KIND_REACTION)`; else defer via `PendingReaction`.
+10. **Schedule follow-up** (Phase 10). Fired on a non-downing hit, when `kind != SHOT_KIND_REACTION`, and when `chain_depth < _MAX_CHAIN_DEPTH`. `defender.player_awareness < random.randint(0, 100)` ⇒ chain. `cd_ticks == 0` ⇒ recursive `resolve_shot(..., kind=SHOT_KIND_FOLLOW_UP, chain_depth=next)`; else defer via `PendingFollowup`.
+
+**Behaviour changes folded into the pending re-baseline.** The two uniform-policy changes above (hide roll, Ammo decrement) plus the one-pass-per-shot RNG interleaving deliberately shift seeded outcomes. Internal SIM-07 / SIM-08 contract (same seed + Orientation + rosters + map ⇒ identical game, serial == parallel, faithful Replay) holds in form. Drift folds into the **already-pending post-MOVE-01 Score Calibration re-baseline** — no new obligation. One calibration-sensitive test (`test_strong_team_winpct_not_diluted_by_alternation` in `test_batch_sim.py`) had its strong-team-win% threshold dropped from 58% to 55% to absorb the drift.
+
+**Private helpers.** `_actor_meta` / `_target_meta` / `_build_meta` (event-metadata builders, mirror `simulation` byte-for-byte; consolidation pending in the EventLog candidate); `_kind_extras(kind, chain_depth)` (kind metadata flags); `_elimination_action(kind)` (the `elimination_action` string); `_emit_tag` / `_emit_miss` / `_emit_elimination` (event-dict appenders); `_cooldown_ticks(player, tick)` (seconds → ticks conversion mirroring the deleted `simulation._cooldown_ticks`); `_maybe_schedule_reaction` / `_maybe_schedule_followup` (Phases 9–10).
+
+**Tests:** `matches/tests/test_shot_resolver.py` — 49 pure-unit tests across 8 classes (`TestResolveShotInitial`, `TestResolveShotAmmoUniformity`, `TestResolveShotHideUniformity`, `TestResolveShotFollowUp`, `TestResolveShotReaction`, `TestResolveShotOverwatch`, `TestResolveShotDownChain`, `TestResolveShotSpecialPoints`) covering every phase × every kind. RNG patched via `matches.sim_helpers.shot.random.randint` / `.random` for deterministic control. No DB required.
+
 ## player_state.py
 
 `PlayerState` is an in-memory dataclass that mirrors the `PlayerRoundState` ORM model. `BatchSimulator` uses it instead of DB objects so the tick loop never touches the ORM (round runs in ~200 ms with the current MOVE-01..04 / MECH-01..06 mechanics, BS-1).
