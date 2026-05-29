@@ -616,3 +616,148 @@ class TestLg01fNextSeasonSessionWrite(TestCase):
         # 302 redirect AND session has been written.
         self.assertEqual(response.status_code, 302)
         self.assertEqual(self.client.session["last_league_id"], league.id)
+
+
+# ---------------------------------------------------------------------------
+# TestNextSeasonMapConfigCarryForward (LG-01j — appended per seam contract
+# Section 8 ``next_season`` extension)
+# ---------------------------------------------------------------------------
+
+
+import io as _lg01j_io  # noqa: E402
+
+from django.core.files.uploadedfile import (  # noqa: E402
+    SimpleUploadedFile as _Lg01jSimpleUploadedFile,
+)
+
+from core.models import ArenaMap as _Lg01jArenaMap  # noqa: E402
+
+
+def _lg01j_png() -> bytes:
+    from PIL import Image as _PILImage
+
+    buf = _lg01j_io.BytesIO()
+    _PILImage.new("RGB", (10, 10), color=(0, 0, 255)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _lg01j_make_arena_map(name: str) -> _Lg01jArenaMap:
+    return _Lg01jArenaMap.objects.create(
+        name=name,
+        image=_Lg01jSimpleUploadedFile(
+            f"{name}.png", _lg01j_png(), content_type="image/png"
+        ),
+        img_width=10,
+        img_height=10,
+    )
+
+
+class TestNextSeasonMapConfigCarryForward(TestCase):
+    """LG-01j — ``next_season`` carries ``map_mode`` from
+    ``latest_completed`` verbatim, and rehydrates ``map_pool`` from
+    ``latest_completed.starting_map_pool_ids_json`` (the SNAPSHOT, NOT
+    the live M2M).
+    """
+
+    def _setup_completed_with_map_config(
+        self, league_name: str, *, map_mode: str, snapshot_ids: list[int]
+    ) -> tuple[League, Season, list[Team]]:
+        league = _make_league(league_name)
+        teams = _make_teams(f"{league_name}T", 2)
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        prev.map_mode = map_mode
+        prev.starting_map_pool_ids_json = sorted(snapshot_ids)
+        prev.save()
+        return league, prev, teams
+
+    def test_carry_mode_none_yields_empty_pool(self) -> None:
+        league, _prev, _teams = self._setup_completed_with_map_config(
+            "CarryNone", map_mode="none", snapshot_ids=[]
+        )
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        self.assertEqual(new_season.map_mode, "none")
+        self.assertEqual(new_season.map_pool.count(), 0)
+
+    def test_carry_mode_single_with_one_map(self) -> None:
+        m = _lg01j_make_arena_map("CarrySingleMap")
+        league, _prev, _teams = self._setup_completed_with_map_config(
+            "CarrySingle", map_mode="single", snapshot_ids=[m.id]
+        )
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        self.assertEqual(new_season.map_mode, "single")
+        ids = list(new_season.map_pool.values_list("id", flat=True))
+        self.assertEqual(ids, [m.id])
+
+    def test_carry_mode_random_per_round_with_three_maps(self) -> None:
+        ms = [_lg01j_make_arena_map(f"CarryR{i}") for i in range(3)]
+        league, _prev, _teams = self._setup_completed_with_map_config(
+            "CarryRand",
+            map_mode="random_per_round",
+            snapshot_ids=[m.id for m in ms],
+        )
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        self.assertEqual(new_season.map_mode, "random_per_round")
+        ids = sorted(new_season.map_pool.values_list("id", flat=True))
+        self.assertEqual(ids, sorted([m.id for m in ms]))
+
+    def test_carry_drops_deleted_map_silently(self) -> None:
+        """Defensive: snapshot includes a deleted-after-activation id.
+        The carry-forward uses ``filter(id__in=)`` so the missing id is
+        silently dropped from the new Season's pool — no 400, no crash.
+        """
+        m1 = _lg01j_make_arena_map("CarryAlive1")
+        m2 = _lg01j_make_arena_map("CarryAlive2")
+        league, _prev, _teams = self._setup_completed_with_map_config(
+            "CarryDrop",
+            map_mode="random_per_round",
+            snapshot_ids=[m1.id, m2.id, 999_999],
+        )
+        response = self.client.post(
+            reverse("next_season", kwargs={"league_id": league.id})
+        )
+        self.assertEqual(response.status_code, 302)
+        new_season = league.seasons.order_by("-id").first()
+        ids = sorted(new_season.map_pool.values_list("id", flat=True))
+        self.assertEqual(ids, sorted([m1.id, m2.id]))
+        self.assertNotIn(999_999, ids)
+
+    def test_carry_reads_snapshot_not_live_m2m(self) -> None:
+        """LG-01j locked rule: carry-forward reads from
+        ``starting_map_pool_ids_json`` (snapshot), NOT from the live
+        ``map_pool`` M2M.
+
+        Pin this by mutating the previous Season's live M2M after
+        activation (adding a 3rd map) while leaving the snapshot at 2
+        ids — and asserting the new Season's pool equals the snapshot,
+        NOT the live M2M.
+        """
+        m1 = _lg01j_make_arena_map("CarrySnap1")
+        m2 = _lg01j_make_arena_map("CarrySnap2")
+        league, prev, _teams = self._setup_completed_with_map_config(
+            "CarrySnapNotLive",
+            map_mode="random_per_round",
+            snapshot_ids=[m1.id, m2.id],
+        )
+        # Live M2M had 2 maps at snapshot time; mutate it to include a
+        # 3rd one (post-activation admin drift).
+        m3 = _lg01j_make_arena_map("CarrySnap3")
+        prev.map_pool.add(m1, m2, m3)
+        prev.save()
+        # Cross-check: live M2M has 3, snapshot still has 2.
+        self.assertEqual(prev.map_pool.count(), 3)
+        self.assertEqual(len(prev.starting_map_pool_ids_json), 2)
+
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        ids = sorted(new_season.map_pool.values_list("id", flat=True))
+        # New Season inherits ONLY the snapshot (2 ids), NOT m3.
+        self.assertEqual(ids, sorted([m1.id, m2.id]))
+        self.assertNotIn(m3.id, ids)

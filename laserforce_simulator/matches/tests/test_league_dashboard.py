@@ -568,3 +568,133 @@ class TestLg01fSessionWrite(TestCase):
     def test_404_does_not_write_session(self) -> None:
         self.client.get(reverse("league_dashboard", args=[99999]))
         self.assertNotIn("last_league_id", self.client.session)
+
+
+# ---------------------------------------------------------------------------
+# TestLg01jLeagueDashboardMapConfig (LG-01j — appended per seam contract
+# Section 11 Dashboard read-only display + Section 12.1 templates/leagues/
+# dashboard.html DOM id ``league-dashboard-map-config``)
+# ---------------------------------------------------------------------------
+
+
+import io as _lg01j_io  # noqa: E402
+
+from django.core.files.uploadedfile import (  # noqa: E402
+    SimpleUploadedFile as _Lg01jSimpleUploadedFile,
+)
+
+from core.models import ArenaMap as _Lg01jArenaMap  # noqa: E402
+
+
+def _lg01j_png() -> bytes:
+    from PIL import Image as _PILImage
+
+    buf = _lg01j_io.BytesIO()
+    _PILImage.new("RGB", (10, 10), color=(100, 50, 200)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _lg01j_arena_map(name: str) -> _Lg01jArenaMap:
+    return _Lg01jArenaMap.objects.create(
+        name=name,
+        image=_Lg01jSimpleUploadedFile(
+            f"{name}.png", _lg01j_png(), content_type="image/png"
+        ),
+        img_width=10,
+        img_height=10,
+    )
+
+
+class TestLg01jLeagueDashboardMapConfig(TestCase):
+    """LG-01j — ``templates/leagues/dashboard.html`` renders
+    ``map_config_label`` inside ``<div id="league-dashboard-map-config">``.
+
+    Tests the 4 label cases plus 2 defensive cases. Label strings are
+    byte-equal — locked at seam contract §11 + §13.
+    """
+
+    _DOM_ID = "league-dashboard-map-config"
+
+    def _get_body(self, league: League) -> str:
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertEqual(response.status_code, 200)
+        return response.content.decode()
+
+    def test_dom_id_present_in_rendered_template(self) -> None:
+        league = _make_league("LbjDOM")
+        # League with no Seasons (`displayed_season is None`) — Case 1.
+        body = self._get_body(league)
+        self.assertIn(f'id="{self._DOM_ID}"', body)
+
+    def test_displayed_season_none_renders_3_zone_fallback_label(self) -> None:
+        league = _make_league("LbjCaseNone")
+        body = self._get_body(league)
+        self.assertIn("Map: 3-zone fallback (no map)", body)
+
+    def test_map_mode_none_renders_3_zone_fallback_label(self) -> None:
+        league = _make_league("LbjModeNone")
+        season, _ = _make_draft_season(league, n_teams=2)
+        season.start_season()
+        season.map_mode = "none"
+        season.save()
+        body = self._get_body(league)
+        self.assertIn("Map: 3-zone fallback (no map)", body)
+
+    def test_map_mode_single_renders_em_dash_with_map_name(self) -> None:
+        league = _make_league("LbjModeSingle")
+        season, _ = _make_draft_season(league, n_teams=2)
+        the_map = _lg01j_arena_map("Alpha")
+        season.map_pool.add(the_map)
+        season.start_season()
+        season.map_mode = "single"
+        season.save()
+        body = self._get_body(league)
+        # Locked: em-dash U+2014, single SPACE on both sides.
+        self.assertIn("Map: Single — Alpha", body)
+
+    def test_map_mode_single_with_deleted_map_renders_map_deleted_label(
+        self,
+    ) -> None:
+        """Defensive case: snapshot [42] but ArenaMap 42 was deleted."""
+        league = _make_league("LbjModeSingleDel")
+        season, _ = _make_draft_season(league, n_teams=2)
+        season.start_season()
+        season.map_mode = "single"
+        season.starting_map_pool_ids_json = [999_999]  # nonexistent
+        season.save()
+        body = self._get_body(league)
+        self.assertIn("Map: Single — (map deleted)", body)
+
+    def test_map_mode_random_per_round_renders_count_and_names_alphabetical(
+        self,
+    ) -> None:
+        league = _make_league("LbjModeRand")
+        season, _ = _make_draft_season(league, n_teams=2)
+        # Add maps OUT of alphabetical order — the label must sort
+        # ascending by NAME.
+        m_charlie = _lg01j_arena_map("Charlie")
+        m_alpha = _lg01j_arena_map("Alpha")
+        m_bravo = _lg01j_arena_map("Bravo")
+        season.map_pool.add(m_charlie, m_alpha, m_bravo)
+        season.start_season()
+        season.map_mode = "random_per_round"
+        season.save()
+        body = self._get_body(league)
+        # Locked exact label.
+        self.assertIn(
+            "Map: Random per Round (3 maps: Alpha, Bravo, Charlie)",
+            body,
+        )
+
+    def test_map_mode_random_per_round_with_empty_pool_renders_no_maps(
+        self,
+    ) -> None:
+        """Defensive: random_per_round + empty snapshot ⇒ ``(no maps)``."""
+        league = _make_league("LbjModeRandEmpty")
+        season, _ = _make_draft_season(league, n_teams=2)
+        season.start_season()
+        season.map_mode = "random_per_round"
+        season.starting_map_pool_ids_json = []
+        season.save()
+        body = self._get_body(league)
+        self.assertIn("Map: Random per Round (no maps)", body)

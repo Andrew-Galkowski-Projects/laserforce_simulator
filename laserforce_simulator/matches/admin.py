@@ -13,4 +13,6 @@ class LeagueAdmin(admin.ModelAdmin):
 @admin.register(Season)
 class SeasonAdmin(admin.ModelAdmin):
     list_display = ("name", "league", "state", "schedule_format", "start_date")
-    filter_horizontal = ("teams",)
+    # LG-01j — extend the M2M dual-select widget to cover the new
+    # ``map_pool`` field alongside the existing ``teams``.
+    filter_horizontal = ("teams", "map_pool")

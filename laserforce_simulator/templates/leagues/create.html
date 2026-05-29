@@ -60,6 +60,29 @@
             </div>
         </div>
 
+        <div class="mb-3">
+            <label for="league-create-map-mode" class="form-label">Map mode</label>
+            {{ form.map_mode }}
+            <div class="form-text">
+                Per-Season arena map configuration. Pick "3-zone fallback" to
+                play every Round on the legacy 3-zone model, "Single map" to
+                use one fixed map every Round, or "Random per Round" to
+                draw a map per Round from the pool below.
+            </div>
+            {{ form.map_mode.errors }}
+        </div>
+
+        <div class="mb-3">
+            <label for="league-create-map-pool" class="form-label">Map pool</label>
+            {{ form.map_pool }}
+            <div class="form-text">
+                Pool must be empty for "3-zone fallback", contain exactly 1
+                map for "Single map", or contain at least 1 map for
+                "Random per Round".
+            </div>
+            {{ form.map_pool.errors }}
+        </div>
+
         {% if form.non_field_errors %}
             <div class="alert alert-danger">{{ form.non_field_errors }}</div>
         {% endif %}

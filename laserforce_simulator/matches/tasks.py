@@ -1,8 +1,70 @@
+import random
+from typing import TYPE_CHECKING
+
 from celery import shared_task
 
 from teams.models import Team
 
 from .simulation import BatchSimulator
+
+if TYPE_CHECKING:
+    from core.models import ArenaMap
+
+    from .models import Season
+    from .schedule_generator import ScheduleFixture
+
+
+def _resolve_fixture_map(
+    season: "Season",
+    fixture: "ScheduleFixture",
+    pool_by_id: "dict[int, ArenaMap]",
+) -> "ArenaMap | None":
+    """LG-01j — per-fixture map resolver (pure, no Django ORM access).
+
+    Reads ``season.map_mode`` and ``season.starting_map_pool_ids_json``
+    (the frozen-at-activation snapshot) plus ``fixture``'s identity
+    fields, and returns the resolved :class:`~core.models.ArenaMap`
+    (or ``None`` for the 3-zone fallback).
+
+    Locked algorithm:
+        * ``mode == "none"`` ⇒ ``None`` (LG-01d 3-zone fallback).
+        * ``mode == "single"`` ⇒ first id of the snapshot, looked up
+          in ``pool_by_id``; ``None`` when the snapshot is empty or the
+          row was deleted after activation.
+        * ``mode == "random_per_round"`` ⇒ ``random.Random(seed_str)
+          .choice(pool_ids)`` where ``seed_str = f"{season.id}|{
+          fixture.matchday}|{fixture.round_number}|{fixture.team_a_id}|{
+          fixture.team_b_id}"`` — deterministic by fixture identity,
+          replay-faithful, and isolated from the simulator's own RNG.
+          ``None`` when the snapshot is empty or the chosen row was
+          deleted.
+        * Any other value ⇒ ``ValueError(f"Unknown map_mode: {mode!r}")``.
+
+    The caller resolves ``pool_by_id`` once per call site via a single
+    ``ArenaMap.objects.in_bulk(pool_ids)``; this helper itself touches
+    no ORM and is unit-testable with hand-built dataclass stubs.
+    """
+    mode = season.map_mode
+    if mode == "none":
+        return None
+    if mode == "single":
+        pool_ids = season.starting_map_pool_ids_json or []
+        if not pool_ids:
+            return None
+        chosen_id = pool_ids[0]
+        return pool_by_id.get(chosen_id)
+    if mode == "random_per_round":
+        pool_ids = season.starting_map_pool_ids_json or []
+        if not pool_ids:
+            return None
+        seed_str = (
+            f"{season.id}|{fixture.matchday}|{fixture.round_number}|"
+            f"{fixture.team_a_id}|{fixture.team_b_id}"
+        )
+        rng = random.Random(seed_str)
+        chosen_id = rng.choice(pool_ids)
+        return pool_by_id.get(chosen_id)
+    raise ValueError(f"Unknown map_mode: {mode!r}")
 
 
 def _resolve_arena_map(arena_map_id: int | None):
@@ -116,6 +178,7 @@ def play_season_task(
     import django.db
 
     try:
+        from core.models import ArenaMap
         from matches.models import GameRound, Season
         from matches.schedule_generator import generate_schedule
         from matches.season_dashboard import select_play_fixtures
@@ -144,12 +207,26 @@ def play_season_task(
 
         team_ids = {f.team_a_id for f in to_play} | {f.team_b_id for f in to_play}
         team_by_id = Team.objects.in_bulk(team_ids)
+        # LG-01j — bulk-load the frozen-snapshot map pool ONCE outside
+        # the per-fixture loop (single ORM query regardless of
+        # ``len(to_play)``). ``in_bulk`` on an empty list is a no-op
+        # returning an empty dict.
+        pool_ids = season.starting_map_pool_ids_json or []
+        pool_by_id: dict[int, ArenaMap] = ArenaMap.objects.in_bulk(pool_ids)
 
         for k, fixture in enumerate(to_play):
             team_a = team_by_id[fixture.team_a_id]
             team_b = team_by_id[fixture.team_b_id]
+            # LG-01j — resolve the per-Round arena_map via the locked
+            # algorithm (3-zone for ``none``, fixed map for ``single``,
+            # deterministic per-fixture draw for ``random_per_round``).
+            arena_map = _resolve_fixture_map(season, fixture, pool_by_id)
             BatchSimulator().simulate_scheduled_round(
-                season, team_a, team_b, fixture.round_number
+                season,
+                team_a,
+                team_b,
+                fixture.round_number,
+                arena_map=arena_map,
             )
             self.update_state(
                 state="PROGRESS",

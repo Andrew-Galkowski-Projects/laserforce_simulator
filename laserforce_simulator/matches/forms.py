@@ -1,7 +1,7 @@
 from django import forms
 from django.utils import timezone
 from teams.models import Team
-from .models import Match
+from .models import Match, Season
 from core.models import ArenaMap
 
 
@@ -180,6 +180,81 @@ class CreateLeagueForm(forms.Form):
         ),
         label="Stat standard deviation",
     )
+    # LG-01j — per-Season arena map configuration. Two new fields appended
+    # to the locked LG-01b 7-field block; total field count is now 9 in
+    # the locked order league_name → season_name → start_date → num_teams
+    # → schedule_format → mean → std_dev → map_mode → map_pool.
+    map_mode = forms.ChoiceField(
+        choices=Season._meta.get_field("map_mode").choices,
+        initial="none",
+        required=True,
+        widget=forms.Select(
+            attrs={
+                "id": "league-create-map-mode",
+                "class": "form-select",
+            }
+        ),
+        label="Map mode",
+    )
+    map_pool = forms.ModelMultipleChoiceField(
+        queryset=_maps_with_confirmed_config(),
+        required=False,
+        widget=forms.SelectMultiple(
+            attrs={
+                "id": "league-create-map-pool",
+                "class": "form-select",
+            }
+        ),
+        label="Map pool",
+    )
+
+    def clean(self):
+        """LG-01j — cross-field mode-vs-pool count rules.
+
+        Three rules (locked error messages):
+            * ``none`` ⇒ pool MUST be empty.
+            * ``single`` ⇒ pool MUST contain exactly 1 map.
+            * ``random_per_round`` ⇒ pool MUST contain ≥ 1 map.
+
+        Errors attach to ``map_pool`` (NOT ``map_mode``) so the help
+        text co-locates with the field the user clicked wrong. When
+        ``map_mode`` failed its own field-level validation, skip the
+        cross-field rule (defensive — ``cleaned_data["map_mode"]`` is
+        absent in that case).
+        """
+        cleaned_data = super().clean()
+        mode = cleaned_data.get("map_mode")
+        if mode is None:
+            return cleaned_data
+        pool = cleaned_data.get("map_pool") or []
+        pool_count = len(pool)
+        if mode == "none" and pool_count > 0:
+            raise forms.ValidationError(
+                {
+                    "map_pool": (
+                        "Map pool must be empty when Map mode is " "'3-zone fallback'."
+                    )
+                }
+            )
+        if mode == "single" and pool_count != 1:
+            raise forms.ValidationError(
+                {
+                    "map_pool": (
+                        "Map pool must contain exactly 1 map when Map "
+                        "mode is 'Single map'."
+                    )
+                }
+            )
+        if mode == "random_per_round" and pool_count < 1:
+            raise forms.ValidationError(
+                {
+                    "map_pool": (
+                        "Map pool must contain at least 1 map when Map "
+                        "mode is 'Random per Round'."
+                    )
+                }
+            )
+        return cleaned_data
 
 
 class BatchSimulateForm(forms.Form):

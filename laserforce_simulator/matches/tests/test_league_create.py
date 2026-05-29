@@ -36,6 +36,11 @@ def _valid_payload(**overrides) -> dict:
         "schedule_format": "single_round_robin",
         "mean": "50",
         "std_dev": "15",
+        # LG-01j — ``map_mode`` is a required field on
+        # ``CreateLeagueForm``; pre-LG-01j tests get the locked default
+        # ``"none"`` with an empty ``map_pool`` so existing LG-01b /
+        # LG-01g happy paths continue to pass.
+        "map_mode": "none",
     }
     payload.update(overrides)
     return payload
@@ -346,3 +351,285 @@ class TestLg01gCurrentTeamAutoSet(TestCase):
         season = league.seasons.first()
         enrolled_team_ids = set(season.teams.values_list("id", flat=True))
         self.assertIn(league.current_team_id, enrolled_team_ids)
+
+
+# ---------------------------------------------------------------------------
+# LG-01j — Per-Season map configuration on the create-League form
+# ---------------------------------------------------------------------------
+#
+# Seam contract: ``.claude/worktrees/lg-01j-seam-contract.md`` §6
+# ``CreateLeagueForm`` extension (2 new fields ``map_mode`` + ``map_pool``
+# with 3 cross-field ``clean()`` rules) and the view-side persistence
+# (Section 7 ``league_create`` view extension): ``map_mode=`` passed into
+# ``Season.objects.create`` and ``season.map_pool.set(cleaned["map_pool"])``
+# after ``season.teams.add(*created_teams)``.
+#
+# Tests use the existing LG-01b ``_valid_payload`` helper and exercise
+# the form / view through the public POST endpoint (no mocking of
+# ``_maps_with_confirmed_config`` — the helper already exists in
+# ``matches/forms.py`` for ``MatchSetupForm`` / ``SingleRoundSetupForm``;
+# LG-01j reuses it verbatim per the seam contract Section 6).
+
+
+import io as _lg01j_io
+
+from django.core.files.uploadedfile import (
+    SimpleUploadedFile as _Lg01jSimpleUploadedFile,
+)
+
+from core.models import (
+    ArenaMap as _Lg01jArenaMap,
+    MapZoneConfig as _Lg01jMapZoneConfig,
+)
+from matches.forms import CreateLeagueForm as _Lg01jCreateLeagueForm
+
+
+def _lg01j_png_bytes() -> bytes:
+    from PIL import Image as _PILImage
+
+    buf = _lg01j_io.BytesIO()
+    _PILImage.new("RGB", (10, 10), color=(0, 128, 0)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _lg01j_make_map_with_config(name: str = "Map") -> _Lg01jArenaMap:
+    """Build an ArenaMap with at least one confirmed MapZoneConfig so it
+    surfaces in ``_maps_with_confirmed_config()``."""
+    arena_map = _Lg01jArenaMap.objects.create(
+        name=name,
+        image=_Lg01jSimpleUploadedFile(
+            f"{name}.png", _lg01j_png_bytes(), content_type="image/png"
+        ),
+        img_width=10,
+        img_height=10,
+    )
+    _Lg01jMapZoneConfig.objects.create(
+        arena_map=arena_map,
+        zone_size=50,
+        zone_data={"zones": [[1, 1], [1, 1]]},
+        confirmed=True,
+    )
+    return arena_map
+
+
+def _lg01j_make_map_without_config(name: str = "MapNoCfg") -> _Lg01jArenaMap:
+    """ArenaMap with NO confirmed MapZoneConfig — should NOT surface in
+    the picker queryset."""
+    return _Lg01jArenaMap.objects.create(
+        name=name,
+        image=_Lg01jSimpleUploadedFile(
+            f"{name}.png", _lg01j_png_bytes(), content_type="image/png"
+        ),
+        img_width=10,
+        img_height=10,
+    )
+
+
+class TestLeagueCreateMapMode(TestCase):
+    """LG-01j — ``CreateLeagueForm`` gains ``map_mode`` field; choices,
+    initial, and per-mode-vs-pool ``clean()`` rules."""
+
+    def test_form_has_map_mode_field(self) -> None:
+        form = _Lg01jCreateLeagueForm()
+        self.assertIn("map_mode", form.fields)
+
+    def test_map_mode_choices_match_three_locked_tuples(self) -> None:
+        form = _Lg01jCreateLeagueForm()
+        choices = list(form.fields["map_mode"].choices)
+        # Choices come from the model field; locked at §3 + §13.
+        # Allow the Django default blank choice prefix to be omitted
+        # since ``required=True`` + ``initial="none"`` is the locked
+        # form definition (no blank choice).
+        self.assertEqual(
+            choices,
+            [
+                ("none", "3-zone fallback"),
+                ("single", "Single map"),
+                ("random_per_round", "Random per Round"),
+            ],
+        )
+
+    def test_map_mode_initial_is_none_string(self) -> None:
+        form = _Lg01jCreateLeagueForm()
+        self.assertEqual(form.fields["map_mode"].initial, "none")
+
+    def test_map_mode_required_true(self) -> None:
+        form = _Lg01jCreateLeagueForm()
+        self.assertTrue(form.fields["map_mode"].required)
+
+    def test_clean_accepts_mode_none_with_empty_pool(self) -> None:
+        payload = _valid_payload(map_mode="none")
+        form = _Lg01jCreateLeagueForm(payload)
+        self.assertTrue(form.is_valid(), msg=form.errors.as_json())
+
+    def test_clean_accepts_mode_single_with_one_map(self) -> None:
+        m = _lg01j_make_map_with_config("S1")
+        payload = _valid_payload(map_mode="single")
+        payload["map_pool"] = [str(m.id)]
+        form = _Lg01jCreateLeagueForm(payload)
+        self.assertTrue(form.is_valid(), msg=form.errors.as_json())
+
+    def test_clean_accepts_mode_random_per_round_with_one_map(self) -> None:
+        m = _lg01j_make_map_with_config("R1")
+        payload = _valid_payload(map_mode="random_per_round")
+        payload["map_pool"] = [str(m.id)]
+        form = _Lg01jCreateLeagueForm(payload)
+        self.assertTrue(form.is_valid(), msg=form.errors.as_json())
+
+    def test_clean_accepts_mode_random_per_round_with_five_maps(self) -> None:
+        ms = [_lg01j_make_map_with_config(f"R5_{i}") for i in range(5)]
+        payload = _valid_payload(map_mode="random_per_round")
+        payload["map_pool"] = [str(m.id) for m in ms]
+        form = _Lg01jCreateLeagueForm(payload)
+        self.assertTrue(form.is_valid(), msg=form.errors.as_json())
+
+    def test_clean_rejects_bogus_mode(self) -> None:
+        payload = _valid_payload(map_mode="bogus")
+        form = _Lg01jCreateLeagueForm(payload)
+        self.assertFalse(form.is_valid())
+        # Django field-level enum error keyed on ``map_mode``.
+        self.assertIn("map_mode", form.errors)
+
+
+class TestLeagueCreateMapPool(TestCase):
+    """LG-01j — ``CreateLeagueForm`` gains ``map_pool`` field; queryset
+    is ``_maps_with_confirmed_config()``; the 3 mode-vs-pool rules
+    enforced; happy-path view persistence."""
+
+    def test_form_has_map_pool_field(self) -> None:
+        form = _Lg01jCreateLeagueForm()
+        self.assertIn("map_pool", form.fields)
+
+    def test_map_pool_required_false(self) -> None:
+        form = _Lg01jCreateLeagueForm()
+        self.assertFalse(form.fields["map_pool"].required)
+
+    def test_queryset_excludes_maps_without_confirmed_config(self) -> None:
+        live = _lg01j_make_map_with_config("LiveMap")
+        skipped = _lg01j_make_map_without_config("SkippedMap")
+        form = _Lg01jCreateLeagueForm()
+        qs_ids = set(form.fields["map_pool"].queryset.values_list("id", flat=True))
+        self.assertIn(live.id, qs_ids)
+        self.assertNotIn(skipped.id, qs_ids)
+
+    # ---- 3 mode-vs-pool rules ----
+
+    def test_clean_rejects_mode_none_with_non_empty_pool(self) -> None:
+        m = _lg01j_make_map_with_config("NoneWithPool")
+        payload = _valid_payload(map_mode="none")
+        payload["map_pool"] = [str(m.id)]
+        form = _Lg01jCreateLeagueForm(payload)
+        self.assertFalse(form.is_valid())
+        # Locked error message — byte-equal.
+        self.assertIn(
+            "Map pool must be empty when Map mode is '3-zone fallback'.",
+            form.errors.get("map_pool", []),
+        )
+
+    def test_clean_rejects_mode_single_with_empty_pool(self) -> None:
+        payload = _valid_payload(map_mode="single")
+        # No map_pool key in payload ⇒ empty.
+        form = _Lg01jCreateLeagueForm(payload)
+        self.assertFalse(form.is_valid())
+        self.assertIn(
+            "Map pool must contain exactly 1 map when Map mode is 'Single map'.",
+            form.errors.get("map_pool", []),
+        )
+
+    def test_clean_rejects_mode_single_with_two_maps(self) -> None:
+        m1 = _lg01j_make_map_with_config("S2A")
+        m2 = _lg01j_make_map_with_config("S2B")
+        payload = _valid_payload(map_mode="single")
+        payload["map_pool"] = [str(m1.id), str(m2.id)]
+        form = _Lg01jCreateLeagueForm(payload)
+        self.assertFalse(form.is_valid())
+        self.assertIn(
+            "Map pool must contain exactly 1 map when Map mode is 'Single map'.",
+            form.errors.get("map_pool", []),
+        )
+
+    def test_clean_rejects_mode_random_per_round_with_empty_pool(self) -> None:
+        payload = _valid_payload(map_mode="random_per_round")
+        form = _Lg01jCreateLeagueForm(payload)
+        self.assertFalse(form.is_valid())
+        self.assertIn(
+            "Map pool must contain at least 1 map when Map mode is 'Random per Round'.",
+            form.errors.get("map_pool", []),
+        )
+
+    # ---- Tamper POSTs through the view ----
+
+    def test_view_post_mode_none_with_pool_rejected_no_league_created(self) -> None:
+        m = _lg01j_make_map_with_config("TamperNone")
+        payload = _valid_payload(map_mode="none")
+        payload["map_pool"] = [str(m.id)]
+        before = League.objects.count()
+        response = self.client.post(reverse("league_create"), payload)
+        # 200 re-render, NOT 302.
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(League.objects.count(), before)
+
+    def test_view_post_mode_single_with_two_maps_rejected(self) -> None:
+        m1 = _lg01j_make_map_with_config("TamperS2A")
+        m2 = _lg01j_make_map_with_config("TamperS2B")
+        payload = _valid_payload(map_mode="single")
+        payload["map_pool"] = [str(m1.id), str(m2.id)]
+        before = League.objects.count()
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(League.objects.count(), before)
+
+    def test_view_post_mode_random_empty_pool_rejected(self) -> None:
+        payload = _valid_payload(map_mode="random_per_round")
+        before = League.objects.count()
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(League.objects.count(), before)
+
+    # ---- Happy-path view persistence ----
+
+    def test_view_post_mode_none_empty_pool_creates_season_with_none(self) -> None:
+        payload = _valid_payload(map_mode="none", league_name="NoneOK")
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        league = League.objects.get(name="NoneOK")
+        season = league.seasons.first()
+        self.assertEqual(season.map_mode, "none")
+        self.assertEqual(season.map_pool.count(), 0)
+
+    def test_view_post_mode_single_with_one_map_creates_season(self) -> None:
+        m = _lg01j_make_map_with_config("SingleOK")
+        payload = _valid_payload(map_mode="single", league_name="SingleL")
+        payload["map_pool"] = [str(m.id)]
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        league = League.objects.get(name="SingleL")
+        season = league.seasons.first()
+        self.assertEqual(season.map_mode, "single")
+        self.assertEqual(list(season.map_pool.values_list("id", flat=True)), [m.id])
+
+    def test_view_post_mode_random_with_pool_creates_season(self) -> None:
+        ms = [_lg01j_make_map_with_config(f"RandOK{i}") for i in range(3)]
+        payload = _valid_payload(map_mode="random_per_round", league_name="RandL")
+        payload["map_pool"] = [str(m.id) for m in ms]
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        league = League.objects.get(name="RandL")
+        season = league.seasons.first()
+        self.assertEqual(season.map_mode, "random_per_round")
+        ids = sorted(season.map_pool.values_list("id", flat=True))
+        self.assertEqual(ids, sorted([m.id for m in ms]))
+
+    def test_view_post_invalid_rolls_back_no_league_or_team_rows(self) -> None:
+        """Atomic rollback unchanged — an invalid form does NOT create
+        the League or its Teams."""
+        m = _lg01j_make_map_with_config("AtomTamper")
+        payload = _valid_payload(map_mode="none", league_name="ShouldNotExist")
+        payload["map_pool"] = [str(m.id)]
+        before_leagues = League.objects.count()
+        before_teams = Team.objects.count()
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(League.objects.count(), before_leagues)
+        self.assertEqual(Team.objects.count(), before_teams)
+        self.assertFalse(League.objects.filter(name="ShouldNotExist").exists())
