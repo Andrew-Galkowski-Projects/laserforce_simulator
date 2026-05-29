@@ -340,8 +340,14 @@ def league_create(request) -> HttpResponse:
         start_date=cleaned["start_date"],
         state="draft",
         schedule_format=cleaned["schedule_format"],
+        # LG-01j — persist the picked map_mode at create-League time.
+        map_mode=cleaned["map_mode"],
     )
     season.teams.add(*created_teams)
+    # LG-01j — materialise the M2M map_pool rows in the same atomic
+    # block. ``cleaned["map_pool"]`` is the ModelMultipleChoiceField's
+    # QuerySet; ``.set()`` accepts an iterable of objects or PKs.
+    season.map_pool.set(cleaned["map_pool"])
 
     return redirect("season_standings", season_id=season.id)
 
@@ -523,6 +529,12 @@ def _build_dashboard_context(
         leaders_tags = compute_leaders(player_rounds, "tags_per_game", limit=3)
         leaders_ratio = compute_leaders(player_rounds, "tag_ratio", limit=3)
 
+    # LG-01j — read-only map-config label for the dashboard "Map: ..."
+    # line. 4 cases in pinned precedence order. Active / completed
+    # Seasons read from the FROZEN SNAPSHOT; draft Seasons read the
+    # live M2M (the snapshot is None pre-activation).
+    map_config_label = _build_map_config_label(displayed_season, season_mode)
+
     return {
         "displayed_season": displayed_season,
         "season_mode": season_mode,
@@ -535,7 +547,73 @@ def _build_dashboard_context(
         "leaders_ratio": leaders_ratio,
         "action_button_label": action_button_label,
         "action_button_state": action_button_state,
+        # LG-01j — 12th key.
+        "map_config_label": map_config_label,
     }
+
+
+def _build_map_config_label(
+    displayed_season: Optional[Season], season_mode: str
+) -> str:
+    """LG-01j — render the per-Season Map: <...> dashboard label.
+
+    Locked precedence (the 4-case ladder in pinned order):
+
+        1. ``displayed_season is None`` OR ``season_mode == "none"``
+           (LG-01c ``season_mode`` — distinct from ``Season.map_mode``
+           — the "no Season picked" case) ⇒
+           ``"Map: 3-zone fallback (no map)"``.
+        2. ``displayed_season.map_mode == "none"`` ⇒
+           ``"Map: 3-zone fallback (no map)"``.
+        3. ``displayed_season.map_mode == "single"`` ⇒ resolve the lone
+           map and render ``f"Map: Single — {name}"`` (em-dash U+2014)
+           or ``"Map: Single — (map deleted)"`` when the map row was
+           deleted between activation and render.
+        4. ``displayed_season.map_mode == "random_per_round"`` ⇒
+           ``"Map: Random per Round ({n} maps: {names})"`` (names
+           alphabetical asc) or ``"Map: Random per Round (no maps)"``
+           when the pool is empty / all entries deleted.
+
+    For active / completed Seasons the pool ids come from the FROZEN
+    SNAPSHOT (``starting_map_pool_ids_json``); for draft Seasons the
+    snapshot is ``None`` so the live M2M is read instead.
+    """
+    if displayed_season is None or season_mode == "none":
+        return "Map: 3-zone fallback (no map)"
+
+    from core.models import ArenaMap
+
+    mode = displayed_season.map_mode
+    if mode == "none":
+        return "Map: 3-zone fallback (no map)"
+
+    # Resolve pool ids — snapshot for active/completed, live M2M for draft.
+    if season_mode in ("active", "completed"):
+        pool_ids = displayed_season.starting_map_pool_ids_json or []
+    else:
+        pool_ids = list(displayed_season.map_pool.values_list("id", flat=True))
+
+    if mode == "single":
+        if not pool_ids:
+            return "Map: Single — (map deleted)"
+        map_obj = ArenaMap.objects.filter(id=pool_ids[0]).first()
+        if map_obj is None:
+            return "Map: Single — (map deleted)"
+        return f"Map: Single — {map_obj.name}"
+
+    if mode == "random_per_round":
+        names = list(
+            ArenaMap.objects.filter(id__in=pool_ids)
+            .order_by("name")
+            .values_list("name", flat=True)
+        )
+        if not names:
+            return "Map: Random per Round (no maps)"
+        return f"Map: Random per Round ({len(names)} maps: {', '.join(names)})"
+
+    # Defensive fallback — an unknown enum value (admin-side raw write)
+    # surfaces as the 3-zone label rather than crashing the dashboard.
+    return "Map: 3-zone fallback (no map)"
 
 
 # ---------------------------------------------------------------------------
@@ -1059,6 +1137,13 @@ def play_week(request, season_id: int) -> HttpResponse:
 
     try:
         with transaction.atomic():
+            # LG-01j — deferred import of ArenaMap + the per-fixture
+            # map-resolver helper. Mirrors the ``play_season_task``
+            # pattern: ``in_bulk`` runs ONCE outside the per-fixture
+            # loop, the helper is called per fixture.
+            from core.models import ArenaMap
+            from matches.tasks import _resolve_fixture_map
+
             fixtures = generate_schedule(
                 season.starting_team_ids_json or [], season.schedule_format
             )
@@ -1076,11 +1161,19 @@ def play_week(request, season_id: int) -> HttpResponse:
                 return redirect("season_dashboard", season_id=season.id)
             team_ids = {f.team_a_id for f in to_play} | {f.team_b_id for f in to_play}
             team_by_id = Team.objects.in_bulk(team_ids)
+            # LG-01j — bulk-load the frozen-snapshot map pool once.
+            pool_ids = season.starting_map_pool_ids_json or []
+            pool_by_id: dict[int, ArenaMap] = ArenaMap.objects.in_bulk(pool_ids)
             for fixture in to_play:
                 team_a = team_by_id[fixture.team_a_id]
                 team_b = team_by_id[fixture.team_b_id]
+                arena_map = _resolve_fixture_map(season, fixture, pool_by_id)
                 BatchSimulator().simulate_scheduled_round(
-                    season, team_a, team_b, fixture.round_number
+                    season,
+                    team_a,
+                    team_b,
+                    fixture.round_number,
+                    arena_map=arena_map,
                 )
     except (ValidationError, ValueError) as exc:
         return _render_season_dashboard_error(request, season, str(exc))
@@ -1445,11 +1538,24 @@ def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
         start_date=start_date,
         schedule_format=schedule_format,
         state="draft",
+        # LG-01j — carry map_mode verbatim from the previous Season.
+        map_mode=latest_completed.map_mode,
     )
 
     team_ids = latest_completed.starting_team_ids_json or []
     if team_ids:
         teams_qs = Team.objects.filter(id__in=team_ids)
         new_season.teams.add(*teams_qs)
+
+    # LG-01j — rehydrate the new Season's map_pool from the previous
+    # Season's FROZEN SNAPSHOT (NOT its live M2M). The snapshot is the
+    # source of truth post-activation: admin-side edits to the live
+    # ``map_pool`` of the completed Season don't leak into the next
+    # Season's pool. Deleted maps simply drop out of the queryset.
+    from core.models import ArenaMap
+
+    map_pool_ids = latest_completed.starting_map_pool_ids_json or []
+    if map_pool_ids:
+        new_season.map_pool.set(ArenaMap.objects.filter(id__in=map_pool_ids))
 
     return redirect("season_dashboard", season_id=new_season.id)

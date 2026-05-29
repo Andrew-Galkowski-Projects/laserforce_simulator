@@ -481,3 +481,121 @@ class TestLg01fSessionWrite(TestCase):
     def test_404_does_not_write_session(self) -> None:
         self.client.get(reverse("season_dashboard", args=[99999]))
         self.assertNotIn("last_league_id", self.client.session)
+
+
+# ---------------------------------------------------------------------------
+# TestLg01jSeasonDashboardMapConfig (LG-01j — appended per seam contract
+# Section 11 Dashboard read-only display + Section 12.2 templates/seasons/
+# dashboard.html DOM id ``season-dashboard-map-config``)
+# ---------------------------------------------------------------------------
+
+
+import io as _lg01j_io  # noqa: E402
+
+from django.core.files.uploadedfile import (  # noqa: E402
+    SimpleUploadedFile as _Lg01jSimpleUploadedFile,
+)
+
+from core.models import ArenaMap as _Lg01jArenaMap  # noqa: E402
+
+
+def _lg01j_png() -> bytes:
+    from PIL import Image as _PILImage
+
+    buf = _lg01j_io.BytesIO()
+    _PILImage.new("RGB", (10, 10), color=(50, 100, 150)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _lg01j_arena_map(name: str) -> _Lg01jArenaMap:
+    return _Lg01jArenaMap.objects.create(
+        name=name,
+        image=_Lg01jSimpleUploadedFile(
+            f"{name}.png", _lg01j_png(), content_type="image/png"
+        ),
+        img_width=10,
+        img_height=10,
+    )
+
+
+class TestLg01jSeasonDashboardMapConfig(TestCase):
+    """LG-01j — ``templates/seasons/dashboard.html`` renders
+    ``map_config_label`` inside ``<div id="season-dashboard-map-config">``.
+
+    Tests the 4 label cases plus 2 defensive cases. Label strings are
+    byte-equal — locked at seam contract §11 + §13.
+
+    The season dashboard always has a Season (URL-resolved), so
+    ``displayed_season is None`` does NOT apply here — that case is the
+    league-dashboard branch only. The 3-zone fallback label arises here
+    only via ``Season.map_mode == "none"``.
+    """
+
+    _DOM_ID = "season-dashboard-map-config"
+
+    def _get_body(self, season: Season) -> str:
+        response = self.client.get(reverse("season_dashboard", args=[season.id]))
+        self.assertEqual(response.status_code, 200)
+        return response.content.decode()
+
+    def test_dom_id_present_in_rendered_template(self) -> None:
+        _league, season, _teams = _make_league_and_draft_season("SbjDOM")
+        body = self._get_body(season)
+        self.assertIn(f'id="{self._DOM_ID}"', body)
+
+    def test_map_mode_none_renders_3_zone_fallback_label(self) -> None:
+        _league, season, _teams = _make_league_and_draft_season("SbjModeNone")
+        # Default ``map_mode`` is "none" — explicit pin.
+        season.map_mode = "none"
+        season.save()
+        body = self._get_body(season)
+        self.assertIn("Map: 3-zone fallback (no map)", body)
+
+    def test_map_mode_single_renders_em_dash_with_map_name(self) -> None:
+        _league, season, _teams = _make_league_and_draft_season("SbjModeSingle")
+        the_map = _lg01j_arena_map("Alpha")
+        season.map_pool.add(the_map)
+        season.start_season()
+        season.map_mode = "single"
+        season.save()
+        body = self._get_body(season)
+        self.assertIn("Map: Single — Alpha", body)
+
+    def test_map_mode_single_with_deleted_map_renders_map_deleted_label(
+        self,
+    ) -> None:
+        _league, season, _teams = _make_league_and_draft_season("SbjModeSingleDel")
+        season.start_season()
+        season.map_mode = "single"
+        season.starting_map_pool_ids_json = [999_999]
+        season.save()
+        body = self._get_body(season)
+        self.assertIn("Map: Single — (map deleted)", body)
+
+    def test_map_mode_random_per_round_renders_count_and_names_alphabetical(
+        self,
+    ) -> None:
+        _league, season, _teams = _make_league_and_draft_season("SbjModeRand")
+        m_charlie = _lg01j_arena_map("Charlie")
+        m_alpha = _lg01j_arena_map("Alpha")
+        m_bravo = _lg01j_arena_map("Bravo")
+        season.map_pool.add(m_charlie, m_alpha, m_bravo)
+        season.start_season()
+        season.map_mode = "random_per_round"
+        season.save()
+        body = self._get_body(season)
+        self.assertIn(
+            "Map: Random per Round (3 maps: Alpha, Bravo, Charlie)",
+            body,
+        )
+
+    def test_map_mode_random_per_round_with_empty_pool_renders_no_maps(
+        self,
+    ) -> None:
+        _league, season, _teams = _make_league_and_draft_season("SbjModeRandEmpty")
+        season.start_season()
+        season.map_mode = "random_per_round"
+        season.starting_map_pool_ids_json = []
+        season.save()
+        body = self._get_body(season)
+        self.assertIn("Map: Random per Round (no maps)", body)

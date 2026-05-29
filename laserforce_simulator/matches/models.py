@@ -868,6 +868,12 @@ class Season(models.Model):
         ("completed", "Completed"),
     )
     SCHEDULE_FORMAT_CHOICES = (("single_round_robin", "Single round-robin"),)
+    # LG-01j — per-Season arena map configuration enum.
+    MAP_MODE_CHOICES = (
+        ("none", "3-zone fallback"),
+        ("single", "Single map"),
+        ("random_per_round", "Random per Round"),
+    )
 
     league = models.ForeignKey(
         League,
@@ -895,6 +901,18 @@ class Season(models.Model):
         related_name="seasons_won",
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    # LG-01j — per-Season arena map config (picked at create-League time).
+    map_mode = models.CharField(
+        max_length=32,
+        choices=MAP_MODE_CHOICES,
+        default="none",
+    )
+    map_pool = models.ManyToManyField(
+        "core.ArenaMap",
+        blank=True,
+        related_name="seasons_using_pool",
+    )
+    starting_map_pool_ids_json = models.JSONField(null=True, blank=True, default=None)
 
     def __str__(self) -> str:
         return f"{self.league.name} — {self.name}"
@@ -916,6 +934,16 @@ class Season(models.Model):
             raise ValidationError(
                 "Only one non-completed Season is allowed per League."
             )
+        # LG-01j — defensive enum-value check on map_mode (the field-level
+        # ``choices`` already validates this on ``full_clean()``, but a
+        # raw admin-side assignment to an unknown literal would otherwise
+        # round-trip through ``save()`` unchecked). M2M pool-count rules
+        # live form-side (CreateLeagueForm.clean) + admin-side
+        # (SeasonAdmin), NOT here — M2M rows aren't visible to
+        # ``Model.clean()``.
+        valid_map_modes = {value for value, _ in self.MAP_MODE_CHOICES}
+        if self.map_mode not in valid_map_modes:
+            raise ValidationError({"map_mode": "Unknown map mode."})
 
     @transaction.atomic
     def start_season(self) -> None:
@@ -931,6 +959,11 @@ class Season(models.Model):
                 "A Season requires at least 2 enrolled teams to start."
             )
         self.starting_team_ids_json = sorted(t.id for t in self.teams.all())
+        # LG-01j — snapshot the map pool at activation time, mirroring
+        # the ``starting_team_ids_json`` precedent (sorted asc by id for
+        # determinism). Empty pool ⇒ ``[]`` (NOT ``None``); ``None``
+        # remains the pre-activation sentinel.
+        self.starting_map_pool_ids_json = sorted(m.id for m in self.map_pool.all())
         self.state = "active"
         self.save()
 
