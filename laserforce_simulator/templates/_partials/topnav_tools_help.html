@@ -1,0 +1,21 @@
+{# LG-01k — Tools + Help top-bar dropdowns, included verbatim in all 3 app_mode branches of base.html. #}
+<div class="nav-item dropdown">
+    <a class="nav-link dropdown-toggle" id="tools-nav-link" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Tools ▾</a>
+    <ul class="dropdown-menu" aria-labelledby="tools-nav-link">
+        <li><a class="dropdown-item" id="tools-achievements-topbar-link" href="{% url 'coming_soon_tools_achievements' %}">Achievements</a></li>
+        <li><a class="dropdown-item" id="tools-screenshot-topbar-link" href="{% url 'coming_soon_tools_screenshot' %}">Screenshot</a></li>
+        <li><a class="dropdown-item" id="tools-debug-mode-topbar-link" href="{% url 'coming_soon_tools_debug_mode' %}">Enable Debug Mode</a></li>
+        <li><a class="dropdown-item" id="tools-reset-db-topbar-link" href="{% url 'coming_soon_tools_reset_db' %}">Reset DB</a></li>
+    </ul>
+</div>
+<div class="nav-item dropdown">
+    <a class="nav-link dropdown-toggle" id="help-nav-link" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Help ▾</a>
+    <ul class="dropdown-menu" aria-labelledby="help-nav-link">
+        <li><a class="dropdown-item" id="help-overview-topbar-link" href="{% url 'coming_soon_help_overview' %}">Overview</a></li>
+        <li><a class="dropdown-item" id="help-changes-topbar-link" href="{% url 'coming_soon_help_changes' %}">Changes</a></li>
+        <li><a class="dropdown-item" id="help-custom-rosters-topbar-link" href="{% url 'coming_soon_help_custom_rosters' %}">Custom Rosters</a></li>
+        <li><a class="dropdown-item" id="help-debugging-topbar-link" href="{% url 'coming_soon_help_debugging' %}">Debugging</a></li>
+        <li><a class="dropdown-item" id="help-lol-gm-forums-topbar-link" href="{% url 'coming_soon_help_lol_gm_forums' %}">LOL GM Forums</a></li>
+        <li><a class="dropdown-item" id="help-zen-gm-forums-topbar-link" href="{% url 'coming_soon_help_zen_gm_forums' %}">Zen GM Forums</a></li>
+    </ul>
+</div>

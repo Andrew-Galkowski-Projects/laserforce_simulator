@@ -1,8 +1,8 @@
-# Web testing — LG-01j (per-Season arena map config)
+# Web testing — LG-01k (top nav modes)
 
-Date: 2026-05-28
-Branch: `lg-01j-per-season-arena-map-options`
-Scope: smoke-test the LG-01j surfaces (create-League form gains `map_mode` + `map_pool`; League + Season dashboards render `map_config_label`).
+Date: 2026-05-29
+Branch: `lg-01k-top-nav-modes`
+Scope: smoke-test the LG-01k 3-mode topnav restructure (`start` / `sandbox` / `league`).
 
 ## Severity legend
 - 🔴 critical — broken feature, data loss, crash
@@ -15,33 +15,29 @@ Scope: smoke-test the LG-01j surfaces (create-League form gains `map_mode` + `ma
 
 | Severity | Surface | Finding |
 |---|---|---|
-| 🔵 | `runserver --noreload` | Stale dev-server rendered empty `{{ form.map_mode/pool }}` until the process was killed + `__pycache__` wiped. NOT a code defect — Django test client (`Client().get('/leagues/create/')`) renders the fields correctly against the same code base. Fixed by killing PID + clearing pycache + restarting. |
-| ✅ | `/leagues/create/` | Both new fields render with correct DOM ids (`league-create-map-mode`, `league-create-map-pool`), correct options (3 modes + 2 confirmed-config maps), correct defaults (`none`, empty pool). |
-| ✅ | Form validation | All 3 mode-vs-pool `clean()` rules fire byte-equal to seam-contract literals: `"Map pool must contain exactly 1 map when Map mode is 'Single map'."`, `"Map pool must contain at least 1 map when Map mode is 'Random per Round'."`, `"Map pool must be empty when Map mode is '3-zone fallback'."`. |
-| ✅ | Form happy paths | Mode `none` + empty pool → 302 to `/seasons/<id>/standings/`; mode `single` + 1 map → 302; mode `random_per_round` + 2 maps → 302. All three Leagues + Seasons created. |
-| ✅ | `season-dashboard-map-config` | Renders the locked label string for every mode: `"Map: 3-zone fallback (no map)"`, `"Map: Single — Syracuse Laser Tag"` (em-dash U+2014 confirmed byte-equal), `"Map: Random per Round (2 maps: San Marcos Laser Tag, Syracuse Laser Tag)"` (alphabetical sort verified — San Marcos < Syracuse). |
-| ✅ | `league-dashboard-map-config` | Same label string surfaces on `/leagues/<id>/` per the parent League's active Season. |
-| ✅ | No console errors | Zero console messages across all surfaces walked. |
-| ✅ | No network errors | All GETs (`/`, `/teams/`, `/matches/`, `/leagues/`, `/seasons/<id>/standings/`, `/seasons/<id>/schedule/`, `/leagues/<id>/history/`) return 200; no 4xx/5xx. |
-| ✅ | Existing surfaces unaffected | Landing, Teams list, Matches list, League list, season standings/schedule/history pages still render correctly under the LG-01h `app_mode` branching with the LG-01f sidebar intact. |
-| ✅ | Responsive layout | Form renders correctly at 720×1115 (mobile, navbar collapsed) and 1280×900 (desktop). Screenshots `screenshots/lg01j-create-mobile-720.png` + `screenshots/lg01j-create-desktop-1280.png`. |
+| ✅ | `GET /` (start mode) | Topnav contains ONLY `tools-nav-link` + `help-nav-link`. Tools at HTML offset 667, Help at 1398 → Tools-before-Help confirmed. No `dashboard-nav-link`, `league-nav-link`, `team-nav-link`, `players-nav-link`, `stats-nav-link`, `leagues-nav-link` (retired), or `player-list-nav-link` ids present. 4 Tools child items + 6 Help child items all present. |
+| ✅ | `GET /teams/` (sandbox mode) | Topnav contains exactly 6 flat hrefs in pinned order: `/teams/`, `/players/`, `/matches/`, `/matches/simulate-batch/`, `/teams/create/`, `/maps/`. LG-01a `player-list-nav-link` id preserved on Players link. Tools (offset 603) before Help (1334). No `League ▾` text, no `leagues-nav-link`, no `league-nav-link`/`team-nav-link`/`players-nav-link`/`stats-nav-link` ids. |
+| ✅ | `GET /leagues/` (league mode) | `dashboard-nav-link` present with text content `⌂` (U+2302) and `href="/leagues/19/"` (the session-pinned League). All 4 section dropdown toggles (`league-nav-link`, `team-nav-link`, `players-nav-link`, `stats-nav-link`) render. Tools (offset 8983) before Help (9714). No retired `leagues-nav-link`. |
+| ✅ | League ▾ dropdown items (6) | Pinned order verified: Standings → `/seasons/18/standings/` (`topbar-league-standings`), Schedule → `/seasons/18/schedule/` (`topbar-league-schedule`), Playoffs → `/leagues/19/playoffs/` (`topbar-league-playoffs`), Finances → `/leagues/19/finances/` (`topbar-league-finances`), History → `/leagues/19/history/` (`topbar-league-history`), Power Rankings → `/leagues/19/power-rankings/` (`topbar-league-power_rankings` — note underscore matching the helper's `key="power_rankings"`). All LIVE (no disabled spans). |
+| ✅ | Team ▾ dropdown items (4) | Pinned order verified: Roster → `topbar-team-roster`, Schedule → `topbar-team-schedule_team` (`_team` suffix per LG-01g key-collision rule), Finances → `topbar-team-finances_team`, History → `topbar-team-history_team`. All LIVE. |
+| ✅ | Players ▾ dropdown items (6) | Pinned order verified: Free Agents, Trade, Trading Block, Prospects, Watch List, Hall of Fame. Ids `topbar-players-free_agents` / `_trade` / `_trading_block` / `_prospects` / `_watch_list` / `_hall_of_fame`. All LIVE. |
+| ✅ | Stats ▾ dropdown items (6) | Pinned order verified: Game Log, League Leaders, Player Ratings, Player Stats, Team Stats, Statistical Feats. Ids `topbar-stats-game_log` / `_league_leaders` / `_player_ratings` / `_player_stats` / `_team_stats` / `_statistical_feats`. All LIVE. |
+| ✅ | `GET /leagues/19/` (dashboard target) | Home icon `href` resolves to itself (`/leagues/19/`); page returns 200; `⌂` text content confirmed; all 4 section toggles render. Page title `"sample — League"` confirms `league_dashboard` view rendered. |
+| ✅ | Section dropdown sourcing | All 22 in-dropdown ids match the `topbar-{section}-{key}` pattern (the seam contract's mirror of LG-01f `sidebar-{section}-{key}`). The top Dashboard entry of `top_bar_links` is filtered out of the regrouped iteration — no `topbar-top-dashboard` id present. |
+| ✅ | Console | Zero console messages across all 4 pages (`/`, `/teams/`, `/leagues/`, `/leagues/19/`). |
+| ✅ | Network | All page GETs return 200. Only external requests are the 2 Bootstrap 5.3.0 CDN assets (CSS + JS bundle, both 200). |
+| ✅ | Tools-before-Help order | Confirmed on all 3 modes via HTML offset comparison. |
 
-## Test data created during this session (not auto-torn-down)
+## Test data created during this session
 
-The chrome-web-testing teardown helper expects `ChromeTest`-prefixed Team names, but LG-01b's `_generate_teams` picks Team names from the `teams.constants.TEAM_NAMES` pool — the prefix doesn't match. The League names ARE `ChromeTest LG-01j …` but the helper script doesn't accept a `LeagueNamePrefix`. Created (and left in the dev DB):
-
-- League 16 — "ChromeTest LG-01j none-happy" with Season 15 (`map_mode=none`)
-- League 17 — "ChromeTest LG-01j single-happy" with Season 16 (`map_mode=single`, pool = Syracuse)
-- League 18 — "ChromeTest LG-01j random-happy" with Season 17 (`map_mode=random_per_round`, pool = both)
-
-To clean up manually: `python laserforce_simulator/manage.py shell --command "from matches.models import League; League.objects.filter(name__startswith='ChromeTest').delete()"` — cascades Season + Match (none) + GameRound (none) + the M2M rows. Teams + Players survive (Team is global per CONTEXT.md). The generated teams use names from TEAM_NAMES + auto-rostered players; no straightforward way to filter them.
+None. LG-01k is a nav-only restructure — no DB writes by the smoke test (no forms submitted, no League / Season / Team / Match creation). Pre-existing dev-DB data (League 19 "sample", visible via the dashboard icon target) is unmodified.
 
 ## Flows NOT exercised
 
-- **LG-01e Start Next Season carry-forward** — requires a completed Season to drive `next_season`. Unit tests cover this end-to-end (`TestNextSeasonMapConfigCarryForward`).
-- **LG-01d Play Week / play_season_task with `arena_map` resolution** — requires Starting the Season + Playing a Matchday. Unit tests cover this (`TestPlaySeasonTaskMapResolution` mocks `simulate_scheduled_round` and asserts the `arena_map=` kwarg propagation; the helper has its own 22-test pure-unit class).
-- **Defensive deleted-map fallback** — requires admin-deleting a map after activation. Unit tests cover (`TestResolveFixtureMapMissingMap`, `TestSeasonStartingMapPoolSnapshot.test_defensive_*`).
+- **Disabled dropdown entries**: The current dev DB has a League with `last_league_id` pinned and an active Season, so every LEAGUE / TEAM / PLAYERS / STATS entry is LIVE. The disabled-entry branch (`<span class="dropdown-item disabled">` when `displayed_season is None`) is covered by `TestLg01kLeagueNavContextProcessor::test_displayed_season_is_none_disables_standings_and_schedule` end-to-end and is rendered correctly by the existing LG-01f sidebar partial template branch which the topbar reuses.
+- **2+ Leagues no-session-pin fallback**: would render `top_bar_links == []` and `top_bar_dashboard_url == reverse("league_list")` per the LG-01k processor. Covered by `TestLg01kLeagueNavContextProcessor::test_top_bar_links_is_empty_with_two_leagues_no_session_pin` + `test_top_bar_dashboard_url_falls_back_to_league_list`.
+- **Mobile responsive layout**: out of LG-01k scope (Bootstrap navbar-toggler collapse behaviour is unchanged from LG-01h; only the inner content shape changed).
 
 ## Verdict
 
-LG-01j ships without browser-visible defects. Stale-server caching was the only blocker and was environmental, not code-side. All locked-name + locked-label assertions pass byte-equal.
+LG-01k ships without browser-visible defects. All 3 mode topnav shapes render byte-equal to the seam contract specification. Tools-before-Help confirmed everywhere; `⌂` home icon, all 22 dropdown items, all 4 section toggles, and all retired-id absences confirmed. Zero console errors, zero non-2xx network requests.
