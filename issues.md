@@ -1,5 +1,25 @@
 # Website Testing — Bugs & Issues
 
+## LG-01h global nav restructure (2026-05-28)
+
+Server: `runserver --noreload` on port 8000. Branch: `lg-01h-global-nav-restructure`. Scope: mode-based base.html (sandbox vs league top-nav), 23-entry sidebar with new STATS section, 19 placeholder URLs (LEAGUE/TEAM/PLAYERS/STATS + Help + Tools), `coming_soon` shared view, `app_mode` context processor.
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| H1-1 | ✅ | Sandbox top-nav at `/` | Renders brand + 6 flat sandbox links (Teams / Players / Matches / Batch Sim / Create Team / Maps) + `League ▾` / `Help ▾` / `Tools ▾` dropdowns. Zero console errors. |
+| H1-2 | ✅ | Help dropdown opens with 6 LIVE items | `Help ▾` expands to Overview / Changes / Custom Rosters / Debugging / LOL GM Forums / Zen GM Forums, each pointing at `/help/<slug>/`. |
+| H1-3 | ✅ | `/help/overview/` placeholder renders | Title `Overview — Coming Soon`; sandbox top-nav (no sidebar — Help is sandbox mode); `<h1>Overview</h1>` + section badge `help` + body `Coming soon — this page is a placeholder for the Overview feature.` + feature key `help_overview`. |
+| H1-4 | ✅ | League mode at `/leagues/15/` HIDES sandbox links | Top-nav collapses to brand + `League ▾` / `Help ▾` / `Tools ▾` only — the 6 sandbox flat links are absent. Confirms `app_mode` context processor's path-prefix branch fires. |
+| H1-5 | ✅ | 23-entry sidebar renders on league dashboard | Dashboard (1) + LEAGUE (6, all LIVE: Standings → `/seasons/14/standings/`, Schedule → `/seasons/14/schedule/`, Playoffs / Finances / History / Power Rankings → `/leagues/15/<slug>/`) + TEAM (4, all LIVE: Roster / Schedule / Finances / History — Schedule still goes to LG-01g's `/leagues/15/team_schedule/62/`) + PLAYERS (6, all LIVE: Free Agents / Trade / Trading Block / Prospects / Watch List / Hall of Fame under `/leagues/15/players/<slug>/`) + STATS (6, new section, all LIVE: Game Log / League Leaders / Player Ratings / Player Stats / Team Stats / Statistical Feats under `/leagues/15/stats/<slug>/`). **1 + 6 + 4 + 6 + 6 = 23** entries with STATS section header rendered. |
+| H1-6 | ✅ | `/leagues/15/stats/game-log/` placeholder renders with sidebar | Title `Game Log — Coming Soon`; league-mode top-nav (no sandbox links); full 23-entry sidebar; `<h1>Game Log</h1>` + section badge `stats` + body `Coming soon — this page is a placeholder for the Game Log feature.` + feature key `stats_game_log`. |
+| H1-7 | ✅ | `League ▾` top-bar dropdown 5 items all LIVE | Standings → `/seasons/14/standings/` (resolved via LG-01f session-pin chain — `last_league_id=15`), Playoffs → `/leagues/15/playoffs/`, Finances → `/leagues/15/finances/`, History → `/leagues/15/history/` (LG-01f preserved), Power Rankings → `/leagues/15/power-rankings/`. The LG-01f-only-History-live shape is now 5/5 LIVE, fulfilling the LG-01h contract for `league_nav`'s 4 new top-bar URL keys. |
+| H1-8 | ✅ | Console + network clean across every page | Zero console messages on `/`, `/help/overview/`, `/leagues/15/`, `/leagues/15/stats/game-log/`. Every network request 2xx. |
+| H1-9 | ℹ️ | Pre-existing ChromeTest leagues in DB | Three `ChromeTest LG-01<x> League` entries from prior LG-01c/d/g test runs still in the DB. Not LG-01h-related. |
+
+**Overall:** LG-01h ships green. Mode-based base.html branches correctly on path prefix; 23-entry sidebar with new STATS section renders on every league-context page; placeholder URLs navigate to the shared `coming_soon` view rendering the placeholder template with appropriate sidebar context. No console errors, no non-2xx network requests. Manual spot-checks of one Help URL (`/help/overview/`) and one Stats URL (`/leagues/15/stats/game-log/`) confirm both branches of the placeholder template (with-sidebar / without-sidebar). Screenshot: `screenshots/lg01h_league_mode_with_sidebar.png`.
+
+---
+
 Date: 2026-05-25. Server: `runserver --noreload` (http://127.0.0.1:8000, `LF_CELERY_EAGER=1`). Branch: `api-03-async-batch-celery`. Scope: API-03 async batch + save flows via Celery + the new REST endpoints.
 
 Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note · ✅ Working

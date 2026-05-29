@@ -24,11 +24,13 @@ from core import views as core_views
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/", include("laserforce_simulator.api_urls")),
+    path("help/", include("core.help_urls")),
     path("teams/", include("teams.urls")),
     path("matches/", include("matches.urls")),
     path("seasons/", include("matches.season_urls")),
     path("leagues/", include("matches.league_urls")),
     path("maps/", include("core.urls")),
+    path("tools/", include("core.tools_urls")),
     path(
         "players/", include("teams.player_urls")
     ),  # HX-01: must be above the "" include

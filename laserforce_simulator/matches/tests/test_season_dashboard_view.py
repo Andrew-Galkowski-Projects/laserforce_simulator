@@ -420,10 +420,14 @@ class TestLg01fSidebarRendered(TestCase):
         for entry in response.context["sidebar_links"]:
             self.assertFalse(entry["active"])
 
-    def test_sidebar_links_has_14_entries(self) -> None:
-        _league, season, _teams = _make_league_and_draft_season("LfSb14")
+    def test_sidebar_links_has_23_entries(self) -> None:
+        """LG-01h extends the LG-01f 14-entry sidebar to 23 by appending
+        3 PLAYERS entries (Prospects / Watch List / Hall of Fame) and a
+        full 6-entry STATS section.
+        """
+        _league, season, _teams = _make_league_and_draft_season("LfSb23")
         response = self.client.get(reverse("season_dashboard", args=[season.id]))
-        self.assertEqual(len(response.context["sidebar_links"]), 14)
+        self.assertEqual(len(response.context["sidebar_links"]), 23)
 
     def test_lg01c_sidebar_dom_ids_are_absent(self) -> None:
         _league, season, _teams = _make_league_and_draft_season("LfSbOld")

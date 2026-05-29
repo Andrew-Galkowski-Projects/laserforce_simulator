@@ -508,7 +508,7 @@ class TestLg01eDashboardWiring(TestCase):
 
 
 class TestLg01fSidebarRendered(TestCase):
-    """LG-01f — the league dashboard renders the 14-entry sidebar partial
+    """LG-01f / LG-01h — the league dashboard renders the 23-entry sidebar partial
     with ``sidebar_active="dashboard"`` so the Dashboard entry carries
     the active class.
     """
@@ -529,10 +529,14 @@ class TestLg01fSidebarRendered(TestCase):
         element = body[start : end + 1]
         self.assertIn("active", element)
 
-    def test_sidebar_links_has_14_entries(self) -> None:
-        league = _make_league("LfLD14")
+    def test_sidebar_links_has_23_entries(self) -> None:
+        """LG-01h extends the LG-01f 14-entry sidebar to 23 by appending
+        3 PLAYERS entries (Prospects / Watch List / Hall of Fame) and a
+        full 6-entry STATS section.
+        """
+        league = _make_league("LfLD23")
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
-        self.assertEqual(len(response.context["sidebar_links"]), 14)
+        self.assertEqual(len(response.context["sidebar_links"]), 23)
 
     def test_history_entry_url_targets_this_leagues_history(self) -> None:
         league = _make_league("LfLDHist")

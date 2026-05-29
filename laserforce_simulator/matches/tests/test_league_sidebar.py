@@ -200,13 +200,18 @@ class TestBuildLeagueSidebarLinks(TestCase):
 
 
 class TestSidebarLinkShape(TestCase):
-    """14-entry list shape + per-entry 6-key dict + section order."""
+    """23-entry list shape + per-entry 6-key dict + section order (LG-01h
+    extension of the LG-01f 14-entry shape — adds 3 PLAYERS entries
+    (Prospects / Watch List / Hall of Fame) + a full 6-entry STATS
+    section).
+    """
 
-    def test_returns_exactly_14_entries_in_pinned_order(self) -> None:
-        league = _make_league("Shape14")
+    def test_returns_exactly_23_entries_in_pinned_order(self) -> None:
+        league = _make_league("Shape23")
         links = _build_league_sidebar_links(league, None, None)
-        self.assertEqual(len(links), 14)
-        # Pinned key order from §5b.
+        self.assertEqual(len(links), 23)
+        # Pinned key order — LG-01h extends LG-01f by appending 3 PLAYERS
+        # + 6 STATS at the tail.
         expected_keys = [
             "dashboard",
             "standings",
@@ -222,17 +227,28 @@ class TestSidebarLinkShape(TestCase):
             "free_agents",
             "trade",
             "trading_block",
+            "prospects",
+            "watch_list",
+            "hall_of_fame",
+            "game_log",
+            "league_leaders",
+            "player_ratings",
+            "player_stats",
+            "team_stats",
+            "statistical_feats",
         ]
         self.assertEqual([e["key"] for e in links], expected_keys)
 
-    def test_entries_in_pinned_section_order_top_league_team_players(self) -> None:
+    def test_entries_in_pinned_section_order_top_league_team_players_stats(
+        self,
+    ) -> None:
         league = _make_league("ShapeSec")
         links = _build_league_sidebar_links(league, None, None)
         sections = [e["section"] for e in links]
-        # 1 top + 6 league + 4 team + 3 players.
+        # 1 top + 6 league + 4 team + 6 players + 6 stats.
         self.assertEqual(
             sections,
-            ["top"] + ["league"] * 6 + ["team"] * 4 + ["players"] * 3,
+            ["top"] + ["league"] * 6 + ["team"] * 4 + ["players"] * 6 + ["stats"] * 6,
         )
 
     def test_each_entry_has_exactly_6_keys(self) -> None:
@@ -242,25 +258,21 @@ class TestSidebarLinkShape(TestCase):
         for entry in links:
             self.assertEqual(set(entry.keys()), expected_keys)
 
-    def test_disabled_entries_have_url_none_and_disabled_true(self) -> None:
+    def test_only_schedule_team_disabled_when_no_displayed_season(self) -> None:
+        """LG-01h flips Playoffs / Finances / Power Rankings / Roster /
+        Finances_team / History_team / Free Agents / Trade / Trading Block
+        and the 3 new PLAYERS + 6 STATS additions to LIVE via the
+        ``coming_soon_*`` URL names. Only ``schedule_team`` (LG-01g,
+        requires a Team in Season) and the always-conditional
+        ``standings`` / ``schedule`` remain disabled when no Season.
+        """
         league = _make_league("ShapeDis")
-        # No Seasons ⇒ standings + schedule also disabled.
+        # No Seasons ⇒ standings + schedule also disabled; schedule_team
+        # also disabled (no displayed season). Everything else is LIVE.
         links = _build_league_sidebar_links(league, None, None)
-        # The 10 always-disabled entries.
-        always_disabled = {
-            "playoffs",
-            "finances",
-            "power_rankings",
-            "roster",
-            "schedule_team",
-            "finances_team",
-            "history_team",
-            "free_agents",
-            "trade",
-            "trading_block",
-        }
+        conditional_disabled = {"standings", "schedule", "schedule_team"}
         for entry in links:
-            if entry["key"] in always_disabled:
+            if entry["key"] in conditional_disabled:
                 self.assertIsNone(entry["url"])
                 self.assertTrue(entry["disabled"])
 
@@ -268,7 +280,31 @@ class TestSidebarLinkShape(TestCase):
         league = _make_league("ShapeLive")
         active = _make_active_season(league)
         links = _build_league_sidebar_links(league, active, None)
-        live = {"dashboard", "history", "standings", "schedule"}
+        # LG-01h: most entries flip LIVE under ``coming_soon_*`` URLs.
+        live = {
+            "dashboard",
+            "standings",
+            "schedule",
+            "playoffs",
+            "finances",
+            "history",
+            "power_rankings",
+            "roster",
+            "finances_team",
+            "history_team",
+            "free_agents",
+            "trade",
+            "trading_block",
+            "prospects",
+            "watch_list",
+            "hall_of_fame",
+            "game_log",
+            "league_leaders",
+            "player_ratings",
+            "player_stats",
+            "team_stats",
+            "statistical_feats",
+        }
         for entry in links:
             if entry["key"] in live:
                 self.assertIsInstance(entry["url"], str)
@@ -408,3 +444,260 @@ class TestLg01gScheduleTeamEntryLive(TestCase):
         entry = self._entry(links, "schedule_team")
         self.assertIsNone(entry["url"])
         self.assertTrue(entry["disabled"])
+
+
+# ---------------------------------------------------------------------------
+# LG-01h — STATS section (entire section NEW, 6 entries)
+# ---------------------------------------------------------------------------
+
+
+class TestLg01hStatsSection(TestCase):
+    """LG-01h — the 6 STATS section entries all LIVE via their
+    ``coming_soon_*`` URL names, in pinned order Game Log / League Leaders /
+    Player Ratings / Player Stats / Team Stats / Statistical Feats.
+    """
+
+    def _entry(self, links, key: str) -> dict:
+        for entry in links:
+            if entry["key"] == key:
+                return entry
+        raise AssertionError(f"sidebar key {key!r} not found")
+
+    def test_stats_section_has_6_entries(self) -> None:
+        league = _make_league("StatsLen")
+        links = _build_league_sidebar_links(league, None, None)
+        stats_entries = [e for e in links if e["section"] == "stats"]
+        self.assertEqual(len(stats_entries), 6)
+
+    def test_stats_section_keys_in_pinned_order(self) -> None:
+        league = _make_league("StatsOrder")
+        links = _build_league_sidebar_links(league, None, None)
+        stats_entries = [e for e in links if e["section"] == "stats"]
+        self.assertEqual(
+            [e["key"] for e in stats_entries],
+            [
+                "game_log",
+                "league_leaders",
+                "player_ratings",
+                "player_stats",
+                "team_stats",
+                "statistical_feats",
+            ],
+        )
+
+    def test_stats_section_labels(self) -> None:
+        league = _make_league("StatsLabel")
+        links = _build_league_sidebar_links(league, None, None)
+        expected_labels = {
+            "game_log": "Game Log",
+            "league_leaders": "League Leaders",
+            "player_ratings": "Player Ratings",
+            "player_stats": "Player Stats",
+            "team_stats": "Team Stats",
+            "statistical_feats": "Statistical Feats",
+        }
+        for key, label in expected_labels.items():
+            entry = self._entry(links, key)
+            self.assertEqual(entry["label"], label)
+
+    def test_stats_section_urls_resolve_to_coming_soon(self) -> None:
+        league = _make_league("StatsURL")
+        links = _build_league_sidebar_links(league, None, None)
+        # Each STATS entry resolves to its ``coming_soon_*`` URL.
+        expected_url_names = {
+            "game_log": "coming_soon_game_log",
+            "league_leaders": "coming_soon_league_leaders",
+            "player_ratings": "coming_soon_player_ratings",
+            "player_stats": "coming_soon_player_stats",
+            "team_stats": "coming_soon_team_stats",
+            "statistical_feats": "coming_soon_statistical_feats",
+        }
+        for key, url_name in expected_url_names.items():
+            entry = self._entry(links, key)
+            self.assertEqual(
+                entry["url"],
+                reverse(url_name, kwargs={"league_id": league.id}),
+            )
+            self.assertFalse(entry["disabled"])
+
+
+# ---------------------------------------------------------------------------
+# LG-01h — PLAYERS section expansion (3 new entries appended)
+# ---------------------------------------------------------------------------
+
+
+class TestLg01hPlayersExpansion(TestCase):
+    """LG-01h — the PLAYERS section grows from 3 entries (LG-01f) to 6
+    by appending Prospects / Watch List / Hall of Fame at the tail. All
+    three are LIVE via their ``coming_soon_*`` URL names.
+    """
+
+    def _entry(self, links, key: str) -> dict:
+        for entry in links:
+            if entry["key"] == key:
+                return entry
+        raise AssertionError(f"sidebar key {key!r} not found")
+
+    def test_players_section_has_6_entries(self) -> None:
+        league = _make_league("PlayersLen")
+        links = _build_league_sidebar_links(league, None, None)
+        players_entries = [e for e in links if e["section"] == "players"]
+        self.assertEqual(len(players_entries), 6)
+
+    def test_players_section_keys_in_pinned_order(self) -> None:
+        league = _make_league("PlayersOrder")
+        links = _build_league_sidebar_links(league, None, None)
+        players_entries = [e for e in links if e["section"] == "players"]
+        self.assertEqual(
+            [e["key"] for e in players_entries],
+            [
+                "free_agents",
+                "trade",
+                "trading_block",
+                "prospects",
+                "watch_list",
+                "hall_of_fame",
+            ],
+        )
+
+    def test_prospects_entry_is_live(self) -> None:
+        league = _make_league("Prospects")
+        links = _build_league_sidebar_links(league, None, None)
+        entry = self._entry(links, "prospects")
+        self.assertEqual(entry["label"], "Prospects")
+        self.assertEqual(
+            entry["url"],
+            reverse("coming_soon_prospects", kwargs={"league_id": league.id}),
+        )
+        self.assertFalse(entry["disabled"])
+
+    def test_watch_list_entry_is_live(self) -> None:
+        league = _make_league("WatchL")
+        links = _build_league_sidebar_links(league, None, None)
+        entry = self._entry(links, "watch_list")
+        self.assertEqual(entry["label"], "Watch List")
+        self.assertEqual(
+            entry["url"],
+            reverse("coming_soon_watch_list", kwargs={"league_id": league.id}),
+        )
+        self.assertFalse(entry["disabled"])
+
+    def test_hall_of_fame_entry_is_live(self) -> None:
+        league = _make_league("HoF")
+        links = _build_league_sidebar_links(league, None, None)
+        entry = self._entry(links, "hall_of_fame")
+        self.assertEqual(entry["label"], "Hall of Fame")
+        self.assertEqual(
+            entry["url"],
+            reverse("coming_soon_hall_of_fame", kwargs={"league_id": league.id}),
+        )
+        self.assertFalse(entry["disabled"])
+
+
+# ---------------------------------------------------------------------------
+# LG-01h — disabled→LIVE flips of the LG-01f entries
+# ---------------------------------------------------------------------------
+
+
+class TestLg01hDisabledFlipsLive(TestCase):
+    """LG-01h — Playoffs / Finances / Power Rankings / Roster /
+    Finances_team / History_team / Free Agents / Trade / Trading Block
+    flip from LG-01f's always-disabled placeholders to LIVE under their
+    ``coming_soon_*`` URL names.
+    """
+
+    def _entry(self, links, key: str) -> dict:
+        for entry in links:
+            if entry["key"] == key:
+                return entry
+        raise AssertionError(f"sidebar key {key!r} not found")
+
+    def test_playoffs_flips_live(self) -> None:
+        league = _make_league("PlayLive")
+        links = _build_league_sidebar_links(league, None, None)
+        entry = self._entry(links, "playoffs")
+        self.assertEqual(
+            entry["url"],
+            reverse("coming_soon_playoffs", kwargs={"league_id": league.id}),
+        )
+        self.assertFalse(entry["disabled"])
+
+    def test_finances_flips_live(self) -> None:
+        league = _make_league("FinLive")
+        links = _build_league_sidebar_links(league, None, None)
+        entry = self._entry(links, "finances")
+        self.assertEqual(
+            entry["url"],
+            reverse("coming_soon_finances", kwargs={"league_id": league.id}),
+        )
+        self.assertFalse(entry["disabled"])
+
+    def test_power_rankings_flips_live(self) -> None:
+        league = _make_league("PRLive")
+        links = _build_league_sidebar_links(league, None, None)
+        entry = self._entry(links, "power_rankings")
+        self.assertEqual(
+            entry["url"],
+            reverse("coming_soon_power_rankings", kwargs={"league_id": league.id}),
+        )
+        self.assertFalse(entry["disabled"])
+
+    def test_roster_flips_live(self) -> None:
+        league = _make_league("RosLive")
+        links = _build_league_sidebar_links(league, None, None)
+        entry = self._entry(links, "roster")
+        self.assertEqual(
+            entry["url"],
+            reverse("coming_soon_team_roster", kwargs={"league_id": league.id}),
+        )
+        self.assertFalse(entry["disabled"])
+
+    def test_finances_team_flips_live(self) -> None:
+        league = _make_league("FinTeamLive")
+        links = _build_league_sidebar_links(league, None, None)
+        entry = self._entry(links, "finances_team")
+        self.assertEqual(
+            entry["url"],
+            reverse("coming_soon_team_finances", kwargs={"league_id": league.id}),
+        )
+        self.assertFalse(entry["disabled"])
+
+    def test_history_team_flips_live(self) -> None:
+        league = _make_league("HistTeamLive")
+        links = _build_league_sidebar_links(league, None, None)
+        entry = self._entry(links, "history_team")
+        self.assertEqual(
+            entry["url"],
+            reverse("coming_soon_team_history", kwargs={"league_id": league.id}),
+        )
+        self.assertFalse(entry["disabled"])
+
+    def test_free_agents_flips_live(self) -> None:
+        league = _make_league("FALive")
+        links = _build_league_sidebar_links(league, None, None)
+        entry = self._entry(links, "free_agents")
+        self.assertEqual(
+            entry["url"],
+            reverse("coming_soon_free_agents", kwargs={"league_id": league.id}),
+        )
+        self.assertFalse(entry["disabled"])
+
+    def test_trade_flips_live(self) -> None:
+        league = _make_league("TrLive")
+        links = _build_league_sidebar_links(league, None, None)
+        entry = self._entry(links, "trade")
+        self.assertEqual(
+            entry["url"],
+            reverse("coming_soon_trade", kwargs={"league_id": league.id}),
+        )
+        self.assertFalse(entry["disabled"])
+
+    def test_trading_block_flips_live(self) -> None:
+        league = _make_league("TBLive")
+        links = _build_league_sidebar_links(league, None, None)
+        entry = self._entry(links, "trading_block")
+        self.assertEqual(
+            entry["url"],
+            reverse("coming_soon_trading_block", kwargs={"league_id": league.id}),
+        )
+        self.assertFalse(entry["disabled"])

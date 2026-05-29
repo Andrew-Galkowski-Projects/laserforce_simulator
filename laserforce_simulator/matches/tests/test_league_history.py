@@ -700,12 +700,17 @@ class TestLeagueHistorySidebar(TestCase):
         element = body[start : end + 1]
         self.assertNotIn("active", element)
 
-    def test_sidebar_renders_all_14_entries(self) -> None:
-        league = _make_league("Sb14")
+    def test_sidebar_renders_all_23_entries(self) -> None:
+        """LG-01h extends the LG-01f 14-entry sidebar to 23 by appending
+        3 PLAYERS entries (Prospects / Watch List / Hall of Fame) and a
+        full 6-entry STATS section.
+        """
+        league = _make_league("Sb23")
         response = self.client.get(
             reverse("league_history", kwargs={"league_id": league.id})
         )
-        # The 14 locked DOM ids from §0.
+        # The 23 locked DOM ids — 1 top + 6 LEAGUE + 4 TEAM + 6 PLAYERS +
+        # 6 STATS.
         for dom_id in (
             "sidebar-top-dashboard",
             "sidebar-league-standings",
@@ -721,6 +726,15 @@ class TestLeagueHistorySidebar(TestCase):
             "sidebar-players-free_agents",
             "sidebar-players-trade",
             "sidebar-players-trading_block",
+            "sidebar-players-prospects",
+            "sidebar-players-watch_list",
+            "sidebar-players-hall_of_fame",
+            "sidebar-stats-game_log",
+            "sidebar-stats-league_leaders",
+            "sidebar-stats-player_ratings",
+            "sidebar-stats-player_stats",
+            "sidebar-stats-team_stats",
+            "sidebar-stats-statistical_feats",
         ):
             self.assertContains(response, f'id="{dom_id}"')
 

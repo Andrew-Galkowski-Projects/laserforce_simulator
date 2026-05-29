@@ -17,22 +17,75 @@
             </button>
             <div class="collapse navbar-collapse" id="mainNav">
                 <div class="navbar-nav ms-auto">
-                    <div class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" id="leagues-nav-link" href="{% url 'league_list' %}" role="button" data-bs-toggle="dropdown" aria-expanded="false">League ▾</a>
-                        <ul class="dropdown-menu" aria-labelledby="leagues-nav-link">
-                            <li><span class="dropdown-item disabled">Standings</span></li>
-                            <li><span class="dropdown-item disabled">Playoffs</span></li>
-                            <li><span class="dropdown-item disabled">Finances</span></li>
-                            <li><a class="dropdown-item" id="league-history-topbar-link" href="{{ top_bar_history_url }}">History</a></li>
-                            <li><span class="dropdown-item disabled">Power Rankings</span></li>
-                        </ul>
-                    </div>
-                    <a class="nav-link" href="{% url 'team_list' %}">Teams</a>
-                    <a class="nav-link" id="player-list-nav-link" href="{% url 'player_list' %}">Players</a>
-                    <a class="nav-link" href="{% url 'match_list' %}">Matches</a>
-                    <a class="nav-link" href="{% url 'simulate_batch' %}">Batch Sim</a>
-                    <a class="nav-link" href="{% url 'team_create' %}">Create Team</a>
-                    <a class="nav-link" href="{% url 'map_list' %}">Maps</a>
+                    {% if app_mode == "league" %}
+                        <div class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" id="leagues-nav-link" href="{% url 'league_list' %}" role="button" data-bs-toggle="dropdown" aria-expanded="false">League ▾</a>
+                            <ul class="dropdown-menu" aria-labelledby="leagues-nav-link">
+                                <li><a class="dropdown-item" id="league-standings-topbar-link" href="{{ top_bar_standings_url }}">Standings</a></li>
+                                <li><a class="dropdown-item" id="league-playoffs-topbar-link" href="{{ top_bar_playoffs_url }}">Playoffs</a></li>
+                                <li><a class="dropdown-item" id="league-finances-topbar-link" href="{{ top_bar_finances_url }}">Finances</a></li>
+                                <li><a class="dropdown-item" id="league-history-topbar-link" href="{{ top_bar_history_url }}">History</a></li>
+                                <li><a class="dropdown-item" id="league-power-rankings-topbar-link" href="{{ top_bar_power_rankings_url }}">Power Rankings</a></li>
+                            </ul>
+                        </div>
+                        <div class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" id="help-nav-link" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Help ▾</a>
+                            <ul class="dropdown-menu" aria-labelledby="help-nav-link">
+                                <li><a class="dropdown-item" id="help-overview-topbar-link" href="{% url 'coming_soon_help_overview' %}">Overview</a></li>
+                                <li><a class="dropdown-item" id="help-changes-topbar-link" href="{% url 'coming_soon_help_changes' %}">Changes</a></li>
+                                <li><a class="dropdown-item" id="help-custom-rosters-topbar-link" href="{% url 'coming_soon_help_custom_rosters' %}">Custom Rosters</a></li>
+                                <li><a class="dropdown-item" id="help-debugging-topbar-link" href="{% url 'coming_soon_help_debugging' %}">Debugging</a></li>
+                                <li><a class="dropdown-item" id="help-lol-gm-forums-topbar-link" href="{% url 'coming_soon_help_lol_gm_forums' %}">LOL GM Forums</a></li>
+                                <li><a class="dropdown-item" id="help-zen-gm-forums-topbar-link" href="{% url 'coming_soon_help_zen_gm_forums' %}">Zen GM Forums</a></li>
+                            </ul>
+                        </div>
+                        <div class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" id="tools-nav-link" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Tools ▾</a>
+                            <ul class="dropdown-menu" aria-labelledby="tools-nav-link">
+                                <li><a class="dropdown-item" id="tools-achievements-topbar-link" href="{% url 'coming_soon_tools_achievements' %}">Achievements</a></li>
+                                <li><a class="dropdown-item" id="tools-screenshot-topbar-link" href="{% url 'coming_soon_tools_screenshot' %}">Screenshot</a></li>
+                                <li><a class="dropdown-item" id="tools-debug-mode-topbar-link" href="{% url 'coming_soon_tools_debug_mode' %}">Enable Debug Mode</a></li>
+                                <li><a class="dropdown-item" id="tools-reset-db-topbar-link" href="{% url 'coming_soon_tools_reset_db' %}">Reset DB</a></li>
+                            </ul>
+                        </div>
+                    {% else %}
+                        <a class="nav-link" href="{% url 'team_list' %}">Teams</a>
+                        <a class="nav-link" id="player-list-nav-link" href="{% url 'player_list' %}">Players</a>
+                        <a class="nav-link" href="{% url 'match_list' %}">Matches</a>
+                        <a class="nav-link" href="{% url 'simulate_batch' %}">Batch Sim</a>
+                        <a class="nav-link" href="{% url 'team_create' %}">Create Team</a>
+                        <a class="nav-link" href="{% url 'map_list' %}">Maps</a>
+                        <div class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" id="leagues-nav-link" href="{% url 'league_list' %}" role="button" data-bs-toggle="dropdown" aria-expanded="false">League ▾</a>
+                            <ul class="dropdown-menu" aria-labelledby="leagues-nav-link">
+                                <li><a class="dropdown-item" id="league-standings-topbar-link" href="{{ top_bar_standings_url }}">Standings</a></li>
+                                <li><a class="dropdown-item" id="league-playoffs-topbar-link" href="{{ top_bar_playoffs_url }}">Playoffs</a></li>
+                                <li><a class="dropdown-item" id="league-finances-topbar-link" href="{{ top_bar_finances_url }}">Finances</a></li>
+                                <li><a class="dropdown-item" id="league-history-topbar-link" href="{{ top_bar_history_url }}">History</a></li>
+                                <li><a class="dropdown-item" id="league-power-rankings-topbar-link" href="{{ top_bar_power_rankings_url }}">Power Rankings</a></li>
+                            </ul>
+                        </div>
+                        <div class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" id="help-nav-link" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Help ▾</a>
+                            <ul class="dropdown-menu" aria-labelledby="help-nav-link">
+                                <li><a class="dropdown-item" id="help-overview-topbar-link" href="{% url 'coming_soon_help_overview' %}">Overview</a></li>
+                                <li><a class="dropdown-item" id="help-changes-topbar-link" href="{% url 'coming_soon_help_changes' %}">Changes</a></li>
+                                <li><a class="dropdown-item" id="help-custom-rosters-topbar-link" href="{% url 'coming_soon_help_custom_rosters' %}">Custom Rosters</a></li>
+                                <li><a class="dropdown-item" id="help-debugging-topbar-link" href="{% url 'coming_soon_help_debugging' %}">Debugging</a></li>
+                                <li><a class="dropdown-item" id="help-lol-gm-forums-topbar-link" href="{% url 'coming_soon_help_lol_gm_forums' %}">LOL GM Forums</a></li>
+                                <li><a class="dropdown-item" id="help-zen-gm-forums-topbar-link" href="{% url 'coming_soon_help_zen_gm_forums' %}">Zen GM Forums</a></li>
+                            </ul>
+                        </div>
+                        <div class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" id="tools-nav-link" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Tools ▾</a>
+                            <ul class="dropdown-menu" aria-labelledby="tools-nav-link">
+                                <li><a class="dropdown-item" id="tools-achievements-topbar-link" href="{% url 'coming_soon_tools_achievements' %}">Achievements</a></li>
+                                <li><a class="dropdown-item" id="tools-screenshot-topbar-link" href="{% url 'coming_soon_tools_screenshot' %}">Screenshot</a></li>
+                                <li><a class="dropdown-item" id="tools-debug-mode-topbar-link" href="{% url 'coming_soon_tools_debug_mode' %}">Enable Debug Mode</a></li>
+                                <li><a class="dropdown-item" id="tools-reset-db-topbar-link" href="{% url 'coming_soon_tools_reset_db' %}">Reset DB</a></li>
+                            </ul>
+                        </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
