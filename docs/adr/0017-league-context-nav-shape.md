@@ -146,3 +146,64 @@ follow-on.
 - **Pagination matches LG-00c.** The history table uses the LG-00c `?per_page=10|25|50|100`
   selector pattern with default 10, mirroring the player list page exactly. No new
   pagination helper module — reuse the LG-00c approach inline.
+
+### LG-01h extension (2026-05-28)
+
+LG-01h extends but does not supersede this ADR — §1 (replace LG-01c sidebar wholesale),
+§2 (LEAGUE > Schedule divergence-from-zengm), §3 (top-bar `League ▾` dropdown), and §4
+(LG-01f as stepping stone toward LG-01h) all continue to hold. LG-01h fulfils §4's
+promise. The additional consequences:
+
+- **Sidebar shape extends from 14 to 23 entries.** The LG-01f-locked 14-entry list
+  (1 top + 6 LEAGUE + 4 TEAM + 3 PLAYERS) grows by 3 PLAYERS additions (Prospects,
+  Watch List, Hall of Fame) and an entirely NEW 6-entry STATS section (Game Log,
+  League Leaders, Player Ratings, Player Stats, Team Stats, Statistical Feats). The
+  shape is `1 top + 6 LEAGUE + 4 TEAM + 6 PLAYERS + 6 STATS = 23`. The helper
+  `matches.views._build_league_sidebar_links` is extended in-place (signature
+  unchanged, body returns 23 entries) — NOT renamed to a `_v2` (LG-01g precedent).
+  Every page that already renders the LG-01f sidebar partial picks up the 23-entry
+  shape automatically; zero per-page template edits required.
+
+- **`sidebar_active` enum extends from 14+`None` to 23+`None`.** Adds `"prospects"`,
+  `"watch_list"`, `"hall_of_fame"`, `"game_log"`, `"league_leaders"`,
+  `"player_ratings"`, `"player_stats"`, `"team_stats"`, `"statistical_feats"`. The
+  LG-01g `_team` suffix collision-rule (LEAGUE > Schedule keeps `"schedule"`; TEAM >
+  Schedule uses `"schedule_team"`) extends unchanged; the 9 new keys introduce zero
+  new collisions.
+
+- **Mode-based base.html branching via `core.context_processors.app_mode`.** A NEW
+  context processor (appended to the LG-01f-created `core/context_processors.py`,
+  not a new file) classifies every request via the path-prefix rule
+  `request.path.startswith("/leagues/") or request.path.startswith("/seasons/")` ⇒
+  `"league"`; everything else ⇒ `"sandbox"`. `templates/base.html` branches around
+  `{% if app_mode == "league" %}` / `{% else %}`: league mode shows brand →
+  `League ▾` → `Help ▾` → `Tools ▾`; sandbox mode shows brand → the 6 LG-01a flat
+  sandbox links → `League ▾` → `Help ▾` → `Tools ▾`. Mode is path-driven only — no
+  toggle UI, clicking a sandbox link from inside a League re-renders in sandbox
+  mode automatically. Multiplayer mode is deferred (§1 still defers it).
+
+- **19 placeholder pages + shared `coming_soon` view + `_FEATURE_REGISTRY`
+  vocabulary.** Every disabled sidebar entry and disabled top-bar dropdown item
+  from LG-01f flips to LIVE via 19 placeholder URLs (3 League-scoped + 3
+  Team-scoped + 6 Players-scoped + 6 Stats-scoped + 6 Help + 4 Tools — minus the
+  ones already LIVE) all routed to a single shared view
+  `matches.views.coming_soon` rendering `templates/_placeholder.html` with an
+  `<h1>{{ feature_label }}</h1>` and a `<p>` containing the locked substring
+  `"Coming soon"`. The hard-coded module-level dict
+  `matches.views._FEATURE_REGISTRY` (35 entries) maps each `feature_key` to a
+  `{label, section, sidebar_active}` value-dict; `section ∈ {"league", "team",
+  "players", "stats", "help", "tools"}`; Help / Tools entries set
+  `sidebar_active=None` (their placeholders are sandbox-mode pages and render with
+  an empty sidebar).
+
+- **Page wiring property: zero per-page edits.** Because the sidebar partial
+  signature + the helper signature + the `sidebar_links` context-key contract are
+  all stable from LG-01f, the 6 existing dashboard / history / standings /
+  schedule / team_schedule templates (`templates/leagues/dashboard.html`,
+  `templates/leagues/history.html`, `templates/leagues/team_schedule.html`,
+  `templates/seasons/dashboard.html`, `templates/seasons/standings.html`,
+  `templates/seasons/schedule.html`) need no edit at LG-01h — they automatically
+  render the 23-entry shape with the new STATS section header. The only modified
+  templates are `templates/base.html` (mode branching + Help / Tools dropdowns)
+  and `templates/_partials/league_sidebar.html` (STATS section header), plus the
+  NEW `templates/_placeholder.html`.

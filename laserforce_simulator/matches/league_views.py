@@ -631,19 +631,25 @@ def _build_league_sidebar_links(
     displayed_season: Season | None,
     sidebar_active: str | None,
 ) -> list[dict]:
-    """LG-01f — build the 14-entry League sidebar list (top / LEAGUE / TEAM / PLAYERS).
+    """LG-01f / LG-01h — build the 23-entry League sidebar list.
+
+    Order (locked, LG-01h): 1 top + 6 LEAGUE + 4 TEAM + 6 PLAYERS + 6 STATS.
 
     Live entries:
         * top.dashboard ⇒ ``league_dashboard``.
         * league.standings / league.schedule ⇒ the displayed Season's
           standings / schedule when ``displayed_season is not None``,
           else disabled.
+        * league.playoffs / league.finances / league.power_rankings ⇒
+          their ``coming_soon_*`` placeholder routes (LG-01h).
         * league.history ⇒ ``league_history``.
+        * team.roster / team.finances_team / team.history_team ⇒
+          their ``coming_soon_team_*`` placeholder routes (LG-01h).
         * team.schedule_team (LG-01g) ⇒ ``team_schedule`` for the
           Team picked by ``_resolve_current_team_for_sidebar``; falls
           back to disabled when no Team is resolvable.
-
-    All other entries are disabled placeholders for LG-02+.
+        * players.* and stats.* — all 12 placeholder ``coming_soon_*``
+          routes (LG-01h).
     """
     if displayed_season is not None:
         standings_url: str | None = reverse(
@@ -665,26 +671,74 @@ def _build_league_sidebar_links(
             kwargs={"league_id": league.id, "team_id": picked.id},
         )
 
+    # LG-01h placeholder URLs — every entry needs the League id.
+    def _cs(name: str) -> str:
+        return reverse(name, kwargs={"league_id": league.id})
+
     raw_entries: list[tuple[str, str, str, str | None]] = [
+        # top (1)
         (
             "top",
             "dashboard",
             "Dashboard",
             reverse("league_dashboard", args=[league.id]),
         ),
+        # LEAGUE (6)
         ("league", "standings", "Standings", standings_url),
         ("league", "schedule", "Schedule", schedule_url),
-        ("league", "playoffs", "Playoffs", None),
-        ("league", "finances", "Finances", None),
+        ("league", "playoffs", "Playoffs", _cs("coming_soon_playoffs")),
+        ("league", "finances", "Finances", _cs("coming_soon_finances")),
         ("league", "history", "History", reverse("league_history", args=[league.id])),
-        ("league", "power_rankings", "Power Rankings", None),
-        ("team", "roster", "Roster", None),
+        (
+            "league",
+            "power_rankings",
+            "Power Rankings",
+            _cs("coming_soon_power_rankings"),
+        ),
+        # TEAM (4)
+        ("team", "roster", "Roster", _cs("coming_soon_team_roster")),
         ("team", "schedule_team", "Schedule", schedule_team_url),
-        ("team", "finances_team", "Finances", None),
-        ("team", "history_team", "History", None),
-        ("players", "free_agents", "Free Agents", None),
-        ("players", "trade", "Trade", None),
-        ("players", "trading_block", "Trading Block", None),
+        ("team", "finances_team", "Finances", _cs("coming_soon_team_finances")),
+        ("team", "history_team", "History", _cs("coming_soon_team_history")),
+        # PLAYERS (6)
+        ("players", "free_agents", "Free Agents", _cs("coming_soon_free_agents")),
+        ("players", "trade", "Trade", _cs("coming_soon_trade")),
+        (
+            "players",
+            "trading_block",
+            "Trading Block",
+            _cs("coming_soon_trading_block"),
+        ),
+        ("players", "prospects", "Prospects", _cs("coming_soon_prospects")),
+        ("players", "watch_list", "Watch List", _cs("coming_soon_watch_list")),
+        (
+            "players",
+            "hall_of_fame",
+            "Hall of Fame",
+            _cs("coming_soon_hall_of_fame"),
+        ),
+        # STATS (6) — LG-01h, entire section NEW
+        ("stats", "game_log", "Game Log", _cs("coming_soon_game_log")),
+        (
+            "stats",
+            "league_leaders",
+            "League Leaders",
+            _cs("coming_soon_league_leaders"),
+        ),
+        (
+            "stats",
+            "player_ratings",
+            "Player Ratings",
+            _cs("coming_soon_player_ratings"),
+        ),
+        ("stats", "player_stats", "Player Stats", _cs("coming_soon_player_stats")),
+        ("stats", "team_stats", "Team Stats", _cs("coming_soon_team_stats")),
+        (
+            "stats",
+            "statistical_feats",
+            "Statistical Feats",
+            _cs("coming_soon_statistical_feats"),
+        ),
     ]
 
     out: list[dict] = []

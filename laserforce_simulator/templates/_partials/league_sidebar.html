@@ -13,6 +13,8 @@ the entry whose `key` matches `sidebar_active` gets an `active` class.
             <h6 class="text-muted text-uppercase small mt-3 mb-1">TEAM</h6>
         {% elif section.grouper == "players" %}
             <h6 class="text-muted text-uppercase small mt-3 mb-1">PLAYERS</h6>
+        {% elif section.grouper == "stats" %}
+            <h6 class="text-muted text-uppercase small mt-3 mb-1">STATS</h6>
         {% endif %}
         {% for entry in section.list %}
             {% if entry.disabled %}

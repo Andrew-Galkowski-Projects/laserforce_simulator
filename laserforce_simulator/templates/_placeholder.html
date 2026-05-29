@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}{{ feature_label }} — Coming Soon{% endblock %}
+
+{% block content %}
+{% if league is not None %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
+        <div id="coming-soon-header">
+            <h1>{{ feature_label }}</h1>
+        </div>
+        <span id="coming-soon-section-badge" class="badge bg-secondary">{{ feature_section }}</span>
+        <p id="coming-soon-message" class="mt-3">Coming soon — this page is a placeholder for the {{ feature_label }} feature.</p>
+        <small id="coming-soon-feature-key" class="text-muted">{{ feature_key }}</small>
+    </main>
+</div>
+{% else %}
+<main>
+    <div id="coming-soon-header">
+        <h1>{{ feature_label }}</h1>
+    </div>
+    <span id="coming-soon-section-badge" class="badge bg-secondary">{{ feature_section }}</span>
+    <p id="coming-soon-message" class="mt-3">Coming soon — this page is a placeholder for the {{ feature_label }} feature.</p>
+    <small id="coming-soon-feature-key" class="text-muted">{{ feature_key }}</small>
+</main>
+{% endif %}
+{% endblock %}

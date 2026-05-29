@@ -7,6 +7,7 @@ from django.contrib import messages
 from django.db.models import Q, QuerySet
 from django.http import (
     Http404,
+    HttpRequest,
     HttpResponse,
     HttpResponseNotAllowed,
     JsonResponse,
@@ -1677,3 +1678,240 @@ def player_head_to_head(request) -> HttpResponse:
     )
 
     return render(request, "matches/player_head_to_head.html", context)
+
+
+# ====================================================================
+# LG-01h — Shared placeholder view + feature registry
+# ====================================================================
+
+# Locked vocabulary per the LG-01h seam contract. 35 entries total:
+# 10 League-scoped (3 LEAGUE + 3 TEAM + 4 reserved for LG-02), 6 PLAYERS,
+# 6 STATS, 6 Help, 4 Tools. Note the contract says "League-scoped (10)"
+# but enumerates only 3 (Playoffs / Finances / Power Rankings) — the
+# Team-scoped 3 are listed separately, and Standings / Schedule /
+# Schedule_team / History are already LIVE in LG-01f/g (not in this
+# registry). Total entries below: 3 + 3 + 6 + 6 + 6 + 4 = 28… plus the
+# 7 sidebar-active enum entries needed for forward-compat. Counted
+# literally: 3 League + 3 Team + 6 Players + 6 Stats + 6 Help + 4 Tools
+# = 28 — but the contract pins "Total: 35" — see PLAN.md grilling notes.
+# Source of truth is the contract's enumeration in §"Shared placeholder
+# view" which lists exactly the keys below. Here we ship every key
+# enumerated literally; the count discrepancy in the contract preamble
+# is acknowledged in the agent task notes.
+_FEATURE_REGISTRY: dict[str, dict[str, str | None]] = {
+    # League-scoped (3)
+    "league_playoffs": {
+        "label": "Playoffs",
+        "section": "league",
+        "sidebar_active": "playoffs",
+    },
+    "league_finances": {
+        "label": "Finances",
+        "section": "league",
+        "sidebar_active": "finances",
+    },
+    "league_power_rankings": {
+        "label": "Power Rankings",
+        "section": "league",
+        "sidebar_active": "power_rankings",
+    },
+    # Team-scoped (3)
+    "team_roster": {
+        "label": "Roster",
+        "section": "team",
+        "sidebar_active": "roster",
+    },
+    "team_finances": {
+        "label": "Finances",
+        "section": "team",
+        "sidebar_active": "finances_team",
+    },
+    "team_history": {
+        "label": "History",
+        "section": "team",
+        "sidebar_active": "history_team",
+    },
+    # Players-scoped (6)
+    "players_free_agents": {
+        "label": "Free Agents",
+        "section": "players",
+        "sidebar_active": "free_agents",
+    },
+    "players_trade": {
+        "label": "Trade",
+        "section": "players",
+        "sidebar_active": "trade",
+    },
+    "players_trading_block": {
+        "label": "Trading Block",
+        "section": "players",
+        "sidebar_active": "trading_block",
+    },
+    "players_prospects": {
+        "label": "Prospects",
+        "section": "players",
+        "sidebar_active": "prospects",
+    },
+    "players_watch_list": {
+        "label": "Watch List",
+        "section": "players",
+        "sidebar_active": "watch_list",
+    },
+    "players_hall_of_fame": {
+        "label": "Hall of Fame",
+        "section": "players",
+        "sidebar_active": "hall_of_fame",
+    },
+    # Stats-scoped (6)
+    "stats_game_log": {
+        "label": "Game Log",
+        "section": "stats",
+        "sidebar_active": "game_log",
+    },
+    "stats_league_leaders": {
+        "label": "League Leaders",
+        "section": "stats",
+        "sidebar_active": "league_leaders",
+    },
+    "stats_player_ratings": {
+        "label": "Player Ratings",
+        "section": "stats",
+        "sidebar_active": "player_ratings",
+    },
+    "stats_player_stats": {
+        "label": "Player Stats",
+        "section": "stats",
+        "sidebar_active": "player_stats",
+    },
+    "stats_team_stats": {
+        "label": "Team Stats",
+        "section": "stats",
+        "sidebar_active": "team_stats",
+    },
+    "stats_statistical_feats": {
+        "label": "Statistical Feats",
+        "section": "stats",
+        "sidebar_active": "statistical_feats",
+    },
+    # Help (6) — sandbox-mode, no sidebar
+    "help_overview": {
+        "label": "Overview",
+        "section": "help",
+        "sidebar_active": None,
+    },
+    "help_changes": {
+        "label": "Changes",
+        "section": "help",
+        "sidebar_active": None,
+    },
+    "help_custom_rosters": {
+        "label": "Custom Rosters",
+        "section": "help",
+        "sidebar_active": None,
+    },
+    "help_debugging": {
+        "label": "Debugging",
+        "section": "help",
+        "sidebar_active": None,
+    },
+    "help_lol_gm_forums": {
+        "label": "LOL GM Forums",
+        "section": "help",
+        "sidebar_active": None,
+    },
+    "help_zen_gm_forums": {
+        "label": "Zen GM Forums",
+        "section": "help",
+        "sidebar_active": None,
+    },
+    # Tools (4) — sandbox-mode, no sidebar
+    "tools_achievements": {
+        "label": "Achievements",
+        "section": "tools",
+        "sidebar_active": None,
+    },
+    "tools_screenshot": {
+        "label": "Screenshot",
+        "section": "tools",
+        "sidebar_active": None,
+    },
+    "tools_debug_mode": {
+        "label": "Enable Debug Mode",
+        "section": "tools",
+        "sidebar_active": None,
+    },
+    "tools_reset_db": {
+        "label": "Reset DB",
+        "section": "tools",
+        "sidebar_active": None,
+    },
+}
+
+
+def coming_soon(
+    request: HttpRequest,
+    feature_key: str,
+    league_id: int | None = None,
+    team_id: int | None = None,
+) -> HttpResponse:
+    """LG-01h — single shared placeholder view for every disabled link.
+
+    Routes from ``coming_soon_*`` URL names dispatch here. The view
+    renders ``_placeholder.html`` with the feature's label / section /
+    sidebar-active enum (looked up against ``_FEATURE_REGISTRY``); the
+    sidebar partial is included only when ``league_id`` is provided
+    (League / Team / Players / Stats placeholders). Help / Tools
+    placeholders render in sandbox mode with no sidebar.
+
+    The ``team_id`` kwarg is reserved for forward-compat with LG-02+
+    per-Team routes and currently unused.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    # Local imports keep the module-level import surface lean and avoid
+    # a circular import path (league_views imports from .views).
+    from .models import League
+    from .league_views import _build_league_sidebar_links
+
+    if league_id is not None:
+        league = get_object_or_404(League, pk=league_id)
+    else:
+        league = None
+
+    feature = _FEATURE_REGISTRY.get(feature_key)
+    if feature is None:
+        raise Http404(f"Unknown placeholder feature {feature_key!r}.")
+
+    sidebar_active = feature["sidebar_active"]
+
+    if league is not None:
+        # Session-pin the League id so the top-bar dropdown URLs stay
+        # fresh as the user clicks through placeholder pages.
+        try:
+            request.session["last_league_id"] = league.id
+        except AttributeError:
+            # RequestFactory-built requests with no session middleware.
+            pass
+
+        displayed_season = (
+            league.active_season
+            or league.seasons.filter(state="completed").order_by("-id").first()
+        )
+        sidebar_links = _build_league_sidebar_links(
+            league, displayed_season, sidebar_active
+        )
+    else:
+        displayed_season = None
+        sidebar_links = []
+
+    context = {
+        "league": league,
+        "displayed_season": displayed_season,
+        "feature_key": feature_key,
+        "feature_label": feature["label"],
+        "feature_section": feature["section"],
+        "sidebar_links": sidebar_links,
+        "sidebar_active": sidebar_active,
+    }
+    return render(request, "_placeholder.html", context)
