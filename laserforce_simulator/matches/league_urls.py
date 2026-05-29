@@ -19,5 +19,10 @@ urlpatterns = [
         league_views.league_history,
         name="league_history",
     ),
+    path(
+        "<int:league_id>/team_schedule/<int:team_id>/",
+        league_views.team_schedule,
+        name="team_schedule",
+    ),
     path("", league_views.league_list, name="league_list"),
 ]

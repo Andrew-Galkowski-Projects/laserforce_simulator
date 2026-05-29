@@ -10,17 +10,19 @@ callables here; URL names are unchanged.
 import random
 from collections import defaultdict
 from datetime import date, timedelta
-from typing import Optional
+from typing import Iterable, Optional
 
 from celery.result import AsyncResult
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db import transaction
+from django.db.models import Q
 from django.http import (
     HttpRequest,
     HttpResponse,
     HttpResponseBadRequest,
     HttpResponseNotAllowed,
+    HttpResponseNotFound,
     JsonResponse,
 )
 from django.shortcuts import get_object_or_404, redirect, render
@@ -327,6 +329,11 @@ def league_create(request) -> HttpResponse:
         mode="league",
         state="active",
     )
+    # LG-01g: auto-set the manager's current_team to the alphabetically-first
+    # generated Team so the TEAM > Schedule sidebar entry has a default
+    # target on the next render.
+    league.current_team = sorted(created_teams, key=lambda t: t.name)[0]
+    league.save(update_fields=["current_team"])
     season = Season.objects.create(
         league=league,
         name=cleaned["season_name"],
@@ -589,6 +596,36 @@ def _coerce_page(raw: str | None, default: int = 1) -> int:
     return value
 
 
+def _resolve_current_team_for_sidebar(
+    league: League,
+    displayed_season: Season | None,
+) -> Team | None:
+    """LG-01g — pick the Team the TEAM > Schedule sidebar entry targets.
+
+    Resolution chain:
+        (a) ``league.current_team`` if that Team is enrolled in
+            ``displayed_season`` (defensive — admin may have removed
+            the Team from the Season's M2M between the auto-set and
+            this render).
+        (b) The alphabetically-first Team in ``displayed_season.teams``.
+        (c) ``None`` — no Team in Season; the sidebar entry stays
+            disabled.
+
+    Returns ``None`` immediately when ``displayed_season is None`` so
+    the league dashboard's no-Season fallback keeps the entry disabled.
+    """
+    if displayed_season is None:
+        return None
+    # Read current_team_id (the FK column) first to avoid an extra
+    # SELECT when the row isn't cached.
+    current_team_id = league.current_team_id
+    if current_team_id is not None:
+        in_season_ids = set(displayed_season.teams.values_list("id", flat=True))
+        if current_team_id in in_season_ids:
+            return league.current_team
+    return displayed_season.teams.order_by("name").first()
+
+
 def _build_league_sidebar_links(
     league: League,
     displayed_season: Season | None,
@@ -602,6 +639,9 @@ def _build_league_sidebar_links(
           standings / schedule when ``displayed_season is not None``,
           else disabled.
         * league.history ⇒ ``league_history``.
+        * team.schedule_team (LG-01g) ⇒ ``team_schedule`` for the
+          Team picked by ``_resolve_current_team_for_sidebar``; falls
+          back to disabled when no Team is resolvable.
 
     All other entries are disabled placeholders for LG-02+.
     """
@@ -615,6 +655,15 @@ def _build_league_sidebar_links(
     else:
         standings_url = None
         schedule_url = None
+
+    picked = _resolve_current_team_for_sidebar(league, displayed_season)
+    if picked is None:
+        schedule_team_url: str | None = None
+    else:
+        schedule_team_url = reverse(
+            "team_schedule",
+            kwargs={"league_id": league.id, "team_id": picked.id},
+        )
 
     raw_entries: list[tuple[str, str, str, str | None]] = [
         (
@@ -630,7 +679,7 @@ def _build_league_sidebar_links(
         ("league", "history", "History", reverse("league_history", args=[league.id])),
         ("league", "power_rankings", "Power Rankings", None),
         ("team", "roster", "Roster", None),
-        ("team", "schedule_team", "Schedule", None),
+        ("team", "schedule_team", "Schedule", schedule_team_url),
         ("team", "finances_team", "Finances", None),
         ("team", "history_team", "History", None),
         ("players", "free_agents", "Free Agents", None),
@@ -1084,6 +1133,215 @@ def play_status(request, season_id: int, job_id: str) -> JsonResponse:
 
     async_result = AsyncResult(job_id)
     return JsonResponse(_build_play_status_response(async_result, season_id=season_id))
+
+
+# ---------------------------------------------------------------------------
+# LG-01g — Per-Team Schedule view + helpers
+# ---------------------------------------------------------------------------
+
+
+def _render_fixture_sides(fixture, teams_by_id: dict[int, Team]):
+    """LG-01g — resolve a fixture's per-Round Side assignment.
+
+    Round 1 ⇒ ``(teams_by_id[team_a_id], teams_by_id[team_b_id])``.
+    Round 2 ⇒ ``(teams_by_id[team_b_id], teams_by_id[team_a_id])`` —
+    the per-Match colour swap simulated round 2 persists.
+
+    Raises ``KeyError`` if a team id is missing from ``teams_by_id`` —
+    a real bug, never swallowed (the lookup is built from the same
+    ``starting_team_ids_json`` set that produced the fixtures).
+    """
+    if fixture.round_number == 1:
+        return (teams_by_id[fixture.team_a_id], teams_by_id[fixture.team_b_id])
+    return (teams_by_id[fixture.team_b_id], teams_by_id[fixture.team_a_id])
+
+
+def _build_team_schedule_rows(
+    displayed_season: Season,
+    team: Team,
+    fixtures: list,
+    played_game_rounds: Iterable[GameRound],
+    teams_by_id: dict[int, Team],
+) -> dict[str, list[dict]]:
+    """LG-01g — walk fixtures + played GameRounds, partition into
+    Upcoming / Completed rows from the picked Team's perspective.
+
+    Algorithm (§4c, pinned):
+        1. ``played_keys`` keyed Side-agnostically on
+           ``(frozenset({team_red_id, team_blue_id}), round_number)``.
+        2. ``fixture_by_key`` over the full ``fixtures`` list for
+           Completed-row matchday recovery.
+        3. Filter fixtures to ones involving ``team``.
+        4. Per filtered fixture: skip if played, else build the
+           7-key Upcoming row via ``_render_fixture_sides``.
+        5. Per played GameRound: build the 11-key Completed row from
+           the persisted ``match.team_red`` / ``team_blue`` (NOT
+           recomputed — the GameRound records actual physical Sides).
+        6. Sort Upcoming by ``(matchday, round_number)`` asc; Completed
+           keeps queryset order (id asc = chronological).
+    """
+    played_game_rounds = list(played_game_rounds)
+    played_keys: set[tuple[frozenset[int], int]] = set()
+    for gr in played_game_rounds:
+        match = gr.match
+        if match is None or match.team_red_id is None or match.team_blue_id is None:
+            continue
+        played_keys.add(
+            (
+                frozenset({match.team_red_id, match.team_blue_id}),
+                gr.round_number,
+            )
+        )
+
+    fixture_by_key: dict[tuple[frozenset[int], int], object] = {}
+    for fixture in fixtures:
+        key = (
+            frozenset({fixture.team_a_id, fixture.team_b_id}),
+            fixture.round_number,
+        )
+        fixture_by_key[key] = fixture
+
+    upcoming: list[dict] = []
+    for fixture in fixtures:
+        if team.id not in {fixture.team_a_id, fixture.team_b_id}:
+            continue
+        key = (
+            frozenset({fixture.team_a_id, fixture.team_b_id}),
+            fixture.round_number,
+        )
+        if key in played_keys:
+            continue
+        red_team, blue_team = _render_fixture_sides(fixture, teams_by_id)
+        fixture_date = displayed_season.start_date + timedelta(
+            days=(fixture.matchday - 1) * 7
+        )
+        upcoming.append(
+            {
+                "matchday": fixture.matchday,
+                "round_number": fixture.round_number,
+                "date": fixture_date,
+                "red_team_id": red_team.id,
+                "red_team_name": red_team.name,
+                "blue_team_id": blue_team.id,
+                "blue_team_name": blue_team.name,
+            }
+        )
+
+    upcoming.sort(key=lambda r: (r["matchday"], r["round_number"]))
+
+    completed: list[dict] = []
+    for gr in played_game_rounds:
+        match = gr.match
+        if match is None or match.team_red_id is None or match.team_blue_id is None:
+            # Defensive — a GameRound with no persisted Match cannot
+            # render the per-Side breakdown; skip silently.
+            continue
+        key = (
+            frozenset({match.team_red_id, match.team_blue_id}),
+            gr.round_number,
+        )
+        fixture = fixture_by_key.get(key)
+        matchday = fixture.matchday if fixture is not None else 0
+        fixture_date = displayed_season.start_date + timedelta(days=(matchday - 1) * 7)
+        if gr.round_number == 1:
+            red_score = match.red_round1_points
+            blue_score = match.blue_round1_points
+        else:
+            red_score = match.red_round2_points
+            blue_score = match.blue_round2_points
+
+        picked_is_red = team.id == match.team_red_id
+        picked_per_round = red_score if picked_is_red else blue_score
+        other_per_round = blue_score if picked_is_red else red_score
+        if picked_per_round > other_per_round:
+            outcome = "W"
+        elif picked_per_round < other_per_round:
+            outcome = "L"
+        else:
+            outcome = "T"
+
+        completed.append(
+            {
+                "matchday": matchday,
+                "round_number": gr.round_number,
+                "date": fixture_date,
+                "red_team_id": match.team_red_id,
+                "red_team_name": match.team_red.name,
+                "blue_team_id": match.team_blue_id,
+                "blue_team_name": match.team_blue.name,
+                "game_round_id": gr.id,
+                "red_score": red_score,
+                "blue_score": blue_score,
+                "outcome": outcome,
+            }
+        )
+
+    return {"upcoming": upcoming, "completed": completed}
+
+
+def team_schedule(request: HttpRequest, league_id: int, team_id: int) -> HttpResponse:
+    """LG-01g — Per-Team Schedule page.
+
+    Two-column read-only view of a single Team's per-Round schedule
+    inside the displayed Season of ``league_id``. The Upcoming column
+    enumerates unplayed (fixture, round_number) pairs that involve the
+    Team; the Completed column enumerates persisted GameRounds for
+    Matches involving the Team. A dropdown above the columns navigates
+    to a different Team's view inside the same League.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    league = get_object_or_404(League, pk=league_id)
+    team = get_object_or_404(Team, pk=team_id)
+
+    displayed_season = (
+        league.active_season
+        or league.seasons.filter(state="completed").order_by("-id").first()
+    )
+    if displayed_season is None:
+        return HttpResponseNotFound("No Season in this League.")
+
+    if displayed_season.starting_team_ids_json:
+        team_ids = list(displayed_season.starting_team_ids_json)
+    else:
+        team_ids = sorted(t.id for t in displayed_season.teams.all())
+
+    fixtures = generate_schedule(team_ids, displayed_season.schedule_format)
+    teams_by_id = Team.objects.in_bulk(team_ids)
+
+    played_game_rounds = list(
+        GameRound.objects.filter(match__season=displayed_season)
+        .filter(Q(match__team_red=team) | Q(match__team_blue=team))
+        .select_related("match", "match__team_red", "match__team_blue")
+        .order_by("id")
+    )
+
+    rows = _build_team_schedule_rows(
+        displayed_season=displayed_season,
+        team=team,
+        fixtures=fixtures,
+        played_game_rounds=played_game_rounds,
+        teams_by_id=teams_by_id,
+    )
+
+    request.session["last_league_id"] = league.id
+
+    sidebar_links = _build_league_sidebar_links(
+        league, displayed_season, "schedule_team"
+    )
+    context = {
+        "league": league,
+        "displayed_season": displayed_season,
+        "team": team,
+        "upcoming_rows": rows["upcoming"],
+        "completed_rows": rows["completed"],
+        "team_picker_options": displayed_season.teams.order_by("name"),
+        "sidebar_links": sidebar_links,
+        "sidebar_active": "schedule_team",
+        "current_team": league.current_team,
+    }
+    return render(request, "leagues/team_schedule.html", context)
 
 
 @transaction.atomic

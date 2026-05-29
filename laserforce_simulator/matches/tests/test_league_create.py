@@ -312,3 +312,37 @@ class TestSeamWithGenerateTeams(TestCase):
         self.assertEqual(League.objects.count(), before_leagues)
         self.assertEqual(Season.objects.count(), before_seasons)
         self.assertEqual(Team.objects.count(), before_teams)
+
+
+# ---------------------------------------------------------------------------
+# LG-01g — current_team auto-set on league_create (§9c)
+# ---------------------------------------------------------------------------
+
+
+class TestLg01gCurrentTeamAutoSet(TestCase):
+    """LG-01g — ``league_create`` populates ``League.current_team`` to
+    the alphabetically-first generated Team.
+
+    Locked at ``.claude/worktrees/lg-01g-seam-contract.md`` §8 + §9c.
+    The auto-set lands INSIDE the existing ``@transaction.atomic`` body
+    between the League create and the Season create, so a Season-create
+    failure rolls the auto-set back atomically.
+    """
+
+    def test_league_create_populates_current_team_to_first_alphabetical_team(
+        self,
+    ) -> None:
+        self.client.post(reverse("league_create"), _valid_payload())
+        league = League.objects.get(name="Spring 2026")
+        self.assertIsNotNone(league.current_team)
+        # The alphabetically-first Team in the Season's M2M.
+        season = league.seasons.first()
+        first_alphabetical = sorted(t.name for t in season.teams.all())[0]
+        self.assertEqual(league.current_team.name, first_alphabetical)
+
+    def test_league_create_current_team_is_in_created_teams(self) -> None:
+        self.client.post(reverse("league_create"), _valid_payload())
+        league = League.objects.get(name="Spring 2026")
+        season = league.seasons.first()
+        enrolled_team_ids = set(season.teams.values_list("id", flat=True))
+        self.assertIn(league.current_team_id, enrolled_team_ids)
