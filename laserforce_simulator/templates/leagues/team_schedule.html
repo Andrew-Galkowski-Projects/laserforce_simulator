@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}{{ team.name }} — Schedule{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1 p-3">
+        <header id="team-schedule-header" class="mb-4">
+            <h1 class="mb-1">{{ team.name }} — Schedule</h1>
+            <p class="text-muted mb-3">{{ displayed_season.name }}</p>
+            <form
+                id="team-schedule-team-picker-form"
+                method="get"
+                class="d-flex align-items-center gap-2"
+            >
+                <label for="team-schedule-team-picker" class="form-label mb-0">
+                    Team:
+                </label>
+                <select
+                    id="team-schedule-team-picker"
+                    name="picked_team_id"
+                    class="form-select w-auto"
+                    onchange="window.location.href = '{% url 'team_schedule' league_id=league.id team_id=0 %}'.replace('/0/', '/' + this.value + '/');"
+                >
+                    {% for option in team_picker_options %}
+                        <option
+                            value="{{ option.id }}"
+                            {% if option.id == team.id %}selected{% endif %}
+                        >{{ option.name }}</option>
+                    {% endfor %}
+                </select>
+                <noscript>
+                    <button
+                        type="submit"
+                        id="team-schedule-team-picker-apply"
+                        class="btn btn-primary btn-sm"
+                    >Apply</button>
+                </noscript>
+            </form>
+        </header>
+
+        <div class="row">
+            <section
+                id="team-schedule-upcoming-section"
+                class="col-md-6 mb-4"
+            >
+                <h2 class="h4">Upcoming Games</h2>
+                {% if upcoming_rows %}
+                    <table
+                        id="team-schedule-upcoming-list"
+                        class="table table-striped"
+                    >
+                        <thead>
+                            <tr>
+                                <th>Matchday</th>
+                                <th>Date</th>
+                                <th>Match</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in upcoming_rows %}
+                                <tr id="team-schedule-upcoming-row-{{ row.matchday }}-{{ row.round_number }}">
+                                    <td>{{ row.matchday }} &middot; R{{ row.round_number }}</td>
+                                    <td>{{ row.date|date:"Y-m-d" }}</td>
+                                    <td>(R) {{ row.red_team_name }} VS (B) {{ row.blue_team_name }}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                {% else %}
+                    <div
+                        id="team-schedule-upcoming-empty"
+                        class="alert alert-info"
+                    >No upcoming games</div>
+                {% endif %}
+            </section>
+
+            <section
+                id="team-schedule-completed-section"
+                class="col-md-6 mb-4"
+            >
+                <h2 class="h4">Completed Games</h2>
+                {% if completed_rows %}
+                    <table
+                        id="team-schedule-completed-list"
+                        class="table table-striped"
+                    >
+                        <thead>
+                            <tr>
+                                <th>Matchday</th>
+                                <th>Date</th>
+                                <th>Match</th>
+                                <th>Score</th>
+                                <th>Result</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in completed_rows %}
+                                <tr id="team-schedule-completed-row-{{ row.game_round_id }}">
+                                    <td>{{ row.matchday }} &middot; R{{ row.round_number }}</td>
+                                    <td>{{ row.date|date:"Y-m-d" }}</td>
+                                    <td>(R) {{ row.red_team_name }} VS (B) {{ row.blue_team_name }}</td>
+                                    <td>{{ row.red_score }} &mdash; {{ row.blue_score }}</td>
+                                    <td>{{ row.outcome }}</td>
+                                    <td>
+                                        <a href="/matches/game-round/{{ row.game_round_id }}/">
+                                            View Round detail
+                                        </a>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                {% else %}
+                    <div
+                        id="team-schedule-completed-empty"
+                        class="alert alert-info"
+                    >No completed games</div>
+                {% endif %}
+            </section>
+        </div>
+    </main>
+</div>
+{% endblock %}

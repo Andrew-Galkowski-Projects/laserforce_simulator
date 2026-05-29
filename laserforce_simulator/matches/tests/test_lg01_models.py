@@ -368,3 +368,62 @@ class TestMatchSeasonFK(TestCase):
 # Reference to silence unused-import warnings (GameRound is referenced
 # indirectly via the simulator; keep the import for future regression tests).
 _ = GameRound
+
+
+# ---------------------------------------------------------------------------
+# LG-01g — League.current_team FK (§9b)
+# ---------------------------------------------------------------------------
+
+
+class TestLeagueCurrentTeamField(TestCase):
+    """LG-01g — ``League.current_team`` FK contract.
+
+    Locked at ``.claude/worktrees/lg-01g-seam-contract.md`` §2 + §9b:
+    nullable FK to ``teams.Team`` with ``on_delete=SET_NULL`` and
+    ``related_name="managed_in_leagues"``. Migration
+    ``matches/migrations/0030_league_current_team.py``.
+    """
+
+    def test_current_team_is_nullable(self) -> None:
+        league = League(name="X")
+        league.save()
+        self.assertIsNone(league.current_team)
+
+    def test_current_team_default_is_None(self) -> None:
+        league = League.objects.create(name="X")
+        self.assertIsNone(league.current_team)
+
+    def test_current_team_set_null_on_team_delete(self) -> None:
+        team, _ = make_team_with_slots("Tdel")
+        league = League.objects.create(name="LDel", current_team=team)
+        team.delete()
+        league.refresh_from_db()
+        self.assertIsNone(league.current_team)
+
+    def test_related_name_managed_in_leagues(self) -> None:
+        team, _ = make_team_with_slots("Trev")
+        l1 = League.objects.create(name="L1", current_team=team)
+        l2 = League.objects.create(name="L2", current_team=team)
+        # Defensive: a third League pointing elsewhere should NOT appear.
+        other_team, _ = make_team_with_slots("Toth")
+        League.objects.create(name="L3", current_team=other_team)
+        managed_ids = set(team.managed_in_leagues.values_list("id", flat=True))
+        self.assertEqual(managed_ids, {l1.id, l2.id})
+
+    def test_migration_0030_exists(self) -> None:
+        """Field is present on the model with the expected on-delete
+        behaviour; the migration filename is a separate artifact pinned
+        by the Code agent.
+        """
+        from django.db import models as _models
+
+        field = League._meta.get_field("current_team")
+        # ForeignKey to teams.Team.
+        self.assertEqual(field.related_model._meta.label, "teams.Team")
+        # SET_NULL on delete.
+        self.assertIs(field.remote_field.on_delete, _models.SET_NULL)
+        # related_name on the reverse side.
+        self.assertEqual(field.remote_field.related_name, "managed_in_leagues")
+        # Nullable / blank.
+        self.assertTrue(field.null)
+        self.assertTrue(field.blank)

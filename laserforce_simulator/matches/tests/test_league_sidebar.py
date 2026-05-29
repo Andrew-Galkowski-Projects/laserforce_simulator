@@ -291,3 +291,120 @@ class TestSidebarLinkShape(TestCase):
         keys = [e["key"] for e in team_section]
         self.assertIn("history_team", keys)
         self.assertNotIn("history", keys)
+
+
+# ---------------------------------------------------------------------------
+# LG-01g — TEAM > Schedule entry LIVE wiring (§9d)
+# ---------------------------------------------------------------------------
+
+
+class TestLg01gScheduleTeamEntryLive(TestCase):
+    """LG-01g — the ``schedule_team`` sidebar entry flips from LG-01f's
+    always-disabled placeholder to LIVE when the resolution chain
+    (``league.current_team`` if in Season ⇒ alphabetically-first
+    in-Season Team ⇒ ``None``) yields a target Team.
+
+    Locked at ``.claude/worktrees/lg-01g-seam-contract.md`` §4a + §7 + §9d.
+    """
+
+    def _entry(self, links, key: str) -> dict:
+        for entry in links:
+            if entry["key"] == key:
+                return entry
+        raise AssertionError(f"sidebar key {key!r} not found")
+
+    def test_schedule_team_entry_url_resolves_via_current_team_when_in_season(
+        self,
+    ) -> None:
+        league = _make_league("LiveA")
+        active = _make_active_season(league)
+        team_in_season, _ = make_team_with_slots("InSeason")
+        active.teams.add(team_in_season)
+        league.current_team = team_in_season
+        league.save()
+        links = _build_league_sidebar_links(league, active, None)
+        entry = self._entry(links, "schedule_team")
+        self.assertEqual(
+            entry["url"],
+            reverse(
+                "team_schedule",
+                kwargs={"league_id": league.id, "team_id": team_in_season.id},
+            ),
+        )
+        self.assertFalse(entry["disabled"])
+
+    def test_schedule_team_entry_url_falls_back_to_first_alphabetical_when_current_team_none(
+        self,
+    ) -> None:
+        league = _make_league("FallNone")
+        active = _make_active_season(league)
+        # Create teams "B", "A", "C" — alphabetically-first is "A Team"
+        # (the conftest helper appends " Team" to the prefix).
+        tb, _ = make_team_with_slots("B")
+        ta, _ = make_team_with_slots("A")
+        tc, _ = make_team_with_slots("C")
+        active.teams.add(tb, ta, tc)
+        # current_team explicitly None.
+        self.assertIsNone(league.current_team)
+        links = _build_league_sidebar_links(league, active, None)
+        entry = self._entry(links, "schedule_team")
+        self.assertEqual(
+            entry["url"],
+            reverse(
+                "team_schedule",
+                kwargs={"league_id": league.id, "team_id": ta.id},
+            ),
+        )
+        self.assertFalse(entry["disabled"])
+
+    def test_schedule_team_entry_url_falls_back_when_current_team_not_in_displayed_season(
+        self,
+    ) -> None:
+        league = _make_league("FallNotIn")
+        active = _make_active_season(league)
+        ta, _ = make_team_with_slots("InS_A")
+        tb, _ = make_team_with_slots("InS_B")
+        active.teams.add(ta, tb)
+        # current_team is set but NOT enrolled in the Season's M2M.
+        team_x, _ = make_team_with_slots("Outside")
+        league.current_team = team_x
+        league.save()
+        links = _build_league_sidebar_links(league, active, None)
+        entry = self._entry(links, "schedule_team")
+        # Alphabetically-first in-Season Team is ``InS_A Team``.
+        self.assertEqual(
+            entry["url"],
+            reverse(
+                "team_schedule",
+                kwargs={"league_id": league.id, "team_id": ta.id},
+            ),
+        )
+        # And NOT the out-of-Season team_x.
+        self.assertNotEqual(
+            entry["url"],
+            reverse(
+                "team_schedule",
+                kwargs={"league_id": league.id, "team_id": team_x.id},
+            ),
+        )
+
+    def test_schedule_team_entry_disabled_when_displayed_season_is_none(
+        self,
+    ) -> None:
+        league = _make_league("DisNone")
+        links = _build_league_sidebar_links(league, None, None)
+        entry = self._entry(links, "schedule_team")
+        self.assertIsNone(entry["url"])
+        self.assertTrue(entry["disabled"])
+
+    def test_schedule_team_entry_disabled_when_displayed_season_has_no_teams(
+        self,
+    ) -> None:
+        league = _make_league("DisNoTeams")
+        active = _make_active_season(league)
+        # Season has zero enrolled teams.
+        self.assertEqual(active.teams.count(), 0)
+        links = _build_league_sidebar_links(league, active, None)
+        entry = self._entry(links, "schedule_team")
+        self.assertIsNone(entry["url"])
+        self.assertTrue(entry["disabled"])

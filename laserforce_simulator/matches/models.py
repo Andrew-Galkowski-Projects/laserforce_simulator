@@ -826,6 +826,17 @@ class League(models.Model):
     mode = models.CharField(max_length=16, choices=MODE_CHOICES, default="league")
     state = models.CharField(max_length=16, choices=STATE_CHOICES, default="active")
     created_at = models.DateTimeField(auto_now_add=True)
+    # LG-01g: the Team this League's user manages (picked by the TEAM >
+    # Schedule sidebar entry's default target). Auto-set at League create
+    # time to the alphabetically-first generated Team; SET_NULL on Team
+    # delete (the LG-01g sidebar / view fallback chain handles None).
+    current_team = models.ForeignKey(
+        "teams.Team",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="managed_in_leagues",
+    )
 
     def __str__(self) -> str:
         return self.name
