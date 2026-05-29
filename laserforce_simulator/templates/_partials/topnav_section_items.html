@@ -1,0 +1,8 @@
+{# LG-01k — Renders one section's `top_bar_links` entries as `<li>`s inside a Bootstrap dropdown. Disabled entries render as `<span>` (no href, no DOM id). LIVE entries render as `<a>` with `topbar-{section}-{key}` id. Included 4 times from base.html (LEAGUE / TEAM / PLAYERS / STATS). #}
+{% for entry in section.list %}
+    {% if entry.disabled %}
+        <li><span class="dropdown-item disabled">{{ entry.label }}</span></li>
+    {% else %}
+        <li><a class="dropdown-item" id="topbar-{{ entry.section }}-{{ entry.key }}" href="{{ entry.url }}">{{ entry.label }}</a></li>
+    {% endif %}
+{% endfor %}

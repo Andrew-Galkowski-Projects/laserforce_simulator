@@ -40,10 +40,9 @@ class TestAppModeContextProcessor(TestCase):
 
     # -- Sandbox branch ------------------------------------------------------
 
-    def test_root_path_is_sandbox(self) -> None:
-        request = self.factory.get("/")
-        result = self.app_mode(request)
-        self.assertEqual(result, {"app_mode": "sandbox"})
+    # NOTE: ``test_root_path_is_sandbox`` retired by LG-01k — ``/`` now
+    # resolves to ``"start"``. The replacement assertion lives at
+    # ``test_start_mode_for_exact_root_path`` below.
 
     def test_teams_path_is_sandbox(self) -> None:
         request = self.factory.get("/teams/")
@@ -140,8 +139,41 @@ class TestAppModeContextProcessor(TestCase):
         result = self.app_mode(request)
         self.assertEqual(list(result.keys()), ["app_mode"])
 
-    def test_returned_value_is_one_of_the_two_literals(self) -> None:
+    def test_returned_value_is_one_of_the_three_literals(self) -> None:
+        # LG-01k extended the enum from 2 literals to 3 by adding ``"start"``.
         for path in ("/", "/teams/", "/leagues/", "/seasons/1/", "/help/overview/"):
             request = self.factory.get(path)
             result = self.app_mode(request)
-            self.assertIn(result["app_mode"], ("league", "sandbox"))
+            self.assertIn(result["app_mode"], ("start", "league", "sandbox"))
+
+    # -- LG-01k 3-mode extension --------------------------------------------
+
+    def test_start_mode_for_exact_root_path(self) -> None:
+        """LG-01k — an exact ``"/"`` path resolves to the new
+        ``"start"`` mode (replaces the LG-01h ``"sandbox"`` fallback
+        for the root path).
+        """
+        request = self.factory.get("/")
+        result = self.app_mode(request)
+        self.assertEqual(result, {"app_mode": "start"})
+
+    def test_sandbox_mode_for_empty_path(self) -> None:
+        """LG-01k — an explicit empty-string ``request.path`` does NOT
+        match the ``"/"`` exact-match rule (the LG-01k Code agent must
+        distinguish missing/empty path from explicit ``/``) and
+        therefore resolves to ``"sandbox"``.
+        """
+        request = self.factory.get("/")
+        request.path = ""
+        result = self.app_mode(request)
+        self.assertEqual(result, {"app_mode": "sandbox"})
+
+    def test_sandbox_mode_for_missing_path_attribute(self) -> None:
+        """LG-01k — a raw object with no ``.path`` attribute resolves
+        to ``"sandbox"`` (the missing-attribute case must not crash and
+        must NOT spuriously resolve to ``"start"`` via the LG-01h
+        ``or "/"`` fallback).
+        """
+        request = type("R", (), {})()
+        result = self.app_mode(request)
+        self.assertEqual(result, {"app_mode": "sandbox"})

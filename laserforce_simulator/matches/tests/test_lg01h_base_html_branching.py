@@ -44,19 +44,10 @@ class TestBaseHtmlSandboxBranch(TestCase):
     + ``Help ▾`` / ``Tools ▾`` / ``League ▾`` dropdown toggles.
     """
 
-    def test_landing_page_renders_sandbox_flat_links(self) -> None:
-        response = self.client.get("/")
-        self.assertEqual(response.status_code, 200)
-        body = response.content.decode()
-        # Each sandbox flat link is identified by its href URL substring on
-        # an ``<a class="nav-link" href="...">`` so a sidebar "Team" label
-        # cannot false-positive.
-        self.assertIn(reverse("team_list"), body)
-        self.assertIn(reverse("player_list"), body)
-        self.assertIn(reverse("match_list"), body)
-        self.assertIn(reverse("simulate_batch"), body)
-        self.assertIn(reverse("team_create"), body)
-        self.assertIn(reverse("map_list"), body)
+    # NOTE: ``test_landing_page_renders_sandbox_flat_links`` retired by
+    # LG-01k — ``/`` is now start mode (Tools/Help only, no flat links).
+    # The replacement is ``TestLg01kStartModeTopbar`` in
+    # ``test_lg01k_base_html_branching.py``.
 
     def test_landing_page_renders_help_dropdown_toggle(self) -> None:
         response = self.client.get("/")
@@ -65,10 +56,6 @@ class TestBaseHtmlSandboxBranch(TestCase):
     def test_landing_page_renders_tools_dropdown_toggle(self) -> None:
         response = self.client.get("/")
         self.assertContains(response, 'id="tools-nav-link"')
-
-    def test_landing_page_renders_league_dropdown_toggle(self) -> None:
-        response = self.client.get("/")
-        self.assertContains(response, 'id="leagues-nav-link"')
 
     def test_teams_page_renders_sandbox_shell(self) -> None:
         response = self.client.get("/teams/")
@@ -80,10 +67,11 @@ class TestBaseHtmlSandboxBranch(TestCase):
         self.assertIn(reverse("simulate_batch"), body)
         self.assertIn(reverse("team_create"), body)
         self.assertIn(reverse("map_list"), body)
-        # Plus the 3 dropdown toggles.
+        # Plus the Tools / Help dropdown toggles (the LG-01h League
+        # dropdown was retired from sandbox by LG-01k — the retired-id
+        # assertion lives in test_lg01k_base_html_branching.py).
         self.assertContains(response, 'id="help-nav-link"')
         self.assertContains(response, 'id="tools-nav-link"')
-        self.assertContains(response, 'id="leagues-nav-link"')
 
 
 # ---------------------------------------------------------------------------
@@ -141,50 +129,11 @@ class TestBaseHtmlLeagueBranch(TestCase):
         response = self.client.get(f"/leagues/{self.league.id}/")
         self.assertContains(response, 'id="tools-nav-link"')
 
-    def test_league_dashboard_renders_league_dropdown_toggle(self) -> None:
-        response = self.client.get(f"/leagues/{self.league.id}/")
-        self.assertContains(response, 'id="leagues-nav-link"')
 
-
-# ---------------------------------------------------------------------------
-# TestLeagueDropdownItems
-# ---------------------------------------------------------------------------
-
-
-class TestLeagueDropdownItems(TestCase):
-    """The ``League ▾`` dropdown has 5 LIVE items in the league branch
-    (Standings / Playoffs / Finances / History / Power Rankings) with
-    the 5 locked DOM ids.
-    """
-
-    @classmethod
-    def setUpTestData(cls) -> None:
-        cls.league = League.objects.create(
-            name="LG01hDropdown", mode="league", state="active"
-        )
-
-    def test_dropdown_item_dom_ids_present_in_league_branch(self) -> None:
-        response = self.client.get(f"/leagues/{self.league.id}/")
-        for dom_id in (
-            "league-standings-topbar-link",
-            "league-playoffs-topbar-link",
-            "league-finances-topbar-link",
-            "league-history-topbar-link",
-            "league-power-rankings-topbar-link",
-        ):
-            self.assertContains(response, f'id="{dom_id}"')
-
-    def test_dropdown_item_dom_ids_present_in_sandbox_branch(self) -> None:
-        """The ``League ▾`` dropdown also renders in sandbox mode per the
-        seam contract — so the 5 dropdown DOM ids must be present at
-        ``/`` as well.
-        """
-        response = self.client.get("/")
-        for dom_id in (
-            "league-standings-topbar-link",
-            "league-playoffs-topbar-link",
-            "league-finances-topbar-link",
-            "league-history-topbar-link",
-            "league-power-rankings-topbar-link",
-        ):
-            self.assertContains(response, f'id="{dom_id}"')
+# NOTE: the LG-01h ``leagues-nav-link`` toggle id and the 5
+# ``league-{standings,playoffs,finances,history,power-rankings}-topbar-link``
+# child ids are RETIRED by LG-01k. The replacement assertions on the
+# LG-01k 4-section dropdown structure
+# (``league-nav-link`` / ``team-nav-link`` / ``players-nav-link`` /
+# ``stats-nav-link`` + the ``topbar-{section}-{key}`` per-entry ids)
+# live in ``test_lg01k_base_html_branching.py``.

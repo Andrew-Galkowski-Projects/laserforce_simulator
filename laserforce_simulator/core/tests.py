@@ -327,17 +327,16 @@ class TestLandingView(TestCase):
     def test_root_url_reverses_to_landing_view(self) -> None:
         self.assertEqual(reverse("landing"), "/")
 
-    def test_base_html_navbar_brand_links_to_landing_and_leagues_nav_link_present(
+    def test_base_html_navbar_brand_links_to_landing(
         self,
     ) -> None:
-        """Navbar regression — placed here (per the contract's choice
-        clause). The brand href must be ``/`` and the Leagues nav link
-        must be present in any view extending ``base.html``.
+        """Navbar regression — brand href must be ``/`` on any view
+        extending ``base.html``. LG-01k retired ``leagues-nav-link``
+        (replaced by ``league-nav-link`` in league mode only); the
+        landing page is start mode and renders neither.
         """
         response = self.client.get(reverse("landing"))
         body = response.content.decode()
-        # Leagues nav-link id present.
-        self.assertIn('id="leagues-nav-link"', body)
         # Brand href is "/" — parse the navbar-brand anchor.
         match = re.search(r'class="navbar-brand"[^>]*href="([^"]+)"', body)
         if match is None:
