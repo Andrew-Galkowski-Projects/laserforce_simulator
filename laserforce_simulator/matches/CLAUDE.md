@@ -737,6 +737,78 @@ Read-only paginated **League History** page at `GET /leagues/<int:league_id>/his
 
 **Locked names.** Model fields (3 NEW on `Season`) `map_mode` (CharField, choices, default `"none"`, max_length 32) / `map_pool` (M2M to `ArenaMap`, blank=True, related_name `"seasons_using_pool"`) / `starting_map_pool_ids_json` (JSONField, null=True, default=None); mode enum literals `"none"` (display `"3-zone fallback"`) / `"single"` (display `"Single map"`) / `"random_per_round"` (display `"Random per Round"`); migration filename `matches/migrations/0031_season_map_mode_pool.py`; NEW helper `matches.tasks._resolve_fixture_map(season, fixture, pool_by_id) -> ArenaMap | None` (module-level, no class, pure — no ORM); form fields (2 NEW on `CreateLeagueForm`) `map_mode` (`forms.ChoiceField`, choices from model field, initial `"none"`, required=True) / `map_pool` (`forms.ModelMultipleChoiceField`, queryset `_maps_with_confirmed_config()`, required=False); form helper REUSED `matches.forms._maps_with_confirmed_config() -> QuerySet[ArenaMap]` (already exists — no edit, no redefinition); EXTENDED views `matches.views.league_create` / `matches.views.next_season` / `matches.views._build_dashboard_context` (body extensions only — no rename, no signature change); EXTENDED tasks `matches.tasks.play_season_task` / `matches.views.play_week` (body extensions only — same `@shared_task` decorator, same name); template names (3 MODIFIED, 0 NEW) `templates/leagues/dashboard.html` / `templates/seasons/dashboard.html` / `templates/leagues/create.html`; DOM ids (4 NEW) `league-dashboard-map-config` / `season-dashboard-map-config` / `league-create-map-mode` / `league-create-map-pool`; label string literals (5 locked — byte-equal, em-dash U+2014) `"Map: 3-zone fallback (no map)"` / `"Map: Single — {name}"` (e.g. `"Map: Single — Alpha Arena"`) / `"Map: Single — (map deleted)"` / `"Map: Random per Round ({n} maps: {comma_joined_names})"` (e.g. `"Map: Random per Round (3 maps: Alpha, Bravo, Charlie)"`) / `"Map: Random per Round (no maps)"`; form `clean()` error messages (3 locked — byte-equal) `"Map pool must be empty when Map mode is '3-zone fallback'."` / `"Map pool must contain exactly 1 map when Map mode is 'Single map'."` / `"Map pool must contain at least 1 map when Map mode is 'Random per Round'."`; `_resolve_fixture_map` `ValueError` message `f"Unknown map_mode: {mode!r}"`; seed-string format (byte-locked) `f"{season.id}|{fixture.matchday}|{fixture.round_number}|{fixture.team_a_id}|{fixture.team_b_id}"` (5 components, pipe `|`-separated, no spaces, exact order); context key (NEW on `_build_dashboard_context`) `map_config_label: str` (12th key on the existing 11-key dict); CONTEXT.md term names (3 NEW) `Map mode` / `Map pool` / `Per-fixture map resolution` (appended to `### League and seasons` section after the existing `Team schedule` entry, in that order); test files (2 NEW) `matches/tests/test_lg01j_season_map_config.py` + `matches/tests/test_lg01j_resolve_fixture_map.py`; test files (5 EXTENDED) `matches/tests/test_league_create.py` + `test_lg01e_next_season.py` + `test_lg01d_tasks.py` + `test_league_dashboard.py` + `test_season_dashboard_view.py`; test classes (NEW) `TestSeasonMapModeField` / `TestSeasonMapPoolField` / `TestSeasonStartingMapPoolSnapshot` / `TestSeasonStartSeasonSnapshotsMapPool` (in `test_lg01j_season_map_config.py`); `TestResolveFixtureMapNone` / `TestResolveFixtureMapSingle` / `TestResolveFixtureMapRandomPerRound` / `TestResolveFixtureMapUnknownMode` / `TestResolveFixtureMapMissingMap` (in `test_lg01j_resolve_fixture_map.py`); `TestLeagueCreateMapMode` / `TestLeagueCreateMapPool` (in `test_league_create.py`); `TestNextSeasonMapConfigCarryForward` (in `test_lg01e_next_season.py`); `TestPlaySeasonTaskMapResolution` (in `test_lg01d_tasks.py`); `TestLg01jLeagueDashboardMapConfig` (in `test_league_dashboard.py`); `TestLg01jSeasonDashboardMapConfig` (in `test_season_dashboard_view.py`); admin change (only one) `matches/admin.py` `SeasonAdmin.filter_horizontal` extends from `("teams",)` to `("teams", "map_pool")`; M2M reverse-accessor name `arena_map.seasons_using_pool` (locked via `related_name="seasons_using_pool"` on `Season.map_pool`). Seam contract: [`.claude/worktrees/lg-01j-seam-contract.md`](../../.claude/worktrees/lg-01j-seam-contract.md).
 
+## LG-01z league sidebar screens
+
+Turns 17 of the LG-01h "coming soon" league-sidebar placeholders into real
+pages: **11 live read-only screens** + **6 explainer stubs** for features
+still blocked on unbuilt models. All read-only — **no model change, no
+migration, no simulator touch, no RNG, no Score Calibration re-baseline.**
+Per-screen status + blockers in [`sub-plan.md`](../../sub-plan.md); seam
+contract at [`.claude/worktrees/lg-01z-seam-contract.md`](../../.claude/worktrees/lg-01z-seam-contract.md).
+
+**Package `matches/league_screens/`** (NEW) — one module per screen, each
+exposing a single GET-only view `<key>(request, league_id)` re-exported from
+the package `__init__`. The 11 views: `power_rankings`, `team_roster`,
+`team_history`, `free_agents`, `watch_list`, `game_log`, `league_leaders`,
+`player_ratings`, `player_stats`, `team_stats`, `statistical_feats`. Each
+follows the shared contract: GET-guard (`HttpResponseNotAllowed(["GET"])`) →
+`get_object_or_404(League)` → `request.session["last_league_id"] = league.id`
+→ `displayed_season = league.active_season or league.seasons.filter(
+state="completed").order_by("-id").first()` → `sidebar_links =
+_build_league_sidebar_links(league, displayed_season, sidebar_active="<key>")`
+→ aggregation → render `templates/leagues/<key>.html` (the `d-flex` +
+`_partials/league_sidebar.html` shell). Empty-state (no Season) renders a
+`<key>-empty-notice` with the substring `"No Season"`. **Watch List** is the
+one exception to GET-only: a `?action=add|remove&player_id=<id>` GET toggle
+mutates `request.session["watch_list"]` (a list of int ids) then redirects to
+the bare URL — a browser-session-local convenience list (no model, migrates to
+per-user when UX-01 lands).
+
+**Pure logic modules** (NEW, top-level `matches/`, frozen `dataclasses` /
+`typing` / `collections` import allowlist, each with a `TestNoDjangoImportsLeaked`
+subprocess check): `power_rankings_logic.py` (composite power score = sum of
+three per-League min-max-normalized components — team mean `overall_rating`,
+win%, avg per-Round score diff; `compute_power_rankings` + `sort_power_rankings`
+with `SORT_KEYS` for the sortable columns, rank preserved as the canonical
+power-score position), `league_leaders_logic.py` (`compute_leaderboards` → 4
+top-N boards: avg tags / avg score / fewest-tagged / tag ratio; reuses the
+LG-01c `LeaderRow`), `season_player_stats.py` (per-player HX-01 STAT_KEYS
+aggregation — counts summed, `mvp`/`accuracy` averaged), `team_stats_logic.py`
+(`aggregate_team_stats` over per-round + per-event dicts; event→column mapping
+`base_capture`/`missiled`(+`hit`)/`special`-nuke-detonation/`nuke_cancelled`),
+`team_history_logic.py` (`compute_overall_record` / `compute_season_rows` /
+`compute_player_rollups` — green = currently on team, blue = now elsewhere,
+derived from `PlayerRoundState` history vs current `Player.team`), and
+`stat_feats.py` (9 feat predicates → `FeatRecord`s, deep-linking to the Round).
+Screens with trivial aggregation (Game Log, Player Ratings, Free Agents, Team
+Roster, Watch List) keep their logic in the view and reuse the LG-00c sort
+helpers (`teams.views._coerce_sort` / `_coerce_dir` / `_SORT_KEYS`).
+
+**Central wiring** (`matches/league_urls.py` + `matches/league_views.py::
+_build_league_sidebar_links` + `matches/views.py::_FEATURE_REGISTRY`): each
+live screen gets a real `path("<int:league_id>/…/", league_screens.<view>,
+name="<url_name>")` route (URL names `league_power_rankings`, `team_roster`,
+`team_history`, `players_free_agents`, `players_watch_list`, `stats_game_log`,
+`stats_league_leaders`, `stats_player_ratings`, `stats_player_stats`,
+`stats_team_stats`, `stats_statistical_feats`); the sidebar builder's entry is
+repointed from `_cs("coming_soon_<x>")` to `_cs("<url_name>")` — and because
+`_build_league_sidebar_links` is the **single source of truth** for both the
+LG-01f sidebar AND the LG-01k topbar, both surfaces flip live at once. The 11
+now-live `coming_soon_*` routes + `_FEATURE_REGISTRY` entries are removed,
+leaving the registry at **17 entries** (7 still-blocked LEAGUE/TEAM/PLAYERS
+placeholders + 6 Help + 4 Tools). The 7 blocked placeholder entries gain a
+`blocker` string rendered by `coming_soon` into `_placeholder.html` (DOM id
+`coming-soon-blocker`).
+
+**Tests:** `matches/tests/test_lg01z_<screen>.py` per screen (view 200 / 405 /
+404 / session-write / empty-state / DOM ids + sort/toggle behaviour, plus
+pure-unit + purity classes for the logic modules). The LG-01h
+`test_lg01h_coming_soon.py` (registry now 17, value-dicts may carry `blocker`)
+and `test_league_sidebar.py` (6 entries point at live URLs) were updated as
+blast-radius. A pre-existing RNG-flaky `test_batch_sim.py::TestBugfixMedicHits
+Tracked` (unseeded 95%-hit) was pinned deterministically with the file's own
+`patch("random.randint", return_value=1)` idiom.
+
 ## Tests
 
 `matches/tests/` package:

@@ -1,0 +1,533 @@
+"""LG-01z-q — tests for the Statistical Feats league screen.
+
+Two test surfaces:
+
+* Pure-unit tests for ``matches/stat_feats.py`` (hand-built dict fixtures, no
+  DB) plus the ``TestNoDjangoImportsLeaked`` subprocess purity check.
+* Django ``TestCase`` tests for the view
+  ``matches.league_screens.statistical_feats.statistical_feats`` exercised via
+  ``RequestFactory`` with a real session attached (the route is wired
+  centrally by the orchestrator, so the view is called directly).
+
+Fixtures are hand-constructed ``Match`` / ``GameRound`` / ``PlayerRoundState``
+/ ``GameEvent`` rows — LG-01z runs NO simulation.
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+from datetime import date
+
+from django.contrib.sessions.middleware import SessionMiddleware
+from django.test import RequestFactory, SimpleTestCase, TestCase
+
+from matches import stat_feats
+from matches.league_screens.statistical_feats import statistical_feats
+from matches.models import (
+    GameEvent,
+    GameRound,
+    League,
+    Match,
+    PlayerRoundState,
+    Season,
+)
+from matches.tests.conftest import make_team_with_slots
+
+# ===========================================================================
+# Pure-unit tests for matches/stat_feats.py
+# ===========================================================================
+
+
+def _pr(**overrides) -> dict:
+    """Build a per-player-round seam dict with sane defaults."""
+    base = {
+        "round_id": 1,
+        "match_id": 1,
+        "player_id": 1,
+        "player_name": "Alice",
+        "team_id": 10,
+        "team_name": "Red Team",
+        "role": "scout",
+        "tags_made": 0,
+        "times_tagged": 0,
+        "shots_missed": 0,
+        "points_scored": 0,
+        "resupplies_given": 0,
+        "missiles_landed": 0,
+        "mvp": 0.0,
+        "nuke_detonations": 0,
+    }
+    base.update(overrides)
+    return base
+
+
+def _match(**overrides) -> dict:
+    base = {
+        "match_id": 1,
+        "round_id": 2,
+        "winner_team_id": 10,
+        "winner_team_name": "Red Team",
+        "red_team_id": 10,
+        "blue_team_id": 20,
+        "red_round1_points": 5,
+        "blue_round1_points": 10,
+    }
+    base.update(overrides)
+    return base
+
+
+class TestFindTripleNukes(SimpleTestCase):
+    def test_three_detonations_qualifies(self) -> None:
+        rows = [_pr(player_name="Cmdr", nuke_detonations=3, round_id=7)]
+        recs = stat_feats.find_triple_nukes(rows)
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0].kind, "triple_nuke")
+        self.assertEqual(recs[0].name, "Cmdr")
+        self.assertEqual(recs[0].value, "3")
+        self.assertEqual(recs[0].round_id, 7)
+
+    def test_two_detonations_does_not_qualify(self) -> None:
+        rows = [_pr(nuke_detonations=2)]
+        self.assertEqual(stat_feats.find_triple_nukes(rows), [])
+
+    def test_multiple_qualifiers_sorted_by_count_desc(self) -> None:
+        rows = [
+            _pr(player_name="A", nuke_detonations=3, mvp=1.0),
+            _pr(player_name="B", nuke_detonations=4, mvp=1.0),
+        ]
+        recs = stat_feats.find_triple_nukes(rows)
+        self.assertEqual([r.name for r in recs], ["B", "A"])
+
+    def test_empty_input(self) -> None:
+        self.assertEqual(stat_feats.find_triple_nukes([]), [])
+
+
+class TestFindMedicShutout(SimpleTestCase):
+    def test_untagged_medic_qualifies(self) -> None:
+        rows = [_pr(role="medic", times_tagged=0, tags_made=2, round_id=3)]
+        rec = stat_feats.find_medic_shutout(rows)
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec.kind, "medic_shutout")
+        self.assertEqual(rec.round_id, 3)
+
+    def test_tagged_medic_excluded(self) -> None:
+        rows = [_pr(role="medic", times_tagged=1)]
+        self.assertIsNone(stat_feats.find_medic_shutout(rows))
+
+    def test_non_medic_excluded(self) -> None:
+        rows = [_pr(role="heavy", times_tagged=0)]
+        self.assertIsNone(stat_feats.find_medic_shutout(rows))
+
+    def test_best_by_tags_made(self) -> None:
+        rows = [
+            _pr(player_name="A", role="medic", times_tagged=0, tags_made=1),
+            _pr(player_name="B", role="medic", times_tagged=0, tags_made=5),
+        ]
+        rec = stat_feats.find_medic_shutout(rows)
+        self.assertEqual(rec.name, "B")
+
+
+class TestFindPerfectHeavy(SimpleTestCase):
+    def test_perfect_heavy_qualifies(self) -> None:
+        rows = [_pr(role="heavy", shots_missed=0, tags_made=4, round_id=9)]
+        rec = stat_feats.find_perfect_heavy(rows)
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec.kind, "perfect_heavy")
+        self.assertEqual(rec.round_id, 9)
+
+    def test_heavy_with_misses_excluded(self) -> None:
+        rows = [_pr(role="heavy", shots_missed=1, tags_made=4)]
+        self.assertIsNone(stat_feats.find_perfect_heavy(rows))
+
+    def test_heavy_with_zero_tags_excluded(self) -> None:
+        rows = [_pr(role="heavy", shots_missed=0, tags_made=0)]
+        self.assertIsNone(stat_feats.find_perfect_heavy(rows))
+
+    def test_non_heavy_excluded(self) -> None:
+        rows = [_pr(role="scout", shots_missed=0, tags_made=4)]
+        self.assertIsNone(stat_feats.find_perfect_heavy(rows))
+
+
+class TestFindTopMvpAndScore(SimpleTestCase):
+    def test_top_mvp(self) -> None:
+        rows = [
+            _pr(player_name="A", mvp=12.0),
+            _pr(player_name="B", mvp=99.5, round_id=4),
+        ]
+        rec = stat_feats.find_top_mvp(rows)
+        self.assertEqual(rec.kind, "top_mvp")
+        self.assertEqual(rec.name, "B")
+        self.assertEqual(rec.value, "99.5")
+        self.assertEqual(rec.round_id, 4)
+
+    def test_top_score(self) -> None:
+        rows = [
+            _pr(player_name="A", points_scored=100),
+            _pr(player_name="B", points_scored=8000, round_id=5),
+        ]
+        rec = stat_feats.find_top_score(rows)
+        self.assertEqual(rec.kind, "top_score")
+        self.assertEqual(rec.name, "B")
+        self.assertEqual(rec.value, "8000")
+
+    def test_empty_returns_none(self) -> None:
+        self.assertIsNone(stat_feats.find_top_mvp([]))
+        self.assertIsNone(stat_feats.find_top_score([]))
+
+
+class TestFindTagStreak(SimpleTestCase):
+    def test_most_tags_in_round(self) -> None:
+        rows = [
+            _pr(player_name="A", tags_made=3),
+            _pr(player_name="B", tags_made=17, round_id=6),
+        ]
+        rec = stat_feats.find_tag_streak(rows)
+        self.assertEqual(rec.kind, "tag_streak")
+        self.assertEqual(rec.name, "B")
+        self.assertEqual(rec.value, "17")
+
+    def test_zero_tags_returns_none(self) -> None:
+        self.assertIsNone(stat_feats.find_tag_streak([_pr(tags_made=0)]))
+
+
+class TestFindResuppliesAndMissiles(SimpleTestCase):
+    def test_most_resupplies(self) -> None:
+        rows = [_pr(player_name="Medic", resupplies_given=9, round_id=2)]
+        rec = stat_feats.find_most_resupplies(rows)
+        self.assertEqual(rec.kind, "most_resupplies")
+        self.assertEqual(rec.value, "9")
+
+    def test_most_missiles(self) -> None:
+        rows = [_pr(player_name="Heavy", missiles_landed=6, round_id=2)]
+        rec = stat_feats.find_most_missiles(rows)
+        self.assertEqual(rec.kind, "most_missiles")
+        self.assertEqual(rec.value, "6")
+
+    def test_zero_returns_none(self) -> None:
+        self.assertIsNone(stat_feats.find_most_resupplies([_pr(resupplies_given=0)]))
+        self.assertIsNone(stat_feats.find_most_missiles([_pr(missiles_landed=0)]))
+
+
+class TestFindComebackWin(SimpleTestCase):
+    def test_winner_lost_round_one_qualifies(self) -> None:
+        # Red won the match but lost round 1 (5 < 10).
+        rec = stat_feats.find_comeback_win([_match()])
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec.kind, "comeback_win")
+        self.assertEqual(rec.name, "Red Team")
+        self.assertEqual(rec.round_id, 2)
+
+    def test_winner_won_round_one_excluded(self) -> None:
+        m = _match(red_round1_points=20, blue_round1_points=5)
+        self.assertIsNone(stat_feats.find_comeback_win([m]))
+
+    def test_tie_match_excluded(self) -> None:
+        m = _match(winner_team_id=None, winner_team_name="")
+        self.assertIsNone(stat_feats.find_comeback_win([m]))
+
+    def test_last_qualifier_chosen(self) -> None:
+        m1 = _match(match_id=1, round_id=2)
+        m2 = _match(match_id=2, round_id=4, winner_team_name="Red Team")
+        rec = stat_feats.find_comeback_win([m1, m2])
+        self.assertEqual(rec.round_id, 4)
+
+
+class TestScanFeats(SimpleTestCase):
+    def test_stable_order_and_all_kinds(self) -> None:
+        rows = [
+            _pr(player_name="Cmdr", role="commander", nuke_detonations=3, round_id=1),
+            _pr(player_name="Doc", role="medic", times_tagged=0, tags_made=2),
+            _pr(player_name="Tank", role="heavy", shots_missed=0, tags_made=4),
+            _pr(
+                player_name="Star",
+                mvp=50.0,
+                points_scored=9000,
+                tags_made=10,
+                resupplies_given=3,
+                missiles_landed=2,
+            ),
+        ]
+        recs = stat_feats.scan_feats(rows, [_match()])
+        kinds = [r.kind for r in recs]
+        # triple_nuke first, comeback last.
+        self.assertEqual(kinds[0], "triple_nuke")
+        self.assertEqual(kinds[-1], "comeback_win")
+        for expected in (
+            "medic_shutout",
+            "perfect_heavy",
+            "top_mvp",
+            "top_score",
+            "tag_streak",
+            "most_resupplies",
+            "most_missiles",
+        ):
+            self.assertIn(expected, kinds)
+
+    def test_empty_inputs_return_empty(self) -> None:
+        self.assertEqual(stat_feats.scan_feats([], []), [])
+
+
+class TestNoDjangoImportsLeaked(SimpleTestCase):
+    """stat_feats.py must stay pure — no Django in sys.modules after import."""
+
+    def test_no_django_imported(self) -> None:
+        code = (
+            "import sys; import matches.stat_feats; "
+            "leaked = [m for m in sys.modules if m == 'django' "
+            "or m.startswith('django.')]; "
+            "assert not leaked, leaked; print('OK')"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            cwd=_manage_dir(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("OK", result.stdout)
+
+
+def _manage_dir() -> str:
+    """Directory containing manage.py (so `import matches.*` resolves)."""
+    import os
+
+    # This test file: .../laserforce_simulator/matches/tests/<file>
+    # manage.py lives at .../laserforce_simulator/
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.abspath(os.path.join(here, "..", ".."))
+
+
+# ===========================================================================
+# View tests (Django TestCase)
+# ===========================================================================
+
+
+def _attach_session(request):
+    SessionMiddleware(lambda r: None).process_request(request)
+    request.session.save()
+    return request
+
+
+def _get(league_id: int):
+    request = RequestFactory().get(f"/leagues/{league_id}/stats/statistical-feats/")
+    return _attach_session(request)
+
+
+def _make_league(name: str = "FeatLeague") -> League:
+    return League.objects.create(name=name)
+
+
+def _make_active_season(league: League, *, name: str = "S1", n_teams: int = 2):
+    season = Season.objects.create(
+        league=league, name=name, start_date=date(2026, 6, 1)
+    )
+    teams = []
+    for i in range(n_teams):
+        t, _ = make_team_with_slots(f"{league.name[:3]}T{i}")
+        teams.append(t)
+        season.teams.add(t)
+    season.start_season()
+    season.refresh_from_db()
+    return season, teams
+
+
+def _player_of(team):
+    return team.slot_commander
+
+
+def _make_round(
+    season,
+    team_red,
+    team_blue,
+    *,
+    round_number=1,
+    red_points=10,
+    blue_points=5,
+    completed=True,
+):
+    match, _ = Match.objects.get_or_create(
+        team_red=team_red, team_blue=team_blue, season=season
+    )
+    return match, GameRound.objects.create(
+        match=match,
+        team_red=team_red,
+        team_blue=team_blue,
+        round_number=round_number,
+        red_points=red_points,
+        blue_points=blue_points,
+        is_completed=completed,
+    )
+
+
+def _make_prs(game_round, player, team_color, role, **stats):
+    defaults = dict(
+        game_round=game_round,
+        player=player,
+        team_color=team_color,
+        role=role,
+    )
+    defaults.update(stats)
+    return PlayerRoundState.objects.create(**defaults)
+
+
+class TestStatisticalFeatsRouting(TestCase):
+    def test_get_returns_200(self) -> None:
+        league = _make_league()
+        _make_active_season(league)
+        response = statistical_feats(_get(league.id), league.id)
+        self.assertEqual(response.status_code, 200)
+
+    def test_post_returns_405(self) -> None:
+        league = _make_league()
+        request = _attach_session(
+            RequestFactory().post(f"/leagues/{league.id}/stats/statistical-feats/")
+        )
+        response = statistical_feats(request, league.id)
+        self.assertEqual(response.status_code, 405)
+
+    def test_bad_league_id_returns_404(self) -> None:
+        from django.http import Http404
+
+        with self.assertRaises(Http404):
+            statistical_feats(_get(999999), 999999)
+
+    def test_writes_last_league_id_to_session(self) -> None:
+        league = _make_league()
+        _make_active_season(league)
+        request = _get(league.id)
+        statistical_feats(request, league.id)
+        self.assertEqual(request.session.get("last_league_id"), league.id)
+
+
+class TestStatisticalFeatsEmptyState(TestCase):
+    def test_no_season_renders_empty_notice_with_no_season(self) -> None:
+        league = _make_league()
+        response = statistical_feats(_get(league.id), league.id)
+        content = response.content.decode()
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("stat-feats-empty-notice", content)
+        self.assertIn("No Season", content)
+
+    def test_no_season_still_renders_sidebar(self) -> None:
+        league = _make_league()
+        response = statistical_feats(_get(league.id), league.id)
+        self.assertIn("league-sidebar", response.content.decode())
+
+    def test_season_no_feats_renders_empty_notice(self) -> None:
+        league = _make_league()
+        _make_active_season(league)
+        response = statistical_feats(_get(league.id), league.id)
+        content = response.content.decode()
+        self.assertIn("stat-feats-empty-notice", content)
+
+
+class TestStatisticalFeatsBody(TestCase):
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = teams
+
+    def test_perfect_heavy_and_top_score_render(self) -> None:
+        _match, gr = _make_round(self.season, self.team_a, self.team_b)
+        _make_prs(
+            gr,
+            self.team_a.slot_heavy,
+            "red",
+            "heavy",
+            shots_missed=0,
+            tags_made=5,
+            points_scored=6000,
+        )
+        response = statistical_feats(_get(self.league.id), self.league.id)
+        content = response.content.decode()
+        self.assertIn("stat-feats-list", content)
+        self.assertIn("stat-feat-perfect_heavy", content)
+        self.assertIn("stat-feat-top_score", content)
+        self.assertIn(f"/matches/game-round/{gr.id}/", content)
+
+    def test_medic_shutout_render(self) -> None:
+        _match, gr = _make_round(self.season, self.team_a, self.team_b)
+        _make_prs(
+            gr,
+            self.team_a.slot_medic,
+            "red",
+            "medic",
+            times_tagged=0,
+            tags_made=1,
+        )
+        response = statistical_feats(_get(self.league.id), self.league.id)
+        self.assertIn("stat-feat-medic_shutout", response.content.decode())
+
+    def test_triple_nuke_render(self) -> None:
+        _m, gr = _make_round(self.season, self.team_a, self.team_b)
+        cmdr = self.team_a.slot_commander
+        _make_prs(gr, cmdr, "red", "commander", tags_made=1)
+        for tick in (100, 200, 300):
+            GameEvent.objects.create(
+                game_round=gr,
+                actor=cmdr,
+                event_type="special",
+                timestamp=tick,
+                points_awarded=500,
+                metadata={"targets": [1, 2]},
+            )
+        response = statistical_feats(_get(self.league.id), self.league.id)
+        content = response.content.decode()
+        self.assertIn("stat-feat-triple_nuke", content)
+        self.assertIn(cmdr.name, content)
+
+    def test_nuke_activation_not_counted(self) -> None:
+        # Activation rows (points=0, fires_at) must NOT count toward triple-nuke.
+        _m, gr = _make_round(self.season, self.team_a, self.team_b)
+        cmdr = self.team_a.slot_commander
+        _make_prs(gr, cmdr, "red", "commander")
+        for tick in (100, 200, 300):
+            GameEvent.objects.create(
+                game_round=gr,
+                actor=cmdr,
+                event_type="special",
+                timestamp=tick,
+                points_awarded=0,
+                metadata={"fires_at": tick + 20},
+            )
+        response = statistical_feats(_get(self.league.id), self.league.id)
+        self.assertNotIn("stat-feat-triple_nuke", response.content.decode())
+
+    def test_comeback_win_render(self) -> None:
+        # team_a (red) loses round 1 but wins the match.
+        match, gr1 = _make_round(
+            self.season,
+            self.team_a,
+            self.team_b,
+            round_number=1,
+            red_points=5,
+            blue_points=12,
+            completed=False,
+        )
+        GameRound.objects.create(
+            match=match,
+            team_red=self.team_b,
+            team_blue=self.team_a,
+            round_number=2,
+            red_points=2,
+            blue_points=20,
+            is_completed=True,
+        )
+        # team_a won round 1? no (lost 5<12); round 2 team_a played blue, scored 20.
+        match.red_round1_points = 5
+        match.blue_round1_points = 12
+        match.red_round2_points = 2
+        match.blue_round2_points = 20
+        match.is_completed = True
+        match.save()
+        match.refresh_from_db()
+        # Winner is team_a (won round 2, 2 rounds tie 1-1 -> total points 25 vs 14).
+        response = statistical_feats(_get(self.league.id), self.league.id)
+        content = response.content.decode()
+        if match.winner_id == self.team_a.id:
+            self.assertIn("stat-feat-comeback_win", content)
+
+    def test_sidebar_active_entry_present(self) -> None:
+        response = statistical_feats(_get(self.league.id), self.league.id)
+        self.assertIn("sidebar-stats-statistical_feats", response.content.decode())

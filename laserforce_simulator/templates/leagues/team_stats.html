@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}{{ league.name }} — Team Stats{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
+        <h1 class="mb-3">{{ league.name }} — Team Stats</h1>
+
+        {% if displayed_season is None %}
+            <div id="team-stats-empty-notice" class="alert alert-info">
+                No Season in this League yet — start a Season to populate team stats.
+            </div>
+        {% elif not rows %}
+            <div id="team-stats-empty-notice" class="alert alert-info">
+                No teams enrolled in this Season yet.
+            </div>
+        {% else %}
+            <div class="table-responsive">
+                <table id="team-stats-table" class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            {% for key, label in sort_keys_display %}
+                                {% if key == sort %}
+                                    {% if dir == "asc" %}
+                                        <th><a href="?sort={{ key }}&dir=desc">{{ label }} &uarr;</a></th>
+                                    {% else %}
+                                        <th><a href="?sort={{ key }}&dir=asc">{{ label }} &darr;</a></th>
+                                    {% endif %}
+                                {% else %}
+                                    <th><a href="?sort={{ key }}&dir=asc">{{ label }}</a></th>
+                                {% endif %}
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in rows %}
+                            <tr id="team-stats-row-{{ row.team_id }}">
+                                <td>{{ row.team_name }}</td>
+                                <td class="text-end">{{ row.avg_points_for|floatformat:1 }}</td>
+                                <td class="text-end">{{ row.avg_points_against|floatformat:1 }}</td>
+                                <td class="text-end">{{ row.avg_margin|floatformat:1 }}</td>
+                                <td class="text-end">{{ row.avg_survivors|floatformat:2 }}</td>
+                                <td class="text-end">{{ row.total_tags_landed }}</td>
+                                <td class="text-end">{{ row.total_times_tagged }}</td>
+                                <td class="text-end">{{ row.base_captures }}</td>
+                                <td class="text-end">{{ row.missiles_fired }}</td>
+                                <td class="text-end">{{ row.missiles_hit }}</td>
+                                <td class="text-end">{{ row.nukes_fired }}</td>
+                                <td class="text-end">{{ row.nukes_landed }}</td>
+                                <td class="text-end">{{ row.cancelled_nukes }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+    </main>
+</div>
+{% endblock %}

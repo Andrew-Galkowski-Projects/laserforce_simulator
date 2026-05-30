@@ -771,15 +771,15 @@ def _build_league_sidebar_links(
             "league",
             "power_rankings",
             "Power Rankings",
-            _cs("coming_soon_power_rankings"),
+            _cs("league_power_rankings"),
         ),
         # TEAM (4)
-        ("team", "roster", "Roster", _cs("coming_soon_team_roster")),
+        ("team", "roster", "Roster", _cs("team_roster")),
         ("team", "schedule_team", "Schedule", schedule_team_url),
         ("team", "finances_team", "Finances", _cs("coming_soon_team_finances")),
-        ("team", "history_team", "History", _cs("coming_soon_team_history")),
+        ("team", "history_team", "History", _cs("team_history")),
         # PLAYERS (6)
-        ("players", "free_agents", "Free Agents", _cs("coming_soon_free_agents")),
+        ("players", "free_agents", "Free Agents", _cs("players_free_agents")),
         ("players", "trade", "Trade", _cs("coming_soon_trade")),
         (
             "players",
@@ -788,7 +788,7 @@ def _build_league_sidebar_links(
             _cs("coming_soon_trading_block"),
         ),
         ("players", "prospects", "Prospects", _cs("coming_soon_prospects")),
-        ("players", "watch_list", "Watch List", _cs("coming_soon_watch_list")),
+        ("players", "watch_list", "Watch List", _cs("players_watch_list")),
         (
             "players",
             "hall_of_fame",
@@ -796,26 +796,26 @@ def _build_league_sidebar_links(
             _cs("coming_soon_hall_of_fame"),
         ),
         # STATS (6) — LG-01h, entire section NEW
-        ("stats", "game_log", "Game Log", _cs("coming_soon_game_log")),
+        ("stats", "game_log", "Game Log", _cs("stats_game_log")),
         (
             "stats",
             "league_leaders",
             "League Leaders",
-            _cs("coming_soon_league_leaders"),
+            _cs("stats_league_leaders"),
         ),
         (
             "stats",
             "player_ratings",
             "Player Ratings",
-            _cs("coming_soon_player_ratings"),
+            _cs("stats_player_ratings"),
         ),
-        ("stats", "player_stats", "Player Stats", _cs("coming_soon_player_stats")),
-        ("stats", "team_stats", "Team Stats", _cs("coming_soon_team_stats")),
+        ("stats", "player_stats", "Player Stats", _cs("stats_player_stats")),
+        ("stats", "team_stats", "Team Stats", _cs("stats_team_stats")),
         (
             "stats",
             "statistical_feats",
             "Statistical Feats",
-            _cs("coming_soon_statistical_feats"),
+            _cs("stats_statistical_feats"),
         ),
     ]
 

@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block title %}{% if team %}{{ team.name }} — History{% else %}{{ league.name }} — History{% endif %}{% endblock %}
+
+{% block content %}
+<style>
+    .team-history-player-green td:first-child a { color: #198754; }
+    .team-history-player-blue td:first-child a { color: #0d6efd; }
+</style>
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
+        {% if not displayed_season %}
+            <h1 class="mb-3">{{ league.name }} — History</h1>
+            <div id="team-history-empty-notice" class="alert alert-info">
+                No Season in this League yet — start a Season to view team history.
+            </div>
+        {% elif not team %}
+            <h1 class="mb-3">{{ league.name }} — History</h1>
+            <div id="team-history-empty-notice" class="alert alert-info">
+                No team available to display in this League's current Season.
+            </div>
+        {% else %}
+            <h1 class="mb-3">{{ team.name }} — History</h1>
+
+            <form method="get" class="mb-4">
+                <label for="team-history-team-picker" class="form-label me-2">Team:</label>
+                <select id="team-history-team-picker" name="team_id"
+                        class="form-select form-select-sm d-inline-block w-auto"
+                        onchange="this.form.submit()">
+                    {% for option in enrolled_teams %}
+                        <option value="{{ option.id }}"{% if option.id == team.id %} selected{% endif %}>{{ option.name }}</option>
+                    {% endfor %}
+                </select>
+                <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">View</button></noscript>
+            </form>
+
+            <ul class="nav nav-tabs" id="team-history-tabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="team-history-overall-tab"
+                            data-bs-toggle="tab" data-bs-target="#team-history-overall"
+                            type="button" role="tab"
+                            aria-controls="team-history-overall" aria-selected="true">
+                        Overall
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="team-history-seasons-tab"
+                            data-bs-toggle="tab" data-bs-target="#team-history-seasons"
+                            type="button" role="tab"
+                            aria-controls="team-history-seasons" aria-selected="false">
+                        Seasons
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="team-history-players-tab"
+                            data-bs-toggle="tab" data-bs-target="#team-history-players"
+                            type="button" role="tab"
+                            aria-controls="team-history-players" aria-selected="false">
+                        Players
+                    </button>
+                </li>
+            </ul>
+
+            <div class="tab-content pt-3">
+                {# ---------------------------------------------------------- #}
+                {# Overall tab                                                #}
+                {# ---------------------------------------------------------- #}
+                <div class="tab-pane fade show active" id="team-history-overall"
+                     role="tabpanel" aria-labelledby="team-history-overall-tab">
+                    <h2 class="h5">Overall</h2>
+                    {% if overall_record %}
+                        <dl class="row" style="max-width: 22rem;">
+                            <dt class="col-7">Record (round W-L-T)</dt>
+                            <dd class="col-5">{{ overall_record.wins }}-{{ overall_record.losses }}-{{ overall_record.ties }}</dd>
+                            <dt class="col-7">Playoff appearances</dt>
+                            <dd class="col-5">{{ overall_record.playoff_appearances }}</dd>
+                            <dt class="col-7">Championships</dt>
+                            <dd class="col-5">{{ overall_record.championships }}</dd>
+                        </dl>
+                    {% else %}
+                        <p class="text-muted">No history yet.</p>
+                    {% endif %}
+                </div>
+
+                {# ---------------------------------------------------------- #}
+                {# Seasons tab                                                #}
+                {# ---------------------------------------------------------- #}
+                <div class="tab-pane fade" id="team-history-seasons"
+                     role="tabpanel" aria-labelledby="team-history-seasons-tab">
+                    <h2 class="h5">Seasons</h2>
+                    <div class="table-responsive">
+                        <table id="team-history-seasons-table" class="table table-striped table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Year</th>
+                                    <th class="text-end">Record (W-L-T)</th>
+                                    <th class="text-end">Final rank</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in season_rows %}
+                                    <tr id="team-history-season-row-{{ row.season_id }}">
+                                        <td>{% if row.year is not None %}{{ row.year }}{% else %}—{% endif %}</td>
+                                        <td class="text-end">{{ row.wins }}-{{ row.losses }}-{{ row.ties }}</td>
+                                        <td class="text-end">{% if row.rank is not None %}{{ row.rank }}{% else %}—{% endif %}</td>
+                                    </tr>
+                                {% empty %}
+                                    <tr><td colspan="3" class="text-muted">No Seasons enrolled.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                {# ---------------------------------------------------------- #}
+                {# Players tab                                                #}
+                {# ---------------------------------------------------------- #}
+                <div class="tab-pane fade" id="team-history-players"
+                     role="tabpanel" aria-labelledby="team-history-players-tab">
+                    <h2 class="h5">Players</h2>
+                    <p class="text-muted small">
+                        Players currently on this team are
+                        <span class="team-history-player-green">highlighted in green</span>.
+                        Players now on another team are
+                        <span class="team-history-player-blue">highlighted in blue</span>.
+                    </p>
+                    <div class="table-responsive">
+                        <table id="team-history-players-table" class="table table-striped table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th class="text-end">Games</th>
+                                    <th class="text-end">Points</th>
+                                    <th class="text-end">Tags</th>
+                                    <th class="text-end">Times tagged</th>
+                                    <th class="text-end">Missiles</th>
+                                    <th class="text-end">Resupplies</th>
+                                    <th class="text-end">Specials</th>
+                                    <th class="text-end">Last season</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for p in player_rollups %}
+                                    <tr id="team-history-player-row-{{ p.player_id }}" class="{{ p.colour_class }}">
+                                        <td><a href="{% url 'player_career_stats' p.player_id %}">{{ p.name }}</a></td>
+                                        <td class="text-end">{{ p.games_played }}</td>
+                                        <td class="text-end">{{ p.stats.points_scored }}</td>
+                                        <td class="text-end">{{ p.stats.tags_made }}</td>
+                                        <td class="text-end">{{ p.stats.times_tagged }}</td>
+                                        <td class="text-end">{{ p.stats.missiles_landed }}</td>
+                                        <td class="text-end">{{ p.stats.resupplies_given }}</td>
+                                        <td class="text-end">{{ p.stats.specials_used }}</td>
+                                        <td class="text-end">{% if p.last_season_year is not None %}{{ p.last_season_year }}{% else %}—{% endif %}</td>
+                                    </tr>
+                                {% empty %}
+                                    <tr><td colspan="9" class="text-muted">No players have appeared for this team yet.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        {% endif %}
+    </main>
+</div>
+{% endblock %}

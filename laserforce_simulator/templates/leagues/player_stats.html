@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}{{ league.name }} — Player Stats{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
+        <h1 class="mb-3">Player Stats</h1>
+
+        {% if not displayed_season %}
+            <div id="player-stats-empty-notice" class="alert alert-info">
+                No Season in this League yet — start a Season to view player stats.
+            </div>
+        {% elif not page_obj or paginator.count == 0 %}
+            <div id="player-stats-empty-notice" class="alert alert-info">
+                No player performance recorded in this League's current Season yet.
+            </div>
+        {% else %}
+            <p class="text-muted">{{ paginator.count }} player{{ paginator.count|pluralize }}</p>
+
+            <div class="table-responsive">
+                <table class="table table-striped" id="player-stats-table">
+                    <thead>
+                        <tr>
+                            {% for key, label, is_float in columns %}
+                                {% if key == sort %}
+                                    {% if dir == "asc" %}
+                                        <th id="player-stats-th-{{ key }}">
+                                            <a href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort={{ key }}&dir=desc">{{ label }} ↑</a>
+                                        </th>
+                                    {% else %}
+                                        <th id="player-stats-th-{{ key }}">
+                                            <a href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort={{ key }}&dir=asc">{{ label }} ↓</a>
+                                        </th>
+                                    {% endif %}
+                                {% else %}
+                                    <th id="player-stats-th-{{ key }}">
+                                        <a href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort={{ key }}&dir=desc">{{ label }}</a>
+                                    </th>
+                                {% endif %}
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in page_obj %}
+                        <tr>
+                            <td><a href="{% url 'player_career_stats' row.player_id %}">{{ row.player_name }}</a></td>
+                            <td>{{ row.team_name }}</td>
+                            <td>{{ row.games }}</td>
+                            <td>{{ row.stats.points_scored|floatformat:0 }}</td>
+                            <td>{{ row.stats.mvp|floatformat:1 }}</td>
+                            <td>{{ row.stats.tags_made|floatformat:0 }}</td>
+                            <td>{{ row.stats.times_tagged|floatformat:0 }}</td>
+                            <td>{{ row.stats.accuracy|floatformat:1 }}</td>
+                            <td>{{ row.stats.final_lives|floatformat:0 }}</td>
+                            <td>{{ row.stats.resupplies_given|floatformat:0 }}</td>
+                            <td>{{ row.stats.missiles_landed|floatformat:0 }}</td>
+                            <td>{{ row.stats.specials_used|floatformat:0 }}</td>
+                            <td>{{ row.stats.follow_up_shots|floatformat:0 }}</td>
+                            <td>{{ row.stats.reaction_shots|floatformat:0 }}</td>
+                            <td>{{ row.stats.combo_resupply_count|floatformat:0 }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% if page_obj.has_other_pages %}
+                <nav id="player-stats-pagination" aria-label="Player stats pagination">
+                    <ul class="pagination">
+                        {% if page_obj.has_previous %}
+                            <li class="page-item">
+                                <a class="page-link" href="?{{ querystring_without_page }}{% if querystring_without_page %}&{% endif %}page={{ page_obj.previous_page_number }}">Previous</a>
+                            </li>
+                        {% else %}
+                            <li class="page-item disabled"><span class="page-link">Previous</span></li>
+                        {% endif %}
+                        <li class="page-item active">
+                            <span class="page-link">Page {{ page_obj.number }} of {{ paginator.num_pages }}</span>
+                        </li>
+                        {% if page_obj.has_next %}
+                            <li class="page-item">
+                                <a class="page-link" href="?{{ querystring_without_page }}{% if querystring_without_page %}&{% endif %}page={{ page_obj.next_page_number }}">Next</a>
+                            </li>
+                        {% else %}
+                            <li class="page-item disabled"><span class="page-link">Next</span></li>
+                        {% endif %}
+                    </ul>
+                </nav>
+            {% endif %}
+        {% endif %}
+    </main>
+</div>
+{% endblock %}

@@ -2085,21 +2085,26 @@ class TestBugfixMedicHitsTracked:
         defender = _make_ps("medic", team_color="blue", final_shots=20, survival=0)
         sim = BatchSimulator()
         log: list = []
-        sim._resolve_tag_attempts(
-            [
-                {
-                    "attacker": attacker,
-                    "defender": defender,
-                    "second": 5,
-                    "movement_ctx": None,
-                    "overwatch": False,
-                }
-            ],
-            second=5,
-            event_log=log,
-            pending_followups=[],
-            pending_reactions=[],
-        )
+        # accuracy=100/survival=0 clamps hit_chance to 95%, not 100% — force
+        # the hit deterministically so the test never flakes on the ~5% miss
+        # (matches the patch("random.randint", return_value=1) idiom used
+        # throughout this file).
+        with patch("random.randint", return_value=1):
+            sim._resolve_tag_attempts(
+                [
+                    {
+                        "attacker": attacker,
+                        "defender": defender,
+                        "second": 5,
+                        "movement_ctx": None,
+                        "overwatch": False,
+                    }
+                ],
+                second=5,
+                event_log=log,
+                pending_followups=[],
+                pending_reactions=[],
+            )
         assert (
             attacker.counters.tags_made >= 1
         ), "fixture must produce a hit (accuracy=100)"
@@ -2113,21 +2118,24 @@ class TestBugfixMedicHitsTracked:
         defender = _make_ps("heavy", team_color="blue", final_shots=20, survival=0)
         sim = BatchSimulator()
         log: list = []
-        sim._resolve_tag_attempts(
-            [
-                {
-                    "attacker": attacker,
-                    "defender": defender,
-                    "second": 5,
-                    "movement_ctx": None,
-                    "overwatch": False,
-                }
-            ],
-            second=5,
-            event_log=log,
-            pending_followups=[],
-            pending_reactions=[],
-        )
+        # Force the hit deterministically (see the medic-hit test above) so
+        # we verify medic_hits stays 0 on a real landed tag, not a flaky miss.
+        with patch("random.randint", return_value=1):
+            sim._resolve_tag_attempts(
+                [
+                    {
+                        "attacker": attacker,
+                        "defender": defender,
+                        "second": 5,
+                        "movement_ctx": None,
+                        "overwatch": False,
+                    }
+                ],
+                second=5,
+                event_log=log,
+                pending_followups=[],
+                pending_reactions=[],
+            )
         assert attacker.medic_hits == 0, (
             f"non-medic tag must not bump medic_hits; got " f"{attacker.medic_hits}"
         )
