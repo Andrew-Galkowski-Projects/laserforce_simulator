@@ -10,7 +10,8 @@ Fixtures are hand-constructed League / Season / Team / Player rows —
 LG-01z runs NO simulation, so the simulator is never entered.
 
 "Free agent" as implemented = a Player whose Team is the reserved "Free
-Agents" pool team OR whose Team is NOT enrolled in the displayed Season.
+Agents" pool team (a Player on no competitive roster). Players on any real
+Team are NOT free agents.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from django.test import RequestFactory, TestCase
 from matches.league_screens.free_agents import free_agents
 from matches.models import League, Season
 from matches.tests.conftest import make_team_with_slots
-from teams.models import Player, Team, get_free_agents_team
+from teams.models import Player, Team
 
 
 def _attach_session(request):
@@ -43,7 +44,12 @@ def _get(league_id: int, *, query: str = ""):
 
 
 def _make_league(name: str = "FALeague") -> League:
-    return League.objects.create(name=name)
+    """Create a League with its own dedicated free-agent pool Team."""
+    league = League.objects.create(name=name)
+    pool = Team.objects.create(name=f"{name} Free Agents")
+    league.free_agent_pool = pool
+    league.save(update_fields=["free_agent_pool"])
+    return league
 
 
 def _make_active_season(league: League, *, name: str = "S1", n_teams: int = 2):
@@ -133,20 +139,21 @@ class TestFreeAgentsDefinition(TestCase):
         self.enrolled_a, self.enrolled_b = self.teams
 
     def test_pool_team_player_is_a_free_agent(self) -> None:
-        pool = get_free_agents_team()
+        pool = self.league.free_agent_pool
         fa = Player.objects.create(team=pool, name="PoolStar")
         response = free_agents(_get(self.league.id), self.league.id)
         content = response.content.decode()
         self.assertIn("PoolStar", content)
         self.assertIn(f"/players/{fa.id}/stats/", content)
 
-    def test_player_on_unenrolled_team_is_a_free_agent(self) -> None:
+    def test_player_on_unenrolled_team_is_not_a_free_agent(self) -> None:
+        # A Player on any real Team — even one not enrolled in this Season —
+        # has a team, so they are NOT a free agent.
         outsider = Team.objects.create(name="Outsiders")
-        fa = Player.objects.create(team=outsider, name="Outsider Ace")
+        Player.objects.create(team=outsider, name="Outsider Ace")
         response = free_agents(_get(self.league.id), self.league.id)
         content = response.content.decode()
-        self.assertIn("Outsider Ace", content)
-        self.assertIn(f"/players/{fa.id}/stats/", content)
+        self.assertNotIn("Outsider Ace", content)
 
     def test_player_on_enrolled_team_is_not_a_free_agent(self) -> None:
         enrolled_player = self.enrolled_a.active_players[0]
@@ -154,6 +161,14 @@ class TestFreeAgentsDefinition(TestCase):
         content = response.content.decode()
         # Enrolled-team players must NOT appear in the free-agent listing.
         self.assertNotIn(enrolled_player.name, content)
+
+    def test_another_leagues_pool_player_is_not_a_free_agent(self) -> None:
+        # Free agents are per-League: a Player in a DIFFERENT League's pool
+        # must NOT appear on this League's Free Agents screen.
+        other_league = _make_league("OtherLeague")
+        Player.objects.create(team=other_league.free_agent_pool, name="Foreign Agent")
+        response = free_agents(_get(self.league.id), self.league.id)
+        self.assertNotIn("Foreign Agent", response.content.decode())
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +180,7 @@ class TestFreeAgentsBody(TestCase):
     def setUp(self) -> None:
         self.league = _make_league()
         self.season, _ = _make_active_season(self.league, n_teams=2)
-        self.pool = get_free_agents_team()
+        self.pool = self.league.free_agent_pool
         self.fa = Player.objects.create(team=self.pool, name="Agent Smith")
 
     def test_table_dom_id_present(self) -> None:
@@ -197,7 +212,7 @@ class TestFreeAgentsSorting(TestCase):
     def setUp(self) -> None:
         self.league = _make_league()
         self.season, _ = _make_active_season(self.league, n_teams=2)
-        self.pool = get_free_agents_team()
+        self.pool = self.league.free_agent_pool
         # Three free agents with distinct names + accuracy values.
         self.zed = Player.objects.create(team=self.pool, name="Zed", accuracy=10)
         self.amy = Player.objects.create(team=self.pool, name="Amy", accuracy=90)

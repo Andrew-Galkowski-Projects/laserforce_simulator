@@ -1,10 +1,11 @@
 """LG-01z-f — Free Agents (league-context) screen.
 
 Read-only, GET-only, sortable + paginated list of every **free agent** in
-a League's displayed Season. A free agent is a Player who is either on the
-reserved "Free Agents" pool team (``teams.models.get_free_agents_team()``)
-OR on a Team that is NOT enrolled in the displayed Season. Each player
-links to their career / player page (``player_career_stats`` —
+a League's displayed Season. A free agent is a Player on the reserved
+"Free Agents" pool team (``teams.models.get_free_agents_team()``) — i.e. a
+Player on no competitive roster. Players on any real Team (enrolled in the
+Season or not) have a team and are NOT free agents. Each player links to
+their career / player page (``player_career_stats`` —
 ``/players/<id>/stats/``). There is no sign action (deferred with the cap
 model).
 
@@ -33,24 +34,24 @@ from matches.league_views import (
     _coerce_per_page,
 )
 from matches.models import League
-from teams.models import Player, get_free_agents_team
+from teams.models import Player
 from teams.views import _coerce_dir, _coerce_sort, _SORT_KEYS, _SORT_KEYS_DISPLAY
 
 
-def _free_agent_queryset(displayed_season) -> "QuerySet[Player]":
-    """Players who are free agents in ``displayed_season``.
+def _free_agent_queryset(league: League) -> "QuerySet[Player]":
+    """Players who are free agents in ``league`` — on **no** competitive Team.
 
-    Free agent = on the reserved "Free Agents" pool team OR on a Team that
-    is NOT enrolled in ``displayed_season``. The queryset is annotated with
+    A free agent is a Player on this League's dedicated free-agent pool
+    Team (``league.free_agent_pool``). Each League owns its own pool, so a
+    Player only appears for the League whose pool they belong to. Players
+    on any competitive Team are NOT free agents (they have a team).
+    Filtering on ``league.free_agent_pool_id`` (``None`` when the League has
+    no pool — e.g. legacy Leagues) yields an empty queryset, since every
+    Player has a non-null team. The queryset is annotated with
     ``overall_rating_db`` (mean of the 19 stats) so the LG-00c
     ``overall_rating`` sort key has an ORM target.
     """
-    enrolled_ids = set(displayed_season.teams.values_list("id", flat=True))
-    free_agents_team = get_free_agents_team()
-    # Pool team OR any team not enrolled in the displayed Season.
-    qs = Player.objects.select_related("team").exclude(
-        team_id__in=enrolled_ids - {free_agents_team.id}
-    )
+    qs = Player.objects.select_related("team").filter(team_id=league.free_agent_pool_id)
     return qs.annotate(
         overall_rating_db=(
             F("player_awareness")
@@ -122,7 +123,7 @@ def free_agents(request: HttpRequest, league_id: int) -> HttpResponse:
         context["querystring_without_sort_dir_page"] = ""
         return render(request, "leagues/free_agents.html", context)
 
-    qs = _free_agent_queryset(displayed_season)
+    qs = _free_agent_queryset(league)
 
     if sort == "preferred_roles":
         rows = list(qs)

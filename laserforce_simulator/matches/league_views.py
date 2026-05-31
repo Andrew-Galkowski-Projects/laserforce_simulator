@@ -30,7 +30,7 @@ from django.urls import reverse
 
 from teams.constants import PLAYER_NAMES, TEAM_NAMES
 from teams.models import Team
-from teams.views import _generate_teams
+from teams.views import _generate_free_agents, _generate_teams
 
 from .forms import CreateLeagueForm
 from .models import GameRound, League, Match, PlayerRoundState, Season
@@ -329,11 +329,28 @@ def league_create(request) -> HttpResponse:
         mode="league",
         state="active",
     )
+    # This League's dedicated free-agent pool Team. Hidden from
+    # ``Team.objects.regular()`` via the ``free_agent_pool`` FK, so it
+    # never appears in competitive team lists.
+    pool_team = Team.objects.create(name=f"{cleaned['league_name']} Free Agents")
+    league.free_agent_pool = pool_team
     # LG-01g: auto-set the manager's current_team to the alphabetically-first
     # generated Team so the TEAM > Schedule sidebar entry has a default
     # target on the next render.
     league.current_team = sorted(created_teams, key=lambda t: t.name)[0]
-    league.save(update_fields=["current_team"])
+    league.save(update_fields=["current_team", "free_agent_pool"])
+
+    # Seed a pool of 100–200 free agents (Players on no competitive
+    # roster) into THIS League's pool so its Free Agents screen is
+    # populated from the start.
+    _generate_free_agents(
+        rng.randint(100, 200),
+        rng=rng,
+        mean=cleaned["mean"],
+        std_dev=cleaned["std_dev"],
+        player_names_pool=player_names_pool,
+        team=pool_team,
+    )
     season = Season.objects.create(
         league=league,
         name=cleaned["season_name"],

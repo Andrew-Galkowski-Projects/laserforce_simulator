@@ -837,6 +837,18 @@ class League(models.Model):
         on_delete=models.SET_NULL,
         related_name="managed_in_leagues",
     )
+    # Each League owns its own pool of free agents (Players on no
+    # competitive roster). The pool is a dedicated Team created at
+    # League-create time; ``Team.objects.regular()`` hides any Team
+    # referenced here so per-League pools never leak into competitive
+    # team lists. SET_NULL on Team delete.
+    free_agent_pool = models.ForeignKey(
+        "teams.Team",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="free_agent_pool_for",
+    )
 
     def __str__(self) -> str:
         return self.name
