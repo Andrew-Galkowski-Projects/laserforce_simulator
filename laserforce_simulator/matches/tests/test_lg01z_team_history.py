@@ -305,16 +305,22 @@ class TestTeamHistoryTabs(TestCase):
         self.league.current_team = self.team_a
         self.league.save(update_fields=["current_team"])
 
-    def test_three_tab_dom_ids_present(self) -> None:
+    def test_three_section_dom_ids_present(self) -> None:
         content = team_history(_get(self.league.id), self.league.id).content.decode()
         self.assertIn("team-history-tabs", content)
         self.assertIn("team-history-overall", content)
         self.assertIn("team-history-seasons", content)
         self.assertIn("team-history-players", content)
 
-    def test_uses_bootstrap_tab_toggle(self) -> None:
+    def test_all_three_sections_on_one_screen(self) -> None:
+        # Single-screen layout: Overall, Seasons and Players are all rendered
+        # together — no Bootstrap tab toggle gating their visibility.
         content = team_history(_get(self.league.id), self.league.id).content.decode()
-        self.assertIn('data-bs-toggle="tab"', content)
+        self.assertNotIn('data-bs-toggle="tab"', content)
+        # All three section headings render at once.
+        self.assertIn("Overall", content)
+        self.assertIn("Seasons", content)
+        self.assertIn("Players", content)
 
     def test_sidebar_active_is_history_team(self) -> None:
         content = team_history(_get(self.league.id), self.league.id).content.decode()
