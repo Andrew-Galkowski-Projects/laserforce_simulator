@@ -179,6 +179,18 @@ class TestWatchListBody(TestCase):
         # The watched player's option must not be selectable to add again.
         self.assertNotIn(f'<option value="{self.player.id}">', content)
 
+    def test_remove_all_control_present_when_watching(self) -> None:
+        request = self._get_with_watched(self.player.id)
+        response = watch_list(request, self.league.id)
+        content = response.content.decode()
+        self.assertIn("watch-list-remove-all", content)
+        self.assertIn("action=clear", content)
+
+    def test_remove_all_control_absent_when_empty(self) -> None:
+        # No "Remove All" affordance when the watch list is empty.
+        response = watch_list(_get(self.league.id), self.league.id)
+        self.assertNotIn("watch-list-remove-all", response.content.decode())
+
 
 # ---------------------------------------------------------------------------
 # GET toggle — add / remove / invalid id, with redirect + session mutation
@@ -239,6 +251,31 @@ class TestWatchListToggle(TestCase):
         response = watch_list(request, self.league.id)
         self.assertEqual(response.status_code, 302)
         self.assertEqual(request.session.get("watch_list", []), [])
+
+    def test_clear_empties_watch_list_and_redirects(self) -> None:
+        request = _get(self.league.id, query="action=clear")
+        request.session["watch_list"] = [self.player.id, self.other.id]
+        request.session.save()
+        response = watch_list(request, self.league.id)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"], WATCH_LIST_PATH.format(lid=self.league.id)
+        )
+        self.assertEqual(request.session["watch_list"], [])
+
+    def test_clear_on_empty_list_is_noop_and_redirects(self) -> None:
+        request = _get(self.league.id, query="action=clear")
+        response = watch_list(request, self.league.id)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(request.session.get("watch_list", []), [])
+
+    def test_clear_ignores_player_id_param(self) -> None:
+        # action=clear empties everything regardless of any player_id supplied.
+        request = _get(self.league.id, query=f"action=clear&player_id={self.player.id}")
+        request.session["watch_list"] = [self.player.id, self.other.id]
+        request.session.save()
+        watch_list(request, self.league.id)
+        self.assertEqual(request.session["watch_list"], [])
 
     def test_toggle_fires_before_no_season_render(self) -> None:
         # A toggle action redirects even when the League has no Season.

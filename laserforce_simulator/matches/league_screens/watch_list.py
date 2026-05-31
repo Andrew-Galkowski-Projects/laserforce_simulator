@@ -9,8 +9,9 @@ Follows the shared LG-01z view contract (§2 of the seam contract) EXCEPT
 for the documented GET-toggle exception (§4 entry "j"): a plain GET renders
 the list, while ``?action=add|remove&player_id=<id>`` mutates the session
 and redirects back to the bare watch-list URL so a refresh does not
-re-toggle. POST would require CSRF plumbing; a GET toggle is acceptable for
-a session-local convenience list.
+re-toggle. ``?action=clear`` empties the whole list (the "Remove All"
+control; no ``player_id`` needed). POST would require CSRF plumbing; a GET
+toggle is acceptable for a session-local convenience list.
 
 Renders the watched players (each links to their player/career page) with a
 Remove control, plus an add control listing the remaining players with an
@@ -51,18 +52,23 @@ def watch_list(request: HttpRequest, league_id: int) -> HttpResponse:
     # Mutate the session then redirect back to the bare watch-list URL so a
     # refresh does not re-toggle. The League 404 above still fires first.
     action = request.GET.get("action")
-    if action in ("add", "remove"):
+    if action in ("add", "remove", "clear"):
         watched: list = list(request.session.get("watch_list", []))
-        player_id = _coerce_player_id(request.GET.get("player_id"))
-        # Only mutate for a real Player id; invalid / unknown ids are ignored.
-        if player_id is not None and Player.objects.filter(pk=player_id).exists():
-            if action == "add":
-                if player_id not in watched:
-                    watched.append(player_id)
-            else:  # action == "remove"
-                watched = [pid for pid in watched if pid != player_id]
-            request.session["watch_list"] = watched
+        if action == "clear":
+            # Drop the whole list — no player_id needed; any supplied is ignored.
+            request.session["watch_list"] = []
             request.session.modified = True
+        else:
+            player_id = _coerce_player_id(request.GET.get("player_id"))
+            # Only mutate for a real Player id; invalid / unknown ids are ignored.
+            if player_id is not None and Player.objects.filter(pk=player_id).exists():
+                if action == "add":
+                    if player_id not in watched:
+                        watched.append(player_id)
+                else:  # action == "remove"
+                    watched = [pid for pid in watched if pid != player_id]
+                request.session["watch_list"] = watched
+                request.session.modified = True
         # Redirect back to the bare watch-list URL so a refresh does not
         # re-toggle. The central owner wires the ``players_watch_list`` route
         # (§3); until then the locked path is built directly so the view is
