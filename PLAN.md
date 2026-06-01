@@ -853,6 +853,27 @@ session before implementation.
   [`player-ratings.md`](docs/zengm-comparison/player-ratings.md),
   [`player-stats.md`](docs/zengm-comparison/player-stats.md),
   [`team-history.md`](docs/zengm-comparison/team-history.md).
+  - completed: the three rating/stats screens (Free Agents, Player Ratings,
+    Player Stats) already paginated view-side — each already imported
+    `_coerce_per_page` / `_coerce_page` and set `per_page` / `page_obj` /
+    `paginator` — so LG-06a added only the page-size `<select>` UI (the LG-01f
+    `history.html` precedent) to their templates plus a `per_page_options`
+    context key fed from the shared `matches.league_views._LG01F_PER_PAGE_OPTIONS
+    = (10, 25, 50, 100)` tuple (the single source; not hardcoded in any
+    template). Team History, which had **no** pagination before, gained
+    `Paginator` wiring on the **Players section only** (view + template) —
+    `page_obj` / `paginator` / `players_querystring_without_page` (the latter
+    carries `team_id` and omits `page`); the Overall and Seasons sections were
+    left untouched. On every screen the per-page `<form>` preserves the other
+    params via hidden inputs (`sort` + `dir` on the rating/stats screens,
+    `team_id` on Team History) and omits `page` so a page-size change resets to
+    page 1; the Team History team-picker form additionally gained a hidden
+    `per_page` so switching team preserves the chosen page size. New DOM ids
+    `<screen>-per-page-form` / `<screen>-per-page-select` plus
+    `team-history-players-pagination`; `_coerce_per_page` / `_coerce_page` were
+    reused verbatim (no new helpers). UI-only — no model, migration,
+    CONTEXT.md, ADR, simulator, or score re-baseline. Seam contract at
+    `.claude/worktrees/lg-06a-seam-contract.md`.
 - **LG-06b · Team filter.** Add an "All Teams" + per-enrolled-team filter
   `<select>` to **Player Ratings**, **Player Stats**, **Statistical Feats** (the
   team list is already enrolled-season-scoped on those views). Cross-cutting

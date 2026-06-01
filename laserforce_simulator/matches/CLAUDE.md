@@ -809,6 +809,18 @@ blast-radius. A pre-existing RNG-flaky `test_batch_sim.py::TestBugfixMedicHits
 Tracked` (unseeded 95%-hit) was pinned deterministically with the file's own
 `patch("random.randint", return_value=1)` idiom.
 
+**LG-06a polish.** Free Agents / Player Ratings / Player Stats (already
+paginated view-side) gained the 10/25/50/100 page-size `<select>` (LG-01f
+`history.html` precedent) via a `per_page_options` context key fed from the
+shared `_LG01F_PER_PAGE_OPTIONS`; Team History gained `Paginator` wiring on the
+**Players section only** (`page_obj` / `paginator` /
+`players_querystring_without_page`, carries `team_id` + omits `page`), Overall +
+Seasons untouched. The per-page `<form>` preserves other params via hidden
+inputs (`sort`+`dir`, or `team_id` on Team History) and omits `page` to reset to
+page 1; new DOM ids `<screen>-per-page-form` / `-select` +
+`team-history-players-pagination`. UI-only, no model/simulator change. Seam
+contract: [`.claude/worktrees/lg-06a-seam-contract.md`](../../.claude/worktrees/lg-06a-seam-contract.md).
+
 ## Tests
 
 `matches/tests/` package:

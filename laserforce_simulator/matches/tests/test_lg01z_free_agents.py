@@ -270,3 +270,38 @@ class TestFreeAgentsSorting(TestCase):
             self.league.id,
         )
         self.assertEqual(response.status_code, 200)
+
+
+# ---------------------------------------------------------------------------
+# LG-06a — page-size <select> selector
+# ---------------------------------------------------------------------------
+
+
+class TestFreeAgentsPerPageSelector(TestCase):
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, _ = _make_active_season(self.league, n_teams=2)
+        self.pool = self.league.free_agent_pool
+        # A free agent so the body (and its per-page form) renders.
+        Player.objects.create(team=self.pool, name="Agent Selector")
+
+    def test_per_page_select_dom_id_present(self) -> None:
+        response = free_agents(_get(self.league.id), self.league.id)
+        self.assertIn("free-agents-per-page-select", response.content.decode())
+
+    def test_selected_option_reflects_requested_per_page(self) -> None:
+        response = free_agents(
+            _get(self.league.id, query="per_page=25"), self.league.id
+        )
+        content = response.content.decode()
+        # The requested page size is the selected <option>.
+        self.assertIn('value="25" selected', content)
+
+    def test_per_page_form_carries_hidden_sort_and_dir(self) -> None:
+        response = free_agents(
+            _get(self.league.id, query="sort=name&dir=asc&per_page=25"),
+            self.league.id,
+        )
+        content = response.content.decode()
+        self.assertIn('name="sort"', content)
+        self.assertIn('name="dir"', content)

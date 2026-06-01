@@ -33,12 +33,16 @@ from the ORM and feeds them across that seam.
 
 from __future__ import annotations
 
+from django.core.paginator import Paginator
 from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, render
 
 from matches.league_views import (
     _build_league_sidebar_links,
+    _coerce_page,
+    _coerce_per_page,
+    _LG01F_PER_PAGE_OPTIONS,
     _resolve_current_team_for_sidebar,
 )
 from matches.models import GameRound, League, PlayerRoundState, Season
@@ -249,11 +253,15 @@ def team_history(request: HttpRequest, league_id: int) -> HttpResponse:
         league, displayed_season, sidebar_active="history_team"
     )
 
+    per_page = _coerce_per_page(request.GET.get("per_page"))
+
     base_context = {
         "league": league,
         "displayed_season": displayed_season,
         "sidebar_links": sidebar_links,
         "sidebar_active": "history_team",
+        "per_page": per_page,
+        "per_page_options": _LG01F_PER_PAGE_OPTIONS,
     }
 
     # No Season ⇒ empty-state (the sidebar still renders).
@@ -264,7 +272,9 @@ def team_history(request: HttpRequest, league_id: int) -> HttpResponse:
             "enrolled_teams": [],
             "overall_record": None,
             "season_rows": [],
-            "player_rollups": [],
+            "page_obj": None,
+            "paginator": None,
+            "players_querystring_without_page": "",
         }
         return render(request, "leagues/team_history.html", context)
 
@@ -278,11 +288,24 @@ def team_history(request: HttpRequest, league_id: int) -> HttpResponse:
             "enrolled_teams": enrolled_teams,
             "overall_record": None,
             "season_rows": [],
-            "player_rollups": [],
+            "page_obj": None,
+            "paginator": None,
+            "players_querystring_without_page": "",
         }
         return render(request, "leagues/team_history.html", context)
 
     seasons_by_id = _completed_season_ids_for_team(team)
+
+    players_context = _build_players_context(team, seasons_by_id)
+    paginator = Paginator(players_context["player_rollups"], per_page)
+    page_obj = paginator.get_page(_coerce_page(request.GET.get("page")))
+
+    # Players pagination links carry the resolved team_id and omit page so
+    # switching page stays on this team.
+    players_qs = request.GET.copy()
+    players_qs.pop("page", None)
+    players_qs["team_id"] = str(team.id)
+    players_querystring_without_page = players_qs.urlencode()
 
     context = {
         **base_context,
@@ -290,6 +313,8 @@ def team_history(request: HttpRequest, league_id: int) -> HttpResponse:
         "enrolled_teams": enrolled_teams,
         **_build_overall_context(team),
         **_build_seasons_context(team, seasons_by_id),
-        **_build_players_context(team, seasons_by_id),
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "players_querystring_without_page": players_querystring_without_page,
     }
     return render(request, "leagues/team_history.html", context)

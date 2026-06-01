@@ -487,3 +487,41 @@ class TestPlayerStatsPagination(TestCase):
         content = response.content.decode()
         self.assertIn("player-stats-pagination", content)
         self.assertIn("per_page=10", content)
+
+
+# ===========================================================================
+# View — LG-06a page-size <select> selector
+# ===========================================================================
+
+
+class TestPlayerStatsPerPageSelector(TestCase):
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        self.red, self.blue = self.teams
+        # One scoring player so the body (+ per-page form) renders.
+        _make_round_with_states(
+            self.season,
+            self.red,
+            self.blue,
+            [(self.red.active_players[0], "red", {"points_scored": 100})],
+        )
+
+    def test_per_page_select_dom_id_present(self) -> None:
+        response = player_stats(_get(self.league.id), self.league.id)
+        self.assertIn("player-stats-per-page-select", response.content.decode())
+
+    def test_selected_option_reflects_requested_per_page(self) -> None:
+        response = player_stats(
+            _get(self.league.id, query="per_page=25"), self.league.id
+        )
+        self.assertIn('value="25" selected', response.content.decode())
+
+    def test_per_page_form_carries_hidden_sort_and_dir(self) -> None:
+        response = player_stats(
+            _get(self.league.id, query="sort=points_scored&dir=asc&per_page=25"),
+            self.league.id,
+        )
+        content = response.content.decode()
+        self.assertIn('name="sort"', content)
+        self.assertIn('name="dir"', content)
