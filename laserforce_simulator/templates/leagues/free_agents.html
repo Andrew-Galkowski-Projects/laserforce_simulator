@@ -19,6 +19,18 @@
         {% else %}
             <p class="text-muted">{{ paginator.count }} free agent{{ paginator.count|pluralize }}</p>
 
+            <form id="free-agents-per-page-form" method="get" class="d-inline-block mb-3">
+                <label for="free-agents-per-page-select" class="form-label me-2">Per page:</label>
+                <select id="free-agents-per-page-select" name="per_page" class="form-select form-select-sm d-inline-block w-auto" onchange="this.form.submit()">
+                    {% for option in per_page_options %}
+                        <option value="{{ option }}"{% if option == per_page %} selected{% endif %}>{{ option }}</option>
+                    {% endfor %}
+                </select>
+                <input type="hidden" name="sort" value="{{ sort }}">
+                <input type="hidden" name="dir" value="{{ dir }}">
+                <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">Update</button></noscript>
+            </form>
+
             <div class="table-responsive">
                 <table class="table table-striped" id="free-agents-table">
                     <thead>

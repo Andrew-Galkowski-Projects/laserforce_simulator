@@ -38,6 +38,7 @@ from matches.league_views import (
     _build_league_sidebar_links,
     _coerce_page,
     _coerce_per_page,
+    _LG01F_PER_PAGE_OPTIONS,
 )
 from matches.models import League
 from teams.models import Player
@@ -114,6 +115,7 @@ def player_ratings(request: HttpRequest, league_id: int) -> HttpResponse:
         "sort": sort,
         "dir": direction,
         "per_page": per_page,
+        "per_page_options": _LG01F_PER_PAGE_OPTIONS,
         "sort_keys": RATING_SORT_KEYS_DISPLAY,
     }
 

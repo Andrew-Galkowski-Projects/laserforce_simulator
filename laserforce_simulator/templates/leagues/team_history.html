@@ -33,6 +33,7 @@
                             <option value="{{ option.id }}"{% if option.id == team.id %} selected{% endif %}>{{ option.name }}</option>
                         {% endfor %}
                     </select>
+                    <input type="hidden" name="per_page" value="{{ per_page }}">
                     <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">View</button></noscript>
                 </form>
             </div>
@@ -97,6 +98,18 @@
                             Players now on another team are
                             <span class="team-history-player-blue">highlighted in blue</span>.
                         </p>
+
+                        <form id="team-history-per-page-form" method="get" class="d-inline-block mb-3">
+                            <label for="team-history-per-page-select" class="form-label me-2">Per page:</label>
+                            <select id="team-history-per-page-select" name="per_page" class="form-select form-select-sm d-inline-block w-auto" onchange="this.form.submit()">
+                                {% for option in per_page_options %}
+                                    <option value="{{ option }}"{% if option == per_page %} selected{% endif %}>{{ option }}</option>
+                                {% endfor %}
+                            </select>
+                            <input type="hidden" name="team_id" value="{{ team.id }}">
+                            <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">Update</button></noscript>
+                        </form>
+
                         <div class="table-responsive">
                             <table id="team-history-players-table" class="table table-striped table-hover">
                                 <thead>
@@ -113,7 +126,7 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {% for p in player_rollups %}
+                                    {% for p in page_obj %}
                                         <tr id="team-history-player-row-{{ p.player_id }}" class="{{ p.colour_class }}">
                                             <td><a href="{% url 'player_career_stats' p.player_id %}">{{ p.name }}</a></td>
                                             <td class="text-end">{{ p.games_played }}</td>
@@ -131,6 +144,30 @@
                                 </tbody>
                             </table>
                         </div>
+
+                        {% if page_obj.has_other_pages %}
+                            <nav id="team-history-players-pagination" aria-label="Team history players pagination">
+                                <ul class="pagination">
+                                    {% if page_obj.has_previous %}
+                                        <li class="page-item">
+                                            <a class="page-link" href="?{{ players_querystring_without_page }}&page={{ page_obj.previous_page_number }}">Previous</a>
+                                        </li>
+                                    {% else %}
+                                        <li class="page-item disabled"><span class="page-link">Previous</span></li>
+                                    {% endif %}
+                                    <li class="page-item active">
+                                        <span class="page-link">Page {{ page_obj.number }} of {{ paginator.num_pages }}</span>
+                                    </li>
+                                    {% if page_obj.has_next %}
+                                        <li class="page-item">
+                                            <a class="page-link" href="?{{ players_querystring_without_page }}&page={{ page_obj.next_page_number }}">Next</a>
+                                        </li>
+                                    {% else %}
+                                        <li class="page-item disabled"><span class="page-link">Next</span></li>
+                                    {% endif %}
+                                </ul>
+                            </nav>
+                        {% endif %}
                     </section>
                 </div>
             </div>

@@ -470,6 +470,120 @@ class TestTeamHistoryPlayers(TestCase):
 
 
 # ===========================================================================
+# Players tab — LG-06a pagination + page-size <select> selector
+# ===========================================================================
+
+
+class TestTeamHistoryPlayersPagination(TestCase):
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = self.teams
+        self.league.current_team = self.team_a
+        self.league.save(update_fields=["current_team"])
+        self.match, self.gr = _play_round(
+            self.season,
+            self.team_a,
+            self.team_b,
+            round_number=1,
+            red_points=100,
+            blue_points=50,
+        )
+        # Seed > 10 distinct players who appeared for team_a (build the
+        # PlayerRoundState rows exactly as TestTeamHistoryPlayers does).
+        self.players = []
+        for i in range(13):
+            p = Player.objects.create(team=self.team_a, name=f"Roster{i:02d}")
+            PlayerRoundState.objects.create(
+                game_round=self.gr,
+                player=p,
+                team_color="red",
+                points_scored=10 + i,
+            )
+            self.players.append(p)
+
+    def _row_count(self, content: str) -> int:
+        return content.count("team-history-player-row-")
+
+    def test_per_page_select_dom_id_present(self) -> None:
+        content = team_history(
+            _get(self.league.id, query=f"team_id={self.team_a.id}"),
+            self.league.id,
+        ).content.decode()
+        self.assertIn("team-history-per-page-select", content)
+
+    def test_selected_option_reflects_requested_per_page(self) -> None:
+        content = team_history(
+            _get(self.league.id, query=f"team_id={self.team_a.id}&per_page=25"),
+            self.league.id,
+        ).content.decode()
+        self.assertIn('value="25" selected', content)
+
+    def test_per_page_form_carries_hidden_team_id(self) -> None:
+        content = team_history(
+            _get(self.league.id, query=f"team_id={self.team_a.id}&per_page=10"),
+            self.league.id,
+        ).content.decode()
+        self.assertIn('name="team_id"', content)
+
+    def test_team_picker_form_carries_hidden_per_page(self) -> None:
+        # The team-picker <select id="team-history-team-picker"> form must
+        # carry the current per_page so switching teams keeps the page size.
+        content = team_history(
+            _get(self.league.id, query=f"team_id={self.team_a.id}&per_page=25"),
+            self.league.id,
+        ).content.decode()
+        self.assertIn("team-history-team-picker", content)
+        self.assertIn('name="per_page"', content)
+
+    def test_pagination_renders_over_ten_players(self) -> None:
+        content = team_history(
+            _get(self.league.id, query=f"team_id={self.team_a.id}&per_page=10"),
+            self.league.id,
+        ).content.decode()
+        self.assertIn("team-history-players-pagination", content)
+
+    def test_page_one_shows_ten_rows(self) -> None:
+        content = team_history(
+            _get(
+                self.league.id,
+                query=f"team_id={self.team_a.id}&per_page=10&page=1",
+            ),
+            self.league.id,
+        ).content.decode()
+        self.assertEqual(self._row_count(content), 10)
+
+    def test_page_two_shows_remainder(self) -> None:
+        content = team_history(
+            _get(
+                self.league.id,
+                query=f"team_id={self.team_a.id}&per_page=10&page=2",
+            ),
+            self.league.id,
+        ).content.decode()
+        # 13 players → page 1 has 10, page 2 has the remaining 3.
+        self.assertEqual(self._row_count(content), 3)
+
+    def test_pagination_link_carries_team_id_and_no_stale_page(self) -> None:
+        content = team_history(
+            _get(
+                self.league.id,
+                query=f"team_id={self.team_a.id}&per_page=10&page=2",
+            ),
+            self.league.id,
+        ).content.decode()
+        # Locate the pagination nav and assert its links carry team_id and
+        # do not carry a stale extra page= in the querystring base.
+        self.assertIn("team-history-players-pagination", content)
+        nav_start = content.index("team-history-players-pagination")
+        nav = content[nav_start:]
+        self.assertIn(f"team_id={self.team_a.id}", nav)
+        # The querystring helper feeding the page links must not bake in a
+        # stale page= (the page number is appended separately by the link).
+        self.assertNotIn("page=2&", nav)
+
+
+# ===========================================================================
 # Team selection — ?team_id= validation + default
 # ===========================================================================
 

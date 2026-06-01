@@ -38,6 +38,7 @@ from matches.league_views import (
     _build_league_sidebar_links,
     _coerce_page,
     _coerce_per_page,
+    _LG01F_PER_PAGE_OPTIONS,
 )
 from matches.models import League, PlayerRoundState
 from matches.season_player_stats import (
@@ -173,6 +174,7 @@ def player_stats(request: HttpRequest, league_id: int) -> HttpResponse:
         "sort": sort,
         "dir": direction,
         "per_page": per_page,
+        "per_page_options": _LG01F_PER_PAGE_OPTIONS,
         "columns": _PLAYER_STATS_COLUMNS,
         "stat_keys": STAT_KEYS,
     }

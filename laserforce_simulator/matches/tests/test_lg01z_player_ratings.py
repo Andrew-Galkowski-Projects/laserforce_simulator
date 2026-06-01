@@ -291,3 +291,35 @@ class TestPlayerRatingsPagination(TestCase):
         self.assertIn("player-ratings-pagination", content)
         # Page-2 navigation links must carry the coerced per_page value.
         self.assertIn("per_page=10", content)
+
+
+# ---------------------------------------------------------------------------
+# LG-06a — page-size <select> selector
+# ---------------------------------------------------------------------------
+
+
+class TestPlayerRatingsPerPageSelector(TestCase):
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        # An enrolled-team player so the body (+ per-page form) renders.
+        Player.objects.create(team=self.teams[0], name="Rate Selector")
+
+    def test_per_page_select_dom_id_present(self) -> None:
+        response = player_ratings(_get(self.league.id), self.league.id)
+        self.assertIn("player-ratings-per-page-select", response.content.decode())
+
+    def test_selected_option_reflects_requested_per_page(self) -> None:
+        response = player_ratings(
+            _get(self.league.id, query="per_page=25"), self.league.id
+        )
+        self.assertIn('value="25" selected', response.content.decode())
+
+    def test_per_page_form_carries_hidden_sort_and_dir(self) -> None:
+        response = player_ratings(
+            _get(self.league.id, query="sort=name&dir=asc&per_page=25"),
+            self.league.id,
+        )
+        content = response.content.decode()
+        self.assertIn('name="sort"', content)
+        self.assertIn('name="dir"', content)
