@@ -38,6 +38,7 @@ from matches.league_views import (
     _build_league_sidebar_links,
     _coerce_page,
     _coerce_per_page,
+    _coerce_team_id,
     _LG01F_PER_PAGE_OPTIONS,
 )
 from matches.models import League
@@ -122,13 +123,28 @@ def player_ratings(request: HttpRequest, league_id: int) -> HttpResponse:
     # Empty-state per §2 — no Season; render the notice instead of the body.
     # The sidebar still renders.
     if displayed_season is None:
+        context["enrolled_teams"] = []
+        context["selected_team_id"] = None
         context["page_obj"] = None
         context["paginator"] = None
         context["querystring_without_page"] = ""
         context["querystring_without_sort_dir_page"] = ""
         return render(request, "leagues/player_ratings.html", context)
 
+    # LG-06b — team filter. Enrolled teams (the picker options) + the
+    # forgiving ``?team_id=`` coercion against the enrolment set.
+    enrolled_teams = list(displayed_season.teams.order_by("name"))
+    enrolled_ids = {t.id for t in enrolled_teams}
+    selected_team_id = _coerce_team_id(request.GET.get("team_id"), enrolled_ids)
+    context["enrolled_teams"] = enrolled_teams
+    context["selected_team_id"] = selected_team_id
+
     qs = _enrolled_player_queryset(displayed_season)
+
+    # Apply the team filter before the sort split so it covers both the
+    # ORM-order branch and the preferred_roles python-list branch.
+    if selected_team_id is not None:
+        qs = qs.filter(team_id=selected_team_id)
 
     if sort == "preferred_roles":
         rows = list(qs)
@@ -151,6 +167,8 @@ def player_ratings(request: HttpRequest, league_id: int) -> HttpResponse:
     qs_no_page["sort"] = sort
     qs_no_page["dir"] = direction
     qs_no_page["per_page"] = str(per_page)
+    if selected_team_id is not None:
+        qs_no_page["team_id"] = str(selected_team_id)
     querystring_without_page = qs_no_page.urlencode()
 
     qs_no_sort_dir_page = request.GET.copy()
@@ -158,6 +176,8 @@ def player_ratings(request: HttpRequest, league_id: int) -> HttpResponse:
     qs_no_sort_dir_page.pop("sort", None)
     qs_no_sort_dir_page.pop("dir", None)
     qs_no_sort_dir_page["per_page"] = str(per_page)
+    if selected_team_id is not None:
+        qs_no_sort_dir_page["team_id"] = str(selected_team_id)
     querystring_without_sort_dir_page = qs_no_sort_dir_page.urlencode()
 
     context["page_obj"] = page_obj

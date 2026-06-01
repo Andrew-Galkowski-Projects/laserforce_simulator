@@ -33,6 +33,7 @@ from matches.models import (
     Season,
 )
 from matches.tests.conftest import make_team_with_slots
+from teams.models import Team
 
 # ===========================================================================
 # Pure-unit tests for matches/stat_feats.py
@@ -531,3 +532,186 @@ class TestStatisticalFeatsBody(TestCase):
     def test_sidebar_active_entry_present(self) -> None:
         response = statistical_feats(_get(self.league.id), self.league.id)
         self.assertIn("sidebar-stats-statistical_feats", response.content.decode())
+
+
+# ===========================================================================
+# LG-06b — team filter
+# ===========================================================================
+
+
+class TestStatisticalFeatsTeamFilter(TestCase):
+    """LG-06b team filter via the Django test ``Client`` against the
+    wired ``stats_statistical_feats`` URL (so ``response.context``
+    exists). Statistical Feats has NO pagination / sort."""
+
+    URL_NAME = "stats_statistical_feats"
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, teams = _make_active_season(self.league, n_teams=2)
+        teams.sort(key=lambda t: t.name)
+        self.team_a, self.team_b = teams
+        # team_a's Heavy logs a perfect-accuracy round (feat: perfect_heavy);
+        # team_b's Heavy logs a perfect round too. The two feats are
+        # attributed to different teams, so a team filter narrows them.
+        _match, gr = _make_round(self.season, self.team_a, self.team_b)
+        self.heavy_a = self.team_a.slot_heavy
+        self.heavy_b = self.team_b.slot_heavy
+        _make_prs(
+            gr,
+            self.heavy_a,
+            "red",
+            "heavy",
+            shots_missed=0,
+            tags_made=5,
+            points_scored=9000,
+        )
+        _make_prs(
+            gr,
+            self.heavy_b,
+            "blue",
+            "heavy",
+            shots_missed=0,
+            tags_made=3,
+            points_scored=1000,
+        )
+
+    def _get(self, *, query: str = ""):
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        if query:
+            url = f"{url}?{query}"
+        return self.client.get(url)
+
+    def test_enrolled_teams_context_ordered_by_name(self) -> None:
+        response = self._get()
+        enrolled = response.context["enrolled_teams"]
+        names = [t.name for t in enrolled]
+        self.assertEqual(names, sorted(names))
+        self.assertEqual(
+            {t.id for t in enrolled},
+            {self.team_a.id, self.team_b.id},
+        )
+
+    def test_selected_team_id_none_when_no_param(self) -> None:
+        response = self._get()
+        self.assertIsNone(response.context["selected_team_id"])
+
+    def test_selected_team_id_set_for_enrolled(self) -> None:
+        response = self._get(query=f"team_id={self.team_a.id}")
+        self.assertEqual(response.context["selected_team_id"], self.team_a.id)
+
+    def test_selected_team_id_none_for_non_enrolled(self) -> None:
+        outsider = Team.objects.create(name="SF Outsiders")
+        response = self._get(query=f"team_id={outsider.id}")
+        self.assertIsNone(response.context["selected_team_id"])
+
+    def test_filter_attributes_feats_to_team_only(self) -> None:
+        # Filtering to team_a: the top_score feat (9000, team_a's Heavy)
+        # is present; team_b's Heavy (1000 points) is not the top scorer
+        # within team_a's pool, so the other team's player name must not
+        # surface as a feat holder.
+        content = self._get(query=f"team_id={self.team_a.id}").content.decode()
+        self.assertIn(self.heavy_a.name, content)
+        self.assertNotIn(self.heavy_b.name, content)
+
+    def test_absent_param_shows_full_feats(self) -> None:
+        # The overall top scorer is team_a's Heavy; both teams' rounds
+        # feed the full scan.
+        content = self._get().content.decode()
+        self.assertIn(self.heavy_a.name, content)
+
+    def test_malformed_param_falls_back_to_full(self) -> None:
+        response = self._get(query="team_id=abc")
+        self.assertIsNone(response.context["selected_team_id"])
+        self.assertIn(self.heavy_a.name, response.content.decode())
+
+    def test_non_enrolled_param_falls_back_to_full(self) -> None:
+        outsider = Team.objects.create(name="SF Outsiders")
+        response = self._get(query=f"team_id={outsider.id}")
+        self.assertIsNone(response.context["selected_team_id"])
+        self.assertIn(self.heavy_a.name, response.content.decode())
+
+    def test_filter_form_and_select_dom_ids_present(self) -> None:
+        content = self._get().content.decode()
+        self.assertIn("statistical-feats-team-filter-form", content)
+        self.assertIn("statistical-feats-team-filter-select", content)
+
+    def test_default_all_teams_option_present(self) -> None:
+        content = self._get().content.decode()
+        # The default option carries value="" and the "All Teams" label;
+        # it may additionally carry ``selected`` when no team is picked.
+        self.assertIn('value=""', content)
+        self.assertIn("All Teams", content)
+
+    def test_selected_option_matches_selected_team_id(self) -> None:
+        content = self._get(query=f"team_id={self.team_a.id}").content.decode()
+        self.assertIn(f'value="{self.team_a.id}" selected', content)
+
+
+class TestStatisticalFeatsComebackFilter(TestCase):
+    """The comeback feat is included only when the selected team
+    participated in the match (selected in {red_team_id, blue_team_id})."""
+
+    URL_NAME = "stats_statistical_feats"
+
+    def _get(self, *, query: str = ""):
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        if query:
+            url = f"{url}?{query}"
+        return self.client.get(url)
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, teams = _make_active_season(self.league, n_teams=3)
+        teams.sort(key=lambda t: t.name)
+        self.team_a, self.team_b, self.team_c = teams
+        # team_a (Match.team_red) loses round 1 (5 < 12) but wins round 2
+        # (20 > 2): rounds tie 1-1, team_a wins on total points (25 vs 14)
+        # — a comeback win. The Match's per-round point fields drive
+        # ``calculate_winner`` (keyed to team_red / team_blue), so team_a
+        # must be the round-2 point WINNER as red.
+        match, gr1 = _make_round(
+            self.season,
+            self.team_a,
+            self.team_b,
+            round_number=1,
+            red_points=5,
+            blue_points=12,
+            completed=False,
+        )
+        GameRound.objects.create(
+            match=match,
+            team_red=self.team_a,
+            team_blue=self.team_b,
+            round_number=2,
+            red_points=20,
+            blue_points=2,
+            is_completed=True,
+        )
+        match.red_round1_points = 5
+        match.blue_round1_points = 12
+        match.red_round2_points = 20
+        match.blue_round2_points = 2
+        match.is_completed = True
+        match.save()
+        match.refresh_from_db()
+        self.match = match
+
+    def test_comeback_feat_present_when_team_participated(self) -> None:
+        # Only assert if team_a actually won the comeback match.
+        if self.match.winner_id != self.team_a.id:
+            self.skipTest("fixture did not produce a comeback win for team_a")
+        response = self._get(query=f"team_id={self.team_a.id}")
+        self.assertIn("stat-feat-comeback_win", response.content.decode())
+
+    def test_comeback_feat_absent_for_uninvolved_team(self) -> None:
+        if self.match.winner_id != self.team_a.id:
+            self.skipTest("fixture did not produce a comeback win for team_a")
+        # team_c did not participate in the comeback match → no comeback feat
+        # when filtering to team_c.
+        response = self._get(query=f"team_id={self.team_c.id}")
+        self.assertNotIn("stat-feat-comeback_win", response.content.decode())

@@ -19,6 +19,20 @@
         {% else %}
             <p class="text-muted">{{ paginator.count }} player{{ paginator.count|pluralize }}</p>
 
+            <form id="player-ratings-team-filter-form" method="get" class="d-inline-block mb-3 me-3">
+                <label for="player-ratings-team-filter-select" class="form-label me-2">Team:</label>
+                <select id="player-ratings-team-filter-select" name="team_id" class="form-select form-select-sm d-inline-block w-auto" onchange="this.form.submit()">
+                    <option value=""{% if not selected_team_id %} selected{% endif %}>All Teams</option>
+                    {% for t in enrolled_teams %}
+                        <option value="{{ t.id }}"{% if t.id == selected_team_id %} selected{% endif %}>{{ t.name }}</option>
+                    {% endfor %}
+                </select>
+                <input type="hidden" name="sort" value="{{ sort }}">
+                <input type="hidden" name="dir" value="{{ dir }}">
+                <input type="hidden" name="per_page" value="{{ per_page }}">
+                <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">Filter</button></noscript>
+            </form>
+
             <form id="player-ratings-per-page-form" method="get" class="d-inline-block mb-3">
                 <label for="player-ratings-per-page-select" class="form-label me-2">Per page:</label>
                 <select id="player-ratings-per-page-select" name="per_page" class="form-select form-select-sm d-inline-block w-auto" onchange="this.form.submit()">
@@ -28,6 +42,7 @@
                 </select>
                 <input type="hidden" name="sort" value="{{ sort }}">
                 <input type="hidden" name="dir" value="{{ dir }}">
+                {% if selected_team_id %}<input type="hidden" name="team_id" value="{{ selected_team_id }}">{% endif %}
                 <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">Update</button></noscript>
             </form>
 

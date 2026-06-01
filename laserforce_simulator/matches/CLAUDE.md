@@ -821,6 +821,23 @@ page 1; new DOM ids `<screen>-per-page-form` / `-select` +
 `team-history-players-pagination`. UI-only, no model/simulator change. Seam
 contract: [`.claude/worktrees/lg-06a-seam-contract.md`](../../.claude/worktrees/lg-06a-seam-contract.md).
 
+**LG-06b polish.** Player Ratings / Player Stats / Statistical Feats gained an
+"All Teams" + per-enrolled-team `?team_id=<id>` `<select>` via a shared
+validator `league_views._coerce_team_id(raw, enrolled_ids)` (mirrors
+`_coerce_per_page`; the single source for all three) returning the int id iff it
+parses **and** is enrolled, else `None` (All Teams). Each view adds
+`enrolled_teams` (`displayed_season.teams.order_by("name")`) + `selected_team_id`.
+Filter points differ: Ratings filters the queryset (`qs.filter(team_id=…)` after
+`_enrolled_player_queryset`), Stats filters rows post-`aggregate_player_stats` on
+`PlayerStatRow.team_id`, Feats filters the seam **inputs** before
+`stat_feats.scan_feats` (`player_rounds` by `team_id`, `matches` by red/blue id)
+— `stat_feats.py` untouched. `team_id` carries in both querystring helpers + a
+hidden per-page-form input on the two paginated screens (picker form omits
+`page`); Feats has no pagination/sort. DOM ids
+`{player-ratings,player-stats,statistical-feats}-team-filter-{form,select}`.
+UI-only, read-only, no model/simulator change. Seam contract:
+[`.claude/worktrees/lg-06b-seam-contract.md`](../../.claude/worktrees/lg-06b-seam-contract.md).
+
 ## Tests
 
 `matches/tests/` package:

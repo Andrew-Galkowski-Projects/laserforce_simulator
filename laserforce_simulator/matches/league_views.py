@@ -724,6 +724,25 @@ def _coerce_page(raw: str | None, default: int = 1) -> int:
     return value
 
 
+def _coerce_team_id(raw: str | None, enrolled_ids: set[int]) -> int | None:
+    """LG-06b — coerce ``?team_id=`` to an enrolled Team id, else ``None``.
+
+    Returns the int id iff ``raw`` parses as an int AND is present in
+    ``enrolled_ids``. ``None`` / empty / malformed / non-enrolled values
+    all map to ``None`` ("All Teams", no filter). Mirrors the forgiving
+    ``_coerce_per_page`` / ``_coerce_page`` precedent.
+    """
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if value in enrolled_ids:
+        return value
+    return None
+
+
 def _resolve_current_team_for_sidebar(
     league: League,
     displayed_season: Season | None,

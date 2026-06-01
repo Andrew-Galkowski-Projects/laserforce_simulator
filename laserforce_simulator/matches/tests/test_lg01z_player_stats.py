@@ -40,7 +40,7 @@ from matches.season_player_stats import (
     sort_player_stats,
 )
 from matches.tests.conftest import make_team_with_slots
-from teams.models import Player
+from teams.models import Player, Team
 
 # ===========================================================================
 # Pure-unit — aggregation
@@ -525,3 +525,125 @@ class TestPlayerStatsPerPageSelector(TestCase):
         content = response.content.decode()
         self.assertIn('name="sort"', content)
         self.assertIn('name="dir"', content)
+
+
+# ===========================================================================
+# View — LG-06b team filter
+# ===========================================================================
+
+
+class TestPlayerStatsTeamFilter(TestCase):
+    """LG-06b team filter via the Django test ``Client`` against the
+    wired ``stats_player_stats`` URL (so ``response.context`` exists)."""
+
+    URL_NAME = "stats_player_stats"
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        self.teams.sort(key=lambda t: t.name)
+        self.red, self.blue = self.teams
+        # A distinctly-named scoring player on each enrolled team.
+        self.red_player = Player.objects.create(team=self.red, name="Red Filtered")
+        self.blue_player = Player.objects.create(team=self.blue, name="Blue Filtered")
+        _make_round_with_states(
+            self.season,
+            self.red,
+            self.blue,
+            [
+                (self.red_player, "red", {"points_scored": 500}),
+                (self.blue_player, "blue", {"points_scored": 300}),
+            ],
+        )
+
+    def _get(self, *, query: str = ""):
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        if query:
+            url = f"{url}?{query}"
+        return self.client.get(url)
+
+    def test_enrolled_teams_context_ordered_by_name(self) -> None:
+        response = self._get()
+        enrolled = response.context["enrolled_teams"]
+        names = [t.name for t in enrolled]
+        self.assertEqual(names, sorted(names))
+        self.assertEqual({t.id for t in enrolled}, {self.red.id, self.blue.id})
+
+    def test_selected_team_id_none_when_no_param(self) -> None:
+        response = self._get()
+        self.assertIsNone(response.context["selected_team_id"])
+
+    def test_selected_team_id_set_for_enrolled(self) -> None:
+        response = self._get(query=f"team_id={self.red.id}")
+        self.assertEqual(response.context["selected_team_id"], self.red.id)
+
+    def test_selected_team_id_none_for_non_enrolled(self) -> None:
+        outsider = Team.objects.create(name="PS Outsiders")
+        response = self._get(query=f"team_id={outsider.id}")
+        self.assertIsNone(response.context["selected_team_id"])
+
+    def test_filter_restricts_to_team_and_excludes_other(self) -> None:
+        content = self._get(
+            query=f"team_id={self.red.id}&per_page=100"
+        ).content.decode()
+        self.assertIn("Red Filtered", content)
+        self.assertNotIn("Blue Filtered", content)
+
+    def test_absent_param_shows_all_teams(self) -> None:
+        content = self._get(query="per_page=100").content.decode()
+        self.assertIn("Red Filtered", content)
+        self.assertIn("Blue Filtered", content)
+
+    def test_malformed_param_falls_back_to_all(self) -> None:
+        content = self._get(query="team_id=abc&per_page=100").content.decode()
+        self.assertIn("Red Filtered", content)
+        self.assertIn("Blue Filtered", content)
+
+    def test_non_enrolled_param_falls_back_to_all(self) -> None:
+        outsider = Team.objects.create(name="PS Outsiders")
+        content = self._get(
+            query=f"team_id={outsider.id}&per_page=100"
+        ).content.decode()
+        self.assertIn("Red Filtered", content)
+        self.assertIn("Blue Filtered", content)
+
+    def test_filter_form_and_select_dom_ids_present(self) -> None:
+        content = self._get().content.decode()
+        self.assertIn("player-stats-team-filter-form", content)
+        self.assertIn("player-stats-team-filter-select", content)
+
+    def test_default_all_teams_option_present(self) -> None:
+        content = self._get().content.decode()
+        # The default option carries value="" and the "All Teams" label;
+        # it may additionally carry ``selected`` when no team is picked.
+        self.assertIn('value=""', content)
+        self.assertIn("All Teams", content)
+
+    def test_selected_option_matches_selected_team_id(self) -> None:
+        content = self._get(query=f"team_id={self.red.id}").content.decode()
+        self.assertIn(f'value="{self.red.id}" selected', content)
+
+    def test_team_id_in_querystring_without_page(self) -> None:
+        response = self._get(query=f"team_id={self.red.id}&per_page=25")
+        qs = response.context["querystring_without_page"]
+        self.assertIn(f"team_id={self.red.id}", qs)
+
+    def test_team_id_in_querystring_without_sort_dir_page(self) -> None:
+        response = self._get(query=f"team_id={self.red.id}&per_page=25")
+        qs = response.context["querystring_without_sort_dir_page"]
+        self.assertIn(f"team_id={self.red.id}", qs)
+
+    def test_hidden_team_id_input_in_per_page_form(self) -> None:
+        content = self._get(query=f"team_id={self.red.id}&per_page=25").content.decode()
+        self.assertIn('name="team_id"', content)
+
+    def test_picker_form_omits_page(self) -> None:
+        content = self._get(
+            query=f"team_id={self.red.id}&page=2&per_page=10"
+        ).content.decode()
+        form_start = content.index("player-stats-team-filter-form")
+        form_end = content.index("</form>", form_start)
+        picker_block = content[form_start:form_end]
+        self.assertNotIn('name="page"', picker_block)
