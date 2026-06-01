@@ -34,13 +34,14 @@ from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, render
 
 from matches.league_views import (
+    RATING_SORT_KEYS_DISPLAY,
     _build_league_sidebar_links,
     _coerce_page,
     _coerce_per_page,
 )
 from matches.models import League
 from teams.models import Player
-from teams.views import _coerce_dir, _coerce_sort, _SORT_KEYS, _SORT_KEYS_DISPLAY
+from teams.views import _coerce_dir, _coerce_sort, _SORT_KEYS
 
 
 def _enrolled_player_queryset(displayed_season) -> "QuerySet[Player]":
@@ -113,7 +114,7 @@ def player_ratings(request: HttpRequest, league_id: int) -> HttpResponse:
         "sort": sort,
         "dir": direction,
         "per_page": per_page,
-        "sort_keys": _SORT_KEYS_DISPLAY,
+        "sort_keys": RATING_SORT_KEYS_DISPLAY,
     }
 
     # Empty-state per §2 — no Season; render the notice instead of the body.

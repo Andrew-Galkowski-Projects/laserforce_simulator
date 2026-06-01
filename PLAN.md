@@ -834,6 +834,71 @@ through its own grilling session before implementation.
   blockers tracked in [`sub-plan.md`](sub-plan.md); seam contract at
   `.claude/worktrees/lg-01z-seam-contract.md`.
 
+### LG-06 · ZenGM league-screen parity polish
+Follow-ups to the shipped LG-01z read-only screens, from the per-page comparison
+against the reference product (LOL GM) in
+[`docs/zengm-comparison/`](docs/zengm-comparison/) (see that folder's `README.md`
+for methodology + the C1–C10 cross-cutting table; each step links its per-page
+doc). All UI-only, read-only — no model change, no simulator touch. Lower
+priority than LG-02..LG-05; sequence after the screens have real multi-season
+data to justify the controls. Each step should go through its own grilling
+session before implementation.
+
+- **LG-06a · Page-size selector + Team History pagination.** Add the standard
+  10/25/50/100 page-size `<select>` (LG-01f `league_history` precedent) to
+  **Free Agents**, **Player Ratings**, **Player Stats**; add pagination to
+  **Team History** (currently unbounded — one row per player ever, no paging).
+  Cross-cutting **C4**. Docs:
+  [`free-agents.md`](docs/zengm-comparison/free-agents.md),
+  [`player-ratings.md`](docs/zengm-comparison/player-ratings.md),
+  [`player-stats.md`](docs/zengm-comparison/player-stats.md),
+  [`team-history.md`](docs/zengm-comparison/team-history.md).
+- **LG-06b · Team filter.** Add an "All Teams" + per-enrolled-team filter
+  `<select>` to **Player Ratings**, **Player Stats**, **Statistical Feats** (the
+  team list is already enrolled-season-scoped on those views). Cross-cutting
+  **C5**. Docs:
+  [`player-ratings.md`](docs/zengm-comparison/player-ratings.md),
+  [`player-stats.md`](docs/zengm-comparison/player-stats.md),
+  [`statistical-feats.md`](docs/zengm-comparison/statistical-feats.md).
+- **LG-06c · Sortable columns on the remaining tables.** Bring the LG-00c
+  `_coerce_sort` / `_coerce_dir` sort-header pattern (already used on Power
+  Rankings / Free Agents / Player Ratings / Player Stats / Team Stats) to the
+  five tables that lack it: **Team History**, **Game Log**, **League Leaders**,
+  **Watch List**, **Statistical Feats**. Cross-cutting **C6**. Docs:
+  [`team-history.md`](docs/zengm-comparison/team-history.md),
+  [`game-log.md`](docs/zengm-comparison/game-log.md),
+  [`league-leaders.md`](docs/zengm-comparison/league-leaders.md),
+  [`watch-list.md`](docs/zengm-comparison/watch-list.md),
+  [`statistical-feats.md`](docs/zengm-comparison/statistical-feats.md).
+- **LG-06d · Season selector + rate/career toggles.** Add a `?season=` selector
+  (and, where it maps, ZenGM's Per Game / Per 36 / Totals + Career-Totals
+  toggles) across the stats screens once leagues routinely span multiple
+  Seasons — currently every screen renders only `displayed_season`. Cross-cutting
+  **C1 / C2 / C7**. Lowest priority of the set. Doc:
+  [`README.md`](docs/zengm-comparison/README.md) (cross-cutting table).
+- **LG-06e · Statistical Feats as a per-game feed.** Reshape the feats screen
+  from the current ~9 fixed category-best entries into ZenGM's model: one
+  sortable row per notable single-game performance with its box-score line +
+  Opp / Result / Season, deep-linking to the Round. Larger than the other LG-06
+  steps (changes `stat_feats.py` output shape + template). Doc:
+  [`statistical-feats.md`](docs/zengm-comparison/statistical-feats.md).
+- **LG-06f · Watch List as a full stats view.** Replace the 3-column bookmark
+  table with the Player-Stats column set filtered to watched players (ZenGM
+  parity). Per-user (vs. current browser-session) persistence is **deferred to
+  UX-01** (the watch list moves from `request.session` to a per-user model when
+  accounts land). Doc: [`watch-list.md`](docs/zengm-comparison/watch-list.md).
+- **LG-06g · Standings form/side detail.** Surface Streak, Last-5 (L5), and a
+  home-away (Red/Blue side) split on the Standings table — we already persist
+  per-Round side data; this is presentation only. Doc:
+  [`standings.md`](docs/zengm-comparison/standings.md).
+
+Structural divergences surfaced by the playthrough that map to **existing**
+tasks rather than LG-06 (see
+[`season-lifecycle.md`](docs/zengm-comparison/season-lifecycle.md)): the
+playoffs stage + phase-aware Play menu → **LG-02**; season-MVP / Finals-MVP
+awards (and surfacing them on League History) → **LG-03**; MMR / Rank / Potential
+columns → **STAT-PROXY-01**.
+
 ### LG-02 · Tournament formats
 Support the following tournament types:
 
@@ -861,6 +926,12 @@ Once tournaments land, relabel "Until end of season" → "Until playoffs" (LG-01
 ### LG-03 · Season-end awards
 Computed from `PlayerRoundState` aggregates: Most Points, Highest K/D by role, Best Medic, 
 Most Efficient Nuke, Best Accuracy. Awards page at `/seasons/<id>/awards/`. Award badge on player profile.
+
+Also surface the headline **season MVP** (and, once LG-02 playoffs land, a
+**Finals MVP**) on the **League History** table (LG-01f) — the reference product
+puts both in its history row next to Champion / Runner-up, and ours currently has
+no awards column. See
+[`docs/zengm-comparison/season-lifecycle.md`](docs/zengm-comparison/season-lifecycle.md).
 
 ### LG-04 · Season-end stat updates
 At the end of each season, all players (on active teams or otherwise) receive a stat update.
@@ -1451,3 +1522,26 @@ Team-level confidence badge: Low (<5 games), Medium (5–20), High (>20). Link t
 
 ### STAT-03 career stat additions
 add mvp and elo over time to career stats
+
+### STAT-PROXY-01 · Rating proxies — MMR, Rank tier, Potential
+
+The LG-01z league screens (Player Ratings, Free Agents, Team Roster, and — once
+unblocked — Hall of Fame) reserve columns for three LoL-GM rating concepts we don't yet
+model: **MMR**, **Rank tier**, and **Potential**. They currently render a literal `-`
+placeholder (see `stats.md`). This task replaces the placeholders with real values:
+
+1. **MMR** — a per-player skill rating. Likely an Elo-style number seeded from
+   `overall_rating` and updated from game results (ties into SIM-04's "elo skill rating
+   of actual players using all imported games" and STAT-03's "elo over time"). Decide:
+   stored field vs. derived; per-Season vs. career.
+2. **Rank tier** — a **letter tier** (e.g. S / A / B / C / D, or named bands) derived
+   from MMR or `overall_rating` bands. Cosmetic label; thresholds are tunable.
+3. **Potential** — a ceiling rating (0–100) per player, paired with `overall_rating`.
+   Likely a stored field set at generation / import; drives prospect scouting later.
+
+**Implementation surface:** add the field(s) / derivation, then replace the `-`
+placeholder cells on the Player Ratings, Free Agents, and Team Roster templates with the
+real values (and make them sortable where it makes sense). Unblocks the **Hall of Fame**
+screen's Peak MMR / Peak Overall columns (`stats.md` §11). No simulator-mechanic change;
+no Score Calibration re-baseline. Coordinate with SIM-04 (import-driven Elo) so MMR has a
+single source of truth.

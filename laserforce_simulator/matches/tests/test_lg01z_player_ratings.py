@@ -181,6 +181,32 @@ class TestPlayerRatingsBody(TestCase):
         response = player_ratings(_get(self.league.id), self.league.id)
         self.assertIn(f"/players/{self.player.id}/stats/", response.content.decode())
 
+    def test_bio_and_proxy_columns_present(self) -> None:
+        # Fixed bio columns + the deferred MMR / Rank / Potential proxies.
+        response = player_ratings(_get(self.league.id), self.league.id)
+        content = response.content.decode()
+        for col in (
+            "age",
+            "home_site",
+            "height",
+            "games",
+            "started",
+            "mmr",
+            "rank",
+            "potential",
+        ):
+            self.assertIn(f"player-ratings-th-{col}", content)
+        self.assertIn("Potential", content)
+
+    def test_team_cell_links_to_roster(self) -> None:
+        # The Team value links to the league Team Roster page for that team.
+        response = player_ratings(_get(self.league.id), self.league.id)
+        content = response.content.decode()
+        team = self.player.team
+        self.assertIn(
+            f"/leagues/{self.league.id}/team/roster/?team_id={team.id}", content
+        )
+
 
 # ---------------------------------------------------------------------------
 # Sorting — LG-00c forgiving fallback + ORM / Python-sentinel branches

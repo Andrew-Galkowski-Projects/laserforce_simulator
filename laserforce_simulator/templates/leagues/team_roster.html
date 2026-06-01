@@ -31,6 +31,7 @@
                 <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">View</button></noscript>
             </form>
 
+            {# MMR / Rank / Potential are placeholders until STAT-PROXY-01 (see stats.md). #}
             <h2 class="h5">Starting Six</h2>
             <div class="table-responsive mb-4">
                 <table id="roster-starting-table" class="table table-striped table-hover">
@@ -38,7 +39,15 @@
                         <tr>
                             <th>Role</th>
                             <th>Name</th>
+                            <th>Age</th>
+                            <th>Home Site</th>
+                            <th>Height</th>
+                            <th>Games</th>
+                            <th>Started</th>
+                            <th>MMR</th>
+                            <th>Rank</th>
                             <th class="text-end">Overall</th>
+                            <th>Potential</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -46,10 +55,18 @@
                             <tr>
                                 <td>{{ role|title }}</td>
                                 <td><a href="{% url 'player_career_stats' player.id %}">{{ player.name }}</a></td>
+                                <td>{{ player.age|default:"-" }}</td>
+                                <td>{{ player.home_site|default:"-" }}</td>
+                                <td>{{ player.height|default:"-" }}</td>
+                                <td>{{ player.total_games }}</td>
+                                <td>{{ player.started_playing_age|default:"-" }}</td>
+                                <td>-</td>
+                                <td>-</td>
                                 <td class="text-end">{{ player.overall_rating|floatformat:1 }}</td>
+                                <td>-</td>
                             </tr>
                         {% empty %}
-                            <tr><td colspan="3" class="text-muted">No starting players assigned.</td></tr>
+                            <tr><td colspan="11" class="text-muted">No starting players assigned.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -61,17 +78,33 @@
                     <thead>
                         <tr>
                             <th>Name</th>
+                            <th>Age</th>
+                            <th>Home Site</th>
+                            <th>Height</th>
+                            <th>Games</th>
+                            <th>Started</th>
+                            <th>MMR</th>
+                            <th>Rank</th>
                             <th class="text-end">Overall</th>
+                            <th>Potential</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for player in bench_players %}
                             <tr>
                                 <td><a href="{% url 'player_career_stats' player.id %}">{{ player.name }}</a></td>
+                                <td>{{ player.age|default:"-" }}</td>
+                                <td>{{ player.home_site|default:"-" }}</td>
+                                <td>{{ player.height|default:"-" }}</td>
+                                <td>{{ player.total_games }}</td>
+                                <td>{{ player.started_playing_age|default:"-" }}</td>
+                                <td>-</td>
+                                <td>-</td>
                                 <td class="text-end">{{ player.overall_rating|floatformat:1 }}</td>
+                                <td>-</td>
                             </tr>
                         {% empty %}
-                            <tr><td colspan="2" class="text-muted">No bench players.</td></tr>
+                            <tr><td colspan="10" class="text-muted">No bench players.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>

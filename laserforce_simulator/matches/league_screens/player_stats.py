@@ -62,7 +62,9 @@ _PLAYER_STATS_COLUMNS: tuple[tuple[str, str, bool], ...] = (
     ("mvp", "MVP", True),
     ("tags_made", "Tags", False),
     ("times_tagged", "Tagged", False),
+    ("tag_ratio", "Tag Ratio", True),
     ("accuracy", "Acc%", True),
+    ("survival", "Survival", True),
     ("final_lives", "Lives", False),
     ("resupplies_given", "Resup", False),
     ("missiles_landed", "Missiles", False),
@@ -120,6 +122,10 @@ def _build_round_dicts(displayed_season) -> list[dict]:
                 "tags_made": prs.tags_made,
                 "times_tagged": prs.times_tagged,
                 "accuracy": float(prs.get_accuracy),
+                # Derived survival seconds: elimination tick capped at the
+                # round length (1800), ÷2 to seconds at the display boundary
+                # (TIME-01). The pure module averages this across rounds.
+                "survival_seconds": min(prs.was_eliminated_at, 1800) / 2,
                 "final_lives": prs.final_lives,
                 "resupplies_given": prs.resupplies_given,
                 "missiles_landed": prs.missiles_landed,

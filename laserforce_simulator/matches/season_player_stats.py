@@ -64,6 +64,19 @@ AVERAGED_KEYS: tuple[str, ...] = (
     "accuracy",
 )
 
+# DERIVED keys — not in STAT_KEYS (they are neither a plain sum nor a plain
+# per-round mean), computed from the accumulators after the round loop:
+#   - "tag_ratio" = sum(tags_made) / max(sum(times_tagged), 1)  (our KDA)
+#   - "survival"  = mean per-round survival seconds (the view pre-computes
+#                   each round's ``survival_seconds`` = min(was_eliminated_at,
+#                   1800) ÷ 2; missing ⇒ treated as 0.0, defensive).
+# Surfaced in PlayerStatRow.stats alongside the STAT_KEYS so the template /
+# sorter treat them uniformly.
+DERIVED_KEYS: tuple[str, ...] = (
+    "tag_ratio",
+    "survival",
+)
+
 
 @dataclass(frozen=True)
 class PlayerStatRow:
@@ -117,6 +130,7 @@ def aggregate_player_stats(player_rounds: Iterable[Mapping]) -> list[PlayerStatR
                 "games": 0,
                 "_sums": {k: 0.0 for k in SUMMED_KEYS},
                 "_avg_sums": {k: 0.0 for k in AVERAGED_KEYS},
+                "_survival_sum": 0.0,
             }
             acc[pid] = bucket
             order.append(pid)
@@ -131,6 +145,8 @@ def aggregate_player_stats(player_rounds: Iterable[Mapping]) -> list[PlayerStatR
             bucket["_sums"][k] += pr[k]
         for k in AVERAGED_KEYS:
             bucket["_avg_sums"][k] += pr[k]
+        # Derived: per-round survival seconds (view pre-computes; missing ⇒ 0).
+        bucket["_survival_sum"] += pr.get("survival_seconds", 0.0)
 
     rows: list[PlayerStatRow] = []
     for pid in order:
@@ -141,6 +157,11 @@ def aggregate_player_stats(player_rounds: Iterable[Mapping]) -> list[PlayerStatR
             stats[k] = bucket["_sums"][k]
         for k in AVERAGED_KEYS:
             stats[k] = bucket["_avg_sums"][k] / games if games else 0.0
+        # Derived keys (not in STAT_KEYS).
+        stats["tag_ratio"] = bucket["_sums"]["tags_made"] / max(
+            bucket["_sums"]["times_tagged"], 1
+        )
+        stats["survival"] = bucket["_survival_sum"] / games if games else 0.0
         rows.append(
             PlayerStatRow(
                 player_id=bucket["player_id"],
@@ -158,10 +179,11 @@ def aggregate_player_stats(player_rounds: Iterable[Mapping]) -> list[PlayerStatR
 def coerce_sort(raw: "str | None", default: str = "points_scored") -> str:
     """Forgiving ``?sort=`` validator over the STAT_KEYS + ``name`` / ``team``.
 
-    Accepted: every key in :data:`STAT_KEYS` plus ``"name"`` / ``"team"``
-    / ``"games"``. Anything else (``None``, unknown, empty) ⇒ ``default``.
+    Accepted: every key in :data:`STAT_KEYS` and :data:`DERIVED_KEYS` plus
+    ``"name"`` / ``"team"`` / ``"games"``. Anything else (``None``, unknown,
+    empty) ⇒ ``default``.
     """
-    if raw in STAT_KEYS or raw in ("name", "team", "games"):
+    if raw in STAT_KEYS or raw in DERIVED_KEYS or raw in ("name", "team", "games"):
         return raw  # type: ignore[return-value]
     return default
 
@@ -205,7 +227,7 @@ def sort_player_stats(
         return materialised
     if sort == "games":
         primary = lambda r: r.games  # noqa: E731
-    elif sort in STAT_KEYS:
+    elif sort in STAT_KEYS or sort in DERIVED_KEYS:
         primary = lambda r: r.stats.get(sort, 0.0)  # noqa: E731
     else:
         primary = lambda r: r.stats.get("points_scored", 0.0)  # noqa: E731

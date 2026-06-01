@@ -47,6 +47,39 @@ from .standings import compute_standings
 from .tasks import play_season_task
 from .views import _celery_state_to_job_status
 
+# Abbreviated column headers for the wide rating tables (Player Ratings,
+# Free Agents). Each entry is ``(key, abbr, full)``: ``key`` matches the
+# LG-00c ``teams.views._SORT_KEYS_DISPLAY`` key byte-for-byte (so sort links
+# + ``*-th-{key}`` DOM ids are unchanged) — only the rendered label is
+# shortened, with the full name kept in a ``title`` tooltip. Scoped to the
+# league rating screens; the shared LG-00c ``/players/`` table keeps its full
+# labels.
+RATING_SORT_KEYS_DISPLAY: tuple[tuple[str, str, str], ...] = (
+    ("name", "Name", "Name"),
+    ("team", "Team", "Team"),
+    ("preferred_roles", "Roles", "Preferred Roles"),
+    ("overall_rating", "Ovr", "Overall"),
+    ("player_awareness", "PlAw", "Player Awareness"),
+    ("game_awareness", "GmAw", "Game Awareness"),
+    ("resource_awareness", "RsAw", "Resource Awareness"),
+    ("decision_making", "Dec", "Decision Making"),
+    ("positioning", "Pos", "Positioning"),
+    ("stamina", "Sta", "Stamina"),
+    ("speed", "Spd", "Speed"),
+    ("flexibility", "Flx", "Flexibility"),
+    ("adaptability", "Adp", "Adaptability"),
+    ("communication", "Comm", "Communication"),
+    ("teamwork", "Team", "Teamwork"),
+    ("offensive_synergy", "OffSyn", "Offensive Synergy"),
+    ("defensive_synergy", "DefSyn", "Defensive Synergy"),
+    ("midfield_synergy", "MidSyn", "Midfield Synergy"),
+    ("resupply_synergy", "RsupSyn", "Resupply Synergy"),
+    ("resupply_efficiency", "RsupEff", "Resupply Efficiency"),
+    ("accuracy", "Acc", "Accuracy"),
+    ("survival", "Surv", "Survival"),
+    ("special_usage", "SpcUse", "Special Usage"),
+)
+
 # ====================================================================
 # LG-01 — Season views
 # ====================================================================

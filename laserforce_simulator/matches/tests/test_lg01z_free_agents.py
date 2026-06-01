@@ -202,6 +202,22 @@ class TestFreeAgentsBody(TestCase):
         response = free_agents(_get(self.league.id), self.league.id)
         self.assertIn(f"/players/{self.fa.id}/stats/", response.content.decode())
 
+    def test_bio_and_proxy_columns_present(self) -> None:
+        # Fixed bio columns + the deferred MMR / Rank / Potential proxies.
+        response = free_agents(_get(self.league.id), self.league.id)
+        content = response.content.decode()
+        for col in (
+            "age",
+            "home_site",
+            "height",
+            "games",
+            "started",
+            "mmr",
+            "rank",
+            "potential",
+        ):
+            self.assertIn(f"free-agents-th-{col}", content)
+
 
 # ---------------------------------------------------------------------------
 # Sorting — LG-00c forgiving fallback + ORM / Python-sentinel branches

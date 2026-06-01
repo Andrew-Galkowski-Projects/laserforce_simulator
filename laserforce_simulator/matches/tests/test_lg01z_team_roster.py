@@ -158,6 +158,22 @@ class TestTeamRosterBody(TestCase):
         response = team_roster(_get(self.league.id), self.league.id)
         self.assertIn("sidebar-team-roster", response.content.decode())
 
+    def test_bio_and_proxy_columns_present(self) -> None:
+        # Both roster tables surface bio columns + the deferred MMR / Rank /
+        # Potential proxies (rendered "-" until STAT-PROXY-01).
+        response = team_roster(_get(self.league.id), self.league.id)
+        content = response.content.decode()
+        for header in (
+            "Home Site",
+            "Height",
+            "Games",
+            "Started",
+            "MMR",
+            "Rank",
+            "Potential",
+        ):
+            self.assertIn(header, content)
+
 
 # ---------------------------------------------------------------------------
 # Team selection — ?team_id= validation + default

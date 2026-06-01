@@ -31,6 +31,7 @@ from matches.league_screens.player_stats import player_stats
 from matches.models import GameRound, League, Match, PlayerRoundState, Season
 from matches.season_player_stats import (
     AVERAGED_KEYS,
+    DERIVED_KEYS,
     STAT_KEYS,
     SUMMED_KEYS,
     aggregate_player_stats,
@@ -117,6 +118,40 @@ class TestAggregateGrouping(TestCase):
         self.assertEqual(rows[0].role, "medic")
 
 
+class TestDerivedStats(TestCase):
+    def test_derived_keys_are_not_in_stat_keys(self) -> None:
+        # Derived keys are computed separately; they must not pollute the
+        # 12-key SUMMED ∪ AVERAGED partition.
+        self.assertEqual(set(DERIVED_KEYS) & set(STAT_KEYS), set())
+
+    def test_tag_ratio_is_sum_over_sum(self) -> None:
+        # 10 tags / 0 tagged then 0 tags / 4 tagged ⇒ 10 / max(4,1) = 2.5,
+        # NOT the mean of per-round ratios (which would be (inf + 0)/2).
+        rounds = [
+            _round_dict(1, tags_made=10, times_tagged=0),
+            _round_dict(1, tags_made=0, times_tagged=4),
+        ]
+        rows = aggregate_player_stats(rounds)
+        self.assertAlmostEqual(rows[0].stats["tag_ratio"], 2.5)
+
+    def test_tag_ratio_zero_tagged_clamps_denominator(self) -> None:
+        rows = aggregate_player_stats([_round_dict(1, tags_made=7, times_tagged=0)])
+        self.assertAlmostEqual(rows[0].stats["tag_ratio"], 7.0)
+
+    def test_survival_is_mean_of_per_round_seconds(self) -> None:
+        rounds = [
+            _round_dict(1, survival_seconds=900.0),
+            _round_dict(1, survival_seconds=300.0),
+        ]
+        rows = aggregate_player_stats(rounds)
+        self.assertAlmostEqual(rows[0].stats["survival"], 600.0)
+
+    def test_survival_defaults_to_zero_when_absent(self) -> None:
+        # Round dicts without survival_seconds (defensive) contribute 0.
+        rows = aggregate_player_stats([_round_dict(1)])
+        self.assertAlmostEqual(rows[0].stats["survival"], 0.0)
+
+
 # ===========================================================================
 # Pure-unit — coercers + sorting
 # ===========================================================================
@@ -131,6 +166,10 @@ class TestCoercers(TestCase):
         self.assertEqual(coerce_sort("name"), "name")
         self.assertEqual(coerce_sort("team"), "team")
         self.assertEqual(coerce_sort("games"), "games")
+
+    def test_coerce_sort_accepts_derived_keys(self) -> None:
+        for k in DERIVED_KEYS:
+            self.assertEqual(coerce_sort(k), k)
 
     def test_coerce_sort_falls_back(self) -> None:
         self.assertEqual(coerce_sort("BOGUS"), "points_scored")
@@ -361,6 +400,14 @@ class TestPlayerStatsBody(TestCase):
         self.assertIn("player-stats-th-mvp", content)
         self.assertIn("player-stats-th-accuracy", content)
         self.assertIn("player-stats-th-name", content)
+
+    def test_tag_ratio_and_survival_columns_present(self) -> None:
+        response = player_stats(_get(self.league.id), self.league.id)
+        content = response.content.decode()
+        self.assertIn("player-stats-th-tag_ratio", content)
+        self.assertIn("player-stats-th-survival", content)
+        self.assertIn("Tag Ratio", content)
+        self.assertIn("Survival", content)
 
     def test_sidebar_active_is_player_stats(self) -> None:
         response = player_stats(_get(self.league.id), self.league.id)
