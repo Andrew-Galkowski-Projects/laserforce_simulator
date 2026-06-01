@@ -881,6 +881,27 @@ session before implementation.
   [`player-ratings.md`](docs/zengm-comparison/player-ratings.md),
   [`player-stats.md`](docs/zengm-comparison/player-stats.md),
   [`statistical-feats.md`](docs/zengm-comparison/statistical-feats.md).
+  - completed: all three screens gained an "All Teams" + per-enrolled-team
+    `<select>` driven by `?team_id=<id>`, with a shared validator
+    `matches.league_views._coerce_team_id(raw, enrolled_ids)` (mirrors
+    `_coerce_per_page`; the single source imported by all three modules) that
+    returns the int id iff it parses **and** is enrolled, else `None` (= All
+    Teams, forgiving fallback). Each view sets `enrolled_teams`
+    (`displayed_season.teams.order_by("name")`) + `selected_team_id`. Filter
+    points differ per screen: Player Ratings filters the queryset
+    (`qs.filter(team_id=selected)` after `_enrolled_player_queryset`); Player
+    Stats filters the materialized rows post-`aggregate_player_stats` on
+    `PlayerStatRow.team_id`; Statistical Feats filters the seam **inputs**
+    before `stat_feats.scan_feats` (keep `player_rounds` where
+    `team_id == selected`, keep `matches` where `selected in {red_team_id,
+    blue_team_id}`) — `stat_feats.py` itself untouched. `team_id` is carried in
+    both querystring helpers + a hidden per-page-form input on the two
+    paginated screens (the picker form omits `page` so a team change resets to
+    page 1); Statistical Feats has no pagination/sort. New DOM ids
+    `{player-ratings,player-stats,statistical-feats}-team-filter-{form,select}`.
+    UI-only, read-only — no model, migration, URL, simulator, CONTEXT.md, ADR,
+    or score re-baseline. Cross-cutting **C5**. Seam contract at
+    `.claude/worktrees/lg-06b-seam-contract.md`.
 - **LG-06c · Sortable columns on the remaining tables.** Bring the LG-00c
   `_coerce_sort` / `_coerce_dir` sort-header pattern (already used on Power
   Rankings / Free Agents / Player Ratings / Player Stats / Team Stats) to the

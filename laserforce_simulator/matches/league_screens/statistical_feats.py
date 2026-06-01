@@ -16,7 +16,7 @@ from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, render
 
 from matches import stat_feats
-from matches.league_views import _build_league_sidebar_links
+from matches.league_views import _build_league_sidebar_links, _coerce_team_id
 from matches.models import GameEvent, GameRound, League, Match, PlayerRoundState
 
 
@@ -64,10 +64,20 @@ def statistical_feats(request: HttpRequest, league_id: int) -> HttpResponse:
         "sidebar_links": sidebar_links,
         "sidebar_active": "statistical_feats",
         "feats": [],
+        "enrolled_teams": [],
+        "selected_team_id": None,
     }
 
     if displayed_season is None:
         return render(request, "leagues/statistical_feats.html", base_context)
+
+    # LG-06b — team filter. Enrolled teams (the picker options) + the
+    # forgiving ``?team_id=`` coercion against the enrolment set.
+    enrolled_teams = list(displayed_season.teams.order_by("name"))
+    enrolled_ids = {t.id for t in enrolled_teams}
+    selected_team_id = _coerce_team_id(request.GET.get("team_id"), enrolled_ids)
+    base_context["enrolled_teams"] = enrolled_teams
+    base_context["selected_team_id"] = selected_team_id
 
     # --- Per-Round nuke-detonation counts, keyed (round_id, actor_id) -----
     detonations: dict[tuple[int, int], int] = defaultdict(int)
@@ -150,6 +160,17 @@ def statistical_feats(request: HttpRequest, league_id: int) -> HttpResponse:
                 "blue_round1_points": match.blue_round1_points,
             }
         )
+
+    # LG-06b — apply the team filter to both seam inputs before scanning.
+    if selected_team_id is not None:
+        player_rounds = [
+            pr for pr in player_rounds if pr["team_id"] == selected_team_id
+        ]
+        matches = [
+            m
+            for m in matches
+            if selected_team_id in {m["red_team_id"], m["blue_team_id"]}
+        ]
 
     feats = stat_feats.scan_feats(player_rounds, matches)
 
