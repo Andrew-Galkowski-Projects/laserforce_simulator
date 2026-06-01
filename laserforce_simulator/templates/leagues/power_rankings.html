@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}{{ league.name }} — Power Rankings{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
+        <h1 class="mb-3">{{ league.name }} — Power Rankings</h1>
+
+        {% if not displayed_season %}
+            <div id="power-rankings-empty-notice" class="alert alert-info">
+                No Season in this League yet — start a Season to populate the
+                power rankings.
+            </div>
+        {% else %}
+            <p class="text-muted small mb-3">
+                The power score sums three per-League min-max-normalized
+                components: team mean overall rating, win%, and average
+                per-round score differential. Highest score ranks #1.
+            </p>
+            <div class="table-responsive">
+                <table id="power-rankings-table" class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            {% for key, label in sort_keys_display %}
+                                <th id="power-rankings-th-{{ key }}"{% if key != "team" %} class="text-end"{% endif %}>
+                                    {% if key == sort %}
+                                        {% if dir == "asc" %}
+                                            <a href="?sort={{ key }}&dir=desc">{{ label }} &uarr;</a>
+                                        {% else %}
+                                            <a href="?sort={{ key }}&dir=asc">{{ label }} &darr;</a>
+                                        {% endif %}
+                                    {% else %}
+                                        <a href="?sort={{ key }}&dir=asc">{{ label }}</a>
+                                    {% endif %}
+                                </th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row, team in rows %}
+                            <tr id="power-rankings-row-{{ row.team_id }}">
+                                <td class="text-end">{{ row.rank }}</td>
+                                <td>
+                                    {% if team %}
+                                        <a href="{% url 'team_detail' team.id %}">{{ row.team_name }}</a>
+                                    {% else %}
+                                        {{ row.team_name }}
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">{{ row.mean_rating|floatformat:1 }}</td>
+                                <td class="text-end">{{ row.win_pct|floatformat:3 }}</td>
+                                <td class="text-end">{{ row.avg_score_diff|floatformat:1 }}</td>
+                                <td class="text-end fw-bold">{{ row.power_score|floatformat:3 }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+    </main>
+</div>
+{% endblock %}

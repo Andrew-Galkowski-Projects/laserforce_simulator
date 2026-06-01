@@ -36,18 +36,22 @@ ROLE_CHOICES = [
 
 
 class TeamManager(models.Manager):
-    """Default manager for `Team`, plus `regular()` which excludes the
-    reserved Free Agents Team.
+    """Default manager for `Team`, plus `regular()` which excludes every
+    free-agent pool Team.
 
-    LG-00: the Free Agents Team is identified by the magic name
-    ``"Free Agents"`` only (no schema flag). `Team.objects.all()` still
-    includes it; call sites that want only competitive Teams use
-    `Team.objects.regular()` instead.
+    Two kinds of pool Team are hidden: the legacy global sandbox pool
+    identified by the magic name ``"Free Agents"`` (LG-00), and every
+    per-League pool — any Team referenced by a ``League.free_agent_pool``
+    FK (detected via the ``free_agent_pool_for`` reverse relation).
+    `Team.objects.all()` still includes them; call sites that want only
+    competitive Teams use `Team.objects.regular()` instead.
     """
 
     def regular(self):
-        """All Teams except the reserved Free Agents Team."""
-        return self.exclude(name="Free Agents")
+        """All Teams except free-agent pool Teams (global + per-League)."""
+        return self.exclude(name="Free Agents").exclude(
+            free_agent_pool_for__isnull=False
+        )
 
 
 class Team(models.Model):

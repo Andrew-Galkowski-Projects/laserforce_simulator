@@ -12,6 +12,7 @@
         </div>
         <span id="coming-soon-section-badge" class="badge bg-secondary">{{ feature_section }}</span>
         <p id="coming-soon-message" class="mt-3">Coming soon — this page is a placeholder for the {{ feature_label }} feature.</p>
+        {% if blocker %}<p id="coming-soon-blocker" class="text-muted fst-italic">Blocked: {{ blocker }}</p>{% endif %}
         <small id="coming-soon-feature-key" class="text-muted">{{ feature_key }}</small>
     </main>
 </div>

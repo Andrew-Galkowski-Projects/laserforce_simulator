@@ -794,6 +794,111 @@ teams, players, matches, batch sime, create team, maps, help, and tools
 - completed
 - note: **three-mode topnav restructure** — extends the LG-01h `core.context_processors.app_mode(request: HttpRequest) -> dict[str, str]` enum from 2 values (`"league"` / `"sandbox"`) to **3 values** (`"start"` / `"league"` / `"sandbox"`) via the locked 3-way path-prefix rule applied in this exact order so `/` does NOT fall into sandbox — (1) `path == "/"` (exact match) ⇒ `"start"`, (2) `path.startswith("/leagues/") or path.startswith("/seasons/")` ⇒ `"league"`, (3) everything else (including empty string `""`, missing `.path` attribute, `/teams/`, `/players/`, `/matches/`, `/maps/`, `/help/*`, `/tools/*`, any unknown path) ⇒ `"sandbox"`; the defensive read distinguishes "missing attribute" from "explicit `/`" via `path = getattr(request, "path", None)` — `None` and `""` both fall through to the sandbox return, only an explicit `path == "/"` string trips the start return; signature unchanged, return-key unchanged, return-value-type still `dict[str, str]` (all 3 enum values are strings); rewrites `core.context_processors.league_nav(request: HttpRequest) -> dict[str, Any]` (return-type annotation widens from `dict[str, str]` (LG-01h) to `dict[str, Any]` because `top_bar_links` is a `list[dict]`, not a `str`) — the **5 LG-01h URL keys** `top_bar_history_url` / `top_bar_standings_url` / `top_bar_playoffs_url` / `top_bar_finances_url` / `top_bar_power_rankings_url` are DELETED from the return dict (zero callers remain after the `base.html` rewrite), and the processor now returns exactly **2 keys** — `top_bar_links: list[dict]` (the 23-entry output of `matches.views._build_league_sidebar_links(league, displayed_season, sidebar_active=None)` for the resolved League + displayed Season, or `[]` when no League can be resolved; `sidebar_active=None` is locked since active-styling belongs to the sidebar partial not the topnav) + `top_bar_dashboard_url: str` (`reverse("league_dashboard", kwargs={"league_id": league.id})` for the resolved League, or `reverse("league_list")` when no League can be resolved); the **3-step League resolution chain** (session-pin `last_league_id` → single-League via bounded `[:2]` probe → fallback) + the **displayed-Season resolution** (`league.active_season` → most-recent completed via `seasons.filter(state="completed").order_by("-id").first()` → `None`) + the **defensive DB-error handling** (every ORM call wrapped `try: ... except DatabaseError:` logging at DEBUG, broken-transaction renders falling through to the empty-list + list-page fallback) are all identical to LG-01h; a new lazy local-import `from matches.views import _build_league_sidebar_links` joins the existing `from matches.models import League` inside the function body (not at module scope, to preserve the LG-01f apps-loading-cycle guard); rewrites `templates/base.html`'s `<div class="navbar-nav ms-auto">` block around a 3-way `{% if app_mode == "league" %}` / `{% elif app_mode == "sandbox" %}` / `{% else %}` branch where the `{% else %}` arm is the start-mode (path == `/`) minimum-viable layout — placing it as `{% else %}` minimises visual complexity of the most-frequently-loaded path; the brand link `<a class="navbar-brand" href="{% url 'landing' %}">⚡ Laserforce Manager</a>` + the LG-01a-locked outer wrapper `<div class="container">` + `<button class="navbar-toggler">` + `<div class="collapse navbar-collapse" id="mainNav">` are preserved verbatim around all 3 branches; **league-mode block (7 elements)** in pinned left-to-right order `[⌂ home icon] | League ▾ | Team ▾ | Players ▾ | Stats ▾ | Tools ▾ | Help ▾` — (1) Dashboard home-icon link `<a class="nav-link" id="dashboard-nav-link" href="{{ top_bar_dashboard_url }}" aria-label="League dashboard">⌂</a>` where the home-icon text content is the literal character `⌂` (U+2302 HOUSE — no Bootstrap Icons CDN, no `<i>` element, no SVG, no 🏠 emoji), (2) `League ▾` dropdown toggle id `league-nav-link` (the `s` is dropped from the LG-01h `leagues-nav-link` id — LG-01k uses singular `league-nav-link` to match the `section="league"` vocabulary of `top_bar_links`) containing the LEAGUE section (6 entries: Standings / Schedule / Playoffs / Finances / History / Power Rankings), (3) `Team ▾` id `team-nav-link` containing the TEAM section (4 entries: Roster / Schedule / Finances / History), (4) `Players ▾` id `players-nav-link` containing the PLAYERS section (6 entries: Free Agents / Trade / Trading Block / Prospects / Watch List / Hall of Fame), (5) `Stats ▾` id `stats-nav-link` containing the STATS section (6 entries: Game Log / League Leaders / Player Ratings / Player Stats / Team Stats / Statistical Feats), (6) `Tools ▾` preserved verbatim from LG-01h (4 items, ids `tools-nav-link` + `tools-{achievements,screenshot,debug-mode,reset-db}-topbar-link`), (7) `Help ▾` preserved verbatim from LG-01h (6 items, ids `help-nav-link` + `help-{overview,changes,custom-rosters,debugging,lol-gm-forums,zen-gm-forums}-topbar-link`); **sandbox-mode block (8 elements)** in pinned order `Teams | Players | Matches | Batch Sim | Create Team | Maps | Tools ▾ | Help ▾` — the 6 LG-01a flat anchors preserved verbatim (Teams `team_list` / Players `player_list` with LG-01a-locked DOM id `player-list-nav-link` preserved / Matches `match_list` / Batch Sim `simulate_batch` / Create Team `team_create` / Maps `map_list`, anchors 1, 3, 4, 5, 6 carry no DOM id matching LG-01a) followed by the universal Tools ▾ + Help ▾ dropdowns — **delta from LG-01h: the LG-01h sandbox-branch `League ▾` dropdown is REMOVED from sandbox mode entirely** (a user in sandbox mode is not browsing a League, so the League menu surface is irrelevant); **start-mode block (2 elements)** in pinned order `Tools ▾ | Help ▾` and nothing else — no `League ▾`, no Dashboard icon, no flat sandbox links, no `player-list-nav-link` — the start page (`/`) presents the minimum-viable topnav and the user picks a mode card (per LG-01a `mode-card-sandbox` / `mode-card-league` / `mode-card-multiplayer`) to path-flip into a populated mode; **order delta from LG-01h applies in all 3 modes: Tools is now BEFORE Help** (LG-01h had Help-then-Tools; LG-01k swaps to Tools-then-Help); the Tools ▾ + Help ▾ markup is identical across all 3 modes — the Code agent MAY (locked optional) factor the ~14 lines of duplication into a small `{% include "_partials/topnav_tools_help.html" %}` partial (path locked) included at the end of each branch, OR inline the markup 3× (test plan asserts on DOM ids, not on inclusion structure); **section-dropdown iteration pattern** (applies to all 4 league-mode section dropdowns) uses `{% regroup top_bar_links by section as sections %}` at the start of the league branch followed by per-section rendering via `section.grouper` filtering, with per-entry branching on `entry.disabled` — `{% if entry.disabled %}<li><span class="dropdown-item disabled">{{ entry.label }}</span></li>{% else %}<li><a class="dropdown-item" id="topbar-{{ entry.section }}-{{ entry.key }}" href="{{ entry.url }}">{{ entry.label }}</a></li>{% endif %}` — and the locked **`topbar-{section}-{key}` DOM-id pattern** (mirrors LG-01f `sidebar-{section}-{key}`) produces the 22 league-mode dropdown-entry ids `topbar-league-standings` / `topbar-league-schedule` / `topbar-league-playoffs` / `topbar-league-finances` / `topbar-league-history` / `topbar-league-power_rankings` / `topbar-team-roster` / `topbar-team-schedule_team` / `topbar-team-finances_team` / `topbar-team-history_team` / `topbar-players-free_agents` / `topbar-players-trade` / `topbar-players-trading_block` / `topbar-players-prospects` / `topbar-players-watch_list` / `topbar-players-hall_of_fame` / `topbar-stats-game_log` / `topbar-stats-league_leaders` / `topbar-stats-player_ratings` / `topbar-stats-player_stats` / `topbar-stats-team_stats` / `topbar-stats-statistical_feats` (note the `power_rankings` / `schedule_team` / `finances_team` / `history_team` / `free_agents` / `trading_block` / `watch_list` / `hall_of_fame` / `game_log` / `league_leaders` / `player_ratings` / `player_stats` / `team_stats` / `statistical_feats` underscore-not-hyphen forms — they match the helper's `key=` values); **the top Dashboard entry (`section="top", key="dashboard"`) of `top_bar_links` is filtered OUT of the regrouped iteration** — it surfaces only via the leading `dashboard-nav-link` icon, not in any dropdown, so no `topbar-top-dashboard` DOM id is emitted; disabled entries render as `<span class="dropdown-item disabled">` with NO DOM id (the `topbar-{section}-{key}` id is only emitted on LIVE `<a>` elements — tests must not assert on disabled-entry ids); **single-source-of-truth observation**: `matches.views._build_league_sidebar_links` becomes the sole producer of the per-section entry list consumed by BOTH the LG-01f sidebar partial AND the LG-01k league-mode topbar — flipping a disabled→LIVE in the helper (e.g. LG-02 lighting up Playoffs) updates both surfaces at once with zero per-surface edit; LG-01k does NOT edit the helper itself, it is read-only consumed; **6 retired LG-01h DOM ids** — `leagues-nav-link` (replaced by `league-nav-link`) / `league-standings-topbar-link` (replaced by `topbar-league-standings`) / `league-playoffs-topbar-link` (replaced by `topbar-league-playoffs`) / `league-finances-topbar-link` (replaced by `topbar-league-finances`) / `league-history-topbar-link` (replaced by `topbar-league-history`) / `league-power-rankings-topbar-link` (replaced by `topbar-league-power_rankings` — underscore not hyphen); **5 retired LG-01h context keys** — `top_bar_history_url` / `top_bar_standings_url` / `top_bar_playoffs_url` / `top_bar_finances_url` / `top_bar_power_rankings_url`; tests live in **1 NEW file + 3 EXTENDED files** under `matches/tests/` — `test_lg01k_base_html_branching.py` (NEW, Django `TestCase`, classes `TestLg01kStartModeTopbar` / `TestLg01kSandboxModeTopbar` / `TestLg01kLeagueModeTopbar` covering per-mode DOM-id presence/absence, the `⌂` U+2302 character inside the `dashboard-nav-link` anchor body, the Tools-before-Help source-order check, the `topbar-top-dashboard` ABSENT assertion, the 6 retired-id ABSENT assertions, and at least one `topbar-{section}-{key}` id per section); EXTENDED `test_lg01h_app_mode_processor.py` (existing `TestAppModeContextProcessor` gains 3 new methods for `"/"` ⇒ `"start"`, `""` ⇒ `"sandbox"`, missing-`.path` ⇒ `"sandbox"`); EXTENDED `test_league_nav_context_processor.py` (the 5 LG-01h test methods on retired URL keys are DELETED and replaced with new methods covering the 2-key return shape — `top_bar_links` length 23 with League / `[]` on fallback, `top_bar_dashboard_url` resolves to `league_dashboard` / `league_list` fallback, retired keys ABSENT, helper called with `sidebar_active=None` via monkeypatched recording, displayed-Season chain works, `displayed_season is None` keeps 23 entries but Standings/Schedule are `url=None, disabled=True`, top entry `[0]` has `section="top", key="dashboard"` present in processor output — the TEMPLATE filters it from the regrouped iteration, not the processor); MINIMAL EDIT `test_lg01h_base_html_branching.py` (assertions referencing retired ids and retired URL context keys are deleted or updated; Tools / Help DOM-id assertions stay verbatim; LG-01h file NOT replaced wholesale — `test_lg01k_base_html_branching.py` is the new authority for topbar DOM assertions); tests must NOT touch `simulate_scheduled_round` / `simulate_match` / `save_games`; **scope-out (locked)**: no model change, no migration, no simulator touch, no RNG, no `_flush_to_db` touch, no SIM-07 / SIM-08 contract interaction, no Score Calibration re-baseline (LG-01k is a UI restructure — no simulation mechanics change), no new ADR (ADR-0017 is unchanged; LG-01k modification is at the implementation layer, the LG-01h architectural decision still stands), no CONTEXT.md edit (`start` / `sandbox` / `league` are implementation enum values for topnav rendering, not domain language), no new dependency, no API / DRF endpoint, no `django.contrib.messages` flash, no admin change, no JS framework / htmx / Alpine / Stimulus / inline `<script>` blocks (Bootstrap 5 dropdown JS already in `base.html` is the only existing dep), no new template tag library, no new Django context processor beyond the existing 2, no edit to `templates/_partials/league_sidebar.html`, no edit to `matches.views._build_league_sidebar_links` (read-only consumed by both sidebar and topbar), no edit to any view function / URL include file / `core/views.py` / `matches/views.py` / `settings.py` (the `TEMPLATES` context-processor registration list is unchanged — only the existing 2 entries are reused), no edit to the LG-01h `coming_soon` view / `_FEATURE_REGISTRY` / `templates/_placeholder.html`, no edit to the LG-01a `landing` view / `templates/core/landing.html`, no mode-toggle UI (mode is path-driven only, per LG-01h precedent), no multiplayer mode (deferred per ADR-0017 §1), no new placeholder views or `coming_soon_*` URL names (LG-01k strictly reuses the LG-01h URL names), no backfill; locked names — context processor function names `core.context_processors.app_mode` (signature unchanged, body extended 2→3 branches) + `core.context_processors.league_nav` (signature unchanged, body rewritten, return-type annotation widens to `dict[str, Any]`); NEW context keys `top_bar_links` + `top_bar_dashboard_url`; RETIRED context keys (5 listed above); `app_mode` 3-value enum `"start"` / `"league"` / `"sandbox"`; helper consumed read-only `matches.views._build_league_sidebar_links(league, displayed_season, sidebar_active=None)`; files modified `laserforce_simulator/core/context_processors.py` + `laserforce_simulator/templates/base.html`; files new (test) `laserforce_simulator/matches/tests/test_lg01k_base_html_branching.py`; files extended (test) `laserforce_simulator/matches/tests/test_lg01h_app_mode_processor.py` + `test_league_nav_context_processor.py` + `test_lg01h_base_html_branching.py` (minimal-edit); file new (optional partial, Code agent's discretion) `laserforce_simulator/templates/_partials/topnav_tools_help.html`; DOM ids NEW (league mode only) `dashboard-nav-link` + `league-nav-link` (replaces retired `leagues-nav-link`) + `team-nav-link` + `players-nav-link` + `stats-nav-link` + the 22 `topbar-{section}-{key}` ids; DOM ids PRESERVED from LG-01h `tools-nav-link` + 4 Tools child ids + `help-nav-link` + 6 Help child ids; DOM id PRESERVED from LG-01a `player-list-nav-link` (sandbox mode only); DOM ids RETIRED (6 listed above); toggle text literals `League ▾` / `Team ▾` / `Players ▾` / `Stats ▾` / `Tools ▾` / `Help ▾` (all trailing U+25BE) plus home-icon text content `⌂` (U+2302 HOUSE); DOM-id pattern locked `topbar-{section}-{key}` (mirrors LG-01f `sidebar-{section}-{key}`); test classes `TestLg01kStartModeTopbar` / `TestLg01kSandboxModeTopbar` / `TestLg01kLeagueModeTopbar` (new file) plus extensions to `TestAppModeContextProcessor` and `TestLeagueNavContextProcessor`. Seam contract: [`.claude/worktrees/lg-01k-seam-contract.md`](.claude/worktrees/lg-01k-seam-contract.md).
 
+### LG-01z · Sidebar placeholder backlog (sub-plan)
+After LG-01h landed, the 23-entry league sidebar
+(`templates/_partials/league_sidebar.html` /
+`_build_league_sidebar_links` in `matches/views.py`) carries 19 disabled
+"coming soon" placeholders. **Playoffs** is covered by LG-02 below; the
+remaining 17 do not yet have an LG-XX feature in this document
+(`PLAN.md` lines 660-666 explicitly acknowledged this gap during the
+LG-01 grilling session).
+
+The full per-placeholder backlog — one entry per missing surface (LEAGUE
+> Finances / Power Rankings; TEAM > Roster / Finances / History; PLAYERS
+> Free Agents / Trade / Trading Block / Prospects / Watch List / Hall of
+Fame; STATS > Game Log / League Leaders / Player Ratings / Player Stats
+/ Team Stats / Statistical Feats) — lives in
+[`sub-plan.md`](sub-plan.md) under IDs **LG-01z-a..q**. Each sub-entry is
+a scope sketch (placeholder URL it replaces, minimum-viable
+implementation, dependency on other PLAN tasks). Each one will go
+through its own grilling session before implementation.
+- completed: 11 of the 17 placeholders shipped as real read-only screens in
+  one parallel batch — LG-01z-b Power Rankings (sortable), -c Team Roster,
+  -e Team History (3-tab), -f Free Agents, -j Watch List (session-scoped),
+  -l Game Log, -m League Leaders, -n Player Ratings, -o Player Stats,
+  -p Team Stats, -q Statistical Feats. Each owns an isolated view in the new
+  `matches/league_screens/` package + a pure-logic module where aggregation
+  is non-trivial (`power_rankings_logic`, `league_leaders_logic`,
+  `season_player_stats`, `team_stats_logic`, `team_history_logic`,
+  `stat_feats`) + a `templates/leagues/<screen>.html` template + a
+  `test_lg01z_<screen>.py` test file. Central wiring repoints each entry in
+  `_build_league_sidebar_links` (single source of truth for both the LG-01f
+  sidebar and the LG-01k topbar) from its `coming_soon_*` placeholder to the
+  live URL, adds the route to `matches/league_urls.py`, and trims
+  `_FEATURE_REGISTRY` to the 7 still-blocked placeholders. The remaining 6
+  (LG-01z-a Finances, -d Team Finances, -g Trade, -h Trading Block,
+  -i Prospects, -k Hall of Fame) stay on `coming_soon` but now render an
+  explainer page with a `blocker` note naming the unbuilt dependency (salary/
+  contract model, LG-05 potential, LG-03/04 awards). Read-only throughout —
+  no model change, no migration, no simulator touch. Per-screen status +
+  blockers tracked in [`sub-plan.md`](sub-plan.md); seam contract at
+  `.claude/worktrees/lg-01z-seam-contract.md`.
+
+### LG-06 · ZenGM league-screen parity polish
+Follow-ups to the shipped LG-01z read-only screens, from the per-page comparison
+against the reference product (LOL GM) in
+[`docs/zengm-comparison/`](docs/zengm-comparison/) (see that folder's `README.md`
+for methodology + the C1–C10 cross-cutting table; each step links its per-page
+doc). All UI-only, read-only — no model change, no simulator touch. Lower
+priority than LG-02..LG-05; sequence after the screens have real multi-season
+data to justify the controls. Each step should go through its own grilling
+session before implementation.
+
+- **LG-06a · Page-size selector + Team History pagination.** Add the standard
+  10/25/50/100 page-size `<select>` (LG-01f `league_history` precedent) to
+  **Free Agents**, **Player Ratings**, **Player Stats**; add pagination to
+  **Team History** (currently unbounded — one row per player ever, no paging).
+  Cross-cutting **C4**. Docs:
+  [`free-agents.md`](docs/zengm-comparison/free-agents.md),
+  [`player-ratings.md`](docs/zengm-comparison/player-ratings.md),
+  [`player-stats.md`](docs/zengm-comparison/player-stats.md),
+  [`team-history.md`](docs/zengm-comparison/team-history.md).
+- **LG-06b · Team filter.** Add an "All Teams" + per-enrolled-team filter
+  `<select>` to **Player Ratings**, **Player Stats**, **Statistical Feats** (the
+  team list is already enrolled-season-scoped on those views). Cross-cutting
+  **C5**. Docs:
+  [`player-ratings.md`](docs/zengm-comparison/player-ratings.md),
+  [`player-stats.md`](docs/zengm-comparison/player-stats.md),
+  [`statistical-feats.md`](docs/zengm-comparison/statistical-feats.md).
+- **LG-06c · Sortable columns on the remaining tables.** Bring the LG-00c
+  `_coerce_sort` / `_coerce_dir` sort-header pattern (already used on Power
+  Rankings / Free Agents / Player Ratings / Player Stats / Team Stats) to the
+  five tables that lack it: **Team History**, **Game Log**, **League Leaders**,
+  **Watch List**, **Statistical Feats**. Cross-cutting **C6**. Docs:
+  [`team-history.md`](docs/zengm-comparison/team-history.md),
+  [`game-log.md`](docs/zengm-comparison/game-log.md),
+  [`league-leaders.md`](docs/zengm-comparison/league-leaders.md),
+  [`watch-list.md`](docs/zengm-comparison/watch-list.md),
+  [`statistical-feats.md`](docs/zengm-comparison/statistical-feats.md).
+- **LG-06d · Season selector + rate/career toggles.** Add a `?season=` selector
+  (and, where it maps, ZenGM's Per Game / Per 36 / Totals + Career-Totals
+  toggles) across the stats screens once leagues routinely span multiple
+  Seasons — currently every screen renders only `displayed_season`. Cross-cutting
+  **C1 / C2 / C7**. Lowest priority of the set. Doc:
+  [`README.md`](docs/zengm-comparison/README.md) (cross-cutting table).
+- **LG-06e · Statistical Feats as a per-game feed.** Reshape the feats screen
+  from the current ~9 fixed category-best entries into ZenGM's model: one
+  sortable row per notable single-game performance with its box-score line +
+  Opp / Result / Season, deep-linking to the Round. Larger than the other LG-06
+  steps (changes `stat_feats.py` output shape + template). Doc:
+  [`statistical-feats.md`](docs/zengm-comparison/statistical-feats.md).
+- **LG-06f · Watch List as a full stats view.** Replace the 3-column bookmark
+  table with the Player-Stats column set filtered to watched players (ZenGM
+  parity). Per-user (vs. current browser-session) persistence is **deferred to
+  UX-01** (the watch list moves from `request.session` to a per-user model when
+  accounts land). Doc: [`watch-list.md`](docs/zengm-comparison/watch-list.md).
+- **LG-06g · Standings form/side detail.** Surface Streak, Last-5 (L5), and a
+  home-away (Red/Blue side) split on the Standings table — we already persist
+  per-Round side data; this is presentation only. Doc:
+  [`standings.md`](docs/zengm-comparison/standings.md).
+
+Structural divergences surfaced by the playthrough that map to **existing**
+tasks rather than LG-06 (see
+[`season-lifecycle.md`](docs/zengm-comparison/season-lifecycle.md)): the
+playoffs stage + phase-aware Play menu → **LG-02**; season-MVP / Finals-MVP
+awards (and surfacing them on League History) → **LG-03**; MMR / Rank / Potential
+columns → **STAT-PROXY-01**.
+
 ### LG-02 · Tournament formats
 Support the following tournament types:
 
@@ -821,6 +926,12 @@ Once tournaments land, relabel "Until end of season" → "Until playoffs" (LG-01
 ### LG-03 · Season-end awards
 Computed from `PlayerRoundState` aggregates: Most Points, Highest K/D by role, Best Medic, 
 Most Efficient Nuke, Best Accuracy. Awards page at `/seasons/<id>/awards/`. Award badge on player profile.
+
+Also surface the headline **season MVP** (and, once LG-02 playoffs land, a
+**Finals MVP**) on the **League History** table (LG-01f) — the reference product
+puts both in its history row next to Champion / Runner-up, and ours currently has
+no awards column. See
+[`docs/zengm-comparison/season-lifecycle.md`](docs/zengm-comparison/season-lifecycle.md).
 
 ### LG-04 · Season-end stat updates
 At the end of each season, all players (on active teams or otherwise) receive a stat update.
@@ -1411,3 +1522,26 @@ Team-level confidence badge: Low (<5 games), Medium (5–20), High (>20). Link t
 
 ### STAT-03 career stat additions
 add mvp and elo over time to career stats
+
+### STAT-PROXY-01 · Rating proxies — MMR, Rank tier, Potential
+
+The LG-01z league screens (Player Ratings, Free Agents, Team Roster, and — once
+unblocked — Hall of Fame) reserve columns for three LoL-GM rating concepts we don't yet
+model: **MMR**, **Rank tier**, and **Potential**. They currently render a literal `-`
+placeholder (see `stats.md`). This task replaces the placeholders with real values:
+
+1. **MMR** — a per-player skill rating. Likely an Elo-style number seeded from
+   `overall_rating` and updated from game results (ties into SIM-04's "elo skill rating
+   of actual players using all imported games" and STAT-03's "elo over time"). Decide:
+   stored field vs. derived; per-Season vs. career.
+2. **Rank tier** — a **letter tier** (e.g. S / A / B / C / D, or named bands) derived
+   from MMR or `overall_rating` bands. Cosmetic label; thresholds are tunable.
+3. **Potential** — a ceiling rating (0–100) per player, paired with `overall_rating`.
+   Likely a stored field set at generation / import; drives prospect scouting later.
+
+**Implementation surface:** add the field(s) / derivation, then replace the `-`
+placeholder cells on the Player Ratings, Free Agents, and Team Roster templates with the
+real values (and make them sortable where it makes sense). Unblocks the **Hall of Fame**
+screen's Peak MMR / Peak Overall columns (`stats.md` §11). No simulator-mechanic change;
+no Score Calibration re-baseline. Coordinate with SIM-04 (import-driven Elo) so MMR has a
+single source of truth.

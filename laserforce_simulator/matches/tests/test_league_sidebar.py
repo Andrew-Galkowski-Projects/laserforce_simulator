@@ -500,17 +500,17 @@ class TestLg01hStatsSection(TestCase):
             entry = self._entry(links, key)
             self.assertEqual(entry["label"], label)
 
-    def test_stats_section_urls_resolve_to_coming_soon(self) -> None:
+    def test_stats_section_urls_resolve_to_live(self) -> None:
         league = _make_league("StatsURL")
         links = _build_league_sidebar_links(league, None, None)
-        # Each STATS entry resolves to its ``coming_soon_*`` URL.
+        # LG-01z: every STATS entry now resolves to its real screen URL.
         expected_url_names = {
-            "game_log": "coming_soon_game_log",
-            "league_leaders": "coming_soon_league_leaders",
-            "player_ratings": "coming_soon_player_ratings",
-            "player_stats": "coming_soon_player_stats",
-            "team_stats": "coming_soon_team_stats",
-            "statistical_feats": "coming_soon_statistical_feats",
+            "game_log": "stats_game_log",
+            "league_leaders": "stats_league_leaders",
+            "player_ratings": "stats_player_ratings",
+            "player_stats": "stats_player_stats",
+            "team_stats": "stats_team_stats",
+            "statistical_feats": "stats_statistical_feats",
         }
         for key, url_name in expected_url_names.items():
             entry = self._entry(links, key)
@@ -578,7 +578,7 @@ class TestLg01hPlayersExpansion(TestCase):
         self.assertEqual(entry["label"], "Watch List")
         self.assertEqual(
             entry["url"],
-            reverse("coming_soon_watch_list", kwargs={"league_id": league.id}),
+            reverse("players_watch_list", kwargs={"league_id": league.id}),
         )
         self.assertFalse(entry["disabled"])
 
@@ -638,7 +638,7 @@ class TestLg01hDisabledFlipsLive(TestCase):
         entry = self._entry(links, "power_rankings")
         self.assertEqual(
             entry["url"],
-            reverse("coming_soon_power_rankings", kwargs={"league_id": league.id}),
+            reverse("league_power_rankings", kwargs={"league_id": league.id}),
         )
         self.assertFalse(entry["disabled"])
 
@@ -648,7 +648,7 @@ class TestLg01hDisabledFlipsLive(TestCase):
         entry = self._entry(links, "roster")
         self.assertEqual(
             entry["url"],
-            reverse("coming_soon_team_roster", kwargs={"league_id": league.id}),
+            reverse("team_roster", kwargs={"league_id": league.id}),
         )
         self.assertFalse(entry["disabled"])
 
@@ -668,7 +668,7 @@ class TestLg01hDisabledFlipsLive(TestCase):
         entry = self._entry(links, "history_team")
         self.assertEqual(
             entry["url"],
-            reverse("coming_soon_team_history", kwargs={"league_id": league.id}),
+            reverse("team_history", kwargs={"league_id": league.id}),
         )
         self.assertFalse(entry["disabled"])
 
@@ -678,7 +678,7 @@ class TestLg01hDisabledFlipsLive(TestCase):
         entry = self._entry(links, "free_agents")
         self.assertEqual(
             entry["url"],
-            reverse("coming_soon_free_agents", kwargs={"league_id": league.id}),
+            reverse("players_free_agents", kwargs={"league_id": league.id}),
         )
         self.assertFalse(entry["disabled"])
 

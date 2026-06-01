@@ -30,7 +30,7 @@ from django.urls import reverse
 
 from teams.constants import PLAYER_NAMES, TEAM_NAMES
 from teams.models import Team
-from teams.views import _generate_teams
+from teams.views import _generate_free_agents, _generate_teams
 
 from .forms import CreateLeagueForm
 from .models import GameRound, League, Match, PlayerRoundState, Season
@@ -46,6 +46,39 @@ from .simulation import BatchSimulator
 from .standings import compute_standings
 from .tasks import play_season_task
 from .views import _celery_state_to_job_status
+
+# Abbreviated column headers for the wide rating tables (Player Ratings,
+# Free Agents). Each entry is ``(key, abbr, full)``: ``key`` matches the
+# LG-00c ``teams.views._SORT_KEYS_DISPLAY`` key byte-for-byte (so sort links
+# + ``*-th-{key}`` DOM ids are unchanged) — only the rendered label is
+# shortened, with the full name kept in a ``title`` tooltip. Scoped to the
+# league rating screens; the shared LG-00c ``/players/`` table keeps its full
+# labels.
+RATING_SORT_KEYS_DISPLAY: tuple[tuple[str, str, str], ...] = (
+    ("name", "Name", "Name"),
+    ("team", "Team", "Team"),
+    ("preferred_roles", "Roles", "Preferred Roles"),
+    ("overall_rating", "Ovr", "Overall"),
+    ("player_awareness", "PlAw", "Player Awareness"),
+    ("game_awareness", "GmAw", "Game Awareness"),
+    ("resource_awareness", "RsAw", "Resource Awareness"),
+    ("decision_making", "Dec", "Decision Making"),
+    ("positioning", "Pos", "Positioning"),
+    ("stamina", "Sta", "Stamina"),
+    ("speed", "Spd", "Speed"),
+    ("flexibility", "Flx", "Flexibility"),
+    ("adaptability", "Adp", "Adaptability"),
+    ("communication", "Comm", "Communication"),
+    ("teamwork", "Team", "Teamwork"),
+    ("offensive_synergy", "OffSyn", "Offensive Synergy"),
+    ("defensive_synergy", "DefSyn", "Defensive Synergy"),
+    ("midfield_synergy", "MidSyn", "Midfield Synergy"),
+    ("resupply_synergy", "RsupSyn", "Resupply Synergy"),
+    ("resupply_efficiency", "RsupEff", "Resupply Efficiency"),
+    ("accuracy", "Acc", "Accuracy"),
+    ("survival", "Surv", "Survival"),
+    ("special_usage", "SpcUse", "Special Usage"),
+)
 
 # ====================================================================
 # LG-01 — Season views
@@ -329,11 +362,28 @@ def league_create(request) -> HttpResponse:
         mode="league",
         state="active",
     )
+    # This League's dedicated free-agent pool Team. Hidden from
+    # ``Team.objects.regular()`` via the ``free_agent_pool`` FK, so it
+    # never appears in competitive team lists.
+    pool_team = Team.objects.create(name=f"{cleaned['league_name']} Free Agents")
+    league.free_agent_pool = pool_team
     # LG-01g: auto-set the manager's current_team to the alphabetically-first
     # generated Team so the TEAM > Schedule sidebar entry has a default
     # target on the next render.
     league.current_team = sorted(created_teams, key=lambda t: t.name)[0]
-    league.save(update_fields=["current_team"])
+    league.save(update_fields=["current_team", "free_agent_pool"])
+
+    # Seed a pool of 100–200 free agents (Players on no competitive
+    # roster) into THIS League's pool so its Free Agents screen is
+    # populated from the start.
+    _generate_free_agents(
+        rng.randint(100, 200),
+        rng=rng,
+        mean=cleaned["mean"],
+        std_dev=cleaned["std_dev"],
+        player_names_pool=player_names_pool,
+        team=pool_team,
+    )
     season = Season.objects.create(
         league=league,
         name=cleaned["season_name"],
@@ -771,15 +821,15 @@ def _build_league_sidebar_links(
             "league",
             "power_rankings",
             "Power Rankings",
-            _cs("coming_soon_power_rankings"),
+            _cs("league_power_rankings"),
         ),
         # TEAM (4)
-        ("team", "roster", "Roster", _cs("coming_soon_team_roster")),
+        ("team", "roster", "Roster", _cs("team_roster")),
         ("team", "schedule_team", "Schedule", schedule_team_url),
         ("team", "finances_team", "Finances", _cs("coming_soon_team_finances")),
-        ("team", "history_team", "History", _cs("coming_soon_team_history")),
+        ("team", "history_team", "History", _cs("team_history")),
         # PLAYERS (6)
-        ("players", "free_agents", "Free Agents", _cs("coming_soon_free_agents")),
+        ("players", "free_agents", "Free Agents", _cs("players_free_agents")),
         ("players", "trade", "Trade", _cs("coming_soon_trade")),
         (
             "players",
@@ -788,7 +838,7 @@ def _build_league_sidebar_links(
             _cs("coming_soon_trading_block"),
         ),
         ("players", "prospects", "Prospects", _cs("coming_soon_prospects")),
-        ("players", "watch_list", "Watch List", _cs("coming_soon_watch_list")),
+        ("players", "watch_list", "Watch List", _cs("players_watch_list")),
         (
             "players",
             "hall_of_fame",
@@ -796,26 +846,26 @@ def _build_league_sidebar_links(
             _cs("coming_soon_hall_of_fame"),
         ),
         # STATS (6) — LG-01h, entire section NEW
-        ("stats", "game_log", "Game Log", _cs("coming_soon_game_log")),
+        ("stats", "game_log", "Game Log", _cs("stats_game_log")),
         (
             "stats",
             "league_leaders",
             "League Leaders",
-            _cs("coming_soon_league_leaders"),
+            _cs("stats_league_leaders"),
         ),
         (
             "stats",
             "player_ratings",
             "Player Ratings",
-            _cs("coming_soon_player_ratings"),
+            _cs("stats_player_ratings"),
         ),
-        ("stats", "player_stats", "Player Stats", _cs("coming_soon_player_stats")),
-        ("stats", "team_stats", "Team Stats", _cs("coming_soon_team_stats")),
+        ("stats", "player_stats", "Player Stats", _cs("stats_player_stats")),
+        ("stats", "team_stats", "Team Stats", _cs("stats_team_stats")),
         (
             "stats",
             "statistical_feats",
             "Statistical Feats",
-            _cs("coming_soon_statistical_feats"),
+            _cs("stats_statistical_feats"),
         ),
     ]
 

@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}{{ league.name }} — League Leaders{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
+        <h1 class="mb-3">League Leaders</h1>
+
+        {% if displayed_season is None %}
+            <div id="leaders-empty-notice" class="alert alert-info">
+                No Season in this League yet — start a Season to populate the
+                leaderboards.
+            </div>
+        {% else %}
+            <p class="text-muted">{{ displayed_season.name }}</p>
+            <div class="row g-4">
+                {# --- Average Tags ------------------------------------- #}
+                <div class="col-md-6">
+                    <table id="leaders-avg-tags" class="table table-sm table-striped">
+                        <thead>
+                            <tr>
+                                <th>Average Tags</th>
+                                <th class="text-end">Tags</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in leaderboards.avg_tags %}
+                                <tr>
+                                    <td>
+                                        {{ row.rank }}.
+                                        <a href="/players/{{ row.player_id }}/stats/">{{ row.player_name }}</a>,
+                                        {{ row.team_name }}
+                                    </td>
+                                    <td class="text-end">{{ row.value|floatformat:1 }}</td>
+                                </tr>
+                            {% empty %}
+                                <tr><td colspan="2" class="text-muted">No data.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                {# --- Average Score ------------------------------------ #}
+                <div class="col-md-6">
+                    <table id="leaders-avg-score" class="table table-sm table-striped">
+                        <thead>
+                            <tr>
+                                <th>Average Score</th>
+                                <th class="text-end">Score</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in leaderboards.avg_score %}
+                                <tr>
+                                    <td>
+                                        {{ row.rank }}.
+                                        <a href="/players/{{ row.player_id }}/stats/">{{ row.player_name }}</a>,
+                                        {{ row.team_name }}
+                                    </td>
+                                    <td class="text-end">{{ row.value|floatformat:1 }}</td>
+                                </tr>
+                            {% empty %}
+                                <tr><td colspan="2" class="text-muted">No data.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                {# --- Fewest Times Tagged ------------------------------ #}
+                <div class="col-md-6">
+                    <table id="leaders-fewest-tagged" class="table table-sm table-striped">
+                        <thead>
+                            <tr>
+                                <th>Fewest Times Tagged</th>
+                                <th class="text-end">Tagged</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in leaderboards.fewest_tagged %}
+                                <tr>
+                                    <td>
+                                        {{ row.rank }}.
+                                        <a href="/players/{{ row.player_id }}/stats/">{{ row.player_name }}</a>,
+                                        {{ row.team_name }}
+                                    </td>
+                                    <td class="text-end">{{ row.value|floatformat:1 }}</td>
+                                </tr>
+                            {% empty %}
+                                <tr><td colspan="2" class="text-muted">No data.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                {# --- Tag Ratio ---------------------------------------- #}
+                <div class="col-md-6">
+                    <table id="leaders-tag-ratio" class="table table-sm table-striped">
+                        <thead>
+                            <tr>
+                                <th>Tag Ratio</th>
+                                <th class="text-end">Ratio</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in leaderboards.tag_ratio %}
+                                <tr>
+                                    <td>
+                                        {{ row.rank }}.
+                                        <a href="/players/{{ row.player_id }}/stats/">{{ row.player_name }}</a>,
+                                        {{ row.team_name }}
+                                    </td>
+                                    <td class="text-end">{{ row.value|floatformat:2 }}</td>
+                                </tr>
+                            {% empty %}
+                                <tr><td colspan="2" class="text-muted">No data.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        {% endif %}
+    </main>
+</div>
+{% endblock %}

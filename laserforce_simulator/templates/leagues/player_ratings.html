@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block title %}{{ league.name }} — Player Ratings{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
+        <h1 class="mb-3">Player Ratings</h1>
+
+        {% if not displayed_season %}
+            <div id="player-ratings-empty-notice" class="alert alert-info">
+                No Season in this League yet — start a Season to view player ratings.
+            </div>
+        {% elif not page_obj or paginator.count == 0 %}
+            <div id="player-ratings-empty-notice" class="alert alert-info">
+                No players on enrolled teams in this League's current Season.
+            </div>
+        {% else %}
+            <p class="text-muted">{{ paginator.count }} player{{ paginator.count|pluralize }}</p>
+
+            <div class="table-responsive">
+                <table class="table table-striped" id="player-ratings-table">
+                    <thead>
+                        <tr>
+                            {% for key, label, full in sort_keys %}
+                                {% if key == sort %}
+                                    {% if dir == "asc" %}
+                                        <th id="player-ratings-th-{{ key }}">
+                                            <a title="{{ full }}" href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort={{ key }}&dir=desc">{{ label }} ↑</a>
+                                        </th>
+                                    {% else %}
+                                        <th id="player-ratings-th-{{ key }}">
+                                            <a title="{{ full }}" href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort={{ key }}&dir=asc">{{ label }} ↓</a>
+                                        </th>
+                                    {% endif %}
+                                {% else %}
+                                    <th id="player-ratings-th-{{ key }}">
+                                        <a title="{{ full }}" href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort={{ key }}&dir=asc">{{ label }}</a>
+                                    </th>
+                                {% endif %}
+                            {% endfor %}
+                            {# Fixed (non-sortable) bio + rating-proxy columns. MMR / Rank /
+                               Potential are placeholders until STAT-PROXY-01 (see stats.md).
+                               Abbreviated headers; full names in the title tooltip. #}
+                            <th id="player-ratings-th-age" title="Age">Age</th>
+                            <th id="player-ratings-th-home_site" title="Home Site">Site</th>
+                            <th id="player-ratings-th-height" title="Height">Ht</th>
+                            <th id="player-ratings-th-games" title="Games Played">GP</th>
+                            <th id="player-ratings-th-started" title="Started Playing Age">Start</th>
+                            <th id="player-ratings-th-mmr" title="MMR">MMR</th>
+                            <th id="player-ratings-th-rank" title="Rank">Rank</th>
+                            <th id="player-ratings-th-potential" title="Potential">Pot</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for player in page_obj %}
+                        <tr>
+                            <td><a href="{% url 'player_career_stats' player.id %}">{{ player.name }}</a></td>
+                            <td><a href="{% url 'team_roster' league.id %}?team_id={{ player.team.id }}" title="{{ player.team.name }}">{{ player.team.name|truncatechars:14 }}</a></td>
+                            <td title="{{ player.preferred_roles|join:', ' }}">{{ player.preferred_roles|join:", "|truncatechars:14 }}</td>
+                            <td>{{ player.overall_rating|floatformat:1 }}</td>
+                            <td>{{ player.player_awareness }}</td>
+                            <td>{{ player.game_awareness }}</td>
+                            <td>{{ player.resource_awareness }}</td>
+                            <td>{{ player.decision_making }}</td>
+                            <td>{{ player.positioning }}</td>
+                            <td>{{ player.stamina }}</td>
+                            <td>{{ player.speed }}</td>
+                            <td>{{ player.flexibility }}</td>
+                            <td>{{ player.adaptability }}</td>
+                            <td>{{ player.communication }}</td>
+                            <td>{{ player.teamwork }}</td>
+                            <td>{{ player.Offensive_synergy }}</td>
+                            <td>{{ player.defensive_synergy }}</td>
+                            <td>{{ player.midfield_synergy }}</td>
+                            <td>{{ player.resupply_synergy }}</td>
+                            <td>{{ player.resupply_efficiency }}</td>
+                            <td>{{ player.accuracy }}</td>
+                            <td>{{ player.survival }}</td>
+                            <td>{{ player.special_usage }}</td>
+                            <td>{{ player.age|default:"-" }}</td>
+                            <td title="{{ player.home_site }}">{{ player.home_site|default:"-"|truncatechars:10 }}</td>
+                            <td>{{ player.height|default:"-" }}</td>
+                            <td>{{ player.total_games }}</td>
+                            <td>{{ player.started_playing_age|default:"-" }}</td>
+                            <td>-</td>
+                            <td>-</td>
+                            <td>-</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% if page_obj.has_other_pages %}
+                <nav id="player-ratings-pagination" aria-label="Player ratings pagination">
+                    <ul class="pagination">
+                        {% if page_obj.has_previous %}
+                            <li class="page-item">
+                                <a class="page-link" href="?{{ querystring_without_page }}{% if querystring_without_page %}&{% endif %}page={{ page_obj.previous_page_number }}">Previous</a>
+                            </li>
+                        {% else %}
+                            <li class="page-item disabled"><span class="page-link">Previous</span></li>
+                        {% endif %}
+                        <li class="page-item active">
+                            <span class="page-link">Page {{ page_obj.number }} of {{ paginator.num_pages }}</span>
+                        </li>
+                        {% if page_obj.has_next %}
+                            <li class="page-item">
+                                <a class="page-link" href="?{{ querystring_without_page }}{% if querystring_without_page %}&{% endif %}page={{ page_obj.next_page_number }}">Next</a>
+                            </li>
+                        {% else %}
+                            <li class="page-item disabled"><span class="page-link">Next</span></li>
+                        {% endif %}
+                    </ul>
+                </nav>
+            {% endif %}
+        {% endif %}
+    </main>
+</div>
+{% endblock %}

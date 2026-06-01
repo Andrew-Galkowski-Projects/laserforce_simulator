@@ -38,6 +38,19 @@ class TestObjectsRegularManagerMethod(TestCase):
         self.assertIn("Free Agents", names)
         self.assertIn("Red Phoenix", names)
 
+    def test_regular_excludes_per_league_pool_team(self) -> None:
+        """A Team referenced as a League's ``free_agent_pool`` is hidden."""
+        from matches.models import League
+
+        pool = Team.objects.create(name="Spring Free Agents")
+        league = League.objects.create(name="Spring")
+        league.free_agent_pool = pool
+        league.save(update_fields=["free_agent_pool"])
+        Team.objects.create(name="Red Phoenix")
+        names = set(Team.objects.regular().values_list("name", flat=True))
+        self.assertNotIn("Spring Free Agents", names)
+        self.assertIn("Red Phoenix", names)
+
 
 class TestTeamListExcludesFreeAgents(TestCase):
     """The ``team_list`` view filters out the Free Agents Team."""

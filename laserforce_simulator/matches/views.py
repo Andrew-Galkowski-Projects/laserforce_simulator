@@ -1699,99 +1699,65 @@ def player_head_to_head(request) -> HttpResponse:
 # enumerated literally; the count discrepancy in the contract preamble
 # is acknowledged in the agent task notes.
 _FEATURE_REGISTRY: dict[str, dict[str, str | None]] = {
-    # League-scoped (3)
+    # League-scoped placeholders still blocked on unbuilt models.
+    # LG-01z made Power Rankings live; the rest carry a ``blocker`` note
+    # rendered on the explainer page.
     "league_playoffs": {
         "label": "Playoffs",
         "section": "league",
         "sidebar_active": "playoffs",
+        "blocker": "Needs LG-02 tournament formats — not yet built.",
     },
     "league_finances": {
         "label": "Finances",
         "section": "league",
         "sidebar_active": "finances",
+        "blocker": (
+            "Needs a salary / contract model (Player.salary, "
+            "Team.cap_space) — not yet built."
+        ),
     },
-    "league_power_rankings": {
-        "label": "Power Rankings",
-        "section": "league",
-        "sidebar_active": "power_rankings",
-    },
-    # Team-scoped (3)
-    "team_roster": {
-        "label": "Roster",
-        "section": "team",
-        "sidebar_active": "roster",
-    },
+    # Team-scoped placeholders (Roster + History went live in LG-01z).
     "team_finances": {
         "label": "Finances",
         "section": "team",
         "sidebar_active": "finances_team",
+        "blocker": (
+            "Needs the salary / contract model from League Finances — " "not yet built."
+        ),
     },
-    "team_history": {
-        "label": "History",
-        "section": "team",
-        "sidebar_active": "history_team",
-    },
-    # Players-scoped (6)
-    "players_free_agents": {
-        "label": "Free Agents",
-        "section": "players",
-        "sidebar_active": "free_agents",
-    },
+    # Players-scoped placeholders (Free Agents + Watch List went live).
     "players_trade": {
         "label": "Trade",
         "section": "players",
         "sidebar_active": "trade",
+        "blocker": (
+            "Needs cap-space validation from the salary / contract "
+            "model — not yet built."
+        ),
     },
     "players_trading_block": {
         "label": "Trading Block",
         "section": "players",
         "sidebar_active": "trading_block",
+        "blocker": (
+            "Needs a Player.on_trading_block field and the Trade "
+            "builder — not yet built."
+        ),
     },
     "players_prospects": {
         "label": "Prospects",
         "section": "players",
         "sidebar_active": "prospects",
-    },
-    "players_watch_list": {
-        "label": "Watch List",
-        "section": "players",
-        "sidebar_active": "watch_list",
+        "blocker": "Needs the LG-05 player-potential model — not yet built.",
     },
     "players_hall_of_fame": {
         "label": "Hall of Fame",
         "section": "players",
         "sidebar_active": "hall_of_fame",
-    },
-    # Stats-scoped (6)
-    "stats_game_log": {
-        "label": "Game Log",
-        "section": "stats",
-        "sidebar_active": "game_log",
-    },
-    "stats_league_leaders": {
-        "label": "League Leaders",
-        "section": "stats",
-        "sidebar_active": "league_leaders",
-    },
-    "stats_player_ratings": {
-        "label": "Player Ratings",
-        "section": "stats",
-        "sidebar_active": "player_ratings",
-    },
-    "stats_player_stats": {
-        "label": "Player Stats",
-        "section": "stats",
-        "sidebar_active": "player_stats",
-    },
-    "stats_team_stats": {
-        "label": "Team Stats",
-        "section": "stats",
-        "sidebar_active": "team_stats",
-    },
-    "stats_statistical_feats": {
-        "label": "Statistical Feats",
-        "section": "stats",
-        "sidebar_active": "statistical_feats",
+        "blocker": (
+            "Needs LG-03 season-end awards + LG-04 stat updates — " "not yet built."
+        ),
     },
     # Help (6) — sandbox-mode, no sidebar
     "help_overview": {
@@ -1911,6 +1877,7 @@ def coming_soon(
         "feature_key": feature_key,
         "feature_label": feature["label"],
         "feature_section": feature["section"],
+        "blocker": feature.get("blocker"),
         "sidebar_links": sidebar_links,
         "sidebar_active": sidebar_active,
     }

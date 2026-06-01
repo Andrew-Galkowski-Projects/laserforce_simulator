@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}{{ league.name }} — Statistical Feats{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
+        <h1 class="mb-3">{{ league.name }} — Statistical Feats</h1>
+        <p class="text-muted">Notable single-game feats from this Season.</p>
+
+        {% if displayed_season is None %}
+            <div id="stat-feats-empty-notice" class="alert alert-info">
+                No Season in this League yet — start a Season to record statistical feats.
+            </div>
+        {% elif not feats %}
+            <div id="stat-feats-empty-notice" class="alert alert-info">
+                No statistical feats recorded yet in this Season.
+            </div>
+        {% else %}
+            <ul id="stat-feats-list" class="list-group">
+                {% for feat in feats %}
+                    <li id="stat-feat-{{ feat.kind }}"
+                        class="list-group-item d-flex justify-content-between align-items-start">
+                        <div class="me-3">
+                            <div class="fw-semibold">{{ feat.label }}</div>
+                            <div class="text-muted small">{{ feat.name }}</div>
+                        </div>
+                        <div class="text-end">
+                            <span class="badge bg-primary rounded-pill">{{ feat.value }}</span>
+                            {% if feat.round_id %}
+                                <div class="small">
+                                    <a href="{% url 'game_round_detail' feat.round_id %}">View round</a>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    </main>
+</div>
+{% endblock %}

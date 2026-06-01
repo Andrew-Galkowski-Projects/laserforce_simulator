@@ -850,14 +850,18 @@ def _generate_free_agents(
     mean: int,
     std_dev: int,
     player_names_pool: list[str],
+    team: "Team | None" = None,
 ) -> int:
-    """Create ``players_per_team`` Players on the reserved Free Agents Team.
+    """Create ``players_per_team`` Players on a free-agent pool Team.
 
-    Players land in the pool via ``bulk_create`` — the Free-Agents branch
+    ``team`` is the destination pool Team; when ``None`` it defaults to the
+    reserved global Free Agents Team (LG-00 sandbox pool). League-create
+    passes a dedicated per-League pool Team so each League owns its own
+    free agents. Players land via ``bulk_create`` — the Free-Agents branch
     has no per-Player slot-FK step, so PKs after creation are not needed,
     and one INSERT replaces N. Returns the count actually created.
     """
-    free_agents = get_free_agents_team()
+    free_agents = team if team is not None else get_free_agents_team()
     player_fallback = PLAYER_NAMES[-1] if PLAYER_NAMES else "Player"
     name_exists = _player_name_exists_on_team(free_agents)
 

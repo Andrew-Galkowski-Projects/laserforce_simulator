@@ -175,6 +175,45 @@ class TestLeagueCreatePost(TestCase):
 
 
 # ---------------------------------------------------------------------------
+# TestLeagueCreateFreeAgents — free-agent pool seeded at creation
+# ---------------------------------------------------------------------------
+
+
+class TestLeagueCreateFreeAgents(TestCase):
+    """Creating a League seeds its own 100–200 pool of free agents."""
+
+    def test_post_creates_per_league_free_agent_pool(self) -> None:
+        self.client.post(reverse("league_create"), _valid_payload())
+        league = League.objects.get(name="Spring 2026")
+        self.assertIsNotNone(league.free_agent_pool)
+        count = league.free_agent_pool.players.count()
+        self.assertGreaterEqual(count, 100)
+        self.assertLessEqual(count, 200)
+
+    def test_pool_not_enrolled_and_hidden_from_regular_teams(self) -> None:
+        self.client.post(reverse("league_create"), _valid_payload())
+        league = League.objects.get(name="Spring 2026")
+        season = Season.objects.get(name="Season 1")
+        pool = league.free_agent_pool
+        # The pool Team is never enrolled in the Season.
+        self.assertNotIn(pool.id, season.teams.values_list("id", flat=True))
+        # And it never leaks into the competitive team list.
+        self.assertNotIn(pool.id, Team.objects.regular().values_list("id", flat=True))
+
+    def test_each_league_gets_its_own_separate_pool(self) -> None:
+        self.client.post(reverse("league_create"), _valid_payload(league_name="L1"))
+        self.client.post(reverse("league_create"), _valid_payload(league_name="L2"))
+        l1 = League.objects.get(name="L1")
+        l2 = League.objects.get(name="L2")
+        self.assertIsNotNone(l1.free_agent_pool)
+        self.assertIsNotNone(l2.free_agent_pool)
+        self.assertNotEqual(l1.free_agent_pool_id, l2.free_agent_pool_id)
+        # Each pool holds only its own League's free agents.
+        self.assertGreaterEqual(l1.free_agent_pool.players.count(), 100)
+        self.assertGreaterEqual(l2.free_agent_pool.players.count(), 100)
+
+
+# ---------------------------------------------------------------------------
 # TestLeagueCreateFormValidation — per-field validation
 # ---------------------------------------------------------------------------
 

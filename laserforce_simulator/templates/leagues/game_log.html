@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}{{ league.name }} — Game Log{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
+        <h1 class="mb-3">{{ league.name }} — Game Log</h1>
+
+        {% if displayed_season is None %}
+            <div id="game-log-empty-notice" class="alert alert-info">
+                No Season in this League yet — start a Season to populate the game log.
+            </div>
+        {% else %}
+            <form method="get" class="mb-3">
+                <label for="game-log-team-filter" class="form-label me-2">Team:</label>
+                <select id="game-log-team-filter" name="team_id"
+                        class="form-select form-select-sm d-inline-block w-auto"
+                        onchange="this.form.submit()">
+                    <option value=""{% if selected_team_id is None %} selected{% endif %}>All teams</option>
+                    {% for team in team_options %}
+                        <option value="{{ team.id }}"{% if team.id == selected_team_id %} selected{% endif %}>{{ team.name }}</option>
+                    {% endfor %}
+                </select>
+                <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">Filter</button></noscript>
+            </form>
+
+            {% if not rows %}
+                <div id="game-log-empty-notice" class="alert alert-info">
+                    No games played yet in this Season.
+                </div>
+            {% else %}
+                <div class="table-responsive">
+                    <table id="game-log-table" class="table table-striped table-hover">
+                        <thead>
+                            <tr>
+                                <th>Matchday</th>
+                                <th>Date</th>
+                                <th>Red</th>
+                                <th>Blue</th>
+                                <th class="text-center">Score</th>
+                                <th>Winner</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in rows %}
+                                <tr id="game-log-row-{{ row.round_id }}">
+                                    <td>{{ row.matchday }}</td>
+                                    <td>{{ row.date_played|date:"Y-m-d" }}</td>
+                                    <td>
+                                        <a href="{% url 'game_round_detail' row.round_id %}">
+                                            {% if row.team_red %}{{ row.team_red.name }}{% else %}—{% endif %}
+                                        </a>
+                                    </td>
+                                    <td>
+                                        <a href="{% url 'game_round_detail' row.round_id %}">
+                                            {% if row.team_blue %}{{ row.team_blue.name }}{% else %}—{% endif %}
+                                        </a>
+                                    </td>
+                                    <td class="text-center">
+                                        <a href="{% url 'game_round_detail' row.round_id %}">{{ row.red_points }}–{{ row.blue_points }}</a>
+                                    </td>
+                                    <td>{% if row.winner %}{{ row.winner.name }}{% else %}—{% endif %}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% endif %}
+        {% endif %}
+    </main>
+</div>
+{% endblock %}

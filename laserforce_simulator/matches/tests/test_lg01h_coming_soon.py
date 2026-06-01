@@ -1,13 +1,20 @@
 """LG-01h — Django ``TestCase`` tests for ``matches.views.coming_soon``
 and the module-level ``matches.views._FEATURE_REGISTRY``.
 
-The seam contract is locked at ``.claude/worktrees/lg-01h-seam-contract.md``
-(Part b — Shared placeholder view + Placeholder template + URL routes).
 The view is the single shared ``<h1>Coming soon</h1>`` view rendered via
-``templates/_placeholder.html``. ``_FEATURE_REGISTRY`` is the locked
-35-entry hard-coded vocabulary.
+``templates/_placeholder.html``.
 
-Tests hand-construct ``League`` rows — LG-01h runs NO simulation.
+**Updated by LG-01z** (sidebar placeholder backlog): 11 of the original
+18 LEAGUE/TEAM/PLAYERS/STATS placeholders became real read-only screens
+(Power Rankings, Team Roster, Team History, Free Agents, Watch List, and
+all 6 STATS screens). Their ``coming_soon_*`` routes + ``_FEATURE_REGISTRY``
+entries were removed and their sidebar entries repointed to the live URLs.
+The 7 still-blocked LEAGUE/TEAM/PLAYERS placeholders (Playoffs, League
+Finances, Team Finances, Trade, Trading Block, Prospects, Hall of Fame)
+keep routing through ``coming_soon`` and now carry a ``blocker`` note
+rendered on the explainer page. Registry total: 7 + 6 Help + 4 Tools = 17.
+
+Tests hand-construct ``League`` rows — no simulation.
 """
 
 from __future__ import annotations
@@ -27,11 +34,11 @@ def _make_league(name: str = "L") -> League:
 
 
 # ---------------------------------------------------------------------------
-# Locked vocabulary (mirrors the seam contract — used by feature-registry
-# tests for byte-for-byte assertions).
+# Locked vocabulary (post-LG-01z).
 # ---------------------------------------------------------------------------
 
-# 23-value enum + None — extended from LG-01f's 14 by LG-01h.
+# The sidebar_active enum is unchanged by LG-01z (the live screens still
+# pass their key as sidebar_active to _build_league_sidebar_links).
 LOCKED_SIDEBAR_ACTIVE = {
     "dashboard",
     "standings",
@@ -61,34 +68,22 @@ LOCKED_SIDEBAR_ACTIVE = {
 
 LOCKED_SECTIONS = {"league", "team", "players", "stats", "help", "tools"}
 
-# LEAGUE-scoped entries (the seam contract pins these labels + sidebar_active
-# values; ``coming_soon_*`` is the URL-name prefix that gets used in routing).
+# Still-blocked placeholder entries (LG-01z flipped the rest live).
 LEAGUE_SCOPED_KEYS = {
     "league_playoffs": ("Playoffs", "league", "playoffs"),
     "league_finances": ("Finances", "league", "finances"),
-    "league_power_rankings": ("Power Rankings", "league", "power_rankings"),
 }
 TEAM_SCOPED_KEYS = {
-    "team_roster": ("Roster", "team", "roster"),
     "team_finances": ("Finances", "team", "finances_team"),
-    "team_history": ("History", "team", "history_team"),
 }
 PLAYERS_SCOPED_KEYS = {
-    "players_free_agents": ("Free Agents", "players", "free_agents"),
     "players_trade": ("Trade", "players", "trade"),
     "players_trading_block": ("Trading Block", "players", "trading_block"),
     "players_prospects": ("Prospects", "players", "prospects"),
-    "players_watch_list": ("Watch List", "players", "watch_list"),
     "players_hall_of_fame": ("Hall of Fame", "players", "hall_of_fame"),
 }
-STATS_SCOPED_KEYS = {
-    "stats_game_log": ("Game Log", "stats", "game_log"),
-    "stats_league_leaders": ("League Leaders", "stats", "league_leaders"),
-    "stats_player_ratings": ("Player Ratings", "stats", "player_ratings"),
-    "stats_player_stats": ("Player Stats", "stats", "player_stats"),
-    "stats_team_stats": ("Team Stats", "stats", "team_stats"),
-    "stats_statistical_feats": ("Statistical Feats", "stats", "statistical_feats"),
-}
+# All STATS placeholders went live in LG-01z.
+STATS_SCOPED_KEYS: dict[str, tuple[str, str, str]] = {}
 HELP_KEYS = {
     "help_overview": ("Overview", "help", None),
     "help_changes": ("Changes", "help", None),
@@ -104,26 +99,15 @@ TOOLS_KEYS = {
     "tools_reset_db": ("Reset DB", "tools", None),
 }
 
-# URL-name → feature_key + (league-scoped? bool).
+# The 7 league-scoped placeholder URL names still routed through coming_soon.
 LEAGUE_SCOPED_URL_NAMES = {
     "coming_soon_playoffs": "league_playoffs",
     "coming_soon_finances": "league_finances",
-    "coming_soon_power_rankings": "league_power_rankings",
-    "coming_soon_team_roster": "team_roster",
     "coming_soon_team_finances": "team_finances",
-    "coming_soon_team_history": "team_history",
-    "coming_soon_free_agents": "players_free_agents",
     "coming_soon_trade": "players_trade",
     "coming_soon_trading_block": "players_trading_block",
     "coming_soon_prospects": "players_prospects",
-    "coming_soon_watch_list": "players_watch_list",
     "coming_soon_hall_of_fame": "players_hall_of_fame",
-    "coming_soon_game_log": "stats_game_log",
-    "coming_soon_league_leaders": "stats_league_leaders",
-    "coming_soon_player_ratings": "stats_player_ratings",
-    "coming_soon_player_stats": "stats_player_stats",
-    "coming_soon_team_stats": "stats_team_stats",
-    "coming_soon_statistical_feats": "stats_statistical_feats",
 }
 HELP_TOOLS_URL_NAMES = {
     "coming_soon_help_overview": "help_overview",
@@ -145,12 +129,11 @@ HELP_TOOLS_URL_NAMES = {
 
 
 class TestComingSoonRouting(TestCase):
-    """200 on every URL name in ``_FEATURE_REGISTRY``; 405 on POST;
-    404 on stale ``league_id``; 404 on unknown ``feature_key``; sidebar
-    rendered in league branch; sidebar empty in Help / Tools branch;
-    ``feature_label`` injected into the ``<h1>``; ``"Coming soon"``
-    substring in the body; locked context keys present; ``app_mode``
-    matches the URL-prefix rule.
+    """200 on every still-placeholder URL name; 405 on POST; 404 on stale
+    ``league_id``; 404 on unknown ``feature_key``; sidebar rendered in
+    league branch; sidebar empty in Help / Tools branch; ``feature_label``
+    in the ``<h1>``; ``"Coming soon"`` substring; locked context keys;
+    ``app_mode`` matches the URL-prefix rule.
     """
 
     @classmethod
@@ -217,11 +200,6 @@ class TestComingSoonRouting(TestCase):
     # -- 404 on unknown feature_key (direct invocation) ---------------------
 
     def test_unknown_feature_key_returns_404(self) -> None:
-        """The URL routing pre-validates ``feature_key`` (it is passed via
-        kwargs from ``urls.py``), so an unknown key cannot be reached
-        through routing. Invoke the view directly to assert the
-        ``Http404`` guard.
-        """
         from django.http import Http404
         from django.test import RequestFactory
 
@@ -251,10 +229,7 @@ class TestComingSoonRouting(TestCase):
     def test_feature_label_in_h1_for_league_scoped(self) -> None:
         url = reverse("coming_soon_playoffs", kwargs={"league_id": self.league.id})
         response = self.client.get(url)
-        body = response.content.decode()
-        # Label is "Playoffs" per the registry.
-        self.assertIn("Playoffs", body)
-        # Inside the locked coming-soon-header wrapper.
+        self.assertIn("Playoffs", response.content.decode())
         self.assertContains(response, 'id="coming-soon-header"')
 
     def test_feature_label_in_h1_for_help_overview(self) -> None:
@@ -274,9 +249,21 @@ class TestComingSoonRouting(TestCase):
         self.assertContains(response, 'id="coming-soon-message"')
         self.assertIn("Coming soon", response.content.decode())
 
-    # -- Locked 7 context keys present (+ global app_mode = 8) --------------
+    # -- LG-01z: blocked placeholders render a blocker note -----------------
 
-    def test_locked_7_context_keys_present_league_scoped(self) -> None:
+    def test_blocker_note_rendered_for_blocked_league_screen(self) -> None:
+        url = reverse("coming_soon_finances", kwargs={"league_id": self.league.id})
+        response = self.client.get(url)
+        self.assertContains(response, 'id="coming-soon-blocker"')
+        self.assertIn("Blocked:", response.content.decode())
+
+    def test_no_blocker_note_for_help_screen(self) -> None:
+        response = self.client.get(reverse("coming_soon_help_overview"))
+        self.assertNotContains(response, 'id="coming-soon-blocker"')
+
+    # -- Locked 7 context keys present (+ global app_mode) ------------------
+
+    def test_locked_context_keys_present_league_scoped(self) -> None:
         url = reverse("coming_soon_playoffs", kwargs={"league_id": self.league.id})
         response = self.client.get(url)
         ctx = response.context
@@ -286,14 +273,14 @@ class TestComingSoonRouting(TestCase):
             "feature_key",
             "feature_label",
             "feature_section",
+            "blocker",
             "sidebar_links",
             "sidebar_active",
         ):
             self.assertIn(key, ctx, f"missing context key {key!r}")
-        # Plus the global ``app_mode``.
         self.assertIn("app_mode", ctx)
 
-    def test_locked_7_context_keys_present_help_branch(self) -> None:
+    def test_locked_context_keys_present_help_branch(self) -> None:
         response = self.client.get(reverse("coming_soon_help_overview"))
         ctx = response.context
         for key in (
@@ -302,11 +289,11 @@ class TestComingSoonRouting(TestCase):
             "feature_key",
             "feature_label",
             "feature_section",
+            "blocker",
             "sidebar_links",
             "sidebar_active",
         ):
             self.assertIn(key, ctx, f"missing context key {key!r}")
-        # ``league`` is None on Help/Tools, but the key must be present.
         self.assertIsNone(ctx["league"])
         self.assertEqual(ctx["sidebar_links"], [])
 
@@ -332,12 +319,9 @@ class TestComingSoonRouting(TestCase):
 
 
 class TestComingSoonFeatureRegistry(TestCase):
-    """All 35 ``_FEATURE_REGISTRY`` entries exist; every value-dict has the
-    3 keys ``label, section, sidebar_active``; every ``sidebar_active`` is
-    in the locked 23+``None`` enum; section is in the locked 6-value set;
-    the 18 LEAGUE/TEAM/PLAYERS/STATS placeholder entries (3+3+6+6 = 18)
-    have non-``None`` ``sidebar_active``; the 6 Help + 4 Tools entries have
-    ``sidebar_active=None``.
+    """Post-LG-01z the registry holds 17 entries (7 still-blocked
+    LEAGUE/TEAM/PLAYERS placeholders + 6 Help + 4 Tools). The 7 blocked
+    entries carry a ``blocker`` note; Help/Tools do not.
     """
 
     def setUp(self) -> None:
@@ -345,27 +329,30 @@ class TestComingSoonFeatureRegistry(TestCase):
 
         self.registry = _FEATURE_REGISTRY
 
-    def test_registry_has_28_entries(self) -> None:
-        """The seam contract's prose claims "Total: 35 entries", but the
-        explicit per-key vocabulary it enumerates totals 3 + 3 + 6 + 6 +
-        6 + 4 = 28. The "35" is a misnote analogous to the acknowledged
-        misnote on contract line 37 (the ``/leagues/<id>/standings/``
-        route which was already LIVE via LG-01f). The Standings entry is
-        NOT in the registry (it's already LIVE), and the 7 "extra"
-        league-scoped entries the prose hints at do not appear in the
-        explicit per-key enumeration. Tests assert against the
-        enumerated vocabulary.
-        """
-        self.assertEqual(len(self.registry), 28)
+    def test_registry_has_17_entries(self) -> None:
+        self.assertEqual(len(self.registry), 17)
 
-    def test_every_value_dict_has_3_keys(self) -> None:
-        expected = {"label", "section", "sidebar_active"}
+    def test_base_keys_present_in_every_value_dict(self) -> None:
+        base = {"label", "section", "sidebar_active"}
         for key, value in self.registry.items():
-            self.assertEqual(
-                set(value.keys()),
-                expected,
-                f"feature_key {key!r} value dict has wrong keys: {set(value.keys())}",
+            self.assertTrue(
+                base.issubset(set(value.keys())),
+                f"feature_key {key!r} missing base keys: {set(value.keys())}",
             )
+
+    def test_blocked_placeholders_carry_a_blocker_note(self) -> None:
+        blocked_keys = (
+            set(LEAGUE_SCOPED_KEYS) | set(TEAM_SCOPED_KEYS) | set(PLAYERS_SCOPED_KEYS)
+        )
+        self.assertEqual(len(blocked_keys), 7)
+        for key in blocked_keys:
+            self.assertIn("blocker", self.registry[key], f"{key!r} missing blocker")
+            self.assertIsInstance(self.registry[key]["blocker"], str)
+            self.assertTrue(self.registry[key]["blocker"])
+
+    def test_help_tools_have_no_blocker(self) -> None:
+        for key in set(HELP_KEYS) | set(TOOLS_KEYS):
+            self.assertNotIn("blocker", self.registry[key])
 
     def test_every_sidebar_active_in_locked_enum(self) -> None:
         for key, value in self.registry.items():
@@ -383,8 +370,6 @@ class TestComingSoonFeatureRegistry(TestCase):
                 LOCKED_SECTIONS,
                 f"feature_key {key!r} section {value['section']!r} not in locked set",
             )
-
-    # -- 18 placeholder LEAGUE/TEAM/PLAYERS/STATS entries -------------------
 
     def test_league_scoped_entries_present(self) -> None:
         for key, (label, section, sidebar_active) in LEAGUE_SCOPED_KEYS.items():
@@ -410,29 +395,37 @@ class TestComingSoonFeatureRegistry(TestCase):
                 self.assertEqual(self.registry[key]["section"], section)
                 self.assertEqual(self.registry[key]["sidebar_active"], sidebar_active)
 
-    def test_stats_scoped_entries_present(self) -> None:
-        for key, (label, section, sidebar_active) in STATS_SCOPED_KEYS.items():
-            with self.subTest(key=key):
-                self.assertIn(key, self.registry)
-                self.assertEqual(self.registry[key]["label"], label)
-                self.assertEqual(self.registry[key]["section"], section)
-                self.assertEqual(self.registry[key]["sidebar_active"], sidebar_active)
+    def test_no_live_lg01z_keys_remain_in_registry(self) -> None:
+        for gone in (
+            "league_power_rankings",
+            "team_roster",
+            "team_history",
+            "players_free_agents",
+            "players_watch_list",
+            "stats_game_log",
+            "stats_league_leaders",
+            "stats_player_ratings",
+            "stats_player_stats",
+            "stats_team_stats",
+            "stats_statistical_feats",
+        ):
+            self.assertNotIn(
+                gone, self.registry, f"{gone!r} should be live, not placeholder"
+            )
 
-    def test_18_placeholder_entries_have_non_none_sidebar_active(self) -> None:
+    def test_placeholder_entries_have_non_none_sidebar_active(self) -> None:
         placeholder_keys = (
-            set(LEAGUE_SCOPED_KEYS.keys())
-            | set(TEAM_SCOPED_KEYS.keys())
-            | set(PLAYERS_SCOPED_KEYS.keys())
-            | set(STATS_SCOPED_KEYS.keys())
+            set(LEAGUE_SCOPED_KEYS)
+            | set(TEAM_SCOPED_KEYS)
+            | set(PLAYERS_SCOPED_KEYS)
+            | set(STATS_SCOPED_KEYS)
         )
-        self.assertEqual(len(placeholder_keys), 18)
+        self.assertEqual(len(placeholder_keys), 7)
         for key in placeholder_keys:
             self.assertIsNotNone(
                 self.registry[key]["sidebar_active"],
                 f"feature_key {key!r} should have non-None sidebar_active",
             )
-
-    # -- Help + Tools entries -----------------------------------------------
 
     def test_help_entries_present(self) -> None:
         for key, (label, section, sidebar_active) in HELP_KEYS.items():
@@ -451,31 +444,19 @@ class TestComingSoonFeatureRegistry(TestCase):
                 self.assertIsNone(self.registry[key]["sidebar_active"])
 
     def test_6_help_plus_4_tools_have_none_sidebar_active(self) -> None:
-        help_tools_keys = set(HELP_KEYS.keys()) | set(TOOLS_KEYS.keys())
+        help_tools_keys = set(HELP_KEYS) | set(TOOLS_KEYS)
         self.assertEqual(len(help_tools_keys), 10)
         for key in help_tools_keys:
-            self.assertIsNone(
-                self.registry[key]["sidebar_active"],
-                f"feature_key {key!r} should have None sidebar_active",
-            )
+            self.assertIsNone(self.registry[key]["sidebar_active"])
 
     def test_entry_counts_by_section(self) -> None:
-        """3 league + 3 team + 6 players + 6 stats + 6 help + 4 tools = 28
-        ... wait — let's count properly. The seam contract pins 10
-        league-scoped TOTAL in the registry (the misnote on line 25 of the
-        contract listed 10 League-scoped including standings, but Standings
-        is already LIVE in LG-01f so it's not in the registry).
-
-        Per the explicit per-key vocabulary in the contract: League-scoped
-        in the registry are exactly 3 (playoffs / finances / power_rankings).
-        """
         by_section: dict[str, int] = {}
         for value in self.registry.values():
             by_section[value["section"]] = by_section.get(value["section"], 0) + 1
-        self.assertEqual(by_section.get("league", 0), 3)
-        self.assertEqual(by_section.get("team", 0), 3)
-        self.assertEqual(by_section.get("players", 0), 6)
-        self.assertEqual(by_section.get("stats", 0), 6)
+        self.assertEqual(by_section.get("league", 0), 2)
+        self.assertEqual(by_section.get("team", 0), 1)
+        self.assertEqual(by_section.get("players", 0), 4)
+        self.assertEqual(by_section.get("stats", 0), 0)
         self.assertEqual(by_section.get("help", 0), 6)
         self.assertEqual(by_section.get("tools", 0), 4)
 
@@ -498,19 +479,13 @@ class TestComingSoonSessionWrite(TestCase):
 
     def test_team_scoped_get_writes_last_league_id(self) -> None:
         league = _make_league("SessWriteT")
-        url = reverse("coming_soon_team_roster", kwargs={"league_id": league.id})
+        url = reverse("coming_soon_team_finances", kwargs={"league_id": league.id})
         self.client.get(url)
         self.assertEqual(self.client.session.get("last_league_id"), league.id)
 
     def test_players_scoped_get_writes_last_league_id(self) -> None:
         league = _make_league("SessWriteP")
-        url = reverse("coming_soon_free_agents", kwargs={"league_id": league.id})
-        self.client.get(url)
-        self.assertEqual(self.client.session.get("last_league_id"), league.id)
-
-    def test_stats_scoped_get_writes_last_league_id(self) -> None:
-        league = _make_league("SessWriteS")
-        url = reverse("coming_soon_game_log", kwargs={"league_id": league.id})
+        url = reverse("coming_soon_trade", kwargs={"league_id": league.id})
         self.client.get(url)
         self.assertEqual(self.client.session.get("last_league_id"), league.id)
 
