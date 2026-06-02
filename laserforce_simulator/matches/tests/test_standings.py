@@ -1,8 +1,14 @@
-"""LG-01 — Pure-unit tests for ``matches/standings.py``.
+"""LG-01 / LG-06g — Pure-unit tests for ``matches/standings.py``.
 
-No DB, no Django imports in the assertion path. The seam contract is
-locked at ``.claude/worktrees/lg-01-seam-contract.md`` (§2b, §6b). Pure
-``SimpleTestCase`` with hand-crafted dict-list inputs.
+No DB, no Django imports in the assertion path. The LG-01 seam contract is
+locked at ``.claude/worktrees/lg-01-seam-contract.md`` (§2b, §6b); the LG-06g
+form / side-detail extension at ``.claude/worktrees/lg-06g-seam-contract.md``.
+Pure ``SimpleTestCase`` with hand-crafted dict-list inputs.
+
+LG-06g changed the signature to
+``compute_standings(completed_matches, enrolled_teams, season_rounds)`` — every
+callsite below passes the 3rd arg (``[]`` where only Match-grain columns are
+exercised).
 """
 
 from __future__ import annotations
@@ -12,7 +18,7 @@ from django.test import SimpleTestCase
 from matches.standings import StandingsRow, compute_standings
 
 # ---------------------------------------------------------------------------
-# Helpers — build one match dict (the 8-key shape, §2b)
+# Helpers — build one match dict (9-key shape) and one round dict (6-key shape)
 # ---------------------------------------------------------------------------
 
 
@@ -26,8 +32,13 @@ def _match(
     blue_rounds_won: int = 0,
     red_total_points: int = 0,
     blue_total_points: int = 0,
+    date_played: int = 0,
 ) -> dict:
-    """Build one ``completed_matches`` entry with every locked key."""
+    """Build one ``completed_matches`` entry with every locked key.
+
+    ``date_played`` defaults to ``0`` so order falls to the ``match_id``
+    tiebreak; streak / L5 tests pass it explicitly to control ordering.
+    """
     return {
         "match_id": match_id,
         "team_red_id": team_red_id,
@@ -37,6 +48,27 @@ def _match(
         "blue_rounds_won": blue_rounds_won,
         "red_total_points": red_total_points,
         "blue_total_points": blue_total_points,
+        "date_played": date_played,
+    }
+
+
+def _round(
+    *,
+    round_id: int = 1,
+    team_red_id: int = 100,
+    team_blue_id: int = 200,
+    red_points: int = 0,
+    blue_points: int = 0,
+    date_played: int = 0,
+) -> dict:
+    """Build one ``season_rounds`` entry (6-key shape, physical sides)."""
+    return {
+        "round_id": round_id,
+        "team_red_id": team_red_id,
+        "team_blue_id": team_blue_id,
+        "red_points": red_points,
+        "blue_points": blue_points,
+        "date_played": date_played,
     }
 
 
@@ -49,7 +81,7 @@ class TestComputeStandingsEmptyInput(SimpleTestCase):
     """No matches / no enrolled teams edges."""
 
     def test_no_matches_all_enrolled_rows_zeroed(self) -> None:
-        rows = compute_standings([], [(1, "A"), (2, "B")])
+        rows = compute_standings([], [(1, "A"), (2, "B")], [])
         self.assertEqual(len(rows), 2)
         for r in rows:
             self.assertEqual(r.matches_played, 0)
@@ -59,20 +91,24 @@ class TestComputeStandingsEmptyInput(SimpleTestCase):
             self.assertEqual(r.league_points, 0)
             self.assertEqual(r.round_wins, 0)
             self.assertEqual(r.total_score, 0)
+            # LG-06g — zeroed form / side fields on an empty Season.
+            self.assertEqual(r.match_streak, ("", 0))
+            self.assertEqual(r.match_l5, (0, 0, 0))
+            self.assertEqual(r.round_streak, ("", 0))
+            self.assertEqual(r.round_l5, (0, 0, 0))
+            self.assertEqual(r.red_wlt, (0, 0, 0))
+            self.assertEqual(r.blue_wlt, (0, 0, 0))
+            self.assertEqual(r.red_points_for, 0)
+            self.assertEqual(r.blue_points_for, 0)
 
     def test_no_enrolled_teams_and_no_matches_returns_empty_list(self) -> None:
-        rows = compute_standings([], [])
+        rows = compute_standings([], [], [])
         self.assertEqual(rows, [])
 
     def test_match_teams_not_in_enrolled_are_still_aggregated(self) -> None:
-        # Contract §2b: "A match entry whose team_red_id or team_blue_id is
-        # NOT in enrolled_teams is still aggregated (its rows are added to
-        # the table). The Code agent does not filter — the view passes only
-        # the Season's matches." So empty enrolled_teams + a non-empty match
-        # list produces rows for the matched teams (defensive fallback —
-        # the team name is the empty string when not in enrolled_teams).
         rows = compute_standings(
             [_match(match_id=1, team_red_id=1, team_blue_id=2)],
+            [],
             [],
         )
         self.assertEqual(len(rows), 2)
@@ -89,14 +125,9 @@ class TestComputeStandingsBasicWinLoss(SimpleTestCase):
 
     def test_one_match_red_wins_red_w_blue_l(self) -> None:
         matches = [
-            _match(
-                match_id=1,
-                team_red_id=1,
-                team_blue_id=2,
-                winner_team_id=1,
-            ),
+            _match(match_id=1, team_red_id=1, team_blue_id=2, winner_team_id=1),
         ]
-        rows = compute_standings(matches, [(1, "A"), (2, "B")])
+        rows = compute_standings(matches, [(1, "A"), (2, "B")], [])
         by_id = {r.team_id: r for r in rows}
         self.assertEqual(by_id[1].wins, 1)
         self.assertEqual(by_id[1].losses, 0)
@@ -107,14 +138,9 @@ class TestComputeStandingsBasicWinLoss(SimpleTestCase):
 
     def test_one_match_blue_wins_blue_w_red_l(self) -> None:
         matches = [
-            _match(
-                match_id=1,
-                team_red_id=1,
-                team_blue_id=2,
-                winner_team_id=2,
-            ),
+            _match(match_id=1, team_red_id=1, team_blue_id=2, winner_team_id=2),
         ]
-        rows = compute_standings(matches, [(1, "A"), (2, "B")])
+        rows = compute_standings(matches, [(1, "A"), (2, "B")], [])
         by_id = {r.team_id: r for r in rows}
         self.assertEqual(by_id[2].wins, 1)
         self.assertEqual(by_id[1].losses, 1)
@@ -130,6 +156,7 @@ class TestComputeStandingsBasicWinLoss(SimpleTestCase):
         rows = compute_standings(
             matches,
             [(1, "A"), (2, "B"), (3, "C"), (4, "D"), (5, "E")],
+            [],
         )
         by_id = {r.team_id: r for r in rows}
         self.assertEqual(by_id[1].wins, 2)
@@ -148,14 +175,9 @@ class TestComputeStandingsTie(SimpleTestCase):
 
     def test_winner_team_id_none_counts_as_tie_both(self) -> None:
         matches = [
-            _match(
-                match_id=1,
-                team_red_id=1,
-                team_blue_id=2,
-                winner_team_id=None,
-            ),
+            _match(match_id=1, team_red_id=1, team_blue_id=2, winner_team_id=None),
         ]
-        rows = compute_standings(matches, [(1, "A"), (2, "B")])
+        rows = compute_standings(matches, [(1, "A"), (2, "B")], [])
         by_id = {r.team_id: r for r in rows}
         self.assertEqual(by_id[1].ties, 1)
         self.assertEqual(by_id[2].ties, 1)
@@ -165,16 +187,10 @@ class TestComputeStandingsTie(SimpleTestCase):
         self.assertEqual(by_id[2].losses, 0)
 
     def test_unknown_winner_id_counts_as_tie_defensive(self) -> None:
-        # winner_team_id 999 is neither red (1) nor blue (2) -- defensive tie.
         matches = [
-            _match(
-                match_id=1,
-                team_red_id=1,
-                team_blue_id=2,
-                winner_team_id=999,
-            ),
+            _match(match_id=1, team_red_id=1, team_blue_id=2, winner_team_id=999),
         ]
-        rows = compute_standings(matches, [(1, "A"), (2, "B")])
+        rows = compute_standings(matches, [(1, "A"), (2, "B")], [])
         by_id = {r.team_id: r for r in rows}
         self.assertEqual(by_id[1].ties, 1)
         self.assertEqual(by_id[2].ties, 1)
@@ -191,54 +207,6 @@ class TestComputeStandingsTiebreakLadder(SimpleTestCase):
     """
 
     def test_tied_league_points_resolved_by_round_wins(self) -> None:
-        # Each of A and B has 1W (3 league_points) but A has more round_wins.
-        matches = [
-            # Team 1 (A) won match vs team 3 with red_rounds_won=2.
-            _match(
-                match_id=1,
-                team_red_id=1,
-                team_blue_id=3,
-                winner_team_id=1,
-                red_rounds_won=2,
-                blue_rounds_won=0,
-                red_total_points=100,
-                blue_total_points=50,
-            ),
-            # Team 2 (B) won match vs team 4 with red_rounds_won=2 too --
-            # equal round_wins on the W side -- so make A's W with more
-            # round_wins overall. Give A a second match (also a tie, no W)
-            # but with a round_win count contributing.
-            _match(
-                match_id=2,
-                team_red_id=2,
-                team_blue_id=4,
-                winner_team_id=2,
-                red_rounds_won=2,
-                blue_rounds_won=1,
-                red_total_points=100,
-                blue_total_points=80,
-            ),
-            # A picks up an extra round_win in a tie match.
-            _match(
-                match_id=3,
-                team_red_id=1,
-                team_blue_id=5,
-                winner_team_id=None,
-                red_rounds_won=1,
-                blue_rounds_won=1,
-                red_total_points=50,
-                blue_total_points=50,
-            ),
-        ]
-        rows = compute_standings(
-            matches,
-            [(1, "A"), (2, "B"), (3, "C"), (4, "D"), (5, "E")],
-        )
-        # A has 1W + 1T = 3 + 1 = 4 points; B has 1W = 3 points -- A ranks
-        # above B on league_points alone (so this case doesn't test the
-        # tiebreak). Rewire so both tie on league_points and A has more
-        # round_wins. The exact scaffold above doesn't isolate. Simpler:
-        # make both teams 1W exactly, with A scoring more round_wins.
         matches2 = [
             _match(
                 match_id=1,
@@ -261,24 +229,16 @@ class TestComputeStandingsTiebreakLadder(SimpleTestCase):
                 blue_total_points=20,
             ),
         ]
-        rows2 = compute_standings(
-            matches2,
-            [(1, "A"), (2, "B"), (10, "Filler")],
-        )
+        rows2 = compute_standings(matches2, [(1, "A"), (2, "B"), (10, "Filler")], [])
         by_id = {r.team_id: r for r in rows2}
-        # Both A and B have 3 league_points.
         self.assertEqual(by_id[1].league_points, 3)
         self.assertEqual(by_id[2].league_points, 3)
-        # A has more round_wins (2 > 1).
         self.assertGreater(by_id[1].round_wins, by_id[2].round_wins)
-        # A ranks higher (lower rank number).
         self.assertLess(by_id[1].rank, by_id[2].rank)
 
     def test_tied_league_points_and_round_wins_resolved_by_total_score(
         self,
     ) -> None:
-        # Both A and B win one match each with equal round_wins; A scores
-        # more total_score.
         matches = [
             _match(
                 match_id=1,
@@ -301,10 +261,7 @@ class TestComputeStandingsTiebreakLadder(SimpleTestCase):
                 blue_total_points=10,
             ),
         ]
-        rows = compute_standings(
-            matches,
-            [(1, "A"), (2, "B"), (10, "Filler")],
-        )
+        rows = compute_standings(matches, [(1, "A"), (2, "B"), (10, "Filler")], [])
         by_id = {r.team_id: r for r in rows}
         self.assertEqual(by_id[1].league_points, by_id[2].league_points)
         self.assertEqual(by_id[1].round_wins, by_id[2].round_wins)
@@ -312,7 +269,6 @@ class TestComputeStandingsTiebreakLadder(SimpleTestCase):
         self.assertLess(by_id[1].rank, by_id[2].rank)
 
     def test_tied_on_all_three_resolved_by_team_name_alphabetical(self) -> None:
-        # Two teams with identical records -- name asc breaks tie.
         matches = [
             _match(
                 match_id=1,
@@ -338,13 +294,12 @@ class TestComputeStandingsTiebreakLadder(SimpleTestCase):
         rows = compute_standings(
             matches,
             [(1, "Zebra"), (2, "Alpha"), (10, "Filler1"), (11, "Filler2")],
+            [],
         )
         by_id = {r.team_id: r for r in rows}
-        # Both Zebra (team 1) and Alpha (team 2) have identical records.
         self.assertEqual(by_id[1].league_points, by_id[2].league_points)
         self.assertEqual(by_id[1].round_wins, by_id[2].round_wins)
         self.assertEqual(by_id[1].total_score, by_id[2].total_score)
-        # Alpha sorts before Zebra -- so team 2 ranks higher.
         self.assertLess(by_id[2].rank, by_id[1].rank)
 
 
@@ -357,7 +312,7 @@ class TestComputeStandingsRankPopulated(SimpleTestCase):
     """rank is 1-based, dense, in iteration order."""
 
     def test_rank_is_one_based_and_dense(self) -> None:
-        rows = compute_standings([], [(1, "A"), (2, "B"), (3, "C")])
+        rows = compute_standings([], [(1, "A"), (2, "B"), (3, "C")], [])
         ranks = [r.rank for r in rows]
         self.assertEqual(ranks, [1, 2, 3])
 
@@ -369,8 +324,7 @@ class TestComputeStandingsRankPopulated(SimpleTestCase):
 
 class TestComputeStandingsTeamElimBonusFlowsIn(SimpleTestCase):
     """The 10k team-elim bonus is already baked into red_total_points /
-    blue_total_points by the view (Match.red_total_points property). The
-    pure module simply sums it into total_score.
+    blue_total_points by the view; the pure module just sums it.
     """
 
     def test_red_total_points_carries_team_elim_bonus_into_total_score(
@@ -386,10 +340,374 @@ class TestComputeStandingsTeamElimBonusFlowsIn(SimpleTestCase):
                 blue_total_points=2000,
             ),
         ]
-        rows = compute_standings(matches, [(1, "A"), (2, "B")])
+        rows = compute_standings(matches, [(1, "A"), (2, "B")], [])
         by_id = {r.team_id: r for r in rows}
         self.assertEqual(by_id[1].total_score, 15000)
         self.assertEqual(by_id[2].total_score, 2000)
+
+
+# ===========================================================================
+# LG-06g — Match-grain form (match_streak / match_l5)
+# ===========================================================================
+
+
+class TestComputeStandingsMatchForm(SimpleTestCase):
+    """match_streak / match_l5 read the completed-Match corpus, ordered by
+    (date_played, match_id) ascending; the streak runs from the most recent.
+    """
+
+    def test_winning_streak_runs_from_most_recent(self) -> None:
+        # Team 1 wins matches 1,2,3 in chronological order ⇒ ("W", 3).
+        matches = [
+            _match(
+                match_id=1,
+                team_red_id=1,
+                team_blue_id=2,
+                winner_team_id=1,
+                date_played=1,
+            ),
+            _match(
+                match_id=2,
+                team_red_id=1,
+                team_blue_id=3,
+                winner_team_id=1,
+                date_played=2,
+            ),
+            _match(
+                match_id=3,
+                team_red_id=1,
+                team_blue_id=4,
+                winner_team_id=1,
+                date_played=3,
+            ),
+        ]
+        rows = compute_standings(matches, [(1, "A"), (2, "B"), (3, "C"), (4, "D")], [])
+        by_id = {r.team_id: r for r in rows}
+        self.assertEqual(by_id[1].match_streak, ("W", 3))
+        # The three opponents each have a fresh single-loss streak.
+        self.assertEqual(by_id[2].match_streak, ("L", 1))
+
+    def test_streak_breaks_on_result_change(self) -> None:
+        # Most recent result is a loss ⇒ ("L", 1) regardless of prior wins.
+        matches = [
+            _match(
+                match_id=1,
+                team_red_id=1,
+                team_blue_id=2,
+                winner_team_id=1,
+                date_played=1,
+            ),
+            _match(
+                match_id=2,
+                team_red_id=1,
+                team_blue_id=2,
+                winner_team_id=1,
+                date_played=2,
+            ),
+            _match(
+                match_id=3,
+                team_red_id=1,
+                team_blue_id=2,
+                winner_team_id=2,
+                date_played=3,
+            ),
+        ]
+        rows = compute_standings(matches, [(1, "A"), (2, "B")], [])
+        by_id = {r.team_id: r for r in rows}
+        self.assertEqual(by_id[1].match_streak, ("L", 1))
+
+    def test_tie_streak(self) -> None:
+        matches = [
+            _match(
+                match_id=1,
+                team_red_id=1,
+                team_blue_id=2,
+                winner_team_id=None,
+                date_played=1,
+            ),
+            _match(
+                match_id=2,
+                team_red_id=1,
+                team_blue_id=2,
+                winner_team_id=None,
+                date_played=2,
+            ),
+        ]
+        rows = compute_standings(matches, [(1, "A"), (2, "B")], [])
+        by_id = {r.team_id: r for r in rows}
+        self.assertEqual(by_id[1].match_streak, ("T", 2))
+
+    def test_l5_window_counts_last_five_only(self) -> None:
+        # 6 matches for team 1: oldest is a loss, the last 5 are W,W,W,W,L
+        # (the very first loss falls outside the window).
+        matches = [
+            _match(
+                match_id=1,
+                team_red_id=1,
+                team_blue_id=2,
+                winner_team_id=2,
+                date_played=1,
+            ),
+            _match(
+                match_id=2,
+                team_red_id=1,
+                team_blue_id=2,
+                winner_team_id=1,
+                date_played=2,
+            ),
+            _match(
+                match_id=3,
+                team_red_id=1,
+                team_blue_id=2,
+                winner_team_id=1,
+                date_played=3,
+            ),
+            _match(
+                match_id=4,
+                team_red_id=1,
+                team_blue_id=2,
+                winner_team_id=1,
+                date_played=4,
+            ),
+            _match(
+                match_id=5,
+                team_red_id=1,
+                team_blue_id=2,
+                winner_team_id=1,
+                date_played=5,
+            ),
+            _match(
+                match_id=6,
+                team_red_id=1,
+                team_blue_id=2,
+                winner_team_id=2,
+                date_played=6,
+            ),
+        ]
+        rows = compute_standings(matches, [(1, "A"), (2, "B")], [])
+        by_id = {r.team_id: r for r in rows}
+        # Last 5 (matches 2..6) = W,W,W,W,L ⇒ (4,1,0). Streak = ("L",1).
+        self.assertEqual(by_id[1].match_l5, (4, 1, 0))
+        self.assertEqual(by_id[1].match_streak, ("L", 1))
+
+    def test_ordering_tiebreak_by_match_id_when_dates_equal(self) -> None:
+        # Same date_played ⇒ order by match_id ⇒ most-recent = match_id 2 (a
+        # loss), so the streak is the loss not the win.
+        matches = [
+            _match(
+                match_id=1,
+                team_red_id=1,
+                team_blue_id=2,
+                winner_team_id=1,
+                date_played=5,
+            ),
+            _match(
+                match_id=2,
+                team_red_id=1,
+                team_blue_id=2,
+                winner_team_id=2,
+                date_played=5,
+            ),
+        ]
+        rows = compute_standings(matches, [(1, "A"), (2, "B")], [])
+        by_id = {r.team_id: r for r in rows}
+        self.assertEqual(by_id[1].match_streak, ("L", 1))
+
+
+# ===========================================================================
+# LG-06g — Round-grain form (round_streak / round_l5)
+# ===========================================================================
+
+
+class TestComputeStandingsRoundForm(SimpleTestCase):
+    """round_streak / round_l5 read the season_rounds corpus (every persisted
+    Round), independent of the Match corpus; team's own W/L/T regardless of
+    physical side.
+    """
+
+    def test_round_form_independent_of_match_corpus(self) -> None:
+        # No completed matches at all — round form still computes.
+        rounds = [
+            _round(
+                round_id=1,
+                team_red_id=1,
+                team_blue_id=2,
+                red_points=100,
+                blue_points=50,
+                date_played=1,
+            ),
+            _round(
+                round_id=2,
+                team_red_id=2,
+                team_blue_id=1,
+                red_points=20,
+                blue_points=80,
+                date_played=2,
+            ),
+        ]
+        rows = compute_standings([], [(1, "A"), (2, "B")], rounds)
+        by_id = {r.team_id: r for r in rows}
+        # Team 1 won round 1 (red, 100>50) and round 2 (blue, 80>20) ⇒ W,W.
+        self.assertEqual(by_id[1].round_streak, ("W", 2))
+        self.assertEqual(by_id[1].round_l5, (2, 0, 0))
+        # Match-grain stays zeroed (no completed matches passed in).
+        self.assertEqual(by_id[1].match_streak, ("", 0))
+
+    def test_round_result_when_team_plays_blue(self) -> None:
+        rounds = [
+            _round(
+                round_id=1,
+                team_red_id=2,
+                team_blue_id=1,
+                red_points=10,
+                blue_points=99,
+                date_played=1,
+            ),
+        ]
+        rows = compute_standings([], [(1, "A"), (2, "B")], rounds)
+        by_id = {r.team_id: r for r in rows}
+        # Team 1 played blue and blue won (99>10) ⇒ W.
+        self.assertEqual(by_id[1].round_streak, ("W", 1))
+        self.assertEqual(by_id[2].round_streak, ("L", 1))
+
+    def test_round_tie(self) -> None:
+        rounds = [
+            _round(
+                round_id=1,
+                team_red_id=1,
+                team_blue_id=2,
+                red_points=50,
+                blue_points=50,
+                date_played=1,
+            ),
+        ]
+        rows = compute_standings([], [(1, "A"), (2, "B")], rounds)
+        by_id = {r.team_id: r for r in rows}
+        self.assertEqual(by_id[1].round_streak, ("T", 1))
+        self.assertEqual(by_id[1].round_l5, (0, 0, 1))
+
+    def test_round_l5_window(self) -> None:
+        # 6 rounds for team 1, all as red; results L,W,W,W,W,W (oldest first).
+        rounds = [
+            _round(
+                round_id=1,
+                team_red_id=1,
+                team_blue_id=2,
+                red_points=10,
+                blue_points=99,
+                date_played=1,
+            ),
+            _round(
+                round_id=2,
+                team_red_id=1,
+                team_blue_id=2,
+                red_points=99,
+                blue_points=10,
+                date_played=2,
+            ),
+            _round(
+                round_id=3,
+                team_red_id=1,
+                team_blue_id=2,
+                red_points=99,
+                blue_points=10,
+                date_played=3,
+            ),
+            _round(
+                round_id=4,
+                team_red_id=1,
+                team_blue_id=2,
+                red_points=99,
+                blue_points=10,
+                date_played=4,
+            ),
+            _round(
+                round_id=5,
+                team_red_id=1,
+                team_blue_id=2,
+                red_points=99,
+                blue_points=10,
+                date_played=5,
+            ),
+            _round(
+                round_id=6,
+                team_red_id=1,
+                team_blue_id=2,
+                red_points=99,
+                blue_points=10,
+                date_played=6,
+            ),
+        ]
+        rows = compute_standings([], [(1, "A"), (2, "B")], rounds)
+        by_id = {r.team_id: r for r in rows}
+        # Last 5 (rounds 2..6) = all W ⇒ (5,0,0); the early loss falls outside.
+        self.assertEqual(by_id[1].round_l5, (5, 0, 0))
+        self.assertEqual(by_id[1].round_streak, ("W", 5))
+
+
+# ===========================================================================
+# LG-06g — Side split (red_wlt / blue_wlt / red_points_for / blue_points_for)
+# ===========================================================================
+
+
+class TestComputeStandingsSideSplit(SimpleTestCase):
+    """Per-physical-side W-L-T + points; a team aggregates into both sides
+    across the Season.
+    """
+
+    def test_red_side_record_and_points(self) -> None:
+        rounds = [
+            _round(
+                round_id=1,
+                team_red_id=1,
+                team_blue_id=2,
+                red_points=100,
+                blue_points=40,
+            ),
+            _round(
+                round_id=2, team_red_id=1, team_blue_id=2, red_points=30, blue_points=70
+            ),
+        ]
+        rows = compute_standings([], [(1, "A"), (2, "B")], rounds)
+        by_id = {r.team_id: r for r in rows}
+        # Team 1 played red both rounds: 1 win (100>40), 1 loss (30<70).
+        self.assertEqual(by_id[1].red_wlt, (1, 1, 0))
+        self.assertEqual(by_id[1].red_points_for, 130)
+        self.assertEqual(by_id[1].blue_wlt, (0, 0, 0))
+        self.assertEqual(by_id[1].blue_points_for, 0)
+        # Team 2 played blue both rounds: 1 loss, 1 win.
+        self.assertEqual(by_id[2].blue_wlt, (1, 1, 0))
+        self.assertEqual(by_id[2].blue_points_for, 110)
+
+    def test_team_aggregates_into_both_sides(self) -> None:
+        rounds = [
+            _round(
+                round_id=1, team_red_id=1, team_blue_id=2, red_points=80, blue_points=20
+            ),
+            _round(
+                round_id=2, team_red_id=2, team_blue_id=1, red_points=10, blue_points=90
+            ),
+        ]
+        rows = compute_standings([], [(1, "A"), (2, "B")], rounds)
+        by_id = {r.team_id: r for r in rows}
+        # Team 1: red in round 1 (win, 80 pts), blue in round 2 (win, 90 pts).
+        self.assertEqual(by_id[1].red_wlt, (1, 0, 0))
+        self.assertEqual(by_id[1].red_points_for, 80)
+        self.assertEqual(by_id[1].blue_wlt, (1, 0, 0))
+        self.assertEqual(by_id[1].blue_points_for, 90)
+
+    def test_side_tie_increments_t_on_both_sides(self) -> None:
+        rounds = [
+            _round(
+                round_id=1, team_red_id=1, team_blue_id=2, red_points=50, blue_points=50
+            ),
+        ]
+        rows = compute_standings([], [(1, "A"), (2, "B")], rounds)
+        by_id = {r.team_id: r for r in rows}
+        self.assertEqual(by_id[1].red_wlt, (0, 0, 1))
+        self.assertEqual(by_id[2].blue_wlt, (0, 0, 1))
+        self.assertEqual(by_id[1].red_points_for, 50)
+        self.assertEqual(by_id[2].blue_points_for, 50)
 
 
 # ---------------------------------------------------------------------------
@@ -398,12 +716,9 @@ class TestComputeStandingsTeamElimBonusFlowsIn(SimpleTestCase):
 
 
 class TestNoDjangoImportsLeaked(SimpleTestCase):
-    """Mirrors the HX-01 / HX-02 / HX-03 / HX-04 / RES-04 / RV-03 /
-    LG-00 / LG-00b precedent.
-
-    Importing ``matches.standings`` in a fresh subprocess must not pull in
-    ``django.*`` -- the pure module's import allowlist is ``dataclasses``
-    + ``typing`` + ``collections``.
+    """Importing ``matches.standings`` in a fresh subprocess must not pull in
+    ``django.*`` — the allowlist is ``dataclasses`` + ``typing`` +
+    ``collections``.
     """
 
     def test_pure_module_does_not_pull_in_django(self) -> None:

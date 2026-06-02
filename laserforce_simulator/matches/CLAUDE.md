@@ -1064,6 +1064,67 @@ unit tests). The league-pinned **career-page** flag was split off to **LG-06h**
 (the global `/players/<id>/stats/` page is league-agnostic, so its flag has no
 League to toggle against).
 
+## LG-06g standings form + side detail
+
+The LG-01 Season **Standings** table gained **8 form / side-detail columns** and
+every column became sortable (LG-06c pattern). Read-only — **no model, migration,
+URL, simulator, RNG, or Score Calibration re-baseline; no ADR**; CONTEXT.md
+carries the new **Standings form** + **Side split** terms. Seam contract:
+[`.claude/worktrees/lg-06g-seam-contract.md`](../../.claude/worktrees/lg-06g-seam-contract.md).
+
+**Pure module (`matches/standings.py`, extended in place).** `StandingsRow` grew
+from 9 to **17 fields** — the 8 new ones appended after `rank` (pinned order):
+`match_streak: tuple[str,int]`, `match_l5: tuple[int,int,int]`,
+`round_streak: tuple[str,int]`, `round_l5: tuple[int,int,int]`,
+`red_wlt: tuple[int,int,int]`, `blue_wlt: tuple[int,int,int]`,
+`red_points_for: int`, `blue_points_for: int`. The dataclass holds **structured
+numerics only** (streak as `(kind, length)` where `kind ∈ {"W","L","T",""}`;
+records/L5 as `(W,L,T)`); the template formats display strings and the view
+derives sort keys. `compute_standings(completed_matches, enrolled_teams,
+season_rounds)` gained the 3rd param — the Match dict is now **9 keys** (adds
+`date_played`) and `season_rounds` is a **6-key** dict (`round_id, team_red_id,
+team_blue_id, red_points, blue_points, date_played`). The frozen import allowlist
+(`dataclasses`/`typing`/`collections`) is unchanged (`TestNoDjangoImportsLeaked`
+still passes — `date_played` values cross the seam as already-comparable dict
+values, never imported).
+
+**Two corpora (by design).** Match-grain — existing `wins/losses/ties/
+league_points/round_wins/total_score` + `match_streak` + `match_l5` — read the
+**completed-Match** corpus. Round-grain — `round_streak`, `round_l5`, and all
+four side-split columns — read **every persisted Season Round** including Rounds
+of in-progress (`is_completed=False`) Matches. Streak runs from the most recent,
+both grains ordered chronologically by `(date_played, id)` asc; L5 is `(W,L,T)`
+over the last ≤5.
+
+**Side split is per PHYSICAL side.** Read straight off `GameRound.team_red`/
+`team_blue` (the actual physical sides, SIM-08) + `red_points`/`blue_points` —
+**never** the Match-level `red_*`/`blue_*` fields (team-position-keyed:
+`Match.red_round2_points` is team_red's points while it physically played BLUE in
+R2). Round result: red wins iff `red_points > blue_points`, blue iff the reverse,
+tie iff equal. `red_wlt`/`red_points_for` aggregate Rounds the team physically
+held red, `blue_*` symmetric; a team aggregates into both across the Season.
+`round_streak`/`round_l5` are the team's own side-agnostic W/L/T.
+
+**All 17 columns sortable (`matches/league_views.py::season_standings`).**
+View-side sort on the materialized rows after `compute_standings`, via
+`_coerce_sort_key` (new `_STANDINGS_SORT_KEYS` frozenset of 17 keys; default
+`("rank","asc")` ⇒ no `?sort` renders today's order) + `teams.views._coerce_dir`
+(newly imported). Helpers `_standings_sort_value` / `_streak_sort_value` /
+`_standings_row_attr` (attr-or-key adapter so the draft-preview dict rows sort
+through the same path); record/L5 sort `(wins desc, losses asc)`, streaks by
+signed run length, **`rank` stays frozen** (never renumbered — LG-06c
+League-Leaders precedent). The view builds `season_rounds` from
+`GameRound.objects.filter(match__season=season).values(…)`, adds `date_played`
+to the Match dicts, and adds context keys `sort` / `dir` / `sort_keys`
+(= `_STANDINGS_SORT_KEYS_DISPLAY`) / `querystring_without_sort_dir`; the
+draft-preview branch emits the 8 new fields zeroed and still sorts. Template
+`templates/seasons/standings.html` swapped its 9 hardcoded `<th>` for the
+sort-header loop (DOM ids `season-standings-th-<key>`, ` ↑`/` ↓` glyphs) + 17
+`<td>`, preserving `season-standings-table` / `-empty` / `-draft-preview-banner`
+/ `season-state-badge`. Tests: `matches/tests/test_standings.py` (pure-unit) +
+`matches/tests/test_season_views.py` (view/DOM, classes
+`TestLg06gStandingsFormSideDetail` / `TestLg06gStandingsDraftPreview`).
+
 ## Tests
 
 `matches/tests/` package:

@@ -9,8 +9,8 @@ Story IDs from `sm5_user_stories_v2.html` are referenced where applicable.
 
 ### LG-06 · ZenGM league-screen parity polish
 
-**Status: PARTIAL — a/b/c/d/e/f DONE, g/h NOT STARTED.** LG-06 is a multi-step group;
-shipping a, b, c, d, e, and f does NOT complete LG-06. Next incomplete step is **LG-06g**.
+**Status: PARTIAL — a/b/c/d/e/f/g DONE, h NOT STARTED.** LG-06 is a multi-step group;
+shipping a–g does NOT complete LG-06. Next incomplete step is **LG-06h**.
 
 Follow-ups to the shipped LG-01z read-only screens, from the per-page comparison
 against the reference product (LOL GM) in
@@ -298,10 +298,69 @@ session before implementation.
     `/players/<id>/stats/` page is league-agnostic, so its flag has no League to
     toggle against) — was **split off to LG-06h** on 2026-06-02. Seam contract:
     [`.claude/worktrees/lg-06f-seam-contract.md`](.claude/worktrees/lg-06f-seam-contract.md).
-- **LG-06g · [TODO — NOT STARTED] Standings form/side detail.** Surface Streak, Last-5 (L5), and a
+- **LG-06g · [DONE] Standings form/side detail.** Surface Streak, Last-5 (L5), and a
   home-away (Red/Blue side) split on the Standings table — we already persist
   per-Round side data; this is presentation only. Doc:
   [`standings.md`](docs/zengm-comparison/standings.md).
+  - completed: the LG-01 Standings table gained **8 new columns in two grains**
+    plus made **all 17 columns sortable** (LG-06c pattern). The pure module
+    `matches/standings.py` was extended in place — `StandingsRow` grew from 9 to
+    **17 fields** (appended after `rank`, pinned order: `match_streak`,
+    `match_l5`, `round_streak`, `round_l5`, `red_wlt`, `blue_wlt`,
+    `red_points_for`, `blue_points_for`) and `compute_standings` gained a 3rd
+    positional param `season_rounds`. **Two corpora by design:** the Match-grain
+    columns (existing W/L/T/Pts/RW/TS + `match_streak` + `match_l5`) read the
+    completed-Match corpus (`completed_matches`, now a 9-key dict with the added
+    `date_played`); the Round-grain columns (`round_streak`, `round_l5`) and all
+    four side-split columns (`red_wlt`/`blue_wlt`/`red_points_for`/
+    `blue_points_for`) read **every persisted Season Round** including Rounds of
+    in-progress (`is_completed=False`) Matches (`season_rounds`, a 6-key dict
+    `round_id, team_red_id, team_blue_id, red_points, blue_points, date_played`).
+    The **side split is per PHYSICAL side** — read straight off `GameRound`'s
+    stored `team_red`/`team_blue` + `red_points`/`blue_points` (SIM-08: stored
+    sides are the actual physical sides), NEVER the Match-level `red_*`/`blue_*`
+    fields (those are team-position-keyed — `Match.red_round2_points` is
+    team_red's points while it physically played BLUE in R2). A Round result:
+    red wins iff `red_points > blue_points`, blue iff `blue_points > red_points`,
+    tie iff equal; `red_wlt`/`red_points_for` aggregate the Rounds the team
+    physically held red, `blue_*` symmetric, and a team aggregates into BOTH
+    across the Season. `round_streak`/`round_l5` are the team's own side-agnostic
+    W/L/T. **Streak** is stored as a `(kind, length)` tuple (`("W",3)` →
+    `"W3"`, `("L",2)` → `"L2"`, `("T",1)` → `"T1"`, `("",0)` → `"—"`) — the
+    `(kind, length)` shape avoids the T-vs-no-streak collision a signed int
+    would carry; **L5** and the side records are `(W,L,T)` int-tuples displayed
+    `"3-1-1"`. Both grains order chronologically by `(date_played, id)` asc,
+    most-recent = tail. The dataclass holds **structured numerics only**; the
+    template formats display strings and the view derives sort keys. **All 17
+    columns sortable** via the LG-06c pattern — `matches.league_views`
+    `_coerce_sort_key` (new frozenset `_STANDINGS_SORT_KEYS` of 17 keys, default
+    `("rank","asc")` so a no-`?sort` request renders today's order unchanged) +
+    `teams.views._coerce_dir` (newly imported into `league_views`), sorting
+    **view-side** on the materialized rows after `compute_standings` with new
+    helpers `_standings_sort_value` / `_streak_sort_value` / `_standings_row_attr`
+    (the last an attr-or-key adapter so the draft-preview dict rows sort through
+    the same path); record/L5 columns sort `(wins desc, losses asc)`, streaks by
+    signed run length, and **`rank` stays frozen** (never renumbered, the LG-06c
+    League-Leaders precedent) so sorting by another column reorders display while
+    the Rank cell shows the true standing. The view (`season_standings`) builds
+    `season_rounds` from `GameRound.objects.filter(match__season=season).values(
+    …)`, adds `date_played` to the Match dicts, and exposes new context keys
+    `sort` / `dir` / `sort_keys` (= `_STANDINGS_SORT_KEYS_DISPLAY`) /
+    `querystring_without_sort_dir`; the **draft-preview** branch emits the 8 new
+    fields zeroed (`("",0)` streaks → `"—"`, `(0,0,0)` → `"0-0-0"`, points `0`)
+    and still sorts. The template `templates/seasons/standings.html` swapped its
+    9 hardcoded `<th>` for the LG-06c sort-header loop (DOM ids
+    `season-standings-th-<key>` for all 17, ` ↑`/` ↓` glyph on the active header)
+    and renders 17 `<td>`, preserving `season-standings-table` / `-empty` /
+    `-draft-preview-banner` / `season-state-badge`. UI-only, read-only — **no
+    model, migration, URL, simulator, RNG, or Score Calibration re-baseline**;
+    CONTEXT.md gained the **Standings form** + **Side split** terms (no ADR).
+    Tests: `matches/tests/test_standings.py` (pure-unit — every callsite migrated
+    to the 3-arg signature, new classes for both grains + side split + ordering;
+    `TestNoDjangoImportsLeaked` retained) and `matches/tests/test_season_views.py`
+    (view/DOM — 17 header ids, two-corpora difference, physical-side split, sort
+    reorders with frozen rank, draft zeroed + sortable). Seam contract:
+    [`.claude/worktrees/lg-06g-seam-contract.md`](.claude/worktrees/lg-06g-seam-contract.md).
 - **LG-06h · [TODO — NOT STARTED] League-scoped player page (+ watch flag).** Introduce a
   **league-pinned** player detail route (`/leagues/<league_id>/players/<player_id>/…`)
   so a Player viewed from inside a League carries that League's context — and put the

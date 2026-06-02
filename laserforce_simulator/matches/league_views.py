@@ -30,7 +30,7 @@ from django.urls import reverse
 
 from teams.constants import PLAYER_NAMES, TEAM_NAMES
 from teams.models import Team
-from teams.views import _generate_free_agents, _generate_teams
+from teams.views import _coerce_dir, _generate_free_agents, _generate_teams
 
 from .forms import CreateLeagueForm
 from .models import GameRound, League, Match, PlayerRoundState, Season
@@ -43,7 +43,7 @@ from .season_dashboard import (
     select_play_fixtures,
 )
 from .simulation import BatchSimulator
-from .standings import compute_standings
+from .standings import StandingsRow, compute_standings
 from .tasks import play_season_task
 from .views import _celery_state_to_job_status
 
@@ -99,6 +99,90 @@ def _compute_team_overall(team: Team) -> float:
     return sum(p.overall_rating for p in actives) / len(actives)
 
 
+# LG-06g — sortable Standings columns. Every column (the 9 LG-01 columns
+# plus the 8 form / side-detail columns) is sortable via the LG-06c
+# ``_coerce_sort_key`` / ``_coerce_dir`` pattern; sorting runs view-side on
+# the materialised rows and never renumbers ``rank`` (it stays the frozen
+# standings position, mirroring the LG-06c League-Leaders precedent).
+_STANDINGS_SORT_KEYS: frozenset[str] = frozenset(
+    {
+        "rank",
+        "team",
+        "matches_played",
+        "wins",
+        "losses",
+        "ties",
+        "league_points",
+        "round_wins",
+        "total_score",
+        "match_streak",
+        "match_l5",
+        "round_streak",
+        "round_l5",
+        "red_wlt",
+        "blue_wlt",
+        "red_points_for",
+        "blue_points_for",
+    }
+)
+_STANDINGS_SORT_KEYS_DISPLAY: tuple[tuple[str, str], ...] = (
+    ("rank", "Rank"),
+    ("team", "Team"),
+    ("matches_played", "MP"),
+    ("wins", "W"),
+    ("losses", "L"),
+    ("ties", "T"),
+    ("league_points", "Pts"),
+    ("round_wins", "RW"),
+    ("total_score", "TS"),
+    ("match_streak", "Streak"),
+    ("match_l5", "L5"),
+    ("round_streak", "R Streak"),
+    ("round_l5", "R L5"),
+    ("red_wlt", "Red Rec"),
+    ("blue_wlt", "Blue Rec"),
+    ("red_points_for", "Red PF"),
+    ("blue_points_for", "Blue PF"),
+)
+
+
+def _standings_row_attr(row: "StandingsRow | dict", key: str):
+    """Attr-or-key access so the LG-06g sort works on BOTH ``StandingsRow``
+    dataclasses (active / completed) and the zeroed draft-preview dicts
+    (mirrors the existing ``_row_team_id`` attr-or-key precedent)."""
+    if hasattr(row, key):
+        return getattr(row, key)
+    return row[key]
+
+
+def _streak_sort_value(streak: tuple) -> int:
+    """Signed run length for a ``(kind, length)`` streak: ``W`` ⇒ ``+length``,
+    ``L`` ⇒ ``-length``, ``T`` / ``""`` ⇒ ``0``."""
+    kind, length = streak
+    if kind == "W":
+        return length
+    if kind == "L":
+        return -length
+    return 0
+
+
+def _standings_sort_value(row: "StandingsRow | dict", team_name: str, key: str):
+    """LG-06g — sort-value extraction over a ``StandingsRow`` (or draft dict).
+
+    Record / L5 columns sort by ``(wins desc, losses asc)`` under one
+    direction via a ``(wins, -losses)`` key; streaks by signed run length;
+    ``team`` by the team name; everything else by the raw int.
+    """
+    if key == "team":
+        return team_name
+    if key in ("match_streak", "round_streak"):
+        return _streak_sort_value(_standings_row_attr(row, key))
+    if key in ("match_l5", "round_l5", "red_wlt", "blue_wlt"):
+        wins, losses, _ties = _standings_row_attr(row, key)
+        return (wins, -losses)
+    return _standings_row_attr(row, key)
+
+
 def season_standings(request, season_id: int) -> HttpResponse:
     """LG-01 — Standings page for a Season.
 
@@ -135,6 +219,15 @@ def season_standings(request, season_id: int) -> HttpResponse:
                     "round_wins": 0,
                     "total_score": 0,
                     "rank": index + 1,
+                    # LG-06g — zeroed form / side-detail cells.
+                    "match_streak": ("", 0),
+                    "match_l5": (0, 0, 0),
+                    "round_streak": ("", 0),
+                    "round_l5": (0, 0, 0),
+                    "red_wlt": (0, 0, 0),
+                    "blue_wlt": (0, 0, 0),
+                    "red_points_for": 0,
+                    "blue_points_for": 0,
                 }
             )
     else:
@@ -151,8 +244,32 @@ def season_standings(request, season_id: int) -> HttpResponse:
                     "blue_rounds_won": match.blue_rounds_won,
                     "red_total_points": match.red_total_points,
                     "blue_total_points": match.blue_total_points,
+                    "date_played": match.date_played,
                 }
             )
+
+        # LG-06g — every persisted Season Round (incl. Rounds of in-progress
+        # Matches) for the Round-grain form + per-physical-side split. The
+        # stored ``team_red_id`` / ``team_blue_id`` are the actual physical
+        # sides (SIM-08), so red/blue points map straight to each side.
+        season_rounds = [
+            {
+                "round_id": r["id"],
+                "team_red_id": r["team_red_id"],
+                "team_blue_id": r["team_blue_id"],
+                "red_points": r["red_points"],
+                "blue_points": r["blue_points"],
+                "date_played": r["date_played"],
+            }
+            for r in GameRound.objects.filter(match__season=season).values(
+                "id",
+                "team_red_id",
+                "team_blue_id",
+                "red_points",
+                "blue_points",
+                "date_played",
+            )
+        ]
 
         if season.starting_team_ids_json is not None:
             team_ids = list(season.starting_team_ids_json)
@@ -162,13 +279,32 @@ def season_standings(request, season_id: int) -> HttpResponse:
         enrolled_teams = list(
             Team.objects.filter(id__in=team_ids).values_list("id", "name")
         )
-        rows = compute_standings(completed_matches, enrolled_teams)
+        rows = compute_standings(completed_matches, enrolled_teams, season_rounds)
         teams_by_id = {t.id: t for t in Team.objects.filter(id__in=team_ids)}
 
     def _row_team_id(row) -> int:
         if hasattr(row, "team_id"):
             return row.team_id
         return row["team_id"]
+
+    # LG-06g — view-side sort over the materialised rows. ``rank`` is left
+    # frozen (we never renumber it); a no-``?sort`` request resolves to
+    # ``("rank", "asc")`` so the page renders in standings order unchanged.
+    sort = _coerce_sort_key(request.GET.get("sort"), _STANDINGS_SORT_KEYS, "rank")
+    direction = _coerce_dir(request.GET.get("dir"))
+    name_by_id = {tid: team.name for tid, team in teams_by_id.items()}
+    rows.sort(
+        key=lambda r: (
+            _standings_sort_value(r, name_by_id.get(_row_team_id(r), ""), sort),
+            _row_team_id(r),
+        ),
+        reverse=(direction == "desc"),
+    )
+
+    qs_no_sort_dir = request.GET.copy()
+    qs_no_sort_dir.pop("sort", None)
+    qs_no_sort_dir.pop("dir", None)
+    querystring_without_sort_dir = qs_no_sort_dir.urlencode()
 
     rows_with_teams = [(row, teams_by_id.get(_row_team_id(row))) for row in rows]
 
@@ -188,6 +324,10 @@ def season_standings(request, season_id: int) -> HttpResponse:
         "is_draft_preview": is_draft_preview,
         "sidebar_active": "standings",
         "sidebar_links": sidebar_links,
+        "sort": sort,
+        "dir": direction,
+        "sort_keys": _STANDINGS_SORT_KEYS_DISPLAY,
+        "querystring_without_sort_dir": querystring_without_sort_dir,
     }
     return render(request, "seasons/standings.html", context)
 
