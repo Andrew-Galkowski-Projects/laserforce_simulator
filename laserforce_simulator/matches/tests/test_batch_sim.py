@@ -36,12 +36,62 @@ def _make_ps(role, team_color="red", **kwargs):
 
 
 # ---------------------------------------------------------------------------
+# Fast-round seam
+# ---------------------------------------------------------------------------
+
+# The default round is 1800 ticks (~200 ms no-map, several seconds with a map).
+# Tests that assert *determinism*, *bookkeeping*, or *reproducibility* — not the
+# concrete outcome of a full-length round — are length-independent, so they can
+# run a tiny round and stay semantically identical. This mirrors the established
+# fast-test seam used in test_sim09_consolidation / test_lg01_simulator
+# (``patch.object(BatchSimulator, "ROUND_TICKS", 40)``).
+_FAST_TICKS = 40
+
+
+class _FastRoundsMixin:
+    """Autouse fixture that shrinks ``ROUND_TICKS`` for length-independent tests.
+
+    Mixing this in cuts each full-round simulation from seconds to milliseconds
+    without changing what the test asserts (determinism / side bookkeeping /
+    replay parity all hold at any round length).
+
+    Only mix this into a class where **every** test is round-length independent
+    AND **serial** (no ``workers=``). The ``ROUND_TICKS`` patch lives on the
+    class attribute in this process only — a parallel ``workers=`` run executes
+    in subprocesses that import a fresh ``BatchSimulator`` at the production
+    1800-tick default, so a patched parent (40) vs unpatched worker (1800) makes
+    serial != parallel. Classes that contain a parallel test, or a test that
+    needs a full-length round (e.g. to accumulate missiles or resolve a strength
+    gap), must instead opt the *serial* tests in individually into the
+    ``fast_rounds`` fixture below.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _fast_rounds(self):
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            yield
+
+
+@pytest.fixture
+def fast_rounds():
+    """Opt-in twin of ``_FastRoundsMixin`` for one serial test at a time.
+
+    A test in a class that *also* holds a parallel (``workers=``) or
+    full-length-fidelity test requests this fixture by name to shrink only its
+    own round. See ``_FastRoundsMixin`` for why a class-wide patch is unsafe
+    next to a parallel test.
+    """
+    with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+        yield
+
+
+# ---------------------------------------------------------------------------
 # Seed reproducibility
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
-class TestBatchSimulatorSeedReproducibility:
+class TestBatchSimulatorSeedReproducibility(_FastRoundsMixin):
     """Verify that capturing/restoring RNG state reproduces identical rounds."""
 
     def _rosters(self, prefix):
@@ -603,188 +653,77 @@ class TestSim06FlushFields:
     # Tests
     # ------------------------------------------------------------------
 
-    def test_ticks_active_written_for_all_players(self):
-        """Every non-immediately-eliminated player accumulates ticks_active > 0.
+    def test_all_sim06_fields_written(self, subtests):
+        """All 10 SIM-06 fields are persisted by _flush_to_db.
 
-        TIME-01: renamed from test_seconds_active_written_for_all_players;
-        seconds_active → ticks_active. Survivors have was_eliminated_at == 1801.
+        Consolidated: one shared 3-round simulation drives every per-field
+        assertion via ``subtests`` (previously 10 separate tests each re-ran a
+        full ~4.4s simulation to check a single field). Each ``subtests.test``
+        block reports independently, so a single broken field still pinpoints
+        itself by name without paying for 10 simulations.
+
+        TIME-01: the uptime columns were renamed seconds_* → ticks_*.
         """
         from matches.models import PlayerRoundState
 
-        team_red, _ = make_team_with_slots("Sim06ActiveR")
-        team_blue, _ = make_team_with_slots("Sim06ActiveB")
-        arena_map = self._make_arena_map("Sim06Active")
+        team_red, _ = make_team_with_slots("Sim06R")
+        team_blue, _ = make_team_with_slots("Sim06B")
+        arena_map = self._make_arena_map("Sim06")
 
-        gr = self._run_and_flush(team_red, team_blue, arena_map)
+        gr = self._run_and_flush(team_red, team_blue, arena_map, n_rounds=3)
 
         states = list(PlayerRoundState.objects.filter(game_round=gr))
         assert states, "No PlayerRoundState rows were created"
-        # Players who were not eliminated at tick 0 have been active for some
-        # ticks (sentinel 1801 == survived; any positive elimination tick also
-        # implies they were active before being eliminated).
-        active_states = [s for s in states if s.was_eliminated_at > 0]
-        for s in active_states:
-            assert s.ticks_active > 0, (
-                f"{s.player} ({s.role}) has was_eliminated_at={s.was_eliminated_at} "
-                f"but ticks_active=0"
+
+        # ticks_active > 0 for every player not eliminated at tick 0 (sentinel
+        # 1801 == survived; any positive elimination tick implies prior activity).
+        with subtests.test(field="ticks_active"):
+            active_states = [s for s in states if s.was_eliminated_at > 0]
+            for s in active_states:
+                assert s.ticks_active > 0, (
+                    f"{s.player} ({s.role}) has "
+                    f"was_eliminated_at={s.was_eliminated_at} but ticks_active=0"
+                )
+
+        # cell_row / cell_col: at least collectively non-null on a map-aware round.
+        with subtests.test(field="cell_row"):
+            assert any(s.cell_row is not None for s in states), (
+                "Expected at least one PlayerRoundState with non-null cell_row "
+                "after flushing a map-aware round, but all were null"
+            )
+        with subtests.test(field="cell_col"):
+            assert any(s.cell_col is not None for s in states), (
+                "Expected at least one PlayerRoundState with non-null cell_col "
+                "after flushing a map-aware round, but all were null"
             )
 
-    def test_cell_row_and_cell_col_non_null_with_map(self):
-        """With an arena_map provided, at least one player has non-null cell coordinates."""
-        from matches.models import PlayerRoundState
+        # Fields that must be > 0 on at least one player across 3 rounds.
+        nonzero_any_fields = [
+            "follow_up_shots",
+            "reaction_shots",
+            "ticks_not_targetable",
+            "ticks_reset_window",
+            "missile_points",
+        ]
+        for field in nonzero_any_fields:
+            with subtests.test(field=field):
+                assert any(getattr(s, field) > 0 for s in states), (
+                    f"Expected {field} > 0 on at least one player but all were 0. "
+                    f"This field is probably not being written by _flush_to_db."
+                )
 
-        team_red, _ = make_team_with_slots("Sim06CellR")
-        team_blue, _ = make_team_with_slots("Sim06CellB")
-        arena_map = self._make_arena_map("Sim06Cell")
+        # Fields that must merely be written (not left null) on every row.
+        written_all_fields = ["combo_resupply_count", "times_tagged_in_reset_window"]
+        for field in written_all_fields:
+            with subtests.test(field=field):
+                assert all(
+                    getattr(s, field) is not None for s in states
+                ), f"{field} must not be null after flush"
 
-        gr = self._run_and_flush(team_red, team_blue, arena_map)
-
-        states = list(PlayerRoundState.objects.filter(game_round=gr))
-        assert any(s.cell_row is not None for s in states), (
-            "Expected at least one PlayerRoundState with non-null cell_row after "
-            "flushing a map-aware round, but all were null"
-        )
-        assert any(s.cell_col is not None for s in states), (
-            "Expected at least one PlayerRoundState with non-null cell_col after "
-            "flushing a map-aware round, but all were null"
-        )
-
-    def test_follow_up_shots_non_zero_on_at_least_one_player(self):
-        """At least one player has follow_up_shots > 0 across 3 simulated rounds."""
-        from matches.models import PlayerRoundState
-
-        team_red, _ = make_team_with_slots("Sim06FUR")
-        team_blue, _ = make_team_with_slots("Sim06FUB")
-        arena_map = self._make_arena_map("Sim06FU")
-
-        gr = self._run_and_flush(team_red, team_blue, arena_map, n_rounds=3)
-
-        states = list(PlayerRoundState.objects.filter(game_round=gr))
-        assert any(s.follow_up_shots > 0 for s in states), (
-            "Expected follow_up_shots > 0 on at least one player but all were 0. "
-            "This field is probably not being written by _flush_to_db."
-        )
-
-    def test_reaction_shots_non_zero_on_at_least_one_player(self):
-        """At least one player has reaction_shots > 0 across 3 simulated rounds."""
-        from matches.models import PlayerRoundState
-
-        team_red, _ = make_team_with_slots("Sim06RxR")
-        team_blue, _ = make_team_with_slots("Sim06RxB")
-        arena_map = self._make_arena_map("Sim06Rx")
-
-        gr = self._run_and_flush(team_red, team_blue, arena_map, n_rounds=3)
-
-        states = list(PlayerRoundState.objects.filter(game_round=gr))
-        assert any(s.reaction_shots > 0 for s in states), (
-            "Expected reaction_shots > 0 on at least one player but all were 0. "
-            "This field is probably not being written by _flush_to_db."
-        )
-
-    def test_ticks_not_targetable_non_zero_on_at_least_one_player(self):
-        """At least one player has ticks_not_targetable > 0 (was tagged at least once).
-
-        TIME-01: renamed from seconds_not_targetable.
-        """
-        from matches.models import PlayerRoundState
-
-        team_red, _ = make_team_with_slots("Sim06NTR")
-        team_blue, _ = make_team_with_slots("Sim06NTB")
-        arena_map = self._make_arena_map("Sim06NT")
-
-        gr = self._run_and_flush(team_red, team_blue, arena_map, n_rounds=3)
-
-        states = list(PlayerRoundState.objects.filter(game_round=gr))
-        assert any(s.ticks_not_targetable > 0 for s in states), (
-            "Expected ticks_not_targetable > 0 on at least one tagged player "
-            "but all were 0."
-        )
-
-    def test_ticks_reset_window_non_zero_on_at_least_one_player(self):
-        """At least one player has ticks_reset_window > 0 (had taggable reset time).
-
-        TIME-01: renamed from seconds_reset_window.
-        """
-        from matches.models import PlayerRoundState
-
-        team_red, _ = make_team_with_slots("Sim06RWR")
-        team_blue, _ = make_team_with_slots("Sim06RWB")
-        arena_map = self._make_arena_map("Sim06RW")
-
-        gr = self._run_and_flush(team_red, team_blue, arena_map, n_rounds=3)
-
-        states = list(PlayerRoundState.objects.filter(game_round=gr))
-        assert any(s.ticks_reset_window > 0 for s in states), (
-            "Expected ticks_reset_window > 0 on at least one player that was "
-            "tagged (and thus entered the reset window), but all were 0."
-        )
-
-    def test_missile_points_non_zero_on_at_least_one_player(self):
-        """At least one Commander or Heavy has missile_points > 0 across 3 rounds."""
-        from matches.models import PlayerRoundState
-
-        team_red, _ = make_team_with_slots("Sim06MsR")
-        team_blue, _ = make_team_with_slots("Sim06MsB")
-        arena_map = self._make_arena_map("Sim06Ms")
-
-        gr = self._run_and_flush(team_red, team_blue, arena_map, n_rounds=3)
-
-        states = list(PlayerRoundState.objects.filter(game_round=gr))
-        assert any(s.missile_points > 0 for s in states), (
-            "Expected missile_points > 0 on at least one Commander or Heavy but "
-            "all were 0. This field is probably not being written by _flush_to_db."
-        )
-
-    def test_combo_resupply_count_field_is_written(self):
-        """combo_resupply_count must be explicitly written (not left at default)."""
-        from matches.models import PlayerRoundState
-
-        team_red, _ = make_team_with_slots("Sim06CbR")
-        team_blue, _ = make_team_with_slots("Sim06CbB")
-        arena_map = self._make_arena_map("Sim06Cb")
-
-        gr = self._run_and_flush(team_red, team_blue, arena_map, n_rounds=3)
-
-        # combo_resupply_count defaults to 0; if _flush_to_db does not write it
-        # the field will be 0 on all rows. We simply confirm it is present — a
-        # deeper check would require knowing which rounds had combo resupplies.
-        states = list(PlayerRoundState.objects.filter(game_round=gr))
-        assert all(
-            s.combo_resupply_count is not None for s in states
-        ), "combo_resupply_count must not be null after flush"
-
-    def test_times_tagged_in_reset_window_field_is_written(self):
-        """times_tagged_in_reset_window must be written, not defaulted."""
-        from matches.models import PlayerRoundState
-
-        team_red, _ = make_team_with_slots("Sim06TTRWR")
-        team_blue, _ = make_team_with_slots("Sim06TTRWB")
-        arena_map = self._make_arena_map("Sim06TTRW")
-
-        gr = self._run_and_flush(team_red, team_blue, arena_map, n_rounds=3)
-
-        states = list(PlayerRoundState.objects.filter(game_round=gr))
-        assert all(
-            s.times_tagged_in_reset_window is not None for s in states
-        ), "times_tagged_in_reset_window must not be null after flush"
-
-    def test_all_ten_fields_present_after_flush(self):
-        """Integration smoke test: all 10 SIM-06 fields exist on every state row."""
-        from matches.models import PlayerRoundState
-
-        team_red, _ = make_team_with_slots("Sim06AllR")
-        team_blue, _ = make_team_with_slots("Sim06AllB")
-        arena_map = self._make_arena_map("Sim06All")
-
-        gr = self._run_and_flush(team_red, team_blue, arena_map, n_rounds=3)
-
-        states = list(PlayerRoundState.objects.filter(game_round=gr))
-        assert states, "No PlayerRoundState rows were created"
-
+        # Integration smoke: every int field present (non-null) on every row.
         int_fields = [
             "follow_up_shots",
             "reaction_shots",
-            # TIME-01: seconds_* → ticks_*
             "ticks_active",
             "ticks_not_targetable",
             "ticks_reset_window",
@@ -792,20 +731,13 @@ class TestSim06FlushFields:
             "times_tagged_in_reset_window",
             "missile_points",
         ]
-        for s in states:
-            for field in int_fields:
-                val = getattr(s, field)
-                assert val is not None, (
-                    f"{field} is None on {s.player} ({s.role}) — "
-                    f"_flush_to_db probably does not write it"
-                )
-            # cell_row / cell_col: at least collectively non-null across the round
-        assert any(
-            s.cell_row is not None for s in states
-        ), "No player has cell_row set — _flush_to_db does not write cell coordinates"
-        assert any(
-            s.cell_col is not None for s in states
-        ), "No player has cell_col set — _flush_to_db does not write cell coordinates"
+        with subtests.test(field="all_int_fields_present"):
+            for s in states:
+                for field in int_fields:
+                    assert getattr(s, field) is not None, (
+                        f"{field} is None on {s.player} ({s.role}) — "
+                        f"_flush_to_db probably does not write it"
+                    )
 
 
 # ---------------------------------------------------------------------------
@@ -845,7 +777,7 @@ class TestSim07RngSeed:
     # 2. Replay-vs-replay determinism (DB-backed)
     # ------------------------------------------------------------------
 
-    def test_replay_vs_replay_is_deterministic_from_stored_seed(self):
+    def test_replay_vs_replay_is_deterministic_from_stored_seed(self, fast_rounds):
         """save_games stores a valid int seed; replaying it twice is identical.
 
         Builds two real teams, persists one round via save_games with a fixed
@@ -886,7 +818,7 @@ class TestSim07RngSeed:
     # 3. Correct seed stored (DB-backed)
     # ------------------------------------------------------------------
 
-    def test_save_games_stores_the_seed_it_replayed(self):
+    def test_save_games_stores_the_seed_it_replayed(self, fast_rounds):
         """Each persisted GameRound stores exactly the int seed it replayed.
 
         Passing two distinct known ints and checking that the GameRounds, in
@@ -921,7 +853,7 @@ class TestSim07RngSeed:
     # 4. Master-seed reproducibility (no DB)
     # ------------------------------------------------------------------
 
-    def test_master_seed_makes_run_reproducible(self):
+    def test_master_seed_makes_run_reproducible(self, fast_rounds):
         """run() with the same master_seed yields identical aggregates+seed lists.
 
         A different master_seed must produce a different per-round int seed
@@ -1050,7 +982,7 @@ class TestSim08SideAlternation:
     # 1 + 2. Alternation parity / even-split guarantee
     # ------------------------------------------------------------------
 
-    def test_even_n_yields_exact_50_50_canonical_vs_flipped(self):
+    def test_even_n_yields_exact_50_50_canonical_vs_flipped(self, fast_rounds):
         """Even n ⇒ exactly n/2 flipped and n/2 canonical games.
 
         Asserted via the ``flipped`` flags on the documented
@@ -1092,7 +1024,7 @@ class TestSim08SideAlternation:
             f"{len(flips)} distinct seeds)"
         )
 
-    def test_odd_n_split_differs_by_exactly_one(self):
+    def test_odd_n_split_differs_by_exactly_one(self, fast_rounds):
         """Odd n ⇒ physical-side game counts differ by exactly 1.
 
         Derived from the alternation: with n odd the canonical side gets one
@@ -1168,7 +1100,20 @@ class TestSim08SideAlternation:
         # 55% to absorb the drift that folds into the pending post-MOVE-01
         # Score Calibration re-baseline (no new obligation).
         n = 120
-        stats = sim.run(strong_team, weak_team, n=n, master_seed=9001)
+        # This 120-game full-length batch is the single slowest test in the
+        # suite (~45 s serial) and the xdist critical path. ROUND_TICKS cannot
+        # be shrunk here — the strength signal is non-monotonic in round length
+        # and the margin over the 55% threshold is thin (≈57.5% at 1800), so a
+        # short round flips the result. Instead, run the batch across worker
+        # processes: SIM-07 guarantees the team-position aggregates are
+        # byte-identical to the serial path for a given master_seed (verified:
+        # both give 57.5%), so this is a pure ~3x speedup with zero change to
+        # what is asserted. Fall back to serial if a process pool is
+        # unavailable in the environment (identical result, just slower).
+        try:
+            stats = sim.run(strong_team, weak_team, n=n, master_seed=9001, workers=4)
+        except Exception:  # pragma: no cover - environment dependent
+            stats = sim.run(strong_team, weak_team, n=n, master_seed=9001)
 
         # Team-position: the strong team is the team_red arg → red_*.
         # It must out-score and out-win the weak team on a team-position
@@ -1210,7 +1155,7 @@ class TestSim08SideAlternation:
     # 4. side_advantage shape
     # ------------------------------------------------------------------
 
-    def test_side_advantage_shape_and_bounds(self):
+    def test_side_advantage_shape_and_bounds(self, fast_rounds):
         """All documented keys present; pcts in [0,100]; counts sum to n."""
         _, team_red, _ = self._rosters("Sim08ShapeR")
         _, team_blue, _ = self._rosters("Sim08ShapeB")
@@ -1240,7 +1185,7 @@ class TestSim08SideAlternation:
     # 5. Determinism: same master_seed ⇒ identical everything
     # ------------------------------------------------------------------
 
-    def test_same_master_seed_reproduces_scores_and_side_advantage(self):
+    def test_same_master_seed_reproduces_scores_and_side_advantage(self, fast_rounds):
         """Two ``run()`` calls with the same master_seed match exactly."""
         _, team_red, _ = self._rosters("Sim08DetR")
         _, team_blue, _ = self._rosters("Sim08DetB")
@@ -1541,7 +1486,7 @@ def _move01_make_map(name, zone_data=None, zone_size=100):
 
 
 @pytest.mark.django_db
-class TestMove01PlayerStateMovementTrail:
+class TestMove01PlayerStateMovementTrail(_FastRoundsMixin):
     """PlayerState.movement_trail: transient, defaults empty, accumulates
     compact (start, end, timestamp) entries during a map-active round."""
 
@@ -1661,7 +1606,7 @@ class TestMove01PlayerStateMovementTrail:
 
 
 @pytest.mark.django_db
-class TestMove01FlushTrailToCompactEvents:
+class TestMove01FlushTrailToCompactEvents(_FastRoundsMixin):
     """_flush_to_db converts movement_trail into compact movement GameEvents
     (start + end + timestamp, no route list); an unsaved run() persists none."""
 
@@ -1744,7 +1689,7 @@ class TestMove01DeterminismPreserved:
         team, _ = make_team_with_slots(prefix)
         return list(team.active_roster), team
 
-    def test_same_master_seed_identical_with_map(self):
+    def test_same_master_seed_identical_with_map(self, fast_rounds):
         red, team_red = self._rosters("M01DetR")
         blue, team_blue = self._rosters("M01DetB")
         arena_map = _move01_make_map("M01DetMap")
@@ -1760,7 +1705,7 @@ class TestMove01DeterminismPreserved:
         assert a["outlier_seeds"] == b["outlier_seeds"]
         assert a["side_advantage"] == b["side_advantage"]
 
-    def test_replay_movement_trail_is_deterministic(self):
+    def test_replay_movement_trail_is_deterministic(self, fast_rounds):
         """Two replays of the same (seed, orientation) with a map produce
         byte-identical movement trails (Advance/A* are deterministic)."""
         red, team_red = self._rosters("M01ReplayR")
@@ -1838,15 +1783,23 @@ class TestMove01DeterminismPreserved:
 
 
 @pytest.mark.django_db
-class TestMove02DeterminismParityWithCache(TestMove01DeterminismPreserved):
-    """Extends the MOVE-01 serial==parallel / master-seed parity contract:
+class TestMove02DeterminismParityWithCache(_FastRoundsMixin):
+    """The SAME determinism guarantees as MOVE-01 must hold with the MOVE-02
+    path cache active.
 
-    the SAME determinism guarantees must hold with the MOVE-02 path cache
-    active. Inherits every MOVE-01 determinism case (re-run here against the
-    cached pathfinding) and adds a stronger same-master-seed parity assertion
-    that also pins the per-round seed/orientation lists and the win split — the
-    internal contract MOVE-02 must preserve.
+    The path cache (`astar_advance_cached`) is unconditionally on in
+    production, so the MOVE-01 determinism cases already exercise the cached
+    pathfinding — re-running them here via inheritance was pure duplication and
+    was removed. This class keeps only the MOVE-02-specific assertions: a
+    stronger same-master-seed parity check that also pins the per-round
+    seed/orientation lists and the full win split, plus a cache-active replay
+    trail identity check. The serial==parallel parity case stays covered once
+    by `TestMove01DeterminismPreserved`.
     """
+
+    def _rosters(self, prefix):
+        team, _ = make_team_with_slots(prefix)
+        return list(team.active_roster), team
 
     def test_path_cache_does_not_perturb_master_seed_determinism(self):
         """Two map-active run()s with the same master_seed are identical down
@@ -1900,7 +1853,7 @@ class TestMove02DeterminismParityWithCache(TestMove01DeterminismPreserved):
 
 
 @pytest.mark.django_db
-class TestMove02FlushTrailUnderCaching:
+class TestMove02FlushTrailUnderCaching(_FastRoundsMixin):
     """DB integration: a small BatchSim round WITH a map persisted via
     save_games (→ _flush_to_db) must produce coherent compact movement
     GameEvents under path commitment — route commitment must not corrupt the

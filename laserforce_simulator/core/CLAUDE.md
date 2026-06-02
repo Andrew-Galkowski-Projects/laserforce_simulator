@@ -99,7 +99,7 @@ Map-processing tests for MAP-05/07 features live in `matches/tests/test_map.py` 
 - `TestMap07WallTypes` — 25 pure unit tests covering: movement adjacency (high/low/windowed wall block, legacy 2/3 passable), LOS (low wall transparent, windowed/high wall block), `compute_sight_lines` passable-origin filtering, `_can_tag_through_windowed_wall` N-S/E-W axis and unknown facing, `_get_los_targets` aperture hit and miss, proximity-based `_zone_from_cell` cases
 - `TestMap07DBIntegration` — 2 DB tests: `wall_meta` round-trip through `save_zone_config` → `_resolve_map_data`, and `wall_meta` key present in `_build_movement_ctx` result
 
-MAP-09 tests live in `matches/tests/test_map09_high_ground.py`:
+MAP-09 tests live in `matches/tests/test_map_high_ground.py`:
 - `TestMap09ElevationStorage` (DB) — elevation 2D array and wall height round-trip through `MapZoneConfig.zone_data`; `_elevation_at` helper; `_resolve_map_data` returns `elevation_grid` at index 9
 - `TestMap09WallHeight` (DB) — `wall_meta` height key persists; missing height key returns None (callers treat as impassable)
 - `TestMap09ShootOver` (pure) — 8 tests for `can_shoot_over_wall`: threshold boundary (strict `>`), elevated wall base, short/zero-height walls

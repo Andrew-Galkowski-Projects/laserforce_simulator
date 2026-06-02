@@ -202,7 +202,7 @@ def _assert_targets_list(targets: object, *, allow_empty: bool, label: str) -> N
 class TestRes02EventMetadata:
     """Universal RES-02b contract: per-player snapshots on every emit site.
 
-    The file name (``test_res02_sp_metadata.py``) is kept since the test
+    The file name (``test_sp_metadata.py``) is kept since the test
     history is mature; the class is renamed to reflect that the contract
     is no longer SP-only — it now covers the full actor/target/targets
     snapshot blocks documented in the RES-02b seam contract.
@@ -493,30 +493,30 @@ class TestRes02EventMetadata:
         event_log: list = []
         pre_sp = commander.final_special
 
+        # _complete_nuke emits the detonation "special" event through the
+        # RoundContext EventLog (RES-02b), so capturing it requires a ctx with
+        # a persisting EventLog. Sharing the ``event_log`` buffer lets the
+        # emitted events be read straight back out of it. This forces the
+        # detonation directly (the docstring's "rather than relied on by luck"
+        # contract) — no simulated round, no seed dependence.
+        from matches.sim_helpers.event_log import EventLog
+        from matches.sim_helpers.round_context import RoundContext
+
+        ctx = RoundContext(
+            events=EventLog(persist=True, buffer=event_log),
+            pending_nukes=[],
+            pending_followups=[],
+            pending_reactions=[],
+            all_alive=[commander, victim],
+            movement_ctx=None,
+        )
         sim = BatchSimulator()
-        try:
-            sim._complete_nuke(
-                commander,
-                second=100,
-                opposing_players=[victim],
-                event_log=event_log,
-            )
-        except TypeError:
-            events = _simulate_event_log(seed=42, ticks=1200)
-            nuke_detonations = [
-                e
-                for e in events
-                if e["event_type"] == "special"
-                and "nuke detonates" in (e.get("description") or "").lower()
-            ]
-            if not nuke_detonations:
-                pytest.skip(
-                    "_complete_nuke signature changed AND no nuke detonations "
-                    "in simulated round — coverage gap"
-                )
-            for ev in nuke_detonations:
-                _assert_actor_block(ev)
-            return
+        sim._complete_nuke(
+            commander,
+            second=100,
+            opposing_players=[victim],
+            ctx=ctx,
+        )
 
         detonations = [
             ev

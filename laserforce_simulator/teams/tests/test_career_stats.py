@@ -7,7 +7,7 @@ no Django imports) and the DB/view tests for ``teams.views.player_career_stats``
 The seam contract is locked at ``.claude/worktrees/hx-01-seam-contract.md``.
 Until the Code agent lands ``teams/career_stats.py`` and the view/url/template,
 some of these tests will fail at import time or at assertion — that is expected
-TDD precedent (mirrors ``test_res04_cell_occupancy.py`` / ``test_rv03_pdf_report.py``).
+TDD precedent (mirrors ``test_heatmap.py`` / ``test_round_views.py``).
 
 The round-dict schema crossing the pure-module seam is the §2b 10-key shape:
 

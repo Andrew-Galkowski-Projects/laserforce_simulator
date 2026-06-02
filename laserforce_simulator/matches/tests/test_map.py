@@ -10,7 +10,7 @@ have been ported to ``BatchSimulator`` with ``patch.object(BatchSimulator,
 ``_simulate_combat_exchange`` patching, ``_move_to_cell`` event-buffer
 emission) had no clean BatchSim equivalent and were dropped here — equivalent
 in-memory movement is already covered by ``test_batch_sim.py`` /
-``test_move03_hold_overwatch.py``.
+``test_hold_overwatch.py``.
 """
 
 import pytest
