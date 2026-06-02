@@ -21,5 +21,5 @@ Nukes Landed · Cancelled Nukes**. Sortable. Event→column mapping in
 | ZenGM's "by shotcalling / by skill" sub-attribution has no analogue | = Intentional (no such model) |
 | Our **Avg points for/against/margin/survivors** are richer scoring detail than ZenGM's flat K/D/A | extra (ours) |
 | ZenGM **Team-vs-Opponent toggle** — we show only own-team aggregates | ⚠ Gap |
-| ZenGM **season selector** | C1 ⚠ (LG-06d) |
+| ~~ZenGM season selector~~ → `?season=` selector (each Season + **Career**) | C1 ✓ Delivered (LG-06d) |
 | No **W/L/GP** columns on our Team Stats (they're on Standings) | ▲ Layout |

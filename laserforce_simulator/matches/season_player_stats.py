@@ -176,6 +176,59 @@ def aggregate_player_stats(player_rounds: Iterable[Mapping]) -> list[PlayerStatR
     return rows
 
 
+def apply_rate(rows: Iterable[PlayerStatRow], rate: str) -> list[PlayerStatRow]:
+    """LG-06d — re-express the SUMMED_KEYS of each row as a rate, pure.
+
+    ``rate`` is one of ``"total"`` / ``"per_game"`` / ``"per_10"`` (coerce
+    upstream via :func:`matches.league_views._coerce_rate`). Only the 10
+    :data:`SUMMED_KEYS` count totals are transformed; :data:`AVERAGED_KEYS`
+    (``mvp`` / ``accuracy``) and :data:`DERIVED_KEYS` (``tag_ratio`` /
+    ``survival``) pass through untouched, and ``games`` is unchanged.
+
+    - ``"total"`` ⇒ identity (every summed key returned as-is).
+    - ``"per_game"`` ⇒ ``value / games`` (``0.0`` when ``games <= 0``).
+    - ``"per_10"`` ⇒ ``value * 600 / total_uptime_seconds`` where
+      ``total_uptime_seconds = stats["survival"] * games`` (the laser-tag
+      analogue of ZenGM Per-36 — denominator is the player's total
+      survival/uptime seconds across the Season); guard
+      ``total_uptime_seconds <= 0`` ⇒ ``0.0``.
+
+    Returns a NEW list of NEW frozen :class:`PlayerStatRow` objects — the input
+    rows are never mutated; each output row's ``stats`` is a fresh dict copy
+    with only the summed keys replaced. Pure: no Django / ORM / RNG / I/O.
+    """
+    out: list[PlayerStatRow] = []
+    for row in rows:
+        if rate == "total":
+            new_stats = dict(row.stats)
+        else:
+            games = row.games
+            new_stats = dict(row.stats)
+            if rate == "per_game":
+                divisor = float(games)
+                for key in SUMMED_KEYS:
+                    new_stats[key] = (row.stats[key] / divisor) if divisor > 0 else 0.0
+            else:  # rate == "per_10"
+                total_uptime_seconds = row.stats.get("survival", 0.0) * games
+                for key in SUMMED_KEYS:
+                    if total_uptime_seconds > 0:
+                        new_stats[key] = row.stats[key] * 600 / total_uptime_seconds
+                    else:
+                        new_stats[key] = 0.0
+        out.append(
+            PlayerStatRow(
+                player_id=row.player_id,
+                player_name=row.player_name,
+                team_id=row.team_id,
+                team_name=row.team_name,
+                role=row.role,
+                games=row.games,
+                stats=new_stats,
+            )
+        )
+    return out
+
+
 def coerce_sort(raw: "str | None", default: str = "points_scored") -> str:
     """Forgiving ``?sort=`` validator over the STAT_KEYS + ``name`` / ``team``.
 

@@ -737,6 +737,110 @@ def _coerce_sort_key(raw: str | None, allowed: frozenset[str], default: str) -> 
     return default
 
 
+def _coerce_season(
+    raw: str | None, valid_season_ids: set[int], default: int | None
+) -> int | str | None:
+    """LG-06d — coerce ``?season=`` to a Season id, the ``"career"`` sentinel, or default.
+
+    Returns the literal string ``"career"`` iff ``raw == "career"``; else the
+    int Season id iff ``raw`` parses as an int AND is present in
+    ``valid_season_ids`` (a ``set[int]`` of this League's Season ids); else
+    ``default`` (the ``displayed_season`` id, or ``None`` when the League has
+    no Season). Mirrors the forgiving ``_coerce_team_id`` / ``_coerce_per_page``
+    precedent — ``None`` / empty / malformed / non-belonging values all fall
+    back to ``default`` (the current displayed-Season scope, fully
+    backward-compatible). The single source of ``?season=`` coercion for all
+    six LG-06d screens.
+    """
+    if raw == "career":
+        return "career"
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if value in valid_season_ids:
+        return value
+    return default
+
+
+def _coerce_rate(raw: str | None, default: str = "total") -> str:
+    """LG-06d — coerce ``?rate=`` to a whitelisted rate mode, else default.
+
+    Accepted: ``"total"`` / ``"per_game"`` / ``"per_10"``. Anything else
+    (``None`` / empty / unknown) ⇒ ``default`` (``"total"``). Mirrors the
+    forgiving ``_coerce_per_page`` / ``_coerce_team_id`` precedent. Player
+    Stats is the only screen that carries a rate toggle.
+    """
+    if raw in ("total", "per_game", "per_10"):
+        return raw
+    return default
+
+
+def _season_param(selected_season: int | str | None) -> str:
+    """LG-06d — serialise a coerced ``selected_season`` to a querystring value.
+
+    ``"career"`` → ``"career"``; an int Season id → its ``str``; ``None``
+    (empty-state) → ``""`` (the param is dropped). Used by the six screens'
+    querystring-carry helpers + hidden form inputs so changing another control
+    preserves the chosen Season scope.
+    """
+    if selected_season is None:
+        return ""
+    return str(selected_season)
+
+
+def _resolve_season_scope(
+    request: HttpRequest, league: League, displayed_season: Season | None
+) -> tuple[list[Season], int | str | None, list[dict], dict | None]:
+    """LG-06d — resolve the ``?season=`` selector into a scope for a screen.
+
+    Single source for the six LG-06d season-selector screens. Builds the
+    Season picker options (newest-first by ``start_date`` then ``id``),
+    coerces ``?season=`` via :func:`_coerce_season` defaulting to
+    ``displayed_season`` (fully backward-compatible), and derives the
+    round/match queryset filter for the chosen scope.
+
+    Returns a 4-tuple ``(seasons, selected_season, season_options, season_filter)``:
+
+    - ``seasons`` — ``list[Season]`` newest-first (the materialised picker
+      source; reused by the view to resolve a picked Season id without an
+      extra query).
+    - ``selected_season`` — ``"career"`` | ``int`` Season id | ``None`` (the
+      empty-state, when the League has no Season).
+    - ``season_options`` — ``list[dict]`` of ``{"id", "name", "year"}``
+      newest-first; the template appends the "Career" entry.
+    - ``season_filter`` — the ORM lookup dict to apply to a round / match
+      queryset (joined via ``match__season…``): ``{"match__season__league":
+      league}`` for Career, ``{"match__season": <Season>}`` for a single
+      Season, or ``None`` in the empty-state.
+    """
+    seasons = list(league.seasons.order_by("-start_date", "-id"))
+    valid_ids = {s.id for s in seasons}
+    default_id = displayed_season.id if displayed_season is not None else None
+    selected_season = _coerce_season(request.GET.get("season"), valid_ids, default_id)
+
+    season_options = [
+        {
+            "id": s.id,
+            "name": s.name,
+            "year": s.start_date.year if s.start_date is not None else None,
+        }
+        for s in seasons
+    ]
+
+    if selected_season == "career":
+        season_filter: dict | None = {"match__season__league": league}
+    elif selected_season is None:
+        season_filter = None
+    else:
+        season_obj = next((s for s in seasons if s.id == selected_season), None)
+        season_filter = (
+            {"match__season": season_obj} if season_obj is not None else None
+        )
+
+    return seasons, selected_season, season_options, season_filter
+
+
 def _coerce_team_id(raw: str | None, enrolled_ids: set[int]) -> int | None:
     """LG-06b — coerce ``?team_id=`` to an enrolled Team id, else ``None``.
 

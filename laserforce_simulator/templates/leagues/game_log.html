@@ -8,12 +8,28 @@
     <main class="flex-grow-1">
         <h1 class="mb-3">{{ league.name }} — Game Log</h1>
 
+        <form id="game-log-season-filter-form" method="get" class="d-inline-block mb-3 me-3">
+            <label for="game-log-season-filter-select" class="form-label me-2">Season:</label>
+            <select id="game-log-season-filter-select" name="season"
+                    class="form-select form-select-sm d-inline-block w-auto"
+                    onchange="this.form.submit()">
+                {% for opt in season_options %}
+                    <option value="{{ opt.id }}"{% if opt.id == selected_season %} selected{% endif %}>{{ opt.name }}{% if opt.year %} ({{ opt.year }}){% endif %}</option>
+                {% endfor %}
+                <option value="career"{% if selected_season == "career" %} selected{% endif %}>Career</option>
+            </select>
+            <input type="hidden" name="sort" value="{{ sort }}">
+            <input type="hidden" name="dir" value="{{ dir }}">
+            {% if selected_team_id %}<input type="hidden" name="team_id" value="{{ selected_team_id }}">{% endif %}
+            <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">View</button></noscript>
+        </form>
+
         {% if displayed_season is None %}
             <div id="game-log-empty-notice" class="alert alert-info">
                 No Season in this League yet — start a Season to populate the game log.
             </div>
         {% else %}
-            <form method="get" class="mb-3">
+            <form method="get" class="d-inline-block mb-3">
                 <label for="game-log-team-filter" class="form-label me-2">Team:</label>
                 <select id="game-log-team-filter" name="team_id"
                         class="form-select form-select-sm d-inline-block w-auto"
@@ -26,6 +42,8 @@
                 {# LG-06c — carry the current sort/dir so changing team keeps it. #}
                 <input type="hidden" name="sort" value="{{ sort }}">
                 <input type="hidden" name="dir" value="{{ dir }}">
+                {# LG-06d — carry the season scope so changing team keeps it. #}
+                <input type="hidden" name="season" value="{{ selected_season }}">
                 <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">Filter</button></noscript>
             </form>
 

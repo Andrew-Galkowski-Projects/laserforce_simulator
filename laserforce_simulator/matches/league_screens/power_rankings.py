@@ -14,7 +14,11 @@ from collections import defaultdict
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, render
 
-from matches.league_views import _build_league_sidebar_links
+from matches.league_views import (
+    _build_league_sidebar_links,
+    _resolve_season_scope,
+    _season_param,
+)
 from matches.models import GameRound, League, Match
 from matches.power_rankings_logic import (
     SORT_KEYS_DISPLAY,
@@ -81,6 +85,21 @@ def power_rankings(request: HttpRequest, league_id: int) -> HttpResponse:
     sort = coerce_sort(request.GET.get("sort"))
     direction = coerce_dir(request.GET.get("dir"))
 
+    # LG-06d — season selector. Picker options + the forgiving ``?season=``
+    # coercion (defaults to displayed_season — fully backward-compatible).
+    seasons, selected_season, season_options, season_filter = _resolve_season_scope(
+        request, league, displayed_season
+    )
+
+    # COERCE-BEFORE-QUERYSTRING: the sort-header href carries every param
+    # except sort/dir, with the coerced ``season`` re-set so the chosen scope
+    # survives a re-sort (LG-06d).
+    qs_no_sort_dir = request.GET.copy()
+    qs_no_sort_dir.pop("sort", None)
+    qs_no_sort_dir.pop("dir", None)
+    qs_no_sort_dir["season"] = _season_param(selected_season)
+    querystring_without_sort_dir = qs_no_sort_dir.urlencode()
+
     context = {
         "league": league,
         "displayed_season": displayed_season,
@@ -89,19 +108,31 @@ def power_rankings(request: HttpRequest, league_id: int) -> HttpResponse:
         "sort": sort,
         "dir": direction,
         "sort_keys_display": SORT_KEYS_DISPLAY,
+        "season_options": season_options,
+        "selected_season": selected_season,
+        "querystring_without_sort_dir": querystring_without_sort_dir,
     }
 
-    if displayed_season is None:
-        # Empty-state per §2 — no Season, render the notice instead of the
-        # body. The sidebar still renders.
+    if season_filter is None:
+        # Empty-state per §2 — no Season scope, render the notice instead of
+        # the body. The sidebar still renders.
         context["rows"] = []
         return render(request, "leagues/power_rankings.html", context)
 
-    team_ids = _enrolled_team_ids(displayed_season)
+    # Enrolled teams come from the displayed Season (the League's current
+    # roster) even under a Career / past-Season scope.
+    team_ids = (
+        _enrolled_team_ids(displayed_season) if displayed_season is not None else []
+    )
     teams_by_id: dict[int, Team] = Team.objects.in_bulk(team_ids)
 
+    # Re-point the LG-06d scope onto the two join shapes: Match filters
+    # directly (strip the leading ``match__``); GameRound joins via
+    # ``match__season…`` (the season_filter shape verbatim).
+    match_filter = {k[len("match__") :]: v for k, v in season_filter.items()}
+
     # --- Component 2: win% via compute_standings over completed Matches ---
-    completed_qs = Match.objects.filter(season=displayed_season, is_completed=True)
+    completed_qs = Match.objects.filter(is_completed=True, **match_filter)
     completed_matches: list[dict] = []
     for match in completed_qs:
         completed_matches.append(
@@ -126,9 +157,7 @@ def power_rankings(request: HttpRequest, league_id: int) -> HttpResponse:
         win_pct_by_id[row.team_id] = (row.wins / played) if played else 0.0
 
     # --- Component 3: avg score diff per Round from each team's view -------
-    rounds_qs = GameRound.objects.filter(match__season=displayed_season).select_related(
-        "match"
-    )
+    rounds_qs = GameRound.objects.filter(**season_filter).select_related("match")
     diff_sums: dict[int, float] = defaultdict(float)
     diff_counts: dict[int, int] = defaultdict(int)
     for game_round in rounds_qs:

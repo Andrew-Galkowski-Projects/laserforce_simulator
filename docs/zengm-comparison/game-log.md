@@ -13,7 +13,7 @@ detail page.
 | Discrepancy | Type |
 |---|---|
 | ZenGM is **one team's** results (Opp / W-L / Score); ours is a **league-wide** list of all rounds (Red vs. Blue) | ▲ Layout (fundamental orientation difference) |
-| ZenGM **season selector**; ours current-season only | C1 ⚠ (LG-06d) |
+| ~~ZenGM season selector; ours current-season only~~ → `?season=` selector (each Season + **Career**) | C1 ✓ Delivered (LG-06d) |
 | ZenGM inline expandable **box score**; ours links out to round detail | ▲ Layout |
 | Our **Matchday / Date / Winner** columns are extra context | extra (ours) |
 | Not sortable either side; ours could add sort | C6 → **LG-06c** |

@@ -53,13 +53,13 @@ These recur across most screens; per-page docs reference them by id.
 
 | # | ZenGM has | We have | Type | PLAN |
 |---|-----------|---------|------|------|
-| C1 | **Season selector** on nearly every stats screen | Current `displayed_season` only | ⚠ Gap | LG-06d |
-| C2 | **Rate toggle** Per Game / Per 36 / Totals | Fixed aggregation | ⚠ Gap | LG-06d |
+| C1 | **Season selector** on nearly every stats screen | `?season=` selector (each Season + Career) on Player/Team Stats, League Leaders, Statistical Feats, Game Log, Power Rankings; Team History intentionally excluded (natively all-time) | ✓ Delivered (LG-06d) | LG-06d |
+| C2 | **Rate toggle** Per Game / Per 36 / Totals | `?rate=` Totals / Per Game / **Per 10 min** on Player Stats (Per-10 replaces Per-36 — intentional laser-tag divergence) | ✓ Delivered (LG-06d) | LG-06d |
 | C3 | **Regular Season / Playoffs** toggle | No playoffs yet | = Intentional | LG-02 |
 | C4 | **Page-size selector** 10/25/50/100 on every paginated table | Prev/Next + "Page X of Y" only; Team History has none | ⚠ Gap | LG-06a |
 | C5 | **Team filter** ("All Teams") on Ratings/Stats/Feats | None | ⚠ Gap | LG-06b |
 | C6 | **All stat tables sortable** | Team History, Game Log, League Leaders, Watch List, Feats not sortable | ⚠ Gap | LG-06c |
-| C7 | **Career Totals vs. season** toggle | Season only | ⚠ Gap | LG-06d |
+| C7 | **Career Totals vs. season** toggle | **Career** entry in the `?season=` selector = league-scoped aggregate across all of this League's Seasons (view-side queryset switch) | ✓ Delivered (LG-06d) | LG-06d |
 | C8 | **Grouped header rows** ("superCols") | Flat header | ▲ Layout (mostly LoL objective groups) | — |
 | C9 | **Inline roster/FA actions** (Release, Negotiate, pick/ban, drag-reorder) | Read-only | = Intentional | finances deferred |
 | C10 | **Top-nav dropdowns** League/Team/Players/Stats/Tools/Help | Same shape (LG-01k) | ✓ Matches | — |

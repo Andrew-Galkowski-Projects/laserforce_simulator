@@ -9,7 +9,12 @@ from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, render
 
-from matches.league_views import _build_league_sidebar_links, _coerce_sort_key
+from matches.league_views import (
+    _build_league_sidebar_links,
+    _coerce_sort_key,
+    _resolve_season_scope,
+    _season_param,
+)
 from matches.models import GameRound, League
 from teams.views import _coerce_dir
 
@@ -76,7 +81,13 @@ def game_log(request: HttpRequest, league_id: int) -> HttpResponse:
     sort = _coerce_sort_key(request.GET.get("sort"), _GAME_LOG_SORT_KEYS, "date_played")
     direction = _coerce_dir(request.GET.get("dir"))
 
-    if displayed_season is None:
+    # LG-06d — season selector. Picker options + the forgiving ``?season=``
+    # coercion (defaults to displayed_season — fully backward-compatible).
+    seasons, selected_season, season_options, season_filter = _resolve_season_scope(
+        request, league, displayed_season
+    )
+
+    if season_filter is None:
         return render(
             request,
             "leagues/game_log.html",
@@ -92,11 +103,19 @@ def game_log(request: HttpRequest, league_id: int) -> HttpResponse:
                 "dir": direction,
                 "sort_keys": _GAME_LOG_SORT_KEYS_DISPLAY,
                 "querystring_without_sort_dir": "",
+                "season_options": season_options,
+                "selected_season": selected_season,
             },
         )
 
-    # Enrolled teams for the filter dropdown (and the valid-id allowlist).
-    team_options = list(displayed_season.teams.order_by("name"))
+    # Enrolled teams for the filter dropdown (and the valid-id allowlist). The
+    # picker lists the displayed Season's enrolment even under a Career /
+    # past-Season scope.
+    team_options = (
+        list(displayed_season.teams.order_by("name"))
+        if displayed_season is not None
+        else []
+    )
     enrolled_ids = {t.id for t in team_options}
 
     # Optional ?team_id= filter — silently ignore a bad / non-enrolled id.
@@ -111,7 +130,7 @@ def game_log(request: HttpRequest, league_id: int) -> HttpResponse:
             selected_team_id = candidate
 
     rounds_qs = (
-        GameRound.objects.filter(match__season=displayed_season)
+        GameRound.objects.filter(**season_filter)
         .select_related("match", "team_red", "team_blue", "winner")
         .order_by("id")
     )
@@ -148,6 +167,7 @@ def game_log(request: HttpRequest, league_id: int) -> HttpResponse:
     qs_no_sort_dir = request.GET.copy()
     qs_no_sort_dir.pop("sort", None)
     qs_no_sort_dir.pop("dir", None)
+    qs_no_sort_dir["season"] = _season_param(selected_season)
     if selected_team_id is not None:
         qs_no_sort_dir["team_id"] = str(selected_team_id)
     else:
@@ -169,5 +189,7 @@ def game_log(request: HttpRequest, league_id: int) -> HttpResponse:
             "dir": direction,
             "sort_keys": _GAME_LOG_SORT_KEYS_DISPLAY,
             "querystring_without_sort_dir": querystring_without_sort_dir,
+            "season_options": season_options,
+            "selected_season": selected_season,
         },
     )

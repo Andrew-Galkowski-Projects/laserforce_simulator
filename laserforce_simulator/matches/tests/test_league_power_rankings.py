@@ -533,5 +533,8 @@ class TestPowerRankingsSort(TestCase):
             _get(self.league.id, "?sort=mean_rating&dir=asc"), self.league.id
         ).content.decode()
         # The active asc column links to flip to desc and shows the up arrow.
-        self.assertIn("?sort=mean_rating&dir=desc", content)
+        # LG-06d: sort-header hrefs now also carry the season param, so the
+        # querystring is "?season=<id>&sort=mean_rating&dir=desc" — assert the
+        # season-agnostic substring rather than the old "?sort=" prefix.
+        self.assertIn("sort=mean_rating&dir=desc", content)
         self.assertIn("&uarr;", content)
