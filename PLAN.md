@@ -361,7 +361,7 @@ session before implementation.
     (view/DOM — 17 header ids, two-corpora difference, physical-side split, sort
     reorders with frozen rank, draft zeroed + sortable). Seam contract:
     [`.claude/worktrees/lg-06g-seam-contract.md`](.claude/worktrees/lg-06g-seam-contract.md).
-- **LG-06h · [TODO — NOT STARTED] League-scoped player page (+ watch flag).** Introduce a
+- **LG-06h · [DONE] League-scoped player page (+ watch flag).** Introduce a
   **league-pinned** player detail route (`/leagues/<league_id>/players/<player_id>/…`)
   so a Player viewed from inside a League carries that League's context — and put the
   ZenGM **watch flag** on it. This is the one player surface LG-06f could **not** cover:
@@ -376,6 +376,45 @@ session before implementation.
   reuse the HX-01 aggregation or a Season-scoped one; sidebar chrome + flag placement.
   **Depends on LG-06f** — reuses the per-League watch-list storage, toggle endpoint,
   context processor, and flag partial it ships, verbatim.
+  - completed: shipped the read-only **League player page** at the league-pinned
+    route `/leagues/<int:league_id>/players/<int:player_id>/` (URL name
+    `league_player_detail`, GET-only). The view
+    `matches/league_screens/player_detail.py::player_detail(request, league_id,
+    player_id)` is re-exported from `matches/league_screens/__init__` and lives
+    among the existing `players/*` routes in `matches/league_urls.py` (after
+    `players_free_agents` / `players_watch_list` / `watch_list_toggle`, before the
+    `league_list` catch-all — the digit-only `<int:player_id>` converter does not
+    shadow the literal `players/free-agents/` etc.). The page mirrors the ZenGM
+    player profile: a header (player bio + the LG-06f **watch flag** + an EXTERNAL
+    link out to the global HX-01 `player_career_stats` page at
+    `/players/<id>/stats/`), an **Overall** summary, grouped **current ratings**
+    read off the `Player` fields, and a **Potential** block rendering the literal
+    `—` placeholder (LG-05 owns the real Potential field — none exists yet). The
+    league-scoped **Regular-Season stats table** (one per-Season row plus a
+    Career-in-league row) is built **VIEW-SIDE** by reusing
+    `matches.league_screens.player_stats._build_round_dicts` +
+    `matches.season_player_stats.aggregate_player_stats` — **no new pure module**:
+    one aggregation pass per this-League Season the player has Rounds in (scope
+    `game_round__match__season=season, player_id=player.id`) plus one league-wide
+    Career pass (`game_round__match__season__league=league, player_id=player.id`).
+    Each per-Season row's **Team is derived from the player's actual Rounds that
+    Season** (the aggregated row's last-seen `team_name`/`team_id`, NOT the current
+    `Player.team`), so a dropped/transferred player shows the team they played for.
+    Rendering is **LENIENT**: any valid `(League, Player)` pair renders 200 (404
+    only on a missing League or missing Player); the league-scoped sections render a
+    blank empty-state when the player has no Rounds in the League (e.g. a free agent
+    or a player whose only Rounds are in another League) — the header, Potential,
+    and all stubs still render. Five inline **"coming soon" stub** sections
+    (Playoffs, Ratings-history, Awards, Salaries, Transactions) hold space for the
+    model-less ZenGM sections. The **8 LG-06f league screens'** player-name links
+    were repointed from the global `player_career_stats` to the in-League
+    `league_player_detail` route (Statistical Feats, previously plain text, gained a
+    link; the sandbox `teams/` surfaces stay league-agnostic on
+    `player_career_stats`). Read-only — **no model, migration, simulator, RNG, or
+    Score Calibration re-baseline; no ADR**. CONTEXT.md already carries the **League
+    player page** term. Template `templates/leagues/player_detail.html`; tests
+    `matches/tests/test_league_player_detail.py`. Seam contract:
+    [`.claude/worktrees/lg-06h-seam-contract.md`](.claude/worktrees/lg-06h-seam-contract.md).
 
 Structural divergences surfaced by the playthrough that map to **existing**
 tasks rather than LG-06 (see

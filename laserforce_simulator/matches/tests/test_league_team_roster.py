@@ -141,18 +141,20 @@ class TestTeamRosterBody(TestCase):
         for player in self.team_a.active_players:
             self.assertIn(player.name, content)
 
-    def test_player_links_to_career_page(self) -> None:
+    def test_player_links_to_in_league_player_page(self) -> None:
+        # LG-06h: player-name link repointed to league_player_detail.
         response = team_roster(_get(self.league.id), self.league.id)
         content = response.content.decode()
         for player in self.team_a.active_players:
-            self.assertIn(f"/players/{player.id}/stats/", content)
+            self.assertIn(f"/leagues/{self.league.id}/players/{player.id}/", content)
 
     def test_bench_player_rendered(self) -> None:
         bench = Player.objects.create(team=self.team_a, name="Benchwarmer")
         response = team_roster(_get(self.league.id), self.league.id)
         content = response.content.decode()
         self.assertIn("Benchwarmer", content)
-        self.assertIn(f"/players/{bench.id}/stats/", content)
+        # LG-06h: player-name link repointed to league_player_detail.
+        self.assertIn(f"/leagues/{self.league.id}/players/{bench.id}/", content)
 
     def test_sidebar_active_is_roster(self) -> None:
         response = team_roster(_get(self.league.id), self.league.id)

@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+
+{% comment %}
+LG-06h — League player page (per-Player, league-pinned detail).
+
+Frozen context keys (the seam): league, player, displayed_season,
+sidebar_links, sidebar_active, rs_rows, career_row, stat_columns.
+
+The header's EXTERNAL career link intentionally still reverses
+``player_career_stats`` (the global HX-01 page) — the one place in the
+league templates that does so on purpose.
+{% endcomment %}
+
+{% block title %}{{ player.name }} — {{ league.name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1" id="league-player-detail">
+
+        <div id="league-player-header" class="d-flex align-items-center gap-2 mb-3">
+            {% include "_partials/watch_flag.html" with player_id=player.id %}
+            <h1 class="mb-0">{{ player.name }}</h1>
+            <a href="{% url 'player_career_stats' player.id %}"
+               class="btn btn-sm btn-outline-secondary ms-2">Career stats (global)</a>
+        </div>
+
+        <div class="row g-3 mb-4">
+            <div class="col-md-6">
+                <div id="league-player-overall" class="card h-100">
+                    <div class="card-header fw-semibold py-2">Overall</div>
+                    <div class="card-body py-2">
+                        <div class="d-flex align-items-center mb-2">
+                            <span class="text-muted me-2" style="width:160px;">Overall rating</span>
+                            <span class="fw-bold" style="font-size:1.5rem;">{{ player.overall_rating|floatformat:0 }}</span>
+                        </div>
+                        {% if player.preferred_roles %}
+                        <div>
+                            <small class="text-muted d-block mb-1">Preferred roles</small>
+                            {% for r in player.preferred_roles %}
+                            <span class="badge bg-primary me-1">{{ r|capfirst }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div id="league-player-potential" class="card h-100">
+                    <div class="card-header fw-semibold py-2">Potential</div>
+                    <div class="card-body py-2">
+                        <div class="d-flex align-items-center">
+                            <span class="text-muted me-2" style="width:160px;">Potential rating</span>
+                            <span class="fw-bold" style="font-size:1.5rem;">&#8212;</span>
+                        </div>
+                        <small class="text-muted">Arrives with LG-05.</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% comment %} Current ratings — the 19 Player stat fields, grouped. {% endcomment %}
+        <div id="league-player-ratings" class="row g-3 mb-4">
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-header fw-semibold py-2">Awareness</div>
+                    <div class="card-body py-2">
+                        <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Player Awareness</span><span class="fw-semibold">{{ player.player_awareness }}</span></div>
+                        <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Game Awareness</span><span class="fw-semibold">{{ player.game_awareness }}</span></div>
+                        <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Resource Awareness</span><span class="fw-semibold">{{ player.resource_awareness }}</span></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-header fw-semibold py-2">Decision-making</div>
+                    <div class="card-body py-2">
+                        <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Decision Making</span><span class="fw-semibold">{{ player.decision_making }}</span></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-header fw-semibold py-2">Physical</div>
+                    <div class="card-body py-2">
+                        <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Positioning</span><span class="fw-semibold">{{ player.positioning }}</span></div>
+                        <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Stamina</span><span class="fw-semibold">{{ player.stamina }}</span></div>
+                        <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Speed</span><span class="fw-semibold">{{ player.speed }}</span></div>
+                        <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Flexibility</span><span class="fw-semibold">{{ player.flexibility }}</span></div>
+                        <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Adaptability</span><span class="fw-semibold">{{ player.adaptability }}</span></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-header fw-semibold py-2">Team</div>
+                    <div class="card-body py-2">
+                        <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Communication</span><span class="fw-semibold">{{ player.communication }}</span></div>
+                        <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Teamwork</span><span class="fw-semibold">{{ player.teamwork }}</span></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="card h-100">
+                    <div class="card-header fw-semibold py-2">Role</div>
+                    <div class="card-body py-2">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Offensive Synergy</span><span class="fw-semibold">{{ player.Offensive_synergy }}</span></div>
+                                <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Defensive Synergy</span><span class="fw-semibold">{{ player.defensive_synergy }}</span></div>
+                                <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Midfield Synergy</span><span class="fw-semibold">{{ player.midfield_synergy }}</span></div>
+                                <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Resupply Synergy</span><span class="fw-semibold">{{ player.resupply_synergy }}</span></div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Resupply Efficiency</span><span class="fw-semibold">{{ player.resupply_efficiency }}</span></div>
+                                <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Accuracy</span><span class="fw-semibold">{{ player.accuracy }}</span></div>
+                                <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Survival</span><span class="fw-semibold">{{ player.survival }}</span></div>
+                                <div class="d-flex mb-1"><span class="text-muted me-2" style="width:200px;">Special Usage</span><span class="fw-semibold">{{ player.special_usage }}</span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% comment %} Regular-Season stats — per-Season rows + Career row. {% endcomment %}
+        <h2 class="h4 mb-2">Regular Season</h2>
+        {% if rs_rows or career_row %}
+            <div class="table-responsive">
+                <table class="table table-striped" id="league-player-rs-stats-table">
+                    <thead>
+                        <tr>
+                            <th>Year</th>
+                            <th>Team</th>
+                            {% for key, label, is_float in stat_columns %}
+                                <th>{{ label }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% comment %}
+                        Stat cells render in the fixed ``stat_columns`` order
+                        (``_PLAYER_STATS_COLUMNS[2:]``): GP, Points, MVP, Tags,
+                        Tagged, Tag Ratio, Acc%, Survival, Lives, Resup,
+                        Missiles, Specials, Follow-up, Reaction, Combo Resup.
+                        Django can't dict-lookup by a loop variable, so each
+                        known stat key is rendered explicitly in that order.
+                        {% endcomment %}
+                        {% for row in rs_rows %}
+                        <tr>
+                            <td>{{ row.year }}</td>
+                            <td>{{ row.team_name }}</td>
+                            <td>{{ row.games }}</td>
+                            <td>{{ row.stats.points_scored|floatformat:0 }}</td>
+                            <td>{{ row.stats.mvp|floatformat:1 }}</td>
+                            <td>{{ row.stats.tags_made|floatformat:0 }}</td>
+                            <td>{{ row.stats.times_tagged|floatformat:0 }}</td>
+                            <td>{{ row.stats.tag_ratio|floatformat:2 }}</td>
+                            <td>{{ row.stats.accuracy|floatformat:1 }}</td>
+                            <td>{{ row.stats.survival|floatformat:0 }}s</td>
+                            <td>{{ row.stats.final_lives|floatformat:0 }}</td>
+                            <td>{{ row.stats.resupplies_given|floatformat:0 }}</td>
+                            <td>{{ row.stats.missiles_landed|floatformat:0 }}</td>
+                            <td>{{ row.stats.specials_used|floatformat:0 }}</td>
+                            <td>{{ row.stats.follow_up_shots|floatformat:0 }}</td>
+                            <td>{{ row.stats.reaction_shots|floatformat:0 }}</td>
+                            <td>{{ row.stats.combo_resupply_count|floatformat:0 }}</td>
+                        </tr>
+                        {% endfor %}
+                        {% if career_row %}
+                        <tr class="fw-bold border-top">
+                            <td>{{ career_row.year }}</td>
+                            <td>{{ career_row.team_name }}</td>
+                            <td>{{ career_row.games }}</td>
+                            <td>{{ career_row.stats.points_scored|floatformat:0 }}</td>
+                            <td>{{ career_row.stats.mvp|floatformat:1 }}</td>
+                            <td>{{ career_row.stats.tags_made|floatformat:0 }}</td>
+                            <td>{{ career_row.stats.times_tagged|floatformat:0 }}</td>
+                            <td>{{ career_row.stats.tag_ratio|floatformat:2 }}</td>
+                            <td>{{ career_row.stats.accuracy|floatformat:1 }}</td>
+                            <td>{{ career_row.stats.survival|floatformat:0 }}s</td>
+                            <td>{{ career_row.stats.final_lives|floatformat:0 }}</td>
+                            <td>{{ career_row.stats.resupplies_given|floatformat:0 }}</td>
+                            <td>{{ career_row.stats.missiles_landed|floatformat:0 }}</td>
+                            <td>{{ career_row.stats.specials_used|floatformat:0 }}</td>
+                            <td>{{ career_row.stats.follow_up_shots|floatformat:0 }}</td>
+                            <td>{{ career_row.stats.reaction_shots|floatformat:0 }}</td>
+                            <td>{{ career_row.stats.combo_resupply_count|floatformat:0 }}</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div id="league-player-rs-stats-empty" class="alert alert-info">
+                {{ player.name }} has no recorded Rounds in {{ league.name }} yet.
+            </div>
+        {% endif %}
+
+        {% comment %} Coming-soon stub blocks (model-less sections). {% endcomment %}
+        <div id="league-player-playoffs-stub" class="card mt-4">
+            <div class="card-body">
+                <h3 class="h5">Playoffs</h3>
+                <p class="text-muted mb-0">Coming soon — arrives with LG-02.</p>
+            </div>
+        </div>
+        <div id="league-player-ratings-history-stub" class="card mt-3">
+            <div class="card-body">
+                <h3 class="h5">Ratings history</h3>
+                <p class="text-muted mb-0">Coming soon — arrives with LG-05.</p>
+            </div>
+        </div>
+        <div id="league-player-awards-stub" class="card mt-3">
+            <div class="card-body">
+                <h3 class="h5">Awards</h3>
+                <p class="text-muted mb-0">Coming soon — awaiting an awards model.</p>
+            </div>
+        </div>
+        <div id="league-player-salaries-stub" class="card mt-3">
+            <div class="card-body">
+                <h3 class="h5">Salaries</h3>
+                <p class="text-muted mb-0">Coming soon — awaiting a roster-economy model.</p>
+            </div>
+        </div>
+        <div id="league-player-transactions-stub" class="card mt-3">
+            <div class="card-body">
+                <h3 class="h5">Transactions</h3>
+                <p class="text-muted mb-0">Coming soon — awaiting a transactions model.</p>
+            </div>
+        </div>
+
+        {% include "_partials/watch_flag_script.html" %}
+    </main>
+</div>
+{% endblock %}

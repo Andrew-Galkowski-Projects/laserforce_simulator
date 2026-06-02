@@ -417,7 +417,10 @@ class TestPlayerStatsBody(TestCase):
         response = player_stats(_get(self.league.id), self.league.id)
         content = response.content.decode()
         self.assertIn(self.red_player.name, content)
-        self.assertIn(f"/players/{self.red_player.id}/stats/", content)
+        # LG-06h: player-name link repointed to league_player_detail.
+        self.assertIn(
+            f"/leagues/{self.league.id}/players/{self.red_player.id}/", content
+        )
 
     def test_player_with_no_rounds_excluded(self) -> None:
         # A player on an enrolled team but with zero PlayerRoundState rows

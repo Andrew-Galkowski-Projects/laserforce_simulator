@@ -54,7 +54,7 @@
                                     <td>
                                         {{ row.rank }}.
                                         {% include "_partials/watch_flag.html" with player_id=row.player_id %}
-                                        <a href="/players/{{ row.player_id }}/stats/">{{ row.player_name }}</a>,
+                                        <a href="{% url 'league_player_detail' league.id row.player_id %}">{{ row.player_name }}</a>,
                                         {{ row.team_name }}
                                     </td>
                                     <td class="text-end">{{ row.value|floatformat:1 }}</td>
@@ -93,7 +93,7 @@
                                     <td>
                                         {{ row.rank }}.
                                         {% include "_partials/watch_flag.html" with player_id=row.player_id %}
-                                        <a href="/players/{{ row.player_id }}/stats/">{{ row.player_name }}</a>,
+                                        <a href="{% url 'league_player_detail' league.id row.player_id %}">{{ row.player_name }}</a>,
                                         {{ row.team_name }}
                                     </td>
                                     <td class="text-end">{{ row.value|floatformat:1 }}</td>
@@ -132,7 +132,7 @@
                                     <td>
                                         {{ row.rank }}.
                                         {% include "_partials/watch_flag.html" with player_id=row.player_id %}
-                                        <a href="/players/{{ row.player_id }}/stats/">{{ row.player_name }}</a>,
+                                        <a href="{% url 'league_player_detail' league.id row.player_id %}">{{ row.player_name }}</a>,
                                         {{ row.team_name }}
                                     </td>
                                     <td class="text-end">{{ row.value|floatformat:1 }}</td>
@@ -171,7 +171,7 @@
                                     <td>
                                         {{ row.rank }}.
                                         {% include "_partials/watch_flag.html" with player_id=row.player_id %}
-                                        <a href="/players/{{ row.player_id }}/stats/">{{ row.player_name }}</a>,
+                                        <a href="{% url 'league_player_detail' league.id row.player_id %}">{{ row.player_name }}</a>,
                                         {{ row.team_name }}
                                     </td>
                                     <td class="text-end">{{ row.value|floatformat:2 }}</td>
