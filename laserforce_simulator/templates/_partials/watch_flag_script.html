@@ -1,0 +1,85 @@
+{% comment %}
+LG-06f — once-per-page delegated-click handler for the watch-flag buttons.
+
+Include exactly ONCE near the end of a page's {% block content %} (NOT inside
+any loop). Binds a single delegated click listener that POSTs to the button's
+``data-toggle-url`` with ``player_id`` from ``data-player-id``, sending the
+``X-CSRFToken`` header. The token is rendered server-side via ``{{ csrf_token }}``
+(which also calls ``get_token()`` so Django sets the ``csrftoken`` cookie on this
+response) — the league screens render GET-only forms with no ``{% templatetag
+openblock %} csrf_token {% templatetag closeblock %}``, so a fresh session landing
+directly on a league screen would otherwise have no cookie and the POST would 403.
+The ``csrftoken`` cookie is kept as a fallback. On ``{watched:true}`` it adds
+``.watch-flag-on`` to ALL buttons sharing that ``data-player-id`` (handles
+Statistical Feats / League Leaders rendering a player on multiple rows); on
+``{watched:false}`` it removes the class from all of them.
+{% endcomment %}
+<style>
+    .watch-flag {
+        color: #adb5bd;
+        font-size: 1rem;
+        line-height: 1;
+        cursor: pointer;
+        vertical-align: middle;
+    }
+    .watch-flag:hover { color: #6c757d; }
+    .watch-flag-on { color: #dc3545; }
+    .watch-flag-on:hover { color: #dc3545; }
+</style>
+<script>
+(function () {
+    if (window.__lfWatchFlagBound) { return; }
+    window.__lfWatchFlagBound = true;
+
+    function getCookie(name) {
+        var value = "; " + document.cookie;
+        var parts = value.split("; " + name + "=");
+        if (parts.length === 2) {
+            return parts.pop().split(";").shift();
+        }
+        return "";
+    }
+
+    // Token rendered server-side (sets the csrftoken cookie via get_token());
+    // fall back to the cookie if the rendered value is ever empty.
+    var CSRF_TOKEN = "{{ csrf_token }}" || getCookie("csrftoken");
+
+    function setAll(playerId, on) {
+        var sel = '.watch-flag[data-player-id="' + playerId + '"]';
+        var buttons = document.querySelectorAll(sel);
+        buttons.forEach(function (b) {
+            if (on) {
+                b.classList.add("watch-flag-on");
+                b.setAttribute("aria-pressed", "true");
+            } else {
+                b.classList.remove("watch-flag-on");
+                b.setAttribute("aria-pressed", "false");
+            }
+        });
+    }
+
+    document.addEventListener("click", function (e) {
+        var btn = e.target.closest(".watch-flag");
+        if (!btn) { return; }
+        e.preventDefault();
+        var url = btn.dataset.toggleUrl;
+        var playerId = btn.dataset.playerId;
+        if (!url || !playerId) { return; }
+        fetch(url, {
+            method: "POST",
+            headers: {
+                "X-CSRFToken": CSRF_TOKEN,
+                "X-Requested-With": "XMLHttpRequest"
+            },
+            body: new URLSearchParams({ player_id: playerId })
+        })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data && typeof data.watched === "boolean") {
+                    setAll(playerId, data.watched);
+                }
+            })
+            .catch(function () { /* swallow — flag stays in last-known state */ });
+    });
+})();
+</script>

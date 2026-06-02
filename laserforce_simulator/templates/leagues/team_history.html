@@ -160,7 +160,7 @@
                                 <tbody>
                                     {% for p in page_obj %}
                                         <tr id="team-history-player-row-{{ p.player_id }}" class="{{ p.colour_class }}">
-                                            <td><a href="{% url 'player_career_stats' p.player_id %}">{{ p.name }}</a></td>
+                                            <td>{% include "_partials/watch_flag.html" with player_id=p.player_id %} <a href="{% url 'player_career_stats' p.player_id %}">{{ p.name }}</a></td>
                                             <td class="text-end">{{ p.games_played }}</td>
                                             <td class="text-end">{{ p.stats.points_scored }}</td>
                                             <td class="text-end">{{ p.stats.tags_made }}</td>
@@ -204,6 +204,8 @@
                 </div>
             </div>
         {% endif %}
+
+        {% include "_partials/watch_flag_script.html" %}
     </main>
 </div>
 {% endblock %}

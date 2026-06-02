@@ -54,7 +54,7 @@
                         {% for role, player in starting_roster %}
                             <tr>
                                 <td>{{ role|title }}</td>
-                                <td><a href="{% url 'player_career_stats' player.id %}">{{ player.name }}</a></td>
+                                <td>{% include "_partials/watch_flag.html" with player_id=player.id %} <a href="{% url 'player_career_stats' player.id %}">{{ player.name }}</a></td>
                                 <td>{{ player.age|default:"-" }}</td>
                                 <td>{{ player.home_site|default:"-" }}</td>
                                 <td>{{ player.height|default:"-" }}</td>
@@ -92,7 +92,7 @@
                     <tbody>
                         {% for player in bench_players %}
                             <tr>
-                                <td><a href="{% url 'player_career_stats' player.id %}">{{ player.name }}</a></td>
+                                <td>{% include "_partials/watch_flag.html" with player_id=player.id %} <a href="{% url 'player_career_stats' player.id %}">{{ player.name }}</a></td>
                                 <td>{{ player.age|default:"-" }}</td>
                                 <td>{{ player.home_site|default:"-" }}</td>
                                 <td>{{ player.height|default:"-" }}</td>
@@ -110,6 +110,8 @@
                 </table>
             </div>
         {% endif %}
+
+        {% include "_partials/watch_flag_script.html" %}
     </main>
 </div>
 {% endblock %}

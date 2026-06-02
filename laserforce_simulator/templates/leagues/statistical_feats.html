@@ -116,7 +116,7 @@
                             <tbody>
                                 {% for row in feat_rows %}
                                 <tr>
-                                    <td>{{ row.player_name }}</td>
+                                    <td>{% include "_partials/watch_flag.html" with player_id=row.player_id %} {{ row.player_name }}</td>
                                     <td>{{ row.role }}</td>
                                     <td>{{ row.team_name }}</td>
                                     <td>{{ row.opp_team_name }}</td>
@@ -190,6 +190,8 @@
                 {% endif %}
             {% endif %}
         {% endif %}
+
+        {% include "_partials/watch_flag_script.html" %}
     </main>
 </div>
 {% endblock %}

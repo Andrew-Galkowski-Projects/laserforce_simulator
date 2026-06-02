@@ -58,6 +58,11 @@ urlpatterns = [
         league_screens.watch_list,
         name="players_watch_list",
     ),
+    path(
+        "<int:league_id>/players/watch-list/toggle/",
+        league_screens.watch_list_toggle,
+        name="watch_list_toggle",
+    ),
     # Stats-scoped
     path(
         "<int:league_id>/stats/game-log/",

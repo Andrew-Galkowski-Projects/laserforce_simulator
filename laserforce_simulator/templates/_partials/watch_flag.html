@@ -1,0 +1,16 @@
+{% comment %}
+LG-06f — per-cell watch-flag button.
+
+Usage: {% include "_partials/watch_flag.html" with player_id=<id> %}
+
+Reads ``watched_player_ids`` (from the core.context_processors.watch_list
+context processor) + ``league.id`` (in every league-screen context). Needs only
+the ``player_id`` passed in. The JS delegated handler keys off ``.watch-flag``;
+the watched-state ``.watch-flag-on`` class drives the red styling.
+{% endcomment %}
+<button type="button"
+        class="watch-flag btn btn-sm p-0 border-0 bg-transparent{% if player_id in watched_player_ids %} watch-flag-on{% endif %}"
+        data-player-id="{{ player_id }}"
+        data-toggle-url="{% url 'watch_list_toggle' league.id %}"
+        aria-pressed="{% if player_id in watched_player_ids %}true{% else %}false{% endif %}"
+        title="Toggle watch">&#9733;</button>
