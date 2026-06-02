@@ -16,8 +16,47 @@ from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, render
 
 from matches import stat_feats
-from matches.league_views import _build_league_sidebar_links, _coerce_team_id
+from matches.league_views import (
+    _build_league_sidebar_links,
+    _coerce_sort_key,
+    _coerce_team_id,
+)
 from matches.models import GameEvent, GameRound, League, Match, PlayerRoundState
+from teams.views import _coerce_dir
+
+# LG-06c — sortable Statistical Feats columns. The Feats surface is a flat
+# list of heterogeneous ``FeatRecord``s; sort is over the three record-level
+# attributes uniform across all feats. Default ``kind`` asc (groups same-kind
+# feats together). Secondary tiebreak: ``feat.label``.
+_FEATS_SORT_KEYS: frozenset[str] = frozenset({"kind", "name", "value"})
+_FEATS_SORT_KEYS_DISPLAY: tuple[tuple[str, str], ...] = (
+    ("kind", "Feat"),
+    ("name", "Who"),
+    ("value", "Value"),
+)
+
+
+def _feat_value_sort_key(value: str) -> tuple[int, object]:
+    """Numeric-aware sort key for ``FeatRecord.value`` (a string).
+
+    Tries ``float(value)``; on ``ValueError`` falls back to a sentinel that
+    sorts non-numeric values together AFTER numerics. The tuple-pair keeps the
+    sort total and deterministic so e.g. ``"Comeback"`` never crashes it.
+    """
+    try:
+        return (0, float(value))
+    except (TypeError, ValueError):
+        return (1, value)
+
+
+def _feat_sort_value(feat: "stat_feats.FeatRecord", key: str):
+    """Sort-value extraction on a ``FeatRecord`` per the LG-06c contract."""
+    if key == "kind":
+        return feat.kind
+    if key == "name":
+        return feat.name
+    # key == "value" — numeric-aware
+    return _feat_value_sort_key(feat.value)
 
 
 def _is_nuke_detonation(event: GameEvent) -> bool:
@@ -58,6 +97,10 @@ def statistical_feats(request: HttpRequest, league_id: int) -> HttpResponse:
         league, displayed_season, sidebar_active="statistical_feats"
     )
 
+    # LG-06c — coerce the sort/dir params before anything else.
+    sort = _coerce_sort_key(request.GET.get("sort"), _FEATS_SORT_KEYS, "kind")
+    direction = _coerce_dir(request.GET.get("dir"))
+
     base_context = {
         "league": league,
         "displayed_season": displayed_season,
@@ -66,6 +109,10 @@ def statistical_feats(request: HttpRequest, league_id: int) -> HttpResponse:
         "feats": [],
         "enrolled_teams": [],
         "selected_team_id": None,
+        "sort": sort,
+        "dir": direction,
+        "sort_keys": _FEATS_SORT_KEYS_DISPLAY,
+        "querystring_without_sort": "",
     }
 
     if displayed_season is None:
@@ -174,6 +221,26 @@ def statistical_feats(request: HttpRequest, league_id: int) -> HttpResponse:
 
     feats = stat_feats.scan_feats(player_rounds, matches)
 
+    # LG-06c — in-memory sort over the materialised FeatRecord list with
+    # ``feat.label`` as the always-appended stable secondary tiebreak.
+    feats = sorted(
+        feats,
+        key=lambda feat: (_feat_sort_value(feat, sort), feat.label),
+        reverse=(direction == "desc"),
+    )
+
+    # COERCE-BEFORE-QUERYSTRING: header href carry keeps the coerced team_id
+    # (re-set) with sort/dir popped, so invalid params never survive.
+    qs_no_sort = request.GET.copy()
+    qs_no_sort.pop("sort", None)
+    qs_no_sort.pop("dir", None)
+    if selected_team_id is not None:
+        qs_no_sort["team_id"] = str(selected_team_id)
+    else:
+        qs_no_sort.pop("team_id", None)
+    querystring_without_sort = qs_no_sort.urlencode()
+
     context = dict(base_context)
     context["feats"] = feats
+    context["querystring_without_sort"] = querystring_without_sort
     return render(request, "leagues/statistical_feats.html", context)

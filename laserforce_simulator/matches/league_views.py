@@ -724,6 +724,19 @@ def _coerce_page(raw: str | None, default: int = 1) -> int:
     return value
 
 
+def _coerce_sort_key(raw: str | None, allowed: frozenset[str], default: str) -> str:
+    """LG-06c — coerce ``?<…>sort=`` to a whitelisted sort key, else default.
+
+    Returns ``raw`` iff ``raw`` is in ``allowed``; otherwise ``default``.
+    ``None`` / empty / unknown all map to ``default``. Mirrors the forgiving
+    ``_coerce_per_page`` / ``_coerce_team_id`` precedent in this file. The
+    single source of sort-key coercion for all five LG-06c screens.
+    """
+    if raw is not None and raw in allowed:
+        return raw
+    return default
+
+
 def _coerce_team_id(raw: str | None, enrolled_ids: set[int]) -> int | None:
     """LG-06b — coerce ``?team_id=`` to an enrolled Team id, else ``None``.
 

@@ -22,6 +22,9 @@
                         <option value="{{ t.id }}"{% if t.id == selected_team_id %} selected{% endif %}>{{ t.name }}</option>
                     {% endfor %}
                 </select>
+                {# LG-06c — carry the current sort/dir so changing team keeps it. #}
+                <input type="hidden" name="sort" value="{{ sort }}">
+                <input type="hidden" name="dir" value="{{ dir }}">
                 <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">Filter</button></noscript>
             </form>
 
@@ -30,6 +33,25 @@
                     No statistical feats recorded yet in this Season.
                 </div>
             {% else %}
+                {# LG-06c — sort-control bar above the feats list. #}
+                <div class="d-flex align-items-center mb-2">
+                    <span class="text-muted small me-2">Sort by:</span>
+                    <div class="btn-group btn-group-sm" role="group">
+                        {% for key, label in sort_keys %}
+                            <span id="statistical-feats-th-{{ key }}">
+                                {% if key == sort %}
+                                    {% if dir == "asc" %}
+                                        <a class="btn btn-outline-secondary active" href="?{{ querystring_without_sort }}{% if querystring_without_sort %}&{% endif %}sort={{ key }}&dir=desc">{{ label }} ↑</a>
+                                    {% else %}
+                                        <a class="btn btn-outline-secondary active" href="?{{ querystring_without_sort }}{% if querystring_without_sort %}&{% endif %}sort={{ key }}&dir=asc">{{ label }} ↓</a>
+                                    {% endif %}
+                                {% else %}
+                                    <a class="btn btn-outline-secondary" href="?{{ querystring_without_sort }}{% if querystring_without_sort %}&{% endif %}sort={{ key }}&dir=asc">{{ label }}</a>
+                                {% endif %}
+                            </span>
+                        {% endfor %}
+                    </div>
+                </div>
                 <ul id="stat-feats-list" class="list-group">
                     {% for feat in feats %}
                         <li id="stat-feat-{{ feat.kind }}"

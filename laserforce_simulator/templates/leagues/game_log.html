@@ -23,6 +23,9 @@
                         <option value="{{ team.id }}"{% if team.id == selected_team_id %} selected{% endif %}>{{ team.name }}</option>
                     {% endfor %}
                 </select>
+                {# LG-06c — carry the current sort/dir so changing team keeps it. #}
+                <input type="hidden" name="sort" value="{{ sort }}">
+                <input type="hidden" name="dir" value="{{ dir }}">
                 <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">Filter</button></noscript>
             </form>
 
@@ -35,12 +38,19 @@
                     <table id="game-log-table" class="table table-striped table-hover">
                         <thead>
                             <tr>
-                                <th>Matchday</th>
-                                <th>Date</th>
-                                <th>Red</th>
-                                <th>Blue</th>
-                                <th class="text-center">Score</th>
-                                <th>Winner</th>
+                                {% for key, label in sort_keys %}
+                                    <th id="game-log-th-{{ key }}"{% if key == "score" %} class="text-center"{% endif %}>
+                                        {% if key == sort %}
+                                            {% if dir == "asc" %}
+                                                <a href="?{{ querystring_without_sort_dir }}{% if querystring_without_sort_dir %}&{% endif %}sort={{ key }}&dir=desc">{{ label }} ↑</a>
+                                            {% else %}
+                                                <a href="?{{ querystring_without_sort_dir }}{% if querystring_without_sort_dir %}&{% endif %}sort={{ key }}&dir=asc">{{ label }} ↓</a>
+                                            {% endif %}
+                                        {% else %}
+                                            <a href="?{{ querystring_without_sort_dir }}{% if querystring_without_sort_dir %}&{% endif %}sort={{ key }}&dir=asc">{{ label }}</a>
+                                        {% endif %}
+                                    </th>
+                                {% endfor %}
                             </tr>
                         </thead>
                         <tbody>

@@ -289,3 +289,211 @@ class TestWatchListToggle(TestCase):
         # The League 404 fires before the toggle mutation.
         with self.assertRaises(Http404):
             watch_list(_get(999999, query="action=add&player_id=1"), 999999)
+
+
+# ---------------------------------------------------------------------------
+# LG-06c — Watch List sortable columns
+#
+# Single ?sort=&dir= pair; keys {name, team, overall_rating}; default
+# name/asc. addable_players stays name-ordered; the add/remove/clear GET
+# toggle redirect is UNCHANGED and DROPS sort/dir on the bare-URL redirect.
+# DOM ids watch-list-th-<key>; active glyph U+2191 / U+2193.
+#
+# EXPECTED TO FAIL until the Code agent lands watched_players sorting +
+# headers.
+# ---------------------------------------------------------------------------
+
+import re  # noqa: E402
+
+_WL_GLYPH_UP = "↑"
+_WL_GLYPH_DOWN = "↓"
+
+
+def _wl_row_ids_in_order(content: str) -> list[int]:
+    return [int(m) for m in re.findall(r"watch-list-row-(\d+)", content)]
+
+
+class _WatchSortFixtureMixin:
+    """Seed the session with two watched players whose name / team / overall
+    orderings DIFFER, so each sort key picks a distinguishable first row."""
+
+    def _build(self):
+        self.league = _make_league()
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = self.teams
+        # Two players with distinct names; team_a name < team_b name (set up
+        # below). Give them clearly different overall ratings.
+        self.lo_name = Player.objects.create(team=self.team_a, name="Aaron Watched")
+        self.hi_name = Player.objects.create(team=self.team_b, name="Zed Watched")
+        # Make overall_rating differ: set every stat high on hi_name's player
+        # but actually we want name-vs-rating to diverge. Aaron (name-first)
+        # gets the LOWER overall so name-asc and rating-asc disagree on order.
+        for field in (
+            "player_awareness",
+            "game_awareness",
+            "resource_awareness",
+            "decision_making",
+            "positioning",
+            "stamina",
+            "speed",
+            "flexibility",
+            "adaptability",
+            "communication",
+            "teamwork",
+            "Offensive_synergy",
+            "defensive_synergy",
+            "midfield_synergy",
+            "resupply_synergy",
+            "resupply_efficiency",
+            "accuracy",
+            "survival",
+            "special_usage",
+        ):
+            setattr(self.lo_name, field, 10)
+            setattr(self.hi_name, field, 90)
+        self.lo_name.save()
+        self.hi_name.save()
+        # team_a / team_b names: ensure a known alphabetical relationship.
+        self.team_lo, self.team_hi = sorted(
+            [self.team_a, self.team_b], key=lambda t: t.name
+        )
+
+    def _get_sorted(self, query: str = ""):
+        request = _get(self.league.id, query=query)
+        request.session["watch_list"] = [self.lo_name.id, self.hi_name.id]
+        request.session.save()
+        return watch_list(request, self.league.id)
+
+
+class TestWatchListSortDefault(_WatchSortFixtureMixin, TestCase):
+    def setUp(self) -> None:
+        self._build()
+
+    def test_default_order_is_name_asc(self) -> None:
+        content = self._get_sorted().content.decode()
+        order = _wl_row_ids_in_order(content)
+        # "Aaron Watched" < "Zed Watched" → lo_name first.
+        self.assertEqual(order[0], self.lo_name.id)
+
+
+class TestWatchListSortKeys(_WatchSortFixtureMixin, TestCase):
+    def setUp(self) -> None:
+        self._build()
+
+    def test_name_asc_then_desc(self) -> None:
+        asc = _wl_row_ids_in_order(
+            self._get_sorted("sort=name&dir=asc").content.decode()
+        )
+        desc = _wl_row_ids_in_order(
+            self._get_sorted("sort=name&dir=desc").content.decode()
+        )
+        self.assertEqual(asc[0], self.lo_name.id)
+        self.assertEqual(desc[0], self.hi_name.id)
+
+    def test_overall_rating_asc_then_desc(self) -> None:
+        # lo_name has overall 10, hi_name has overall 90.
+        asc = _wl_row_ids_in_order(
+            self._get_sorted("sort=overall_rating&dir=asc").content.decode()
+        )
+        desc = _wl_row_ids_in_order(
+            self._get_sorted("sort=overall_rating&dir=desc").content.decode()
+        )
+        self.assertEqual(asc[0], self.lo_name.id)
+        self.assertEqual(desc[0], self.hi_name.id)
+
+    def test_team_asc_then_desc(self) -> None:
+        # Determine which watched player belongs to the lower-named team.
+        lo_player = (
+            self.lo_name if self.lo_name.team_id == self.team_lo.id else self.hi_name
+        )
+        hi_player = (
+            self.lo_name if self.lo_name.team_id == self.team_hi.id else self.hi_name
+        )
+        asc = _wl_row_ids_in_order(
+            self._get_sorted("sort=team&dir=asc").content.decode()
+        )
+        desc = _wl_row_ids_in_order(
+            self._get_sorted("sort=team&dir=desc").content.decode()
+        )
+        self.assertEqual(asc[0], lo_player.id)
+        self.assertEqual(desc[0], hi_player.id)
+
+
+class TestWatchListSortInvalidFallback(_WatchSortFixtureMixin, TestCase):
+    def setUp(self) -> None:
+        self._build()
+
+    def test_garbage_sort_falls_back_to_name_asc(self) -> None:
+        order = _wl_row_ids_in_order(self._get_sorted("sort=BOGUS").content.decode())
+        self.assertEqual(order[0], self.lo_name.id)
+
+    def test_garbage_dir_falls_back_to_asc(self) -> None:
+        order = _wl_row_ids_in_order(
+            self._get_sorted("sort=name&dir=NOPE").content.decode()
+        )
+        self.assertEqual(order[0], self.lo_name.id)
+
+    def test_uppercase_sort_falls_back(self) -> None:
+        order = _wl_row_ids_in_order(self._get_sorted("sort=NAME").content.decode())
+        self.assertEqual(order[0], self.lo_name.id)
+
+
+class TestWatchListSortHeaderGlyph(_WatchSortFixtureMixin, TestCase):
+    def setUp(self) -> None:
+        self._build()
+
+    def test_th_dom_ids_present_when_watching(self) -> None:
+        content = self._get_sorted().content.decode()
+        for key in ("name", "team", "overall_rating"):
+            self.assertIn(f"watch-list-th-{key}", content)
+
+    def test_active_overall_rating_header_glyph(self) -> None:
+        content = self._get_sorted("sort=overall_rating&dir=desc").content.decode()
+        th_start = content.index("watch-list-th-overall_rating")
+        window = content[th_start : th_start + 400]
+        self.assertIn(_WL_GLYPH_DOWN, window)
+
+
+class TestWatchListSortDoesNotAffectAddControl(_WatchSortFixtureMixin, TestCase):
+    """addable_players (the add <select>) stays name-ordered regardless of
+    ?sort=."""
+
+    def setUp(self) -> None:
+        self._build()
+
+    def test_add_control_unaffected_by_sort(self) -> None:
+        # With nothing watched, both players are addable; sorting the (empty)
+        # watched table by overall_rating desc must not reorder the add list.
+        request = _get(self.league.id, query="sort=overall_rating&dir=desc")
+        request.session["watch_list"] = []
+        request.session.save()
+        content = watch_list(request, self.league.id).content.decode()
+        # The add control's options stay name-ordered: the option for
+        # "Aaron Watched" (lo_name) appears before "Zed Watched" (hi_name).
+        lo_pos = content.find(f'value="{self.lo_name.id}"')
+        hi_pos = content.find(f'value="{self.hi_name.id}"')
+        self.assertNotEqual(lo_pos, -1)
+        self.assertNotEqual(hi_pos, -1)
+        self.assertLess(lo_pos, hi_pos)
+
+
+class TestWatchListMutationDropsSort(_WatchSortFixtureMixin, TestCase):
+    """The add/remove/clear GET toggle still 302-redirects to the BARE URL,
+    dropping sort/dir (locked behaviour)."""
+
+    def setUp(self) -> None:
+        self._build()
+
+    def test_add_redirect_drops_sort_and_dir(self) -> None:
+        request = _get(
+            self.league.id,
+            query=f"action=add&player_id={self.lo_name.id}&sort=team&dir=desc",
+        )
+        response = watch_list(request, self.league.id)
+        self.assertEqual(response.status_code, 302)
+        # Redirect target is the bare watch-list URL — no query string.
+        self.assertEqual(
+            response["Location"], WATCH_LIST_PATH.format(lid=self.league.id)
+        )
+        self.assertNotIn("sort=", response["Location"])
+        self.assertNotIn("dir=", response["Location"])

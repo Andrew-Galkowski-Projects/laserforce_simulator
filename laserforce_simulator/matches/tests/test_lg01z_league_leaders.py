@@ -385,3 +385,216 @@ class TestLeagueLeadersBody(TestCase):
         content = league_leaders(_get(self.league.id), self.league.id).content.decode()
         # star now appears once (aggregated), name present.
         self.assertIn(self.star.name, content)
+
+
+# ===========================================================================
+# LG-06c — League Leaders sortable columns (namespaced per-board)
+#
+# Four independent boards keyed avg_tags / avg_score / fewest_tagged /
+# tag_ratio. Namespaced params ?<board>_sort=&<board>_dir=. Shared key set
+# {rank, player_name, team_name, role, value, games_played}; default
+# rank/asc per board. DOM ids league-leaders-<board>-th-<key>.
+#
+# EXPECTED TO FAIL until the Code agent lands per-board sorting + headers.
+# ===========================================================================
+
+_BOARDS = ("avg_tags", "avg_score", "fewest_tagged", "tag_ratio")
+_LL_GLYPH_UP = "↑"
+_LL_GLYPH_DOWN = "↓"
+
+
+def _board_player_order(content: str, board_table_id: str) -> list[str]:
+    """Return the player-career-link player ids in render order within the
+    board's <table id="..."> ... section (best-effort scoped slice)."""
+    import re
+
+    start = content.find(board_table_id)
+    assert start != -1, f"board table {board_table_id} not rendered"
+    # Slice from this board's table id to the next board's table id (or end).
+    nexts = [
+        content.find(other, start + len(board_table_id))
+        for other in (
+            "leaders-avg-tags",
+            "leaders-avg-score",
+            "leaders-fewest-tagged",
+            "leaders-tag-ratio",
+        )
+        if content.find(other, start + len(board_table_id)) != -1
+    ]
+    end = min(nexts) if nexts else len(content)
+    section = content[start:end]
+    return re.findall(r"/players/(\d+)/stats/", section)
+
+
+_BOARD_TABLE_ID = {
+    "avg_tags": "leaders-avg-tags",
+    "avg_score": "leaders-avg-score",
+    "fewest_tagged": "leaders-fewest-tagged",
+    "tag_ratio": "leaders-tag-ratio",
+}
+
+
+class _LeadersFixtureMixin:
+    """Build a League with two players that populate all four boards with a
+    clearly-ordered metric so rank order is deterministic and known."""
+
+    def _build(self):
+        self.league = _make_league()
+        self.season, teams = _make_active_season(self.league, n_teams=2)
+        (self.team_a, self.players_a), (self.team_b, self.players_b) = teams
+        # star: high tags / high score / never tagged.
+        self.star = self.players_a["scout"]
+        # weak: low tags / low score / tagged a lot.
+        self.weak = self.players_b["heavy"]
+        _make_round_with_states(
+            self.season,
+            self.team_a,
+            self.team_b,
+            [
+                (self.star, "red", "scout", 30, 0, 5000),
+                (self.weak, "blue", "heavy", 2, 12, 600),
+            ],
+        )
+
+
+class TestLeagueLeadersSortDefault(_LeadersFixtureMixin, TestCase):
+    def setUp(self) -> None:
+        self._build()
+
+    def test_each_board_default_is_rank_asc(self) -> None:
+        content = league_leaders(_get(self.league.id), self.league.id).content.decode()
+        # avg_tags / avg_score / tag_ratio: star (rank 1) leads.
+        for board in ("avg_tags", "avg_score", "tag_ratio"):
+            order = _board_player_order(content, _BOARD_TABLE_ID[board])
+            self.assertEqual(order[0], str(self.star.id), f"{board} default rank order")
+        # fewest_tagged: least-tagged (star, 0 tagged) is rank 1.
+        order = _board_player_order(content, _BOARD_TABLE_ID["fewest_tagged"])
+        self.assertEqual(order[0], str(self.star.id))
+
+
+class TestLeagueLeadersSortKeys(_LeadersFixtureMixin, TestCase):
+    """Sort the avg_tags board by the shared keys, asc and desc."""
+
+    URL_NAME = "stats_league_leaders"
+
+    def setUp(self) -> None:
+        self._build()
+
+    def _order(self, query: str) -> list[str]:
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        content = self.client.get(f"{url}?{query}").content.decode()
+        return _board_player_order(content, _BOARD_TABLE_ID["avg_tags"])
+
+    def test_player_name_asc_then_desc(self) -> None:
+        lo, hi = sorted([self.star, self.weak], key=lambda p: p.name)
+        asc = self._order("avg_tags_sort=player_name&avg_tags_dir=asc")
+        desc = self._order("avg_tags_sort=player_name&avg_tags_dir=desc")
+        self.assertEqual(asc[0], str(lo.id))
+        self.assertEqual(desc[0], str(hi.id))
+
+    def test_value_asc_then_desc(self) -> None:
+        # avg_tags value: star 30 > weak 2.
+        asc = self._order("avg_tags_sort=value&avg_tags_dir=asc")
+        desc = self._order("avg_tags_sort=value&avg_tags_dir=desc")
+        self.assertEqual(asc[0], str(self.weak.id))
+        self.assertEqual(desc[0], str(self.star.id))
+
+    def test_games_played_sorts(self) -> None:
+        # Both played 1 game — assert no crash and a 200 with both players.
+        order = self._order("avg_tags_sort=games_played&avg_tags_dir=desc")
+        self.assertEqual(set(order), {str(self.star.id), str(self.weak.id)})
+
+    def test_rank_asc_is_default_order(self) -> None:
+        order = self._order("avg_tags_sort=rank&avg_tags_dir=asc")
+        self.assertEqual(order[0], str(self.star.id))
+
+    def test_team_name_and_role_sort_without_crash(self) -> None:
+        for key in ("team_name", "role"):
+            order = self._order(f"avg_tags_sort={key}&avg_tags_dir=asc")
+            self.assertEqual(set(order), {str(self.star.id), str(self.weak.id)})
+
+
+class TestLeagueLeadersNamespaceIndependence(_LeadersFixtureMixin, TestCase):
+    """Sorting one board does NOT reorder a sibling board."""
+
+    URL_NAME = "stats_league_leaders"
+
+    def setUp(self) -> None:
+        self._build()
+
+    def test_sorting_avg_tags_leaves_avg_score_in_rank_order(self) -> None:
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        # Re-order ONLY the avg_tags board by player_name asc (weak first if
+        # weak's name sorts lower); avg_score must stay rank-asc (star first).
+        content = self.client.get(
+            f"{url}?avg_tags_sort=value&avg_tags_dir=asc"
+        ).content.decode()
+        # avg_tags value-asc → weak leads.
+        avg_tags_order = _board_player_order(content, _BOARD_TABLE_ID["avg_tags"])
+        self.assertEqual(avg_tags_order[0], str(self.weak.id))
+        # avg_score untouched → still rank-asc, star leads.
+        avg_score_order = _board_player_order(content, _BOARD_TABLE_ID["avg_score"])
+        self.assertEqual(avg_score_order[0], str(self.star.id))
+
+    def test_each_board_param_pair_is_independent(self) -> None:
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        # Flip tag_ratio only; avg_tags + avg_score + fewest_tagged stay rank.
+        content = self.client.get(
+            f"{url}?tag_ratio_sort=value&tag_ratio_dir=asc"
+        ).content.decode()
+        for board in ("avg_tags", "avg_score"):
+            order = _board_player_order(content, _BOARD_TABLE_ID[board])
+            self.assertEqual(
+                order[0], str(self.star.id), f"{board} should be untouched"
+            )
+
+
+class TestLeagueLeadersSortInvalidFallback(_LeadersFixtureMixin, TestCase):
+    URL_NAME = "stats_league_leaders"
+
+    def setUp(self) -> None:
+        self._build()
+
+    def _order(self, query: str) -> list[str]:
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        content = self.client.get(f"{url}?{query}").content.decode()
+        return _board_player_order(content, _BOARD_TABLE_ID["avg_tags"])
+
+    def test_bogus_board_sort_falls_back_to_rank(self) -> None:
+        order = self._order("avg_tags_sort=BOGUS&avg_tags_dir=asc")
+        self.assertEqual(order[0], str(self.star.id))
+
+    def test_bogus_board_dir_falls_back_to_asc(self) -> None:
+        order = self._order("avg_tags_sort=rank&avg_tags_dir=SIDEWAYS")
+        self.assertEqual(order[0], str(self.star.id))
+
+
+class TestLeagueLeadersSortHeaderGlyph(_LeadersFixtureMixin, TestCase):
+    def setUp(self) -> None:
+        self._build()
+
+    def test_namespaced_th_dom_ids_present(self) -> None:
+        content = league_leaders(_get(self.league.id), self.league.id).content.decode()
+        # At minimum the two rendered sortable columns per board.
+        for board in _BOARDS:
+            self.assertIn(f"league-leaders-{board}-th-player_name", content)
+            self.assertIn(f"league-leaders-{board}-th-value", content)
+
+    def test_active_board_header_glyph(self) -> None:
+        from django.urls import reverse
+
+        url = reverse("stats_league_leaders", args=[self.league.id])
+        content = self.client.get(
+            f"{url}?avg_tags_sort=value&avg_tags_dir=desc"
+        ).content.decode()
+        th_start = content.index("league-leaders-avg_tags-th-value")
+        window = content[th_start : th_start + 400]
+        self.assertIn(_LL_GLYPH_DOWN, window)

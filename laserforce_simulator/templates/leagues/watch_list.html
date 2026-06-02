@@ -28,9 +28,19 @@
                     <table id="watch-list-table" class="table table-striped table-hover">
                         <thead>
                             <tr>
-                                <th>Player</th>
-                                <th>Team</th>
-                                <th class="text-end">Overall</th>
+                                {% for key, label in sort_keys %}
+                                    <th id="watch-list-th-{{ key }}"{% if key == "overall_rating" %} class="text-end"{% endif %}>
+                                        {% if key == sort %}
+                                            {% if dir == "asc" %}
+                                                <a href="?sort={{ key }}&dir=desc">{{ label }} ↑</a>
+                                            {% else %}
+                                                <a href="?sort={{ key }}&dir=asc">{{ label }} ↓</a>
+                                            {% endif %}
+                                        {% else %}
+                                            <a href="?sort={{ key }}&dir=asc">{{ label }}</a>
+                                        {% endif %}
+                                    </th>
+                                {% endfor %}
                                 <th class="text-end">Action</th>
                             </tr>
                         </thead>

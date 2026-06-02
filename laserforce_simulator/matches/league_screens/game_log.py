@@ -9,8 +9,42 @@ from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, render
 
-from matches.league_views import _build_league_sidebar_links
+from matches.league_views import _build_league_sidebar_links, _coerce_sort_key
 from matches.models import GameRound, League
+from teams.views import _coerce_dir
+
+# LG-06c — sortable Game Log columns. Whitelist derived from the rendered
+# columns; default is ``date_played`` asc (reproduces the current
+# chronological-by-id order, with ``round_id`` as the always-appended
+# secondary tiebreak).
+_GAME_LOG_SORT_KEYS: frozenset[str] = frozenset(
+    {"matchday", "date_played", "team_red", "team_blue", "score", "winner"}
+)
+_GAME_LOG_SORT_KEYS_DISPLAY: tuple[tuple[str, str], ...] = (
+    ("matchday", "Matchday"),
+    ("date_played", "Date"),
+    ("team_red", "Red"),
+    ("team_blue", "Blue"),
+    ("score", "Score"),
+    ("winner", "Winner"),
+)
+
+
+def _game_log_sort_value(row: dict, key: str):
+    """Sort-value extraction per the LG-06c contract (None-safe via tuple)."""
+    if key == "matchday":
+        return row["matchday"]
+    if key == "date_played":
+        date_played = row["date_played"]
+        return (date_played is None, date_played)
+    if key == "team_red":
+        return row["team_red"].name if row["team_red"] else ""
+    if key == "team_blue":
+        return row["team_blue"].name if row["team_blue"] else ""
+    if key == "score":
+        return row["red_points"] + row["blue_points"]
+    # key == "winner"
+    return row["winner"].name if row["winner"] else ""
 
 
 def game_log(request: HttpRequest, league_id: int) -> HttpResponse:
@@ -37,6 +71,11 @@ def game_log(request: HttpRequest, league_id: int) -> HttpResponse:
         league, displayed_season, sidebar_active="game_log"
     )
 
+    # LG-06c — coerce the sort/dir params before anything else so the
+    # context (and querystring-carry below) always reflects canonical values.
+    sort = _coerce_sort_key(request.GET.get("sort"), _GAME_LOG_SORT_KEYS, "date_played")
+    direction = _coerce_dir(request.GET.get("dir"))
+
     if displayed_season is None:
         return render(
             request,
@@ -49,6 +88,10 @@ def game_log(request: HttpRequest, league_id: int) -> HttpResponse:
                 "rows": [],
                 "team_options": [],
                 "selected_team_id": None,
+                "sort": sort,
+                "dir": direction,
+                "sort_keys": _GAME_LOG_SORT_KEYS_DISPLAY,
+                "querystring_without_sort_dir": "",
             },
         )
 
@@ -92,6 +135,25 @@ def game_log(request: HttpRequest, league_id: int) -> HttpResponse:
             }
         )
 
+    # LG-06c — in-memory sort with ``round_id`` as the always-appended stable
+    # secondary tiebreak (so equal dates keep id order = current behaviour).
+    rows.sort(
+        key=lambda row: (_game_log_sort_value(row, sort), row["round_id"]),
+        reverse=(direction == "desc"),
+    )
+
+    # COERCE-BEFORE-QUERYSTRING: build the header href carry from the coerced
+    # ``team_id`` (re-set) with ``sort`` / ``dir`` popped, so invalid params
+    # never survive into the header / filter links.
+    qs_no_sort_dir = request.GET.copy()
+    qs_no_sort_dir.pop("sort", None)
+    qs_no_sort_dir.pop("dir", None)
+    if selected_team_id is not None:
+        qs_no_sort_dir["team_id"] = str(selected_team_id)
+    else:
+        qs_no_sort_dir.pop("team_id", None)
+    querystring_without_sort_dir = qs_no_sort_dir.urlencode()
+
     return render(
         request,
         "leagues/game_log.html",
@@ -103,5 +165,9 @@ def game_log(request: HttpRequest, league_id: int) -> HttpResponse:
             "rows": rows,
             "team_options": team_options,
             "selected_team_id": selected_team_id,
+            "sort": sort,
+            "dir": direction,
+            "sort_keys": _GAME_LOG_SORT_KEYS_DISPLAY,
+            "querystring_without_sort_dir": querystring_without_sort_dir,
         },
     )

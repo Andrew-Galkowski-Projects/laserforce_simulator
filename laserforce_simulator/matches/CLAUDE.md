@@ -838,6 +838,32 @@ hidden per-page-form input on the two paginated screens (picker form omits
 UI-only, read-only, no model/simulator change. Seam contract:
 [`.claude/worktrees/lg-06b-seam-contract.md`](../../.claude/worktrees/lg-06b-seam-contract.md).
 
+**LG-06c polish.** Team History / Game Log / League Leaders / Watch List /
+Statistical Feats gained the LG-00c sortable-column-header pattern, sorting
+**view-side** with in-memory `sorted(key=…, reverse=(dir=="desc"))` on the
+already-materialized rows — the pure modules `stat_feats.py` /
+`team_history_logic.py` / `league_leaders_logic.py` (incl. `LeaderRow`, whose
+`rank` stays the frozen metric standing) are untouched, sorted on their OUTPUT.
+The single new shared helper `league_views._coerce_sort_key(raw, allowed,
+default)` (returns `raw` iff in the `allowed` frozenset, else `default`; mirrors
+`_coerce_per_page` / `_coerce_team_id`) is the sole source of sort-key
+coercion; `teams.views._coerce_dir` is imported and reused verbatim. Multi-table
+screens namespace their params so one table never resets a sibling — Team
+History (`players_sort`/`players_dir`, `seasons_sort`/`seasons_dir`) and League
+Leaders (per-board `<board>_sort`/`<board>_dir` across the four
+`avg_tags`/`avg_score`/`fewest_tagged`/`tag_ratio` boards) — while single-table
+screens (Game Log, Watch List, Statistical Feats) use one `?sort=&dir=`. On the
+LG-06a-paginated Team History Players table the sort runs BEFORE `Paginator`
+(global top row leads), with the extended `players_querystring_without_page`
+carrying `players_sort`/`players_dir` on pagination links and a sibling
+`players_querystring_without_sort_page` backing the headers so a sort change
+resets to page 1. Sort coexists with the existing `?team_id=` filters on Game
+Log + Statistical Feats; Team History's Overall `dl` stays unsorted. Key tuples
+are `None`-safe with a per-screen secondary tiebreak; new DOM ids
+`<screen>[-<table>]-th-<key>` with ` ↑`/` ↓` glyphs on the active header.
+UI-only, read-only, no model/simulator change. Seam contract:
+[`.claude/worktrees/lg-06c-seam-contract.md`](../../.claude/worktrees/lg-06c-seam-contract.md).
+
 ## Tests
 
 `matches/tests/` package:
