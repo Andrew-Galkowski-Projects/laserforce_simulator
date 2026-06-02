@@ -8,6 +8,17 @@
     <main class="flex-grow-1">
         <h1 class="mb-3">League Leaders</h1>
 
+        <form id="league-leaders-season-filter-form" method="get" class="d-inline-block mb-3">
+            <label for="league-leaders-season-filter-select" class="form-label me-2">Season:</label>
+            <select id="league-leaders-season-filter-select" name="season" class="form-select form-select-sm d-inline-block w-auto" onchange="this.form.submit()">
+                {% for opt in season_options %}
+                    <option value="{{ opt.id }}"{% if opt.id == selected_season %} selected{% endif %}>{{ opt.name }}{% if opt.year %} ({{ opt.year }}){% endif %}</option>
+                {% endfor %}
+                <option value="career"{% if selected_season == "career" %} selected{% endif %}>Career</option>
+            </select>
+            <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">View</button></noscript>
+        </form>
+
         {% if displayed_season is None %}
             <div id="leaders-empty-notice" class="alert alert-info">
                 No Season in this League yet — start a Season to populate the

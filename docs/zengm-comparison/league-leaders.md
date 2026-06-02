@@ -12,5 +12,5 @@ Ratio**, top entries each (`league_leaders_logic.compute_leaderboards`).
 | Discrepancy | Type |
 |---|---|
 | Kills→Tags, KDA→Tag Ratio, CS→(dropped), Assists→(no analogue) — we substituted **Avg Score** and **Fewest Times Tagged** | = Intentional (`stats.md` board mapping) |
-| ZenGM **season selector** | C1 ⚠ (LG-06d) |
+| ~~ZenGM season selector~~ → `?season=` selector (each Season + **Career**) | C1 ✓ Delivered (LG-06d) |
 | ZenGM boards are sortable / clickable into a fuller page; ours are static top-N | C6 ⚠ → **LG-06c** |

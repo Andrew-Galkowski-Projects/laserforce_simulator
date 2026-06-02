@@ -66,3 +66,39 @@ Started + Played One Week (2 rounds) for populated data. Server `127.0.0.1:8060`
   their Players, with 2 played GameRounds. Teardown by `TeamNamePrefix=ChromeTest`.
 
 ---
+
+# Web testing — LG-06d (season selector + rate toggle)
+
+Date: 2026-06-02
+Branch: `lg-06d-season-rate-toggles`
+Scope: smoke-test the `?season=` selector (each Season + Career) on the 6
+season-derived league stats screens, and the `?rate=` toggle (Totals / Per Game /
+Per 10 min) on Player Stats. Read against the pre-existing dev server on
+`127.0.0.1:8000` (no test data created — GETs only). League 22 ("Per-League Pool A")
+is the only season-scoped league with `PlayerRoundState` data (1 Season → Career ==
+Season 1 numerically, which is correct).
+
+## Summary
+
+| Severity | Surface | Finding |
+|---|---|---|
+| ✅ | All 6 screens (player-stats, team-stats, league-leaders, statistical-feats, game-log, power-rankings) | `*-season-filter-form` + `*-season-filter-select` render with options `[<season id>, career]`; no console errors; all network 200 |
+| ✅ | Player Stats rate toggle | `player-stats-rate-select` options `[total, per_game, per_10]`; `?rate=per_10` transforms count columns only and leaves MVP/Acc%/Tag Ratio/Survival untouched |
+| ✅ | Per-10 math (per-player uptime denominator) | Wilson Points 13482 (Totals) → 8988 under Per-10 (× 600/900s uptime); Tags 102 → 68; second row used its own 531s uptime denominator — confirms denominator is per-player survival, not a constant |
+| ✅ | Sort-on-displayed-value | Per-10 table still ordered by displayed Points desc (8988 > 7173) |
+| ✅ | `?season=career` | Power Rankings `?season=career` selects Career and renders 4 scoped rows |
+| ✅ | Empty-Season screens (League 19) | Selector still renders (Season 1 + Career); body shows the existing empty-state notice — no crash |
+| ✅ | Responsive (720px) | Sidebar + `.table-responsive` table intact; navbar collapses to hamburger <992px as designed |
+| ✅ | Console + network (whole pass) | Zero error/warn/issue; all requests 200 (Bootstrap CDN + page) |
+
+Note (not a bug): Power Rankings lives at `/leagues/<id>/power-rankings/` (LEAGUE
+section), **not** under `/stats/` like the other five — by design (its sidebar/
+topbar entry is in the LEAGUE group). Initial `/stats/power-rankings/` probe 404'd
+as expected.
+
+## Test data created during this session
+
+- None. LG-06d is read-only; only GET navigation was performed against the
+  already-running dev server. No teardown required.
+
+---

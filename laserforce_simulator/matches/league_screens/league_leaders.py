@@ -14,7 +14,12 @@ from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, render
 
 from matches.league_leaders_logic import compute_leaderboards
-from matches.league_views import _build_league_sidebar_links, _coerce_sort_key
+from matches.league_views import (
+    _build_league_sidebar_links,
+    _coerce_sort_key,
+    _resolve_season_scope,
+    _season_param,
+)
 from matches.models import League, PlayerRoundState
 from teams.views import _coerce_dir
 
@@ -82,6 +87,12 @@ def league_leaders(request: HttpRequest, league_id: int) -> HttpResponse:
         league, displayed_season, sidebar_active="league_leaders"
     )
 
+    # LG-06d — season selector. Picker options + the forgiving ``?season=``
+    # coercion (defaults to displayed_season — fully backward-compatible).
+    seasons, selected_season, season_options, season_filter = _resolve_season_scope(
+        request, league, displayed_season
+    )
+
     # LG-06c — per-board namespaced sort/dir coercion. Default ``rank`` asc on
     # every board reproduces the pure module's natural metric order.
     board_sort: dict[str, str] = {}
@@ -98,6 +109,8 @@ def league_leaders(request: HttpRequest, league_id: int) -> HttpResponse:
     board_querystring_without_sort: dict[str, str] = {}
     for board in _LEADERS_BOARDS:
         qs = request.GET.copy()
+        # LG-06d — carry the chosen Season scope across a board re-sort.
+        qs["season"] = _season_param(selected_season)
         for other in _LEADERS_BOARDS:
             if other == board:
                 qs.pop(f"{other}_sort", None)
@@ -113,6 +126,8 @@ def league_leaders(request: HttpRequest, league_id: int) -> HttpResponse:
         "sidebar_links": sidebar_links,
         "sidebar_active": "league_leaders",
         "leaders_sort_keys": _LEADERS_SORT_KEYS_DISPLAY,
+        "season_options": season_options,
+        "selected_season": selected_season,
     }
     for board in _LEADERS_BOARDS:
         context[f"{board}_sort"] = board_sort[board]
@@ -121,9 +136,9 @@ def league_leaders(request: HttpRequest, league_id: int) -> HttpResponse:
             board
         ]
 
-    if displayed_season is None:
-        # Empty-state per §2 — no Season; render the notice instead of the
-        # body. The sidebar still renders.
+    if season_filter is None:
+        # Empty-state per §2 — no Season scope; render the notice instead of
+        # the body. The sidebar still renders.
         context["leaderboards"] = {
             "avg_tags": [],
             "avg_score": [],
@@ -132,12 +147,15 @@ def league_leaders(request: HttpRequest, league_id: int) -> HttpResponse:
         }
         return render(request, "leagues/league_leaders.html", context)
 
-    # Materialise one dict per PlayerRoundState row across the Season's
-    # completed Rounds (mirrors the LG-01c season-dashboard player-round
-    # dict shape). order_by("id") makes the "last row wins" defensive
-    # fallback in the pure module deterministic.
+    # Re-point the LG-06d scope onto the PlayerRoundState ``game_round__…`` join.
+    prs_filter = {f"game_round__{k}": v for k, v in season_filter.items()}
+
+    # Materialise one dict per PlayerRoundState row across the scoped Rounds
+    # (mirrors the LG-01c season-dashboard player-round dict shape).
+    # order_by("id") makes the "last row wins" defensive fallback in the pure
+    # module deterministic.
     prs_qs = (
-        PlayerRoundState.objects.filter(game_round__match__season=displayed_season)
+        PlayerRoundState.objects.filter(**prs_filter)
         .select_related(
             "player",
             "game_round",

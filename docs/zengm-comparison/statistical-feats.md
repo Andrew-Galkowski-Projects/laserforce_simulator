@@ -15,6 +15,6 @@ value badge · "View round" link. No filters.
 | Discrepancy | Type |
 |---|---|
 | ZenGM = **a feed of every notable single game** (one row per game, full stat line); ours = **a fixed set of category "best" entries** | ⚠ Gap → **LG-06e** (most material divergence here — different concept) |
-| ZenGM team / season / playoffs / page-size filters | C5/C1/C3/C4 ⚠ |
+| ZenGM team / season / playoffs / page-size filters — season now delivered (`?season=` selector, each Season + **Career**); team filter = C5 (LG-06b); playoffs = C3 (LG-02); page-size = C4 (LG-06a) | C1 ✓ Delivered (LG-06d); C5/C3/C4 ⚠ |
 | ZenGM rows are **sortable**; ours is a static list | C6 ⚠ → **LG-06c** |
 | Our laser-tag feats (nukes, medic shutouts, comebacks) are a deliberate domain remap | = Intentional |

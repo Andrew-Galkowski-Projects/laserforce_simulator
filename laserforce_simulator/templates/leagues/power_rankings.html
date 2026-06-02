@@ -8,6 +8,19 @@
     <main class="flex-grow-1">
         <h1 class="mb-3">{{ league.name }} — Power Rankings</h1>
 
+        <form id="power-rankings-season-filter-form" method="get" class="d-inline-block mb-3">
+            <label for="power-rankings-season-filter-select" class="form-label me-2">Season:</label>
+            <select id="power-rankings-season-filter-select" name="season" class="form-select form-select-sm d-inline-block w-auto" onchange="this.form.submit()">
+                {% for opt in season_options %}
+                    <option value="{{ opt.id }}"{% if opt.id == selected_season %} selected{% endif %}>{{ opt.name }}{% if opt.year %} ({{ opt.year }}){% endif %}</option>
+                {% endfor %}
+                <option value="career"{% if selected_season == "career" %} selected{% endif %}>Career</option>
+            </select>
+            <input type="hidden" name="sort" value="{{ sort }}">
+            <input type="hidden" name="dir" value="{{ dir }}">
+            <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">View</button></noscript>
+        </form>
+
         {% if not displayed_season %}
             <div id="power-rankings-empty-notice" class="alert alert-info">
                 No Season in this League yet — start a Season to populate the
@@ -27,12 +40,12 @@
                                 <th id="power-rankings-th-{{ key }}"{% if key != "team" %} class="text-end"{% endif %}>
                                     {% if key == sort %}
                                         {% if dir == "asc" %}
-                                            <a href="?sort={{ key }}&dir=desc">{{ label }} &uarr;</a>
+                                            <a href="?{{ querystring_without_sort_dir }}{% if querystring_without_sort_dir %}&{% endif %}sort={{ key }}&dir=desc">{{ label }} &uarr;</a>
                                         {% else %}
-                                            <a href="?sort={{ key }}&dir=asc">{{ label }} &darr;</a>
+                                            <a href="?{{ querystring_without_sort_dir }}{% if querystring_without_sort_dir %}&{% endif %}sort={{ key }}&dir=asc">{{ label }} &darr;</a>
                                         {% endif %}
                                     {% else %}
-                                        <a href="?sort={{ key }}&dir=asc">{{ label }}</a>
+                                        <a href="?{{ querystring_without_sort_dir }}{% if querystring_without_sort_dir %}&{% endif %}sort={{ key }}&dir=asc">{{ label }}</a>
                                     {% endif %}
                                 </th>
                             {% endfor %}

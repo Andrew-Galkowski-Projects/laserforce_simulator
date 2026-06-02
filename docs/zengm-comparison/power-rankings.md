@@ -18,4 +18,4 @@ Diff`. Pre-season the **Performance (P)** rank is `-`; once games exist it
 | ZenGM "Talent based on MMR" — we have no MMR; our talent proxy is mean overall | = Intentional (STAT-PROXY-01) |
 | ZenGM shows **W / L / Last-5** inline | ⚠ Gap (no form/L5) |
 | Our **Avg Score Differential** ≈ ZenGM's **Tower Differential** | ✓ analogue |
-| Neither has a season selector here | C1 (neither) |
+| ZenGM has no season selector here; ours now adds a `?season=` selector (each Season + **Career**) for consistency with the other stats screens | C1 ✓ Delivered (LG-06d; extra of ours) |

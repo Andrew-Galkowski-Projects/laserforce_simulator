@@ -38,16 +38,29 @@ from matches.league_views import (
     _build_league_sidebar_links,
     _coerce_page,
     _coerce_per_page,
+    _coerce_rate,
     _coerce_team_id,
+    _resolve_season_scope,
+    _season_param,
     _LG01F_PER_PAGE_OPTIONS,
 )
 from matches.models import League, PlayerRoundState
 from matches.season_player_stats import (
     STAT_KEYS,
     aggregate_player_stats,
+    apply_rate,
     coerce_dir,
     coerce_sort,
     sort_player_stats,
+)
+
+# LG-06d — the three rate-toggle options, ``(value, label)`` pairs (the
+# template renders the selector). Totals / Per Game / Per 10 min — the
+# laser-tag analogue of ZenGM's Per-36 (denominator = total uptime seconds).
+_RATE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("total", "Totals"),
+    ("per_game", "Per Game"),
+    ("per_10", "Per 10 min"),
 )
 
 # Column display spec (single source of truth for both the <th> headers
@@ -77,21 +90,22 @@ _PLAYER_STATS_COLUMNS: tuple[tuple[str, str, bool], ...] = (
 )
 
 
-def _build_round_dicts(displayed_season) -> list[dict]:
-    """Build one plain dict per ``PlayerRoundState`` in the Season's Rounds.
+def _build_round_dicts(season_filter: dict) -> list[dict]:
+    """Build one plain dict per ``PlayerRoundState`` in the scoped Rounds.
 
-    Scope: every ``PlayerRoundState`` on a completed Round
-    (``game_round__match__season == displayed_season``) for players on
-    enrolled Teams. ``mvp`` / ``accuracy`` are read from the per-Round
-    ``get_mvp`` / ``get_accuracy`` properties here so the pure module
-    never touches the MVP formula or the ORM.
+    ``season_filter`` is the LG-06d scope lookup dict applied via the
+    ``game_round__…`` join — ``{"game_round__match__season": <Season>}`` for a
+    single Season or ``{"game_round__match__season__league": <League>}`` for
+    Career. ``mvp`` / ``accuracy`` are read from the per-Round ``get_mvp`` /
+    ``get_accuracy`` properties here so the pure module never touches the MVP
+    formula or the ORM.
 
     Team identity per row resolves from the Round's ``team_red`` /
     ``team_blue`` keyed on the player's ``team_color`` (mirrors the
     LG-01c dashboard-leaders precedent).
     """
     prs_qs = (
-        PlayerRoundState.objects.filter(game_round__match__season=displayed_season)
+        PlayerRoundState.objects.filter(**season_filter)
         .select_related(
             "player",
             "game_round",
@@ -166,6 +180,13 @@ def player_stats(request: HttpRequest, league_id: int) -> HttpResponse:
     sort = coerce_sort(request.GET.get("sort"))
     direction = coerce_dir(request.GET.get("dir"))
     per_page = _coerce_per_page(request.GET.get("per_page"))
+    rate = _coerce_rate(request.GET.get("rate"))
+
+    # LG-06d — season selector. Picker options + the forgiving ``?season=``
+    # coercion (defaults to displayed_season — fully backward-compatible).
+    seasons, selected_season, season_options, season_filter = _resolve_season_scope(
+        request, league, displayed_season
+    )
 
     context = {
         "league": league,
@@ -178,11 +199,15 @@ def player_stats(request: HttpRequest, league_id: int) -> HttpResponse:
         "per_page_options": _LG01F_PER_PAGE_OPTIONS,
         "columns": _PLAYER_STATS_COLUMNS,
         "stat_keys": STAT_KEYS,
+        "season_options": season_options,
+        "selected_season": selected_season,
+        "rate": rate,
+        "rate_options": _RATE_OPTIONS,
     }
 
-    # Empty-state per §2 — no Season; render the notice instead of the body.
-    # The sidebar still renders.
-    if displayed_season is None:
+    # Empty-state per §2 — no Season scope (the League has no Season); render
+    # the notice instead of the body. The sidebar still renders.
+    if season_filter is None:
         context["enrolled_teams"] = []
         context["selected_team_id"] = None
         context["page_obj"] = None
@@ -192,15 +217,27 @@ def player_stats(request: HttpRequest, league_id: int) -> HttpResponse:
         return render(request, "leagues/player_stats.html", context)
 
     # LG-06b — team filter. Enrolled teams (the picker options) + the
-    # forgiving ``?team_id=`` coercion against the enrolment set.
-    enrolled_teams = list(displayed_season.teams.order_by("name"))
+    # forgiving ``?team_id=`` coercion against the enrolment set. The picker
+    # lists the displayed Season's enrolment even under a Career / past-Season
+    # scope (the displayed Season is the League's current roster).
+    enrolled_teams = (
+        list(displayed_season.teams.order_by("name"))
+        if displayed_season is not None
+        else []
+    )
     enrolled_ids = {t.id for t in enrolled_teams}
     selected_team_id = _coerce_team_id(request.GET.get("team_id"), enrolled_ids)
     context["enrolled_teams"] = enrolled_teams
     context["selected_team_id"] = selected_team_id
 
-    round_dicts = _build_round_dicts(displayed_season)
+    # Re-point the PRS scope from the ``match__season…`` shape onto the
+    # ``game_round__match__season…`` join used by PlayerRoundState.
+    prs_filter = {f"game_round__{key}": value for key, value in season_filter.items()}
+    round_dicts = _build_round_dicts(prs_filter)
     rows = aggregate_player_stats(round_dicts)
+    # LG-06d pipeline order (locked): aggregate → apply_rate → team filter →
+    # sort → paginate. Sort runs on the rate-adjusted values.
+    rows = apply_rate(rows, rate)
     if selected_team_id is not None:
         rows = [r for r in rows if r.team_id == selected_team_id]
     rows = sort_player_stats(rows, sort, direction)
@@ -215,6 +252,8 @@ def player_stats(request: HttpRequest, league_id: int) -> HttpResponse:
     qs_no_page["sort"] = sort
     qs_no_page["dir"] = direction
     qs_no_page["per_page"] = str(per_page)
+    qs_no_page["rate"] = rate
+    qs_no_page["season"] = _season_param(selected_season)
     if selected_team_id is not None:
         qs_no_page["team_id"] = str(selected_team_id)
     querystring_without_page = qs_no_page.urlencode()
@@ -224,6 +263,8 @@ def player_stats(request: HttpRequest, league_id: int) -> HttpResponse:
     qs_no_sort_dir_page.pop("sort", None)
     qs_no_sort_dir_page.pop("dir", None)
     qs_no_sort_dir_page["per_page"] = str(per_page)
+    qs_no_sort_dir_page["rate"] = rate
+    qs_no_sort_dir_page["season"] = _season_param(selected_season)
     if selected_team_id is not None:
         qs_no_sort_dir_page["team_id"] = str(selected_team_id)
     querystring_without_sort_dir_page = qs_no_sort_dir_page.urlencode()

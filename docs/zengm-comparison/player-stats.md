@@ -16,6 +16,6 @@ sum/sum). Sortable; Prev/Next pagination.
 |---|---|
 | LoL K/D/A/CS/objectives → our **Tags / Tagged / Tag Ratio / Acc% / Survival / Missiles / Specials / Follow-up / Reaction / Combo** | = Intentional (dictionary) |
 | **No team filter** | C5 ⚠ → **LG-06b** |
-| **No Career-vs-Season**, **no Per-Game/Per-36/Totals**, **no Regular/Playoffs** toggles | C7/C2 ⚠ → **LG-06d** (Playoffs = C3, LG-02) |
+| ~~No Career-vs-Season, no Per-Game/Per-36/Totals~~ → `?season=` selector (each Season + **Career**) and `?rate=` Totals / Per Game / **Per 10 min** (Per-10 replaces Per-36, intentional laser-tag divergence; sort runs on the rate-adjusted value); **no Regular/Playoffs** toggle | C7/C2 ✓ Delivered (**LG-06d**); Playoffs = C3 ⚠ → LG-02 |
 | **No page-size selector** | C4 ⚠ → **LG-06a** |
 | Our **MVP** column is an extra not in ZenGM | extra (ours) |

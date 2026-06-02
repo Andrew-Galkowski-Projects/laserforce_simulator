@@ -19,7 +19,11 @@ from collections import defaultdict
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, render
 
-from matches.league_views import _build_league_sidebar_links
+from matches.league_views import (
+    _build_league_sidebar_links,
+    _resolve_season_scope,
+    _season_param,
+)
 from matches.models import GameEvent, GameRound, League, PlayerRoundState
 from matches.team_stats_logic import (
     SORT_KEYS_DISPLAY,
@@ -71,6 +75,21 @@ def team_stats(request: HttpRequest, league_id: int) -> HttpResponse:
     sort = coerce_sort(request.GET.get("sort"))
     direction = coerce_dir(request.GET.get("dir"))
 
+    # LG-06d — season selector. Picker options + the forgiving ``?season=``
+    # coercion (defaults to displayed_season — fully backward-compatible).
+    seasons, selected_season, season_options, season_filter = _resolve_season_scope(
+        request, league, displayed_season
+    )
+
+    # COERCE-BEFORE-QUERYSTRING: the sort-header href carries every param
+    # except sort/dir, with the coerced ``season`` re-set so the chosen scope
+    # survives a re-sort (LG-06d).
+    qs_no_sort_dir = request.GET.copy()
+    qs_no_sort_dir.pop("sort", None)
+    qs_no_sort_dir.pop("dir", None)
+    qs_no_sort_dir["season"] = _season_param(selected_season)
+    querystring_without_sort_dir = qs_no_sort_dir.urlencode()
+
     context = {
         "league": league,
         "displayed_season": displayed_season,
@@ -79,27 +98,39 @@ def team_stats(request: HttpRequest, league_id: int) -> HttpResponse:
         "sort": sort,
         "dir": direction,
         "sort_keys_display": SORT_KEYS_DISPLAY,
+        "season_options": season_options,
+        "selected_season": selected_season,
+        "querystring_without_sort_dir": querystring_without_sort_dir,
     }
 
-    if displayed_season is None:
-        # Empty-state per §2 — no Season, render the notice instead of the
-        # body. The sidebar still renders.
+    if season_filter is None:
+        # Empty-state per §2 — no Season scope, render the notice instead of
+        # the body. The sidebar still renders.
         context["rows"] = []
         return render(request, "leagues/team_stats.html", context)
 
-    team_ids = _enrolled_team_ids(displayed_season)
+    # Enrolled teams come from the displayed Season (the League's current
+    # roster) even under a Career / past-Season scope.
+    team_ids = (
+        _enrolled_team_ids(displayed_season) if displayed_season is not None else []
+    )
     teams_by_id: dict[int, Team] = Team.objects.in_bulk(team_ids)
     enrolled_teams = [
         (tid, teams_by_id[tid].name if tid in teams_by_id else "") for tid in team_ids
     ]
 
+    # Re-point the LG-06d scope onto the two join shapes: GameRound joins via
+    # ``match__season…`` (the season_filter shape verbatim); PRS / GameEvent
+    # via ``game_round__match__season…``.
+    prs_filter = {f"game_round__{k}": v for k, v in season_filter.items()}
+
     # --- Per-round dicts (one per Team appearance in a Round) -------------
-    rounds_qs = GameRound.objects.filter(match__season=displayed_season)
+    rounds_qs = GameRound.objects.filter(**season_filter)
 
     # Per-(round, color) survivor + tag/tagged sums from PlayerRoundState.
-    prs_qs = PlayerRoundState.objects.filter(
-        game_round__match__season=displayed_season
-    ).values("game_round_id", "team_color", "final_lives", "tags_made", "times_tagged")
+    prs_qs = PlayerRoundState.objects.filter(**prs_filter).values(
+        "game_round_id", "team_color", "final_lives", "tags_made", "times_tagged"
+    )
     survivors: dict[tuple[int, str], int] = defaultdict(int)
     tags_landed: dict[tuple[int, str], int] = defaultdict(int)
     times_tagged: dict[tuple[int, str], int] = defaultdict(int)
@@ -134,9 +165,9 @@ def team_stats(request: HttpRequest, league_id: int) -> HttpResponse:
     # Resolve each event's actor team_id via the actor's PlayerRoundState in
     # that Round (team_color → team_red/team_blue). Build the lookup once.
     actor_team_by_key: dict[tuple[int, int], int] = {}
-    color_prs = PlayerRoundState.objects.filter(
-        game_round__match__season=displayed_season
-    ).values("game_round_id", "player_id", "team_color")
+    color_prs = PlayerRoundState.objects.filter(**prs_filter).values(
+        "game_round_id", "player_id", "team_color"
+    )
     round_sides: dict[int, tuple[int | None, int | None]] = {
         gr.id: (gr.team_red_id, gr.team_blue_id) for gr in rounds_qs
     }
@@ -152,8 +183,8 @@ def team_stats(request: HttpRequest, league_id: int) -> HttpResponse:
             actor_team_by_key[(row["game_round_id"], row["player_id"])] = team_id
 
     events_qs = GameEvent.objects.filter(
-        game_round__match__season=displayed_season,
         event_type__in=["base_capture", "missiled", "special", "nuke_cancelled"],
+        **prs_filter,
     ).values(
         "game_round_id",
         "actor_id",

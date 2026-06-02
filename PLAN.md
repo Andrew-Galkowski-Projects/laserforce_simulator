@@ -9,8 +9,8 @@ Story IDs from `sm5_user_stories_v2.html` are referenced where applicable.
 
 ### LG-06 · ZenGM league-screen parity polish
 
-**Status: PARTIAL — a/b/c DONE, d/e/f/g NOT STARTED.** LG-06 is a 7-step group;
-shipping a, b, and c does NOT complete LG-06. Next incomplete step is **LG-06d**.
+**Status: PARTIAL — a/b/c/d DONE, e/f/g NOT STARTED.** LG-06 is a 7-step group;
+shipping a, b, c, and d does NOT complete LG-06. Next incomplete step is **LG-06e**.
 
 Follow-ups to the shipped LG-01z read-only screens, from the per-page comparison
 against the reference product (LOL GM) in
@@ -119,12 +119,52 @@ session before implementation.
     glyphs. UI-only, read-only — no model, migration, URL, simulator, RNG,
     CONTEXT.md, ADR, or score re-baseline. Cross-cutting **C6**. Seam contract
     at `.claude/worktrees/lg-06c-seam-contract.md`.
-- **LG-06d · [TODO — NOT STARTED] Season selector + rate/career toggles.** Add a `?season=` selector
+- **LG-06d · [DONE] Season selector + rate/career toggles.** Add a `?season=` selector
   (and, where it maps, ZenGM's Per Game / Per 36 / Totals + Career-Totals
   toggles) across the stats screens once leagues routinely span multiple
   Seasons — currently every screen renders only `displayed_season`. Cross-cutting
   **C1 / C2 / C7**. Lowest priority of the set. Doc:
   [`README.md`](docs/zengm-comparison/README.md) (cross-cutting table).
+  - completed: a `?season=` selector landed on **6 screens** — Player Stats,
+    Team Stats, League Leaders, Statistical Feats, Game Log, Power Rankings —
+    listing each of this League's Seasons newest-first plus a **Career** entry
+    (aggregate across all of THIS League's Seasons); no `?season=` param keeps
+    the current `displayed_season` (backward-compatible). **Team History is
+    excluded** — it is natively all-time and its own Seasons tab already is the
+    per-season view, so a season selector would be redundant there. Two new
+    shared coercers in `matches.league_views` mirror the `_coerce_per_page` /
+    `_coerce_team_id` forgiving precedent: `_coerce_season(raw, valid_season_ids,
+    default)` (returns the literal `"career"` sentinel iff `raw == "career"`,
+    else the int id iff it parses **and** is in the valid set, else the caller's
+    `default` = the `displayed_season` id or `None`) and `_coerce_rate(raw,
+    default="total")` (one of the locked literals `"total"` / `"per_game"` /
+    `"per_10"`, else default). Career is a **view-side queryset switch** — each
+    screen swaps its round/match filter from `...match__season=<season>` to
+    `...match__season__league=league` and reuses its existing pure aggregation
+    module **verbatim** (`aggregate_player_stats`, `team_stats_logic`,
+    `league_leaders_logic`, `stat_feats`, the Game Log in-view round-row build,
+    `power_rankings_logic` are all indifferent to one-season vs. all-seasons).
+    Player Stats additionally gained a `?rate=` toggle — Totals / Per Game /
+    **Per 10 min** (the laser-tag analogue of ZenGM's Per-36) — via a new pure fn
+    `matches.season_player_stats.apply_rate(rows, rate)` that transforms the
+    summed count columns **only** (`SUMMED_KEYS`); MVP / Acc% / Tag Ratio /
+    Survival pass through untouched. Per-10 denominator = the player's total
+    uptime, `stats["survival"] * games` (survival is the per-Round mean
+    survival-seconds, so ×games rebuilds the summed uptime), i.e.
+    `count * 600 / (survival_mean * games)` with a `<= 0` → `0.0` guard; per-game
+    = `value / games`. The Player Stats pipeline is `aggregate_player_stats` →
+    `apply_rate` → `team_id` filter → `sort_player_stats` → `Paginator`, so the
+    sort runs on the **rate-adjusted** displayed value. `season` (and `rate` on
+    Player Stats) carries through every querystring helper, hidden per-page /
+    team-filter form input, and sort-header href; changing `season` or `rate`
+    omits `page` to reset to page 1 (LG-06a/b/c precedent). New DOM ids
+    `<screen>-season-filter-{form,select}` (prefixes `player-stats`, `team-stats`,
+    `league-leaders`, `statistical-feats`, `game-log`, `power-rankings`) plus
+    `player-stats-rate-{form,select}`. UI-only, read-only — no model, migration,
+    simulator, RNG, or Score Calibration re-baseline; CONTEXT.md was edited (the
+    **Per-10-minute rate** + **Career view (league-scoped)** terms); no ADR.
+    Cross-cutting **C1 / C2 / C7**. Seam contract at
+    `.claude/worktrees/lg-06d-seam-contract.md`.
 - **LG-06e · [TODO — NOT STARTED] Statistical Feats as a per-game feed.** Reshape the feats screen
   from the current ~9 fixed category-best entries into ZenGM's model: one
   sortable row per notable single-game performance with its box-score line +

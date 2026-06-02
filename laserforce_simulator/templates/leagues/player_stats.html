@@ -8,7 +8,38 @@
     <main class="flex-grow-1">
         <h1 class="mb-3">Player Stats</h1>
 
-        {% if not displayed_season %}
+        <form id="player-stats-season-filter-form" method="get" class="d-inline-block mb-3 me-3">
+            <label for="player-stats-season-filter-select" class="form-label me-2">Season:</label>
+            <select id="player-stats-season-filter-select" name="season" class="form-select form-select-sm d-inline-block w-auto" onchange="this.form.submit()">
+                {% for opt in season_options %}
+                    <option value="{{ opt.id }}"{% if opt.id == selected_season %} selected{% endif %}>{{ opt.name }}{% if opt.year %} ({{ opt.year }}){% endif %}</option>
+                {% endfor %}
+                <option value="career"{% if selected_season == "career" %} selected{% endif %}>Career</option>
+            </select>
+            <input type="hidden" name="sort" value="{{ sort }}">
+            <input type="hidden" name="dir" value="{{ dir }}">
+            <input type="hidden" name="per_page" value="{{ per_page }}">
+            <input type="hidden" name="rate" value="{{ rate }}">
+            {% if selected_team_id %}<input type="hidden" name="team_id" value="{{ selected_team_id }}">{% endif %}
+            <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">View</button></noscript>
+        </form>
+
+        <form id="player-stats-rate-form" method="get" class="d-inline-block mb-3 me-3">
+            <label for="player-stats-rate-select" class="form-label me-2">Rate:</label>
+            <select id="player-stats-rate-select" name="rate" class="form-select form-select-sm d-inline-block w-auto" onchange="this.form.submit()">
+                {% for value, label in rate_options %}
+                    <option value="{{ value }}"{% if value == rate %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <input type="hidden" name="sort" value="{{ sort }}">
+            <input type="hidden" name="dir" value="{{ dir }}">
+            <input type="hidden" name="per_page" value="{{ per_page }}">
+            <input type="hidden" name="season" value="{{ selected_season }}">
+            {% if selected_team_id %}<input type="hidden" name="team_id" value="{{ selected_team_id }}">{% endif %}
+            <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">View</button></noscript>
+        </form>
+
+        {% if not displayed_season and not season_options %}
             <div id="player-stats-empty-notice" class="alert alert-info">
                 No Season in this League yet — start a Season to view player stats.
             </div>
@@ -30,6 +61,8 @@
                 <input type="hidden" name="sort" value="{{ sort }}">
                 <input type="hidden" name="dir" value="{{ dir }}">
                 <input type="hidden" name="per_page" value="{{ per_page }}">
+                <input type="hidden" name="season" value="{{ selected_season }}">
+                <input type="hidden" name="rate" value="{{ rate }}">
                 <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">Filter</button></noscript>
             </form>
 
@@ -42,6 +75,8 @@
                 </select>
                 <input type="hidden" name="sort" value="{{ sort }}">
                 <input type="hidden" name="dir" value="{{ dir }}">
+                <input type="hidden" name="season" value="{{ selected_season }}">
+                <input type="hidden" name="rate" value="{{ rate }}">
                 {% if selected_team_id %}<input type="hidden" name="team_id" value="{{ selected_team_id }}">{% endif %}
                 <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">Update</button></noscript>
             </form>

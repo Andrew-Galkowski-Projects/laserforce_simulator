@@ -20,6 +20,8 @@ from matches.league_views import (
     _build_league_sidebar_links,
     _coerce_sort_key,
     _coerce_team_id,
+    _resolve_season_scope,
+    _season_param,
 )
 from matches.models import GameEvent, GameRound, League, Match, PlayerRoundState
 from teams.views import _coerce_dir
@@ -101,6 +103,12 @@ def statistical_feats(request: HttpRequest, league_id: int) -> HttpResponse:
     sort = _coerce_sort_key(request.GET.get("sort"), _FEATS_SORT_KEYS, "kind")
     direction = _coerce_dir(request.GET.get("dir"))
 
+    # LG-06d — season selector. Picker options + the forgiving ``?season=``
+    # coercion (defaults to displayed_season — fully backward-compatible).
+    seasons, selected_season, season_options, season_filter = _resolve_season_scope(
+        request, league, displayed_season
+    )
+
     base_context = {
         "league": league,
         "displayed_season": displayed_season,
@@ -113,14 +121,28 @@ def statistical_feats(request: HttpRequest, league_id: int) -> HttpResponse:
         "dir": direction,
         "sort_keys": _FEATS_SORT_KEYS_DISPLAY,
         "querystring_without_sort": "",
+        "season_options": season_options,
+        "selected_season": selected_season,
     }
 
-    if displayed_season is None:
+    if season_filter is None:
         return render(request, "leagues/statistical_feats.html", base_context)
 
+    # Re-point the LG-06d scope onto the two join shapes used below: PRS /
+    # GameEvent filter via ``game_round__…``; Match filters directly (strip the
+    # leading ``match__``).
+    prs_filter = {f"game_round__{k}": v for k, v in season_filter.items()}
+    match_filter = {k[len("match__") :]: v for k, v in season_filter.items()}
+
     # LG-06b — team filter. Enrolled teams (the picker options) + the
-    # forgiving ``?team_id=`` coercion against the enrolment set.
-    enrolled_teams = list(displayed_season.teams.order_by("name"))
+    # forgiving ``?team_id=`` coercion against the enrolment set. The picker
+    # lists the displayed Season's enrolment even under a Career / past-Season
+    # scope.
+    enrolled_teams = (
+        list(displayed_season.teams.order_by("name"))
+        if displayed_season is not None
+        else []
+    )
     enrolled_ids = {t.id for t in enrolled_teams}
     selected_team_id = _coerce_team_id(request.GET.get("team_id"), enrolled_ids)
     base_context["enrolled_teams"] = enrolled_teams
@@ -129,9 +151,9 @@ def statistical_feats(request: HttpRequest, league_id: int) -> HttpResponse:
     # --- Per-Round nuke-detonation counts, keyed (round_id, actor_id) -----
     detonations: dict[tuple[int, int], int] = defaultdict(int)
     events_qs = GameEvent.objects.filter(
-        game_round__match__season=displayed_season,
         event_type="special",
         points_awarded=500,
+        **prs_filter,
     ).only("game_round_id", "actor_id", "event_type", "points_awarded", "metadata")
     for event in events_qs:
         if _is_nuke_detonation(event):
@@ -139,7 +161,7 @@ def statistical_feats(request: HttpRequest, league_id: int) -> HttpResponse:
 
     # --- Per-player-round seam dicts --------------------------------------
     prs_qs = (
-        PlayerRoundState.objects.filter(game_round__match__season=displayed_season)
+        PlayerRoundState.objects.filter(**prs_filter)
         .select_related(
             "player",
             "game_round",
@@ -180,15 +202,15 @@ def statistical_feats(request: HttpRequest, league_id: int) -> HttpResponse:
     # --- Per-Match seam dicts (comeback win) ------------------------------
     # Index round-2 GameRound ids per Match for the deep-link anchor.
     round2_by_match: dict[int, int] = {}
-    for gr in GameRound.objects.filter(
-        match__season=displayed_season, round_number=2
-    ).only("id", "match_id"):
+    for gr in GameRound.objects.filter(round_number=2, **season_filter).only(
+        "id", "match_id"
+    ):
         if gr.match_id is not None:
             round2_by_match[gr.match_id] = gr.id
 
     matches: list[dict] = []
     matches_qs = (
-        Match.objects.filter(season=displayed_season, is_completed=True)
+        Match.objects.filter(is_completed=True, **match_filter)
         .select_related("team_red", "team_blue", "winner")
         .order_by("id")
     )
@@ -234,6 +256,7 @@ def statistical_feats(request: HttpRequest, league_id: int) -> HttpResponse:
     qs_no_sort = request.GET.copy()
     qs_no_sort.pop("sort", None)
     qs_no_sort.pop("dir", None)
+    qs_no_sort["season"] = _season_param(selected_season)
     if selected_team_id is not None:
         qs_no_sort["team_id"] = str(selected_team_id)
     else:
