@@ -1,37 +1,56 @@
-"""LG-01z-q — pure feat-detection module for the Statistical Feats screen.
+"""LG-06e — pure feat-detection module for the Statistical Feats screen.
 
 PURE module — frozen import allowlist: ``dataclasses``, ``typing``,
 ``collections`` ONLY. NO Django, NO ORM, NO RNG, NO I/O. The view in
 ``matches/league_screens/statistical_feats.py`` materialises a list of
-per-Round dicts (one entry per ``PlayerRoundState`` row, plus the parent
-Round's relevant event counts and Match context) and hands that list to the
-``scan_feats`` entry point here; this module never touches a Django object.
+per-(player, round) dicts (one entry per ``PlayerRoundState`` row, plus the
+parent Round's relevant event counts and view-computed Opp / Result / Season
+descriptors) and hands that list to the ``scan_feats`` entry point here; this
+module never touches a Django object.
 
-Per-Round row dict shape (every key required; the view builds it):
+LG-06e reshapes the output from the pre-existing ~9 "category-best" entries
+(one row = the single best of each feat kind) into ZenGM's model: **one
+sortable row per (Player, Round) that achieved a feat**, carrying that round's
+box-score line + Opp / Result / Season, with the comeback-win feat as a
+SEPARATE Team-feats section. See ``.claude/worktrees/lg-06e-seam-contract.md``.
+
+Per-(player, round) input seam-dict shape (every key required; the view builds
+it — Opp / Result / Season are computed VIEW-SIDE so this module stays pure):
 
     {
-        # --- identity / context ---
-        "round_id": int,                # GameRound.id (deep-link target)
-        "match_id": int | None,         # Match.id, None for standalone rounds
+        # --- identity / deep-link ---
+        "round_id": int,
+        "match_id": int | None,
         "player_id": int,
         "player_name": str,
-        "team_id": int | None,
-        "team_name": str,               # "" when unresolved
-        "role": str,                    # PlayerRoundState.role
-        # --- PlayerRoundState performance ---
+        "role": str,                 # PlayerRoundState.role
+        "team_id": int | None,       # the row's own team that Round
+        "team_name": str,            # "" when unresolved
+        # --- descriptor columns (view-computed) ---
+        "opp_team_name": str,        # the other team that Round; "" when unresolved
+        "result": str,               # "W"/"L"/"T" per-ROUND (own vs opp points)
+        "season_id": int | None,
+        "season_name": str,
+        # --- box-score line (13 BOX_SCORE_KEYS, per-round values) ---
+        "points_scored": int,
+        "mvp": float,
         "tags_made": int,
         "times_tagged": int,
-        "shots_missed": int,
-        "points_scored": int,
+        "accuracy": float,
+        "final_lives": int,
         "resupplies_given": int,
         "missiles_landed": int,
-        "mvp": float,                   # PlayerRoundState.get_mvp
-        # --- per-Round event-derived counts (this player as actor) ---
-        "nuke_detonations": int,        # `special` nuke-detonation events
+        "specials_used": int,
+        "follow_up_shots": int,
+        "reaction_shots": int,
+        "combo_resupply_count": int,
+        "nuke_detonations": int,
+        # --- predicate-only fields (NOT box-score columns) ---
+        "shots_missed": int,         # for the perfect_heavy predicate
     }
 
-Plus a parallel list of per-Match dicts for the comeback-win feat (one entry
-per completed Match in the Season):
+Plus a parallel list of per-Match dicts for the comeback-win feat (unchanged
+from the pre-LG-06e shape):
 
     {
         "match_id": int,
@@ -44,253 +63,234 @@ per completed Match in the Season):
         "blue_round1_points": int,
     }
 
-Each detected feat is returned as a ``FeatRecord`` (see below): ``kind`` (the
-stable feat key driving the per-feat DOM id ``stat-feat-{kind}``), ``label``
-(human-readable summary), ``name`` (player or team name), ``value`` (the
-feat's headline figure as a string), and ``round_id`` (the deep-link target,
-may be ``None`` when no single Round is the natural anchor).
-
-Feat definitions (as implemented — see also the screen's docstring):
-
-* ``triple_nuke``      — a player detonating >= 3 nukes in a single Round.
-                         Derived from the per-Round ``nuke_detonations`` count
-                         (one `special` nuke-detonation GameEvent per actor).
-                         Attributed to the player/actor (the contract allows
-                         "team/player"; the persisted actor on the event is a
-                         player, so we attribute per-player — the cleanest
-                         derivation). One record per qualifying (player, round).
-* ``medic_shutout``    — role == "medic" with times_tagged == 0 in a Round the
-                         player actually played (the row's mere presence proves
-                         the player was in the Round). Best single such feat by
-                         most tags_made (ties → highest mvp), one record.
-* ``perfect_heavy``    — role == "heavy", shots_missed == 0, tags_made > 0
-                         (a perfect-accuracy Heavy round). Best by tags_made,
-                         one record.
-* ``top_mvp``          — the single highest get_mvp across all player-rounds.
-* ``top_score``        — the single highest points_scored across all rows.
-* ``tag_streak``       — BEST-EFFORT. A true consecutive-tag streak (N tags
-                         with no intervening death/miss) is NOT cleanly
-                         derivable: the persisted data exposes per-Round
-                         aggregate ``tags_made`` only, not the ordered tag/miss
-                         timeline at the granularity needed to reconstruct an
-                         uninterrupted run. We therefore APPROXIMATE the streak
-                         as the most tags_made by a single player in a single
-                         Round (the per-Round tag count). Documented as an
-                         approximation in the label.
-* ``most_resupplies``  — the single highest resupplies_given in a Round.
-* ``most_missiles``    — the single highest missiles_landed in a Round.
-* ``comeback_win``     — a team that WON the Match after LOSING round 1 (its
-                         round-1 score was strictly lower than the opponent's).
-                         Derived from the per-Match dicts. One record (the
-                         most recent / first qualifying Match by input order;
-                         input is id-ascending so "last" == most recent).
-
-``scan_feats`` returns the records in a STABLE display order (the order the
-predicates are listed above) so the template renders deterministically.
+``scan_feats`` returns ``(feat_rows, team_feats)``: a per-(player, round) feed
+in a guaranteed deterministic order (round_id DESC then player_id ASC) plus the
+separate Team-feats list (comeback-win record(s)).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Mapping, Optional
 
-# Minimum nuke detonations by one actor in one Round to count as a triple-nuke.
-TRIPLE_NUKE_THRESHOLD = 3
+# ---------------------------------------------------------------------------
+# Box-score keys (the per-round values carried on each FeatRow.stats).
+# The 12 STAT_KEYS from matches/season_player_stats.py (PER-ROUND, not
+# aggregated) PLUS ``nuke_detonations``. Pinned tuple, exact order.
+# ---------------------------------------------------------------------------
+BOX_SCORE_KEYS: tuple[str, ...] = (
+    "points_scored",
+    "mvp",
+    "tags_made",
+    "times_tagged",
+    "accuracy",
+    "final_lives",
+    "resupplies_given",
+    "missiles_landed",
+    "specials_used",
+    "follow_up_shots",
+    "reaction_shots",
+    "combo_resupply_count",
+    "nuke_detonations",
+)
+
+# ---------------------------------------------------------------------------
+# Feat-kind vocabulary — the stable (kind, label) pairs. Single source of
+# truth for labels. The threshold-cross label is the base; the season-best
+# variant is rendered by the template as "<label> (season best)" when the
+# badge's ``is_season_best`` flag is True.
+# ---------------------------------------------------------------------------
+FEAT_KINDS: tuple[tuple[str, str], ...] = (
+    ("triple_nuke", "Triple Nuke"),
+    ("medic_shutout", "Medic Shutout"),
+    ("perfect_heavy", "Perfect Heavy"),
+    ("high_tags", "Tags"),
+    ("high_points", "Points"),
+    ("high_mvp", "MVP"),
+    ("high_resupplies", "Resupplies"),
+    ("high_missiles", "Missiles"),
+)
+
+# kind -> human label lookup (derived from FEAT_KINDS).
+_LABEL_BY_KIND: dict[str, str] = {kind: label for kind, label in FEAT_KINDS}
+
+# ---------------------------------------------------------------------------
+# Season-best stats and their feat-kind mapping (pinned).
+# ---------------------------------------------------------------------------
+SEASON_BEST_STATS: tuple[str, ...] = (
+    "mvp",
+    "points_scored",
+    "tags_made",
+    "resupplies_given",
+    "missiles_landed",
+)
+
+# season-best stat -> feat kind.
+_SEASON_BEST_KIND: dict[str, str] = {
+    "mvp": "high_mvp",
+    "points_scored": "high_points",
+    "tags_made": "high_tags",
+    "resupplies_given": "high_resupplies",
+    "missiles_landed": "high_missiles",
+}
+
+# ---------------------------------------------------------------------------
+# Threshold constants (conservative starting values; tunable; calibration
+# deferred). Named exactly per the seam contract.
+# ---------------------------------------------------------------------------
+TRIPLE_NUKE_THRESHOLD = 3  # nuke_detonations >= 3 (retained from prior module)
+HIGH_TAGS_THRESHOLD = 20  # tags_made >= 20
+HIGH_POINTS_THRESHOLD = 12000  # points_scored >= 12000
+HIGH_MVP_THRESHOLD = 15  # mvp >= 15
+HIGH_RESUPPLIES_THRESHOLD = 20  # resupplies_given >= 20
+HIGH_MISSILES_THRESHOLD = 8  # missiles_landed >= 8
 
 
 @dataclass(frozen=True)
-class FeatRecord:
-    """One detected statistical feat.
+class FeatBadge:
+    """One reason a (player, round) row qualified.
 
-    ``kind`` is the stable feat key (drives the ``stat-feat-{kind}`` DOM id).
-    ``round_id`` is the deep-link target (``None`` when no single Round is the
-    natural anchor for the feat).
+    ``kind`` is a stable key from :data:`FEAT_KINDS` (drives the per-badge DOM
+    id ``stat-feat-badge-{kind}``); ``label`` is the human-readable badge text;
+    ``is_season_best`` is True for a season-best badge, False for a
+    threshold-crossing badge.
     """
 
     kind: str
     label: str
-    name: str
-    value: str
+    is_season_best: bool
+
+
+@dataclass(frozen=True)
+class FeatRow:
+    """One (Player, Round) performance that achieved at least one feat.
+
+    Field order is pinned. ``stats`` carries every :data:`BOX_SCORE_KEYS` key.
+    ``feats`` is non-empty for every emitted row (a row with zero badges is
+    never emitted).
+    """
+
+    # --- identity / deep-link ---
+    player_id: int
+    player_name: str
+    role: str
+    team_id: Optional[int]
+    team_name: str
+    round_id: int
+    # --- descriptor columns ---
+    opp_team_name: str
+    result: str
+    season_id: Optional[int]
+    season_name: str
+    # --- box-score line (per-round values) ---
+    stats: Mapping[str, float]
+    # --- badges (stacked) ---
+    feats: tuple[FeatBadge, ...]
+
+
+@dataclass(frozen=True)
+class TeamFeatRecord:
+    """One Team-feats record (today: comeback-win only).
+
+    Lives in the separate Team-feats section below the per-player feed — it is
+    NOT a per-player row and carries no box-score line.
+    """
+
+    kind: str
+    label: str
+    team_name: str
     round_id: Optional[int]
 
 
-# ---------------------------------------------------------------------------
-# Per-feat predicate / scan functions (one per feat).
-# Each consumes the player-round dict list (and, for comeback, the match list)
-# and returns a single ``FeatRecord`` or ``None`` (no qualifying data).
-# ``triple_nuke`` returns a list (zero-or-more qualifying player-rounds).
-# ---------------------------------------------------------------------------
+def _threshold_badges(row: dict) -> dict[str, FeatBadge]:
+    """Collect the threshold-crossing badges a (player, round) qualifies for.
 
-
-def find_triple_nukes(player_rounds: list[dict]) -> list[FeatRecord]:
-    """All player-rounds with >= TRIPLE_NUKE_THRESHOLD nuke detonations.
-
-    One record per qualifying (player, round). Sorted by detonation count
-    desc, then mvp desc, then player_name asc for a stable order.
+    Returns a ``{kind: FeatBadge}`` map (one badge per kind, all
+    ``is_season_best=False``). A row may cross several thresholds → several
+    distinct kinds.
     """
-    qualifying = [
-        row
-        for row in player_rounds
-        if int(row.get("nuke_detonations", 0)) >= TRIPLE_NUKE_THRESHOLD
-    ]
-    qualifying.sort(
-        key=lambda r: (
-            -int(r["nuke_detonations"]),
-            -float(r["mvp"]),
-            r["player_name"],
+    badges: dict[str, FeatBadge] = {}
+
+    def add(kind: str) -> None:
+        badges[kind] = FeatBadge(
+            kind=kind, label=_LABEL_BY_KIND[kind], is_season_best=False
         )
-    )
-    out: list[FeatRecord] = []
-    for row in qualifying:
-        count = int(row["nuke_detonations"])
-        out.append(
-            FeatRecord(
-                kind="triple_nuke",
-                label=f"{count} nukes detonated in a single round",
-                name=row["player_name"],
-                value=str(count),
-                round_id=row["round_id"],
+
+    if int(row.get("nuke_detonations", 0)) >= TRIPLE_NUKE_THRESHOLD:
+        add("triple_nuke")
+    if row.get("role") == "medic" and int(row.get("times_tagged", 0)) == 0:
+        add("medic_shutout")
+    if (
+        row.get("role") == "heavy"
+        and int(row.get("shots_missed", 0)) == 0
+        and int(row.get("tags_made", 0)) > 0
+    ):
+        add("perfect_heavy")
+    if int(row.get("tags_made", 0)) >= HIGH_TAGS_THRESHOLD:
+        add("high_tags")
+    if int(row.get("points_scored", 0)) >= HIGH_POINTS_THRESHOLD:
+        add("high_points")
+    if float(row.get("mvp", 0)) >= HIGH_MVP_THRESHOLD:
+        add("high_mvp")
+    if int(row.get("resupplies_given", 0)) >= HIGH_RESUPPLIES_THRESHOLD:
+        add("high_resupplies")
+    if int(row.get("missiles_landed", 0)) >= HIGH_MISSILES_THRESHOLD:
+        add("high_missiles")
+
+    return badges
+
+
+def _season_best_keys(player_rounds: list[dict]) -> dict[tuple[int, int], set[str]]:
+    """For each of the 5 SEASON_BEST_STATS, find the single best (player, round).
+
+    Returns a ``{(round_id, player_id): {kind, …}}`` map of season-best feat
+    kinds. "Best" = the single highest value of that stat in the whole pool.
+    Tiebreak: highest value → highest round_id → lowest player_id. A stat whose
+    pool maximum is ``0`` produces NO season-best badge (locked skip — an
+    all-zero stat has no meaningful leader).
+    """
+    out: dict[tuple[int, int], set[str]] = {}
+    if not player_rounds:
+        return out
+
+    for stat in SEASON_BEST_STATS:
+        best_row: Optional[dict] = None
+        best_value: Optional[float] = None
+        for row in player_rounds:
+            value = float(row.get(stat, 0))
+            if best_row is None:
+                best_row, best_value = row, value
+                continue
+            # Tiebreak: value desc, then round_id desc, then player_id asc.
+            candidate = (
+                value,
+                int(row.get("round_id", 0)),
+                -int(row.get("player_id", 0)),
             )
-        )
+            incumbent = (
+                best_value,
+                int(best_row.get("round_id", 0)),
+                -int(best_row.get("player_id", 0)),
+            )
+            if candidate > incumbent:
+                best_row, best_value = row, value
+
+        # Skip the season-best badge when the pool maximum is 0 (locked).
+        if best_row is None or best_value is None or best_value <= 0:
+            continue
+        key = (int(best_row.get("round_id", 0)), int(best_row.get("player_id", 0)))
+        out.setdefault(key, set()).add(_SEASON_BEST_KIND[stat])
+
     return out
 
 
-def find_medic_shutout(player_rounds: list[dict]) -> Optional[FeatRecord]:
-    """Best Medic round with zero times_tagged (a 0-tagged shutout).
-
-    Only rows the player actually played count — the row's presence in the
-    list is proof of participation. Best by tags_made desc, mvp desc.
-    """
-    candidates = [
-        row
-        for row in player_rounds
-        if row["role"] == "medic" and int(row["times_tagged"]) == 0
-    ]
-    if not candidates:
-        return None
-    best = max(
-        candidates,
-        key=lambda r: (int(r["tags_made"]), float(r["mvp"])),
-    )
-    return FeatRecord(
-        kind="medic_shutout",
-        label="Medic survived a round untagged (0 times tagged)",
-        name=best["player_name"],
-        value=f"{int(best['tags_made'])} tags, 0 tagged",
-        round_id=best["round_id"],
-    )
-
-
-def find_perfect_heavy(player_rounds: list[dict]) -> Optional[FeatRecord]:
-    """Best perfect-accuracy Heavy round (shots_missed == 0, tags_made > 0)."""
-    candidates = [
-        row
-        for row in player_rounds
-        if row["role"] == "heavy"
-        and int(row["shots_missed"]) == 0
-        and int(row["tags_made"]) > 0
-    ]
-    if not candidates:
-        return None
-    best = max(candidates, key=lambda r: int(r["tags_made"]))
-    return FeatRecord(
-        kind="perfect_heavy",
-        label="Heavy with perfect accuracy (no missed shots)",
-        name=best["player_name"],
-        value=f"{int(best['tags_made'])} tags, 0 misses",
-        round_id=best["round_id"],
-    )
-
-
-def find_top_mvp(player_rounds: list[dict]) -> Optional[FeatRecord]:
-    """Single highest get_mvp across all player-rounds."""
-    if not player_rounds:
-        return None
-    best = max(player_rounds, key=lambda r: float(r["mvp"]))
-    return FeatRecord(
-        kind="top_mvp",
-        label="Highest single-game MVP score",
-        name=best["player_name"],
-        value=f"{float(best['mvp']):.1f}",
-        round_id=best["round_id"],
-    )
-
-
-def find_top_score(player_rounds: list[dict]) -> Optional[FeatRecord]:
-    """Single highest points_scored across all player-rounds."""
-    if not player_rounds:
-        return None
-    best = max(player_rounds, key=lambda r: int(r["points_scored"]))
-    return FeatRecord(
-        kind="top_score",
-        label="Highest single-game score",
-        name=best["player_name"],
-        value=str(int(best["points_scored"])),
-        round_id=best["round_id"],
-    )
-
-
-def find_tag_streak(player_rounds: list[dict]) -> Optional[FeatRecord]:
-    """Longest tag streak — APPROXIMATED as most tags in a single Round.
-
-    A true consecutive-tag streak is not derivable from the persisted
-    per-Round aggregate ``tags_made`` (the ordered tag/miss timeline at the
-    needed granularity is not exposed across the seam), so this uses the
-    per-Round tag count as a best-effort proxy. Documented in the label.
-    """
-    if not player_rounds:
-        return None
-    best = max(player_rounds, key=lambda r: int(r["tags_made"]))
-    if int(best["tags_made"]) <= 0:
-        return None
-    return FeatRecord(
-        kind="tag_streak",
-        label="Longest tag streak (most tags in a single round)",
-        name=best["player_name"],
-        value=str(int(best["tags_made"])),
-        round_id=best["round_id"],
-    )
-
-
-def find_most_resupplies(player_rounds: list[dict]) -> Optional[FeatRecord]:
-    """Single highest resupplies_given in a Round."""
-    if not player_rounds:
-        return None
-    best = max(player_rounds, key=lambda r: int(r["resupplies_given"]))
-    if int(best["resupplies_given"]) <= 0:
-        return None
-    return FeatRecord(
-        kind="most_resupplies",
-        label="Most resupplies given in a single round",
-        name=best["player_name"],
-        value=str(int(best["resupplies_given"])),
-        round_id=best["round_id"],
-    )
-
-
-def find_most_missiles(player_rounds: list[dict]) -> Optional[FeatRecord]:
-    """Single highest missiles_landed in a Round."""
-    if not player_rounds:
-        return None
-    best = max(player_rounds, key=lambda r: int(r["missiles_landed"]))
-    if int(best["missiles_landed"]) <= 0:
-        return None
-    return FeatRecord(
-        kind="most_missiles",
-        label="Most missiles landed in a single round",
-        name=best["player_name"],
-        value=str(int(best["missiles_landed"])),
-        round_id=best["round_id"],
-    )
-
-
-def find_comeback_win(matches: list[dict]) -> Optional[FeatRecord]:
+def find_comeback_win(matches: list[dict]) -> list[TeamFeatRecord]:
     """A team that won the Match after losing round 1.
 
-    DEFINITION: the Match has a winner, and that winner's round-1 score was
-    strictly LOWER than the opponent's round-1 score (it was behind after
-    round 1 yet won the Match overall). Input is id-ascending, so the LAST
-    qualifying Match is the most recent — we return that one.
+    DEFINITION (unchanged): the Match has a winner whose round-1 score was
+    strictly LOWER than the opponent's round-1 score. Input is id-ascending, so
+    the LAST qualifying Match is the most recent — that one is returned. Returns
+    a list (0 or 1 record today) so the Team-feats section render is uniform.
     """
     chosen: Optional[dict] = None
     for match in matches:
@@ -310,43 +310,79 @@ def find_comeback_win(matches: list[dict]) -> Optional[FeatRecord]:
             continue
         if lost_round1:
             chosen = match  # keep iterating; last qualifying == most recent
+
     if chosen is None:
-        return None
-    return FeatRecord(
-        kind="comeback_win",
-        label="Comeback win (won the match after losing round 1)",
-        name=chosen.get("winner_team_name") or "",
-        value="Comeback",
-        round_id=chosen.get("round_id"),
-    )
+        return []
+    return [
+        TeamFeatRecord(
+            kind="comeback_win",
+            label="Comeback win (won the match after losing round 1)",
+            team_name=chosen.get("winner_team_name") or "",
+            round_id=chosen.get("round_id"),
+        )
+    ]
 
 
-def scan_feats(player_rounds: list[dict], matches: list[dict]) -> list[FeatRecord]:
-    """Run every feat predicate and return the records in display order.
+def scan_feats(
+    player_rounds: list[dict],
+    matches: list[dict],
+) -> tuple[list[FeatRow], list[TeamFeatRecord]]:
+    """Build the per-(player, round) feat feed + the team-feats list.
 
-    The single-record feats appear at most once; ``triple_nuke`` may appear
-    zero-or-more times. Ordering is stable (the order the feats are listed
-    in the module docstring) so the template renders deterministically.
+    Returns ``(feat_rows, team_feats)``:
+
+    * ``feat_rows`` — one :class:`FeatRow` per qualifying (player, round) in the
+      module's guaranteed deterministic order (round_id DESC then player_id
+      ASC). A row qualifies (hybrid) iff it crosses ANY threshold feat OR is the
+      season-best leader for any of the 5 :data:`SEASON_BEST_STATS`. Badges
+      stack per row; a row that both crosses a threshold AND leads the season
+      for the SAME kind collapses to ONE badge with ``is_season_best=True``.
+    * ``team_feats`` — the comeback-win record(s) for the separate Team-feats
+      section (today: zero or one record via :func:`find_comeback_win`).
     """
-    records: list[FeatRecord] = []
+    season_best = _season_best_keys(player_rounds)
 
-    records.extend(find_triple_nukes(player_rounds))
+    rows: list[FeatRow] = []
+    for row in player_rounds:
+        key = (int(row.get("round_id", 0)), int(row.get("player_id", 0)))
+        badges_by_kind = _threshold_badges(row)
 
-    for finder in (
-        find_medic_shutout,
-        find_perfect_heavy,
-        find_top_mvp,
-        find_top_score,
-        find_tag_streak,
-        find_most_resupplies,
-        find_most_missiles,
-    ):
-        rec = finder(player_rounds)
-        if rec is not None:
-            records.append(rec)
+        # Overlay season-best badges; is_season_best=True wins per kind (locked
+        # collapse — a row both ≥ threshold and the season leader for the same
+        # kind carries ONE badge tagged season-best).
+        for kind in season_best.get(key, ()):  # type: ignore[arg-type]
+            badges_by_kind[kind] = FeatBadge(
+                kind=kind, label=_LABEL_BY_KIND[kind], is_season_best=True
+            )
 
-    comeback = find_comeback_win(matches)
-    if comeback is not None:
-        records.append(comeback)
+        if not badges_by_kind:
+            continue
 
-    return records
+        # Order badges by the canonical FEAT_KINDS order for stable rendering.
+        feats = tuple(
+            badges_by_kind[kind] for kind, _ in FEAT_KINDS if kind in badges_by_kind
+        )
+
+        stats = {sk: row.get(sk, 0) for sk in BOX_SCORE_KEYS}
+        rows.append(
+            FeatRow(
+                player_id=int(row.get("player_id", 0)),
+                player_name=row.get("player_name", ""),
+                role=row.get("role", ""),
+                team_id=row.get("team_id"),
+                team_name=row.get("team_name", ""),
+                round_id=int(row.get("round_id", 0)),
+                opp_team_name=row.get("opp_team_name", ""),
+                result=row.get("result", ""),
+                season_id=row.get("season_id"),
+                season_name=row.get("season_name", ""),
+                stats=stats,
+                feats=feats,
+            )
+        )
+
+    # Deterministic default order: round_id DESC, then player_id ASC.
+    rows.sort(key=lambda r: (-r.round_id, r.player_id))
+
+    team_feats = find_comeback_win(matches)
+    return rows, team_feats

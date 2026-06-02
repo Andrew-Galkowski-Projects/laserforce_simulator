@@ -1,3 +1,58 @@
+# Web testing — LG-06e (Statistical Feats per-game feed)
+
+Date: 2026-06-02
+Branch: `lg-06e-statistical-feats-feed`
+Scope: smoke-test the reshaped Statistical Feats screen (per-(Player,Round) feed)
+plus the surrounding league screens, with real league data.
+
+## Severity legend
+- 🔴 critical — broken feature, data loss, crash
+- 🟠 warning — visible bug, no data loss
+- 🟡 minor — cosmetic / pre-existing nit
+- 🔵 environment — host/cache/tooling, not the code under test
+- ✅ verified working
+
+## Summary
+
+| Severity | Surface | Finding |
+|---|---|---|
+| ✅ | Statistical Feats feed (League 22, Season 1, 23 feat rows) | Table renders: 21 sortable headers, feat badges, Opp/Result/Season, deep-links — no console errors, all 200 |
+| ✅ | Feat badges | `high_tags`/`high_resupplies`/`high_missiles` etc. render; season-best badge styled distinctly ("Missiles (season best)", `bg-warning` + `season-best` class) |
+| ✅ | Default sort | Most-recent-first (round_id desc) — round 132 rows lead; bug fixed pre-smoke (see RESOLVED-1) |
+| ✅ | Sort (all columns) | `?sort=points_scored&dir=desc` → [13482,9722,9662…]; `dir=asc` → [1841,2002…]; invalid `?sort=BOGUS` falls back to round-desc |
+| ✅ | Pagination + page-size | `per_page=10` → "Page 1 of 3"; `per_page=25` → 23 rows, nav omitted (single page) |
+| ✅ | Season + Career filter | `?season=career` aggregates this League's Seasons (1 season → 23 rows) |
+| ✅ | Team filter | `?team_id=98` (Aurora Aces #9) → 5 rows, all that team |
+| ✅ | Empty state | League 19 (no games played) → `stat-feats-empty-notice` "No statistical feats recorded yet in this Season." |
+| ✅ | Sidebar / main pages | `/`, `/teams/`, `/matches/`, league dashboard/history/player-stats/league-leaders/game-log all 200, no console errors |
+| 🟡 | Feat badge as CSS class not DOM id | Contract pinned id `stat-feat-badge-<kind>`; Code used class `stat-feat-badge-<kind>` + `season-best`. Sound deviation — ids must be unique, many rows share a kind. Tests pass against the class substrings. No fix needed — see DEV-1 |
+| 🟡 | Wide table overflows page on mobile (720px) | Feats 21-col table → docScrollW 1794 > 720. Pre-existing cross-cutting pattern: Player Stats (LG-06d) also overflows (1365). Not an LG-06e regression — out of scope. See PE-1 |
+| 🔵 | Stale runserver served old template | A pre-edit `runserver` (pid 19004) held :8000; first smoke pass showed the OLD template. Killed + restarted clean. Tooling artifact, not code. See ENV-1 |
+
+Run context: existing seeded data — League 22 "Per-League Pool A" (Season 1, 13 teams,
+2 rounds played → 23 feat rows). Server `127.0.0.1:8000`.
+
+## Notes
+
+- **RESOLVED-1** (was 🟠, fixed during triage): the view defaulted to `round` **asc**
+  because `_coerce_dir(request.GET.get("dir"))` uses `teams.views._coerce_dir`'s
+  built-in `default="asc"`, contradicting the locked default `("round","desc")`.
+  Two view tests caught it (`test_default_order_is_round_desc`,
+  `test_invalid_sort_falls_back_to_round_default`). Fixed at
+  `matches/league_screens/statistical_feats.py` by passing the `"desc"` default:
+  `direction = _coerce_dir(request.GET.get("dir"), "desc")`. Full suite green after.
+- **DEV-1**: feat badges render as `<span class="badge ... stat-feat-badge stat-feat-badge-<kind> [season-best]">`
+  (class, not id). Defensible — a page has many badges of the same kind; ids must be
+  unique. Tests assert the class substrings. Accepted, no change.
+- **PE-1**: wide league stats tables (`d-flex` sidebar + `.table-responsive`) push the
+  document past the viewport on narrow screens; the wrapper doesn't bound the flex
+  `main`. Shared by Player Stats / Game Log / League Leaders — a cross-cutting
+  responsive nit, not introduced by LG-06e. Candidate for a future responsive pass.
+- **ENV-1**: not a code bug. A leftover dev server from before this branch's edits was
+  serving stale code; resolved by killing pid 19004/8136 and restarting.
+
+---
+
 # Web testing — LG-01z (sidebar placeholder screens)
 
 Date: 2026-05-29

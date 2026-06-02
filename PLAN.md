@@ -9,8 +9,8 @@ Story IDs from `sm5_user_stories_v2.html` are referenced where applicable.
 
 ### LG-06 · ZenGM league-screen parity polish
 
-**Status: PARTIAL — a/b/c/d DONE, e/f/g NOT STARTED.** LG-06 is a 7-step group;
-shipping a, b, c, and d does NOT complete LG-06. Next incomplete step is **LG-06e**.
+**Status: PARTIAL — a/b/c/d/e DONE, f/g NOT STARTED.** LG-06 is a 7-step group;
+shipping a, b, c, d, and e does NOT complete LG-06. Next incomplete step is **LG-06f**.
 
 Follow-ups to the shipped LG-01z read-only screens, from the per-page comparison
 against the reference product (LOL GM) in
@@ -165,12 +165,66 @@ session before implementation.
     **Per-10-minute rate** + **Career view (league-scoped)** terms); no ADR.
     Cross-cutting **C1 / C2 / C7**. Seam contract at
     `.claude/worktrees/lg-06d-seam-contract.md`.
-- **LG-06e · [TODO — NOT STARTED] Statistical Feats as a per-game feed.** Reshape the feats screen
+- **LG-06e · [DONE] Statistical Feats as a per-game feed.** Reshape the feats screen
   from the current ~9 fixed category-best entries into ZenGM's model: one
   sortable row per notable single-game performance with its box-score line +
   Opp / Result / Season, deep-linking to the Round. Larger than the other LG-06
   steps (changes `stat_feats.py` output shape + template). Doc:
   [`statistical-feats.md`](docs/zengm-comparison/statistical-feats.md).
+  - completed: the pure module `matches/stat_feats.py` had its OUTPUT SHAPE
+    rewritten from the 9-finder/single-`FeatRecord` design into a per-game feed —
+    `scan_feats(player_rounds, matches) -> tuple[list[FeatRow], list[TeamFeatRecord]]`
+    now emits **one `FeatRow` per (player, round)** that qualifies, each carrying
+    that round's full box-score line (the new pinned `BOX_SCORE_KEYS` tuple of 13:
+    the 12 `season_player_stats.STAT_KEYS` per-round PLUS `nuke_detonations`) as a
+    `stats` mapping plus view-computed Opp / per-Round Result / Season descriptors,
+    and a stacked non-empty `feats` tuple of `FeatBadge(kind, label, is_season_best)`
+    badges. **Hybrid qualification** — a row is included iff it crosses ANY
+    per-game threshold OR is a season-best leader: threshold constants ship at
+    conservative starting values (`TRIPLE_NUKE_THRESHOLD=3`, `HIGH_TAGS_THRESHOLD=20`,
+    `HIGH_POINTS_THRESHOLD=12000`, `HIGH_MVP_THRESHOLD=15`,
+    `HIGH_RESUPPLIES_THRESHOLD=20`, `HIGH_MISSILES_THRESHOLD=8`, plus the boolean
+    `medic_shutout` = medic & `times_tagged==0` and `perfect_heavy` = heavy &
+    `shots_missed==0` & `tags_made>0`), calibration explicitly deferred; the 5
+    `SEASON_BEST_STATS` (`mvp`/`points_scored`/`tags_made`/`resupplies_given`/
+    `missiles_landed`) each yield exactly one guaranteed leader row (tiebreak:
+    highest value -> highest `round_id` -> lowest `player_id`, all-zero-max stat
+    skipped) tagged `is_season_best=True`. A row both crossing a threshold AND
+    leading its kind collapses to ONE badge with `is_season_best=True` winning.
+    Feat kinds are pinned in `FEAT_KINDS` (8 `(kind, label)` pairs). `comeback_win`
+    moved OUT of the per-player feed into a separate **Team feats** section —
+    `find_comeback_win(matches) -> list[TeamFeatRecord]` (return type changed from
+    `Optional[FeatRecord]`; detection logic unchanged). `scan_feats` guarantees a
+    deterministic default order (`round_id` DESC, then `player_id` ASC); the module
+    stays Django-free (`TestNoDjangoImportsLeaked` retained). The view
+    `matches.league_screens.statistical_feats.statistical_feats` materialises the
+    extended per-(player,round) seam dicts (Opp / Result / Season computed
+    **view-side** from `GameRound.red_points`/`blue_points` per-ROUND — NOT the
+    Match outcome — and `Match.season`; `mvp = float(prs.get_mvp)` property,
+    `accuracy = float(prs.get_accuracy())` **method**, `nuke_detonations` from the
+    existing `event_type="special"`/`points_awarded=500` detonation pass), then
+    adds **LG-06a pagination** (`_coerce_per_page`/`_coerce_page`,
+    `_LG01F_PER_PAGE_OPTIONS`, `Paginator` AFTER sort) and **expanded LG-06c sort**
+    over the full box-score column set (`_FEATS_SORT_KEYS` frozenset of every
+    descriptor + 13 box-score keys, `_FEATS_SORT_KEYS_DISPLAY`, the
+    `_feat_row_sort_value` extractor, `teams.views._coerce_dir` reused) with
+    **default sort = most recent first** (`("round", "desc")`) and a deterministic
+    `(round_id desc, player_id asc)` secondary tiebreak; the Team-feats list is not
+    paginated. Coexists with the LG-06b `?team_id=` filter (applied to the seam
+    inputs) + the LG-06d `?season=` selector (incl. Career); changing season/team/
+    sort/per-page omits `page` to reset to page 1. The template
+    `templates/leagues/statistical_feats.html` was rewritten from a `<ul>` of
+    categories into the sortable `statistical-feats-table` (DOM ids
+    `statistical-feats-th-<key>` per column with ` ↑`/` ↓` glyphs,
+    `stat-feat-badge-<kind>` badges with a `(season best)`/`season-best` suffix,
+    `statistical-feats-per-page-{form,select}` / `-pagination`) plus the separate
+    `statistical-feats-team-feats` section (`stat-team-feat-<kind>`), preserving the
+    LG-06b/d filter ids and the `stat-feats-empty-notice`. Read-only — **no model,
+    migration, URL, simulator, RNG, or Score Calibration re-baseline; no CONTEXT.md
+    edit** (the **Statistical feat** term was already finalized) and no ADR. Tests
+    reshaped in `matches/tests/test_league_statistical_feats.py` (pure-unit +
+    view). Seam contract at
+    [`.claude/worktrees/lg-06e-seam-contract.md`](.claude/worktrees/lg-06e-seam-contract.md).
 - **LG-06f · [TODO — NOT STARTED] Watch List as a full stats view.** Replace the 3-column bookmark
   table with the Player-Stats column set filtered to watched players (ZenGM
   parity). Per-user (vs. current browser-session) persistence is **deferred to
