@@ -10,7 +10,7 @@ which buckets them by ``team_id`` and produces a sortable list of
 Frozen import allowlist: ``dataclasses``, ``typing``, ``collections`` only —
 **NO** Django / ORM / RNG / IO. Defended by the
 ``TestNoDjangoImportsLeaked`` subprocess check in
-``matches/tests/test_lg01z_team_stats.py``.
+``matches/tests/test_league_team_stats.py``.
 
 Event-type → column mapping (verified against ``matches/CLAUDE.md``
 "GameEvent" section and the seam contract §4-p):
