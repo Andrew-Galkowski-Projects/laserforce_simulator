@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load team_extras %}
 
 {% block title %}{{ league.name }} — Statistical Feats{% endblock %}
 
@@ -7,7 +8,7 @@
     {% include "_partials/league_sidebar.html" %}
     <main class="flex-grow-1">
         <h1 class="mb-3">{{ league.name }} — Statistical Feats</h1>
-        <p class="text-muted">Notable single-game feats from this Season.</p>
+        <p class="text-muted">One row per (player, round) that achieved a feat — most recent first.</p>
 
         <form id="statistical-feats-season-filter-form" method="get" class="d-inline-block mb-3 me-3">
             <label for="statistical-feats-season-filter-select" class="form-label me-2">Season:</label>
@@ -19,6 +20,7 @@
             </select>
             <input type="hidden" name="sort" value="{{ sort }}">
             <input type="hidden" name="dir" value="{{ dir }}">
+            <input type="hidden" name="per_page" value="{{ per_page }}">
             {% if selected_team_id %}<input type="hidden" name="team_id" value="{{ selected_team_id }}">{% endif %}
             <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">View</button></noscript>
         </form>
@@ -28,7 +30,7 @@
                 No Season in this League yet — start a Season to record statistical feats.
             </div>
         {% else %}
-            <form id="statistical-feats-team-filter-form" method="get" class="d-inline-block mb-3">
+            <form id="statistical-feats-team-filter-form" method="get" class="d-inline-block mb-3 me-3">
                 <label for="statistical-feats-team-filter-select" class="form-label me-2">Team:</label>
                 <select id="statistical-feats-team-filter-select" name="team_id" class="form-select form-select-sm d-inline-block w-auto" onchange="this.form.submit()">
                     <option value=""{% if not selected_team_id %} selected{% endif %}>All Teams</option>
@@ -36,57 +38,156 @@
                         <option value="{{ t.id }}"{% if t.id == selected_team_id %} selected{% endif %}>{{ t.name }}</option>
                     {% endfor %}
                 </select>
-                {# LG-06c — carry the current sort/dir so changing team keeps it. #}
                 <input type="hidden" name="sort" value="{{ sort }}">
                 <input type="hidden" name="dir" value="{{ dir }}">
-                {# LG-06d — carry the season scope so changing team keeps it. #}
+                <input type="hidden" name="per_page" value="{{ per_page }}">
                 <input type="hidden" name="season" value="{{ selected_season }}">
                 <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">Filter</button></noscript>
             </form>
 
-            {% if not feats %}
+            <form id="statistical-feats-per-page-form" method="get" class="d-inline-block mb-3">
+                <label for="statistical-feats-per-page-select" class="form-label me-2">Per page:</label>
+                <select id="statistical-feats-per-page-select" name="per_page" class="form-select form-select-sm d-inline-block w-auto" onchange="this.form.submit()">
+                    {% for option in per_page_options %}
+                        <option value="{{ option }}"{% if option == per_page %} selected{% endif %}>{{ option }}</option>
+                    {% endfor %}
+                </select>
+                <input type="hidden" name="sort" value="{{ sort }}">
+                <input type="hidden" name="dir" value="{{ dir }}">
+                <input type="hidden" name="season" value="{{ selected_season }}">
+                {% if selected_team_id %}<input type="hidden" name="team_id" value="{{ selected_team_id }}">{% endif %}
+                <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">Update</button></noscript>
+            </form>
+
+            {% if not feat_rows and not team_feats %}
                 <div id="stat-feats-empty-notice" class="alert alert-info">
                     No statistical feats recorded yet in this Season.
                 </div>
             {% else %}
-                {# LG-06c — sort-control bar above the feats list. #}
-                <div class="d-flex align-items-center mb-2">
-                    <span class="text-muted small me-2">Sort by:</span>
-                    <div class="btn-group btn-group-sm" role="group">
-                        {% for key, label in sort_keys %}
-                            <span id="statistical-feats-th-{{ key }}">
-                                {% if key == sort %}
-                                    {% if dir == "asc" %}
-                                        <a class="btn btn-outline-secondary active" href="?{{ querystring_without_sort }}{% if querystring_without_sort %}&{% endif %}sort={{ key }}&dir=desc">{{ label }} ↑</a>
-                                    {% else %}
-                                        <a class="btn btn-outline-secondary active" href="?{{ querystring_without_sort }}{% if querystring_without_sort %}&{% endif %}sort={{ key }}&dir=asc">{{ label }} ↓</a>
-                                    {% endif %}
-                                {% else %}
-                                    <a class="btn btn-outline-secondary" href="?{{ querystring_without_sort }}{% if querystring_without_sort %}&{% endif %}sort={{ key }}&dir=asc">{{ label }}</a>
-                                {% endif %}
-                            </span>
-                        {% endfor %}
+                {% if feat_rows %}
+                    <div class="table-responsive">
+                        <table class="table table-striped" id="statistical-feats-table">
+                            <thead>
+                                <tr>
+                                    {# Descriptor / identity headers (Player, Role, Team, Opp, Result, Season, Feats), then Round at the end after box-score. #}
+                                    {% for key, label in sort_keys %}
+                                        {% if key != "round" %}
+                                            <th id="statistical-feats-th-{{ key }}">
+                                                {% if key == sort %}
+                                                    {% if dir == "asc" %}
+                                                        <a href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort={{ key }}&dir=desc">{{ label }} ↑</a>
+                                                    {% else %}
+                                                        <a href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort={{ key }}&dir=asc">{{ label }} ↓</a>
+                                                    {% endif %}
+                                                {% else %}
+                                                    <a href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort={{ key }}&dir=desc">{{ label }}</a>
+                                                {% endif %}
+                                            </th>
+                                        {% endif %}
+                                    {% endfor %}
+                                    {# Box-score column headers (13). #}
+                                    {% for key, label, is_float in box_score_columns %}
+                                        <th id="statistical-feats-th-{{ key }}">
+                                            {% if key == sort %}
+                                                {% if dir == "asc" %}
+                                                    <a href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort={{ key }}&dir=desc">{{ label }} ↑</a>
+                                                {% else %}
+                                                    <a href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort={{ key }}&dir=asc">{{ label }} ↓</a>
+                                                {% endif %}
+                                            {% else %}
+                                                <a href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort={{ key }}&dir=desc">{{ label }}</a>
+                                            {% endif %}
+                                        </th>
+                                    {% endfor %}
+                                    {# Round header (deep-link column), sortable on key ``round``. #}
+                                    <th id="statistical-feats-th-round">
+                                        {% if sort == "round" %}
+                                            {% if dir == "asc" %}
+                                                <a href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort=round&dir=desc">Round ↑</a>
+                                            {% else %}
+                                                <a href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort=round&dir=asc">Round ↓</a>
+                                            {% endif %}
+                                        {% else %}
+                                            <a href="?{{ querystring_without_sort_dir_page }}{% if querystring_without_sort_dir_page %}&{% endif %}sort=round&dir=desc">Round</a>
+                                        {% endif %}
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in feat_rows %}
+                                <tr>
+                                    <td>{{ row.player_name }}</td>
+                                    <td>{{ row.role }}</td>
+                                    <td>{{ row.team_name }}</td>
+                                    <td>{{ row.opp_team_name }}</td>
+                                    <td>{{ row.result }}</td>
+                                    <td>{{ row.season_name }}</td>
+                                    <td>
+                                        {% for badge in row.feats %}
+                                            <span class="badge {% if badge.is_season_best %}bg-warning text-dark stat-feat-badge season-best{% else %}bg-primary stat-feat-badge{% endif %} stat-feat-badge-{{ badge.kind }} me-1">{{ badge.label }}{% if badge.is_season_best %} (season best){% endif %}</span>
+                                        {% endfor %}
+                                    </td>
+                                    {% for key, label, is_float in box_score_columns %}
+                                        <td>
+                                            {% if is_float %}
+                                                {{ row.stats|lookup:key|floatformat:1 }}
+                                            {% else %}
+                                                {{ row.stats|lookup:key|floatformat:0 }}
+                                            {% endif %}
+                                        </td>
+                                    {% endfor %}
+                                    <td><a href="{% url 'game_round_detail' row.round_id %}">View round</a></td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
                     </div>
-                </div>
-                <ul id="stat-feats-list" class="list-group">
-                    {% for feat in feats %}
-                        <li id="stat-feat-{{ feat.kind }}"
-                            class="list-group-item d-flex justify-content-between align-items-start">
-                            <div class="me-3">
-                                <div class="fw-semibold">{{ feat.label }}</div>
-                                <div class="text-muted small">{{ feat.name }}</div>
-                            </div>
-                            <div class="text-end">
-                                <span class="badge bg-primary rounded-pill">{{ feat.value }}</span>
-                                {% if feat.round_id %}
-                                    <div class="small">
-                                        <a href="{% url 'game_round_detail' feat.round_id %}">View round</a>
-                                    </div>
+
+                    {% if paginator.num_pages > 1 %}
+                        <nav id="statistical-feats-pagination" aria-label="Statistical feats pagination">
+                            <ul class="pagination">
+                                {% if page_obj.has_previous %}
+                                    <li class="page-item">
+                                        <a class="page-link" href="?{{ querystring_without_page }}{% if querystring_without_page %}&{% endif %}page={{ page_obj.previous_page_number }}">Previous</a>
+                                    </li>
+                                {% else %}
+                                    <li class="page-item disabled"><span class="page-link">Previous</span></li>
                                 {% endif %}
-                            </div>
-                        </li>
-                    {% endfor %}
-                </ul>
+                                <li class="page-item active">
+                                    <span class="page-link">Page {{ page_obj.number }} of {{ paginator.num_pages }}</span>
+                                </li>
+                                {% if page_obj.has_next %}
+                                    <li class="page-item">
+                                        <a class="page-link" href="?{{ querystring_without_page }}{% if querystring_without_page %}&{% endif %}page={{ page_obj.next_page_number }}">Next</a>
+                                    </li>
+                                {% else %}
+                                    <li class="page-item disabled"><span class="page-link">Next</span></li>
+                                {% endif %}
+                            </ul>
+                        </nav>
+                    {% endif %}
+                {% endif %}
+
+                {% if team_feats %}
+                    <section id="statistical-feats-team-feats" class="mt-4">
+                        <h2 class="h5">Team Feats</h2>
+                        <ul class="list-group">
+                            {% for rec in team_feats %}
+                                <li id="stat-team-feat-{{ rec.kind }}" class="list-group-item d-flex justify-content-between align-items-start">
+                                    <div class="me-3">
+                                        <div class="fw-semibold">{{ rec.label }}</div>
+                                        <div class="text-muted small">{{ rec.team_name }}</div>
+                                    </div>
+                                    {% if rec.round_id %}
+                                        <div class="small">
+                                            <a href="{% url 'game_round_detail' rec.round_id %}">View round</a>
+                                        </div>
+                                    {% endif %}
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    </section>
+                {% endif %}
             {% endif %}
         {% endif %}
     </main>

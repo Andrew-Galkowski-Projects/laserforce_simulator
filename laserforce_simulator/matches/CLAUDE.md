@@ -906,6 +906,56 @@ re-baseline (CONTEXT.md gained the **Per-10-minute rate** + **Career view
 (league-scoped)** terms; no ADR). Cross-cutting **C1 / C2 / C7**. Seam contract:
 [`.claude/worktrees/lg-06d-seam-contract.md`](../../.claude/worktrees/lg-06d-seam-contract.md).
 
+**LG-06e polish.** Statistical Feats was reshaped from a `<ul>` of ~9
+category-best entries into ZenGM's **per-game feed**: one sortable row per
+(player, round) that achieved a feat, with that round's box-score line +
+Opp / Result / Season, deep-linking to the Round. The pure module
+`stat_feats.py` had its OUTPUT SHAPE rewritten — the 9-finder /
+single-`FeatRecord` design is gone; `scan_feats(player_rounds, matches) ->
+tuple[list[FeatRow], list[TeamFeatRecord]]` now emits one frozen `FeatRow` per
+qualifying (player, round), each carrying a `stats` mapping over the new pinned
+`BOX_SCORE_KEYS` (the 12 `season_player_stats.STAT_KEYS` per-round PLUS
+`nuke_detonations`), view-computed Opp / per-Round Result / Season descriptors,
+and a non-empty stacked `feats` tuple of `FeatBadge(kind, label, is_season_best)`.
+**Hybrid qualification:** a row is included iff it crosses ANY per-game threshold
+(`TRIPLE_NUKE_THRESHOLD=3`, `HIGH_TAGS_THRESHOLD=20`, `HIGH_POINTS_THRESHOLD=12000`,
+`HIGH_MVP_THRESHOLD=15`, `HIGH_RESUPPLIES_THRESHOLD=20`, `HIGH_MISSILES_THRESHOLD=8`,
+plus boolean `medic_shutout` / `perfect_heavy`) OR is a season-best leader for any
+of the 5 `SEASON_BEST_STATS` (each yields exactly one guaranteed leader row,
+tiebreak highest value -> highest `round_id` -> lowest `player_id`, all-zero-max
+skipped) tagged `is_season_best=True`; a row both crossing a threshold AND leading
+its kind collapses to ONE badge, season-best winning. Feat kinds are pinned in
+`FEAT_KINDS` (8 `(kind, label)` pairs). `comeback_win` moved OUT of the feed into
+a separate **Team feats** section — `find_comeback_win(matches) ->
+list[TeamFeatRecord]` (return type changed from `Optional[FeatRecord]`; detection
+logic unchanged). `scan_feats` guarantees a deterministic default order
+(`round_id` DESC, then `player_id` ASC); module stays Django-free
+(`TestNoDjangoImportsLeaked` retained). The view materialises the extended
+per-(player,round) seam dicts — Opp / Result / Season computed **view-side**, with
+**per-Round** Result from `GameRound.red_points`/`blue_points` (NOT the Match
+outcome), `mvp = float(prs.get_mvp)` (property) and
+`accuracy = float(prs.get_accuracy())` (**method, call with `()`**), and
+`nuke_detonations` from the existing `event_type="special"`/`points_awarded=500`
+detonation pass — then layers **LG-06a pagination** (`Paginator` AFTER sort,
+`_LG01F_PER_PAGE_OPTIONS`) and **expanded LG-06c sort** over the full box-score
+column set (`_FEATS_SORT_KEYS` frozenset of every descriptor + 13 box-score keys,
+`_FEATS_SORT_KEYS_DISPLAY`, the `_feat_row_sort_value` extractor,
+`teams.views._coerce_dir` reused) with **default sort = most recent first**
+(`("round", "desc")`) and a `(round_id desc, player_id asc)` secondary tiebreak;
+the Team-feats list is not paginated. Coexists with the LG-06b `?team_id=` filter
+(applied to the seam INPUTS, `stat_feats.py` untouched by the filter) + the LG-06d
+`?season=` selector (incl. Career); changing season/team/sort/per-page omits
+`page`. The template `statistical_feats.html` was rewritten into the sortable
+`statistical-feats-table` (DOM ids `statistical-feats-th-<key>` per column with
+` ↑`/` ↓` glyphs, `stat-feat-badge-<kind>` badges with a `(season best)` /
+`season-best` suffix, `statistical-feats-per-page-{form,select}` / `-pagination`)
+plus the separate `statistical-feats-team-feats` section (`stat-team-feat-<kind>`),
+preserving the LG-06b/d filter ids + the `stat-feats-empty-notice`. Read-only — no
+model, migration, URL, simulator, RNG, Score Calibration re-baseline, CONTEXT.md
+edit (the **Statistical feat** term was already finalized), or ADR. Cross-cutting
+Statistical-Feats reshape. Seam contract:
+[`.claude/worktrees/lg-06e-seam-contract.md`](../../.claude/worktrees/lg-06e-seam-contract.md).
+
 ## Tests
 
 `matches/tests/` package:
