@@ -19,7 +19,7 @@ from .statistical_feats import statistical_feats
 from .team_history import team_history
 from .team_roster import team_roster
 from .team_stats import team_stats
-from .watch_list import watch_list
+from .watch_list import watch_list, watch_list_toggle
 
 __all__ = [
     "free_agents",
@@ -33,4 +33,5 @@ __all__ = [
     "team_roster",
     "team_stats",
     "watch_list",
+    "watch_list_toggle",
 ]

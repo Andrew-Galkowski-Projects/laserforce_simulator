@@ -9,8 +9,8 @@ Story IDs from `sm5_user_stories_v2.html` are referenced where applicable.
 
 ### LG-06 · ZenGM league-screen parity polish
 
-**Status: PARTIAL — a/b/c/d/e DONE, f/g NOT STARTED.** LG-06 is a 7-step group;
-shipping a, b, c, d, and e does NOT complete LG-06. Next incomplete step is **LG-06f**.
+**Status: PARTIAL — a/b/c/d/e/f DONE, g/h NOT STARTED.** LG-06 is a multi-step group;
+shipping a, b, c, d, e, and f does NOT complete LG-06. Next incomplete step is **LG-06g**.
 
 Follow-ups to the shipped LG-01z read-only screens, from the per-page comparison
 against the reference product (LOL GM) in
@@ -225,15 +225,98 @@ session before implementation.
     reshaped in `matches/tests/test_league_statistical_feats.py` (pure-unit +
     view). Seam contract at
     [`.claude/worktrees/lg-06e-seam-contract.md`](.claude/worktrees/lg-06e-seam-contract.md).
-- **LG-06f · [TODO — NOT STARTED] Watch List as a full stats view.** Replace the 3-column bookmark
+- **LG-06f · [DONE] Watch List as a full stats view (+ per-League watch flag).** Replace the 3-column bookmark
   table with the Player-Stats column set filtered to watched players (ZenGM
   parity). Per-user (vs. current browser-session) persistence is **deferred to
   UX-01** (the watch list moves from `request.session` to a per-user model when
   accounts land). Doc: [`watch-list.md`](docs/zengm-comparison/watch-list.md).
+  - completed: watch lists became **per-League** in the browser session —
+    `request.session["watch_lists"]: dict[str, list[int]]` keyed by
+    `str(league_id)` (e.g. `{"3": [12, 47], "8": [12]}`); the pre-LG-06f global
+    singular `request.session["watch_list"]` key is **ABANDONED** with no
+    migration, no read-compat, and no fallback (session data is disposable,
+    ADR-0004 precedent). A single source-of-truth reader
+    `matches.league_views._watched_player_ids(request, league_id) -> set[int]`
+    (alongside `_coerce_per_page` / `_coerce_team_id` / `_coerce_season`) coerces
+    each stored entry to int (silently dropping non-ints), never raises, and is
+    consumed by BOTH the new context processor AND the screen view. A new context
+    processor `core.context_processors.watch_list(request) -> {"watched_player_ids":
+    set[int]}` (alongside `league_nav` / `app_mode`, lazy-importing
+    `_watched_player_ids` to dodge the apps cycle) resolves `league_id` from
+    `request.resolver_match.kwargs` defensively (off-League / no match ⇒ empty
+    set) and is **registered immediately AFTER `core.context_processors.app_mode`**
+    in `settings.TEMPLATES[0]["OPTIONS"]["context_processors"]`. A POST-only
+    CSRF-protected toggle endpoint
+    `matches.league_screens.watch_list.watch_list_toggle(request, league_id) ->
+    JsonResponse` (URL name `watch_list_toggle`, route
+    `/leagues/<int:league_id>/players/watch-list/toggle/` inserted right after the
+    `players_watch_list` route) flips a player's membership in **this League's**
+    list and returns `{"watched": bool, "player_id": int}` (200), `{"error":
+    "invalid player_id"}` / `{"error": "unknown player_id"}` (both 400),
+    `HttpResponseNotAllowed(["POST"])` (405), or 404 on missing League — per-League
+    isolation guaranteed by the `str(league_id)` key. The Watch List screen view
+    was **rewritten** into the Player-Stats column set filtered to watched players:
+    a new **pure** helper `season_player_stats.zero_fill_watched(rows, watched_ids,
+    identity_by_id) -> list[PlayerStatRow]` (alongside `aggregate_player_stats` /
+    `apply_rate` / `sort_player_stats`, **no new imports** — the module's frozen
+    no-Django allowlist is preserved) keeps only watched aggregated rows then
+    appends a zero row (`games=0`, every `STAT_KEYS + DERIVED_KEYS` key at `0.0`)
+    for each watched id with no Round in scope, in **ascending-id order**
+    (aggregated-rows-first / zero-rows-second deterministic output; a watched id
+    absent from `identity_by_id` is silently skipped). The locked view pipeline is
+    `_build_round_dicts` (imported from `player_stats.py`) → `aggregate_player_stats`
+    → `zero_fill_watched` → `apply_rate` → `sort_player_stats` → `Paginator`. The
+    reshaped screen carries the full Player-Stats kit **minus the team filter**
+    (the Watch List is a personal cross-team set) — season selector (+ Career) via
+    `_resolve_season_scope`, rate toggle via `_coerce_rate`, per-page via
+    `_coerce_per_page` / `_coerce_page`, sortable columns via `coerce_sort` /
+    `coerce_dir` / `sort_player_stats` — with new DOM ids
+    `watch-list-{per-page,season-filter,rate}-{form,select}` /
+    `watch-list-th-{key}` / `watch-list-pagination` mirroring `player-stats-*`,
+    preserving `watch-list-table` / `watch-list-empty-notice` (the `"No Season"`
+    substring branch retained) and `sidebar_active="watch_list"`. The **add-form is
+    DROPPED** (`watch-list-add` / `-select` and the old `watch-list-row-{id}` rows
+    removed); **Remove All / `?action=clear`** is retained (now clears
+    `watch_lists[str(league_id)]` then redirects to the bare URL); a per-row
+    **watch flag replaces the per-row Remove control**. Two new partials —
+    `templates/_partials/watch_flag.html` (a `<button class="watch-flag">` with
+    `.watch-flag-on` when watched, `data-player-id` + `data-toggle-url`, NO unique
+    `id` so duplicate-player rows don't collide) and
+    `templates/_partials/watch_flag_script.html` (one delegated-click `<script>`,
+    included exactly once per page, fetch-POSTs with the `X-CSRFToken` cookie and
+    toggles `.watch-flag-on` on **all** buttons sharing a `data-player-id`) — wire
+    the ZenGM-style flag onto the player-name cell of **8 league screens**
+    (`player_stats`, `player_ratings`, `free_agents`, `league_leaders` ×4 boards,
+    `statistical_feats`, `team_roster` ×2 sections, `team_history`, and the
+    rewritten `watch_list`). UI-only — **no model, no migration, no simulator, no
+    RNG, no Score Calibration re-baseline**; CONTEXT.md gained the **Watch list** /
+    **Watch flag** terms; no ADR. Tests in
+    `matches/tests/test_watch_flag.py`, `matches/tests/test_watch_toggle.py`, and
+    `matches/tests/test_league_watch_list.py` (the latter also hosts the pure
+    `zero_fill_watched` unit tests). The league-pinned **career-page** flag — the
+    one player surface this reshape could not cover (the global
+    `/players/<id>/stats/` page is league-agnostic, so its flag has no League to
+    toggle against) — was **split off to LG-06h** on 2026-06-02. Seam contract:
+    [`.claude/worktrees/lg-06f-seam-contract.md`](.claude/worktrees/lg-06f-seam-contract.md).
 - **LG-06g · [TODO — NOT STARTED] Standings form/side detail.** Surface Streak, Last-5 (L5), and a
   home-away (Red/Blue side) split on the Standings table — we already persist
   per-Round side data; this is presentation only. Doc:
   [`standings.md`](docs/zengm-comparison/standings.md).
+- **LG-06h · [TODO — NOT STARTED] League-scoped player page (+ watch flag).** Introduce a
+  **league-pinned** player detail route (`/leagues/<league_id>/players/<player_id>/…`)
+  so a Player viewed from inside a League carries that League's context — and put the
+  ZenGM **watch flag** on it. This is the one player surface LG-06f could **not** cover:
+  the existing `player_career_stats` page at `/players/<id>/stats/` is league-agnostic, so
+  its flag has no League to toggle the (per-League) watch list against. Carved out of
+  **LG-06f** on 2026-06-02 because pinning the global HX-01 career page to a League is a
+  new route + view + template, not a watch-list reshape. Repoint the 8 LG-06f league
+  screens' player-name links at the new route. **Open questions for its own grill:** does
+  the page show **league-scoped** stats (only this League's Seasons) or the same global
+  HX-01 career aggregates; how a Player with games in two Leagues is handled (name overlap
+  is intentional — separate Player rows, separate per-League watch lists); whether to
+  reuse the HX-01 aggregation or a Season-scoped one; sidebar chrome + flag placement.
+  **Depends on LG-06f** — reuses the per-League watch-list storage, toggle endpoint,
+  context processor, and flag partial it ships, verbatim.
 
 Structural divergences surfaced by the playthrough that map to **existing**
 tasks rather than LG-06 (see

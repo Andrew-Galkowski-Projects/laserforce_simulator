@@ -70,6 +70,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "core.context_processors.league_nav",
                 "core.context_processors.app_mode",
+                "core.context_processors.watch_list",
             ],
         },
     },

@@ -176,6 +176,57 @@ def aggregate_player_stats(player_rounds: Iterable[Mapping]) -> list[PlayerStatR
     return rows
 
 
+def zero_fill_watched(
+    rows: Iterable[PlayerStatRow],
+    watched_ids: set[int],
+    identity_by_id: Mapping[int, Mapping],
+) -> list[PlayerStatRow]:
+    """LG-06f — keep only watched rows, append a zero row for each missing id.
+
+    Filters the aggregated ``rows`` to those whose ``player_id`` is in
+    ``watched_ids`` (preserving incoming order), then appends one zero
+    :class:`PlayerStatRow` per watched id that has no Round in scope AND is
+    present in ``identity_by_id`` — in ascending player-id order.
+
+    A watched id absent from ``identity_by_id`` (e.g. a deleted Player) is
+    silently skipped (no zero row emitted, no crash).
+
+    Each zero row carries ``games=0`` and ``stats`` with every key in
+    ``STAT_KEYS + DERIVED_KEYS`` set to ``0.0``; the scalar identity fields
+    (``player_name`` / ``team_id`` / ``team_name`` / ``role``) come from
+    ``identity_by_id[pid]``.
+
+    Pure: dataclasses / typing only — the module's frozen no-Django import
+    allowlist is preserved.
+    """
+    kept: list[PlayerStatRow] = []
+    present_ids: set[int] = set()
+    for row in rows:
+        if row.player_id in watched_ids:
+            kept.append(row)
+            present_ids.add(row.player_id)
+
+    missing_ids = sorted(
+        pid for pid in watched_ids if pid not in present_ids and pid in identity_by_id
+    )
+
+    zero_stats_template = {k: 0.0 for k in STAT_KEYS + DERIVED_KEYS}
+    for pid in missing_ids:
+        identity = identity_by_id[pid]
+        kept.append(
+            PlayerStatRow(
+                player_id=pid,
+                player_name=identity["player_name"],
+                team_id=identity["team_id"],
+                team_name=identity["team_name"],
+                role=identity["role"],
+                games=0,
+                stats=dict(zero_stats_template),
+            )
+        )
+    return kept
+
+
 def apply_rate(rows: Iterable[PlayerStatRow], rate: str) -> list[PlayerStatRow]:
     """LG-06d — re-express the SUMMED_KEYS of each row as a rate, pure.
 

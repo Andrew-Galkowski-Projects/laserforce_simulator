@@ -956,6 +956,114 @@ edit (the **Statistical feat** term was already finalized), or ADR. Cross-cuttin
 Statistical-Feats reshape. Seam contract:
 [`.claude/worktrees/lg-06e-seam-contract.md`](../../.claude/worktrees/lg-06e-seam-contract.md).
 
+## LG-06f watch list (+ watch flag)
+
+The Watch List screen was reshaped from the 3-column bookmark table into the
+**Player-Stats column set filtered to watched players** (zero-fill for watched
+players with no Rounds in scope), a ZenGM-style **watch flag** landed on **8
+league screens**, and watch lists became **per-League** in the browser session.
+UI-only — **no model, migration, simulator, RNG, or Score Calibration
+re-baseline** (CONTEXT.md gained the **Watch list** + **Watch flag** terms; no
+ADR). Seam contract:
+[`.claude/worktrees/lg-06f-seam-contract.md`](../../.claude/worktrees/lg-06f-seam-contract.md).
+
+**Per-League session store.** `request.session["watch_lists"]: dict[str,
+list[int]]` keyed by `str(league_id)`, value an ordered list of watched Player
+ids (e.g. `{"3": [12, 47], "8": [12]}`). The pre-LG-06f global singular
+`request.session["watch_list"]` key is **ABANDONED** — no migration, no
+read-compat, no fallback (session data is disposable, ADR-0004 precedent). The
+single source-of-truth reader `league_views._watched_player_ids(request,
+league_id) -> set[int]` (alongside `_coerce_per_page` / `_coerce_team_id` /
+`_coerce_season`) reads `session["watch_lists"].get(str(league_id), [])`, coerces
+each entry to int (silently dropping non-ints), never raises (missing key ⇒
+`set()`), and is consumed by BOTH the context processor AND the screen view.
+
+**Context processor.** `core.context_processors.watch_list(request) ->
+{"watched_player_ids": set[int]}` (alongside `league_nav` / `app_mode`,
+lazy-importing `_watched_player_ids` to dodge the `core ↔ matches` apps cycle)
+resolves `league_id` from `request.resolver_match.kwargs` defensively — no
+`resolver_match` or no `league_id` kwarg (off-League, a pre-resolution 404, or a
+`RequestFactory()` request) ⇒ `{"watched_player_ids": set()}`. **Registered
+immediately AFTER `core.context_processors.app_mode`** in
+`settings.TEMPLATES[0]["OPTIONS"]["context_processors"]`, so every league-screen
+template sees `watched_player_ids` with zero per-view wiring.
+
+**Toggle endpoint.** `matches.league_screens.watch_list.watch_list_toggle(
+request, league_id) -> JsonResponse` — **POST-only** (`HttpResponseNotAllowed(
+["POST"])` first line), CSRF-protected (NOT `@csrf_exempt`), re-exported from
+`league_screens/__init__`. URL name `watch_list_toggle`, route
+`/leagues/<int:league_id>/players/watch-list/toggle/` (inserted right after the
+`players_watch_list` route in `league_urls.py`). Step order: `get_object_or_404(
+League)` → coerce `player_id` from POST (invalid ⇒ 400 `{"error": "invalid
+player_id"}`) → `Player.objects.filter(pk=...).exists()` (unknown ⇒ 400 `{"error":
+"unknown player_id"}`, a locked decision — not a silent no-op) → flip membership
+in `watch_lists[str(league_id)]` → `session.modified = True` → return `{"watched":
+bool, "player_id": int}` (`watched` is the NEW post-flip state). Per-League
+isolation falls out of the `str(league_id)` key — toggling in League A never
+touches League B's list.
+
+**Pure zero-fill helper.** `season_player_stats.zero_fill_watched(rows,
+watched_ids, identity_by_id) -> list[PlayerStatRow]` (alongside
+`aggregate_player_stats` / `apply_rate` / `sort_player_stats`, **no new imports** —
+the module's frozen no-Django allowlist is preserved) keeps only aggregated rows
+whose `player_id in watched_ids`, then appends a zero row for each watched id with
+no Round in scope. A zero row carries `games=0` and `stats={k: 0.0 for k in
+STAT_KEYS + DERIVED_KEYS}` with `player_name` / `team_id` / `team_name` / `role`
+from `identity_by_id[pid]`; a watched id absent from `identity_by_id` (e.g. a
+deleted Player) is **silently skipped**. Output order is locked: aggregated rows
+first (incoming order), then zero rows in **ascending player-id order**
+(`sorted(missing_ids)`) — deterministic for the unit test even though downstream
+`apply_rate` / `sort_player_stats` may re-order.
+
+**Rewritten screen view.** `watch_list(request, league_id)` is GET-only EXCEPT
+the retained `?action=clear` branch (now clears `watch_lists[str(league_id)]`,
+sets `session.modified = True`, redirects to the bare URL). The legacy
+`?action=add|remove` branches and the add-form are GONE. The view reuses the
+player_stats machinery — `_build_round_dicts` is **imported from**
+`matches.league_screens.player_stats` — with the **locked pipeline**
+`_build_round_dicts → aggregate_player_stats → zero_fill_watched → apply_rate →
+sort_player_stats → Paginator` (`zero_fill_watched` runs BEFORE `apply_rate` so
+zero rows take the same rate pass-through, where the `games <= 0 ⇒ 0.0` guard
+leaves zeros as zeros). `identity_by_id` is built view-side from
+`Player.objects.filter(pk__in=watched_ids).select_related("team")` as `{pid:
+{"player_name","team_id","team_name","role"}}`. The screen carries the full
+Player-Stats kit **minus the team filter** (the Watch List is a personal
+cross-team set) — season selector (+ Career) via `_resolve_season_scope`, rate
+toggle via `_coerce_rate`, per-page via `_coerce_per_page` / `_coerce_page`,
+sortable columns via `coerce_sort` / `coerce_dir` / `sort_player_stats` — with
+new DOM ids `watch-list-{per-page,season-filter,rate}-{form,select}` /
+`watch-list-th-{key}` / `watch-list-pagination` mirroring `player-stats-*`,
+preserving `watch-list-table`, `watch-list-empty-notice` (the `"No Season"`
+substring branch retained) and `watch-list-remove-all` (Remove All →
+`?action=clear`), and `sidebar_active="watch_list"`. **Removed ids:**
+`watch-list-add` / `-select` / `watch-list-row-{id}` (add-form + old 3-column rows
+gone); a per-row flag replaces the per-row Remove control.
+
+**Flag partials + 8-screen surface.** `templates/_partials/watch_flag.html`
+renders a `<button type="button" class="watch-flag">` (`.watch-flag-on` added when
+`player_id in watched_player_ids`, red styling keys off that class) with
+`data-player-id` + `data-toggle-url="{% url 'watch_list_toggle' league.id %}"` and
+**NO unique `id`** (League Leaders and Statistical Feats can render the same
+player on multiple rows — a per-row id would collide). Include contract:
+`{% include "_partials/watch_flag.html" with player_id=<id> %}` (the partial reads
+`watched_player_ids` + `league.id` from context). `watch_flag_script.html` carries
+a single **delegated** click `<script>` (bound once via `closest(".watch-flag")`),
+included **exactly once per page**, that fetch-POSTs to `btn.dataset.toggleUrl`
+with the `X-CSRFToken` cookie header and a `player_id` body, then on the response
+adds/removes `.watch-flag-on` on **all** buttons sharing that `data-player-id`
+(handles the multi-row case). The flag wires into the player-name cell of **8
+screens** — `player_stats`, `player_ratings`, `free_agents`, `league_leaders`
+(all 4 boards), `statistical_feats`, `team_roster` (both sections),
+`team_history`, and the rewritten `watch_list` — adjacent to the existing
+career-stats link (the link is kept). **Tests:**
+`matches/tests/test_watch_flag.py` (partial render + context-processor
+resolution), `matches/tests/test_watch_toggle.py` (endpoint add/remove,
+per-League isolation, 405/400/404, CSRF), and
+`matches/tests/test_league_watch_list.py` (screen + the pure `zero_fill_watched`
+unit tests). The league-pinned **career-page** flag was split off to **LG-06h**
+(the global `/players/<id>/stats/` page is league-agnostic, so its flag has no
+League to toggle against).
+
 ## Tests
 
 `matches/tests/` package:

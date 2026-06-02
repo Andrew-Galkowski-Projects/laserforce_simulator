@@ -189,3 +189,35 @@ def app_mode(request: HttpRequest) -> dict[str, str]:
     if path and (path.startswith("/leagues/") or path.startswith("/seasons/")):
         return {"app_mode": "league"}
     return {"app_mode": "sandbox"}
+
+
+def watch_list(request: HttpRequest) -> dict:
+    """LG-06f — expose the watched-player id set to every league-screen template.
+
+    Returns ``{"watched_player_ids": set[int]}``.
+
+    Resolves ``league_id`` from ``request.resolver_match.kwargs.get("league_id")``
+    defensively (``getattr(request, "resolver_match", None)`` — ``None`` when
+    there is no match, e.g. a 404 before URL resolution or a
+    ``RequestFactory()``-built request). Off-League (no ``resolver_match``, or
+    no ``"league_id"`` kwarg) ⇒ ``{"watched_player_ids": set()}``.
+
+    Reuses ``matches.league_views._watched_player_ids`` for the read (lazy
+    import to avoid the ``core`` ↔ ``matches`` apps-loading cycle — mirrors the
+    ``league_nav`` precedent).
+    """
+    resolver_match = getattr(request, "resolver_match", None)
+    if resolver_match is None:
+        return {"watched_player_ids": set()}
+    kwargs = getattr(resolver_match, "kwargs", None) or {}
+    league_id = kwargs.get("league_id")
+    if league_id is None:
+        return {"watched_player_ids": set()}
+    try:
+        league_id_int = int(league_id)
+    except (TypeError, ValueError):
+        return {"watched_player_ids": set()}
+
+    from matches.league_views import _watched_player_ids
+
+    return {"watched_player_ids": _watched_player_ids(request, league_id_int)}

@@ -841,6 +841,45 @@ def _resolve_season_scope(
     return seasons, selected_season, season_options, season_filter
 
 
+def _watched_player_ids(request: HttpRequest, league_id: int) -> set[int]:
+    """LG-06f — the per-League watched-player id set for this browser session.
+
+    Single source: reads ``request.session["watch_lists"].get(str(league_id),
+    [])``, coerces each entry to int (silently dropping non-ints), returns a
+    ``set[int]``. Consumed by BOTH ``core.context_processors.watch_list`` AND
+    ``matches.league_screens.watch_list.watch_list``. Never raises; a missing
+    key ⇒ ``set()``.
+
+    Coercion rule: an entry already ``int`` passes; a ``str`` that
+    ``int()``-parses passes; anything else (``None``, non-numeric str, float,
+    dict) is dropped. De-dup is implicit via ``set``.
+    """
+    session = getattr(request, "session", None)
+    if session is None:
+        return set()
+    lists = session.get("watch_lists", {})
+    if not isinstance(lists, dict):
+        return set()
+    raw_ids = lists.get(str(league_id), [])
+    if not isinstance(raw_ids, (list, tuple)):
+        return set()
+    out: set[int] = set()
+    for entry in raw_ids:
+        if isinstance(entry, bool):
+            # bool is an int subclass — exclude defensively (a stray True/False
+            # is not a real player id).
+            continue
+        if isinstance(entry, int):
+            out.add(entry)
+            continue
+        if isinstance(entry, str):
+            try:
+                out.add(int(entry))
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
 def _coerce_team_id(raw: str | None, enrolled_ids: set[int]) -> int | None:
     """LG-06b — coerce ``?team_id=`` to an enrolled Team id, else ``None``.
 
