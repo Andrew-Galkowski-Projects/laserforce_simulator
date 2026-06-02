@@ -42,6 +42,7 @@ from matches.league_views import (
     _build_league_sidebar_links,
     _coerce_page,
     _coerce_per_page,
+    _coerce_sort_key,
     _LG01F_PER_PAGE_OPTIONS,
     _resolve_current_team_for_sidebar,
 )
@@ -54,6 +55,89 @@ from matches.team_history_logic import (
     round_outcome,
 )
 from teams.models import Team
+from teams.views import _coerce_dir
+
+# LG-06c — sortable Seasons table. Default ``year`` desc reproduces the
+# current newest-first order (with ``season_id`` desc as the always-appended
+# secondary tiebreak). The Record column's header sorts on the ``wins`` key
+# (locked); ``losses`` / ``ties`` stay in the allowed set for forgiving
+# fallback but are not surfaced as their own headers.
+_SEASONS_SORT_KEYS: frozenset[str] = frozenset(
+    {"year", "wins", "losses", "ties", "rank"}
+)
+_SEASONS_SORT_KEYS_DISPLAY: tuple[tuple[str, str], ...] = (
+    ("year", "Year"),
+    ("record", "Record (W-L-T)"),
+    ("rank", "Final rank"),
+)
+
+# LG-06c — sortable Players table. Default ``name`` asc reproduces the pure
+# module's ``(name, player_id)`` order; ``player_id`` is the always-appended
+# secondary tiebreak. Mixed top-level attrs + nested ``stats`` keys.
+_TH_PLAYERS_SORT_KEYS: frozenset[str] = frozenset(
+    {
+        "name",
+        "games_played",
+        "points_scored",
+        "tags_made",
+        "times_tagged",
+        "missiles_landed",
+        "resupplies_given",
+        "specials_used",
+        "last_season_year",
+    }
+)
+_TH_PLAYERS_SORT_KEYS_DISPLAY: tuple[tuple[str, str], ...] = (
+    ("name", "Name"),
+    ("games_played", "Games"),
+    ("points_scored", "Points"),
+    ("tags_made", "Tags"),
+    ("times_tagged", "Times tagged"),
+    ("missiles_landed", "Missiles"),
+    ("resupplies_given", "Resupplies"),
+    ("specials_used", "Specials"),
+    ("last_season_year", "Last season"),
+)
+
+# Nested ``stats`` dict keys (vs top-level ``PlayerRollup`` attrs) — drives the
+# sort-value extraction branch below.
+_TH_PLAYER_STAT_KEYS: frozenset[str] = frozenset(
+    {
+        "points_scored",
+        "tags_made",
+        "times_tagged",
+        "missiles_landed",
+        "resupplies_given",
+        "specials_used",
+    }
+)
+
+
+def _seasons_sort_value(row, key: str):
+    """Sort-value extraction on a ``SeasonRow`` (None-safe via tuple).
+
+    ``year`` and ``rank`` are ``int | None`` — wrapped so None sorts last in
+    ascending order.
+    """
+    value = getattr(row, key)
+    if key in ("year", "rank"):
+        return (value is None, value if value is not None else 0)
+    return value
+
+
+def _th_players_sort_value(row, key: str):
+    """Sort-value extraction on a ``PlayerRollup`` (None-safe via tuple).
+
+    ``name`` / ``games_played`` are top-level attrs; the six stat keys read
+    from ``row.stats``; ``last_season_year`` is ``int | None``, None-safe.
+    """
+    if key == "last_season_year":
+        value = row.last_season_year
+        return (value is None, value if value is not None else 0)
+    if key in _TH_PLAYER_STAT_KEYS:
+        return row.stats.get(key, 0)
+    # ``name`` / ``games_played``
+    return getattr(row, key)
 
 
 def _enrolled_team_ids(season: Season) -> list[int]:
@@ -255,6 +339,16 @@ def team_history(request: HttpRequest, league_id: int) -> HttpResponse:
 
     per_page = _coerce_per_page(request.GET.get("per_page"))
 
+    # LG-06c — coerce both namespaced sort/dir pairs up front.
+    seasons_sort = _coerce_sort_key(
+        request.GET.get("seasons_sort"), _SEASONS_SORT_KEYS, "year"
+    )
+    seasons_dir = _coerce_dir(request.GET.get("seasons_dir"), default="desc")
+    players_sort = _coerce_sort_key(
+        request.GET.get("players_sort"), _TH_PLAYERS_SORT_KEYS, "name"
+    )
+    players_dir = _coerce_dir(request.GET.get("players_dir"))
+
     base_context = {
         "league": league,
         "displayed_season": displayed_season,
@@ -262,6 +356,12 @@ def team_history(request: HttpRequest, league_id: int) -> HttpResponse:
         "sidebar_active": "history_team",
         "per_page": per_page,
         "per_page_options": _LG01F_PER_PAGE_OPTIONS,
+        "seasons_sort": seasons_sort,
+        "seasons_dir": seasons_dir,
+        "seasons_sort_keys": _SEASONS_SORT_KEYS_DISPLAY,
+        "players_sort": players_sort,
+        "players_dir": players_dir,
+        "players_sort_keys": _TH_PLAYERS_SORT_KEYS_DISPLAY,
     }
 
     # No Season ⇒ empty-state (the sidebar still renders).
@@ -275,6 +375,8 @@ def team_history(request: HttpRequest, league_id: int) -> HttpResponse:
             "page_obj": None,
             "paginator": None,
             "players_querystring_without_page": "",
+            "seasons_querystring_without_sort": "",
+            "players_querystring_without_sort_page": "",
         }
         return render(request, "leagues/team_history.html", context)
 
@@ -291,30 +393,88 @@ def team_history(request: HttpRequest, league_id: int) -> HttpResponse:
             "page_obj": None,
             "paginator": None,
             "players_querystring_without_page": "",
+            "seasons_querystring_without_sort": "",
+            "players_querystring_without_sort_page": "",
         }
         return render(request, "leagues/team_history.html", context)
 
     seasons_by_id = _completed_season_ids_for_team(team)
 
-    players_context = _build_players_context(team, seasons_by_id)
-    paginator = Paginator(players_context["player_rollups"], per_page)
+    # --- Seasons tab: sort the rollup list in-memory. ``season_id`` desc is
+    # the always-appended stable secondary tiebreak (paired with the
+    # newest-first default so same-year Seasons keep newest-id-first).
+    season_rows = _build_seasons_context(team, seasons_by_id)["season_rows"]
+    season_rows = sorted(
+        season_rows,
+        key=lambda row: (
+            _seasons_sort_value(row, seasons_sort),
+            -row.season_id,
+        ),
+        reverse=(seasons_dir == "desc"),
+    )
+
+    # --- Players tab: SORT BEFORE PAGINATION. The whole rollup list is
+    # already materialised, so sort it, then construct the Paginator.
+    # ``player_id`` is the always-appended stable secondary tiebreak.
+    player_rollups = _build_players_context(team, seasons_by_id)["player_rollups"]
+    player_rollups = sorted(
+        player_rollups,
+        key=lambda row: (
+            _th_players_sort_value(row, players_sort),
+            row.player_id,
+        ),
+        reverse=(players_dir == "desc"),
+    )
+    paginator = Paginator(player_rollups, per_page)
     page_obj = paginator.get_page(_coerce_page(request.GET.get("page")))
 
-    # Players pagination links carry the resolved team_id and omit page so
-    # switching page stays on this team.
+    # COERCE-BEFORE-QUERYSTRING. Pagination Previous/Next links carry the
+    # resolved team_id + per_page + BOTH namespaced sort pairs and omit page
+    # so the sort survives page navigation.
     players_qs = request.GET.copy()
     players_qs.pop("page", None)
     players_qs["team_id"] = str(team.id)
+    players_qs["per_page"] = str(per_page)
+    players_qs["players_sort"] = players_sort
+    players_qs["players_dir"] = players_dir
+    players_qs["seasons_sort"] = seasons_sort
+    players_qs["seasons_dir"] = seasons_dir
     players_querystring_without_page = players_qs.urlencode()
+
+    # Players column-header hrefs reset to page 1: pop players_sort/dir + page,
+    # keep team_id + per_page + the seasons_* pair.
+    players_qs_no_sort = request.GET.copy()
+    players_qs_no_sort.pop("players_sort", None)
+    players_qs_no_sort.pop("players_dir", None)
+    players_qs_no_sort.pop("page", None)
+    players_qs_no_sort["team_id"] = str(team.id)
+    players_qs_no_sort["per_page"] = str(per_page)
+    players_qs_no_sort["seasons_sort"] = seasons_sort
+    players_qs_no_sort["seasons_dir"] = seasons_dir
+    players_querystring_without_sort_page = players_qs_no_sort.urlencode()
+
+    # Seasons column-header hrefs: pop seasons_sort/dir, keep team_id + the
+    # players_* pair (so re-sorting Seasons doesn't reset the Players table).
+    seasons_qs = request.GET.copy()
+    seasons_qs.pop("seasons_sort", None)
+    seasons_qs.pop("seasons_dir", None)
+    seasons_qs["team_id"] = str(team.id)
+    seasons_qs["players_sort"] = players_sort
+    seasons_qs["players_dir"] = players_dir
+    seasons_querystring_without_sort = seasons_qs.urlencode()
 
     context = {
         **base_context,
         "team": team,
         "enrolled_teams": enrolled_teams,
         **_build_overall_context(team),
-        **_build_seasons_context(team, seasons_by_id),
+        "season_rows": season_rows,
         "page_obj": page_obj,
         "paginator": paginator,
         "players_querystring_without_page": players_querystring_without_page,
+        "players_querystring_without_sort_page": (
+            players_querystring_without_sort_page
+        ),
+        "seasons_querystring_without_sort": seasons_querystring_without_sort,
     }
     return render(request, "leagues/team_history.html", context)

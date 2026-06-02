@@ -21,8 +21,20 @@
                     <table id="leaders-avg-tags" class="table table-sm table-striped">
                         <thead>
                             <tr>
-                                <th>Average Tags</th>
-                                <th class="text-end">Tags</th>
+                                <th id="league-leaders-avg_tags-th-player_name">
+                                    {% if avg_tags_sort == "player_name" %}
+                                        <a href="?{{ avg_tags_querystring_without_sort }}{% if avg_tags_querystring_without_sort %}&{% endif %}avg_tags_sort=player_name&avg_tags_dir={% if avg_tags_dir == 'asc' %}desc{% else %}asc{% endif %}">Average Tags {% if avg_tags_dir == 'asc' %}↑{% else %}↓{% endif %}</a>
+                                    {% else %}
+                                        <a href="?{{ avg_tags_querystring_without_sort }}{% if avg_tags_querystring_without_sort %}&{% endif %}avg_tags_sort=player_name&avg_tags_dir=asc">Average Tags</a>
+                                    {% endif %}
+                                </th>
+                                <th id="league-leaders-avg_tags-th-value" class="text-end">
+                                    {% if avg_tags_sort == "value" %}
+                                        <a href="?{{ avg_tags_querystring_without_sort }}{% if avg_tags_querystring_without_sort %}&{% endif %}avg_tags_sort=value&avg_tags_dir={% if avg_tags_dir == 'asc' %}desc{% else %}asc{% endif %}">Tags {% if avg_tags_dir == 'asc' %}↑{% else %}↓{% endif %}</a>
+                                    {% else %}
+                                        <a href="?{{ avg_tags_querystring_without_sort }}{% if avg_tags_querystring_without_sort %}&{% endif %}avg_tags_sort=value&avg_tags_dir=asc">Tags</a>
+                                    {% endif %}
+                                </th>
                             </tr>
                         </thead>
                         <tbody>
@@ -47,8 +59,20 @@
                     <table id="leaders-avg-score" class="table table-sm table-striped">
                         <thead>
                             <tr>
-                                <th>Average Score</th>
-                                <th class="text-end">Score</th>
+                                <th id="league-leaders-avg_score-th-player_name">
+                                    {% if avg_score_sort == "player_name" %}
+                                        <a href="?{{ avg_score_querystring_without_sort }}{% if avg_score_querystring_without_sort %}&{% endif %}avg_score_sort=player_name&avg_score_dir={% if avg_score_dir == 'asc' %}desc{% else %}asc{% endif %}">Average Score {% if avg_score_dir == 'asc' %}↑{% else %}↓{% endif %}</a>
+                                    {% else %}
+                                        <a href="?{{ avg_score_querystring_without_sort }}{% if avg_score_querystring_without_sort %}&{% endif %}avg_score_sort=player_name&avg_score_dir=asc">Average Score</a>
+                                    {% endif %}
+                                </th>
+                                <th id="league-leaders-avg_score-th-value" class="text-end">
+                                    {% if avg_score_sort == "value" %}
+                                        <a href="?{{ avg_score_querystring_without_sort }}{% if avg_score_querystring_without_sort %}&{% endif %}avg_score_sort=value&avg_score_dir={% if avg_score_dir == 'asc' %}desc{% else %}asc{% endif %}">Score {% if avg_score_dir == 'asc' %}↑{% else %}↓{% endif %}</a>
+                                    {% else %}
+                                        <a href="?{{ avg_score_querystring_without_sort }}{% if avg_score_querystring_without_sort %}&{% endif %}avg_score_sort=value&avg_score_dir=asc">Score</a>
+                                    {% endif %}
+                                </th>
                             </tr>
                         </thead>
                         <tbody>
@@ -73,8 +97,20 @@
                     <table id="leaders-fewest-tagged" class="table table-sm table-striped">
                         <thead>
                             <tr>
-                                <th>Fewest Times Tagged</th>
-                                <th class="text-end">Tagged</th>
+                                <th id="league-leaders-fewest_tagged-th-player_name">
+                                    {% if fewest_tagged_sort == "player_name" %}
+                                        <a href="?{{ fewest_tagged_querystring_without_sort }}{% if fewest_tagged_querystring_without_sort %}&{% endif %}fewest_tagged_sort=player_name&fewest_tagged_dir={% if fewest_tagged_dir == 'asc' %}desc{% else %}asc{% endif %}">Fewest Times Tagged {% if fewest_tagged_dir == 'asc' %}↑{% else %}↓{% endif %}</a>
+                                    {% else %}
+                                        <a href="?{{ fewest_tagged_querystring_without_sort }}{% if fewest_tagged_querystring_without_sort %}&{% endif %}fewest_tagged_sort=player_name&fewest_tagged_dir=asc">Fewest Times Tagged</a>
+                                    {% endif %}
+                                </th>
+                                <th id="league-leaders-fewest_tagged-th-value" class="text-end">
+                                    {% if fewest_tagged_sort == "value" %}
+                                        <a href="?{{ fewest_tagged_querystring_without_sort }}{% if fewest_tagged_querystring_without_sort %}&{% endif %}fewest_tagged_sort=value&fewest_tagged_dir={% if fewest_tagged_dir == 'asc' %}desc{% else %}asc{% endif %}">Tagged {% if fewest_tagged_dir == 'asc' %}↑{% else %}↓{% endif %}</a>
+                                    {% else %}
+                                        <a href="?{{ fewest_tagged_querystring_without_sort }}{% if fewest_tagged_querystring_without_sort %}&{% endif %}fewest_tagged_sort=value&fewest_tagged_dir=asc">Tagged</a>
+                                    {% endif %}
+                                </th>
                             </tr>
                         </thead>
                         <tbody>
@@ -99,8 +135,20 @@
                     <table id="leaders-tag-ratio" class="table table-sm table-striped">
                         <thead>
                             <tr>
-                                <th>Tag Ratio</th>
-                                <th class="text-end">Ratio</th>
+                                <th id="league-leaders-tag_ratio-th-player_name">
+                                    {% if tag_ratio_sort == "player_name" %}
+                                        <a href="?{{ tag_ratio_querystring_without_sort }}{% if tag_ratio_querystring_without_sort %}&{% endif %}tag_ratio_sort=player_name&tag_ratio_dir={% if tag_ratio_dir == 'asc' %}desc{% else %}asc{% endif %}">Tag Ratio {% if tag_ratio_dir == 'asc' %}↑{% else %}↓{% endif %}</a>
+                                    {% else %}
+                                        <a href="?{{ tag_ratio_querystring_without_sort }}{% if tag_ratio_querystring_without_sort %}&{% endif %}tag_ratio_sort=player_name&tag_ratio_dir=asc">Tag Ratio</a>
+                                    {% endif %}
+                                </th>
+                                <th id="league-leaders-tag_ratio-th-value" class="text-end">
+                                    {% if tag_ratio_sort == "value" %}
+                                        <a href="?{{ tag_ratio_querystring_without_sort }}{% if tag_ratio_querystring_without_sort %}&{% endif %}tag_ratio_sort=value&tag_ratio_dir={% if tag_ratio_dir == 'asc' %}desc{% else %}asc{% endif %}">Ratio {% if tag_ratio_dir == 'asc' %}↑{% else %}↓{% endif %}</a>
+                                    {% else %}
+                                        <a href="?{{ tag_ratio_querystring_without_sort }}{% if tag_ratio_querystring_without_sort %}&{% endif %}tag_ratio_sort=value&tag_ratio_dir=asc">Ratio</a>
+                                    {% endif %}
+                                </th>
                             </tr>
                         </thead>
                         <tbody>

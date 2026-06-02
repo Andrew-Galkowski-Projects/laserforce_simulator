@@ -25,9 +25,31 @@ from __future__ import annotations
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
 
-from matches.league_views import _build_league_sidebar_links
+from matches.league_views import _build_league_sidebar_links, _coerce_sort_key
 from matches.models import League
 from teams.models import Player
+from teams.views import _coerce_dir
+
+# LG-06c — sortable Watch List columns (the watched-players table only; the
+# 4th "Action" column is not sortable). Default ``name`` asc — an intentional
+# behavioural refinement over the prior session-insertion order (insertion
+# order is not a rendered column). Secondary tiebreak: ``player.id``.
+_WATCH_LIST_SORT_KEYS: frozenset[str] = frozenset({"name", "team", "overall_rating"})
+_WATCH_LIST_SORT_KEYS_DISPLAY: tuple[tuple[str, str], ...] = (
+    ("name", "Player"),
+    ("team", "Team"),
+    ("overall_rating", "Overall"),
+)
+
+
+def _watch_list_sort_value(player: Player, key: str):
+    """Sort-value extraction on a ``Player`` ORM object (None-safe via tuple)."""
+    if key == "name":
+        return player.name
+    if key == "team":
+        return player.team.name
+    # key == "overall_rating"
+    return player.overall_rating
 
 
 def _coerce_player_id(raw: str | None) -> int | None:
@@ -87,6 +109,10 @@ def watch_list(request: HttpRequest, league_id: int) -> HttpResponse:
         league, displayed_season, sidebar_active="watch_list"
     )
 
+    # LG-06c — coerce the sort/dir params for the plain-GET render path.
+    sort = _coerce_sort_key(request.GET.get("sort"), _WATCH_LIST_SORT_KEYS, "name")
+    direction = _coerce_dir(request.GET.get("dir"))
+
     # No Season ⇒ empty-state (the sidebar still renders).
     if displayed_season is None:
         context = {
@@ -96,6 +122,9 @@ def watch_list(request: HttpRequest, league_id: int) -> HttpResponse:
             "sidebar_active": "watch_list",
             "watched_players": [],
             "addable_players": [],
+            "sort": sort,
+            "dir": direction,
+            "sort_keys": _WATCH_LIST_SORT_KEYS_DISPLAY,
         }
         return render(request, "leagues/watch_list.html", context)
 
@@ -115,6 +144,14 @@ def watch_list(request: HttpRequest, league_id: int) -> HttpResponse:
         players_by_id[pid] for pid in watched_ids if pid in players_by_id
     ]
 
+    # LG-06c — sort the watched table in-memory (only ``watched_players``;
+    # ``addable_players`` below stays name-ordered). ``player.id`` is the
+    # always-appended stable secondary tiebreak.
+    watched_players.sort(
+        key=lambda p: (_watch_list_sort_value(p, sort), p.id),
+        reverse=(direction == "desc"),
+    )
+
     # Add control: every Player NOT already watched, ordered for a stable list.
     watched_set = {p.id for p in watched_players}
     addable_players = [
@@ -130,5 +167,8 @@ def watch_list(request: HttpRequest, league_id: int) -> HttpResponse:
         "sidebar_active": "watch_list",
         "watched_players": watched_players,
         "addable_players": addable_players,
+        "sort": sort,
+        "dir": direction,
+        "sort_keys": _WATCH_LIST_SORT_KEYS_DISPLAY,
     }
     return render(request, "leagues/watch_list.html", context)

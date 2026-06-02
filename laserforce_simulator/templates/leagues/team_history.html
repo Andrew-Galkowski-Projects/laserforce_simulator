@@ -34,6 +34,11 @@
                         {% endfor %}
                     </select>
                     <input type="hidden" name="per_page" value="{{ per_page }}">
+                    {# LG-06c — carry both sort pairs so switching team keeps sorts. #}
+                    <input type="hidden" name="seasons_sort" value="{{ seasons_sort }}">
+                    <input type="hidden" name="seasons_dir" value="{{ seasons_dir }}">
+                    <input type="hidden" name="players_sort" value="{{ players_sort }}">
+                    <input type="hidden" name="players_dir" value="{{ players_dir }}">
                     <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">View</button></noscript>
                 </form>
             </div>
@@ -65,9 +70,27 @@
                             <table id="team-history-seasons-table" class="table table-striped table-hover">
                                 <thead>
                                     <tr>
-                                        <th>Year</th>
-                                        <th class="text-end">Record (W-L-T)</th>
-                                        <th class="text-end">Final rank</th>
+                                        <th id="team-history-seasons-th-year">
+                                            {% if seasons_sort == "year" %}
+                                                <a href="?{{ seasons_querystring_without_sort }}{% if seasons_querystring_without_sort %}&{% endif %}seasons_sort=year&seasons_dir={% if seasons_dir == 'asc' %}desc{% else %}asc{% endif %}">Year {% if seasons_dir == 'asc' %}↑{% else %}↓{% endif %}</a>
+                                            {% else %}
+                                                <a href="?{{ seasons_querystring_without_sort }}{% if seasons_querystring_without_sort %}&{% endif %}seasons_sort=year&seasons_dir=asc">Year</a>
+                                            {% endif %}
+                                        </th>
+                                        <th id="team-history-seasons-th-wins" class="text-end">
+                                            {% if seasons_sort == "wins" %}
+                                                <a href="?{{ seasons_querystring_without_sort }}{% if seasons_querystring_without_sort %}&{% endif %}seasons_sort=wins&seasons_dir={% if seasons_dir == 'asc' %}desc{% else %}asc{% endif %}">Record (W-L-T) {% if seasons_dir == 'asc' %}↑{% else %}↓{% endif %}</a>
+                                            {% else %}
+                                                <a href="?{{ seasons_querystring_without_sort }}{% if seasons_querystring_without_sort %}&{% endif %}seasons_sort=wins&seasons_dir=asc">Record (W-L-T)</a>
+                                            {% endif %}
+                                        </th>
+                                        <th id="team-history-seasons-th-rank" class="text-end">
+                                            {% if seasons_sort == "rank" %}
+                                                <a href="?{{ seasons_querystring_without_sort }}{% if seasons_querystring_without_sort %}&{% endif %}seasons_sort=rank&seasons_dir={% if seasons_dir == 'asc' %}desc{% else %}asc{% endif %}">Final rank {% if seasons_dir == 'asc' %}↑{% else %}↓{% endif %}</a>
+                                            {% else %}
+                                                <a href="?{{ seasons_querystring_without_sort }}{% if seasons_querystring_without_sort %}&{% endif %}seasons_sort=rank&seasons_dir=asc">Final rank</a>
+                                            {% endif %}
+                                        </th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -107,6 +130,11 @@
                                 {% endfor %}
                             </select>
                             <input type="hidden" name="team_id" value="{{ team.id }}">
+                            {# LG-06c — carry both sort pairs so changing page size keeps sorts. #}
+                            <input type="hidden" name="players_sort" value="{{ players_sort }}">
+                            <input type="hidden" name="players_dir" value="{{ players_dir }}">
+                            <input type="hidden" name="seasons_sort" value="{{ seasons_sort }}">
+                            <input type="hidden" name="seasons_dir" value="{{ seasons_dir }}">
                             <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">Update</button></noscript>
                         </form>
 
@@ -114,15 +142,19 @@
                             <table id="team-history-players-table" class="table table-striped table-hover">
                                 <thead>
                                     <tr>
-                                        <th>Name</th>
-                                        <th class="text-end">Games</th>
-                                        <th class="text-end">Points</th>
-                                        <th class="text-end">Tags</th>
-                                        <th class="text-end">Times tagged</th>
-                                        <th class="text-end">Missiles</th>
-                                        <th class="text-end">Resupplies</th>
-                                        <th class="text-end">Specials</th>
-                                        <th class="text-end">Last season</th>
+                                        {% for key, label in players_sort_keys %}
+                                            <th id="team-history-players-th-{{ key }}"{% if key != "name" %} class="text-end"{% endif %}>
+                                                {% if key == players_sort %}
+                                                    {% if players_dir == "asc" %}
+                                                        <a href="?{{ players_querystring_without_sort_page }}{% if players_querystring_without_sort_page %}&{% endif %}players_sort={{ key }}&players_dir=desc">{{ label }} ↑</a>
+                                                    {% else %}
+                                                        <a href="?{{ players_querystring_without_sort_page }}{% if players_querystring_without_sort_page %}&{% endif %}players_sort={{ key }}&players_dir=asc">{{ label }} ↓</a>
+                                                    {% endif %}
+                                                {% else %}
+                                                    <a href="?{{ players_querystring_without_sort_page }}{% if players_querystring_without_sort_page %}&{% endif %}players_sort={{ key }}&players_dir=asc">{{ label }}</a>
+                                                {% endif %}
+                                            </th>
+                                        {% endfor %}
                                     </tr>
                                 </thead>
                                 <tbody>

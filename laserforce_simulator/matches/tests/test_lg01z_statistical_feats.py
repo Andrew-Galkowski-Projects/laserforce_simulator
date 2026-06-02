@@ -715,3 +715,263 @@ class TestStatisticalFeatsComebackFilter(TestCase):
         # when filtering to team_c.
         response = self._get(query=f"team_id={self.team_c.id}")
         self.assertNotIn("stat-feat-comeback_win", response.content.decode())
+
+
+# ===========================================================================
+# LG-06c — Statistical Feats sortable control
+#
+# A single ?sort=&dir= over the flat <ul> of FeatRecords. Keys {kind, name,
+# value}; default kind/asc. value extraction is numeric-aware so non-numeric
+# values ("Comeback", "4 tags, 0 tagged") group at one end without crashing.
+# Coexists with ?team_id=. DOM ids statistical-feats-th-<key>; active glyph
+# U+2191 / U+2193.
+#
+# EXPECTED TO FAIL until the Code agent lands feats sorting + the sort-control
+# bar above the <ul>.
+# ===========================================================================
+
+import re as _sf_re  # noqa: E402
+
+_SF_GLYPH_UP = "↑"
+_SF_GLYPH_DOWN = "↓"
+
+
+def _feat_kind_order(content: str) -> list[str]:
+    """Kinds in render order from the ``stat-feat-{kind}`` list-item ids."""
+    return _sf_re.findall(r"stat-feat-([a-z_]+)", content)
+
+
+def _make_multi_feat_round(test):
+    """Populate a round producing several distinct feat kinds with a mix of
+    numeric and non-numeric values:
+
+      * perfect_heavy  → value "5 tags, 0 misses"  (non-numeric)
+      * top_score      → value "9000"              (numeric)
+      * top_mvp        → value "<float>"           (numeric)
+      * tag_streak     → value "5"                 (numeric)
+      * medic_shutout  → value "<n> tags, 0 tagged" (non-numeric)
+    """
+    _m, gr = _make_round(test.season, test.team_a, test.team_b)
+    _make_prs(
+        gr,
+        test.team_a.slot_heavy,
+        "red",
+        "heavy",
+        shots_missed=0,
+        tags_made=5,
+        points_scored=9000,
+    )
+    _make_prs(
+        gr,
+        test.team_a.slot_medic,
+        "red",
+        "medic",
+        times_tagged=0,
+        tags_made=3,
+        points_scored=100,
+    )
+    return gr
+
+
+class TestStatisticalFeatsSortDefault(TestCase):
+    URL_NAME = "stats_statistical_feats"
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = teams
+        _make_multi_feat_round(self)
+
+    def _get(self, *, query: str = ""):
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        if query:
+            url = f"{url}?{query}"
+        return self.client.get(url)
+
+    def test_default_order_is_kind_asc(self) -> None:
+        kinds = _feat_kind_order(self._get().content.decode())
+        # At least two distinct kinds, rendered kind-ascending.
+        self.assertGreaterEqual(len(set(kinds)), 2)
+        self.assertEqual(kinds, sorted(kinds))
+
+
+class TestStatisticalFeatsSortKeys(TestCase):
+    URL_NAME = "stats_statistical_feats"
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = teams
+        _make_multi_feat_round(self)
+
+    def _get(self, *, query: str = ""):
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        if query:
+            url = f"{url}?{query}"
+        return self.client.get(url)
+
+    def test_kind_asc_then_desc(self) -> None:
+        asc = _feat_kind_order(self._get(query="sort=kind&dir=asc").content.decode())
+        desc = _feat_kind_order(self._get(query="sort=kind&dir=desc").content.decode())
+        self.assertEqual(asc, sorted(asc))
+        self.assertEqual(desc, sorted(desc, reverse=True))
+
+    def test_name_asc_then_desc_returns_200(self) -> None:
+        # All feats here are team_a players; assert no crash + a deterministic
+        # total order (reverse of asc).
+        asc = _feat_kind_order(self._get(query="sort=name&dir=asc").content.decode())
+        desc = _feat_kind_order(self._get(query="sort=name&dir=desc").content.decode())
+        self.assertEqual(self._get(query="sort=name&dir=asc").status_code, 200)
+        # The two orderings must be reverses over the same multiset of kinds.
+        self.assertEqual(sorted(asc), sorted(desc))
+
+    def test_value_sort_mixes_numeric_and_non_numeric_without_crash(self) -> None:
+        # A mix of "9000"/"42.5" (numeric) and "5 tags, 0 misses"/"Comeback"
+        # (non-numeric). The sort must not raise and must give a deterministic
+        # total order — non-numeric values grouped at one end.
+        asc = self._get(query="sort=value&dir=asc")
+        desc = self._get(query="sort=value&dir=desc")
+        self.assertEqual(asc.status_code, 200)
+        self.assertEqual(desc.status_code, 200)
+        asc_kinds = _feat_kind_order(asc.content.decode())
+        desc_kinds = _feat_kind_order(desc.content.decode())
+        # Same multiset of feats either way; deterministic ordering.
+        self.assertEqual(sorted(asc_kinds), sorted(desc_kinds))
+        # Direction actually changes the order (numeric extreme moves).
+        self.assertNotEqual(asc_kinds, desc_kinds)
+
+
+class TestStatisticalFeatsSortInvalidFallback(TestCase):
+    URL_NAME = "stats_statistical_feats"
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = teams
+        _make_multi_feat_round(self)
+
+    def _get(self, *, query: str = ""):
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        if query:
+            url = f"{url}?{query}"
+        return self.client.get(url)
+
+    def test_garbage_sort_falls_back_to_kind_asc(self) -> None:
+        kinds = _feat_kind_order(self._get(query="sort=BOGUS").content.decode())
+        self.assertEqual(kinds, sorted(kinds))
+
+    def test_garbage_dir_falls_back_to_asc(self) -> None:
+        kinds = _feat_kind_order(self._get(query="sort=kind&dir=NOPE").content.decode())
+        self.assertEqual(kinds, sorted(kinds))
+
+    def test_empty_sort_falls_back_to_default(self) -> None:
+        kinds = _feat_kind_order(self._get(query="sort=&dir=").content.decode())
+        self.assertEqual(kinds, sorted(kinds))
+
+    def test_uppercase_sort_falls_back(self) -> None:
+        kinds = _feat_kind_order(self._get(query="sort=KIND").content.decode())
+        self.assertEqual(kinds, sorted(kinds))
+
+
+class TestStatisticalFeatsSortHeaderGlyph(TestCase):
+    URL_NAME = "stats_statistical_feats"
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = teams
+        _make_multi_feat_round(self)
+
+    def _get(self, *, query: str = ""):
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        if query:
+            url = f"{url}?{query}"
+        return self.client.get(url)
+
+    def test_th_dom_ids_present(self) -> None:
+        content = self._get().content.decode()
+        for key in ("kind", "name", "value"):
+            self.assertIn(f"statistical-feats-th-{key}", content)
+
+    def test_active_value_header_glyph(self) -> None:
+        content = self._get(query="sort=value&dir=desc").content.decode()
+        th_start = content.index("statistical-feats-th-value")
+        window = content[th_start : th_start + 400]
+        self.assertIn(_SF_GLYPH_DOWN, window)
+
+    def test_active_kind_header_up_glyph_on_asc(self) -> None:
+        content = self._get(query="sort=kind&dir=asc").content.decode()
+        th_start = content.index("statistical-feats-th-kind")
+        window = content[th_start : th_start + 400]
+        self.assertIn(_SF_GLYPH_UP, window)
+
+
+class TestStatisticalFeatsSortCoexistsWithTeamId(TestCase):
+    """Sort + ?team_id= honoured together. team_a's Heavy is the top scorer;
+    filtering to team_a AND sorting by value desc keeps team_a's feats only."""
+
+    URL_NAME = "stats_statistical_feats"
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, teams = _make_active_season(self.league, n_teams=2)
+        teams.sort(key=lambda t: t.name)
+        self.team_a, self.team_b = teams
+        _m, gr = _make_round(self.season, self.team_a, self.team_b)
+        self.heavy_a = self.team_a.slot_heavy
+        self.heavy_b = self.team_b.slot_heavy
+        _make_prs(
+            gr,
+            self.heavy_a,
+            "red",
+            "heavy",
+            shots_missed=0,
+            tags_made=5,
+            points_scored=9000,
+        )
+        _make_prs(
+            gr,
+            self.heavy_b,
+            "blue",
+            "heavy",
+            shots_missed=0,
+            tags_made=3,
+            points_scored=1000,
+        )
+
+    def _get(self, *, query: str = ""):
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        if query:
+            url = f"{url}?{query}"
+        return self.client.get(url)
+
+    def test_filter_and_value_desc_together(self) -> None:
+        content = self._get(
+            query=f"team_id={self.team_a.id}&sort=value&dir=desc"
+        ).content.decode()
+        # team_a's Heavy present, team_b's Heavy filtered out.
+        self.assertIn(self.heavy_a.name, content)
+        self.assertNotIn(self.heavy_b.name, content)
+
+    def test_header_href_carries_team_id(self) -> None:
+        content = self._get(query=f"team_id={self.team_a.id}").content.decode()
+        th_start = content.index("statistical-feats-th-value")
+        window = content[th_start : th_start + 400]
+        self.assertIn(f"team_id={self.team_a.id}", window)
+
+    def test_team_filter_form_carries_sort_and_dir(self) -> None:
+        content = self._get(
+            query=f"team_id={self.team_a.id}&sort=value&dir=desc"
+        ).content.decode()
+        self.assertIn('name="sort"', content)
+        self.assertIn('name="dir"', content)

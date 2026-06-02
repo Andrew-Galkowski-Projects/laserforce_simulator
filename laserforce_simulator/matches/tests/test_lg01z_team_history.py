@@ -620,3 +620,409 @@ class TestTeamHistoryTeamSelection(TestCase):
         content = team_history(_get(self.league.id), self.league.id).content.decode()
         for team in (self.team_a, self.team_b, self.team_c):
             self.assertIn(team.name, content)
+
+
+# ===========================================================================
+# LG-06c — Team History sortable columns (Seasons + Players; Overall NONE)
+#
+# Seasons: ?seasons_sort=&seasons_dir= keys {year, wins, losses, ties, rank},
+#   default year/desc (newest first).
+# Players: ?players_sort=&players_dir= keys {name, games_played,
+#   points_scored, tags_made, times_tagged, missiles_landed, resupplies_given,
+#   specials_used, last_season_year}, default name/asc, SORTED BEFORE
+#   pagination, sort+dir carried in pagination links, sort change resets to
+#   page 1. Overall tab gets NO sort headers. Namespaced params independent.
+#
+# EXPECTED TO FAIL until the Code agent lands view-side sorting + headers.
+# ===========================================================================
+
+_TH_GLYPH_UP = "↑"
+_TH_GLYPH_DOWN = "↓"
+
+
+def _player_row_ids_in_order(content: str) -> list[int]:
+    import re
+
+    return [int(m) for m in re.findall(r"team-history-player-row-(\d+)", content)]
+
+
+def _season_row_ids_in_order(content: str) -> list[int]:
+    import re
+
+    return [int(m) for m in re.findall(r"team-history-season-row-(\d+)", content)]
+
+
+class TestTeamHistorySeasonsSort(TestCase):
+    """Seasons table sort. Two enrolled Seasons in distinct calendar years so
+    year-desc default and asc/desc flips are observable."""
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        # Two Seasons for the SAME team so both appear in its Seasons table.
+        self.season1, self.teams = _make_active_season(
+            self.league, name="S1", n_teams=2
+        )
+        self.team_a, self.team_b = self.teams
+        self.league.current_team = self.team_a
+        self.league.save(update_fields=["current_team"])
+        # Second Season enrolling team_a, later year. Build it directly so
+        # team_a is enrolled in both (start_date controls the year shown).
+        self.season2 = Season.objects.create(
+            league=self.league, name="S2", start_date=date(2028, 6, 1)
+        )
+        self.season2.teams.add(self.team_a, self.team_b)
+        self.season2.start_season()
+        self.season2.refresh_from_db()
+        # season1 start_date is 2026 (from _make_active_season).
+
+    def test_default_seasons_order_is_year_desc(self) -> None:
+        content = team_history(
+            _get(self.league.id, query=f"team_id={self.team_a.id}"),
+            self.league.id,
+        ).content.decode()
+        order = _season_row_ids_in_order(content)
+        # Newest (2028 = season2) first.
+        self.assertEqual(order[0], self.season2.id)
+
+    def test_year_asc_flips_to_oldest_first(self) -> None:
+        content = team_history(
+            _get(
+                self.league.id,
+                query=f"team_id={self.team_a.id}&seasons_sort=year&seasons_dir=asc",
+            ),
+            self.league.id,
+        ).content.decode()
+        order = _season_row_ids_in_order(content)
+        self.assertEqual(order[0], self.season1.id)
+
+    def test_invalid_seasons_sort_falls_back_to_year_desc(self) -> None:
+        content = team_history(
+            _get(
+                self.league.id,
+                query=f"team_id={self.team_a.id}&seasons_sort=BOGUS&seasons_dir=NOPE",
+            ),
+            self.league.id,
+        ).content.decode()
+        order = _season_row_ids_in_order(content)
+        self.assertEqual(order[0], self.season2.id)
+
+    def test_seasons_th_dom_ids_present(self) -> None:
+        content = team_history(
+            _get(self.league.id, query=f"team_id={self.team_a.id}"),
+            self.league.id,
+        ).content.decode()
+        for key in ("year", "wins", "rank"):
+            self.assertIn(f"team-history-seasons-th-{key}", content)
+
+    def test_active_seasons_header_glyph(self) -> None:
+        content = team_history(
+            _get(
+                self.league.id,
+                query=f"team_id={self.team_a.id}&seasons_sort=year&seasons_dir=asc",
+            ),
+            self.league.id,
+        ).content.decode()
+        th_start = content.index("team-history-seasons-th-year")
+        window = content[th_start : th_start + 400]
+        self.assertIn(_TH_GLYPH_UP, window)
+
+
+class TestTeamHistoryPlayersSort(TestCase):
+    """Players table sort over a >per_page roster so sort-before-pagination
+    is observable. 13 players appear for team_a in one round."""
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = self.teams
+        self.league.current_team = self.team_a
+        self.league.save(update_fields=["current_team"])
+        self.match, self.gr = _play_round(
+            self.season,
+            self.team_a,
+            self.team_b,
+            round_number=1,
+            red_points=100,
+            blue_points=50,
+        )
+        # 13 players, ascending points so the global max is deterministic.
+        self.players = []
+        for i in range(13):
+            p = Player.objects.create(team=self.team_a, name=f"Roster{i:02d}")
+            PlayerRoundState.objects.create(
+                game_round=self.gr,
+                player=p,
+                team_color="red",
+                points_scored=10 + i,  # Roster12 has the highest, =22
+                tags_made=i,
+            )
+            self.players.append(p)
+        self.top_points_player = self.players[-1]  # Roster12, 22 points
+
+    def _q(self, query: str) -> str:
+        return team_history(
+            _get(self.league.id, query=f"team_id={self.team_a.id}&{query}"),
+            self.league.id,
+        ).content.decode()
+
+    def test_default_players_order_is_name_asc(self) -> None:
+        content = self._q("per_page=25")
+        order = _player_row_ids_in_order(content)
+        names_by_id = {p.id: p.name for p in self.players}
+        rendered_names = [names_by_id[i] for i in order if i in names_by_id]
+        self.assertEqual(rendered_names, sorted(rendered_names))
+
+    def test_points_scored_desc_puts_global_max_on_page_one(self) -> None:
+        # SORT-BEFORE-PAGINATION: the global highest-points player (Roster12,
+        # which would be on page 2 in name-asc default order) appears on
+        # page 1 when sorted points_scored desc.
+        content = self._q(
+            "players_sort=points_scored&players_dir=desc&per_page=10&page=1"
+        )
+        order = _player_row_ids_in_order(content)
+        self.assertEqual(order[0], self.top_points_player.id)
+
+    def test_points_scored_asc_puts_global_min_on_page_one(self) -> None:
+        content = self._q(
+            "players_sort=points_scored&players_dir=asc&per_page=10&page=1"
+        )
+        order = _player_row_ids_in_order(content)
+        self.assertEqual(order[0], self.players[0].id)  # Roster00, 10 points
+
+    def test_tags_made_desc_sorts(self) -> None:
+        content = self._q("players_sort=tags_made&players_dir=desc&per_page=10&page=1")
+        order = _player_row_ids_in_order(content)
+        # tags_made == i, so Roster12 (i=12) leads.
+        self.assertEqual(order[0], self.players[-1].id)
+
+    def test_name_desc_reverses(self) -> None:
+        content = self._q("players_sort=name&players_dir=desc&per_page=25")
+        order = _player_row_ids_in_order(content)
+        names_by_id = {p.id: p.name for p in self.players}
+        rendered_names = [names_by_id[i] for i in order if i in names_by_id]
+        self.assertEqual(rendered_names, sorted(rendered_names, reverse=True))
+
+    def test_every_player_key_returns_200_and_sorts(self) -> None:
+        for key in (
+            "name",
+            "games_played",
+            "points_scored",
+            "tags_made",
+            "times_tagged",
+            "missiles_landed",
+            "resupplies_given",
+            "specials_used",
+            "last_season_year",
+        ):
+            content = self._q(f"players_sort={key}&players_dir=asc&per_page=25")
+            # 13 players all render under per_page=25.
+            self.assertEqual(len(_player_row_ids_in_order(content)), 13, key)
+
+    def test_invalid_players_sort_falls_back_to_name_asc(self) -> None:
+        content = self._q("players_sort=BOGUS&players_dir=NOPE&per_page=25")
+        order = _player_row_ids_in_order(content)
+        names_by_id = {p.id: p.name for p in self.players}
+        rendered_names = [names_by_id[i] for i in order if i in names_by_id]
+        self.assertEqual(rendered_names, sorted(rendered_names))
+
+    def test_players_th_dom_ids_present(self) -> None:
+        content = self._q("per_page=25")
+        for key in (
+            "name",
+            "games_played",
+            "points_scored",
+            "tags_made",
+            "times_tagged",
+            "missiles_landed",
+            "resupplies_given",
+            "specials_used",
+            "last_season_year",
+        ):
+            self.assertIn(f"team-history-players-th-{key}", content)
+
+    def test_active_players_header_glyph(self) -> None:
+        content = self._q("players_sort=points_scored&players_dir=desc&per_page=25")
+        th_start = content.index("team-history-players-th-points_scored")
+        window = content[th_start : th_start + 400]
+        self.assertIn(_TH_GLYPH_DOWN, window)
+
+
+class TestTeamHistoryPlayersSortPaginationLinks(TestCase):
+    """Sort change resets to page 1; pagination links preserve sort/dir +
+    team_id + per_page. Uses the wired URL so query strings are real."""
+
+    URL_NAME = "team_history"
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = self.teams
+        self.league.current_team = self.team_a
+        self.league.save(update_fields=["current_team"])
+        self.match, self.gr = _play_round(
+            self.season,
+            self.team_a,
+            self.team_b,
+            round_number=1,
+            red_points=100,
+            blue_points=50,
+        )
+        for i in range(13):
+            p = Player.objects.create(team=self.team_a, name=f"Roster{i:02d}")
+            PlayerRoundState.objects.create(
+                game_round=self.gr,
+                player=p,
+                team_color="red",
+                points_scored=10 + i,
+            )
+
+    def _get(self, *, query: str = ""):
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        if query:
+            url = f"{url}?{query}"
+        return self.client.get(url)
+
+    def test_players_header_href_omits_page(self) -> None:
+        # A column-header href must NOT carry a stale page= (resets to page 1).
+        content = self._get(
+            query=f"team_id={self.team_a.id}&per_page=10&page=2"
+            f"&players_sort=name&players_dir=asc"
+        ).content.decode()
+        th_start = content.index("team-history-players-th-points_scored")
+        window = content[th_start : th_start + 500]
+        self.assertIn("players_sort=points_scored", window)
+        self.assertNotIn("page=2", window)
+
+    def test_pagination_links_carry_sort_dir_team_id_per_page(self) -> None:
+        content = self._get(
+            query=f"team_id={self.team_a.id}&per_page=10&page=1"
+            f"&players_sort=points_scored&players_dir=desc"
+        ).content.decode()
+        self.assertIn("team-history-players-pagination", content)
+        nav_start = content.index("team-history-players-pagination")
+        nav = content[nav_start : nav_start + 1200]
+        self.assertIn("players_sort=points_scored", nav)
+        self.assertIn("players_dir=desc", nav)
+        self.assertIn(f"team_id={self.team_a.id}", nav)
+        self.assertIn("per_page=10", nav)
+
+    def test_per_page_form_carries_players_sort_and_dir(self) -> None:
+        content = self._get(
+            query=f"team_id={self.team_a.id}&per_page=10"
+            f"&players_sort=points_scored&players_dir=desc"
+        ).content.decode()
+        # The per-page <select> form must carry the active players sort/dir
+        # so changing page size keeps the sort.
+        self.assertIn('name="players_sort"', content)
+        self.assertIn('name="players_dir"', content)
+
+
+class TestTeamHistoryNamespaceIndependence(TestCase):
+    """Sorting the Seasons table does not reset the Players sort and vice
+    versa — the two param namespaces are independent."""
+
+    URL_NAME = "team_history"
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = self.teams
+        self.league.current_team = self.team_a
+        self.league.save(update_fields=["current_team"])
+        self.match, self.gr = _play_round(
+            self.season,
+            self.team_a,
+            self.team_b,
+            round_number=1,
+            red_points=100,
+            blue_points=50,
+        )
+        self.players = []
+        for i in range(3):
+            p = Player.objects.create(team=self.team_a, name=f"Roster{i:02d}")
+            PlayerRoundState.objects.create(
+                game_round=self.gr,
+                player=p,
+                team_color="red",
+                points_scored=10 + i,
+            )
+            self.players.append(p)
+
+    def _get(self, *, query: str = ""):
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        if query:
+            url = f"{url}?{query}"
+        return self.client.get(url)
+
+    def test_players_sort_holds_while_seasons_sort_changes(self) -> None:
+        # Set players_sort=points_scored desc AND seasons_sort=year asc.
+        # The Players table must still honour points_scored desc.
+        content = self._get(
+            query=f"team_id={self.team_a.id}&per_page=25"
+            f"&players_sort=points_scored&players_dir=desc"
+            f"&seasons_sort=year&seasons_dir=asc"
+        ).content.decode()
+        order = _player_row_ids_in_order(content)
+        self.assertEqual(order[0], self.players[-1].id)  # highest points first
+
+    def test_seasons_header_href_carries_players_params(self) -> None:
+        # The Seasons header href must carry players_sort/players_dir so it
+        # doesn't reset the Players table.
+        content = self._get(
+            query=f"team_id={self.team_a.id}"
+            f"&players_sort=points_scored&players_dir=desc"
+        ).content.decode()
+        th_start = content.index("team-history-seasons-th-year")
+        window = content[th_start : th_start + 500]
+        self.assertIn("players_sort=points_scored", window)
+
+
+class TestTeamHistorySortCoexistsWithTeamId(TestCase):
+    """Switching team via the picker carries both seasons_* and players_*
+    sort state."""
+
+    URL_NAME = "team_history"
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, self.teams = _make_active_season(self.league, n_teams=3)
+        self.team_a, self.team_b, self.team_c = self.teams
+        self.league.current_team = self.team_a
+        self.league.save(update_fields=["current_team"])
+
+    def _get(self, *, query: str = ""):
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        if query:
+            url = f"{url}?{query}"
+        return self.client.get(url)
+
+    def test_team_picker_form_carries_seasons_and_players_sort(self) -> None:
+        content = self._get(
+            query=f"team_id={self.team_b.id}"
+            f"&seasons_sort=year&seasons_dir=asc"
+            f"&players_sort=points_scored&players_dir=desc"
+        ).content.decode()
+        # The team picker form must carry both namespaced sort states.
+        self.assertIn('name="seasons_sort"', content)
+        self.assertIn('name="players_sort"', content)
+
+
+class TestTeamHistoryOverallNoSort(TestCase):
+    """The Overall tab is a W-L-T dl with NO sort headers."""
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = self.teams
+        self.league.current_team = self.team_a
+        self.league.save(update_fields=["current_team"])
+
+    def test_no_overall_sort_headers(self) -> None:
+        content = team_history(_get(self.league.id), self.league.id).content.decode()
+        self.assertNotIn("team-history-overall-th-", content)
