@@ -1267,6 +1267,151 @@ link-target assertions on the 8 screens were repointed to the new route.
 - `test_season_dashboard_view.py` — LG-01c Django `TestCase` for the season dashboard's state matrix + 5-entry sidebar + body integration: routing (200 / 404 / 405 / reverse / template), state matrix (draft / active / completed each renders the locked DOM-id set with active-only ids absent in draft + action-button label and `data-action-state` per state), sidebar (`sidebar_links` has 5 entries in pinned order `overview, standings, schedule, teams, history` + `sidebar_active="overview"` + standings link reverses to `season_standings` + schedule link reverses to `season_schedule` + teams renders as disabled `<span>` no href + history renders as disabled `<span>` no href), body (leaders use the `compute_leaders` pure module end-to-end via a known-PRS active Season, `next_fixture` omitted when completed and all played, per-leader raw `/players/<id>/career-stats/` href, raw `/seasons/<id>/leaders/` "View all leaders" href)
 - `conftest.py` — shared `make_team_with_slots(prefix)` helper
 
+## LG-02a sandbox single-elimination tournament
+
+A **standalone sandbox Tournament** — a persisted single-elimination bracket
+decoupled from any League / Season (`season`-less, no `generate_schedule`). Three
+new models, one pure module, six views under a new `/tournaments/` mount, a
+bracket-tree detail page, and a sandbox-nav entry. See
+[ADR-0019](../../docs/adr/0019-tournament-bracket-model.md) for the persisted
+standalone-sandbox decision; seam contract:
+[`.claude/worktrees/lg-02a-seam-contract.md`](../../.claude/worktrees/lg-02a-seam-contract.md).
+CONTEXT.md `### Tournaments` carries the 8 locked terms (**Tournament** /
+**Bracket** / **Bracket round** / **Bracket node** / **Bracket seed** /
+**Seeding** / **Advancement** / **Bye**). Migration:
+`matches/migrations/0033_tournament.py` (new models only — **no `RunPython`, no
+backfill**, ADR-0004 precedent; `0032` was taken by `0032_league_free_agent_pool`).
+
+**Models (`matches/models.py`, after `Season`).** `Tournament` (`name`,
+`format` enum default `"single_elimination"` — present-but-single, extensible;
+3-state `state` machine `setup` → `active` → `completed`; `created_at`;
+`champion` FK to `teams.Team` SET_NULL, `related_name="tournaments_won"`).
+Methods: `lock_and_build()` (`@transaction.atomic`, `setup` → `active`: validates
+participant count **≥ 4**, builds + persists the `BracketNode` tree from the
+current Seeding via `matches.bracket.build_bracket`, flips `state="active"`;
+raises `django.core.exceptions.ValidationError` on count < 4 or wrong state — the
+seeding-editable window closes here, mirroring `Season.start_season`'s draft→active
+M2M lock); `is_locked` property (True iff `state != "setup"`);
+`find_next_playable_node()` (delegates to `matches.bracket.find_next_node`).
+`TournamentParticipant` (`tournament` CASCADE `related_name="participants"`,
+`team` CASCADE `related_name="+"`, `seed` `PositiveIntegerField` — 1-based Bracket
+seed, lower int = stronger; `Meta.ordering = ["seed"]` so participants iterate in
+Seeding order; `UniqueConstraint`s `uniq_tournament_seed` + `uniq_tournament_team`).
+`BracketNode` (`tournament` CASCADE `related_name="nodes"`; tree coords
+`bracket_round` 1-based + `position` 0-based; team slots `team_a` / `team_b`
+nullable SET_NULL; `seed_a` / `seed_b` carry each slot's Bracket seed alongside it
+so the tie-break and bye carry-forward need no participant re-query; `match` FK to
+`matches.Match` SET_NULL `related_name="bracket_node"` — NULL until played, a bye
+node stays NULL; Advancement pointer `advances_to` self-FK `related_name="feeders"`
++ `advances_to_slot` `"a"`/`"b"`; `is_bye` flag; `winner` FK SET_NULL;
+`UniqueConstraint` `uniq_tournament_round_position`). **A node = exactly one
+2-round `Match`** (no series / best-of-N — deferred LG-02b).
+
+**Pure module `matches/bracket.py`** owns bracket **structure + Seeding + bye
+placement + tie-break math** — frozen import allowlist **`dataclasses`, `typing`,
+`math`, `collections` ONLY** (NO Django / ORM / `random` / `datetime` / I/O /
+logging), enforced by `matches/tests/test_bracket.py::TestNoDjangoImportsLeaked`
+(subprocess fresh-import + `sys.modules` walk, mirroring
+`matches/standings.py` / `matches/schedule_generator.py`). Frozen dataclasses
+`BracketNodeSpec` / `ParticipantSpec`. Functions: `default_seed_order(team_ratings:
+list[tuple[int, float]]) -> list[int]` (default Seeding = mean active-player
+`overall_rating` **DESC**, then `team_id` ASC tiebreak — the SAME talent ranking
+the LG-01c draft-preview standings use); `build_bracket(participants) ->
+list[BracketNodeSpec]` (single-elim tree for **arbitrary N ≥ 4**; size = next
+power of two ≥ N; standard `1vN, 2v(N-1), …` seed pairing; the top `(size − N)`
+Bracket seeds get a round-1 **Bye**; wires `advances_to`/`advances_to_slot`, final
+node `advances_to=None`); `find_next_node(nodes) -> dict | None` (lowest
+`(bracket_round, position)` playable node — both slots filled, not bye, no
+winner/match yet); `advance_winner(nodes, node_position, winner_id, winner_seed) ->
+list[dict]` (parent-slot mutation dicts `{"bracket_round","position","slot",
+"team_id","seed"}`); `resolve_bye_chain(nodes) -> list[dict]` (cascade byes at
+build time into the next round, same mutation shape); `break_tie(seed_a,
+best_round_score_a, seed_b, best_round_score_b) -> int` (**tie-break rule:** higher
+best single-Round score advances, else the higher Bracket seed = **lower seed
+int** — pure integer compare, no re-sim).
+
+**View ↔ pure seam = ints / dicts ONLY.** The pure module never sees a `Team`,
+`Match`, or `BracketNode` ORM instance and never returns a Django object. The view
+flattens `BracketNode` rows to plain dicts via the private helper
+`_node_to_dict(node) -> dict` (keys `bracket_round`, `position`, `team_a_id`,
+`team_b_id`, `seed_a`, `seed_b`, `is_bye`, `match_id`, `winner_id`, `advances_to`
+= `(bracket_round, position)` tuple or `None`, `advances_to_slot`) before calling
+`find_next_node` / `advance_winner` / `resolve_bye_chain`; `default_seed_order`
+gets `(team_id, mean_overall_rating)` tuples built from `Team.active_players` +
+`Player.overall_rating`; `break_tie` gets four ints. The view applies the returned
+mutations to the ORM.
+
+**Views (`matches/tournament_views.py`, NEW) + URLs
+(`matches/tournament_urls.py`, NEW — bare names, no `app_name`, mirrors
+`season_urls.py`).** Mounted `path("tournaments/", include("matches.tournament_urls"))`
+in the project `urls.py` after `matches/` (everything not under `/leagues/` or
+`/seasons/` resolves to `app_mode == "sandbox"` via the LG-01k path-prefix
+processor — **no processor change**). The six views / URL names:
+`tournament_list` (GET, newest-first `order_by("-id")`); `tournament_create`
+(GET form / POST `@transaction.atomic` — team source = **select existing** via
+`Team.objects.regular()` + **generate** via `from teams.views import
+_generate_teams` (the LG-01b cross-app seam, signature unchanged) — creates the
+`Tournament(state="setup")` + `TournamentParticipant` rows with default Seeding);
+`tournament_detail` (GET-only, the bracket tree + seeding-edit form + play
+controls); `tournament_reseed` (POST `@transaction.atomic`, persists a manually
+reordered Seeding, **rejected once `is_locked`**); `tournament_lock` (POST,
+`lock_and_build()`, `ValidationError` → redirect + `messages.error`);
+`tournament_play_next` (POST `@transaction.atomic`, state must be `"active"` —
+sims **ONE** Match `BatchSimulator().simulate_match(node.team_a, node.team_b,
+match_type="tournament")`, resolves the winner incl. the `break_tie` fallback when
+`match.winner is None`, Advances into the parent slot, stamps `champion` +
+`state="completed"` on the final). Guard idiom: non-allowed method →
+`HttpResponseNotAllowed([...])` as the first body line (mirrors `movement_heatmap`
+/ `export_round_report`). Play is **synchronous game-by-game** (one POST per
+node).
+
+**Templates** (`templates/matches/tournament_{list,create,detail}.html`, each
+extends `base.html`). Locked DOM ids: list — `tournament-list-table`,
+`tournament-list-empty` (`No tournaments yet`), `tournament-create-link`, per-row
+`state-badge` class; create — `tournament-create-form`, `tournament-create-name`,
+`tournament-create-team-select` (multi-select of `Team.objects.regular()`),
+`tournament-create-generate-count`, `tournament-create-generate-ppt` (defaults 6),
+`tournament-create-submit`, `tournament-create-no-teams-notice`; detail — the
+**bracket tree** container `tournament-bracket` with one column per Bracket round
+`tournament-bracket-round-{n}` (1-based) and one node `tournament-node-{bracket_round}-{position}`
+(bye node carries the `bye-node` class), the setup-only Seeding form
+`tournament-seeding-form` / `tournament-seed-input-{team_id}` /
+`tournament-seeding-submit`, play controls `tournament-lock-form` /
+`tournament-lock-submit` (setup), `tournament-play-next-form` /
+`tournament-play-next-submit` (active), `tournament-champion-banner` (completed,
+substring `Champion`), and `tournament-detail-empty` (`No participants`).
+`tournament_detail` context keys (frozen): `tournament`, `participants`, `rounds`
+(`[{"bracket_round": int, "nodes": list[node_view_dict]}]`), `next_node`,
+`is_locked`, `can_play`. Sandbox-nav: a flat anchor
+`<a id="tournaments-nav-link" …>Tournaments</a>` in the `{% elif app_mode ==
+"sandbox" %}` branch of `templates/base.html` (after `Maps`, before the tools/help
+include).
+
+**Admin (`matches/admin.py`, after `SeasonAdmin`).** `TournamentAdmin`
+(`list_display` name/format/state/champion/created_at + `TournamentParticipantInline`
+/ `BracketNodeInline`), `TournamentParticipantAdmin`, `BracketNodeAdmin`. No
+existing registration touched.
+
+**Tests.** `matches/tests/test_bracket.py` (pure-unit, no DB —
+`TestDefaultSeedOrder`, `TestBuildBracketPowerOfTwo` N=4/8/16,
+`TestBuildBracketWithByes` N=5/6/12, `TestFindNextNode`, `TestAdvanceWinner`,
+`TestResolveByeChain`, `TestBreakTie`, `TestNoDjangoImportsLeaked`);
+`matches/tests/test_tournament_models.py` (`lock_and_build` transition +
+`ValidationError` on N<4, constraints, `find_next_playable_node`);
+`matches/tests/test_tournament_views.py` (DOM ids + 200/302/404/405, setup→active→
+completed, POST-generate via the **real** `_generate_teams` (no `mock.patch` so
+signature drift fails loudly), forced-tie tie-break path, champion stamped on
+final).
+
+**Scope-out (LOCKED — DEFERRED, do NOT build here):** CSV participant import +
+async "play-all" / Celery (LG-02a-2); series / best-of-N nodes (LG-02b);
+double-elimination / round-robin / RR→DE / Swiss (format enum extensible, only
+`single_elimination` ships); in-League / in-Season embedding (Tournament is
+standalone, `season`-less); batch-N tournament simulation; any
+`simulate_match` / `simulate_scheduled_round` change (consumed verbatim,
+`arena_map=None` 3-zone fallback per node); no per-Tournament arena-map config; no
+backfill / `RunPython`; no CONTEXT.md term beyond the 8 `### Tournaments` entries.
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)

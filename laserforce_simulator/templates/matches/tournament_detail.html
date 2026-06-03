@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tournament.name }} — Tournament{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1>{{ tournament.name }}</h1>
+    <span class="badge bg-secondary state-badge">{{ tournament.get_state_display }}</span>
+</div>
+
+{% if not participants %}
+<div class="alert alert-warning" id="tournament-detail-empty">
+    No participants in this tournament.
+</div>
+{% endif %}
+
+{% if tournament.state == "completed" and tournament.champion %}
+<div class="alert alert-success" id="tournament-champion-banner">
+    Champion: {{ tournament.champion.name }}
+</div>
+{% endif %}
+
+{# ---- Play controls ---- #}
+{% if tournament.state == "setup" %}
+<form method="post" action="{% url 'tournament_lock' tournament.id %}" id="tournament-lock-form" class="mb-3">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-primary" id="tournament-lock-submit">Lock &amp; Build Bracket</button>
+</form>
+{% elif tournament.state == "active" %}
+<form method="post" action="{% url 'tournament_play_next' tournament.id %}" id="tournament-play-next-form" class="mb-3">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-primary" id="tournament-play-next-submit"{% if not can_play %} disabled{% endif %}>Play Next Match</button>
+</form>
+{% endif %}
+
+{# ---- Bracket tree ---- #}
+<h2>Bracket</h2>
+<div class="d-flex" id="tournament-bracket">
+    {% for round in rounds %}
+    <div class="me-4" id="tournament-bracket-round-{{ round.bracket_round }}">
+        <h5>Bracket Round {{ round.bracket_round }}</h5>
+        {% for node in round.nodes %}
+        <div class="card mb-2 {% if node.is_bye %}bye-node{% endif %}" id="tournament-node-{{ node.bracket_round }}-{{ node.position }}">
+            <div class="card-body p-2">
+                <div>
+                    {% if node.seed_a %}<small class="text-muted">[{{ node.seed_a }}]</small>{% endif %}
+                    {{ node.team_a.name|default:"—" }}
+                </div>
+                <div>
+                    {% if node.seed_b %}<small class="text-muted">[{{ node.seed_b }}]</small>{% endif %}
+                    {{ node.team_b.name|default:"—" }}
+                </div>
+                {% if node.is_bye %}
+                <div><small class="text-muted">Bye</small></div>
+                {% elif node.match %}
+                <div><a href="{% url 'match_detail' node.match.id %}">View match</a></div>
+                {% endif %}
+                {% if node.winner %}
+                <div><strong>Winner: {{ node.winner.name }}</strong></div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endfor %}
+</div>
+
+{# ---- Seeding-edit form (setup only) ---- #}
+{% if tournament.state == "setup" %}
+<h2 class="mt-4">Seeding</h2>
+<form method="post" action="{% url 'tournament_reseed' tournament.id %}" id="tournament-seeding-form">
+    {% csrf_token %}
+    <table class="table">
+        <thead>
+            <tr><th>Team</th><th>Bracket seed</th></tr>
+        </thead>
+        <tbody>
+            {% for participant in participants %}
+            <tr>
+                <td>{{ participant.team.name }}</td>
+                <td>
+                    <input type="number" min="1" name="seed_{{ participant.team_id }}"
+                           id="tournament-seed-input-{{ participant.team_id }}"
+                           value="{{ participant.seed }}" class="form-control">
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <button type="submit" class="btn btn-secondary" id="tournament-seeding-submit">Save Seeding</button>
+</form>
+{% endif %}
+{% endblock %}

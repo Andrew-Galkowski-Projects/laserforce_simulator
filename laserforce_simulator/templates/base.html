@@ -60,6 +60,7 @@
                         <a class="nav-link" href="{% url 'simulate_batch' %}">Batch Sim</a>
                         <a class="nav-link" href="{% url 'team_create' %}">Create Team</a>
                         <a class="nav-link" href="{% url 'map_list' %}">Maps</a>
+                        <a class="nav-link" id="tournaments-nav-link" href="{% url 'tournament_list' %}">Tournaments</a>
                         {% include "_partials/topnav_tools_help.html" %}
                     {% else %}
                         {% include "_partials/topnav_tools_help.html" %}

@@ -1074,3 +1074,261 @@ class Season(models.Model):
         self.state = "completed"
         self.champion_team = Team.objects.get(pk=rows[0].team_id)
         self.save()
+
+
+class Tournament(models.Model):
+    """LG-02a — a standalone single-elimination Tournament (Bracket).
+
+    Decoupled from League / Season (sandbox mode). Each Bracket node is one
+    existing 2-round ``Match``. State machine ``setup -> active -> completed``;
+    Seeding is editable only in ``setup`` (the bracket is built on the
+    setup->active transition, mirroring ``Season.start_season``'s draft->active
+    M2M lock).
+    """
+
+    FORMAT_CHOICES = (("single_elimination", "Single elimination"),)
+    STATE_CHOICES = (
+        ("setup", "Setup"),  # participants chosen, Seeding editable, bracket NOT built
+        ("active", "Active"),  # bracket built + locked, nodes being played
+        ("completed", "Completed"),  # champion crowned
+    )
+
+    name = models.CharField(max_length=100)
+    format = models.CharField(
+        max_length=32, choices=FORMAT_CHOICES, default="single_elimination"
+    )
+    state = models.CharField(max_length=16, choices=STATE_CHOICES, default="setup")
+    created_at = models.DateTimeField(auto_now_add=True)
+    # Stamped by advance logic when the final node resolves. SET_NULL — deleting
+    # a Team must NOT cascade-delete the Tournament's history.
+    champion = models.ForeignKey(
+        "teams.Team",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="tournaments_won",
+    )
+
+    def __str__(self) -> str:
+        return self.name
+
+    @property
+    def is_locked(self) -> bool:
+        """True iff state != 'setup' (Seeding can no longer be edited)."""
+        return self.state != "setup"
+
+    @transaction.atomic
+    def lock_and_build(self) -> None:
+        """setup -> active.
+
+        Validates participant count (>= 4), builds the BracketNode tree from
+        the current Seeding via ``matches.bracket.build_bracket``, persists
+        every node, flips state='active'. Raises
+        ``django.core.exceptions.ValidationError`` on count < 4 or
+        state != 'setup'.
+        """
+        from .bracket import build_bracket, resolve_bye_chain, ParticipantSpec
+
+        if self.state != "setup":
+            raise ValidationError("Tournament can only be locked from setup state.")
+        participants = list(self.participants.all())
+        if len(participants) < 4:
+            raise ValidationError("A tournament requires at least 4 participants.")
+
+        specs = build_bracket(
+            [ParticipantSpec(team_id=p.team_id, seed=p.seed) for p in participants]
+        )
+
+        # Persist every node; keep a (bracket_round, position) -> BracketNode map
+        # so we can wire advances_to FKs in a second pass.
+        team_by_id = {p.team_id: p.team for p in participants}
+        node_by_pos = {}
+        for spec in specs:
+            node = BracketNode.objects.create(
+                tournament=self,
+                bracket_round=spec.bracket_round,
+                position=spec.position,
+                team_a=team_by_id.get(spec.team_a_id),
+                team_b=team_by_id.get(spec.team_b_id),
+                seed_a=spec.seed_a,
+                seed_b=spec.seed_b,
+                is_bye=spec.is_bye,
+                advances_to_slot=spec.advances_to_slot,
+                winner=team_by_id.get(spec.winner_id),
+            )
+            node_by_pos[(spec.bracket_round, spec.position)] = node
+
+        # Second pass: wire advances_to self-FKs.
+        for spec in specs:
+            if spec.advances_to is None:
+                continue
+            child = node_by_pos[(spec.bracket_round, spec.position)]
+            child.advances_to = node_by_pos[spec.advances_to]
+            child.save(update_fields=["advances_to"])
+
+        # Cascade byes so a top seed's bye is reflected in round 2 immediately.
+        flat = [_node_to_dict(n) for n in node_by_pos.values()]
+        for mut in resolve_bye_chain(flat):
+            parent = node_by_pos[(mut["bracket_round"], mut["position"])]
+            team = team_by_id.get(mut["team_id"])
+            if mut["slot"] == "a":
+                parent.team_a = team
+                parent.seed_a = mut["seed"]
+            else:
+                parent.team_b = team
+                parent.seed_b = mut["seed"]
+            parent.save(update_fields=["team_a", "team_b", "seed_a", "seed_b"])
+
+        self.state = "active"
+        self.save(update_fields=["state"])
+
+    def find_next_playable_node(self) -> "BracketNode | None":
+        """Delegates to ``matches.bracket.find_next_node`` over this
+        Tournament's nodes.
+
+        Returns the lowest (bracket_round, position) node with both team slots
+        filled, is_bye=False, and match_id IS NULL. None when nothing is ready
+        (or completed).
+        """
+        from .bracket import find_next_node
+
+        nodes = list(self.nodes.select_related("advances_to"))
+        flat = [_node_to_dict(n) for n in nodes]
+        result = find_next_node(flat)
+        if result is None:
+            return None
+        for node in nodes:
+            if (
+                node.bracket_round == result["bracket_round"]
+                and node.position == result["position"]
+            ):
+                return node
+        return None
+
+
+class TournamentParticipant(models.Model):
+    """LG-02a — one Team's enrolment + Bracket seed in a Tournament."""
+
+    tournament = models.ForeignKey(
+        Tournament, on_delete=models.CASCADE, related_name="participants"
+    )
+    team = models.ForeignKey("teams.Team", on_delete=models.CASCADE, related_name="+")
+    # 1-based Bracket seed. Lower int = stronger seed. Unique per Tournament.
+    seed = models.PositiveIntegerField()
+
+    class Meta:
+        ordering = ["seed"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tournament", "seed"], name="uniq_tournament_seed"
+            ),
+            models.UniqueConstraint(
+                fields=["tournament", "team"], name="uniq_tournament_team"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.tournament.name} #{self.seed} {self.team.name}"
+
+
+class BracketNode(models.Model):
+    """LG-02a — one node = one slot for a single ``Match`` in a Bracket."""
+
+    tournament = models.ForeignKey(
+        Tournament, on_delete=models.CASCADE, related_name="nodes"
+    )
+    # 1-based Bracket round (1 = first round played; max = final).
+    bracket_round = models.PositiveIntegerField()
+    # 0-based position within the Bracket round, top-to-bottom in the tree.
+    position = models.PositiveIntegerField()
+
+    # The two team slots. Either may be NULL pre-Advancement (a later-round node
+    # whose feeder nodes have not resolved yet). SET_NULL on Team delete.
+    team_a = models.ForeignKey(
+        "teams.Team",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    team_b = models.ForeignKey(
+        "teams.Team",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    # The Bracket seed integers parked alongside each slot, so the tie-break can
+    # break on "higher Bracket seed" without re-querying participants and so a
+    # bye node can carry its single team's seed forward. NULL when slot empty.
+    seed_a = models.PositiveIntegerField(null=True, blank=True)
+    seed_b = models.PositiveIntegerField(null=True, blank=True)
+
+    # The played Match for this node (NULL until played; a bye node stays NULL).
+    match = models.ForeignKey(
+        "matches.Match",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="bracket_node",
+    )
+    # Advancement pointer: the parent node this node's winner feeds into (NULL
+    # for the final node). slot tells the parent which side to fill.
+    advances_to = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="feeders",
+    )
+    advances_to_slot = models.CharField(
+        max_length=1,
+        null=True,
+        blank=True,
+        choices=(("a", "team_a"), ("b", "team_b")),
+    )
+    # A round-1 node a top Bracket seed skips (auto-advanced; never played).
+    is_bye = models.BooleanField(default=False)
+    # The Team that won (or auto-advanced through) this node. NULL until resolved.
+    winner = models.ForeignKey(
+        "teams.Team",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
+    class Meta:
+        ordering = ["bracket_round", "position"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tournament", "bracket_round", "position"],
+                name="uniq_tournament_round_position",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.tournament.name} R{self.bracket_round}/{self.position}"
+
+
+def _node_to_dict(node: "BracketNode") -> dict:
+    """Flatten a BracketNode ORM row to the plain dict shape the pure
+    ``matches.bracket`` functions consume (LG-02a seam helper).
+    """
+    advances_to = None
+    if node.advances_to_id is not None:
+        adv = node.advances_to
+        advances_to = (adv.bracket_round, adv.position)
+    return {
+        "bracket_round": node.bracket_round,
+        "position": node.position,
+        "team_a_id": node.team_a_id,
+        "team_b_id": node.team_b_id,
+        "seed_a": node.seed_a,
+        "seed_b": node.seed_b,
+        "is_bye": node.is_bye,
+        "match_id": node.match_id,
+        "winner_id": node.winner_id,
+        "advances_to": advances_to,
+        "advances_to_slot": node.advances_to_slot,
+    }

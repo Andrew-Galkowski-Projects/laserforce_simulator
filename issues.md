@@ -1,3 +1,50 @@
+# Web testing — LG-02a (sandbox single-elimination Tournament)
+
+Date: 2026-06-02
+Branch: `lg-02a-sandbox-single-elim`
+Scope: smoke-test the new sandbox Tournaments feature at `/tournaments/` — nav
+entry, list, create (generate path), seeding, lock-and-build with byes (N=5),
+game-by-game play + advancement to champion, plus a regression glance at the
+sandbox pages whose nav (`base.html`) was edited.
+
+## Severity legend
+- 🔴 critical — broken feature, data loss, crash
+- 🟠 warning — visible bug, no data loss
+- 🟡 minor — cosmetic / pre-existing nit
+- 🔵 environment — host/cache/tooling, not the code under test
+- ✅ verified working
+
+## Summary
+
+| Area | Result |
+|---|---|
+| Sandbox nav `Tournaments` link (`tournaments-nav-link`) present, /tournaments/ 200 | ✅ |
+| Tournament list — populated row, `Create Tournament` link | ✅ |
+| Create form — name + multi-select existing + generate-count/ppt (no `max` cap; `valuemax=0` is a Chrome a11y default, not an HTML attr — `tournament_create.html:34,39`) | ✅ |
+| Create via **generate 5 teams** → tournament 2 created, setup state | ✅ |
+| Seeding table editable in setup (seeds 1–5 default by overall-rating desc) | ✅ |
+| Lock & Build → state `active`, bracket built | ✅ |
+| **N=5 Byes** — 8-slot bracket, top 3 seeds [1][2][3] get round-1 Byes, `[4]v[5]` real match | ✅ |
+| Game-by-game `Play Next Match` — sims one Match, advances winner into parent slot | ✅ (matches 48–51) |
+| `View match` deep-links to `/matches/<id>/` | ✅ |
+| Completion → state `completed`, `Champion: Rogue Recon #2` banner, play button gone | ✅ |
+| Completed-bracket render (tournament 1 "Smoke") + champion | ✅ |
+| Regression: `/teams/`, `/matches/`, `/matches/simulate-batch/` after nav edit | ✅ 200, console clean |
+| Console errors/warnings across all tournament pages | ✅ none |
+| Network non-2xx | ✅ none |
+
+## Findings — LG-02a
+
+- 🟡 **Bracket-tier headers read "Round 1 / Round 2 / Round 3".** `templates/matches/tournament_detail.html` labels each **Bracket round** as "Round N". The CONTEXT.md `### Tournaments` glossary explicitly says a Bracket round must **never be shortened to "Round"** (collides with the 15-min game **Round**/`GameRound`), and the seam contract suggested stage labels (Quarterfinal / Semifinal / Final). Cosmetic only — no functional impact — but worth aligning to the locked vocabulary (e.g. "Bracket Round N", or computed stage names). Candidate for the `/code-review` SUGGEST pass.
+
+## Verified flows — LG-02a
+- Create (generate 5) → setup → reseed-editable → Lock & Build (3 byes, N=5) → Play Next ×4 (R1 `[4]v[5]`, two semis, final) → `completed` + champion banner. Every step 200, console + network clean.
+- Advancement verified node-by-node: match 48 winner Ember (seed 5) → R2 vs [1]; match 49 Hyperion → final; match 50 Rogue → final; match 51 Rogue → champion.
+
+> Test data left in the **gitignored dev `db.sqlite3`** (disposable, ADR-0004): Tournaments 1 ("Smoke", Code-agent smoke test) + 2 ("ChromeTest Cup"), their generated Teams, and Matches 45–51. Not part of the PR.
+
+---
+
 # Web testing — LG-06h (League player page + watch flag)
 
 Date: 2026-06-02
