@@ -671,3 +671,338 @@ class TestNodeToDictSeriesKeys(TestCase):
         d = _node_to_dict(node)
         self.assertEqual(d["wins_a"], 0)
         self.assertEqual(d["wins_b"], 0)
+
+
+# ===========================================================================
+# LG-02c — Double-elimination tournaments (model layer)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified — they
+# stay green as single-elim regression guards). Seam contract:
+# ``.claude/worktrees/lg-02c-seam-contract.md`` §1 (models) / §6b (test
+# boundary).
+#
+# BracketNode gains ``bracket_type`` (winners/losers/grand_final, default
+# "winners") + ``loser_advances_to`` (self-FK, related_name "loser_feeders") +
+# ``loser_advances_to_slot`` ("a"/"b"). The uniqueness constraint is widened to
+# include ``bracket_type`` and renamed ``uniq_tournament_bracket_round_position``
+# (a WB and an LB node may share (bracket_round, position); a dup WITHIN one
+# bracket_type is still rejected). ``Tournament.format`` gains the
+# "double_elimination" choice. ``lock_and_build`` branches on format. These
+# assertions WILL fail until the Code agent lands the migration + model edits.
+
+
+class TestBracketNodeDoubleElimFields(TestCase):
+    """``bracket_type`` default + choices; loser-dest fields default NULL; the
+    renamed/widened uniqueness constraint."""
+
+    def test_bracket_type_defaults_to_winners(self) -> None:
+        t = Tournament.objects.create(name="Cup")
+        node = BracketNode.objects.create(tournament=t, bracket_round=1, position=0)
+        self.assertEqual(node.bracket_type, "winners")
+
+    def test_bracket_type_carries_three_choices(self) -> None:
+        choices = dict(BracketNode._meta.get_field("bracket_type").choices)
+        self.assertEqual(set(choices), {"winners", "losers", "grand_final"})
+
+    def test_loser_advances_to_defaults_none(self) -> None:
+        t = Tournament.objects.create(name="Cup")
+        node = BracketNode.objects.create(tournament=t, bracket_round=1, position=0)
+        self.assertIsNone(node.loser_advances_to)
+        self.assertIsNone(node.loser_advances_to_slot)
+
+    def test_loser_feeders_related_name(self) -> None:
+        # loser_advances_to is a self-FK with related_name "loser_feeders".
+        t = Tournament.objects.create(name="Cup")
+        lb_dest = BracketNode.objects.create(
+            tournament=t, bracket_type="losers", bracket_round=1, position=0
+        )
+        wb = BracketNode.objects.create(
+            tournament=t,
+            bracket_type="winners",
+            bracket_round=1,
+            position=0,
+            loser_advances_to=lb_dest,
+            loser_advances_to_slot="a",
+        )
+        self.assertIn(wb, lb_dest.loser_feeders.all())
+
+    def test_loser_advances_to_set_null_on_node_delete(self) -> None:
+        t = Tournament.objects.create(name="Cup")
+        lb_dest = BracketNode.objects.create(
+            tournament=t, bracket_type="losers", bracket_round=1, position=0
+        )
+        wb = BracketNode.objects.create(
+            tournament=t,
+            bracket_type="winners",
+            bracket_round=1,
+            position=0,
+            loser_advances_to=lb_dest,
+            loser_advances_to_slot="a",
+        )
+        lb_dest.delete()
+        wb.refresh_from_db()
+        # SET_NULL — deleting the destination must not cascade the WB node away.
+        self.assertIsNone(wb.loser_advances_to_id)
+        self.assertTrue(BracketNode.objects.filter(pk=wb.pk).exists())
+
+    def test_constraint_allows_wb_and_lb_sharing_round_position(self) -> None:
+        # The widened constraint includes bracket_type, so a WB and LB node may
+        # share (bracket_round, position).
+        t = Tournament.objects.create(name="Cup")
+        BracketNode.objects.create(
+            tournament=t, bracket_type="winners", bracket_round=1, position=0
+        )
+        # No collision — different bracket_type.
+        BracketNode.objects.create(
+            tournament=t, bracket_type="losers", bracket_round=1, position=0
+        )
+        self.assertEqual(
+            BracketNode.objects.filter(
+                tournament=t, bracket_round=1, position=0
+            ).count(),
+            2,
+        )
+
+    def test_constraint_rejects_dup_within_one_bracket_type(self) -> None:
+        t = Tournament.objects.create(name="Cup")
+        BracketNode.objects.create(
+            tournament=t, bracket_type="losers", bracket_round=1, position=0
+        )
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                BracketNode.objects.create(
+                    tournament=t, bracket_type="losers", bracket_round=1, position=0
+                )
+
+    def test_renamed_constraint_present(self) -> None:
+        names = {c.name for c in BracketNode._meta.constraints}
+        self.assertIn("uniq_tournament_bracket_round_position", names)
+        self.assertNotIn("uniq_tournament_round_position", names)
+
+
+class TestTournamentDoubleElimFormat(TestCase):
+    """``Tournament.format`` gains the "double_elimination" choice; the default
+    stays "single_elimination"."""
+
+    def test_format_choices_include_double_elimination(self) -> None:
+        choices = dict(Tournament._meta.get_field("format").choices)
+        self.assertIn("double_elimination", choices)
+        self.assertIn("single_elimination", choices)
+
+    def test_default_format_still_single_elimination(self) -> None:
+        t = Tournament.objects.create(name="Cup")
+        self.assertEqual(t.format, "single_elimination")
+
+    def test_double_elimination_format_persists(self) -> None:
+        t = Tournament.objects.create(name="DE Cup", format="double_elimination")
+        t.refresh_from_db()
+        self.assertEqual(t.format, "double_elimination")
+
+
+class TestLockAndBuildDoubleElim(TestCase):
+    """A DE Tournament locks to active and persists WB + LB + GF nodes with the
+    correct bracket_type, wired loser_advances_to self-FKs, GF1->GF2 loser
+    wiring, and a depth-stamped series_length on every node incl. byes."""
+
+    def _de_tournament(
+        self,
+        n: int,
+        *,
+        final: int = 5,
+        semifinal: int = 3,
+        quarterfinal: int = 1,
+        earlier: int = 1,
+        name: str = "DECup",
+    ) -> Tournament:
+        t = Tournament.objects.create(
+            name=name,
+            format="double_elimination",
+            final_series_length=final,
+            semifinal_series_length=semifinal,
+            quarterfinal_series_length=quarterfinal,
+            earlier_series_length=earlier,
+        )
+        for seed, team in enumerate(_make_teams(n), start=1):
+            TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+        t.lock_and_build()
+        t.refresh_from_db()
+        return t
+
+    def test_lock_flips_state_to_active(self) -> None:
+        t = self._de_tournament(4)
+        self.assertEqual(t.state, "active")
+
+    def test_persists_all_three_bracket_types(self) -> None:
+        t = self._de_tournament(4)
+        types = set(t.nodes.values_list("bracket_type", flat=True))
+        self.assertEqual(types, {"winners", "losers", "grand_final"})
+
+    def test_grand_final_has_two_nodes(self) -> None:
+        t = self._de_tournament(4)
+        self.assertEqual(t.nodes.filter(bracket_type="grand_final").count(), 2)
+
+    def test_a_wb_node_loser_advances_to_an_lb_node(self) -> None:
+        t = self._de_tournament(4)
+        wb_with_drop = (
+            t.nodes.filter(bracket_type="winners", is_bye=False)
+            .exclude(loser_advances_to__isnull=True)
+            .first()
+        )
+        self.assertIsNotNone(wb_with_drop, "a WB node must wire loser_advances_to")
+        self.assertEqual(wb_with_drop.loser_advances_to.bracket_type, "losers")
+
+    def test_gf1_loser_advances_to_gf2(self) -> None:
+        t = self._de_tournament(4)
+        # GF1 = the grand_final node that advances_to GF2 (advances_to not null);
+        # GF2 = the grand_final node with advances_to null.
+        gf1 = (
+            t.nodes.filter(bracket_type="grand_final")
+            .exclude(advances_to__isnull=True)
+            .first()
+        )
+        self.assertIsNotNone(gf1)
+        self.assertIsNotNone(gf1.loser_advances_to)
+        self.assertEqual(gf1.loser_advances_to.bracket_type, "grand_final")
+
+    def test_series_length_stamped_per_depth_incl_final(self) -> None:
+        # final=5/semifinal=3/quarterfinal=1: GF nodes (depth 0) are Bo5;
+        # WB-final & LB-final (depth 1) are Bo3.
+        t = self._de_tournament(4, final=5, semifinal=3, quarterfinal=1, earlier=1)
+        for gf in t.nodes.filter(bracket_type="grand_final"):
+            self.assertEqual(gf.series_length, 5, "GF depth-0 -> Bo5")
+        wb_final = (
+            t.nodes.filter(bracket_type="winners").order_by("-bracket_round").first()
+        )
+        self.assertEqual(wb_final.series_length, 3, "WB final depth-1 -> Bo3")
+
+    def test_every_node_has_a_stamped_series_length(self) -> None:
+        t = self._de_tournament(6, final=5, semifinal=3, quarterfinal=1, earlier=1)
+        for node in t.nodes.all():
+            self.assertIn(node.series_length, (1, 3, 5))
+
+    def test_bye_node_still_stamped(self) -> None:
+        # N=6 -> WB byes; a bye node is inert but still depth-stamped.
+        t = self._de_tournament(6)
+        byes = t.nodes.filter(is_bye=True)
+        self.assertTrue(byes.exists())
+        for node in byes:
+            self.assertIsNotNone(node.series_length)
+
+
+class TestLockAndBuildSingleElimUnchanged(TestCase):
+    """Regression: a single-elim lock is byte-identical to LG-02b-2 — all
+    ``bracket_type="winners"``, every ``loser_advances_to`` NULL, depth-stamped
+    series_length."""
+
+    def _se_tournament(self, n: int, *, name: str = "SECup") -> Tournament:
+        t = Tournament.objects.create(
+            name=name,
+            final_series_length=5,
+            semifinal_series_length=3,
+            quarterfinal_series_length=1,
+            earlier_series_length=1,
+        )
+        for seed, team in enumerate(_make_teams(n), start=1):
+            TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+        t.lock_and_build()
+        t.refresh_from_db()
+        return t
+
+    def test_all_nodes_are_winners_bracket(self) -> None:
+        t = self._se_tournament(4)
+        types = set(t.nodes.values_list("bracket_type", flat=True))
+        self.assertEqual(types, {"winners"})
+
+    def test_no_loser_advances_to_on_any_node(self) -> None:
+        t = self._se_tournament(4)
+        self.assertEqual(t.nodes.exclude(loser_advances_to__isnull=True).count(), 0)
+
+    def test_node_count_unchanged_n4(self) -> None:
+        t = self._se_tournament(4)
+        # Single-elim 4-team bracket is still 3 nodes (no LB/GF).
+        self.assertEqual(t.nodes.count(), 3)
+
+    def test_series_length_still_depth_stamped(self) -> None:
+        t = self._se_tournament(4)
+        final = t.nodes.get(advances_to__isnull=True)
+        self.assertEqual(final.series_length, 5)
+
+
+class TestNodeToDictDoubleElimKeys(TestCase):
+    """``_node_to_dict`` gains ``bracket_type`` + a 3-tuple ``loser_advances_to``
+    ``(bracket_type, round, position)`` + ``loser_advances_to_slot``. A
+    single-elim node produces ``("winners", None, None)`` for the three new
+    keys."""
+
+    def test_de_node_carries_three_new_keys(self) -> None:
+        from matches.models import _node_to_dict
+
+        t = Tournament.objects.create(name="Cup", format="double_elimination")
+        lb_dest = BracketNode.objects.create(
+            tournament=t, bracket_type="losers", bracket_round=1, position=0
+        )
+        wb = BracketNode.objects.create(
+            tournament=t,
+            bracket_type="winners",
+            bracket_round=1,
+            position=0,
+            loser_advances_to=lb_dest,
+            loser_advances_to_slot="b",
+        )
+        d = _node_to_dict(wb)
+        self.assertEqual(d["bracket_type"], "winners")
+        self.assertEqual(d["loser_advances_to"], ("losers", 1, 0))
+        self.assertEqual(d["loser_advances_to_slot"], "b")
+
+    def test_loser_advances_to_is_a_three_tuple(self) -> None:
+        from matches.models import _node_to_dict
+
+        t = Tournament.objects.create(name="Cup", format="double_elimination")
+        lb_dest = BracketNode.objects.create(
+            tournament=t, bracket_type="losers", bracket_round=2, position=1
+        )
+        wb = BracketNode.objects.create(
+            tournament=t,
+            bracket_type="winners",
+            bracket_round=1,
+            position=0,
+            loser_advances_to=lb_dest,
+            loser_advances_to_slot="a",
+        )
+        d = _node_to_dict(wb)
+        self.assertEqual(len(d["loser_advances_to"]), 3)
+        self.assertEqual(d["loser_advances_to"], ("losers", 2, 1))
+
+    def test_single_elim_node_three_new_keys_default(self) -> None:
+        from matches.models import _node_to_dict
+
+        t = Tournament.objects.create(name="Cup")
+        node = BracketNode.objects.create(tournament=t, bracket_round=1, position=0)
+        d = _node_to_dict(node)
+        self.assertEqual(d["bracket_type"], "winners")
+        self.assertIsNone(d["loser_advances_to"])
+        self.assertIsNone(d["loser_advances_to_slot"])
+
+    def test_existing_keys_preserved(self) -> None:
+        from matches.models import _node_to_dict
+
+        t = Tournament.objects.create(name="Cup")
+        node = BracketNode.objects.create(tournament=t, bracket_round=1, position=0)
+        d = _node_to_dict(node)
+        for key in (
+            "bracket_round",
+            "position",
+            "team_a_id",
+            "team_b_id",
+            "seed_a",
+            "seed_b",
+            "is_bye",
+            "wins_a",
+            "wins_b",
+            "series_length",
+            "winner_id",
+            "advances_to",
+            "advances_to_slot",
+        ):
+            self.assertIn(key, d, f"existing _node_to_dict key {key!r} dropped")

@@ -1318,3 +1318,754 @@ class TestSeriesLengthForRound(SimpleTestCase):
 
 # Reference to silence unused-import warnings if BracketNodeSpec is dropped.
 _ = BracketNodeSpec
+
+
+# ===========================================================================
+# LG-02c — Double-elimination tournaments (pure-unit)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified — they
+# stay green as single-elim regression guards). Seam contract:
+# ``.claude/worktrees/lg-02c-seam-contract.md`` §2 (pure module) / §6a (test
+# boundary). Every new pure name is imported LAZILY inside each method so its
+# absence (pre-Code-landing) isolates the failure to THESE classes only and
+# does NOT break the existing (passing) classes above at collection time.
+#
+# The DE builder hosts TWO coupled trees in one BracketNodeSpec list, tagged by
+# ``bracket_type`` ("winners"/"losers"/"grand_final"). A WB node's LOSER drops
+# into an LB slot (``loser_advances_to`` = (bracket_type, round, position) triple
+# + ``loser_advances_to_slot``); GF1's loser feeds GF2 (the Bracket reset).
+# Tests assert on STRUCTURE (node counts per bracket_type, the cross-bracket
+# wiring coords, ``depth`` values, byes / Drop-bye collapse, the
+# ``find_next_node`` total order, ``stage_progress`` group counts) — NEVER on
+# simulated point totals.
+
+
+def _de_node_dict(
+    *,
+    bracket_type: str = "winners",
+    bracket_round: int,
+    position: int,
+    team_a_id: int | None = None,
+    team_b_id: int | None = None,
+    seed_a: int | None = None,
+    seed_b: int | None = None,
+    is_bye: bool = False,
+    winner_id: int | None = None,
+    wins_a: int = 0,
+    wins_b: int = 0,
+    series_length: int = 1,
+    advances_to: tuple[int, int] | None = None,
+    advances_to_slot: str | None = None,
+    loser_advances_to: tuple[str, int, int] | None = None,
+    loser_advances_to_slot: str | None = None,
+) -> dict:
+    """A flattened node dict in the LG-02c double-elim ``_node_to_dict`` shape.
+
+    Adds the three new keys (``bracket_type``, ``loser_advances_to`` triple,
+    ``loser_advances_to_slot``) to the LG-02b series-node shape. The existing
+    ``advances_to`` key stays a 2-tuple ``(bracket_round, position)``;
+    ``loser_advances_to`` is a 3-tuple ``(bracket_type, round, position)`` (the
+    Drop crosses brackets, so the coord carries the destination bracket).
+    """
+    return {
+        "bracket_type": bracket_type,
+        "bracket_round": bracket_round,
+        "position": position,
+        "team_a_id": team_a_id,
+        "team_b_id": team_b_id,
+        "seed_a": seed_a,
+        "seed_b": seed_b,
+        "is_bye": is_bye,
+        "winner_id": winner_id,
+        "wins_a": wins_a,
+        "wins_b": wins_b,
+        "series_length": series_length,
+        "advances_to": advances_to,
+        "advances_to_slot": advances_to_slot,
+        "loser_advances_to": loser_advances_to,
+        "loser_advances_to_slot": loser_advances_to_slot,
+    }
+
+
+def _de_participants(n: int) -> list:
+    """``n`` ParticipantSpec, Bracket seed 1..n, team_id = 100 + seed."""
+    from matches.bracket import ParticipantSpec
+
+    return [ParticipantSpec(team_id=100 + s, seed=s) for s in range(1, n + 1)]
+
+
+class TestSeriesLengthForDepth(SimpleTestCase):
+    """``series_length_for_depth(depth, *, final, semifinal, quarterfinal,
+    earlier)`` — the extracted depth->slot dispatch that
+    ``series_length_for_round`` now delegates to (LG-02c §2b)."""
+
+    # Four DISTINCT slot values so a misrouted depth resolves to the wrong int.
+    _SLOTS = {"final": 5, "semifinal": 3, "quarterfinal": 7, "earlier": 9}
+
+    def test_depth_0_resolves_to_final(self) -> None:
+        from matches.bracket import series_length_for_depth
+
+        self.assertEqual(series_length_for_depth(0, **self._SLOTS), 5)
+
+    def test_depth_1_resolves_to_semifinal(self) -> None:
+        from matches.bracket import series_length_for_depth
+
+        self.assertEqual(series_length_for_depth(1, **self._SLOTS), 3)
+
+    def test_depth_2_resolves_to_quarterfinal(self) -> None:
+        from matches.bracket import series_length_for_depth
+
+        self.assertEqual(series_length_for_depth(2, **self._SLOTS), 7)
+
+    def test_depth_3_resolves_to_earlier(self) -> None:
+        from matches.bracket import series_length_for_depth
+
+        self.assertEqual(series_length_for_depth(3, **self._SLOTS), 9)
+
+    def test_depth_4_resolves_to_earlier(self) -> None:
+        from matches.bracket import series_length_for_depth
+
+        # depth >= 3 is the catch-all -> earlier.
+        self.assertEqual(series_length_for_depth(4, **self._SLOTS), 9)
+
+    def test_slot_args_are_keyword_only(self) -> None:
+        from matches.bracket import series_length_for_depth
+
+        # The four slot args sit after ``*`` — passing them positionally raises.
+        with self.assertRaises(TypeError):
+            series_length_for_depth(0, 5, 3, 7, 9)  # type: ignore[misc]
+
+    def test_returns_int(self) -> None:
+        from matches.bracket import series_length_for_depth
+
+        self.assertIsInstance(series_length_for_depth(0, **self._SLOTS), int)
+
+    def test_series_length_for_round_delegates_with_identical_results(self) -> None:
+        # series_length_for_round(bracket_round, total_rounds, ...) ==
+        # series_length_for_depth(total_rounds - bracket_round, ...). The
+        # delegation must be transparent for representative (round, total) pairs.
+        from matches.bracket import series_length_for_depth, series_length_for_round
+
+        for total_rounds in (2, 3, 4):
+            for bracket_round in range(1, total_rounds + 1):
+                self.assertEqual(
+                    series_length_for_round(bracket_round, total_rounds, **self._SLOTS),
+                    series_length_for_depth(
+                        total_rounds - bracket_round, **self._SLOTS
+                    ),
+                    f"delegation mismatch at round {bracket_round}/{total_rounds}",
+                )
+
+
+class TestBuildDoubleElimBracket(SimpleTestCase):
+    """``build_double_elim_bracket(participants)`` — the two-tree builder.
+
+    N=4 / N=8 (power-of-two, no WB byes) and N=5 / N=6 (with WB byes). Asserts
+    node counts per ``bracket_type``, the loser-drop coords, GF1/GF2 wiring, the
+    per-spec ``depth`` values, and the ValueError guards. The internal
+    (bracket_round, position) numbering scheme is NOT asserted (only the
+    cross-bracket wiring coords + depth are pinned per §2c).
+    """
+
+    def _build(self, n: int) -> list:
+        from matches.bracket import build_double_elim_bracket
+
+        return build_double_elim_bracket(_de_participants(n))
+
+    def _by_type(self, specs: list) -> dict:
+        out: dict[str, list] = {"winners": [], "losers": [], "grand_final": []}
+        for s in specs:
+            out[s.bracket_type].append(s)
+        return out
+
+    # -- node counts per bracket_type (power-of-two) --------------------------
+
+    def test_n4_winners_has_three_nodes(self) -> None:
+        # WB = the single-elim tree for 4 teams = 3 nodes (2 R1 + 1 WB final).
+        parts = self._by_type(self._build(4))
+        self.assertEqual(len(parts["winners"]), 3)
+
+    def test_n4_losers_has_two_nodes(self) -> None:
+        # LB for 4 teams: LB-R1 (one node consuming the 2 WB-R1 losers) +
+        # LB-final (consuming the LB-R1 winner + the WB-final loser) = 2 nodes.
+        parts = self._by_type(self._build(4))
+        self.assertEqual(len(parts["losers"]), 2)
+
+    def test_n4_grand_final_has_two_nodes(self) -> None:
+        # GF1 + GF2 (the Bracket reset) always = 2 nodes.
+        parts = self._by_type(self._build(4))
+        self.assertEqual(len(parts["grand_final"]), 2)
+
+    def test_n8_winners_has_seven_nodes(self) -> None:
+        parts = self._by_type(self._build(8))
+        self.assertEqual(len(parts["winners"]), 7)
+
+    def test_n8_grand_final_has_two_nodes(self) -> None:
+        parts = self._by_type(self._build(8))
+        self.assertEqual(len(parts["grand_final"]), 2)
+
+    def test_n8_losers_node_count(self) -> None:
+        # Standard double-elim LB for 8 teams = 6 nodes (2+1 minor/major pairs:
+        # LB-R1 2 nodes, LB-R2 2 nodes, LB-R3 1 node, LB-final 1 node).
+        parts = self._by_type(self._build(8))
+        self.assertEqual(len(parts["losers"]), 6)
+
+    # -- every spec carries a bracket_type from the locked vocabulary ---------
+
+    def test_every_spec_bracket_type_in_vocabulary(self) -> None:
+        for spec in self._build(8):
+            self.assertIn(spec.bracket_type, ("winners", "losers", "grand_final"))
+
+    # -- WB non-bye node loser-drop coords ------------------------------------
+
+    def test_wb_non_bye_nodes_drop_into_losers(self) -> None:
+        parts = self._by_type(self._build(8))
+        for wb in parts["winners"]:
+            if wb.is_bye:
+                continue
+            # A WB non-bye node's loser drops into an LB slot.
+            self.assertIsNotNone(
+                wb.loser_advances_to,
+                f"WB node {wb.bracket_round}/{wb.position} has no loser dest",
+            )
+            dest_bracket = wb.loser_advances_to[0]
+            self.assertEqual(dest_bracket, "losers")
+            self.assertIn(wb.loser_advances_to_slot, ("a", "b"))
+
+    def test_loser_advances_to_is_a_triple_coord(self) -> None:
+        parts = self._by_type(self._build(4))
+        wb = next(w for w in parts["winners"] if not w.is_bye)
+        # (bracket_type, bracket_round, position) triple.
+        self.assertEqual(len(wb.loser_advances_to), 3)
+
+    # -- Grand final wiring ---------------------------------------------------
+
+    def test_gf1_loser_advances_to_gf2(self) -> None:
+        # GF1's loser feeds GF2 (so the LB-champ path advances both into GF2).
+        parts = self._by_type(self._build(4))
+        # GF1 is the grand_final node with a non-None advances_to (it points at
+        # GF2); GF2 is the one with advances_to None.
+        gfs = parts["grand_final"]
+        gf1 = next(g for g in gfs if g.advances_to is not None)
+        self.assertIsNotNone(gf1.loser_advances_to)
+        self.assertEqual(gf1.loser_advances_to[0], "grand_final")
+
+    def test_gf2_advances_to_and_loser_advances_to_are_none(self) -> None:
+        parts = self._by_type(self._build(4))
+        gfs = parts["grand_final"]
+        gf2 = next(g for g in gfs if g.advances_to is None)
+        self.assertIsNone(gf2.advances_to)
+        self.assertIsNone(gf2.loser_advances_to)
+
+    # -- depth = distance-to-GF1 ----------------------------------------------
+
+    def test_grand_final_nodes_are_depth_zero(self) -> None:
+        parts = self._by_type(self._build(4))
+        for gf in parts["grand_final"]:
+            self.assertEqual(gf.depth, 0, "GF1/GF2 are depth 0")
+
+    def test_wb_final_is_depth_one(self) -> None:
+        # The WB final (the winners node with no winners-bracket advances_to that
+        # feeds GF) sits one step below GF1 -> depth 1.
+        parts = self._by_type(self._build(4))
+        # WB final = the winners node at the highest bracket_round.
+        wb_final = max(parts["winners"], key=lambda s: s.bracket_round)
+        self.assertEqual(wb_final.depth, 1)
+
+    def test_lb_final_is_depth_one(self) -> None:
+        parts = self._by_type(self._build(4))
+        lb_final = max(parts["losers"], key=lambda s: s.bracket_round)
+        self.assertEqual(lb_final.depth, 1)
+
+    def test_every_spec_carries_an_integer_depth(self) -> None:
+        for spec in self._build(8):
+            self.assertIsInstance(spec.depth, int, f"{spec} has non-int depth")
+
+    # -- WB byes for N=5 / N=6 ------------------------------------------------
+
+    def test_n5_winners_has_three_byes(self) -> None:
+        parts = self._by_type(self._build(5))
+        byes = [w for w in parts["winners"] if w.is_bye]
+        self.assertEqual(len(byes), 3)
+
+    def test_n6_winners_has_two_byes(self) -> None:
+        parts = self._by_type(self._build(6))
+        byes = [w for w in parts["winners"] if w.is_bye]
+        self.assertEqual(len(byes), 2)
+
+    def test_byes_only_in_winners_bracket(self) -> None:
+        parts = self._by_type(self._build(5))
+        for s in parts["losers"] + parts["grand_final"]:
+            self.assertFalse(s.is_bye, "LB / GF specs must not be byes pre-resolve")
+
+    # -- error guards (mirror build_bracket) ----------------------------------
+
+    def test_n3_raises_value_error(self) -> None:
+        from matches.bracket import build_double_elim_bracket
+
+        with self.assertRaises(ValueError):
+            build_double_elim_bracket(_de_participants(3))
+
+    def test_empty_raises_value_error(self) -> None:
+        from matches.bracket import build_double_elim_bracket
+
+        with self.assertRaises(ValueError):
+            build_double_elim_bracket([])
+
+    def test_duplicate_seed_raises_value_error(self) -> None:
+        from matches.bracket import ParticipantSpec, build_double_elim_bracket
+
+        dup = [
+            ParticipantSpec(team_id=101, seed=1),
+            ParticipantSpec(team_id=102, seed=1),
+            ParticipantSpec(team_id=103, seed=3),
+            ParticipantSpec(team_id=104, seed=4),
+        ]
+        with self.assertRaises(ValueError):
+            build_double_elim_bracket(dup)
+
+    def test_duplicate_team_id_raises_value_error(self) -> None:
+        from matches.bracket import ParticipantSpec, build_double_elim_bracket
+
+        dup = [
+            ParticipantSpec(team_id=101, seed=1),
+            ParticipantSpec(team_id=101, seed=2),
+            ParticipantSpec(team_id=103, seed=3),
+            ParticipantSpec(team_id=104, seed=4),
+        ]
+        with self.assertRaises(ValueError):
+            build_double_elim_bracket(dup)
+
+
+class TestAdvanceLoser(SimpleTestCase):
+    """``advance_loser(nodes, node_position, loser_id, loser_seed)`` — the Drop
+    mutation (parallel to ``advance_winner``). Reads ``loser_advances_to`` /
+    ``loser_advances_to_slot`` off the resolved node; the mutation dict carries
+    a ``bracket_type`` key (the LB destination's)."""
+
+    def _wb_drop_nodes(self) -> list[dict]:
+        # A resolved WB node whose loser drops into an LB node at ("losers",1,0)
+        # slot "b", plus that LB destination node.
+        return [
+            _de_node_dict(
+                bracket_type="winners",
+                bracket_round=1,
+                position=0,
+                team_a_id=101,
+                team_b_id=104,
+                seed_a=1,
+                seed_b=4,
+                advances_to=(2, 0),
+                advances_to_slot="a",
+                loser_advances_to=("losers", 1, 0),
+                loser_advances_to_slot="b",
+            ),
+            _de_node_dict(
+                bracket_type="losers",
+                bracket_round=1,
+                position=0,
+            ),
+        ]
+
+    def test_drops_loser_into_lb_slot(self) -> None:
+        from matches.bracket import advance_loser
+
+        muts = advance_loser(
+            self._wb_drop_nodes(),
+            ("winners", 1, 0),
+            loser_id=104,
+            loser_seed=4,
+        )
+        self.assertEqual(len(muts), 1)
+        m = muts[0]
+        self.assertEqual(m["bracket_type"], "losers")
+        self.assertEqual(m["bracket_round"], 1)
+        self.assertEqual(m["position"], 0)
+        self.assertEqual(m["slot"], "b")
+        self.assertEqual(m["team_id"], 104)
+        self.assertEqual(m["seed"], 4)
+
+    def test_mutation_dict_has_six_keys_including_bracket_type(self) -> None:
+        from matches.bracket import advance_loser
+
+        muts = advance_loser(
+            self._wb_drop_nodes(), ("winners", 1, 0), loser_id=104, loser_seed=4
+        )
+        self.assertEqual(
+            set(muts[0].keys()),
+            {"bracket_type", "bracket_round", "position", "slot", "team_id", "seed"},
+        )
+
+    def test_empty_list_when_loser_advances_to_is_none(self) -> None:
+        from matches.bracket import advance_loser
+
+        # An LB node (or GF2, or a single-elim WB node) has no loser dest.
+        nodes = [
+            _de_node_dict(
+                bracket_type="losers",
+                bracket_round=1,
+                position=0,
+                team_a_id=104,
+                team_b_id=105,
+                seed_a=4,
+                seed_b=5,
+                loser_advances_to=None,
+            ),
+        ]
+        muts = advance_loser(nodes, ("losers", 1, 0), loser_id=105, loser_seed=5)
+        self.assertEqual(muts, [])
+
+    def test_empty_list_when_node_not_found(self) -> None:
+        from matches.bracket import advance_loser
+
+        muts = advance_loser(
+            self._wb_drop_nodes(),
+            ("winners", 9, 9),  # no such node
+            loser_id=104,
+            loser_seed=4,
+        )
+        self.assertEqual(muts, [])
+
+
+class TestResolveByeChainDropBye(SimpleTestCase):
+    """A WB bye produces NO loser, so the matching LB slot can never fill ->
+    that LB node collapses (Drop bye): the surviving LB opponent auto-advances
+    (``is_bye=True``, ``winner_id`` set). The returned collapse mutation carries
+    a ``bracket_type`` key.
+
+    Single-elim ``resolve_bye_chain`` behaviour stays byte-identical (covered by
+    ``TestResolveByeChain`` above, which stays green)."""
+
+    def _drop_bye_nodes(self) -> list[dict]:
+        # WB bye at ("winners",1,0): team 101 auto-advances, NO loser. Its loser
+        # would have dropped into LB node ("losers",1,0) slot "a". The other LB
+        # feeder is a real WB node's loser landing in slot "b" (team 105). With
+        # slot "a" feeder permanently empty (the bye produced no loser), the LB
+        # node must collapse so 105 auto-advances.
+        return [
+            _de_node_dict(
+                bracket_type="winners",
+                bracket_round=1,
+                position=0,
+                team_a_id=101,
+                team_b_id=None,
+                seed_a=1,
+                is_bye=True,
+                winner_id=101,
+                advances_to=(2, 0),
+                advances_to_slot="a",
+                loser_advances_to=("losers", 1, 0),
+                loser_advances_to_slot="a",
+            ),
+            _de_node_dict(
+                bracket_type="winners",
+                bracket_round=1,
+                position=1,
+                team_a_id=104,
+                team_b_id=105,
+                seed_a=4,
+                seed_b=5,
+                advances_to=(2, 0),
+                advances_to_slot="b",
+                loser_advances_to=("losers", 1, 0),
+                loser_advances_to_slot="b",
+            ),
+            # LB node fed only by the two WB-R1 losers. Slot "b" got team 105
+            # (the real WB game's loser); slot "a"'s feeder was the bye -> empty.
+            # It advances into an LB-final at ("losers",2,0) so the collapse
+            # promotion emits an observable bracket_type-tagged mutation.
+            _de_node_dict(
+                bracket_type="losers",
+                bracket_round=1,
+                position=0,
+                team_a_id=None,
+                team_b_id=105,
+                seed_a=None,
+                seed_b=5,
+                advances_to=(2, 0),
+                advances_to_slot="a",
+            ),
+            _de_node_dict(
+                bracket_type="losers",
+                bracket_round=2,
+                position=0,
+            ),
+        ]
+
+    def test_drop_bye_collapses_lb_node(self) -> None:
+        from matches.bracket import resolve_bye_chain
+
+        muts = resolve_bye_chain(self._drop_bye_nodes())
+        # The LB node's surviving opponent (105) auto-advances out of the
+        # collapsed node. A collapse mutation targets the LB node's parent OR
+        # marks the LB node resolved — at minimum a loser-side mutation carrying
+        # bracket_type must be emitted for the Drop-bye collapse.
+        lb_muts = [m for m in muts if m.get("bracket_type") is not None]
+        self.assertTrue(
+            lb_muts,
+            f"a Drop-bye collapse must emit a bracket_type-tagged mutation; got {muts}",
+        )
+
+    def test_no_byes_returns_empty(self) -> None:
+        from matches.bracket import resolve_bye_chain
+
+        nodes = [
+            _de_node_dict(
+                bracket_type="winners",
+                bracket_round=1,
+                position=0,
+                team_a_id=101,
+                team_b_id=104,
+                seed_a=1,
+                seed_b=4,
+                advances_to=(2, 0),
+                advances_to_slot="a",
+                loser_advances_to=("losers", 1, 0),
+                loser_advances_to_slot="a",
+            ),
+            _de_node_dict(
+                bracket_type="winners",
+                bracket_round=1,
+                position=1,
+                team_a_id=102,
+                team_b_id=103,
+                seed_a=2,
+                seed_b=3,
+                advances_to=(2, 0),
+                advances_to_slot="b",
+                loser_advances_to=("losers", 1, 0),
+                loser_advances_to_slot="b",
+            ),
+        ]
+        self.assertEqual(resolve_bye_chain(nodes), [])
+
+
+class TestFindNextNodeBracketOrder(SimpleTestCase):
+    """``find_next_node`` total order across brackets: the playable predicate is
+    byte-identical (both slots filled, not bye, Series not clinched); the ONLY
+    change is the tiebreak sort key
+    ``(winners<losers<grand_final, bracket_round asc, position asc)``.
+
+    A single-elim-only list (all ``bracket_type="winners"``) collapses to
+    ``(bracket_round, position)`` order exactly as today (covered by
+    ``TestFindNextNode`` / ``TestFindNextNodeSeries`` above, kept green)."""
+
+    def test_winners_beats_losers_and_grand_final(self) -> None:
+        from matches.bracket import find_next_node
+
+        nodes = [
+            _de_node_dict(
+                bracket_type="grand_final",
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=2,
+                seed_a=1,
+                seed_b=2,
+            ),
+            _de_node_dict(
+                bracket_type="losers",
+                bracket_round=1,
+                position=0,
+                team_a_id=3,
+                team_b_id=4,
+                seed_a=3,
+                seed_b=4,
+            ),
+            _de_node_dict(
+                bracket_type="winners",
+                bracket_round=1,
+                position=0,
+                team_a_id=5,
+                team_b_id=6,
+                seed_a=5,
+                seed_b=6,
+            ),
+        ]
+        nxt = find_next_node(nodes)
+        self.assertEqual(nxt["bracket_type"], "winners")
+
+    def test_losers_beats_grand_final(self) -> None:
+        from matches.bracket import find_next_node
+
+        nodes = [
+            _de_node_dict(
+                bracket_type="grand_final",
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=2,
+                seed_a=1,
+                seed_b=2,
+            ),
+            _de_node_dict(
+                bracket_type="losers",
+                bracket_round=1,
+                position=0,
+                team_a_id=3,
+                team_b_id=4,
+                seed_a=3,
+                seed_b=4,
+            ),
+        ]
+        nxt = find_next_node(nodes)
+        self.assertEqual(nxt["bracket_type"], "losers")
+
+    def test_within_bracket_lowest_round_position_wins(self) -> None:
+        from matches.bracket import find_next_node
+
+        nodes = [
+            _de_node_dict(
+                bracket_type="winners",
+                bracket_round=1,
+                position=1,
+                team_a_id=3,
+                team_b_id=4,
+                seed_a=3,
+                seed_b=4,
+            ),
+            _de_node_dict(
+                bracket_type="winners",
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=2,
+                seed_a=1,
+                seed_b=2,
+            ),
+        ]
+        nxt = find_next_node(nodes)
+        self.assertEqual((nxt["bracket_round"], nxt["position"]), (1, 0))
+
+    def test_grand_final_returned_when_only_it_is_ready(self) -> None:
+        from matches.bracket import find_next_node
+
+        # WB / LB nodes already clinched (Bo1, one win) -> only GF is playable.
+        nodes = [
+            _de_node_dict(
+                bracket_type="winners",
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=2,
+                seed_a=1,
+                seed_b=2,
+                wins_a=1,
+                winner_id=1,
+                series_length=1,
+            ),
+            _de_node_dict(
+                bracket_type="grand_final",
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=3,
+                seed_a=1,
+                seed_b=3,
+            ),
+        ]
+        nxt = find_next_node(nodes)
+        self.assertEqual(nxt["bracket_type"], "grand_final")
+
+
+class TestStageProgressDoubleElim(SimpleTestCase):
+    """``stage_progress`` generalized: ``total`` = count of distinct
+    ``(bracket_type, bracket_round)`` groups; a group of all byes / all-inert
+    counts complete; ``completed`` advances as groups finish. Single-elim
+    behaviour is byte-unchanged (every group is ``("winners", r)``), covered by
+    ``TestStageProgress`` above (kept green)."""
+
+    def _two_bracket_nodes(
+        self,
+        *,
+        wb_winner: int | None = None,
+        lb_winner: int | None = None,
+    ) -> list[dict]:
+        # One WB group ("winners", 1) and one LB group ("losers", 1), each a
+        # single non-bye node.
+        return [
+            _de_node_dict(
+                bracket_type="winners",
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=2,
+                seed_a=1,
+                seed_b=2,
+                winner_id=wb_winner,
+            ),
+            _de_node_dict(
+                bracket_type="losers",
+                bracket_round=1,
+                position=0,
+                team_a_id=3,
+                team_b_id=4,
+                seed_a=3,
+                seed_b=4,
+                winner_id=lb_winner,
+            ),
+        ]
+
+    def test_empty_returns_zero_zero(self) -> None:
+        from matches.bracket import stage_progress
+
+        self.assertEqual(stage_progress([]), (0, 0))
+
+    def test_total_counts_distinct_bracket_type_round_groups(self) -> None:
+        from matches.bracket import stage_progress
+
+        _completed, total = stage_progress(self._two_bracket_nodes())
+        # One ("winners",1) group + one ("losers",1) group = 2 groups.
+        self.assertEqual(total, 2)
+
+    def test_no_winners_completes_zero_groups(self) -> None:
+        from matches.bracket import stage_progress
+
+        completed, total = stage_progress(self._two_bracket_nodes())
+        self.assertEqual((completed, total), (0, 2))
+
+    def test_one_group_resolved_completes_one(self) -> None:
+        from matches.bracket import stage_progress
+
+        completed, total = stage_progress(self._two_bracket_nodes(wb_winner=1))
+        self.assertEqual((completed, total), (1, 2))
+
+    def test_both_groups_resolved_completes_all(self) -> None:
+        from matches.bracket import stage_progress
+
+        completed, total = stage_progress(
+            self._two_bracket_nodes(wb_winner=1, lb_winner=3)
+        )
+        self.assertEqual((completed, total), (2, 2))
+
+    def test_inert_grand_final_node_counts_complete(self) -> None:
+        from matches.bracket import stage_progress
+
+        # An inert auto-resolved GF2 node (winner_id set, never played) makes its
+        # ("grand_final", r) group complete via the existing winner_id check.
+        nodes = [
+            _de_node_dict(
+                bracket_type="grand_final",
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=2,
+                seed_a=1,
+                seed_b=2,
+                winner_id=1,
+            ),
+            _de_node_dict(
+                bracket_type="grand_final",
+                bracket_round=2,
+                position=0,
+                team_a_id=1,
+                team_b_id=None,
+                seed_a=1,
+                is_bye=True,
+                winner_id=1,
+            ),
+        ]
+        completed, total = stage_progress(nodes)
+        # Two grand_final groups (round 1 + round 2), both complete.
+        self.assertEqual((completed, total), (2, 2))

@@ -8,7 +8,7 @@ view and the async Celery task drive the bracket through this single
 
 from django.db import transaction
 
-from .bracket import advance_winner, break_tie, series_winner_slot
+from .bracket import advance_loser, advance_winner, break_tie, series_winner_slot
 from .models import (
     BracketNode,
     SeriesMatch,
@@ -68,39 +68,89 @@ def play_next_node(tournament: Tournament) -> "BracketNode | None":
     if slot is None:
         return node
 
-    # 7. Series clinched -> stamp the node winner.
+    # 7. Series clinched -> stamp the node winner (and identify the loser).
     if slot == "a":
         winner_team = node.team_a
         winner_seed = node.seed_a
+        loser_team = node.team_b
+        loser_seed = node.seed_b
     else:
         winner_team = node.team_b
         winner_seed = node.seed_b
+        loser_team = node.team_a
+        loser_seed = node.seed_a
     node.winner = winner_team
     node.save(update_fields=["winner"])
 
-    # 8. Compute + apply parent mutations.
+    # 8. Flatten the bracket (LG-02c widens select_related to loser_advances_to).
     flat = [
         _node_to_dict(n)
-        for n in tournament.nodes.select_related("advances_to").prefetch_related(
-            "series_matches"
-        )
+        for n in tournament.nodes.select_related(
+            "advances_to", "loser_advances_to"
+        ).prefetch_related("series_matches")
     ]
-    mutations = advance_winner(
+
+    # 8a. Winner advance. advance_winner stays the engine's winner-mutation
+    # source (single-elim contract + the atomic-boundary guard tests patch it),
+    # but the engine resolves the PARENT NODE + destination SLOT via the resolved
+    # node's OWN advances_to / advances_to_slot ORM fields — unambiguous across
+    # brackets (a WB and an LB node can share (bracket_round, position), so
+    # advance_winner's 2-tuple flat search is not bracket-safe; for single-elim
+    # the node fields and the mutation agree exactly).
+    win_muts = advance_winner(
         flat, (node.bracket_round, node.position), winner_team.id, winner_seed
     )
-    for mut in mutations:
-        parent = tournament.nodes.get(
-            bracket_round=mut["bracket_round"], position=mut["position"]
-        )
-        if mut["slot"] == "a":
-            parent.team_a = winner_team
-            parent.seed_a = mut["seed"]
-        else:
-            parent.team_b = winner_team
-            parent.seed_b = mut["seed"]
-        parent.save(update_fields=["team_a", "team_b", "seed_a", "seed_b"])
+    if win_muts and node.advances_to_id is not None and node.advances_to_slot:
+        _fill_slot(node.advances_to, node.advances_to_slot, winner_team, winner_seed)
 
-    # 9. Final node -> stamp champion + complete.
+    # 8b. Loser Drop (DE only): WB or GF1 node whose loser has a destination.
+    # advance_loser is the pure contract function (it keys on the full
+    # (bracket_type, round, position) triple, so it is bracket-safe); the engine
+    # applies its mutation via the node's own loser_advances_to FK.
+    if (
+        node.bracket_type in ("winners", "grand_final")
+        and node.loser_advances_to_id is not None
+        and loser_team is not None
+    ):
+        lose_muts = advance_loser(
+            flat,
+            (node.bracket_type, node.bracket_round, node.position),
+            loser_team.id,
+            loser_seed,
+        )
+        if lose_muts:
+            _fill_slot(
+                node.loser_advances_to,
+                node.loser_advances_to_slot,
+                loser_team,
+                lose_muts[0]["seed"],
+            )
+            # The Drop may complete an LB node whose other feeder was a WB Bye —
+            # collapse those Drop byes so the surviving team auto-advances.
+            _collapse_drop_byes(tournament)
+
+    # 8c. Grand-final resolution (the Bracket reset). GF1 is the grand-final node
+    # that still advances (its advances_to points at GF2). GF1 slot "a" is the WB
+    # champion, slot "b" the LB champion.
+    if node.bracket_type == "grand_final" and node.advances_to_id is not None:
+        if slot == "a":
+            # WB champion won GF1 -> beating the LB champ twice is unnecessary.
+            # The Bracket reset auto-resolves GF2 inert (never played): stamp its
+            # winner AND mark it is_bye (bye-style) so find_next_node never
+            # returns it; then crown the champion immediately.
+            gf2 = node.advances_to
+            gf2.winner = winner_team
+            gf2.is_bye = True
+            gf2.save(update_fields=["winner", "is_bye"])
+            tournament.champion = winner_team
+            tournament.state = "completed"
+            tournament.save(update_fields=["champion", "state"])
+        # LB champion won GF1 -> both teams have been advanced into GF2 (the
+        # winner-advance + the loser-Drop above); GF2 is now playable. No
+        # champion yet — leave the tournament active.
+        return node
+
+    # 9. Final node (single-elim final OR GF2) -> stamp champion + complete.
     if node.advances_to_id is None:
         tournament.champion = winner_team
         tournament.state = "completed"
@@ -108,3 +158,91 @@ def play_next_node(tournament: Tournament) -> "BracketNode | None":
 
     # 10. Return the resolved node.
     return node
+
+
+def _fill_slot(parent: "BracketNode", slot: str, team, seed) -> None:
+    """Write ``team`` / ``seed`` into ``parent``'s ``slot`` (a/b) + persist.
+
+    Saves ONLY the two fields of the slot being written. When a node feeds the
+    same parent on both its winner-advance and loser-drop (the GF1->GF2 Bracket
+    reset, where ``advances_to`` and ``loser_advances_to`` coincide), each call
+    loads a separate ORM instance; updating only the written slot's fields means
+    the second save cannot clobber the first slot the other instance wrote.
+    """
+    if slot == "a":
+        parent.team_a = team
+        parent.seed_a = seed
+        parent.save(update_fields=["team_a", "seed_a"])
+    else:
+        parent.team_b = team
+        parent.seed_b = seed
+        parent.save(update_fields=["team_b", "seed_b"])
+
+
+def _collapse_drop_byes(tournament: Tournament) -> None:
+    """Apply any DE Drop-bye collapses ready after a loser Drop.
+
+    A collapsed LB node (one slot filled, the other fed only by a WB Bye that
+    produces no loser) has its surviving team auto-advanced and is itself marked
+    ``is_bye`` / ``winner`` so ``find_next_node`` never returns it; that promotion
+    can itself complete the next LB node, so the pass loops to a fixpoint.
+    """
+    changed = True
+    while changed:
+        changed = False
+        nodes = list(
+            tournament.nodes.select_related(
+                "advances_to", "loser_advances_to"
+            ).prefetch_related("series_matches")
+        )
+        flat = [_node_to_dict(n) for n in nodes]
+
+        def feeder_is_dead(target_btype, target_br, target_pos, slot) -> bool:
+            feeders = []
+            for d in flat:
+                adv = d.get("advances_to")
+                if (
+                    adv is not None
+                    and d.get("advances_to_slot") == slot
+                    and adv[0] == target_br
+                    and adv[1] == target_pos
+                ):
+                    feeders.append(("winner", d))
+                ld = d.get("loser_advances_to")
+                if (
+                    ld is not None
+                    and d.get("loser_advances_to_slot") == slot
+                    and ld[0] == target_btype
+                    and ld[1] == target_br
+                    and ld[2] == target_pos
+                ):
+                    feeders.append(("loser", d))
+            if not feeders:
+                return False
+            for kind, d in feeders:
+                if kind == "loser":
+                    if not d.get("is_bye"):
+                        return False
+                else:
+                    return False
+            return True
+
+        for n in nodes:
+            if n.is_bye or n.winner_id is not None:
+                continue
+            a = n.team_a_id is not None
+            b = n.team_b_id is not None
+            if a == b:
+                continue
+            empty = "b" if a else "a"
+            if not feeder_is_dead(n.bracket_type, n.bracket_round, n.position, empty):
+                continue
+            # Collapse: the surviving team auto-advances; mark the node a bye.
+            surv_team = n.team_a if a else n.team_b
+            surv_seed = n.seed_a if a else n.seed_b
+            n.is_bye = True
+            n.winner = surv_team
+            n.save(update_fields=["is_bye", "winner"])
+            if n.advances_to_id is not None and n.advances_to_slot:
+                _fill_slot(n.advances_to, n.advances_to_slot, surv_team, surv_seed)
+            changed = True

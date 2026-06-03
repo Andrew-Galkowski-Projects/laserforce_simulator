@@ -1,0 +1,38 @@
+{# LG-02c — one DE bracket-round column (bracket_type-namespaced DOM ids). #}
+<div class="me-4" id="tournament-bracket-{{ bracket_type }}-round-{{ round.bracket_round }}">
+    <h5>Round {{ round.bracket_round }}</h5>
+    {% for node in round.nodes %}
+    <div class="card mb-2 {% if node.is_bye %}bye-node{% endif %}"
+         id="tournament-node-{{ bracket_type }}-{{ node.bracket_round }}-{{ node.position }}">
+        <div class="card-body p-2">
+            <div>
+                {% if node.seed_a %}<small class="text-muted">[{{ node.seed_a }}]</small>{% endif %}
+                {{ node.team_a.name|default:"—" }}
+            </div>
+            <div>
+                {% if node.seed_b %}<small class="text-muted">[{{ node.seed_b }}]</small>{% endif %}
+                {{ node.team_b.name|default:"—" }}
+            </div>
+            {% if node.is_bye %}
+            <div><small class="text-muted">Bye</small></div>
+            {% else %}
+            <div>
+                <small class="text-muted"
+                       id="tournament-node-series-length-{{ bracket_type }}-{{ node.bracket_round }}-{{ node.position }}">Bo{{ node.series_length }}</small>
+            </div>
+            <div id="tournament-node-series-score-{{ bracket_type }}-{{ node.bracket_round }}-{{ node.position }}">
+                <small class="text-muted">{{ node.wins_a }}–{{ node.wins_b }}</small>
+            </div>
+            {% for sm in node.series_matches %}
+            {% if sm.match %}
+            <div><a href="{% url 'match_detail' sm.match.id %}">Game {{ sm.game_number }}</a></div>
+            {% endif %}
+            {% endfor %}
+            {% endif %}
+            {% if node.winner %}
+            <div><strong>Winner: {{ node.winner.name }}</strong></div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>

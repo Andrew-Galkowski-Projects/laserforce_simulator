@@ -1128,3 +1128,211 @@ class TestTournamentDetailSeriesLengthLabel(TestCase):
             reverse("tournament_detail", args=[t.id])
         ).content.decode()
         self.assertIn('id="tournament-champion-banner"', body)
+
+
+# ===========================================================================
+# LG-02c — Double-elimination tournaments (views / templates)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified — the
+# single-elim view tests stay green as regression guards). Seam contract:
+# ``.claude/worktrees/lg-02c-seam-contract.md`` §4 (views/templates) / §6c.
+#
+# Create form gains the ``tournament-create-format`` select (single/double,
+# forgiving fallback). Detail page renders three DE sections
+# (``tournament-bracket-{winners,losers,grand-final}``) with DE node ids
+# ``tournament-node-{bracket_type}-{round}-{position}``; single-elim keeps the
+# LEGACY ids ``tournament-node-{round}-{position}`` and the ``tournament-bracket``
+# container (no -losers / -grand-final). These assertions WILL fail until the
+# Code agent lands the view + template edits.
+
+
+def _de_active_tournament(n: int, *, name: str = "DEViewCup") -> Tournament:
+    """A locked/active DOUBLE-elim Tournament with its two-tree bracket built."""
+    t = Tournament.objects.create(name=name, format="double_elimination")
+    for seed, team in enumerate(_make_teams(n), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+class TestCreateFormFormat(TestCase):
+    """GET renders the ``tournament-create-format`` select (single selected by
+    default); POST ``format=double_elimination`` persists it; a tampered/absent
+    value falls back to single_elimination (forgiving-fallback precedent)."""
+
+    def test_get_form_renders_format_select(self) -> None:
+        make_team_with_slots("Existing")
+        body = self.client.get(reverse("tournament_create")).content.decode()
+        self.assertIn('id="tournament-create-format"', body)
+
+    def test_get_form_single_selected_by_default(self) -> None:
+        make_team_with_slots("Existing")
+        body = self.client.get(reverse("tournament_create")).content.decode()
+        start = body.index('id="tournament-create-format"')
+        window = body[start : start + 600]
+        self.assertIn("selected", window, "format select has no selected option")
+        # The selected option is single_elimination.
+        self.assertIn("single_elimination", window)
+
+    def test_post_double_elimination_persists(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "DE Created Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "double_elimination",
+            },
+        )
+        t = Tournament.objects.get(name="DE Created Cup")
+        self.assertEqual(t.format, "double_elimination")
+
+    def test_post_single_elimination_persists(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "SE Created Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "single_elimination",
+            },
+        )
+        t = Tournament.objects.get(name="SE Created Cup")
+        self.assertEqual(t.format, "single_elimination")
+
+    def test_post_tampered_format_falls_back_to_single(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Tampered Format Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "round_robin",  # not a valid choice -> single
+            },
+        )
+        t = Tournament.objects.get(name="Tampered Format Cup")
+        self.assertEqual(t.format, "single_elimination")
+
+    def test_post_absent_format_falls_back_to_single(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "No Format Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+            },
+        )
+        t = Tournament.objects.get(name="No Format Cup")
+        self.assertEqual(t.format, "single_elimination")
+
+
+class TestDetailDoubleElimSections(TestCase):
+    """A locked DE tournament renders the three section containers
+    ``tournament-bracket-{winners,losers,grand-final}`` and DE node ids
+    ``tournament-node-{bracket_type}-{round}-{position}``, plus per-non-bye-node
+    series-score / series-length ids namespaced by bracket_type."""
+
+    def test_three_section_containers_render(self) -> None:
+        t = _de_active_tournament(4)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-bracket-winners"', body)
+        self.assertIn('id="tournament-bracket-losers"', body)
+        self.assertIn('id="tournament-bracket-grand-final"', body)
+
+    def test_de_node_dom_ids_render(self) -> None:
+        t = _de_active_tournament(4)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        # Every node renders its bracket_type-namespaced id.
+        for node in t.nodes.all():
+            bt = node.bracket_type
+            node_id = f'id="tournament-node-{bt}-{node.bracket_round}-{node.position}"'
+            self.assertIn(node_id, body, f"missing DE node id for {node}")
+
+    def test_grand_final_node_ids_render(self) -> None:
+        t = _de_active_tournament(4)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        for node in t.nodes.filter(bracket_type="grand_final"):
+            node_id = (
+                f'id="tournament-node-grand_final-'
+                f'{node.bracket_round}-{node.position}"'
+            )
+            self.assertIn(node_id, body)
+
+    def test_series_score_and_length_ids_namespaced_by_bracket_type(self) -> None:
+        t = _de_active_tournament(4)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        node = t.nodes.filter(bracket_type="losers", is_bye=False).first()
+        self.assertIsNotNone(node)
+        bt = node.bracket_type
+        self.assertIn(
+            f'id="tournament-node-series-score-{bt}-{node.bracket_round}-{node.position}"',
+            body,
+        )
+        self.assertIn(
+            f'id="tournament-node-series-length-{bt}-{node.bracket_round}-{node.position}"',
+            body,
+        )
+
+    def test_legacy_single_elim_node_ids_absent_in_de(self) -> None:
+        # The DE branch must NOT also render the legacy un-namespaced node ids.
+        t = _de_active_tournament(4)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertNotIn('id="tournament-node-1-0"', body)
+
+
+class TestDetailSingleElimIdsUnchanged(TestCase):
+    """Regression: a single-elim tournament keeps the LEGACY DOM ids and does
+    NOT render the DE -losers / -grand-final containers."""
+
+    def test_legacy_bracket_container_and_node_ids(self) -> None:
+        t = _active_tournament(4, name="SEIdsCup")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-bracket"', body)
+        self.assertIn('id="tournament-node-1-0"', body)
+
+    def test_legacy_series_ids_present(self) -> None:
+        t = _active_tournament(4, name="SESeriesIds")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        node = (
+            t.nodes.filter(is_bye=False, bracket_round=1).order_by("position").first()
+        )
+        self.assertIn(
+            f'id="tournament-node-series-score-{node.bracket_round}-{node.position}"',
+            body,
+        )
+        self.assertIn(
+            f'id="tournament-node-series-length-{node.bracket_round}-{node.position}"',
+            body,
+        )
+
+    def test_de_containers_absent_in_single_elim(self) -> None:
+        t = _active_tournament(4, name="SENoDESections")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertNotIn('id="tournament-bracket-losers"', body)
+        self.assertNotIn('id="tournament-bracket-grand-final"', body)

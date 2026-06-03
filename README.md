@@ -16,7 +16,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - **MVP scoring** — Role-specific formulas weighted toward each role's primary contribution
 - **Game replay** — Step through match events chronologically with per-player stat tracking; each persisted round also stores the RNG seed it was simulated with, so the exact game can be re-run (faithful while its rosters, map config, and side orientation are unchanged)
 - **Batch simulation** — Run N games between two teams and view aggregate win % / scores. The two teams alternate which physical side (red/blue) they play across the run, so neither team's aggregate is biased by any map-side advantage; per-team stats are reported by team position regardless of side played, with a separate map-side-advantage panel showing the raw red-side vs blue-side signal
-- **Sandbox tournaments** — Build a standalone single-elimination tournament from a seeded bracket: pick existing teams and/or generate new ones, reorder the seeding (default is overall-rating order), choose a series length (best-of-1, best-of-3, or best-of-5 per matchup), lock the bracket (arbitrary 4+ teams, with byes for the top seeds), then play it match-by-match while each matchup runs until one team clinches the series and winners auto-advance up a visual bracket tree to a crowned champion
+- **Sandbox tournaments** — Build a standalone single- or double-elimination tournament from a seeded bracket: pick existing teams and/or generate new ones, reorder the seeding (default is overall-rating order), choose a series length per round depth (best-of-1, best-of-3, or best-of-5 per matchup), lock the bracket (arbitrary 4+ teams, with byes for the top seeds), then play it match-by-match while each matchup runs until one team clinches the series and winners auto-advance up a visual bracket tree to a crowned champion. Double elimination adds a losers bracket (a first loss drops a team into it rather than eliminating them) and a grand final with bracket reset (the winners-bracket champion must be beaten twice)
 - **Team history** — Win/loss records across all matches
 - **Read-only REST API** — JSON endpoints for teams, players, matches, rounds, and events at `/api/` (paginated, 20 per page)
 
@@ -154,7 +154,7 @@ Action weights live in `matches/sim_helpers/weights.py` and shift dynamically ba
 | `/matches/game-round/<id>/events/` | Filterable event timeline |
 | `/matches/team/<id>/history/` | Team win/loss history |
 | `/tournaments/` | Sandbox tournament list |
-| `/tournaments/create/` | Create a single-elimination tournament |
+| `/tournaments/create/` | Create a single- or double-elimination tournament |
 | `/tournaments/<id>/` | Bracket tree, seeding, and play controls |
 | `/api/teams/` | Team list (paginated JSON) |
 | `/api/teams/<id>/` | Team detail with full player stats |

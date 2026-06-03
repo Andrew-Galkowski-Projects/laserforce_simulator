@@ -1086,7 +1086,10 @@ class Tournament(models.Model):
     M2M lock).
     """
 
-    FORMAT_CHOICES = (("single_elimination", "Single elimination"),)
+    FORMAT_CHOICES = (
+        ("single_elimination", "Single elimination"),
+        ("double_elimination", "Double elimination"),
+    )
     STATE_CHOICES = (
         ("setup", "Setup"),  # participants chosen, Seeding editable, bracket NOT built
         ("active", "Active"),  # bracket built + locked, nodes being played
@@ -1150,8 +1153,10 @@ class Tournament(models.Model):
         """
         from .bracket import (
             build_bracket,
+            build_double_elim_bracket,
             resolve_bye_chain,
             ParticipantSpec,
+            series_length_for_depth,
             series_length_for_round,
         )
 
@@ -1161,52 +1166,96 @@ class Tournament(models.Model):
         if len(participants) < 4:
             raise ValidationError("A tournament requires at least 4 participants.")
 
-        specs = build_bracket(
-            [ParticipantSpec(team_id=p.team_id, seed=p.seed) for p in participants]
-        )
+        part_specs = [
+            ParticipantSpec(team_id=p.team_id, seed=p.seed) for p in participants
+        ]
+        is_de = self.format == "double_elimination"
+        if is_de:
+            specs = build_double_elim_bracket(part_specs)
+        else:
+            specs = build_bracket(part_specs)
 
-        # Persist every node; keep a (bracket_round, position) -> BracketNode map
-        # so we can wire advances_to FKs in a second pass.
         team_by_id = {p.team_id: p.team for p in participants}
+        # The node map is keyed by the full (bracket_type, bracket_round,
+        # position) triple so a WB and LB node may share (round, position). For
+        # single-elim every node is bracket_type="winners", so the triple still
+        # resolves uniquely — output byte-unchanged.
         node_by_pos = {}
-        # LG-02b-2 — depth-from-final escalation: the final lives at the highest
-        # bracket_round, so total_rounds anchors the depth math for every node.
+        # LG-02b-2 — depth-from-final escalation. Single-elim resolves N from
+        # depth-from-the-final (max bracket_round); DE specs carry an explicit
+        # ``depth`` (distance to GF1) instead.
         total_rounds = max(spec.bracket_round for spec in specs)
         for spec in specs:
-            node = BracketNode.objects.create(
-                tournament=self,
-                bracket_round=spec.bracket_round,
-                position=spec.position,
-                team_a=team_by_id.get(spec.team_a_id),
-                team_b=team_by_id.get(spec.team_b_id),
-                seed_a=spec.seed_a,
-                seed_b=spec.seed_b,
-                is_bye=spec.is_bye,
-                advances_to_slot=spec.advances_to_slot,
-                winner=team_by_id.get(spec.winner_id),
-                series_length=series_length_for_round(
+            if is_de:
+                series_length = series_length_for_depth(
+                    spec.depth,
+                    final=self.final_series_length,
+                    semifinal=self.semifinal_series_length,
+                    quarterfinal=self.quarterfinal_series_length,
+                    earlier=self.earlier_series_length,
+                )
+            else:
+                series_length = series_length_for_round(
                     spec.bracket_round,
                     total_rounds,
                     final=self.final_series_length,
                     semifinal=self.semifinal_series_length,
                     quarterfinal=self.quarterfinal_series_length,
                     earlier=self.earlier_series_length,
-                ),
+                )
+            node = BracketNode.objects.create(
+                tournament=self,
+                bracket_round=spec.bracket_round,
+                position=spec.position,
+                bracket_type=spec.bracket_type,
+                team_a=team_by_id.get(spec.team_a_id),
+                team_b=team_by_id.get(spec.team_b_id),
+                seed_a=spec.seed_a,
+                seed_b=spec.seed_b,
+                is_bye=spec.is_bye,
+                advances_to_slot=spec.advances_to_slot,
+                loser_advances_to_slot=spec.loser_advances_to_slot,
+                winner=team_by_id.get(spec.winner_id),
+                series_length=series_length,
             )
-            node_by_pos[(spec.bracket_round, spec.position)] = node
+            node_by_pos[(spec.bracket_type, spec.bracket_round, spec.position)] = node
 
-        # Second pass: wire advances_to self-FKs.
+        # Second pass: wire advances_to self-FKs. The advances_to coord is a
+        # 2-tuple (bracket_round, position); resolve its destination bracket_type
+        # by searching the persisted nodes (a WB/LB final crosses into the GF).
+        def _node_at(coord, prefer_bt):
+            if (prefer_bt, coord[0], coord[1]) in node_by_pos:
+                return node_by_pos[(prefer_bt, coord[0], coord[1])]
+            for (bt, br, pos), nd in node_by_pos.items():
+                if br == coord[0] and pos == coord[1]:
+                    return nd
+            return None
+
         for spec in specs:
-            if spec.advances_to is None:
-                continue
-            child = node_by_pos[(spec.bracket_round, spec.position)]
-            child.advances_to = node_by_pos[spec.advances_to]
-            child.save(update_fields=["advances_to"])
+            child = node_by_pos[(spec.bracket_type, spec.bracket_round, spec.position)]
+            dirty = []
+            if spec.advances_to is not None:
+                child.advances_to = _node_at(spec.advances_to, spec.bracket_type)
+                dirty.append("advances_to")
+            # LG-02c — third pass folded in: wire the loser-drop self-FK (the
+            # coord is a (bracket_type, round, position) triple).
+            if spec.loser_advances_to is not None:
+                ld = spec.loser_advances_to
+                child.loser_advances_to = node_by_pos.get((ld[0], ld[1], ld[2]))
+                dirty.append("loser_advances_to")
+            if dirty:
+                child.save(update_fields=dirty)
 
-        # Cascade byes so a top seed's bye is reflected in round 2 immediately.
+        # Cascade byes so a top seed's bye is reflected in the next round
+        # immediately (and, for DE, collapse Drop byes into the LB).
         flat = [_node_to_dict(n) for n in node_by_pos.values()]
         for mut in resolve_bye_chain(flat):
-            parent = node_by_pos[(mut["bracket_round"], mut["position"])]
+            key = (
+                mut.get("bracket_type", "winners"),
+                mut["bracket_round"],
+                mut["position"],
+            )
+            parent = node_by_pos[key]
             team = team_by_id.get(mut["team_id"])
             if mut["slot"] == "a":
                 parent.team_a = team
@@ -1230,7 +1279,9 @@ class Tournament(models.Model):
         from .bracket import find_next_node
 
         nodes = list(
-            self.nodes.select_related("advances_to").prefetch_related("series_matches")
+            self.nodes.select_related(
+                "advances_to", "loser_advances_to"
+            ).prefetch_related("series_matches")
         )
         flat = [_node_to_dict(n) for n in nodes]
         result = find_next_node(flat)
@@ -1238,7 +1289,8 @@ class Tournament(models.Model):
             return None
         for node in nodes:
             if (
-                node.bracket_round == result["bracket_round"]
+                node.bracket_type == result["bracket_type"]
+                and node.bracket_round == result["bracket_round"]
                 and node.position == result["position"]
             ):
                 return node
@@ -1335,12 +1387,39 @@ class BracketNode(models.Model):
     # carries the already-resolved int (mirrors how seed_a/seed_b carry ints).
     series_length = models.PositiveSmallIntegerField(default=1)
 
+    # LG-02c — sub-bracket discriminator. Single-elim rows default "winners".
+    bracket_type = models.CharField(
+        max_length=12,
+        choices=(
+            ("winners", "Winners bracket"),
+            ("losers", "Losers bracket"),
+            ("grand_final", "Grand final"),
+        ),
+        default="winners",
+    )
+    # LG-02c — Drop pointer: where THIS node's LOSER goes (parallels advances_to
+    # / advances_to_slot which carry the WINNER). NULL for LB nodes (their loser
+    # is eliminated) and for GF2. SET_NULL — deleting a node must not cascade.
+    loser_advances_to = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="loser_feeders",
+    )
+    loser_advances_to_slot = models.CharField(
+        max_length=1,
+        null=True,
+        blank=True,
+        choices=(("a", "team_a"), ("b", "team_b")),
+    )
+
     class Meta:
         ordering = ["bracket_round", "position"]
         constraints = [
             models.UniqueConstraint(
-                fields=["tournament", "bracket_round", "position"],
-                name="uniq_tournament_round_position",
+                fields=["tournament", "bracket_type", "bracket_round", "position"],
+                name="uniq_tournament_bracket_round_position",
             ),
         ]
 
@@ -1409,6 +1488,13 @@ def _node_to_dict(node: "BracketNode") -> dict:
     if node.advances_to_id is not None:
         adv = node.advances_to
         advances_to = (adv.bracket_round, adv.position)
+    # LG-02c — loser-drop coord is a 3-tuple (bracket_type, round, position) —
+    # the WB->LB Drop crosses brackets, so the coord must carry the destination
+    # bracket. (advances_to stays a 2-tuple — deliberate asymmetry.)
+    loser_advances_to = None
+    if node.loser_advances_to_id is not None:
+        ldest = node.loser_advances_to
+        loser_advances_to = (ldest.bracket_type, ldest.bracket_round, ldest.position)
     # LG-02b — Series wins per slot (the caller prefetches ``series_matches``).
     wins_a, wins_b = count_series_wins(
         node.series_matches.all(), node.team_a_id, node.team_b_id
@@ -1427,4 +1513,8 @@ def _node_to_dict(node: "BracketNode") -> dict:
         "winner_id": node.winner_id,
         "advances_to": advances_to,
         "advances_to_slot": node.advances_to_slot,
+        # LG-02c — single-elim rows yield ("winners", None, None).
+        "bracket_type": node.bracket_type,
+        "loser_advances_to": loser_advances_to,
+        "loser_advances_to_slot": node.loser_advances_to_slot,
     }

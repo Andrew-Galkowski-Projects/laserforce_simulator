@@ -754,3 +754,258 @@ class TestPlayNextNodeReadsNodeSeriesLength(TestCase):
         self.assertEqual(max(wins), clinch_threshold(3))
         self.assertLessEqual(len(series), 3)
         self.assertEqual(t.champion_id, final_node.winner_id)
+
+
+# ===========================================================================
+# LG-02c — Double-elimination tournaments (engine)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified — the
+# single-elim engine tests stay green as regression guards). Seam contract:
+# ``.claude/worktrees/lg-02c-seam-contract.md`` §3 (engine) / §6d.
+#
+# On a WB / GF1 clinch, ``play_next_node`` Advances the winner AND Drops the
+# loser into ``loser_advances_to``. The Grand-final Bracket reset has two
+# branches: WB-champ-wins-GF1 -> champion immediately + GF2 inert; LB-champ-
+# wins-GF1 -> GF2 becomes playable, GF2 winner is champion.
+#
+# To force deterministic GF outcomes WITHOUT asserting point totals, we patch
+# ``simulate_match`` to return a Match whose ``winner`` is a chosen Team (the
+# project idiom from ``TestPlayNextNodeForcedTie`` — a pre-built Match returned
+# by the patched bound method). A Bo1 DE field (all four slots Bo1) clinches
+# every node in one Match so a single ``simulate_match`` controls each node.
+
+
+def _de_active_tournament(n: int, *, name: str):
+    """A locked/active DOUBLE-elim Tournament (all slots Bo1) with its two-tree
+    bracket built."""
+    t = Tournament.objects.create(name=name, format="double_elimination")
+    for seed, team in enumerate(_make_teams(n), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+def _winner_match(team_red: Team, team_blue: Team, winner: Team) -> Match:
+    """A completed Match decided in favour of ``winner`` (red sweeps both rounds
+    if winner is team_red, else blue sweeps) so ``Match.winner`` is non-null and
+    no tie-break fires."""
+    if winner.id == team_red.id:
+        red_r1, blue_r1, red_r2, blue_r2 = 500, 10, 500, 10
+    else:
+        red_r1, blue_r1, red_r2, blue_r2 = 10, 500, 10, 500
+    return Match.objects.create(
+        team_red=team_red,
+        team_blue=team_blue,
+        match_type="tournament",
+        red_round1_points=red_r1,
+        blue_round1_points=blue_r1,
+        red_round2_points=red_r2,
+        blue_round2_points=blue_r2,
+        is_completed=True,
+    )
+
+
+class TestPlayNextNodeDoubleElimDrop(TestCase):
+    """Clinching a WB node Advances the winner into its WB parent slot AND Drops
+    the loser into its ``loser_advances_to`` LB slot. Asserted on the resolved
+    tree / SeriesMatch rows — NOT on point totals."""
+
+    def test_wb_clinch_drops_loser_into_lb_slot(self) -> None:
+        from matches.models import SeriesMatch
+        from matches.tournament_engine import play_next_node
+
+        t = _de_active_tournament(4, name="DEDropCup")
+        node = t.find_next_playable_node()
+        self.assertEqual(node.bracket_type, "winners")
+        self.assertIsNotNone(node.loser_advances_to_id)
+        lb_dest = node.loser_advances_to
+        lb_slot = node.loser_advances_to_slot
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            resolved = play_next_node(t)
+
+        resolved.refresh_from_db()
+        self.assertEqual(resolved.id, node.id)
+        self.assertIsNotNone(resolved.winner)
+        # One SeriesMatch recorded (Bo1).
+        self.assertEqual(SeriesMatch.objects.filter(node=resolved).count(), 1)
+        # The loser is the non-winning slot's team.
+        loser_id = (
+            resolved.team_b_id
+            if resolved.winner_id == resolved.team_a_id
+            else resolved.team_a_id
+        )
+        lb_dest.refresh_from_db()
+        dropped_team = getattr(lb_dest, f"team_{lb_slot}")
+        self.assertIsNotNone(
+            dropped_team, "the WB loser must Drop into the LB destination slot"
+        )
+        self.assertEqual(dropped_team.id, loser_id)
+
+    def test_wb_clinch_advances_winner_into_wb_parent(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _de_active_tournament(4, name="DEDropAdvance")
+        node = t.find_next_playable_node()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_next_node(t)
+        node.refresh_from_db()
+        parent = node.advances_to
+        self.assertIsNotNone(parent)
+        parent.refresh_from_db()
+        # The winner advanced INSIDE the winners bracket.
+        self.assertEqual(parent.bracket_type, "winners")
+        slot_team = getattr(parent, f"team_{node.advances_to_slot}")
+        self.assertEqual(slot_team.id, node.winner_id)
+
+
+class TestPlayNextNodeGrandFinalReset(TestCase):
+    """The Bracket reset, both branches.
+
+    WB champ wins GF1 -> champion immediately + GF2 inert (never playable).
+    LB champ wins GF1 -> GF2 becomes playable, GF2 winner is champion.
+
+    The GF1 Match outcome is forced by patching ``simulate_match`` to favour the
+    WB champ (slot a) or the LB champ (slot b)."""
+
+    def _play_to_grand_final(self, t: Tournament) -> Tournament:
+        """Play every WB/LB node (random sims) until GF1 is the next playable
+        node, returning the tournament with GF1 ready."""
+        from matches.tournament_engine import play_next_node
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(60):
+                t.refresh_from_db()
+                if t.state == "completed":
+                    break
+                nxt = t.find_next_playable_node()
+                if nxt is None:
+                    break
+                if nxt.bracket_type == "grand_final":
+                    break
+                play_next_node(t)
+        t.refresh_from_db()
+        return t
+
+    def test_wb_champ_wins_gf1_completes_immediately(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _de_active_tournament(4, name="DEGFWbWins")
+        t = self._play_to_grand_final(t)
+        gf1 = t.find_next_playable_node()
+        self.assertIsNotNone(gf1)
+        self.assertEqual(gf1.bracket_type, "grand_final")
+        # GF1 slot "a" is the WB champion; favour it so the WB champ wins GF1.
+        wb_champ = gf1.team_a
+
+        def _fake(sim_self, team_red, team_blue, *args, **kwargs):
+            return _winner_match(team_red, team_blue, wb_champ)
+
+        with patch.object(
+            BatchSimulator, "simulate_match", autospec=True, side_effect=_fake
+        ):
+            play_next_node(t)
+
+        t.refresh_from_db()
+        # WB champ wins GF1 -> champion stamped immediately, tournament complete.
+        self.assertEqual(t.state, "completed")
+        self.assertEqual(t.champion_id, wb_champ.id)
+        # GF2 is inert: find_next_playable_node returns None (never playable).
+        self.assertIsNone(t.find_next_playable_node())
+
+    def test_lb_champ_wins_gf1_forces_gf2(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _de_active_tournament(4, name="DEGFLbWins")
+        t = self._play_to_grand_final(t)
+        gf1 = t.find_next_playable_node()
+        self.assertEqual(gf1.bracket_type, "grand_final")
+        # GF1 slot "b" is the LB champion; favour it so the LB champ wins GF1.
+        lb_champ = gf1.team_b
+
+        def _fake_lb(sim_self, team_red, team_blue, *args, **kwargs):
+            return _winner_match(team_red, team_blue, lb_champ)
+
+        with patch.object(
+            BatchSimulator, "simulate_match", autospec=True, side_effect=_fake_lb
+        ):
+            play_next_node(t)
+
+        t.refresh_from_db()
+        # LB champ wins GF1 -> no champion yet; GF2 becomes playable.
+        self.assertIsNone(t.champion_id)
+        self.assertNotEqual(t.state, "completed")
+        gf2 = t.find_next_playable_node()
+        self.assertIsNotNone(gf2, "GF2 must be playable after the LB champ wins GF1")
+        self.assertEqual(gf2.bracket_type, "grand_final")
+        # Both teams advanced into GF2.
+        self.assertIsNotNone(gf2.team_a)
+        self.assertIsNotNone(gf2.team_b)
+
+        # Now clinch GF2 -> its winner is the champion.
+        gf2_winner = gf2.team_a
+
+        def _fake_gf2(sim_self, team_red, team_blue, *args, **kwargs):
+            return _winner_match(team_red, team_blue, gf2_winner)
+
+        with patch.object(
+            BatchSimulator, "simulate_match", autospec=True, side_effect=_fake_gf2
+        ):
+            play_next_node(t)
+
+        t.refresh_from_db()
+        self.assertEqual(t.state, "completed")
+        self.assertEqual(t.champion_id, gf2_winner.id)
+
+
+class TestPlayNextNodeSingleElimUnchanged(TestCase):
+    """Regression: a single-elim node clinch advances the winner and does NOT
+    Drop a loser (loser eliminated). Bo1 clinch behaviour byte-identical to
+    LG-02b."""
+
+    def _se_active_tournament(self, n: int, *, name: str) -> Tournament:
+        t = Tournament.objects.create(name=name)  # default single_elimination
+        for seed, team in enumerate(_make_teams(n), start=1):
+            TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+        t.lock_and_build()
+        t.refresh_from_db()
+        return t
+
+    def test_single_elim_clinch_advances_winner_no_loser_drop(self) -> None:
+        from matches.models import SeriesMatch
+        from matches.tournament_engine import play_next_node
+
+        t = self._se_active_tournament(4, name="SERegressionCup")
+        node = t.find_next_playable_node()
+        # Single-elim WB node has no loser destination.
+        self.assertIsNone(node.loser_advances_to_id)
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            resolved = play_next_node(t)
+
+        resolved.refresh_from_db()
+        self.assertIsNotNone(resolved.winner)
+        self.assertEqual(SeriesMatch.objects.filter(node=resolved).count(), 1)
+        # The winner advanced; no LB exists (single-elim has no losers bracket).
+        self.assertFalse(t.nodes.filter(bracket_type="losers").exists())
+        parent = resolved.advances_to
+        parent.refresh_from_db()
+        slot_team = getattr(parent, f"team_{resolved.advances_to_slot}")
+        self.assertEqual(slot_team.id, resolved.winner_id)
+
+    def test_single_elim_plays_to_champion(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = self._se_active_tournament(4, name="SERegressionChamp")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(10):
+                t.refresh_from_db()
+                if t.state == "completed":
+                    break
+                if play_next_node(t) is None:
+                    break
+        t.refresh_from_db()
+        self.assertEqual(t.state, "completed")
+        self.assertIsNotNone(t.champion)
