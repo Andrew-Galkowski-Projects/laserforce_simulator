@@ -1108,6 +1108,12 @@ class Tournament(models.Model):
         on_delete=models.SET_NULL,
         related_name="tournaments_won",
     )
+    # LG-02b — best-of-N series length per Bracket node. Best of 1 (default,
+    # the LG-02a single-Match behaviour), best of 3, or best of 5.
+    series_length = models.PositiveSmallIntegerField(
+        choices=((1, "Best of 1"), (3, "Best of 3"), (5, "Best of 5")),
+        default=1,
+    )
 
     def __str__(self) -> str:
         return self.name
@@ -1192,7 +1198,11 @@ class Tournament(models.Model):
         """
         from .bracket import find_next_node
 
-        nodes = list(self.nodes.select_related("advances_to"))
+        nodes = list(
+            self.nodes.select_related("advances_to", "tournament").prefetch_related(
+                "series_matches"
+            )
+        )
         flat = [_node_to_dict(n) for n in nodes]
         result = find_next_node(flat)
         if result is None:
@@ -1264,14 +1274,6 @@ class BracketNode(models.Model):
     seed_a = models.PositiveIntegerField(null=True, blank=True)
     seed_b = models.PositiveIntegerField(null=True, blank=True)
 
-    # The played Match for this node (NULL until played; a bye node stays NULL).
-    match = models.ForeignKey(
-        "matches.Match",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="bracket_node",
-    )
     # Advancement pointer: the parent node this node's winner feeds into (NULL
     # for the final node). slot tells the parent which side to fill.
     advances_to = models.ForeignKey(
@@ -1311,6 +1313,59 @@ class BracketNode(models.Model):
         return f"{self.tournament.name} R{self.bracket_round}/{self.position}"
 
 
+class SeriesMatch(models.Model):
+    """LG-02b — one Match within a Bracket node's best-of-N Series."""
+
+    node = models.ForeignKey(
+        "matches.BracketNode",
+        on_delete=models.CASCADE,
+        related_name="series_matches",
+    )
+    match = models.ForeignKey(
+        "matches.Match",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="series_match",
+    )
+    game_number = models.PositiveIntegerField()
+    winner = models.ForeignKey(
+        "teams.Team",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
+    class Meta:
+        ordering = ["game_number"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["node", "game_number"], name="uniq_seriesmatch_node_game"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.node} game {self.game_number}"
+
+
+def count_series_wins(series_matches, team_a_id, team_b_id) -> tuple[int, int]:
+    """LG-02b — tally a Bracket node's Series wins per slot from an iterable of
+    ``SeriesMatch`` rows. Single source for the ``(wins_a, wins_b)`` derivation
+    shared by ``_node_to_dict``, the detail view, and the play engine.
+    """
+    wins_a = 0
+    wins_b = 0
+    for sm in series_matches:
+        if sm.winner_id is None:
+            continue
+        if sm.winner_id == team_a_id:
+            wins_a += 1
+        elif sm.winner_id == team_b_id:
+            wins_b += 1
+    return wins_a, wins_b
+
+
 def _node_to_dict(node: "BracketNode") -> dict:
     """Flatten a BracketNode ORM row to the plain dict shape the pure
     ``matches.bracket`` functions consume (LG-02a seam helper).
@@ -1319,6 +1374,10 @@ def _node_to_dict(node: "BracketNode") -> dict:
     if node.advances_to_id is not None:
         adv = node.advances_to
         advances_to = (adv.bracket_round, adv.position)
+    # LG-02b — Series wins per slot (the caller prefetches ``series_matches``).
+    wins_a, wins_b = count_series_wins(
+        node.series_matches.all(), node.team_a_id, node.team_b_id
+    )
     return {
         "bracket_round": node.bracket_round,
         "position": node.position,
@@ -1327,7 +1386,9 @@ def _node_to_dict(node: "BracketNode") -> dict:
         "seed_a": node.seed_a,
         "seed_b": node.seed_b,
         "is_bye": node.is_bye,
-        "match_id": node.match_id,
+        "wins_a": wins_a,
+        "wins_b": wins_b,
+        "series_length": node.tournament.series_length,
         "winner_id": node.winner_id,
         "advances_to": advances_to,
         "advances_to_slot": node.advances_to_slot,

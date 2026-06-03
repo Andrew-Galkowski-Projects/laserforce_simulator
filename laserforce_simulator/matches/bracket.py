@@ -184,10 +184,27 @@ def build_bracket(participants: list[ParticipantSpec]) -> list[BracketNodeSpec]:
     return specs
 
 
+def clinch_threshold(series_length: int) -> int:
+    """Games one slot must win to clinch a best-of-``series_length`` Series."""
+    return (series_length // 2) + 1
+
+
+def series_winner_slot(wins_a: int, wins_b: int, series_length: int) -> Optional[str]:
+    """Return the clinching slot ("a"/"b") for a best-of-N Series, or None
+    when neither slot has reached the clinch threshold yet.
+    """
+    threshold = clinch_threshold(series_length)
+    if wins_a >= threshold:
+        return "a"
+    if wins_b >= threshold:
+        return "b"
+    return None
+
+
 def find_next_node(nodes: list[dict]) -> Optional[dict]:
     """Return the lowest (bracket_round, position) node dict that is PLAYABLE:
     both team slots filled (team_a_id and team_b_id not None), is_bye False,
-    and no recorded winner_id / match_id yet. None when nothing is ready.
+    and the Series has not yet been clinched. None when nothing is ready.
 
     ``nodes``: list of plain dicts (the view flattens BracketNode rows to
     dicts via ``_node_to_dict``). The pure function never touches the ORM.
@@ -198,8 +215,10 @@ def find_next_node(nodes: list[dict]) -> Optional[dict]:
         if nd.get("team_a_id") is not None
         and nd.get("team_b_id") is not None
         and not nd.get("is_bye")
-        and nd.get("winner_id") is None
-        and nd.get("match_id") is None
+        and series_winner_slot(
+            nd.get("wins_a", 0), nd.get("wins_b", 0), nd.get("series_length", 1)
+        )
+        is None
     ]
     if not playable:
         return None

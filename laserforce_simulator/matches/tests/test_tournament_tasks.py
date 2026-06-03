@@ -205,7 +205,7 @@ class TestPlayTournamentTaskResumable:
             play_next_node(t)
         t.refresh_from_db()
         assert t.state == "active", "partial run must leave the tournament active"
-        played_before = t.nodes.filter(match__isnull=False).count()
+        played_before = t.nodes.filter(series_matches__isnull=False).distinct().count()
         assert played_before >= 1
 
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
@@ -215,8 +215,11 @@ class TestPlayTournamentTaskResumable:
         t.refresh_from_db()
         assert t.state == "completed", "task must finish the remaining nodes"
         assert t.champion_id is not None
-        # The earlier-resolved node was NOT re-played (its Match is reused).
-        assert t.nodes.filter(match__isnull=False).count() >= played_before
+        # The earlier-resolved node was NOT re-played (its SeriesMatch persists).
+        assert (
+            t.nodes.filter(series_matches__isnull=False).distinct().count()
+            >= played_before
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -284,3 +287,92 @@ class TestPlayTournamentTaskInactiveEarlyReturn:
         assert (
             Match.objects.count() == matches_before
         ), "a completed-state re-invocation must play no further Matches"
+
+
+# ---------------------------------------------------------------------------
+# LG-02b — best-of-N series via the Play Tournament task
+# ---------------------------------------------------------------------------
+#
+# NEW class appended below (existing classes above are NOT modified).
+# Seam contract: ``.claude/worktrees/lg-02b-seam-contract.md`` §task.
+
+
+def _active_series_tournament(n: int, series_length: int, *, name: str, prefix: str):
+    """A locked/active best-of-``series_length`` Tournament."""
+    from matches.models import Tournament, TournamentParticipant
+
+    t = Tournament.objects.create(name=name, series_length=series_length)
+    for seed, team in enumerate(_make_teams(n, prefix), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+@pytest.mark.django_db
+class TestPlayTournamentTaskSeries:
+    """§task — a Bo3 Tournament plays to a champion via ``play_tournament_task``
+    and every decisive node clinches (its winner reaches clinch_threshold
+    SeriesMatch wins) before advancing.
+    """
+
+    def test_bo3_plays_to_champion(self) -> None:
+        from matches.models import Tournament
+        from matches.tasks import play_tournament_task
+
+        t = _active_series_tournament(4, 3, name="TaskBo3", prefix="TtBo3")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        assert (
+            result.state == "SUCCESS"
+        ), f"expected SUCCESS, got {result.state!r}; info={result.info!r}"
+        t.refresh_from_db()
+        assert t.state == "completed"
+        assert t.champion_id is not None
+
+    def test_bo3_return_shape_is_stage_counts(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_series_tournament(4, 3, name="TaskBo3Shape", prefix="TtBo3S")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        payload = result.result
+        assert set(payload.keys()) == {"completed", "total"}
+        # N=4 ⇒ 2 Bracket stages regardless of series length.
+        assert payload["total"] == 2
+        assert payload["completed"] == payload["total"]
+
+    def test_each_decisive_node_clinched_before_advancing(self) -> None:
+        from matches.bracket import clinch_threshold
+        from matches.models import SeriesMatch
+        from matches.tasks import play_tournament_task
+
+        t = _active_series_tournament(4, 3, name="TaskBo3Clinch", prefix="TtBo3C")
+        threshold = clinch_threshold(3)  # 2
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_tournament_task.apply(args=(t.id,))
+
+        t.refresh_from_db()
+        # Every node with a stamped winner is a decisive (non-bye) series that
+        # clinched: its winner holds exactly clinch_threshold SeriesMatch wins,
+        # the loser is below it, and there is no dead-rubber game.
+        decisive = t.nodes.filter(winner__isnull=False, is_bye=False)
+        assert decisive.exists()
+        for node in decisive:
+            series = list(SeriesMatch.objects.filter(node=node))
+            wins_a = sum(1 for s in series if s.winner_id == node.team_a_id)
+            wins_b = sum(1 for s in series if s.winner_id == node.team_b_id)
+            winner_wins = wins_a if node.winner_id == node.team_a_id else wins_b
+            loser_wins = wins_b if node.winner_id == node.team_a_id else wins_a
+            assert winner_wins == threshold, (
+                f"node {node.bracket_round}/{node.position} winner has "
+                f"{winner_wins} wins, expected clinch_threshold {threshold}"
+            )
+            assert loser_wins < threshold
+            assert len(series) == winner_wins + loser_wins
+            assert len(series) <= t.series_length

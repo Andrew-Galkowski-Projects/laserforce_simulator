@@ -564,13 +564,73 @@ tournament completion.
     `matches/tests/test_bracket.py` (extend — `TestStageProgress`),
     `test_tournament_engine.py` (NEW), `test_tournament_tasks.py` (NEW, under
     `CELERY_TASK_ALWAYS_EAGER`), `test_tournament_views.py` (extend).
-- **LG-02b · [NOT STARTED] Best-of-N series nodes.** Generalise a bracket node from **one**
+- **LG-02b · [DONE] Best-of-N series nodes.** Generalise a bracket node from **one**
   2-round `Match` to a **best-of-3 / best-of-5 series**: the node resolves when one
   side clinches the majority, then Advances. *Why deferred:* LG-02a locked
   "node = exactly one Match" so the advancement + tie-break engine could be built
   against a single deterministic result; a series re-opens node-resolution
   semantics (per-game records, clinch detection, the tie-break's role) and is a
   clean increment once single-game advancement is proven.
+  - completed: generalised a **Bracket node** from holding **one** 2-round `Match`
+    to a best-of-N **Series**, the node Advancing only once a Team clinches the
+    Match-win majority (seam
+    [`.claude/worktrees/lg-02b-seam-contract.md`](.claude/worktrees/lg-02b-seam-contract.md)).
+    New `Tournament.series_length` (`PositiveSmallIntegerField`, choices `1`/`3`/`5`
+    "Best of 1/3/5", `default=1`; create-time only, frozen on the setup→active
+    `lock_and_build` transition) — **Bo1 (`series_length == 1`) is byte-equivalent
+    to LG-02a** (one Match, clinch threshold 1, identical Advancement). New
+    `SeriesMatch` through-model (`node` FK CASCADE `related_name="series_matches"`,
+    `match` FK SET_NULL, 1-based `game_number`, `winner` FK to `teams.Team`
+    SET_NULL; `UniqueConstraint` `uniq_seriesmatch_node_game`,
+    `Meta.ordering=["game_number"]`) — **one row per played Series Match**; the
+    win tally is **derived** by counting `winner` rows per team-slot, **never
+    stored** as counters. The LG-02a `BracketNode.match` FK is **dropped wholesale**
+    (the per-Match link now lives on `SeriesMatch.match`). Migration
+    `matches/migrations/0034_*` in pinned order `AddField(Tournament.series_length)`
+    → `CreateModel(SeriesMatch)` → `RemoveField(BracketNode.match)` — **no
+    `RunPython`, no backfill** (ADR-0004 disposable-sandbox precedent). Pure
+    `matches/bracket.py` gains `clinch_threshold(series_length) -> int`
+    (`(series_length // 2) + 1`: Bo1→1, Bo3→2, Bo5→3) and `series_winner_slot(wins_a,
+    wins_b, series_length) -> Optional[str]` (`"a"`/`"b"`/`None`, total + never-raises,
+    `wins_a` checked first); the `find_next_node` playable predicate swaps the old
+    `winner_id IS NULL AND match_id IS NULL` checks for **`series_winner_slot(...)
+    is None`**; `_node_to_dict` gains `wins_a`/`wins_b`/`series_length` and **drops
+    `match_id`** (frozen `dataclasses`/`typing`/`math`/`collections`-only allowlist
+    unchanged — `TestNoDjangoImportsLeaked` still passes). `tournament_engine.py::
+    play_next_node` is rewritten to resolve **one Match per step**,
+    **per-Match-atomic** (extends ADR-0016 from per-node to per-Match): sim ONE Match
+    (sides fixed `team_a`/`team_b`) → per-Match `break_tie` on `match.winner is None`
+    → create the next `SeriesMatch` row → recompute the derived tally → clinch at
+    `(N//2)+1` ⇒ stamp `node.winner` + `advance_winner` + `champion`/`completed` on
+    the final, **else return the node with no Advancement**; dead-rubber Matches are
+    never simulated. The `stage_progress` / play-all / play-status routes are
+    **unchanged** (`stage_progress` still reads `winner_id`, which is stamped only on
+    clinch; the Celery loop simply iterates once per Match, so a Bo3/Bo5 drains over
+    more steps). Surface: a create-form **`series_length` `<select>`** (DOM id
+    `tournament-create-series-length`, options Bo1/Bo3/Bo5, default Bo1) + a per-node
+    **Series-score** element (DOM id `tournament-node-series-score-{br}-{pos}`
+    rendering `wins_a–wins_b`); the champion still surfaces via the unchanged
+    `tournament-champion-banner`. **Non-deterministic** (`simulate_match` draws fresh
+    per-round seeds) ⇒ **no SIM-07/08 interaction, NO Score Calibration re-baseline**.
+    New **ADR-0020** "Best-of-N series bracket nodes" (cross-ref ADR-0019 + ADR-0016).
+    Tests: `matches/tests/test_bracket.py` (extend — `clinch_threshold` /
+    `series_winner_slot` / Series `find_next_node` cases + purity),
+    `test_tournament_models.py` (extend — `SeriesMatch` + `series_length` +
+    `_node_to_dict`), `test_tournament_engine.py` (extend — per-Match step +
+    clinch-advance + Bo1-equivalence + tie-break), `test_tournament_views.py` (extend
+    — create-field + detail Series-score), `test_tournament_tasks.py` (extend —
+    play-all over a Bo3 Series). See seam
+    [`.claude/worktrees/lg-02b-seam-contract.md`](.claude/worktrees/lg-02b-seam-contract.md).
+- **LG-02b-2 · [NOT STARTED] Per-Bracket-round series escalation.** Let the
+  **Series length vary by Bracket round** — Bo1 early rounds → Bo3 semis → Bo5
+  final — instead of the single per-Tournament `series_length` LG-02b applies to
+  every node. The node reads its round's N (a per-round config persisted at
+  lock time) rather than `tournament.series_length`, building directly on the
+  LG-02b Series engine (clinch / `SeriesMatch` / per-Match-atomic play stay
+  verbatim — this task adds only the per-round N lookup + the create-time UI to
+  set it). *Why deferred:* a clean increment over LG-02b — the Series engine is
+  built once against a single per-Tournament length; escalation is purely a
+  config-resolution + UI layer on top, not a re-open of node-resolution semantics.
 - **LG-02c+ · [NOT STARTED] Additional bracket formats.** **Double elimination** (losers get a
   second chance via a losers bracket), **round robin** (all teams play each other,
   used for seeding), **round robin → double elimination** (RR seeding phase feeds a

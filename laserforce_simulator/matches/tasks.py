@@ -266,9 +266,13 @@ def play_tournament_task(self, tournament_id: int) -> dict:
         tournament = Tournament.objects.get(id=tournament_id)
 
         def _stage_counts() -> tuple[int, int]:
-            # select_related avoids an N+1 on advances_to inside _node_to_dict.
+            # select_related avoids an N+1 on advances_to / tournament and the
+            # prefetch avoids one on series_matches inside _node_to_dict.
             flat = [
-                _node_to_dict(n) for n in tournament.nodes.select_related("advances_to")
+                _node_to_dict(n)
+                for n in tournament.nodes.select_related(
+                    "advances_to", "tournament"
+                ).prefetch_related("series_matches")
             ]
             return stage_progress(flat)
 

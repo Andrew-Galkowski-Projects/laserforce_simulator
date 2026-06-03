@@ -204,6 +204,47 @@ backend, so the eager POST stalled and committed zero nodes.
 re-seed, lock, Play All render + request, sync engine advancement). The only
 gap is async completion, blocked solely by the local no-Redis smoke environment.
 
+---
+
+## LG-02b — Best-of-N series bracket nodes (2026-06-03)
+
+Branch `lg-02b-series-nodes`. Black-box pass over the new Series surfaces:
+the create-form `series_length` select, per-node Series score, one-Match-per-step
+play, clinch + advancement, and champion crowning.
+
+| Area | Result |
+|------|--------|
+| `/tournaments/` list, `/tournaments/create/` | 🟢 200, console clean |
+| **Series length** select `#tournament-create-series-length` (Best of 1/3/5, default Bo1) | 🟢 renders + persists (created a Bo3) |
+| Per-node Series score `#tournament-node-series-score-{r}-{p}` | 🟢 renders `0–0`, updates per Match |
+| **One Match per step** (`Play Next Match`) | 🟢 node `0–0 → 0–1 → 1–1 → 2–1`, "Game 1/2/3" links accrue, no advance until clinch |
+| **Clinch + advancement** | 🟢 at `2–1` → "Winner: …" + winner fills the Round 2 slot |
+| **Champion** | 🟢 state "Completed" + `#tournament-champion-banner` "Champion: Zenith Zealots #14"; final node `1–2` fed by both R1 winners |
+| Bracket-tier headers read "Bracket Round N" | 🟢 (the prior LG-02a "Round N" nit is already fixed) |
+| Console errors / non-2xx network | 🟢 none on any tournament page |
+
+### 🔵 Async Play All — environment-only stall (NOT an LG-02b regression)
+`Play All` (`#tournament-play-all-form`) renders, shows the instant "Starting…"
+feedback, and disables the button (LG-02a-2 inline JS works), but the
+`POST /tournaments/<id>/play-all/` hangs because the dev server has no Redis
+broker / Celery worker running. The async path and its JS are **unchanged by
+LG-02b**, and `matches/tests/test_tournament_tasks.py::TestPlayTournamentTaskSeries`
+already proves `play_tournament_task` crowns a Bo3 champion under
+`CELERY_TASK_ALWAYS_EAGER`. To exercise Play All locally: `LF_CELERY_EAGER=1`
+(dev) or Redis + `celery -A laserforce_simulator worker` (prod). No action for
+LG-02b.
+
+✅ Net: every browser-observable LG-02b surface works — the full Bo3 lifecycle
+(create with series length → lock → per-Match play → per-node Series score →
+clinch → advancement → champion) verified end-to-end, console + network clean.
+
+### Teardown — LG-02b
+Test data is in the **gitignored dev `db.sqlite3`** (disposable, ADR-0004):
+Tournament 4 "ChromeTest Bo3" + its 4 generated teams (Hyperion/Ember/Zenith/
+Aurora "#14") + Matches 59–67 + BracketNodes/SeriesMatch rows. Not part of the
+PR. (The generated teams are not `ChromeTest`-prefixed, so the prefix-based
+teardown script does not target them; left as disposable dev-DB data.)
+
 ### 🟢 UPDATE — Play All confirmed working end-to-end (eager mode)
 Re-ran with `LF_CELERY_EAGER=1` (settings then force `memory://` broker +
 `cache+memory://` result backend + `task_store_eager_result=True` — no Redis
