@@ -1,3 +1,35 @@
+# Web testing — LG-02b-2 (per-Bracket-round Series escalation)
+
+Date: 2026-06-03
+Branch: `lg-02b-2-series-escalation`
+Scope: smoke-test the LG-02b-2 surfaces — the four new series-length selects on
+`/tournaments/create/` and the per-non-bye-node `Bo{n}` labels on the bracket
+tree at `/tournaments/<id>/`, end-to-end (create generated 8-team field → set an
+escalating ladder Final=Bo5 / Semi=Bo3 / QF=Bo1 / Earlier=Bo1 → lock & build →
+verify per-depth labels → play one Match).
+
+## Summary — LG-02b-2
+
+| Area | Result |
+|---|---|
+| Create form — four selects render, DOM ids `tournament-create-{final,semifinal,quarterfinal,earlier}-series-length`, names map, all default `Best of 1` | ✅ |
+| Old single `tournament-create-series-length` id removed (`getElementById` → null) | ✅ |
+| Create (generate 8) + escalating ladder → tournament 4, setup state | ✅ |
+| Lock & Build → state `active`, 7-node bracket built | ✅ |
+| Per-node `Bo{n}` labels match depth: R1 (QF, depth 2) ×4 → `Bo1`; R2 (SF, depth 1) ×2 → `Bo3`; R3 (Final, depth 0) → `Bo5` (DOM ids `tournament-node-series-length-{br}-{pos}`) | ✅ |
+| Existing series-score elements `tournament-node-series-score-{br}-{pos}` still render (`0–0`) | ✅ |
+| `Play Next Match` on a Bo1 QF node → clinches on the first Match (`0–1`), engine reads `node.series_length` | ✅ |
+| Console errors/warnings across create + detail | ✅ none |
+| Network non-2xx | ✅ none |
+| Bracket-tier headers now read "Bracket Round N" (the LG-02a 🟡 nit below is already resolved) | ✅ |
+
+## Findings — LG-02b-2
+
+- No bugs. All LG-02b-2 surfaces behave per the seam contract. Screenshot:
+  `.claude/worktrees/lg-02b-2-bracket-escalation.png`.
+
+---
+
 # Web testing — LG-02a (sandbox single-elimination Tournament)
 
 Date: 2026-06-02

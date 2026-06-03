@@ -1108,9 +1108,24 @@ class Tournament(models.Model):
         on_delete=models.SET_NULL,
         related_name="tournaments_won",
     )
-    # LG-02b — best-of-N series length per Bracket node. Best of 1 (default,
-    # the LG-02a single-Match behaviour), best of 3, or best of 5.
-    series_length = models.PositiveSmallIntegerField(
+    # LG-02b-2 — per-Bracket-round best-of-N Series escalation. The resolved N
+    # for each Bracket node is anchored to its depth from the final (depth 0 =
+    # final, 1 = semifinal, 2 = quarterfinal, >= 3 = earlier rounds) and stamped
+    # onto every BracketNode at lock time via ``series_length_for_round``. These
+    # four slots are set at create-time only and never re-read after lock.
+    final_series_length = models.PositiveSmallIntegerField(
+        choices=((1, "Best of 1"), (3, "Best of 3"), (5, "Best of 5")),
+        default=1,
+    )
+    semifinal_series_length = models.PositiveSmallIntegerField(
+        choices=((1, "Best of 1"), (3, "Best of 3"), (5, "Best of 5")),
+        default=1,
+    )
+    quarterfinal_series_length = models.PositiveSmallIntegerField(
+        choices=((1, "Best of 1"), (3, "Best of 3"), (5, "Best of 5")),
+        default=1,
+    )
+    earlier_series_length = models.PositiveSmallIntegerField(
         choices=((1, "Best of 1"), (3, "Best of 3"), (5, "Best of 5")),
         default=1,
     )
@@ -1133,7 +1148,12 @@ class Tournament(models.Model):
         ``django.core.exceptions.ValidationError`` on count < 4 or
         state != 'setup'.
         """
-        from .bracket import build_bracket, resolve_bye_chain, ParticipantSpec
+        from .bracket import (
+            build_bracket,
+            resolve_bye_chain,
+            ParticipantSpec,
+            series_length_for_round,
+        )
 
         if self.state != "setup":
             raise ValidationError("Tournament can only be locked from setup state.")
@@ -1149,6 +1169,9 @@ class Tournament(models.Model):
         # so we can wire advances_to FKs in a second pass.
         team_by_id = {p.team_id: p.team for p in participants}
         node_by_pos = {}
+        # LG-02b-2 — depth-from-final escalation: the final lives at the highest
+        # bracket_round, so total_rounds anchors the depth math for every node.
+        total_rounds = max(spec.bracket_round for spec in specs)
         for spec in specs:
             node = BracketNode.objects.create(
                 tournament=self,
@@ -1161,6 +1184,14 @@ class Tournament(models.Model):
                 is_bye=spec.is_bye,
                 advances_to_slot=spec.advances_to_slot,
                 winner=team_by_id.get(spec.winner_id),
+                series_length=series_length_for_round(
+                    spec.bracket_round,
+                    total_rounds,
+                    final=self.final_series_length,
+                    semifinal=self.semifinal_series_length,
+                    quarterfinal=self.quarterfinal_series_length,
+                    earlier=self.earlier_series_length,
+                ),
             )
             node_by_pos[(spec.bracket_round, spec.position)] = node
 
@@ -1199,9 +1230,7 @@ class Tournament(models.Model):
         from .bracket import find_next_node
 
         nodes = list(
-            self.nodes.select_related("advances_to", "tournament").prefetch_related(
-                "series_matches"
-            )
+            self.nodes.select_related("advances_to").prefetch_related("series_matches")
         )
         flat = [_node_to_dict(n) for n in nodes]
         result = find_next_node(flat)
@@ -1299,6 +1328,12 @@ class BracketNode(models.Model):
         on_delete=models.SET_NULL,
         related_name="+",
     )
+    # LG-02b-2 — the resolved best-of-N Series length for this node, stamped at
+    # lock time by ``Tournament.lock_and_build`` via ``series_length_for_round``
+    # (depth-from-final escalation). default=1 so a pre-stamp / bye node reads
+    # Bo1. No choices — the four Tournament fields own validation; the node
+    # carries the already-resolved int (mirrors how seed_a/seed_b carry ints).
+    series_length = models.PositiveSmallIntegerField(default=1)
 
     class Meta:
         ordering = ["bracket_round", "position"]
@@ -1388,7 +1423,7 @@ def _node_to_dict(node: "BracketNode") -> dict:
         "is_bye": node.is_bye,
         "wins_a": wins_a,
         "wins_b": wins_b,
-        "series_length": node.tournament.series_length,
+        "series_length": node.series_length,
         "winner_id": node.winner_id,
         "advances_to": advances_to,
         "advances_to_slot": node.advances_to_slot,

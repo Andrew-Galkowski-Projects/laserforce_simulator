@@ -64,7 +64,7 @@ def play_next_node(tournament: Tournament) -> "BracketNode | None":
     )
 
     # 6. Not yet clinched -> return without advancing (no winner write).
-    slot = series_winner_slot(wins_a, wins_b, node.tournament.series_length)
+    slot = series_winner_slot(wins_a, wins_b, node.series_length)
     if slot is None:
         return node
 
@@ -81,9 +81,9 @@ def play_next_node(tournament: Tournament) -> "BracketNode | None":
     # 8. Compute + apply parent mutations.
     flat = [
         _node_to_dict(n)
-        for n in tournament.nodes.select_related(
-            "advances_to", "tournament"
-        ).prefetch_related("series_matches")
+        for n in tournament.nodes.select_related("advances_to").prefetch_related(
+            "series_matches"
+        )
     ]
     mutations = advance_winner(
         flat, (node.bracket_round, node.position), winner_team.id, winner_seed

@@ -899,61 +899,95 @@ def _player_count() -> int:
 # Seam contract: ``.claude/worktrees/lg-02b-seam-contract.md`` §views/§templates.
 
 
+# ===========================================================================
+# LG-02b-2 — per-Bracket-round Series escalation: create-form four selects +
+# per-non-bye-node Bo-N label
+# ===========================================================================
+#
+# MIGRATED from the LG-02b ``TestTournamentCreateSeriesLength`` (single select +
+# single POST field) + ``TestTournamentDetailSeriesScore`` (single per-Tournament
+# series_length) to the LG-02b-2 four-select + per-node Bo-N label shape. Seam
+# contract: ``.claude/worktrees/lg-02b-2-seam-contract.md`` §4 / §6c.
+
+
 class TestTournamentCreateSeriesLength(TestCase):
-    """GET form renders the series-length <select>; POST persists 1/3/5 with a
-    forgiving fallback to 1 on invalid input."""
+    """GET form renders ALL FOUR series-length <select>s by DOM id with Bo1
+    selected by default + the old single id absent; POST persists all four with
+    a forgiving per-field fallback to 1 on invalid input."""
 
-    def test_get_form_renders_series_length_select(self) -> None:
+    _SELECT_IDS = (
+        "tournament-create-final-series-length",
+        "tournament-create-semifinal-series-length",
+        "tournament-create-quarterfinal-series-length",
+        "tournament-create-earlier-series-length",
+    )
+
+    def test_get_form_renders_all_four_selects(self) -> None:
         make_team_with_slots("Existing")
-        response = self.client.get(reverse("tournament_create"))
-        self.assertIn('id="tournament-create-series-length"', response.content.decode())
+        body = self.client.get(reverse("tournament_create")).content.decode()
+        for dom_id in self._SELECT_IDS:
+            self.assertIn(f'id="{dom_id}"', body, f"missing select {dom_id!r}")
 
-    def test_post_series_length_three_persisted(self) -> None:
+    def test_get_form_old_single_series_length_id_absent(self) -> None:
+        make_team_with_slots("Existing")
+        body = self.client.get(reverse("tournament_create")).content.decode()
+        self.assertNotIn('id="tournament-create-series-length"', body)
+
+    def test_get_form_bo1_selected_by_default_each_select(self) -> None:
+        # Each select defaults to Bo1 selected. We check the option value "1"
+        # carries the ``selected`` attribute within each select's markup window.
+        make_team_with_slots("Existing")
+        body = self.client.get(reverse("tournament_create")).content.decode()
+        for dom_id in self._SELECT_IDS:
+            start = body.index(f'id="{dom_id}"')
+            window = body[start : start + 600]
+            self.assertIn("selected", window, f"{dom_id} has no selected option")
+
+    def test_post_persists_all_four_fields(self) -> None:
         teams = _make_teams(4)
         self.client.post(
             reverse("tournament_create"),
             {
-                "name": "Bo3 Cup",
+                "name": "Escalation Cup",
                 "teams": [str(t.id) for t in teams],
                 "generate_count": "0",
                 "generate_ppt": "6",
-                "series_length": "3",
+                "final_series_length": "5",
+                "semifinal_series_length": "3",
+                "quarterfinal_series_length": "1",
+                "earlier_series_length": "3",
             },
         )
-        t = Tournament.objects.get(name="Bo3 Cup")
-        self.assertEqual(t.series_length, 3)
+        t = Tournament.objects.get(name="Escalation Cup")
+        self.assertEqual(t.final_series_length, 5)
+        self.assertEqual(t.semifinal_series_length, 3)
+        self.assertEqual(t.quarterfinal_series_length, 1)
+        self.assertEqual(t.earlier_series_length, 3)
 
-    def test_post_series_length_five_persisted(self) -> None:
+    def test_post_tampered_value_falls_back_to_one_per_field(self) -> None:
+        # "4" is not a valid choice -> that one field falls back to 1; the
+        # other three persist their valid values independently.
         teams = _make_teams(4)
         self.client.post(
             reverse("tournament_create"),
             {
-                "name": "Bo5 Cup",
+                "name": "Tampered Cup",
                 "teams": [str(t.id) for t in teams],
                 "generate_count": "0",
                 "generate_ppt": "6",
-                "series_length": "5",
+                "final_series_length": "4",  # invalid -> 1
+                "semifinal_series_length": "3",
+                "quarterfinal_series_length": "5",
+                "earlier_series_length": "1",
             },
         )
-        t = Tournament.objects.get(name="Bo5 Cup")
-        self.assertEqual(t.series_length, 5)
+        t = Tournament.objects.get(name="Tampered Cup")
+        self.assertEqual(t.final_series_length, 1)
+        self.assertEqual(t.semifinal_series_length, 3)
+        self.assertEqual(t.quarterfinal_series_length, 5)
+        self.assertEqual(t.earlier_series_length, 1)
 
-    def test_post_invalid_series_length_falls_back_to_one(self) -> None:
-        teams = _make_teams(4)
-        self.client.post(
-            reverse("tournament_create"),
-            {
-                "name": "Bad Cup",
-                "teams": [str(t.id) for t in teams],
-                "generate_count": "0",
-                "generate_ppt": "6",
-                "series_length": "4",  # not a valid choice (1/3/5)
-            },
-        )
-        t = Tournament.objects.get(name="Bad Cup")
-        self.assertEqual(t.series_length, 1)
-
-    def test_post_junk_series_length_falls_back_to_one(self) -> None:
+    def test_post_junk_value_falls_back_to_one_per_field(self) -> None:
         teams = _make_teams(4)
         self.client.post(
             reverse("tournament_create"),
@@ -962,13 +996,19 @@ class TestTournamentCreateSeriesLength(TestCase):
                 "teams": [str(t.id) for t in teams],
                 "generate_count": "0",
                 "generate_ppt": "6",
-                "series_length": "abc",
+                "final_series_length": "abc",  # junk -> 1
+                "semifinal_series_length": "5",
+                "quarterfinal_series_length": "xyz",  # junk -> 1
+                "earlier_series_length": "3",
             },
         )
         t = Tournament.objects.get(name="Junk Cup")
-        self.assertEqual(t.series_length, 1)
+        self.assertEqual(t.final_series_length, 1)
+        self.assertEqual(t.semifinal_series_length, 5)
+        self.assertEqual(t.quarterfinal_series_length, 1)
+        self.assertEqual(t.earlier_series_length, 3)
 
-    def test_post_missing_series_length_defaults_to_one(self) -> None:
+    def test_post_missing_fields_default_to_one(self) -> None:
         teams = _make_teams(4)
         self.client.post(
             reverse("tournament_create"),
@@ -980,61 +1020,103 @@ class TestTournamentCreateSeriesLength(TestCase):
             },
         )
         t = Tournament.objects.get(name="NoSeries Cup")
-        self.assertEqual(t.series_length, 1)
+        self.assertEqual(t.final_series_length, 1)
+        self.assertEqual(t.semifinal_series_length, 1)
+        self.assertEqual(t.quarterfinal_series_length, 1)
+        self.assertEqual(t.earlier_series_length, 1)
 
 
-class TestTournamentDetailSeriesScore(TestCase):
-    """A locked Bo3 tournament renders the per-node running series score; a
-    completed tournament still shows the champion banner."""
+class TestTournamentDetailSeriesLengthLabel(TestCase):
+    """A locked escalation tournament renders the per-non-bye-node Bo-N label by
+    DOM id with text ``Bo{n}`` matching the stamped node value; bye nodes have
+    no label. The existing series-score element + champion banner still render.
+    """
 
-    def _bo3_active(self, n: int = 4, *, name: str = "Bo3Detail") -> Tournament:
-        t = _setup_tournament(n, name=name)
-        t.series_length = 3
-        t.save(update_fields=["series_length"])
+    def _escalation_active(self, n: int = 8, *, name: str = "EscDetail") -> Tournament:
+        # final=5 (r3), semifinal=3 (r2), quarterfinal=1 (r1) for N=8.
+        t = Tournament.objects.create(
+            name=name,
+            final_series_length=5,
+            semifinal_series_length=3,
+            quarterfinal_series_length=1,
+        )
+        for seed, team in enumerate(_make_teams(n), start=1):
+            TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
         t.lock_and_build()
         t.refresh_from_db()
         return t
 
-    def test_node_series_score_dom_id_present(self) -> None:
-        t = self._bo3_active()
-        response = self.client.get(reverse("tournament_detail", args=[t.id]))
-        body = response.content.decode()
-        # The round-1 node at position 0 carries the series-score element.
-        self.assertIn('id="tournament-node-series-score-1-0"', body)
+    def test_per_node_series_length_label_dom_id_and_text(self) -> None:
+        t = self._escalation_active()
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        # Each non-bye node renders ``Bo{series_length}`` in its label element.
+        for node in t.nodes.filter(is_bye=False):
+            label_id = (
+                f'id="tournament-node-series-length-'
+                f'{node.bracket_round}-{node.position}"'
+            )
+            self.assertIn(label_id, body, f"missing label for node {node}")
+            start = body.index(label_id)
+            window = body[start : start + 200]
+            self.assertIn(
+                f"Bo{node.series_length}",
+                window,
+                f"label text should be Bo{node.series_length} for node {node}",
+            )
 
-    def test_series_score_shows_running_wins(self) -> None:
-        from matches.models import Match, SeriesMatch
+    def test_bye_node_has_no_series_length_label(self) -> None:
+        # N=5 -> 3 byes in round 1; bye nodes get no Bo-N label.
+        t = self._escalation_active(5, name="EscByeDetail")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        for node in t.nodes.filter(is_bye=True):
+            label_id = (
+                f'id="tournament-node-series-length-'
+                f'{node.bracket_round}-{node.position}"'
+            )
+            self.assertNotIn(
+                label_id, body, f"bye node {node} must not carry a Bo-N label"
+            )
 
-        t = self._bo3_active()
-        node = t.find_next_playable_node()
-        # Record one game won by team_a so the running score reads 1-0.
-        match = Match.objects.create(
-            team_red=node.team_a,
-            team_blue=node.team_b,
-            match_type="tournament",
+    def test_final_node_renders_its_own_bo_label(self) -> None:
+        # The final (depth 0) is stamped Bo5; its label reads Bo5, distinct from
+        # the round-1 quarterfinals' Bo1 — proving the per-node (not flat) value.
+        t = self._escalation_active()
+        final = t.nodes.get(advances_to__isnull=True)
+        self.assertEqual(final.series_length, 5)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        label_id = (
+            f'id="tournament-node-series-length-'
+            f'{final.bracket_round}-{final.position}"'
         )
-        SeriesMatch.objects.create(
-            node=node, match=match, game_number=1, winner=node.team_a
-        )
-        response = self.client.get(reverse("tournament_detail", args=[t.id]))
-        body = response.content.decode()
-        score_id = (
-            f'id="tournament-node-series-score-'
-            f'{node.bracket_round}-{node.position}"'
-        )
-        self.assertIn(score_id, body)
-        # The running wins_a-wins_b (1-0) appears in the rendered score element.
-        marker = body.index(score_id)
-        window = body[marker : marker + 400]
-        self.assertIn("1", window)
-        self.assertIn("0", window)
+        start = body.index(label_id)
+        self.assertIn("Bo5", body[start : start + 200])
 
-    def test_completed_bo3_shows_champion_banner(self) -> None:
+    def test_series_score_element_still_renders(self) -> None:
+        t = self._escalation_active()
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        # A non-bye round-1 node still carries the LG-02b series-score element.
+        node = (
+            t.nodes.filter(is_bye=False, bracket_round=1).order_by("position").first()
+        )
+        self.assertIn(
+            f'id="tournament-node-series-score-{node.bracket_round}-{node.position}"',
+            body,
+        )
+
+    def test_completed_escalation_shows_champion_banner(self) -> None:
         from matches.tournament_engine import play_next_node
 
-        t = self._bo3_active(name="Bo3Completed")
+        t = self._escalation_active(4, name="EscCompleted")
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            for _ in range(30):
+            for _ in range(40):
                 t.refresh_from_db()
                 if t.state == "completed":
                     break
@@ -1042,5 +1124,7 @@ class TestTournamentDetailSeriesScore(TestCase):
                     break
         t.refresh_from_db()
         self.assertEqual(t.state, "completed")
-        response = self.client.get(reverse("tournament_detail", args=[t.id]))
-        self.assertIn('id="tournament-champion-banner"', response.content.decode())
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-champion-banner"', body)

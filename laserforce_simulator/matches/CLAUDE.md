@@ -1666,6 +1666,183 @@ ties broken per-Match by the unchanged `break_tie`); **dead-rubber Matches** (th
 Series stops the moment a Team clinches); any new CONTEXT.md term beyond
 **Series** / **Series length** (already written).
 
+## LG-02b-2 per-Bracket-round series escalation
+
+Generalises the LG-02b best-of-N **Series length** from a **single flat
+per-Tournament value applied to every node** into a **per-Bracket-round** value
+anchored to **depth from the final** — Bo1 early rounds → Bo3 semis → Bo5 final,
+or any independent mix. Builds directly on LG-02b: the pure clinch engine
+(`clinch_threshold`, `series_winner_slot`, `count_series_wins`, the `SeriesMatch`
+through-model, the per-Match-atomic `play_next_node` body) is **UNCHANGED** —
+**only the *source* of the `series_length` argument moves from tournament-level to
+node-level**. [ADR-0020](../../docs/adr/0020-best-of-n-series-bracket-nodes.md) was
+**extended** for the per-round escalation (do NOT re-write it); seam contract:
+[`.claude/worktrees/lg-02b-2-seam-contract.md`](../../.claude/worktrees/lg-02b-2-seam-contract.md).
+CONTEXT.md `### Tournaments` carries **Series length** (revised) + **Series
+escalation** (added at grilling time — both already written, not re-touched).
+Migration: `matches/migrations/0035_*` (ops in **pinned order**
+`RemoveField(Tournament.series_length)` → 4× `AddField(Tournament.*_series_length)`
+→ `AddField(BracketNode.series_length)` — **no `RunPython`, no backfill**,
+ADR-0004 disposable-sandbox precedent; dep `0034_tournament_series`).
+
+**Depth-from-final anchoring.** A node's Series length is resolved from its
+**depth below the final**, `depth = total_rounds - bracket_round` (where
+`total_rounds = max(spec.bracket_round …)` for the built bracket): **depth 0** =
+the final, **depth 1** = semifinal, **depth 2** = quarterfinal, **depth ≥ 3** =
+every earlier round (all collapse to the single `earlier` slot — no fifth tier).
+**No monotonicity constraint** — the four slots may be any of `{1,3,5}` in any
+order (a Bo5 quarterfinal feeding a Bo1 final is permitted; the model does not
+enforce escalation, the user picks four independent values).
+
+**Model changes (`matches/models.py`).** The LG-02b `Tournament.series_length`
+flat field is **DROPPED wholesale** — no alias, no property shim; every reader
+moves to `node.series_length` (see below). **ADD four
+`PositiveSmallIntegerField`s** to `Tournament`, declared in the block where
+`series_length` lived, in order `final_series_length`, `semifinal_series_length`,
+`quarterfinal_series_length`, `earlier_series_length` — each with the identical
+choices `(1, "Best of 1")`/`(3, "Best of 3")`/`(5, "Best of 5")` and `default=1`,
+set at create-time only and **immutable once the Tournament leaves `setup`** (the
+resolved N is frozen onto each node at lock time; the four fields are never
+re-read after lock). **Bo1-everywhere (all four `1`, the migration default) is
+byte-equivalent to LG-02b/LG-02a** — every node stamped `1`,
+`series_winner_slot(1, 0, 1) == "a"`, single-Match clinch. **ADD
+`BracketNode.series_length`** (`PositiveSmallIntegerField`, `default=1`, **no
+choices** — it carries the already-resolved int, mirroring how `seed_a`/`seed_b`
+carry resolved ints without choices). It is the **resolved** best-of-N for the
+node, stamped at lock time on **every** persisted node including bye nodes (bye
+nodes get a depth-resolved value but are **inert** — the engine skips `is_bye`).
+`SeriesMatch` (model, `related_name="series_matches"`, `uniq_seriesmatch_node_game`,
+`Meta.ordering=["game_number"]`) and `count_series_wins(series_matches, team_a_id,
+team_b_id) -> tuple[int, int]` are **unchanged**.
+
+**`lock_and_build` stamps the node (`matches/models.py`).** Inside the existing
+`@transaction.atomic` `lock_and_build`, after `build_bracket(...)` produces
+`specs`, compute `total_rounds = max(spec.bracket_round for spec in specs)` and add
+the kwarg `series_length=series_length_for_round(spec.bracket_round, total_rounds,
+final=self.final_series_length, semifinal=self.semifinal_series_length,
+quarterfinal=self.quarterfinal_series_length, earlier=self.earlier_series_length)`
+to the **existing** `BracketNode.objects.create(...)` loop (both `spec.bracket_round`
+and `total_rounds` are in scope there — no follow-up pass needed; `series_length_for_round`
+is imported alongside the existing `build_bracket`/`resolve_bye_chain`/`ParticipantSpec`
+block). This stamps EVERY persisted node incl. byes; the `resolve_bye_chain` cascade
+and `advances_to` wiring passes are untouched.
+
+**Pure `matches/bracket.py` addition** (frozen `dataclasses`/`typing`/`math`/
+`collections`-only allowlist unchanged — the new function adds **no new import**;
+`TestNoDjangoImportsLeaked` still passes). NEW
+`series_length_for_round(bracket_round: int, total_rounds: int, *, final: int,
+semifinal: int, quarterfinal: int, earlier: int) -> int`: `bracket_round` and
+`total_rounds` are **positional**, the four slot args are **keyword-only** (after
+`*`). Algorithm (locked, pure, total, never raises): `depth = total_rounds -
+bracket_round`; `depth == 0` → `final`; `depth == 1` → `semifinal`; `depth == 2`
+→ `quarterfinal`; **`else` (depth ≥ 3, or any defensive out-of-range value) →
+`earlier`** (the `if/elif/elif/else` chain makes `earlier` the catch-all; no
+validation of the four slot values — callers pass the locked 1/3/5 choices).
+`clinch_threshold`, `series_winner_slot`, `count_series_wins`, `find_next_node`,
+`build_bracket`, `advance_winner`, `resolve_bye_chain`, `break_tie`,
+`stage_progress`, `default_seed_order`, and the two dataclasses are all
+**unchanged** — `find_next_node` still reads the `series_length` dict key (now
+sourced from `node.series_length` via `_node_to_dict`), no edit to it.
+
+**Seam read-source swap.** The clinch math is untouched; the ONLY change is
+*where the `series_length` argument comes from* — tournament-level → **node-level**:
+- `_node_to_dict(node)` keeps every key it has today; its `"series_length"` value
+  now reads `node.series_length` (was `node.tournament.series_length`). `wins_a` /
+  `wins_b` (via `count_series_wins`) and `advances_to` (the self-FK) are
+  unchanged. Post-swap `_node_to_dict` has **no** `node.tournament` access.
+- `tournament_engine.py::play_next_node` (`@transaction.atomic`, body otherwise
+  verbatim): the step-6 clinch check reads `series_winner_slot(wins_a, wins_b,
+  node.series_length)` (was `node.tournament.series_length`). Every other step
+  (find playable node, sim ONE Match, `break_tie` fallback,
+  `SeriesMatch.objects.create`, recompute via `count_series_wins`, stamp
+  `node.winner` + `save(update_fields=["winner"])`, `advance_winner`,
+  `champion`/`state="completed"` on the final) is unchanged. Because no flatten/
+  advance-path code reads `node.tournament` post-swap, `select_related("tournament")`
+  **may be dropped** from the `play_next_node` flat-list build and
+  `find_next_playable_node` (keep `"advances_to"` + the `series_matches` prefetch)
+  — a perf nicety, **not pinned** (no query-count assertion; leaving it in is also
+  fine). The Code agent confirms no residual `node.tournament` reader before dropping.
+
+**View / template surface.** Create form (`tournament_create` /
+`tournament_create.html`): the single `series_length` POST parse is replaced by
+**four** — POST fields `final_series_length` / `semifinal_series_length` /
+`quarterfinal_series_length` / `earlier_series_length`, each int-coerced with a
+forgiving fallback to `1` on `TypeError`/`ValueError` then forced into `{1,3,5}`
+(anything else → `1`) **independently**, **no monotonicity constraint**; the
+create call passes all four (`Tournament.objects.create(name=..., state="setup",
+final_series_length=..., semifinal_series_length=..., quarterfinal_series_length=...,
+earlier_series_length=...)`). Rendered as **four `<select>`s** (each Bo1/Bo3/Bo5,
+**Bo1 selected by default**) in `tournament-create-form` before the submit, with
+locked DOM ids `tournament-create-final-series-length` /
+`tournament-create-semifinal-series-length` /
+`tournament-create-quarterfinal-series-length` /
+`tournament-create-earlier-series-length` (the old single
+`tournament-create-series-length` id is **removed** — no element carries it).
+Detail page (`_build_rounds` / `tournament_detail.html`): each node view-dict
+**gains** `series_length: int` ← `node.series_length` (read straight off the node
+row the loop already iterates); `_detail_context` keeps its frozen LG-02a/LG-02a-2
+keys verbatim (`tournament`, `participants`, `rounds`, `next_node`, `is_locked`,
+`can_play`, `import_form`, `import_row_errors`) — **no new top-level context key**.
+For each **non-bye** node the template renders a Bo-N label beside the existing
+`tournament-node-series-score-{br}-{pos}` element, locked DOM id
+**`tournament-node-series-length-{bracket_round}-{position}`**, **label text shape
+`Bo{n}`** (`Bo{{ node.series_length }}` — e.g. `Bo1`, `Bo3`, `Bo5`); bye nodes have
+no Series and get no such label. The existing series-score element and the
+`tournament-champion-banner` are unchanged.
+
+**Admin (`matches/admin.py`).** The four new `Tournament` fields and
+`BracketNode.series_length` **auto-surface** in the default change forms (editable
+`PositiveSmallIntegerField`s with `choices` render as `<select>`s with no
+`fields`/`fieldsets` declaration). **No `list_display` change** on `TournamentAdmin`
+or `BracketNodeAdmin` (existing tuples stay verbatim).
+
+**Non-deterministic** (`simulate_match` draws fresh per-round seeds) ⇒ **no SIM-07/
+SIM-08 interaction, NO Score Calibration re-baseline** (no simulation mechanics
+change). **Scope-out (LOCKED — do NOT build):** per-node arbitrary override UI
+(escalation is depth-anchored via four slots only); monotonicity enforcement
+(none); home/away side alternation (sides fixed); any clinch-engine /
+`simulate_match` change (consumed verbatim); deterministic / master-seed-replayable
+Series; backfill / `RunPython`; a fifth depth tier (depth ≥ 3 collapse to
+`earlier`); any new CONTEXT.md term / new ADR (Series length revised + Series
+escalation added already; ADR-0020 already extended).
+
+**Locked names.** Models: **DROP** `Tournament.series_length`; **ADD**
+`Tournament.final_series_length` / `.semifinal_series_length` /
+`.quarterfinal_series_length` / `.earlier_series_length` (each
+`PositiveSmallIntegerField`, choices `1`/`3`/`5`, default `1`) + `BracketNode.
+series_length` (`PositiveSmallIntegerField`, default `1`, no choices, stamped at
+`lock_and_build`); migration `matches/migrations/0035_*` (dep
+`0034_tournament_series`; ops `RemoveField(Tournament.series_length)` → 4×
+`AddField(Tournament.*)` → `AddField(BracketNode.series_length)`; no `RunPython`).
+Pure: `series_length_for_round(bracket_round, total_rounds, *, final, semifinal,
+quarterfinal, earlier) -> int` (`depth = total_rounds - bracket_round`; 0→final,
+1→semifinal, 2→quarterfinal, ≥3→earlier; four slot args keyword-only). Engine:
+`play_next_node` clinch check reads `node.series_length`; `select_related(
+"tournament")` droppable. Create: POST `final_series_length` /
+`semifinal_series_length` / `quarterfinal_series_length` / `earlier_series_length`
+(int-coerced, forced into `{1,3,5}`, forgiving fallback `1`, no monotonicity);
+selects `tournament-create-{final,semifinal,quarterfinal,earlier}-series-length`
+(Bo1 default); old `tournament-create-series-length` removed. Detail:
+`_build_rounds` node dict gains `series_length`; per-non-bye-node Bo-N label
+`tournament-node-series-length-{bracket_round}-{position}`, text `Bo{n}`.
+
+**Tests.** `matches/tests/test_bracket.py` (extend — `series_length_for_round`
+depth boundaries + N=4/8/16 worked cases + keyword-only purity; clinch helpers +
+`TestNoDjangoImportsLeaked` still green); `test_tournament_models.py` (extend/migrate
+— `lock_and_build` stamps `node.series_length` per depth **incl. byes**, the four
+new fields exist/default `1`/carry the 1/3/5 choices, `BracketNode.series_length`
+exists/defaults `1`, the old `Tournament.series_length` field is **gone**,
+`_node_to_dict` reads `node.series_length`); `test_tournament_views.py` (extend/
+migrate — four selects by DOM id default Bo1 + old id absent, POST persists all
+four, independent forgiving fallback, detail per-non-bye Bo-N label by DOM id);
+`test_tournament_engine.py` (extend/migrate — node reads its **own**
+`series_length` not `node.tournament.*`, Bo3 clinches at 2, Bo1 unchanged);
+`test_tournament_tasks.py` (migrate the `_active_series_tournament` helper to the
+four-field shape). Tests assert on the pure function, the stamped
+`BracketNode.series_length`, the four `Tournament` fields, the absence of the old
+field, the DOM ids, and `node.winner`/Advancement — **never on exact simulated
+point totals** (non-deterministic).
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)

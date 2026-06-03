@@ -428,38 +428,187 @@ class TestSeriesMatchModel(TestCase):
         self.assertTrue(SeriesMatch.objects.filter(pk=sm.id).exists())
 
 
-class TestTournamentSeriesLength(TestCase):
-    """``Tournament.series_length`` default + 1/3/5 choices + lock immutability."""
+# ===========================================================================
+# LG-02b-2 — per-Bracket-round Series escalation (four Tournament slot fields +
+# BracketNode.series_length + lock_and_build stamping + _node_to_dict node read)
+# ===========================================================================
+#
+# MIGRATED from the LG-02b ``TestTournamentSeriesLength`` (single flat field) +
+# ``TestNodeToDictSeriesKeys`` (read node.tournament.series_length) to the
+# LG-02b-2 four-field + node-field shape. Seam contract:
+# ``.claude/worktrees/lg-02b-2-seam-contract.md`` §1 / §6b.
+#
+# The old flat ``Tournament.series_length`` is DROPPED; four depth-anchored
+# slot fields replace it; ``BracketNode.series_length`` carries the resolved N
+# stamped at lock time; ``_node_to_dict`` reads ``node.series_length`` (NOT the
+# tournament). ``SeriesMatch`` + ``count_series_wins`` are UNCHANGED.
 
-    def test_series_length_defaults_to_one(self) -> None:
+
+class TestTournamentSeriesLengthFields(TestCase):
+    """The four ``Tournament`` slot fields exist, default 1, carry 1/3/5
+    choices; the old flat ``Tournament.series_length`` field is GONE."""
+
+    _SLOT_FIELDS = (
+        "final_series_length",
+        "semifinal_series_length",
+        "quarterfinal_series_length",
+        "earlier_series_length",
+    )
+
+    def test_four_slot_fields_default_to_one(self) -> None:
         t = Tournament.objects.create(name="Cup")
-        self.assertEqual(t.series_length, 1)
+        for field in self._SLOT_FIELDS:
+            self.assertEqual(getattr(t, field), 1, f"{field} should default to 1")
 
-    def test_series_length_accepts_one_three_five(self) -> None:
+    def test_four_slot_fields_persist(self) -> None:
+        t = Tournament.objects.create(
+            name="Cup",
+            final_series_length=5,
+            semifinal_series_length=3,
+            quarterfinal_series_length=1,
+            earlier_series_length=1,
+        )
+        t.refresh_from_db()
+        self.assertEqual(t.final_series_length, 5)
+        self.assertEqual(t.semifinal_series_length, 3)
+        self.assertEqual(t.quarterfinal_series_length, 1)
+        self.assertEqual(t.earlier_series_length, 1)
+
+    def test_each_slot_field_carries_one_three_five_choices(self) -> None:
+        expected = [(1, "Best of 1"), (3, "Best of 3"), (5, "Best of 5")]
+        for field in self._SLOT_FIELDS:
+            choices = list(Tournament._meta.get_field(field).choices)
+            self.assertEqual(
+                choices, expected, f"{field} choices should be 1/3/5 Best-of"
+            )
+
+    def test_each_slot_field_accepts_one_three_five(self) -> None:
         for length in (1, 3, 5):
-            t = Tournament.objects.create(name=f"Cup{length}", series_length=length)
+            t = Tournament.objects.create(
+                name=f"Cup{length}",
+                final_series_length=length,
+                semifinal_series_length=length,
+                quarterfinal_series_length=length,
+                earlier_series_length=length,
+            )
             t.refresh_from_db()
-            self.assertEqual(t.series_length, length)
+            self.assertEqual(t.final_series_length, length)
 
-    def test_relocking_a_locked_tournament_still_raises(self) -> None:
-        # series_length immutability after lock is enforced by the existing
-        # lock_and_build state guard — re-locking a locked tournament raises.
-        t = _tournament_with_participants(4)
-        t.series_length = 3
-        t.save(update_fields=["series_length"])
+    def test_old_flat_series_length_field_is_gone(self) -> None:
+        from django.core.exceptions import FieldDoesNotExist
+
+        with self.assertRaises(FieldDoesNotExist):
+            Tournament._meta.get_field("series_length")
+
+    def test_old_flat_series_length_not_in_field_names(self) -> None:
+        field_names = {f.name for f in Tournament._meta.get_fields()}
+        self.assertNotIn("series_length", field_names)
+
+
+class TestBracketNodeSeriesLengthField(TestCase):
+    """``BracketNode.series_length`` exists and defaults to 1 (no choices)."""
+
+    def test_node_series_length_defaults_to_one(self) -> None:
+        t = Tournament.objects.create(name="Cup")
+        node = BracketNode.objects.create(tournament=t, bracket_round=1, position=0)
+        self.assertEqual(node.series_length, 1)
+
+    def test_node_series_length_field_exists(self) -> None:
+        field = BracketNode._meta.get_field("series_length")
+        self.assertEqual(field.default, 1)
+
+
+class TestLockAndBuildStampsSeriesLengthPerDepth(TestCase):
+    """``lock_and_build`` stamps ``node.series_length`` per depth-from-final for
+    a known four-slot config, INCLUDING bye nodes (still depth-resolved)."""
+
+    def _stamped_tournament(
+        self,
+        n: int,
+        *,
+        final: int,
+        semifinal: int,
+        quarterfinal: int,
+        earlier: int,
+        name: str = "Cup",
+    ) -> Tournament:
+        t = Tournament.objects.create(
+            name=name,
+            final_series_length=final,
+            semifinal_series_length=semifinal,
+            quarterfinal_series_length=quarterfinal,
+            earlier_series_length=earlier,
+        )
+        for seed, team in enumerate(_make_teams(n), start=1):
+            TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
         t.lock_and_build()
-        with self.assertRaises(ValidationError):
-            t.lock_and_build()
+        t.refresh_from_db()
+        return t
+
+    def test_n8_stamps_each_depth(self) -> None:
+        # N=8 -> 3 Bracket rounds. final=5 (r3), semifinal=3 (r2),
+        # quarterfinal=1 (r1). earlier unused at N=8 (no depth >= 3 round).
+        t = self._stamped_tournament(
+            8, final=5, semifinal=3, quarterfinal=1, earlier=1, name="N8Stamp"
+        )
+        # round 3 (the final, depth 0) -> Bo5.
+        for node in t.nodes.filter(bracket_round=3):
+            self.assertEqual(node.series_length, 5)
+        # round 2 (semifinals, depth 1) -> Bo3.
+        for node in t.nodes.filter(bracket_round=2):
+            self.assertEqual(node.series_length, 3)
+        # round 1 (quarterfinals, depth 2) -> Bo1.
+        for node in t.nodes.filter(bracket_round=1):
+            self.assertEqual(node.series_length, 1)
+
+    def test_n16_stamps_earlier_at_depth_3(self) -> None:
+        # N=16 -> 4 Bracket rounds. final=5 (r4), semifinal=3 (r3),
+        # quarterfinal=1 (r2), earlier=5 (r1, depth 3).
+        t = self._stamped_tournament(
+            16, final=5, semifinal=3, quarterfinal=1, earlier=5, name="N16Stamp"
+        )
+        for node in t.nodes.filter(bracket_round=4):
+            self.assertEqual(node.series_length, 5)
+        for node in t.nodes.filter(bracket_round=3):
+            self.assertEqual(node.series_length, 3)
+        for node in t.nodes.filter(bracket_round=2):
+            self.assertEqual(node.series_length, 1)
+        # round 1 (depth 3) -> earlier == 5.
+        for node in t.nodes.filter(bracket_round=1):
+            self.assertEqual(node.series_length, 5)
+
+    def test_bye_node_still_gets_depth_resolved_value(self) -> None:
+        # N=5 -> next power of two 8 -> 3 byes in round 1. A bye node is inert
+        # but still stamped with its depth's resolved value (quarterfinal slot,
+        # depth 2 at N=5's 3 rounds).
+        t = self._stamped_tournament(
+            5, final=5, semifinal=3, quarterfinal=7, earlier=1, name="N5Bye"
+        )
+        byes = t.nodes.filter(is_bye=True)
+        self.assertTrue(byes.exists())
+        for node in byes:
+            # Byes are round-1 nodes (depth = 3 - 1 = 2 -> quarterfinal == 7).
+            self.assertEqual(node.bracket_round, 1)
+            self.assertEqual(node.series_length, 7)
+
+    def test_all_slots_one_stamps_every_node_bo1(self) -> None:
+        # Bo1-everywhere (the migration default) stamps every node series_length=1.
+        t = self._stamped_tournament(
+            8, final=1, semifinal=1, quarterfinal=1, earlier=1, name="N8Bo1"
+        )
+        for node in t.nodes.all():
+            self.assertEqual(node.series_length, 1)
 
 
 class TestNodeToDictSeriesKeys(TestCase):
-    """``_node_to_dict`` carries ``wins_a`` / ``wins_b`` / ``series_length`` and
-    DROPS ``match_id`` (the LG-02b series shape)."""
+    """``_node_to_dict`` carries ``wins_a`` / ``wins_b`` / ``series_length`` read
+    off ``node.series_length`` (NOT ``node.tournament.*``) and DROPS
+    ``match_id`` (the LG-02b-2 node-sourced shape)."""
 
     def _node_with_series(
-        self, series_length: int
+        self, node_series_length: int
     ) -> tuple[BracketNode, object, object]:
-        t = Tournament.objects.create(name="Cup", series_length=series_length)
+        t = Tournament.objects.create(name="Cup")
         team_a = make_team_with_slots("A")[0]
         team_b = make_team_with_slots("B")[0]
         node = BracketNode.objects.create(
@@ -470,6 +619,7 @@ class TestNodeToDictSeriesKeys(TestCase):
             team_b=team_b,
             seed_a=1,
             seed_b=2,
+            series_length=node_series_length,
         )
         return node, team_a, team_b
 
@@ -480,7 +630,7 @@ class TestNodeToDictSeriesKeys(TestCase):
         d = _node_to_dict(node)
         self.assertNotIn("match_id", d)
 
-    def test_three_new_keys_present(self) -> None:
+    def test_three_keys_present(self) -> None:
         from matches.models import _node_to_dict
 
         node, _a, _b = self._node_with_series(3)
@@ -489,11 +639,13 @@ class TestNodeToDictSeriesKeys(TestCase):
         self.assertIn("wins_b", d)
         self.assertIn("series_length", d)
 
-    def test_series_length_from_tournament(self) -> None:
+    def test_series_length_read_from_node_not_tournament(self) -> None:
         from matches.models import _node_to_dict
 
         node, _a, _b = self._node_with_series(5)
         d = _node_to_dict(node)
+        # The dict value equals the NODE's stamped series_length.
+        self.assertEqual(d["series_length"], node.series_length)
         self.assertEqual(d["series_length"], 5)
 
     def test_wins_count_by_winner_team(self) -> None:
