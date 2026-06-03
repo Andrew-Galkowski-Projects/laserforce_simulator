@@ -155,3 +155,65 @@ zero-fill, Remove All), against real league data (League 22 "Per-League Pool A")
   created. Server (pid from this run) stopped after testing.
 
 ---
+
+## LG-02a-2 — Sandbox Tournament: CSV import + async play-all (2026-06-02)
+
+Black-box pass over the tournament-detail surfaces added by LG-02a-2.
+Severity: 🟢 working · 🟡 minor/environment · 🔴 code bug.
+
+| Area | Result |
+|------|--------|
+| Tournament create (`/tournaments/create/`) | 🟢 renders + creates (generate 4 teams) |
+| Detail **setup** — CSV import form | 🟢 all DOM ids render; import works end-to-end |
+| Detail **active** — Play All button | 🟢 renders + fires POST, no JS/console errors |
+| Sync **Play Next Match** (shared engine) | 🟢 resolves a match + advances winner |
+| Async **Play All** completion in-browser | 🟡 environment-only stall (no Redis) — see note |
+
+### 🟢 CSV participant import (setup state)
+`/tournaments/4/` setup page rendered `Import Participants (CSV)` with
+`tournament-import-form` / `-file` / `-submit` / `tournament-import-template-link`
+(→ `/teams/import/template.csv`). POSTing a 4-team roster CSV returned **302**
+and the field grew **4 → 8 participants** (the 4 `ChromeTest Import` teams added)
+and **re-seeded by talent** (Zenith Zealots #14 dropped to seed 8). No console
+errors, all network 2xx/3xx.
+
+### 🟢 Lock & Build + sync engine
+`Lock & Build Bracket` → **Active**, bracket rendered (8 teams, 3 bracket rounds,
+standard 1v8/4v5/2v7/3v6 pairing). `Play Next Match` (the refactored
+`tournament_engine.play_next_node`, no Celery) resolved node [1]v[8] → **match
+55**, `Winner: Ember Enforcers #14`, and the winner **advanced into Bracket
+Round 2** — fast (< a few seconds), correct advancement.
+
+### 🟡 Async Play All — environment-only stall (NOT a code bug)
+The `Play All` button renders and its POST to `/tournaments/<id>/play-all/`
+fires with no JS/console errors. Full async completion could **not** be observed
+in-browser: the dev server was run with `LF_CELERY_EAGER=1` (no Celery worker),
+but `CELERY_RESULT_BACKEND` points at Redis, which is not running locally. In
+eager mode `task.delay()` / `self.update_state(...)` block on the dead Redis
+backend, so the eager POST stalled and committed zero nodes.
+- **Root cause:** Celery result-backend config + absent Redis in the dev smoke
+  setup — not the LG-02a-2 code. The shared engine is proven correct by the sync
+  `Play Next Match` path above, and `play_tournament_task` is covered green by
+  the `CELERY_TASK_ALWAYS_EAGER` unit tests in
+  `matches/tests/test_tournament_tasks.py` (plays-to-champion, stage progress,
+  resumable, inactive no-op). In production the POST returns **202** immediately
+  and a real worker + Redis runs it off-request.
+- **No action required** for LG-02a-2.
+
+✅ Net: every browser-observable LG-02a-2 surface works (import form + flow,
+re-seed, lock, Play All render + request, sync engine advancement). The only
+gap is async completion, blocked solely by the local no-Redis smoke environment.
+
+### 🟢 UPDATE — Play All confirmed working end-to-end (eager mode)
+Re-ran with `LF_CELERY_EAGER=1` (settings then force `memory://` broker +
+`cache+memory://` result backend + `task_store_eager_result=True` — no Redis
+needed): created a 4-team tournament, locked, clicked **Play All** → POST 202 →
+inline JS polled `play-status` → `complete` → reload → **State: Completed,
+Champion crowned**, all 3 matches resolved with correct stage advancement, zero
+console errors. The earlier hang was the eager env var not reaching the detached
+server (it ran non-eager → tried Redis). **The `<!DOCTYPE` JSON error a user sees
+is the Celery broker being unreachable** (`.delay()` → 500 HTML → JS `r.json()`
+fails) — identical to the shipped LG-01d Play Two Months / Until End buttons
+(`league_views.py:1569/1588`, no try/except on `.delay()`). Fix: run with
+`LF_CELERY_EAGER=1` (dev) or Redis + a Celery worker (prod), per
+ADR-0013 / CLAUDE.md "Async execution (Celery)". Not a code defect in LG-02a-2.

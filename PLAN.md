@@ -426,11 +426,11 @@ columns → **STAT-PROXY-01**.
 
 ### LG-02 · Tournament formats
 
-**Status: PARTIAL — Part 1 LG-02a DONE; LG-02a-2 / LG-02b / LG-02c+ / LG-02x
+**Status: PARTIAL — Part 1 LG-02a / LG-02a-2 DONE; LG-02b / LG-02c+ / LG-02x
 NOT STARTED. Part 2 NOT STARTED.** LG-02 is a multi-step group; shipping LG-02a
-does **not** complete it. Only the sandbox single-elimination slice is built —
-every other format, the bulk-intake/async-play ergonomics, and the in-League
-composer remain unstarted.
+and its LG-02a-2 ergonomics follow-up does **not** complete it. The sandbox
+single-elimination slice — now with CSV participant import and async play-all —
+is built, but every other format and the in-League composer remain unstarted.
 
 The **LG-02 grill (2026-06-02)** split this monolith. A Tournament is a
 first-class **persisted, standalone sandbox** object — built and played in the
@@ -495,7 +495,7 @@ tournament completion.
     sandbox-nav entry `tournaments-nav-link` in the `app_mode == "sandbox"` topnav
     branch; admin for all three models. Tests: `matches/tests/test_bracket.py`
     (pure-unit), `test_tournament_models.py`, `test_tournament_views.py`.
-- **LG-02a-2 · [NOT STARTED] Bulk team intake + async play-all.** Two ergonomics follow-ups
+- **LG-02a-2 · [DONE] Bulk team intake + async play-all.** Two ergonomics follow-ups
   deferred from LG-02a so it could ship the minimal create + synchronous play loop
   first. (1) **CSV participant import** — let a Tournament's participant list be
   populated from a CSV roster via the **LG-00b roster importer** (reuse the
@@ -508,6 +508,62 @@ tournament completion.
   shipped model — the sync single-step loop proves the bracket/advancement engine
   end-to-end without the Celery/CSV surface area, and the async path wants the
   proven engine underneath it.
+  - completed: shipped **CSV participant import + async play-all** as additive
+    surfaces over the shipped LG-02a model (seam
+    [`.claude/worktrees/lg-02a-2-seam-contract.md`](.claude/worktrees/lg-02a-2-seam-contract.md);
+    **no model, no migration, no ADR** — per-node-atomic follows ADR-0016, CSV
+    reuse follows LG-00b, both reversible). **CSV import reuses LG-00b verbatim**
+    cross-app read-only — `teams.forms.RosterImportForm`,
+    `teams.roster_importer.parse_roster_csv` / `RosterImportError`, and
+    `teams.views._check_db_slot_collisions` / `_apply_roster` (signatures
+    unchanged, no `teams/` edit) — plus the **Celery** plumbing reuse
+    (`matches.views._celery_state_to_job_status` verbatim, the `play_season_task`
+    body precedent). One new **pure** bracket fn `matches/bracket.py::stage_progress(nodes:
+    list[dict]) -> tuple[int, int]` (STAGE-based progress = completed/total Bracket
+    rounds; reads `bracket_round` / `is_bye` / `winner_id` off `_node_to_dict`
+    output; respects the frozen `dataclasses`/`typing`/`math`/`collections`-only
+    allowlist — `TestNoDjangoImportsLeaked` still passes, no new import). New module
+    `matches/tournament_engine.py::play_next_node(tournament) -> BracketNode | None`
+    (`@transaction.atomic`) **extracts** the per-node resolve/advance body out of the
+    inline `tournament_play_next`; the sync view is **refactored** to call it (keeps
+    its POST-only / `state != "active"` HTTP shell, inline sim/resolve/advance block
+    deleted). New Celery task `matches/tasks.py::play_tournament_task(self,
+    tournament_id) -> dict` (`@shared_task(name="matches.play_tournament")`) loops
+    `play_next_node` to a champion — **per-node-atomic, NO outer
+    `@transaction.atomic`** (ADR-0016 precedent: a mid-loop FAILURE leaves every
+    already-resolved node committed; resumable), inactive-state early-return no-op,
+    `close_old_connections()` in `finally`, **stage-based** `update_state` meta +
+    return `{"completed": int, "total": int}` (stage counts, NOT node counts). Three
+    new views/URLs in `tournament_views.py` / `tournament_urls.py`:
+    `tournament_play_all` (POST → `play_tournament_task.delay`, HTTP **202**
+    `{job_id, tournament_id}`, **409** when not active),
+    `tournament_play_status` (GET, 5-key polling JSON `{status, completed, total,
+    error, tournament_id}` via the new `_build_tournament_play_status_response`
+    mirroring `_build_play_status_response`), and `tournament_import_participants`
+    (POST `@transaction.atomic`). **CSV import = created-teams-only** (only brand-new
+    `_apply_roster` `created_teams` become `TournamentParticipant`s — no
+    `uniq_tournament_team` collision; appended teams are NOT auto-added), then
+    **re-seed the whole field by talent** (`_team_mean_rating` →
+    `default_seed_order`, two-phase offset write dodging `uniq_tournament_seed`,
+    reusing the `tournament_reseed` idiom), **setup-only** (`is_locked` ⇒ flash +
+    redirect, no writes), error path **re-renders** `tournament_detail.html` HTTP 200
+    with `transaction.set_rollback(True)` + per-row errors (RosterImportError or bound
+    form-invalid). A new private `_detail_context(tournament)` helper shares the detail
+    context between `tournament_detail` and the import-error re-render (the 6 frozen
+    LG-02a keys + `import_form` / `import_row_errors`). New DOM ids on
+    `tournament_detail.html`: setup `tournament-import-{form,file,submit,template-link,errors}`
+    + per-row `tournament-import-error-{row_num}-{field|row}`; active
+    `tournament-play-all-{form,submit,progress}` (inline 1000 ms poll JS mirroring the
+    LG-01d seasons dashboard, reveal/update progress, reload on complete, surface error
+    on FAILURE) — the single-step `tournament-play-next-form` is unchanged. The
+    CONTEXT.md **Job** term is extended to a **4th kind** (**Play Tournament job**) +
+    the `/tournaments/<id>/play-all/` URL; **no new term** (the **Roster import** term
+    is reused unedited). **Non-deterministic** — `simulate_match` draws fresh per-round
+    seeds, so Play Tournament games are NOT master-seed-replayable: **no SIM-07 / SIM-08
+    interaction, NO Score Calibration re-baseline**. Tests:
+    `matches/tests/test_bracket.py` (extend — `TestStageProgress`),
+    `test_tournament_engine.py` (NEW), `test_tournament_tasks.py` (NEW, under
+    `CELERY_TASK_ALWAYS_EAGER`), `test_tournament_views.py` (extend).
 - **LG-02b · [NOT STARTED] Best-of-N series nodes.** Generalise a bracket node from **one**
   2-round `Match` to a **best-of-3 / best-of-5 series**: the node resolves when one
   side clinches the majority, then Advances. *Why deferred:* LG-02a locked

@@ -27,6 +27,7 @@ from matches.bracket import (
     default_seed_order,
     find_next_node,
     resolve_bye_chain,
+    stage_progress,
 )
 
 # ---------------------------------------------------------------------------
@@ -592,6 +593,155 @@ class TestBreakTie(SimpleTestCase):
 
 
 # ---------------------------------------------------------------------------
+# LG-02a-2 §1 — stage_progress (STAGE-based Bracket progress)
+# ---------------------------------------------------------------------------
+
+
+class TestStageProgress(SimpleTestCase):
+    """Pure-unit: ``stage_progress(nodes) -> (completed_stages, total_stages)``.
+
+    total_stages = max ``bracket_round`` (0 when empty). completed_stages =
+    count of Bracket rounds in which every non-bye node has ``winner_id`` set
+    (a round of all byes is vacuously complete). LG-02a-2 seam contract §1.
+    """
+
+    def _bracket_n4(
+        self,
+        *,
+        r1_winners: tuple[int | None, int | None] = (None, None),
+        final_winner: int | None = None,
+    ) -> list[dict]:
+        """A 4-team bracket (2 round-1 nodes + 1 final) as flat dicts."""
+        w0, w1 = r1_winners
+        return [
+            _node_dict(
+                bracket_round=1,
+                position=0,
+                team_a_id=101,
+                team_b_id=104,
+                seed_a=1,
+                seed_b=4,
+                winner_id=w0,
+                advances_to=(2, 0),
+                advances_to_slot="a",
+            ),
+            _node_dict(
+                bracket_round=1,
+                position=1,
+                team_a_id=102,
+                team_b_id=103,
+                seed_a=2,
+                seed_b=3,
+                winner_id=w1,
+                advances_to=(2, 0),
+                advances_to_slot="b",
+            ),
+            _node_dict(
+                bracket_round=2,
+                position=0,
+                team_a_id=101 if w0 else None,
+                team_b_id=102 if w1 else None,
+                seed_a=1 if w0 else None,
+                seed_b=2 if w1 else None,
+                winner_id=final_winner,
+            ),
+        ]
+
+    def test_empty_returns_zero_zero(self) -> None:
+        self.assertEqual(stage_progress([]), (0, 0))
+
+    def test_returns_a_two_tuple_of_ints(self) -> None:
+        completed, total = stage_progress(self._bracket_n4())
+        self.assertIsInstance(completed, int)
+        self.assertIsInstance(total, int)
+
+    def test_total_is_max_bracket_round(self) -> None:
+        # N=4 ⇒ 2 Bracket rounds (ceil(log2(4)) == 2).
+        _completed, total = stage_progress(self._bracket_n4())
+        self.assertEqual(total, 2)
+
+    def test_round_1_no_winners_completes_zero_stages(self) -> None:
+        completed, total = stage_progress(self._bracket_n4())
+        self.assertEqual((completed, total), (0, 2))
+
+    def test_all_round_1_winners_set_completes_stage_1(self) -> None:
+        # Both round-1 nodes resolved, final not played ⇒ stage 1 complete.
+        completed, total = stage_progress(self._bracket_n4(r1_winners=(101, 102)))
+        self.assertEqual((completed, total), (1, 2))
+
+    def test_full_bracket_completes_all_stages(self) -> None:
+        completed, total = stage_progress(
+            self._bracket_n4(r1_winners=(101, 102), final_winner=101)
+        )
+        self.assertEqual((completed, total), (2, 2))
+
+    def test_all_bye_round_is_vacuously_complete(self) -> None:
+        # A whole round of byes (no non-bye nodes) counts as complete even
+        # without an explicit winner on every node.
+        nodes = [
+            _node_dict(
+                bracket_round=1,
+                position=0,
+                team_a_id=101,
+                seed_a=1,
+                is_bye=True,
+                winner_id=101,
+            ),
+            _node_dict(
+                bracket_round=1,
+                position=1,
+                team_a_id=102,
+                seed_a=2,
+                is_bye=True,
+                winner_id=102,
+            ),
+            # Round 2 is the real game, unplayed.
+            _node_dict(
+                bracket_round=2,
+                position=0,
+                team_a_id=101,
+                team_b_id=102,
+                seed_a=1,
+                seed_b=2,
+                winner_id=None,
+            ),
+        ]
+        completed, total = stage_progress(nodes)
+        # Round 1 (all byes) complete, round 2 not ⇒ 1 of 2.
+        self.assertEqual((completed, total), (1, 2))
+
+    def test_partial_round_is_not_complete(self) -> None:
+        # One of two round-1 non-bye nodes resolved ⇒ stage 1 NOT complete.
+        completed, _total = stage_progress(self._bracket_n4(r1_winners=(101, None)))
+        self.assertEqual(completed, 0)
+
+    def test_bye_mixed_round_ignores_bye_node_winner_requirement(self) -> None:
+        # A round with one bye node (winner pre-set) and one real node: the
+        # round is complete iff the single NON-bye node has a winner.
+        nodes = [
+            _node_dict(
+                bracket_round=1,
+                position=0,
+                team_a_id=101,
+                seed_a=1,
+                is_bye=True,
+                winner_id=101,
+            ),
+            _node_dict(
+                bracket_round=1,
+                position=1,
+                team_a_id=104,
+                team_b_id=105,
+                seed_a=4,
+                seed_b=5,
+                winner_id=104,  # the real game is decided
+            ),
+        ]
+        completed, total = stage_progress(nodes)
+        self.assertEqual((completed, total), (1, 1))
+
+
+# ---------------------------------------------------------------------------
 # §2 — Defensive: no Django imports leaked into the pure module
 # ---------------------------------------------------------------------------
 
@@ -621,6 +771,63 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
             import sys
             sys.path.insert(0, {str(project_root)!r})
             import matches.bracket  # noqa: F401
+
+            offenders = sorted(
+                name
+                for name in sys.modules
+                if name == "django"
+                or name.startswith("django.")
+                or name == "matches.models"
+            )
+            if offenders:
+                print("LEAK:" + ",".join(offenders))
+                sys.exit(1)
+            sys.exit(0)
+            """)
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=f"stdout={result.stdout!r} stderr={result.stderr!r}",
+        )
+
+    def test_stage_progress_pulls_in_no_django(self) -> None:
+        """LG-02a-2 §1 purity assertion: importing ``matches.bracket`` AND
+        calling ``stage_progress`` in a fresh subprocess must not pull in
+        ``django.*`` / ``matches.models`` — the new function imports nothing
+        new (stdlib only). Mirrors ``test_pure_module_does_not_pull_in_django``.
+        """
+        import os
+        import pathlib
+        import subprocess
+        import sys
+        import textwrap
+
+        here = pathlib.Path(__file__).resolve()
+        project_root = None
+        for parent in here.parents:
+            if (parent / "manage.py").exists():
+                project_root = parent
+                break
+        self.assertIsNotNone(project_root, "could not locate manage.py from test file")
+
+        script = textwrap.dedent(f"""
+            import sys
+            sys.path.insert(0, {str(project_root)!r})
+            from matches.bracket import stage_progress  # noqa: F401
+
+            # Exercise it so a lazy import inside the function body would fire.
+            stage_progress([])
+            stage_progress([
+                {{"bracket_round": 1, "position": 0, "is_bye": False,
+                  "winner_id": 7}},
+            ])
 
             offenders = sorted(
                 name

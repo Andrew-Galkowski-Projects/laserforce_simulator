@@ -29,4 +29,19 @@ urlpatterns = [
         views.tournament_play_next,
         name="tournament_play_next",
     ),
+    path(
+        "<int:tournament_id>/play-all/",
+        views.tournament_play_all,
+        name="tournament_play_all",
+    ),
+    path(
+        "<int:tournament_id>/play-status/<str:job_id>/",
+        views.tournament_play_status,
+        name="tournament_play_status",
+    ),
+    path(
+        "<int:tournament_id>/import-participants/",
+        views.tournament_import_participants,
+        name="tournament_import_participants",
+    ),
 ]
