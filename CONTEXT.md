@@ -481,8 +481,12 @@ The best-of-N set of **Matches** played at one **Bracket node** (LG-02b). Counte
 _Avoid_: counting a Series in **Rounds** or "games" (the unit is the **Match**); inventing a Series-level tiebreaker (odd N always clinches; ties are broken per-Match); playing dead-rubber Matches after a Team has clinched (the Series stops the moment the majority is reached).
 
 **Series length**:
-The odd integer N (1 / 3 / 5) fixing how many **Match** wins clinch a **Series** — `(N // 2) + 1` wins. A single per-**Tournament** value (`Tournament.series_length`, default **1**) applied to every **Bracket node** in LG-02b; per-**Bracket-round** escalation (Bo1 early → Bo5 final) is a deferred follow-up. **Clinch** = reaching `(N // 2) + 1` Match wins.
-_Avoid_: confusing **Series length** (Matches-to-win-a-node) with the fixed two **Rounds** per **Match**; treating an even N as valid (a Series must be decisive).
+The odd integer N (1 / 3 / 5) fixing how many **Match** wins clinch a **Series** — `(N // 2) + 1` wins. **Clinch** = reaching `(N // 2) + 1` Match wins. Each **Bracket node** carries its own Series length, resolved at lock time from the Tournament's **Series escalation** ladder (LG-02b-2); LG-02b's single flat per-**Tournament** value is the special case where every round resolves to the same N.
+_Avoid_: confusing **Series length** (Matches-to-win-a-node) with the fixed two **Rounds** per **Match**; treating an even N as valid (a Series must be decisive); assuming every node in a Tournament shares one Series length (it is per-**Bracket round** under **Series escalation**).
+
+**Series escalation**:
+A **Tournament**'s rule for letting **Series length** grow toward the **Final** — Bo1 early rounds, longer Series in the late rounds (the canonical "Bo1 early → Bo5 final"). Configured at create time and frozen at lock, anchored to **depth from the final** (not absolute **Bracket round** number, which is unstable while the participant field changes during setup). The ladder is expressed in four fixed slots regardless of field size: **Final** (depth 0), **Semifinals** (depth 1), **Quarterfinals** (depth 2), and **Earlier rounds** (depth ≥ 3, a catch-all covering every round before the quarterfinals). At lock, each node's `bracket_round` maps to a depth (`total_rounds − bracket_round`) and resolves its Series length from the matching slot.
+_Avoid_: anchoring the ladder to absolute **Bracket round** numbers (round 3 is the final in a 4-team field but a semifinal in an 8-team field — depth-from-final is stable, round number is not); expecting per-(round, position) granularity (escalation is per **Bracket round** depth, applied uniformly across a round's nodes).
 
 ## Relationships
 

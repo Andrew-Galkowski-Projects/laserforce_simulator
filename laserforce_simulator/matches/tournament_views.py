@@ -126,15 +126,30 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
             {"form": None, "available_teams": available_teams},
         )
 
-    try:
-        series_length = int(request.POST.get("series_length") or 1)
-    except (TypeError, ValueError):
-        series_length = 1
-    if series_length not in (1, 3, 5):
-        series_length = 1
+    # LG-02b-2 — four per-depth Series length slots (final / semifinal /
+    # quarterfinal / earlier rounds), each int-coerced with a forgiving fallback
+    # to 1 then forced into {1,3,5}. No monotonicity — the four are independent.
+    def _parse_series_length(field: str) -> int:
+        try:
+            value = int(request.POST.get(field) or 1)
+        except (TypeError, ValueError):
+            value = 1
+        if value not in (1, 3, 5):
+            value = 1
+        return value
+
+    final_series_length = _parse_series_length("final_series_length")
+    semifinal_series_length = _parse_series_length("semifinal_series_length")
+    quarterfinal_series_length = _parse_series_length("quarterfinal_series_length")
+    earlier_series_length = _parse_series_length("earlier_series_length")
 
     tournament = Tournament.objects.create(
-        name=name, state="setup", series_length=series_length
+        name=name,
+        state="setup",
+        final_series_length=final_series_length,
+        semifinal_series_length=semifinal_series_length,
+        quarterfinal_series_length=quarterfinal_series_length,
+        earlier_series_length=earlier_series_length,
     )
 
     # Default Seeding via mean active-player overall_rating.
@@ -173,6 +188,7 @@ def _build_rounds(tournament: Tournament) -> list[dict]:
             "is_bye": node.is_bye,
             "wins_a": wins_a,
             "wins_b": wins_b,
+            "series_length": node.series_length,
             "series_matches": series_matches,
             "winner": node.winner,
         }

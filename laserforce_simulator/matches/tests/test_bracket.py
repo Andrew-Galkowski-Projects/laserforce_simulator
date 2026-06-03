@@ -1173,5 +1173,148 @@ class TestFindNextNodeSeries(SimpleTestCase):
         self.assertIsNone(find_next_node([]))
 
 
+# ===========================================================================
+# LG-02b-2 — per-Bracket-round Series escalation: series_length_for_round
+# ===========================================================================
+#
+# NEW class appended below (existing classes above are NOT modified).
+# Seam contract: ``.claude/worktrees/lg-02b-2-seam-contract.md`` §2a / §6a.
+#
+# ``series_length_for_round(bracket_round, total_rounds, *, final, semifinal,
+# quarterfinal, earlier) -> int`` resolves a node's Series length from its
+# depth below the final (``depth = total_rounds - bracket_round``): depth 0 ->
+# final, 1 -> semifinal, 2 -> quarterfinal, >= 3 -> earlier. The four slot args
+# are KEYWORD-ONLY. Pure integer dispatch; no new import (the frozen allowlist
+# is unchanged, so ``TestNoDjangoImportsLeaked`` above stays green). The
+# function is imported LAZILY inside each method so its absence (pre-Code-
+# landing) isolates the failure to THIS class only.
+
+
+class TestSeriesLengthForRound(SimpleTestCase):
+    """Depth-anchored Series-length resolver (LG-02b-2 §2a)."""
+
+    # Four DISTINCT slot values so a misrouted depth resolves to the wrong int
+    # and the test catches it. final=5, semifinal=3, quarterfinal=7, earlier=9
+    # (the 7/9 are deliberately NOT in the {1,3,5} ship set — the pure function
+    # does NOT validate the slot values, it only dispatches by depth).
+    _SLOTS = {"final": 5, "semifinal": 3, "quarterfinal": 7, "earlier": 9}
+
+    # -- depth boundaries (total_rounds picked so each depth is hit) ----------
+
+    def test_depth_0_resolves_to_final(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        # depth = total_rounds - bracket_round = 4 - 4 = 0 -> final.
+        self.assertEqual(series_length_for_round(4, 4, **self._SLOTS), 5)
+
+    def test_depth_1_resolves_to_semifinal(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        # depth = 4 - 3 = 1 -> semifinal.
+        self.assertEqual(series_length_for_round(3, 4, **self._SLOTS), 3)
+
+    def test_depth_2_resolves_to_quarterfinal(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        # depth = 4 - 2 = 2 -> quarterfinal.
+        self.assertEqual(series_length_for_round(2, 4, **self._SLOTS), 7)
+
+    def test_depth_3_resolves_to_earlier(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        # depth = 4 - 1 = 3 -> earlier (the depth->=3 fall-through).
+        self.assertEqual(series_length_for_round(1, 4, **self._SLOTS), 9)
+
+    def test_depth_4_resolves_to_earlier(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        # depth = 5 - 1 = 4 (>= 3) -> earlier (still the else branch).
+        self.assertEqual(series_length_for_round(1, 5, **self._SLOTS), 9)
+
+    # -- worked sweep: total_rounds = 2 (N=4) ---------------------------------
+
+    def test_n4_sweep_round2_is_final(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        # N=4: 2 Bracket rounds. round 2 = final (depth 0).
+        self.assertEqual(series_length_for_round(2, 2, **self._SLOTS), 5)
+
+    def test_n4_sweep_round1_is_semifinal(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        # N=4: round 1 = semifinal (depth 1).
+        self.assertEqual(series_length_for_round(1, 2, **self._SLOTS), 3)
+
+    # -- worked sweep: total_rounds = 3 (N=8) ---------------------------------
+
+    def test_n8_sweep_round3_is_final(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        self.assertEqual(series_length_for_round(3, 3, **self._SLOTS), 5)
+
+    def test_n8_sweep_round2_is_semifinal(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        self.assertEqual(series_length_for_round(2, 3, **self._SLOTS), 3)
+
+    def test_n8_sweep_round1_is_quarterfinal(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        # N=8: round 1 = quarterfinal (depth 2).
+        self.assertEqual(series_length_for_round(1, 3, **self._SLOTS), 7)
+
+    # -- worked sweep: total_rounds = 4 (N=16) --------------------------------
+
+    def test_n16_sweep_round4_is_final(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        self.assertEqual(series_length_for_round(4, 4, **self._SLOTS), 5)
+
+    def test_n16_sweep_round3_is_semifinal(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        self.assertEqual(series_length_for_round(3, 4, **self._SLOTS), 3)
+
+    def test_n16_sweep_round2_is_quarterfinal(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        self.assertEqual(series_length_for_round(2, 4, **self._SLOTS), 7)
+
+    def test_n16_sweep_round1_is_earlier(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        # N=16: round 1 = depth 3 -> earlier.
+        self.assertEqual(series_length_for_round(1, 4, **self._SLOTS), 9)
+
+    # -- Bo1-everywhere byte-equivalence (locked-decision-5) ------------------
+
+    def test_all_slots_one_resolves_to_one_at_every_depth(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        ones = {"final": 1, "semifinal": 1, "quarterfinal": 1, "earlier": 1}
+        for total_rounds in (2, 3, 4):
+            for bracket_round in range(1, total_rounds + 1):
+                self.assertEqual(
+                    series_length_for_round(bracket_round, total_rounds, **ones),
+                    1,
+                    f"round {bracket_round}/{total_rounds} should be Bo1",
+                )
+
+    # -- signature is keyword-only past total_rounds --------------------------
+
+    def test_slot_args_are_keyword_only(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        # Passing a slot positionally past total_rounds is a TypeError (the
+        # signature pins the four slots after ``*``).
+        with self.assertRaises(TypeError):
+            series_length_for_round(1, 4, 5, 3, 7, 9)  # type: ignore[misc]
+
+    def test_returns_int(self) -> None:
+        from matches.bracket import series_length_for_round
+
+        self.assertIsInstance(series_length_for_round(1, 2, **self._SLOTS), int)
+
+
 # Reference to silence unused-import warnings if BracketNodeSpec is dropped.
 _ = BracketNodeSpec

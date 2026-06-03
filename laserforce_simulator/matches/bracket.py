@@ -201,6 +201,33 @@ def series_winner_slot(wins_a: int, wins_b: int, series_length: int) -> Optional
     return None
 
 
+def series_length_for_round(
+    bracket_round: int,
+    total_rounds: int,
+    *,
+    final: int,
+    semifinal: int,
+    quarterfinal: int,
+    earlier: int,
+) -> int:
+    """Resolve a Bracket node's best-of-N Series length from its depth below
+    the final.
+
+    depth = total_rounds - bracket_round. depth 0 -> final, 1 -> semifinal,
+    2 -> quarterfinal, depth >= 3 -> earlier. Pure integer dispatch; no
+    validation of the four slot values (callers pass the locked 1/3/5 choices).
+    """
+    depth = total_rounds - bracket_round
+    if depth == 0:
+        return final
+    elif depth == 1:
+        return semifinal
+    elif depth == 2:
+        return quarterfinal
+    else:
+        return earlier
+
+
 def find_next_node(nodes: list[dict]) -> Optional[dict]:
     """Return the lowest (bracket_round, position) node dict that is PLAYABLE:
     both team slots filled (team_a_id and team_b_id not None), is_bye False,

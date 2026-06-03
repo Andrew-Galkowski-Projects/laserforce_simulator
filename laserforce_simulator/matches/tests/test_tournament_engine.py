@@ -390,10 +390,19 @@ class TestPlayNextNodeAtomicity(TestCase):
 
 
 def _series_tournament(n: int, series_length: int, *, name: str) -> Tournament:
-    """A locked/active best-of-``series_length`` Tournament."""
-    t = _setup_tournament(n, name=name)
-    t.series_length = series_length
-    t.save(update_fields=["series_length"])
+    """A locked/active Tournament with ALL FOUR depth slots set to
+    ``series_length`` (LG-02b-2 migration: the single param sets every slot,
+    so ``lock_and_build`` stamps every node's ``series_length`` to that value
+    and the per-node clinch reads ``node.series_length``)."""
+    t = Tournament.objects.create(
+        name=name,
+        final_series_length=series_length,
+        semifinal_series_length=series_length,
+        quarterfinal_series_length=series_length,
+        earlier_series_length=series_length,
+    )
+    for seed, team in enumerate(_make_teams(n), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
     t.lock_and_build()
     t.refresh_from_db()
     return t
@@ -454,7 +463,8 @@ class TestPlayNextNodeSeries(TestCase):
         # No dead rubber: total games == winner_wins + loser_wins and never
         # exceeds the series length.
         self.assertEqual(len(series), winner_wins + loser_wins)
-        self.assertLessEqual(len(series), t.series_length)
+        # The series never exceeds the NODE's stamped series_length.
+        self.assertLessEqual(len(series), node.series_length)
         # node.winner is the team with >= threshold SeriesMatch wins.
         if wins_a >= threshold:
             self.assertEqual(node.winner_id, node.team_a_id)
@@ -477,7 +487,8 @@ class TestPlayNextNodeSeries(TestCase):
                 play_next_node(t)
         count = SeriesMatch.objects.filter(node_id=target_id).count()
         self.assertGreaterEqual(count, threshold)
-        self.assertLessEqual(count, t.series_length)
+        node = t.nodes.get(pk=target_id)
+        self.assertLessEqual(count, node.series_length)
 
     def test_clinch_advances_winner_into_parent_slot(self) -> None:
         from matches.tournament_engine import play_next_node
@@ -607,3 +618,139 @@ class TestPlayNextNodeSeriesTieBreak(TestCase):
         game1 = SeriesMatch.objects.get(node=node, game_number=1)
         self.assertIsNotNone(game1.winner_id)
         self.assertEqual(game1.winner_id, lower_team_id)
+
+
+# ===========================================================================
+# LG-02b-2 — engine reads node.series_length (NOT tournament-level)
+# ===========================================================================
+#
+# NEW class appended below (existing classes above are NOT modified).
+# Seam contract: ``.claude/worktrees/lg-02b-2-seam-contract.md`` §3 / §6d.
+#
+# The clinch check moved from ``series_winner_slot(..., node.tournament.
+# series_length)`` to ``series_winner_slot(..., node.series_length)``. The
+# load-bearing assertion constructs a tournament whose four depth slots DIFFER
+# and verifies a DEEP node clinches at ITS OWN depth's N — not any
+# tournament-level value (the old flat field is gone, so reading it would
+# AttributeError; reading the wrong slot would clinch at the wrong count).
+
+
+def _escalation_tournament(
+    n: int,
+    *,
+    final: int,
+    semifinal: int,
+    quarterfinal: int,
+    earlier: int,
+    name: str,
+) -> Tournament:
+    """A locked/active Tournament with four DISTINCT depth slots, so each
+    Bracket round's nodes stamp a different ``series_length``."""
+    t = Tournament.objects.create(
+        name=name,
+        final_series_length=final,
+        semifinal_series_length=semifinal,
+        quarterfinal_series_length=quarterfinal,
+        earlier_series_length=earlier,
+    )
+    for seed, team in enumerate(_make_teams(n), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+class TestPlayNextNodeReadsNodeSeriesLength(TestCase):
+    """The engine clinches each node at ITS OWN stamped ``node.series_length``,
+    NOT a tournament-level value."""
+
+    def test_bo1_node_clinches_on_first_match(self) -> None:
+        from matches.models import SeriesMatch
+        from matches.tournament_engine import play_next_node
+
+        # final=5 (r3 nodes), but the round-1 quarterfinal slot is Bo1. The
+        # FIRST playable node is a round-1 Bo1 node ⇒ it clinches on game 1.
+        t = _escalation_tournament(
+            8, final=5, semifinal=3, quarterfinal=1, earlier=1, name="EngEscBo1"
+        )
+        target = t.find_next_playable_node()
+        self.assertEqual(target.series_length, 1)
+        target_id = target.id
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_next_node(t)
+        node = t.nodes.get(pk=target_id)
+        # Exactly one SeriesMatch and the Bo1 node clinched immediately.
+        self.assertEqual(SeriesMatch.objects.filter(node=node).count(), 1)
+        self.assertIsNotNone(node.winner)
+
+    def test_bo3_node_clinches_at_two_match_wins(self) -> None:
+        from matches.bracket import clinch_threshold
+        from matches.models import SeriesMatch
+        from matches.tournament_engine import play_next_node
+
+        # All round-1 nodes are Bo3 (quarterfinal=3 at N=8). The first playable
+        # node clinches at 2 wins, advancing only on clinch.
+        t = _escalation_tournament(
+            8, final=1, semifinal=1, quarterfinal=3, earlier=1, name="EngEscBo3"
+        )
+        target = t.find_next_playable_node()
+        self.assertEqual(target.series_length, 3)
+        target_id = target.id
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(6):
+                node = t.nodes.get(pk=target_id)
+                if node.winner_id is not None:
+                    break
+                play_next_node(t)
+        node = t.nodes.get(pk=target_id)
+        self.assertIsNotNone(node.winner, "Bo3 node must clinch")
+        series = list(SeriesMatch.objects.filter(node=node))
+        wins = [
+            sum(1 for s in series if s.winner_id == node.team_a_id),
+            sum(1 for s in series if s.winner_id == node.team_b_id),
+        ]
+        # Winner reached exactly the Bo3 clinch threshold (2); no dead rubber.
+        self.assertEqual(max(wins), clinch_threshold(3))
+        self.assertLessEqual(len(series), node.series_length)
+
+    def test_deep_node_clinches_at_its_own_depth_N(self) -> None:
+        # LOAD-BEARING: the four slots DIFFER. Round-1 (quarterfinal) is Bo1 so
+        # the round-1 nodes resolve in one game each; round-2 (the FINAL of an
+        # N=4 bracket, depth 0) is Bo3. After the two round-1 Bo1 games, the
+        # only playable node is the deep final, stamped Bo3 — it must clinch at
+        # 2 wins (its OWN depth's N), proving the engine reads node.series_length
+        # and not a tournament-level value.
+        from matches.bracket import clinch_threshold
+        from matches.models import SeriesMatch
+        from matches.tournament_engine import play_next_node
+
+        t = _escalation_tournament(
+            4, final=3, semifinal=1, quarterfinal=1, earlier=1, name="EngEscDeep"
+        )
+        final_node = t.nodes.get(advances_to__isnull=True)
+        self.assertEqual(final_node.series_length, 3)
+        # round-1 (semifinal slot at N=4, depth 1) nodes are Bo1.
+        for r1 in t.nodes.filter(bracket_round=1):
+            self.assertEqual(r1.series_length, 1)
+
+        final_id = final_node.id
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(20):
+                t.refresh_from_db()
+                if t.state == "completed":
+                    break
+                if play_next_node(t) is None:
+                    break
+
+        final_node = t.nodes.get(pk=final_id)
+        self.assertIsNotNone(final_node.winner)
+        series = list(SeriesMatch.objects.filter(node=final_node))
+        wins = [
+            sum(1 for s in series if s.winner_id == final_node.team_a_id),
+            sum(1 for s in series if s.winner_id == final_node.team_b_id),
+        ]
+        # The deep Bo3 final clinched at 2 wins — its OWN stamped N, not the
+        # round-1 Bo1 value.
+        self.assertEqual(max(wins), clinch_threshold(3))
+        self.assertLessEqual(len(series), 3)
+        self.assertEqual(t.champion_id, final_node.winner_id)

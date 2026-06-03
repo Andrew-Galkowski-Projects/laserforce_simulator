@@ -91,6 +91,9 @@
                 {% if node.is_bye %}
                 <div><small class="text-muted">Bye</small></div>
                 {% else %}
+                <div>
+                    <small class="text-muted" id="tournament-node-series-length-{{ node.bracket_round }}-{{ node.position }}">Bo{{ node.series_length }}</small>
+                </div>
                 <div id="tournament-node-series-score-{{ node.bracket_round }}-{{ node.position }}">
                     <small class="text-muted">{{ node.wins_a }}–{{ node.wins_b }}</small>
                 </div>

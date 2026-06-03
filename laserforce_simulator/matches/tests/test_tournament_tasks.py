@@ -298,10 +298,18 @@ class TestPlayTournamentTaskInactiveEarlyReturn:
 
 
 def _active_series_tournament(n: int, series_length: int, *, name: str, prefix: str):
-    """A locked/active best-of-``series_length`` Tournament."""
+    """A locked/active Tournament with ALL FOUR depth slots set to
+    ``series_length`` (LG-02b-2 migration: the single param sets every slot so
+    ``lock_and_build`` stamps every node's ``series_length`` to that value)."""
     from matches.models import Tournament, TournamentParticipant
 
-    t = Tournament.objects.create(name=name, series_length=series_length)
+    t = Tournament.objects.create(
+        name=name,
+        final_series_length=series_length,
+        semifinal_series_length=series_length,
+        quarterfinal_series_length=series_length,
+        earlier_series_length=series_length,
+    )
     for seed, team in enumerate(_make_teams(n, prefix), start=1):
         TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
     t.lock_and_build()
@@ -375,4 +383,5 @@ class TestPlayTournamentTaskSeries:
             )
             assert loser_wins < threshold
             assert len(series) == winner_wins + loser_wins
-            assert len(series) <= t.series_length
+            # The series never exceeds the NODE's stamped series_length.
+            assert len(series) <= node.series_length
