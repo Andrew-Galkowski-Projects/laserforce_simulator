@@ -1528,6 +1528,144 @@ the single-step `tournament-play-next` (stays synchronous). Tests:
 `test_tournament_engine.py` (NEW), `test_tournament_tasks.py` (NEW, under
 `CELERY_TASK_ALWAYS_EAGER`), `test_tournament_views.py` (extend).
 
+## LG-02b best-of-N series nodes
+
+Generalises a **Bracket node** from holding **one** 2-round `Match` to holding a
+best-of-N **Series** of Matches — the node Advances only when one Team **clinches**
+the Match-win majority. Builds directly on LG-02a (the persisted single-elim
+bracket) and LG-02a-2 (the per-Match engine + async play-all). See
+[ADR-0020](../../docs/adr/0020-best-of-n-series-bracket-nodes.md) for the
+Series-via-through-model decision; seam contract:
+[`.claude/worktrees/lg-02b-seam-contract.md`](../../.claude/worktrees/lg-02b-seam-contract.md).
+CONTEXT.md `### Tournaments` carries the **Series** / **Series length** terms
+(added at grilling time — reuses the existing **Bracket node** / **clinch** /
+**Advancement** vocabulary, no new glossary entry beyond those two). Migration:
+`matches/migrations/0034_*` (ops in **pinned order** `AddField(Tournament.
+series_length)` → `CreateModel(SeriesMatch)` → `RemoveField(BracketNode.match)`
+— **no `RunPython`, no backfill**, ADR-0004 disposable-sandbox precedent).
+
+**Model changes (`matches/models.py`).** New `Tournament.series_length`
+(`PositiveSmallIntegerField`, choices `(1, "Best of 1")`/`(3, "Best of 3")`/
+`(5, "Best of 5")`, `default=1`) — set at create-time only, **immutable once the
+Tournament leaves `setup`** (the existing `lock_and_build` `state != "setup"`
+guard freezes it on the setup→active transition; no view rewrites it on a
+non-`setup` Tournament). **Bo1 (`series_length == 1`) is byte-equivalent to
+LG-02a** — one Match, clinch threshold 1, identical Advancement. New `SeriesMatch`
+through-model (appended after `BracketNode`): `node` FK CASCADE
+`related_name="series_matches"` (deleting a node drops its Series); `match` FK to
+`matches.Match` SET_NULL/nullable `related_name="series_match"` (mirrors the old
+`BracketNode.match` semantics — deleting a Match must not cascade the Series row);
+`game_number` 1-based `PositiveIntegerField`; `winner` FK to `teams.Team` SET_NULL
+`related_name="+"` (the per-Match decisive Team — `match.winner` or the `break_tie`
+result when `match.winner is None`); `Meta.ordering=["game_number"]` +
+`UniqueConstraint(fields=["node","game_number"], name="uniq_seriesmatch_node_game")`
+(one row per (node, game)). **The node's win tally is DERIVED** by counting
+`SeriesMatch.winner` rows per team-slot — **counters are never stored**;
+`node.winner` is stamped only on clinch. The LG-02a `BracketNode.match` FK
+(`related_name="bracket_node"`) is **dropped wholesale** — the per-Match link now
+lives on `SeriesMatch.match`, every old reader of `node.match` / `node.match_id` /
+the `match_id` dict key moves to the Series-derived path. No alias retained.
+
+**Pure `matches/bracket.py` additions** (frozen `dataclasses`/`typing`/`math`/
+`collections`-only allowlist unchanged — both functions add **no new import**;
+`TestNoDjangoImportsLeaked` still passes). `clinch_threshold(series_length: int)
+-> int` = `(series_length // 2) + 1` (Bo1→1, Bo3→2, Bo5→3; pure integer math, no
+odd-ness validation — callers only pass the locked `1`/`3`/`5`). `series_winner_slot(
+wins_a: int, wins_b: int, series_length: int) -> Optional[str]` returns `"a"` when
+`wins_a >= threshold`, `"b"` when `wins_b >= threshold`, else `None` (Series still
+undecided) — `wins_a` checked **first** so the function is total and deterministic
+on every integer input (a malformed both-at-threshold input resolves to `"a"`
+rather than raising; odd N + Series-stops-on-clinch makes both-at-threshold
+unreachable in practice). `_node_to_dict` gains **3 derived keys** — `wins_a` /
+`wins_b` (`sum(1 for sm in node.series_matches.all() if sm.winner_id ==
+node.team_a_id / node.team_b_id)`) and `series_length` (`node.tournament.
+series_length`) — and **drops `match_id`** (the field is gone); the caller
+prefetches `series_matches` + the tournament's `series_length` so no per-node N+1.
+The `find_next_node` playable predicate swaps the old `winner_id IS NULL AND
+match_id IS NULL` checks for **`series_winner_slot(wins_a, wins_b, series_length)
+is None`** — a node is playable iff both slots are filled, it is not a bye, and the
+Series is not yet clinched (for Bo1 this is exactly the old behaviour:
+`series_winner_slot(0, 0, 1) is None` ⇒ playable until the first Match is recorded).
+**`stage_progress`, `build_bracket`, `advance_winner`, `resolve_bye_chain`,
+`break_tie`, `default_seed_order`, and the two dataclasses are unchanged** — in
+particular `stage_progress` still reads `winner_id` (stamped only on clinch), so it
+keeps reporting Bracket-round completion with zero edits.
+
+**Engine rewrite (`matches/tournament_engine.py::play_next_node`).** Signature
+unchanged (`play_next_node(tournament) -> BracketNode | None`, `@transaction.
+atomic`), but the **transaction boundary is now per-MATCH** (one Series Match = one
+atomic commit) — extends ADR-0016's per-node-atomic to per-Match-atomic. Algorithm:
+`find_next_playable_node()` (now §2d-clinch-aware, skips a clinched node) → compute
+the current derived tally from existing `SeriesMatch` rows → sim **ONE** Match
+`BatchSimulator().simulate_match(node.team_a, node.team_b, match_type="tournament")`
+(**sides fixed across the Series** — `team_a`/`team_b` argument order constant,
+no home/away alternation) → resolve the per-Match decisive winner exactly as
+LG-02a-2 (`break_tie(node.seed_a, best_a, node.seed_b, best_b)` on `match.winner is
+None`, mapping the seed back to the Team) → `SeriesMatch.objects.create(node=node,
+match=match, game_number=node.series_matches.count() + 1, winner=match_winner)` →
+recompute the tally → `slot = series_winner_slot(wins_a, wins_b, node.tournament.
+series_length)`. **If `slot is None`** (Series not yet clinched) ⇒ **return `node`
+now** (no `node.winner` write, no Advancement — the next call resolves the next
+Match of the same node). **On clinch** (`slot` is `"a"`/`"b"`): set `node.winner` +
+`winner_seed`, `save(update_fields=["winner"])` (the list **drops `"match"`** — no
+longer a `BracketNode` field), build the flat `_node_to_dict` list, `advance_winner`
+into the parent slot, and stamp `champion` + `state="completed"` when the clinched
+node is the final (`advances_to_id is None`). Returns `None` when nothing is
+playable. **Bo1 equivalence:** step creates game 1, `series_winner_slot(1, 0, 1) ==
+"a"` ⇒ clinch on the first Match ⇒ identical single-Match advance — the only
+structural difference vs LG-02a-2 is the played `Match` lives on a `SeriesMatch`
+row, not `BracketNode.match`. **Callers unchanged in signature/route:**
+`tournament_play_next`, `play_tournament_task` (the Celery `while play_next_node(...)
+is not None` loop now iterates **once per Match**, so a Bo3/Bo5 drains over more
+steps), `tournament_play_all`, `tournament_play_status` all keep their URLs +
+5-key status JSON; `stage_progress` still reports Bracket-round completion.
+
+**View / template surface.** Create form (`tournament_create` /
+`tournament_create.html`): reads a new POST field `series_length` (parsed to int;
+invalid/absent ⇒ default `1`; only `1`/`3`/`5` accepted, anything else falls back
+to `1` — forgiving-fallback precedent), stamped via `Tournament.objects.create(...,
+series_length=series_length)`; rendered as a `<select name="series_length">` with
+DOM id **`tournament-create-series-length`** (options Bo1 selected / Bo3 / Bo5),
+placed in `tournament-create-form` before the submit. Detail page (`_build_rounds`
+/ `tournament_detail.html`): each node view-dict gains derived `wins_a` / `wins_b`
+(counted from the node's `SeriesMatch` rows, `series_matches` prefetched) and
+**drops the `match` key** (per-node link is now per-SeriesMatch — the template
+renders a "View match" link per played Series Match, or omits it); a per-node
+**Series-score** element with DOM id **`tournament-node-series-score-{bracket_round}-
+{position}`** renders the running `{{ node.wins_a }}–{{ node.wins_b }}` (en-dash,
+e.g. `2–1`) for every non-bye node (a Bo1 node reads `1–0`/`0–1`/`0–0`). The
+**champion** still surfaces via the unchanged `tournament-champion-banner`;
+`tournament.series_length` is read directly off the `tournament` object in the
+template (no new context key — the frozen `_detail_context` keys are unchanged,
+only the shape of each `rounds[*].nodes[*]` dict changes).
+
+**Tests.** `matches/tests/test_bracket.py` (extend — `TestClinchThreshold`,
+`TestSeriesWinnerSlot`, Series cases on `TestFindNextNode`, purity still green);
+`test_tournament_models.py` (extend — `SeriesMatch` create/ordering/
+`uniq_seriesmatch_node_game`/CASCADE/SET_NULL, `series_length` default + choices +
+state-immutability, `_node_to_dict` derived keys with no `match_id`);
+`test_tournament_engine.py` (extend — one `SeriesMatch` per call + no `node.winner`
+until clinch, clinch→advance→champion, Bo1 one-call equivalence, per-Match
+`break_tie`, atomicity); `test_tournament_views.py` (extend — create-form select
++ POST persistence + fallback, detail Series-score element); `test_tournament_
+tasks.py` (extend — `play_tournament_task` drains a Bo3 to a champion, Advance only
+on clinch). Tests assert on the pure functions, `SeriesMatch` rows, `node.winner` /
+Advancement, and DOM ids — **never on exact simulated point totals**
+(non-deterministic).
+
+**Scope-out (LOCKED — DEFERRED, do NOT build here):** **per-Bracket-round Series
+escalation** (Bo1 early → Bo5 final — LG-02b applies a single per-Tournament
+`series_length` to every node; deferred to LG-02b-2); **home/away side alternation**
+(sides fixed `team_a` red / `team_b` blue every Match); **deterministic /
+master-seed-replayable Series** (`simulate_match` draws fresh per-round seeds ⇒
+**non-deterministic, no SIM-07/08, NO Score Calibration re-baseline**); any
+`simulate_match` / `simulate_scheduled_round` change (consumed verbatim,
+`arena_map=None` 3-zone fallback per Match); **backfill / `RunPython`** (none —
+pure schema ops, ADR-0004); a **Series-level tiebreaker** (odd N always clinches;
+ties broken per-Match by the unchanged `break_tie`); **dead-rubber Matches** (the
+Series stops the moment a Team clinches); any new CONTEXT.md term beyond
+**Series** / **Series length** (already written).
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)

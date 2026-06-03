@@ -34,7 +34,13 @@ from .bracket import (
     break_tie,
     default_seed_order,
 )
-from .models import BracketNode, Tournament, TournamentParticipant, _node_to_dict
+from .models import (
+    BracketNode,
+    Tournament,
+    TournamentParticipant,
+    _node_to_dict,
+    count_series_wins,
+)
 from .simulation.entrypoints import BatchSimulator
 from .tasks import play_tournament_task
 from .tournament_engine import play_next_node
@@ -120,7 +126,16 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
             {"form": None, "available_teams": available_teams},
         )
 
-    tournament = Tournament.objects.create(name=name, state="setup")
+    try:
+        series_length = int(request.POST.get("series_length") or 1)
+    except (TypeError, ValueError):
+        series_length = 1
+    if series_length not in (1, 3, 5):
+        series_length = 1
+
+    tournament = Tournament.objects.create(
+        name=name, state="setup", series_length=series_length
+    )
 
     # Default Seeding via mean active-player overall_rating.
     team_ratings = [(t.id, _team_mean_rating(t)) for t in teams]
@@ -137,12 +152,17 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
 def _build_rounds(tournament: Tournament) -> list[dict]:
     """Group nodes into a list of {bracket_round, nodes} for the tree render."""
     nodes = list(
-        tournament.nodes.select_related("team_a", "team_b", "match", "winner").order_by(
-            "bracket_round", "position"
-        )
+        tournament.nodes.select_related("team_a", "team_b", "winner")
+        .prefetch_related("series_matches")
+        .order_by("bracket_round", "position")
     )
     by_round: dict[int, list] = {}
     for node in nodes:
+        # LG-02b — Series win counts per slot, derived from SeriesMatch rows.
+        series_matches = list(node.series_matches.all())
+        wins_a, wins_b = count_series_wins(
+            series_matches, node.team_a_id, node.team_b_id
+        )
         view_dict = {
             "bracket_round": node.bracket_round,
             "position": node.position,
@@ -151,7 +171,9 @@ def _build_rounds(tournament: Tournament) -> list[dict]:
             "seed_a": node.seed_a,
             "seed_b": node.seed_b,
             "is_bye": node.is_bye,
-            "match": node.match,
+            "wins_a": wins_a,
+            "wins_b": wins_b,
+            "series_matches": series_matches,
             "winner": node.winner,
         }
         by_round.setdefault(node.bracket_round, []).append(view_dict)

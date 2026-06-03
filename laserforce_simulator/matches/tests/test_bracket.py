@@ -49,12 +49,16 @@ def _node_dict(
     seed_a: int | None = None,
     seed_b: int | None = None,
     is_bye: bool = False,
-    match_id: int | None = None,
     winner_id: int | None = None,
+    wins_a: int = 0,
+    wins_b: int = 0,
+    series_length: int = 1,
     advances_to: tuple[int, int] | None = None,
     advances_to_slot: str | None = None,
 ) -> dict:
-    """Build one flattened node dict matching the ``_node_to_dict`` seam keys."""
+    """Build one flattened node dict matching the post-LG-02b ``_node_to_dict``
+    seam keys (carries ``wins_a`` / ``wins_b`` / ``series_length``; the old
+    ``match_id`` key was dropped when ``BracketNode.match`` was removed)."""
     return {
         "bracket_round": bracket_round,
         "position": position,
@@ -63,8 +67,10 @@ def _node_dict(
         "seed_a": seed_a,
         "seed_b": seed_b,
         "is_bye": is_bye,
-        "match_id": match_id,
         "winner_id": winner_id,
+        "wins_a": wins_a,
+        "wins_b": wins_b,
+        "series_length": series_length,
         "advances_to": advances_to,
         "advances_to_slot": advances_to_slot,
     }
@@ -352,7 +358,7 @@ class TestFindNextNode(SimpleTestCase):
                 team_b_id=2,
                 seed_a=1,
                 seed_b=4,
-                match_id=99,
+                wins_a=1,  # Bo1 Series already clinched by team_a
                 winner_id=1,
             ),
             _node_dict(
@@ -385,7 +391,7 @@ class TestFindNextNode(SimpleTestCase):
                 team_b_id=2,
                 seed_a=1,
                 seed_b=4,
-                match_id=5,
+                wins_a=1,  # Bo1 Series already clinched -> nothing playable
                 winner_id=1,
             ),
         ]
@@ -853,6 +859,318 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
             0,
             msg=f"stdout={result.stdout!r} stderr={result.stderr!r}",
         )
+
+
+# ===========================================================================
+# LG-02b — Best-of-N series bracket nodes
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified).
+# Seam contract: ``.claude/worktrees/lg-02b-seam-contract.md``.
+#
+# ``clinch_threshold`` / ``series_winner_slot`` are pure series math; the new
+# ``find_next_node`` predicate consumes flat dicts carrying ``wins_a`` /
+# ``wins_b`` / ``series_length`` and NO ``match_id``. These imports are done
+# LAZILY inside each class so the new functions' absence (pre-Code-landing)
+# isolates the failure to these new classes and does NOT break the existing
+# (passing) classes above at module-collection time.
+
+
+def _series_node_dict(
+    *,
+    bracket_round: int,
+    position: int,
+    team_a_id: int | None = None,
+    team_b_id: int | None = None,
+    seed_a: int | None = None,
+    seed_b: int | None = None,
+    is_bye: bool = False,
+    winner_id: int | None = None,
+    wins_a: int = 0,
+    wins_b: int = 0,
+    series_length: int = 3,
+    advances_to: tuple[int, int] | None = None,
+    advances_to_slot: str | None = None,
+) -> dict:
+    """A flat node dict in the NEW LG-02b series shape.
+
+    Carries ``wins_a`` / ``wins_b`` / ``series_length`` and DROPS ``match_id``
+    (the new ``find_next_node`` predicate keys playability on the series score,
+    not on a single attached Match). Mirrors the LG-02a ``_node_dict`` style
+    plus the three new keys, minus ``match_id``.
+    """
+    return {
+        "bracket_round": bracket_round,
+        "position": position,
+        "team_a_id": team_a_id,
+        "team_b_id": team_b_id,
+        "seed_a": seed_a,
+        "seed_b": seed_b,
+        "is_bye": is_bye,
+        "winner_id": winner_id,
+        "wins_a": wins_a,
+        "wins_b": wins_b,
+        "series_length": series_length,
+        "advances_to": advances_to,
+        "advances_to_slot": advances_to_slot,
+    }
+
+
+class TestClinchThreshold(SimpleTestCase):
+    """``clinch_threshold(series_length) -> int``: wins needed to clinch."""
+
+    def test_best_of_1_needs_1(self) -> None:
+        from matches.bracket import clinch_threshold
+
+        self.assertEqual(clinch_threshold(1), 1)
+
+    def test_best_of_3_needs_2(self) -> None:
+        from matches.bracket import clinch_threshold
+
+        self.assertEqual(clinch_threshold(3), 2)
+
+    def test_best_of_5_needs_3(self) -> None:
+        from matches.bracket import clinch_threshold
+
+        self.assertEqual(clinch_threshold(5), 3)
+
+
+class TestSeriesWinnerSlot(SimpleTestCase):
+    """``series_winner_slot(wins_a, wins_b, series_length) -> 'a'|'b'|None``."""
+
+    def test_below_threshold_returns_none(self) -> None:
+        from matches.bracket import series_winner_slot
+
+        self.assertIsNone(series_winner_slot(0, 0, 3))
+        self.assertIsNone(series_winner_slot(1, 0, 3))
+        self.assertIsNone(series_winner_slot(0, 1, 3))
+
+    def test_a_at_threshold_returns_a(self) -> None:
+        from matches.bracket import series_winner_slot
+
+        self.assertEqual(series_winner_slot(1, 0, 1), "a")
+
+    def test_b_at_threshold_returns_b(self) -> None:
+        from matches.bracket import series_winner_slot
+
+        self.assertEqual(series_winner_slot(0, 1, 1), "b")
+
+    def test_bo3_boundary_one_one_is_none(self) -> None:
+        from matches.bracket import series_winner_slot
+
+        self.assertIsNone(series_winner_slot(1, 1, 3))
+
+    def test_bo3_two_zero_is_a(self) -> None:
+        from matches.bracket import series_winner_slot
+
+        self.assertEqual(series_winner_slot(2, 0, 3), "a")
+
+    def test_bo3_zero_two_is_b(self) -> None:
+        from matches.bracket import series_winner_slot
+
+        self.assertEqual(series_winner_slot(0, 2, 3), "b")
+
+    def test_bo5_two_two_is_none(self) -> None:
+        from matches.bracket import series_winner_slot
+
+        self.assertIsNone(series_winner_slot(2, 2, 5))
+
+    def test_bo5_three_zero_is_a(self) -> None:
+        from matches.bracket import series_winner_slot
+
+        self.assertEqual(series_winner_slot(3, 0, 5), "a")
+
+    def test_both_at_threshold_guard_a_checked_first(self) -> None:
+        # An impossible-in-practice double-clinch must resolve deterministically:
+        # ``a`` is checked first, so (2, 2, 3) returns "a".
+        from matches.bracket import series_winner_slot
+
+        self.assertEqual(series_winner_slot(2, 2, 3), "a")
+
+    def test_returns_a_b_or_none_only(self) -> None:
+        from matches.bracket import series_winner_slot
+
+        self.assertIn(series_winner_slot(2, 1, 3), ("a", "b", None))
+        self.assertIn(series_winner_slot(1, 1, 3), ("a", "b", None))
+
+
+class TestFindNextNodeSeries(SimpleTestCase):
+    """The NEW ``find_next_node`` predicate over series flat dicts.
+
+    A node is playable when both slots are filled, it is not a bye, and
+    ``series_winner_slot(wins_a, wins_b, series_length) is None`` (the series is
+    not yet clinched). A clinched node is skipped; a half-played Bo3 stays
+    playable; a Bo1 with one recorded win is clinched (skipped). Lowest
+    (bracket_round, position) returned first. No ``match_id`` key is read.
+    """
+
+    def test_returns_playable_unstarted_node(self) -> None:
+        from matches.bracket import find_next_node
+
+        nodes = [
+            _series_node_dict(
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=2,
+                seed_a=1,
+                seed_b=4,
+                series_length=3,
+            ),
+        ]
+        nxt = find_next_node(nodes)
+        self.assertIsNotNone(nxt)
+        self.assertEqual((nxt["bracket_round"], nxt["position"]), (1, 0))
+
+    def test_clinched_node_not_returned(self) -> None:
+        from matches.bracket import find_next_node
+
+        # Bo3 with 2-0 ⇒ clinched ⇒ NOT playable.
+        nodes = [
+            _series_node_dict(
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=2,
+                seed_a=1,
+                seed_b=4,
+                wins_a=2,
+                wins_b=0,
+                series_length=3,
+            ),
+        ]
+        self.assertIsNone(find_next_node(nodes))
+
+    def test_half_played_bo3_still_playable(self) -> None:
+        from matches.bracket import find_next_node
+
+        # Bo3 with 1-0 ⇒ not clinched ⇒ STILL playable (next game needed).
+        nodes = [
+            _series_node_dict(
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=2,
+                seed_a=1,
+                seed_b=4,
+                wins_a=1,
+                wins_b=0,
+                series_length=3,
+            ),
+        ]
+        nxt = find_next_node(nodes)
+        self.assertIsNotNone(nxt)
+        self.assertEqual((nxt["bracket_round"], nxt["position"]), (1, 0))
+
+    def test_bo1_with_one_win_is_clinched_not_playable(self) -> None:
+        from matches.bracket import find_next_node
+
+        # Bo1 with 1 recorded win ⇒ clinched ⇒ NOT playable.
+        nodes = [
+            _series_node_dict(
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=2,
+                seed_a=1,
+                seed_b=4,
+                wins_a=1,
+                wins_b=0,
+                series_length=1,
+            ),
+        ]
+        self.assertIsNone(find_next_node(nodes))
+
+    def test_skips_bye_nodes(self) -> None:
+        from matches.bracket import find_next_node
+
+        nodes = [
+            _series_node_dict(
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=None,
+                seed_a=1,
+                is_bye=True,
+                winner_id=1,
+                series_length=3,
+            ),
+            _series_node_dict(
+                bracket_round=1,
+                position=1,
+                team_a_id=4,
+                team_b_id=5,
+                seed_a=4,
+                seed_b=5,
+                series_length=3,
+            ),
+        ]
+        nxt = find_next_node(nodes)
+        self.assertEqual((nxt["bracket_round"], nxt["position"]), (1, 1))
+
+    def test_skips_nodes_with_an_empty_slot(self) -> None:
+        from matches.bracket import find_next_node
+
+        nodes = [
+            _series_node_dict(
+                bracket_round=2,
+                position=0,
+                team_a_id=1,
+                team_b_id=None,
+                seed_a=1,
+                series_length=3,
+            ),
+        ]
+        self.assertIsNone(find_next_node(nodes))
+
+    def test_returns_lowest_round_position_first(self) -> None:
+        from matches.bracket import find_next_node
+
+        nodes = [
+            _series_node_dict(
+                bracket_round=1,
+                position=1,
+                team_a_id=3,
+                team_b_id=5,
+                seed_a=2,
+                seed_b=3,
+                series_length=3,
+            ),
+            _series_node_dict(
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=2,
+                seed_a=1,
+                seed_b=4,
+                series_length=3,
+            ),
+        ]
+        nxt = find_next_node(nodes)
+        self.assertEqual((nxt["bracket_round"], nxt["position"]), (1, 0))
+
+    def test_returns_none_when_all_clinched(self) -> None:
+        from matches.bracket import find_next_node
+
+        nodes = [
+            _series_node_dict(
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=2,
+                seed_a=1,
+                seed_b=4,
+                wins_a=2,
+                wins_b=1,
+                series_length=3,
+            ),
+        ]
+        self.assertIsNone(find_next_node(nodes))
+
+    def test_empty_list_returns_none(self) -> None:
+        from matches.bracket import find_next_node
+
+        self.assertIsNone(find_next_node([]))
 
 
 # Reference to silence unused-import warnings if BracketNodeSpec is dropped.

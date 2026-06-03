@@ -317,3 +317,205 @@ class TestTournamentChampionStamping(TestCase):
         t.champion = team
         t.save()
         self.assertIn(t, team.tournaments_won.all())
+
+
+# ===========================================================================
+# LG-02b — Best-of-N series bracket nodes (SeriesMatch + series_length +
+# _node_to_dict series keys)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified).
+# Seam contract: ``.claude/worktrees/lg-02b-seam-contract.md``.
+#
+# ``SeriesMatch`` / ``_node_to_dict`` are imported LAZILY inside each method so
+# their absence (pre-Code-landing) isolates the failure to these new classes
+# and does NOT break the existing (passing) classes above at collection time.
+
+
+class TestSeriesMatchModel(TestCase):
+    """``SeriesMatch`` row shape, ordering, uniqueness, and on_delete rules."""
+
+    def _node(self, tournament: Tournament | None = None) -> BracketNode:
+        t = tournament or Tournament.objects.create(name="Cup")
+        return BracketNode.objects.create(tournament=t, bracket_round=1, position=0)
+
+    def test_create_row_with_node_match_game_number_winner(self) -> None:
+        from matches.models import Match, SeriesMatch
+
+        node = self._node()
+        team_a = make_team_with_slots("A")[0]
+        team_b = make_team_with_slots("B")[0]
+        match = Match.objects.create(
+            team_red=team_a, team_blue=team_b, match_type="tournament"
+        )
+        sm = SeriesMatch.objects.create(
+            node=node, match=match, game_number=1, winner=team_a
+        )
+        self.assertEqual(sm.node_id, node.id)
+        self.assertEqual(sm.match_id, match.id)
+        self.assertEqual(sm.game_number, 1)
+        self.assertEqual(sm.winner_id, team_a.id)
+
+    def test_related_name_series_matches(self) -> None:
+        from matches.models import SeriesMatch
+
+        node = self._node()
+        SeriesMatch.objects.create(node=node, game_number=1)
+        self.assertEqual(node.series_matches.count(), 1)
+
+    def test_meta_ordering_by_game_number(self) -> None:
+        from matches.models import SeriesMatch
+
+        node = self._node()
+        SeriesMatch.objects.create(node=node, game_number=3)
+        SeriesMatch.objects.create(node=node, game_number=1)
+        SeriesMatch.objects.create(node=node, game_number=2)
+        nums = list(node.series_matches.values_list("game_number", flat=True))
+        self.assertEqual(nums, [1, 2, 3])
+
+    def test_unique_node_game_number_rejected(self) -> None:
+        from matches.models import SeriesMatch
+
+        node = self._node()
+        SeriesMatch.objects.create(node=node, game_number=1)
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                SeriesMatch.objects.create(node=node, game_number=1)
+
+    def test_same_game_number_allowed_across_different_nodes(self) -> None:
+        from matches.models import SeriesMatch
+
+        t = Tournament.objects.create(name="Cup")
+        node_a = BracketNode.objects.create(tournament=t, bracket_round=1, position=0)
+        node_b = BracketNode.objects.create(tournament=t, bracket_round=1, position=1)
+        SeriesMatch.objects.create(node=node_a, game_number=1)
+        SeriesMatch.objects.create(node=node_b, game_number=1)
+        self.assertEqual(SeriesMatch.objects.filter(game_number=1).count(), 2)
+
+    def test_node_delete_cascades_series_match(self) -> None:
+        from matches.models import SeriesMatch
+
+        node = self._node()
+        sm = SeriesMatch.objects.create(node=node, game_number=1)
+        sm_id = sm.id
+        node.delete()
+        self.assertFalse(SeriesMatch.objects.filter(pk=sm_id).exists())
+
+    def test_match_delete_set_null_leaves_row(self) -> None:
+        from matches.models import Match, SeriesMatch
+
+        node = self._node()
+        team_a = make_team_with_slots("A")[0]
+        team_b = make_team_with_slots("B")[0]
+        match = Match.objects.create(
+            team_red=team_a, team_blue=team_b, match_type="tournament"
+        )
+        sm = SeriesMatch.objects.create(node=node, match=match, game_number=1)
+        match.delete()
+        sm.refresh_from_db()
+        self.assertIsNone(sm.match_id)
+        self.assertTrue(SeriesMatch.objects.filter(pk=sm.id).exists())
+
+    def test_winner_team_delete_set_null_leaves_row(self) -> None:
+        from matches.models import SeriesMatch
+
+        node = self._node()
+        team = make_team_with_slots("W")[0]
+        sm = SeriesMatch.objects.create(node=node, game_number=1, winner=team)
+        team.delete()
+        sm.refresh_from_db()
+        self.assertIsNone(sm.winner_id)
+        self.assertTrue(SeriesMatch.objects.filter(pk=sm.id).exists())
+
+
+class TestTournamentSeriesLength(TestCase):
+    """``Tournament.series_length`` default + 1/3/5 choices + lock immutability."""
+
+    def test_series_length_defaults_to_one(self) -> None:
+        t = Tournament.objects.create(name="Cup")
+        self.assertEqual(t.series_length, 1)
+
+    def test_series_length_accepts_one_three_five(self) -> None:
+        for length in (1, 3, 5):
+            t = Tournament.objects.create(name=f"Cup{length}", series_length=length)
+            t.refresh_from_db()
+            self.assertEqual(t.series_length, length)
+
+    def test_relocking_a_locked_tournament_still_raises(self) -> None:
+        # series_length immutability after lock is enforced by the existing
+        # lock_and_build state guard — re-locking a locked tournament raises.
+        t = _tournament_with_participants(4)
+        t.series_length = 3
+        t.save(update_fields=["series_length"])
+        t.lock_and_build()
+        with self.assertRaises(ValidationError):
+            t.lock_and_build()
+
+
+class TestNodeToDictSeriesKeys(TestCase):
+    """``_node_to_dict`` carries ``wins_a`` / ``wins_b`` / ``series_length`` and
+    DROPS ``match_id`` (the LG-02b series shape)."""
+
+    def _node_with_series(
+        self, series_length: int
+    ) -> tuple[BracketNode, object, object]:
+        t = Tournament.objects.create(name="Cup", series_length=series_length)
+        team_a = make_team_with_slots("A")[0]
+        team_b = make_team_with_slots("B")[0]
+        node = BracketNode.objects.create(
+            tournament=t,
+            bracket_round=1,
+            position=0,
+            team_a=team_a,
+            team_b=team_b,
+            seed_a=1,
+            seed_b=2,
+        )
+        return node, team_a, team_b
+
+    def test_no_match_id_key_present(self) -> None:
+        from matches.models import _node_to_dict
+
+        node, _a, _b = self._node_with_series(3)
+        d = _node_to_dict(node)
+        self.assertNotIn("match_id", d)
+
+    def test_three_new_keys_present(self) -> None:
+        from matches.models import _node_to_dict
+
+        node, _a, _b = self._node_with_series(3)
+        d = _node_to_dict(node)
+        self.assertIn("wins_a", d)
+        self.assertIn("wins_b", d)
+        self.assertIn("series_length", d)
+
+    def test_series_length_from_tournament(self) -> None:
+        from matches.models import _node_to_dict
+
+        node, _a, _b = self._node_with_series(5)
+        d = _node_to_dict(node)
+        self.assertEqual(d["series_length"], 5)
+
+    def test_wins_count_by_winner_team(self) -> None:
+        from matches.models import Match, SeriesMatch, _node_to_dict
+
+        node, team_a, team_b = self._node_with_series(3)
+        # team_a wins games 1 and 2; team_b wins game 3.
+        for game, winner in ((1, team_a), (2, team_a), (3, team_b)):
+            match = Match.objects.create(
+                team_red=team_a, team_blue=team_b, match_type="tournament"
+            )
+            SeriesMatch.objects.create(
+                node=node, match=match, game_number=game, winner=winner
+            )
+        d = _node_to_dict(node)
+        self.assertEqual(d["wins_a"], 2)
+        self.assertEqual(d["wins_b"], 1)
+
+    def test_wins_zero_when_no_series_matches(self) -> None:
+        from matches.models import _node_to_dict
+
+        node, _a, _b = self._node_with_series(3)
+        d = _node_to_dict(node)
+        self.assertEqual(d["wins_a"], 0)
+        self.assertEqual(d["wins_b"], 0)

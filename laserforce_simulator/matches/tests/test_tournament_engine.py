@@ -84,7 +84,8 @@ class TestPlayNextNodeResolvesOneNode(TestCase):
         t = _active_tournament(4)
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
             play_next_node(t)
-        played = t.nodes.filter(match__isnull=False)
+        # Bo1: one Match per node is recorded as a SeriesMatch row.
+        played = t.nodes.filter(series_matches__isnull=False).distinct()
         self.assertEqual(played.count(), 1)
 
     def test_stamps_winner_on_resolved_node(self) -> None:
@@ -95,7 +96,7 @@ class TestPlayNextNodeResolvesOneNode(TestCase):
             node = play_next_node(t)
         node.refresh_from_db()
         self.assertIsNotNone(node.winner)
-        self.assertIsNotNone(node.match)
+        self.assertTrue(node.series_matches.exists())
 
     def test_winner_is_one_of_the_two_node_teams(self) -> None:
         from matches.tournament_engine import play_next_node
@@ -370,5 +371,239 @@ class TestPlayNextNodeAtomicity(TestCase):
         t.refresh_from_db()
         # No node gained a winner; the atomic unit rolled back.
         self.assertEqual(t.nodes.filter(winner__isnull=False).count(), winners_before)
-        # No node ended up with a Match attached either.
-        self.assertEqual(t.nodes.filter(match__isnull=False).count(), 0)
+        # No SeriesMatch row survived either — the atomic unit rolled back.
+        self.assertEqual(t.nodes.filter(series_matches__isnull=False).count(), 0)
+
+
+# ===========================================================================
+# LG-02b — Best-of-N series ``play_next_node``
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified).
+# Seam contract: ``.claude/worktrees/lg-02b-seam-contract.md``.
+#
+# A series node clinches only once a team reaches ``clinch_threshold`` game
+# wins; each ``play_next_node`` call resolves ONE game (one SeriesMatch row).
+# The sims are RANDOM, so we never assert WHICH team clinches or exact points —
+# we drive the node to resolution via repeated calls and assert the clinch
+# invariants (winner has the threshold, loser is below it, no dead-rubber game).
+
+
+def _series_tournament(n: int, series_length: int, *, name: str) -> Tournament:
+    """A locked/active best-of-``series_length`` Tournament."""
+    t = _setup_tournament(n, name=name)
+    t.series_length = series_length
+    t.save(update_fields=["series_length"])
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+class TestPlayNextNodeSeries(TestCase):
+    """Bo3 node: one game per call; node.winner only set at the clinch."""
+
+    def test_first_call_creates_one_series_match_no_winner_yet(self) -> None:
+        from matches.bracket import clinch_threshold
+        from matches.models import SeriesMatch
+        from matches.tournament_engine import play_next_node
+
+        t = _series_tournament(4, 3, name="EngBo3First")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            node = play_next_node(t)
+        node.refresh_from_db()
+        series = SeriesMatch.objects.filter(node=node)
+        # Exactly ONE game played so far.
+        self.assertEqual(series.count(), 1)
+        self.assertEqual(series.get().game_number, 1)
+        # 1 win < threshold 2 ⇒ node.winner still None.
+        self.assertEqual(clinch_threshold(3), 2)
+        self.assertIsNone(node.winner)
+
+    def test_drives_node_to_clinch_invariant(self) -> None:
+        from matches.bracket import clinch_threshold
+        from matches.models import SeriesMatch
+        from matches.tournament_engine import play_next_node
+
+        t = _series_tournament(4, 3, name="EngBo3Clinch")
+        threshold = clinch_threshold(3)  # 2
+
+        # Resolve the SAME first node repeatedly until it clinches. Each call
+        # resolves the lowest playable node; while this node is unclinched it is
+        # the lowest, so repeated calls keep playing IT until it clinches.
+        target = t.find_next_playable_node()
+        target_id = target.id
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(6):  # Bo3 resolves in at most 3 games; guard loop
+                node = t.nodes.get(pk=target_id)
+                if node.winner_id is not None:
+                    break
+                play_next_node(t)
+
+        node = t.nodes.get(pk=target_id)
+        self.assertIsNotNone(node.winner, "node must clinch within Bo3 games")
+
+        series = list(SeriesMatch.objects.filter(node=node))
+        wins_a = sum(1 for s in series if s.winner_id == node.team_a_id)
+        wins_b = sum(1 for s in series if s.winner_id == node.team_b_id)
+        winner_wins = max(wins_a, wins_b)
+        loser_wins = min(wins_a, wins_b)
+
+        # Clinch invariants:
+        self.assertEqual(winner_wins, threshold, "winner has exactly the threshold")
+        self.assertLess(loser_wins, threshold, "loser is below the threshold")
+        # No dead rubber: total games == winner_wins + loser_wins and never
+        # exceeds the series length.
+        self.assertEqual(len(series), winner_wins + loser_wins)
+        self.assertLessEqual(len(series), t.series_length)
+        # node.winner is the team with >= threshold SeriesMatch wins.
+        if wins_a >= threshold:
+            self.assertEqual(node.winner_id, node.team_a_id)
+        else:
+            self.assertEqual(node.winner_id, node.team_b_id)
+
+    def test_total_series_match_rows_between_threshold_and_length(self) -> None:
+        from matches.bracket import clinch_threshold
+        from matches.models import SeriesMatch
+        from matches.tournament_engine import play_next_node
+
+        t = _series_tournament(4, 3, name="EngBo3Count")
+        threshold = clinch_threshold(3)
+        target_id = t.find_next_playable_node().id
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(6):
+                node = t.nodes.get(pk=target_id)
+                if node.winner_id is not None:
+                    break
+                play_next_node(t)
+        count = SeriesMatch.objects.filter(node_id=target_id).count()
+        self.assertGreaterEqual(count, threshold)
+        self.assertLessEqual(count, t.series_length)
+
+    def test_clinch_advances_winner_into_parent_slot(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _series_tournament(4, 3, name="EngBo3Advance")
+        target_id = t.find_next_playable_node().id
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(6):
+                node = t.nodes.get(pk=target_id)
+                if node.winner_id is not None:
+                    break
+                play_next_node(t)
+        node = t.nodes.get(pk=target_id)
+        parent = node.advances_to
+        self.assertIsNotNone(parent)
+        parent.refresh_from_db()
+        slot_team = getattr(parent, f"team_{node.advances_to_slot}")
+        self.assertIsNotNone(slot_team)
+        self.assertEqual(slot_team.id, node.winner_id)
+
+    def test_final_clinch_stamps_champion_and_completed(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _series_tournament(4, 3, name="EngBo3Final")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            # Bo3 over a 4-team bracket: up to 3 games × 3 nodes = 9 calls.
+            for _ in range(30):
+                t.refresh_from_db()
+                if t.state == "completed":
+                    break
+                if play_next_node(t) is None:
+                    break
+        t.refresh_from_db()
+        self.assertEqual(t.state, "completed")
+        self.assertIsNotNone(t.champion)
+
+
+class TestPlayNextNodeBo1Equivalence(TestCase):
+    """``series_length=1`` ⇒ one game per node clinches immediately + advances
+    (the LG-02a single-Match-per-node behaviour)."""
+
+    def test_single_call_clinches_and_advances(self) -> None:
+        from matches.models import SeriesMatch
+        from matches.tournament_engine import play_next_node
+
+        t = _series_tournament(4, 1, name="EngBo1Single")
+        target_id = t.find_next_playable_node().id
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_next_node(t)
+        node = t.nodes.get(pk=target_id)
+        node.refresh_from_db()
+        # Exactly one SeriesMatch and the node is immediately resolved.
+        self.assertEqual(SeriesMatch.objects.filter(node=node).count(), 1)
+        self.assertIsNotNone(node.winner)
+        # The winner advanced into the parent slot.
+        parent = node.advances_to
+        parent.refresh_from_db()
+        slot_team = getattr(parent, f"team_{node.advances_to_slot}")
+        self.assertEqual(slot_team.id, node.winner_id)
+
+    def test_resolved_tree_shape_after_full_play(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _series_tournament(4, 1, name="EngBo1Tree")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(10):
+                t.refresh_from_db()
+                if t.state == "completed":
+                    break
+                if play_next_node(t) is None:
+                    break
+        t.refresh_from_db()
+        self.assertEqual(t.state, "completed")
+        self.assertIsNotNone(t.champion)
+        # Every non-bye node has exactly one SeriesMatch (Bo1) and a winner.
+        from matches.models import SeriesMatch
+
+        for node in t.nodes.filter(is_bye=False):
+            self.assertIsNotNone(node.winner_id)
+            self.assertEqual(SeriesMatch.objects.filter(node=node).count(), 1)
+
+
+class TestPlayNextNodeSeriesTieBreak(TestCase):
+    """A single game within a series that ends a true Match tie resolves via
+    ``break_tie`` so the SeriesMatch.winner is non-null.
+
+    Existing ``TestPlayNextNodeTieBreak`` above covers the Bo1 view-level path;
+    this asserts the same for one game of a Bo3 (patching ``simulate_match`` to
+    return a pre-built tied Match so the seed-based break fires deterministically).
+    """
+
+    def _forced_tie_match(self, team_red: Team, team_blue: Team) -> Match:
+        # rounds split 1-1, equal totals ⇒ Match.winner is None (true tie).
+        return Match.objects.create(
+            team_red=team_red,
+            team_blue=team_blue,
+            match_type="tournament",
+            red_round1_points=500,
+            blue_round1_points=10,
+            red_round2_points=10,
+            blue_round2_points=500,
+            is_completed=True,
+        )
+
+    def test_tied_game_records_non_null_series_match_winner(self) -> None:
+        from matches.models import SeriesMatch
+        from matches.tournament_engine import play_next_node
+
+        t = _series_tournament(4, 3, name="EngBo3Tie")
+        node = t.find_next_playable_node()
+        lower_seed = min(node.seed_a, node.seed_b)
+        lower_team_id = node.team_a_id if node.seed_a == lower_seed else node.team_b_id
+
+        def _fake_simulate_match(sim_self, team_red, team_blue, *args, **kwargs):
+            return self._forced_tie_match(team_red, team_blue)
+
+        with patch.object(
+            BatchSimulator,
+            "simulate_match",
+            autospec=True,
+            side_effect=_fake_simulate_match,
+        ):
+            play_next_node(t)
+
+        # The first game of the series recorded a winner chosen by break_tie:
+        # equal best single-Round score ⇒ the lower Bracket seed advances.
+        game1 = SeriesMatch.objects.get(node=node, game_number=1)
+        self.assertIsNotNone(game1.winner_id)
+        self.assertEqual(game1.winner_id, lower_team_id)

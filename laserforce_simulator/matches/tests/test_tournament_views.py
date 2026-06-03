@@ -387,8 +387,8 @@ class TestTournamentPlayNext(TestCase):
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
             response = self.client.post(reverse("tournament_play_next", args=[t.id]))
         self.assertEqual(response.status_code, 302)
-        # Exactly one node now has a Match attached + a winner.
-        played = t.nodes.filter(match__isnull=False)
+        # Bo1: exactly one node now has a SeriesMatch row + a winner.
+        played = t.nodes.filter(series_matches__isnull=False).distinct()
         self.assertEqual(played.count(), 1)
         node = played.get()
         self.assertIsNotNone(node.winner)
@@ -397,7 +397,7 @@ class TestTournamentPlayNext(TestCase):
         t = _active_tournament(4)
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
             self.client.post(reverse("tournament_play_next", args=[t.id]))
-        node = t.nodes.filter(match__isnull=False).get()
+        node = t.nodes.filter(series_matches__isnull=False).distinct().get()
         parent = node.advances_to
         self.assertIsNotNone(parent)
         parent.refresh_from_db()
@@ -858,7 +858,7 @@ class TestTournamentPlayNextStillResolvesOneNode(TestCase):
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
             response = self.client.post(reverse("tournament_play_next", args=[t.id]))
         self.assertEqual(response.status_code, 302)
-        played = t.nodes.filter(match__isnull=False)
+        played = t.nodes.filter(series_matches__isnull=False).distinct()
         self.assertEqual(played.count(), 1)
         self.assertIsNotNone(played.get().winner)
 
@@ -889,3 +889,158 @@ def _player_count() -> int:
     from teams.models import Player
 
     return Player.objects.count()
+
+
+# ===========================================================================
+# LG-02b — Best-of-N series: create-form series-length + detail series score
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified).
+# Seam contract: ``.claude/worktrees/lg-02b-seam-contract.md`` §views/§templates.
+
+
+class TestTournamentCreateSeriesLength(TestCase):
+    """GET form renders the series-length <select>; POST persists 1/3/5 with a
+    forgiving fallback to 1 on invalid input."""
+
+    def test_get_form_renders_series_length_select(self) -> None:
+        make_team_with_slots("Existing")
+        response = self.client.get(reverse("tournament_create"))
+        self.assertIn('id="tournament-create-series-length"', response.content.decode())
+
+    def test_post_series_length_three_persisted(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Bo3 Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "series_length": "3",
+            },
+        )
+        t = Tournament.objects.get(name="Bo3 Cup")
+        self.assertEqual(t.series_length, 3)
+
+    def test_post_series_length_five_persisted(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Bo5 Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "series_length": "5",
+            },
+        )
+        t = Tournament.objects.get(name="Bo5 Cup")
+        self.assertEqual(t.series_length, 5)
+
+    def test_post_invalid_series_length_falls_back_to_one(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Bad Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "series_length": "4",  # not a valid choice (1/3/5)
+            },
+        )
+        t = Tournament.objects.get(name="Bad Cup")
+        self.assertEqual(t.series_length, 1)
+
+    def test_post_junk_series_length_falls_back_to_one(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Junk Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "series_length": "abc",
+            },
+        )
+        t = Tournament.objects.get(name="Junk Cup")
+        self.assertEqual(t.series_length, 1)
+
+    def test_post_missing_series_length_defaults_to_one(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "NoSeries Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+            },
+        )
+        t = Tournament.objects.get(name="NoSeries Cup")
+        self.assertEqual(t.series_length, 1)
+
+
+class TestTournamentDetailSeriesScore(TestCase):
+    """A locked Bo3 tournament renders the per-node running series score; a
+    completed tournament still shows the champion banner."""
+
+    def _bo3_active(self, n: int = 4, *, name: str = "Bo3Detail") -> Tournament:
+        t = _setup_tournament(n, name=name)
+        t.series_length = 3
+        t.save(update_fields=["series_length"])
+        t.lock_and_build()
+        t.refresh_from_db()
+        return t
+
+    def test_node_series_score_dom_id_present(self) -> None:
+        t = self._bo3_active()
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        body = response.content.decode()
+        # The round-1 node at position 0 carries the series-score element.
+        self.assertIn('id="tournament-node-series-score-1-0"', body)
+
+    def test_series_score_shows_running_wins(self) -> None:
+        from matches.models import Match, SeriesMatch
+
+        t = self._bo3_active()
+        node = t.find_next_playable_node()
+        # Record one game won by team_a so the running score reads 1-0.
+        match = Match.objects.create(
+            team_red=node.team_a,
+            team_blue=node.team_b,
+            match_type="tournament",
+        )
+        SeriesMatch.objects.create(
+            node=node, match=match, game_number=1, winner=node.team_a
+        )
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        body = response.content.decode()
+        score_id = (
+            f'id="tournament-node-series-score-'
+            f'{node.bracket_round}-{node.position}"'
+        )
+        self.assertIn(score_id, body)
+        # The running wins_a-wins_b (1-0) appears in the rendered score element.
+        marker = body.index(score_id)
+        window = body[marker : marker + 400]
+        self.assertIn("1", window)
+        self.assertIn("0", window)
+
+    def test_completed_bo3_shows_champion_banner(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = self._bo3_active(name="Bo3Completed")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(30):
+                t.refresh_from_db()
+                if t.state == "completed":
+                    break
+                if play_next_node(t) is None:
+                    break
+        t.refresh_from_db()
+        self.assertEqual(t.state, "completed")
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        self.assertIn('id="tournament-champion-banner"', response.content.decode())

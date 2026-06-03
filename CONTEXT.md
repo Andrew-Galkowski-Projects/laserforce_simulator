@@ -460,8 +460,8 @@ One tier of a **Bracket** — first round, Quarterfinal, Semifinal, Final, 3rd-P
 _Avoid_: conflating a **Bracket round** with a **Round** (the 15-min game unit persisted as `GameRound`). A single **Match** at one **Bracket node** is itself two game **Rounds**; the bracket tier those Rounds sit in is the **Bracket round**.
 
 **Bracket node**:
-One structural slot in a **Bracket** — a `(bracket_round, position)` — holding two **Bracket seed** team-slots (filled by **Seeding** for the first round, by **Advancement** thereafter) and, once simulated, exactly one **Match** (node = one Match in v1; best-of-N **series** deferred). The node's winner is the **Match** winner, except a tied **Match** is broken **best single-Round score → higher Bracket seed** (a Bracket needs a decisive advancer; a `winner_id IS NULL` Match cannot stand here).
-_Avoid_: treating a tied **Match** at a node as terminal (Standings tolerates a tie; a Bracket must advance someone — apply the deterministic tiebreaker); reading a node as more than one **Match** in v1.
+One structural slot in a **Bracket** — a `(bracket_round, position)` — holding two **Bracket seed** team-slots (filled by **Seeding** for the first round, by **Advancement** thereafter) and a **Series** of one-or-more **Matches** (LG-02b: the node holds a best-of-N Series; a **Bo1** Series — `series_length == 1` — is exactly the LG-02a single-Match node). The node's winner is the **Team** that **clinches** the Series (the first to win the majority of its Matches); each individual **Match** in the Series is itself made decisive — a tied **Match** is broken **best single-Round score → higher Bracket seed** so it counts toward exactly one side's tally (a `winner_id IS NULL` Match cannot stand at a node).
+_Avoid_: treating a tied **Match** within a Series as terminal (Standings tolerates a tie; a Bracket must advance someone — apply the deterministic per-Match tiebreaker); confusing the **Series** count (in **Matches**) with the two **Rounds** inside each Match; calling the Series unit a "game" (it is a **Match**).
 
 **Bracket seed**:
 A **Team**'s tournament ranking within one **Bracket** (1 = top seed), determining its **Seeding** placement (1 plays the lowest seed, standard 1v8 / 4v5 pairing) and serving as the final **Bracket node** tiebreaker. An int `seed` on the tournament participant.
@@ -475,6 +475,14 @@ A **Bracket node**'s winner moving into its parent node's open team-slot — the
 
 **Bye**:
 A top **Bracket seed** with no first-round opponent (non-power-of-2 field) that auto-advances to the next **Bracket round**. Distinct from the round-robin "bye sentinel" already used by `matches/schedule_generator.py` for odd-N **Season** schedules.
+
+**Series**:
+The best-of-N set of **Matches** played at one **Bracket node** (LG-02b). Counted in **Matches**, never in **Rounds** and never as "games": a best-of-3 Series is up to **3 Matches**, won by the first **Team** to **clinch** 2 Match wins; best-of-5 is up to 5, clinch at 3. Each Match in the Series remains its own two-**Round** contest with the per-Match colour swap, so a Bo3 node simulates 4–6 Rounds. Because **Series length** is odd, a Series always produces a decisive winner — there is no Series-level tie-break (the tie-break operates per-**Match**). A **Bo1** Series (`series_length == 1`) is exactly the LG-02a single-Match node.
+_Avoid_: counting a Series in **Rounds** or "games" (the unit is the **Match**); inventing a Series-level tiebreaker (odd N always clinches; ties are broken per-Match); playing dead-rubber Matches after a Team has clinched (the Series stops the moment the majority is reached).
+
+**Series length**:
+The odd integer N (1 / 3 / 5) fixing how many **Match** wins clinch a **Series** — `(N // 2) + 1` wins. A single per-**Tournament** value (`Tournament.series_length`, default **1**) applied to every **Bracket node** in LG-02b; per-**Bracket-round** escalation (Bo1 early → Bo5 final) is a deferred follow-up. **Clinch** = reaching `(N // 2) + 1` Match wins.
+_Avoid_: confusing **Series length** (Matches-to-win-a-node) with the fixed two **Rounds** per **Match**; treating an even N as valid (a Series must be decisive).
 
 ## Relationships
 

@@ -90,8 +90,15 @@
                 </div>
                 {% if node.is_bye %}
                 <div><small class="text-muted">Bye</small></div>
-                {% elif node.match %}
-                <div><a href="{% url 'match_detail' node.match.id %}">View match</a></div>
+                {% else %}
+                <div id="tournament-node-series-score-{{ node.bracket_round }}-{{ node.position }}">
+                    <small class="text-muted">{{ node.wins_a }}–{{ node.wins_b }}</small>
+                </div>
+                {% for sm in node.series_matches %}
+                {% if sm.match %}
+                <div><a href="{% url 'match_detail' sm.match.id %}">Game {{ sm.game_number }}</a></div>
+                {% endif %}
+                {% endfor %}
                 {% endif %}
                 {% if node.winner %}
                 <div><strong>Winner: {{ node.winner.name }}</strong></div>
