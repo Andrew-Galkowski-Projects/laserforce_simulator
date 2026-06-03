@@ -1,3 +1,42 @@
+# Web testing — LG-02c (double-elimination tournaments)
+
+Date: 2026-06-03
+Branch: `lg-02c-double-elimination`
+Scope: smoke-test the LG-02c surfaces — the new `Bracket format` select on
+`/tournaments/create/`, the three-section double-elim render (Winners / Losers /
+Grand Final) at `/tournaments/<id>/`, byes, the Drop into the losers bracket, the
+bracket-reset Grand Final, and a champion; plus a single-elim regression check
+that legacy DOM ids are unchanged.
+
+## Summary — LG-02c
+
+| Area | Result |
+|---|---|
+| Create form — `Bracket format` select (id `tournament-create-format`) offers Single / Double elimination | ✅ |
+| Create (generate 6) double-elim → tournament 5, setup state, 6 participants | ✅ |
+| Lock & Build → state `active`; three containers `tournament-bracket-{winners,losers,grand-final}` render; no legacy `tournament-bracket` | ✅ |
+| DE node ids namespaced: `tournament-node-{winners,losers,grand_final}-{round}-{position}` (e.g. `…-grand_final-5-0` = GF1, `…-grand_final-6-0` = GF2) | ✅ |
+| WB byes for N=6 (size 8): top 2 seeds show `Bye` / `Winner: …`, only 2 of 4 R1 nodes carry a Series | ✅ |
+| Drove 11 synchronous `Play Next` POSTs → state flips to `Completed` | ✅ |
+| Drop path: champion = Hyperion Hunters (seed 6) came up through the **Losers bracket** | ✅ |
+| Bracket reset: LB champ won GF1 → GF2 (round 6) was **played** (not inert), LB champ won the reset → champion; `tournament-champion-banner` shows `Champion: Hyperion Hunters #14` | ✅ |
+| Single-elim regression (tournament 6, locked): legacy `tournament-bracket` container + legacy node ids `tournament-node-{round}-{position}`, no `bracket_type` prefix, no "Winners Bracket" heading | ✅ |
+| Console errors/warnings | ✅ none |
+| Network non-2xx | ✅ none |
+
+## Findings — LG-02c
+
+- No bugs. All LG-02c surfaces behave per the seam contract: format select,
+  three-section render, byes, Drop, and the conditional bracket-reset Grand Final
+  (GF2 played because the LB champion won GF1) all correct; single-elim render is
+  byte-unchanged.
+- Note (pre-existing, NOT a LG-02c bug): the async `Play All` button stuck at
+  "Starting…" because no Celery worker was running in the dev session — the
+  LG-02a-2 async play-all path needs a broker+worker. The synchronous `Play Next`
+  path drains the bracket fine. Unrelated to this task.
+
+---
+
 # Web testing — LG-02b-2 (per-Bracket-round Series escalation)
 
 Date: 2026-06-03

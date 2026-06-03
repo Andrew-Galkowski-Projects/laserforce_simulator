@@ -385,3 +385,94 @@ class TestPlayTournamentTaskSeries:
             assert len(series) == winner_wins + loser_wins
             # The series never exceeds the NODE's stamped series_length.
             assert len(series) <= node.series_length
+
+
+# ---------------------------------------------------------------------------
+# LG-02c — Double-elimination via the Play Tournament task
+# ---------------------------------------------------------------------------
+#
+# NEW class appended below (existing classes above are NOT modified — the
+# single-elim task tests stay green). Seam contract:
+# ``.claude/worktrees/lg-02c-seam-contract.md`` §9 (async) / §6e.
+#
+# ``play_tournament_task`` drains a full DOUBLE-elim field (N=4) to a champion
+# under CELERY_TASK_ALWAYS_EAGER; the final {"completed","total"} reflects
+# ``stage_progress`` over BOTH brackets + GF (distinct (bracket_type,
+# bracket_round) group counts, NOT node counts).
+
+
+def _active_de_tournament(n: int, *, name: str, prefix: str):
+    """A locked/active DOUBLE-elim Tournament (default Bo1 everywhere) with its
+    two-tree bracket built."""
+    from matches.models import Tournament, TournamentParticipant
+
+    t = Tournament.objects.create(name=name, format="double_elimination")
+    for seed, team in enumerate(_make_teams(n, prefix), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+@pytest.mark.django_db
+class TestPlayTournamentTaskDoubleElim:
+    """§6e — a DE Tournament plays to a champion via ``play_tournament_task``
+    and the final stage counts span both brackets + GF."""
+
+    def test_de_plays_to_champion(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_de_tournament(4, name="TaskDE", prefix="TtDE")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        assert (
+            result.state == "SUCCESS"
+        ), f"expected SUCCESS, got {result.state!r}; info={result.info!r}"
+        t.refresh_from_db()
+        assert t.state == "completed"
+        assert t.champion_id is not None
+
+    def test_de_return_shape_is_stage_counts(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_de_tournament(4, name="TaskDEShape", prefix="TtDES")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        payload = result.result
+        assert set(payload.keys()) == {"completed", "total"}
+        assert isinstance(payload["completed"], int)
+        assert isinstance(payload["total"], int)
+
+    def test_de_stage_counts_span_both_brackets(self) -> None:
+        from matches.bracket import stage_progress
+        from matches.models import _node_to_dict
+        from matches.tasks import play_tournament_task
+
+        t = _active_de_tournament(4, name="TaskDESpan", prefix="TtDESpan")
+
+        # total = distinct (bracket_type, bracket_round) groups across the WB +
+        # LB + GF trees -> strictly more than the WB-only round count (a
+        # single-elim 4-team field would report total=2; DE spans more).
+        flat = [
+            _node_to_dict(n)
+            for n in t.nodes.select_related("advances_to").prefetch_related(
+                "series_matches"
+            )
+        ]
+        _completed_before, total_groups = stage_progress(flat)
+        assert total_groups > 2, (
+            "a DE field's stage total must span WB+LB+GF groups (> the 2 WB "
+            f"rounds of a single-elim 4-team field); got {total_groups}"
+        )
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        payload = result.result
+        # A completed DE tournament reports completed == total over all groups.
+        assert payload["total"] == total_groups
+        assert payload["completed"] == payload["total"]

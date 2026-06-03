@@ -452,11 +452,11 @@ A standalone bracketed competition run in **sandbox mode** (LG-02 Part 1) — it
 _Avoid_: treating a Tournament as a **Season** phase or a **League** (Part 1 Tournament is its own sandbox container, not owned by a League); routing a Tournament's **Bracket** through the **Season** `schedule_format` / `generate_schedule` path (that path is deterministic from the team set and cannot model results-contingent advancement); confusing a Tournament's standalone Teams with a Season's enrolled M2M.
 
 **Bracket**:
-The tree of **Bracket nodes** for a **Tournament**; the visual structure (rendered as a tree) through which winners **Advance** round by round to a final. For a single-elimination field of N **Teams** the Bracket has `N-1` decisive nodes across `ceil(log2(N))` **Bracket rounds**.
-_Avoid_: calling the Bracket a "schedule" (a **Season** schedule is a flat fixture list from `generate_schedule`; a Bracket is a results-contingent tree).
+The structure of **Bracket nodes** for a **Tournament**; the visual layout (rendered as a tree) through which winners **Advance** round by round to a final. A **single-elimination** field of N **Teams** is one tree of `N-1` decisive nodes across `ceil(log2(N))` **Bracket rounds**. A **double-elimination** field (LG-02c) is two coupled trees — a **Winners bracket** and a **Losers bracket** — joined by a **Grand final**: a Team is out only after its second loss, so the Bracket carries roughly twice the decisive nodes of single-elimination and a node's *loser* (not just its winner) has a destination (the **Drop** into the Losers bracket).
+_Avoid_: calling the Bracket a "schedule" (a **Season** schedule is a flat fixture list from `generate_schedule`; a Bracket is a results-contingent tree); assuming one tree (double-elimination is two coupled brackets).
 
 **Bracket round**:
-One tier of a **Bracket** — first round, Quarterfinal, Semifinal, Final, 3rd-Place — stored as an int depth (`bracket_round`) with a display label. **Never shortened to "Round."**
+One tier of a **Bracket** — first round, Quarterfinal, Semifinal, Final, 3rd-Place — stored as an int depth (`bracket_round`) with a display label. In **double-elimination** the `bracket_round` int is namespaced by which sub-bracket it belongs to (**Winners bracket** / **Losers bracket** / **Grand final**), so the same `bracket_round` number can appear once per sub-bracket; a node's identity is its (sub-bracket, `bracket_round`, position). **Never shortened to "Round."**
 _Avoid_: conflating a **Bracket round** with a **Round** (the 15-min game unit persisted as `GameRound`). A single **Match** at one **Bracket node** is itself two game **Rounds**; the bracket tier those Rounds sit in is the **Bracket round**.
 
 **Bracket node**:
@@ -471,10 +471,30 @@ _Avoid_: confusing a **Bracket seed** with an **RNG seed** / **Master seed** / *
 Assigning **Bracket seeds** to a **Tournament**'s enrolled **Teams** and placing them into the first **Bracket round**'s nodes by standard bracket pairing. Distinct from a **Bye**.
 
 **Advancement**:
-A **Bracket node**'s winner moving into its parent node's open team-slot — the mechanic that fills the **Bracket** round by round as Matches are played.
+A **Bracket node**'s winner moving into its parent node's open team-slot — the mechanic that fills the **Bracket** round by round as Matches are played. In **double-elimination** Advancement is paired with its sibling **Drop**: the winner Advances (up the **Winners bracket**, or up the **Losers bracket**, or into the **Grand final**) while the loser either **Drops** into a **Losers bracket** slot (if it had no prior loss) or is eliminated (if it was already in the Losers bracket).
 
 **Bye**:
-A top **Bracket seed** with no first-round opponent (non-power-of-2 field) that auto-advances to the next **Bracket round**. Distinct from the round-robin "bye sentinel" already used by `matches/schedule_generator.py` for odd-N **Season** schedules.
+A top **Bracket seed** with no first-round opponent (non-power-of-2 field) that auto-advances to the next **Bracket round**. Distinct from the round-robin "bye sentinel" already used by `matches/schedule_generator.py` for odd-N **Season** schedules. In **double-elimination** a Winners-bracket Bye also produces no loser, so the **Losers bracket** slot that would have received that loser is empty and collapses (a **Drop bye** — the LB analogue of the WB Bye, resolved by the same auto-advance cascade).
+
+**Winners bracket**:
+The upper of the two coupled trees in a **double-elimination** **Bracket** — every **Team** starts here, and **Advances** through it exactly as in single-elimination until its first loss, which **Drops** it into the **Losers bracket**. The Winners-bracket champion reaches the **Grand final** unbeaten. (Abbreviated WB in prose; the canonical term is "Winners bracket.")
+_Avoid_: treating the Winners bracket as the whole Bracket (it is one of two coupled trees); calling a first WB loss an **Elimination** (a first loss is a **Drop**, not an exit — Elimination in this glossary is the in-game last-life event, and a Tournament exit happens only on a **Team**'s second Match-level loss).
+
+**Losers bracket**:
+The lower of the two coupled trees in a **double-elimination** **Bracket**, populated by **Teams** that **Drop** from the **Winners bracket** on their first loss. A second loss here eliminates the Team from the Tournament. The Losers-bracket champion enters the **Grand final** carrying one loss. (Abbreviated LB; canonical term "Losers bracket.")
+_Avoid_: confusing a Losers-bracket loss (Tournament exit) with a Winners-bracket loss (a **Drop**, second chance retained).
+
+**Drop**:
+The movement of a **Winners bracket** node's *loser* into a specific **Losers bracket** node slot — the double-elimination sibling of **Advancement** (which moves the *winner*). Each WB node has a Drop destination (LB node + slot) fixed at build time. The LG-02c first slice uses a **naive same-position drop** (the loser of WB-round-*r* position *i* drops into the matching LB slot by position, with **no** anti-rematch slot-folding) — simpler than the textbook anti-rematch map and accepted as a known limitation: a dropped Team may immediately replay one it just faced (anti-rematch folding is a deferred follow-up). A WB **Bye** produces no loser, so its Drop slot stays empty and collapses (a **Drop bye**).
+_Avoid_: using "Drop" for the winner's move (that is **Advancement**); assuming a Losers-bracket node also Drops its loser (an LB loser is eliminated, it Drops nowhere); assuming anti-rematch folding (the first slice is a naive position drop).
+
+**Grand final**:
+The final stage of a **double-elimination** **Tournament**, between the **Winners bracket** champion (unbeaten) and the **Losers bracket** champion (one loss). Played as a **Bracket reset**: the first Grand-final **Series** (GF1) is contested; if the WB champion wins it the Tournament ends, but if the LB champion wins GF1 both Teams now carry one loss and a second, deciding Grand-final Series (GF2, the "reset") is played for the title. GF2 is built alongside GF1 at lock time and auto-resolves (never played) when the WB champion wins GF1.
+_Avoid_: treating the Grand final as a single node (it is GF1 plus a conditional GF2 under **Bracket reset**); calling GF2 a "3rd-place match" (there is no separate 3rd-place node — double-elimination ranks 1st/2nd/3rd from the Grand final + the Losers-bracket final naturally).
+
+**Bracket reset**:
+The double-elimination **Grand final** rule that the **Winners bracket** champion must be beaten *twice* to lose the title: winning GF1 is enough for the WB champion (who arrived unbeaten), but the **Losers bracket** champion must win GF1 *and* the reset GF2. The mechanism that makes a Team's second loss — not its first — the elimination event all the way to the title.
+_Avoid_: conflating **Bracket reset** with an **RNG** reset or a **Round**/**Match** replay (it is a conditional second **Grand final** Series, not a re-simulation of the same Matches).
 
 **Series**:
 The best-of-N set of **Matches** played at one **Bracket node** (LG-02b). Counted in **Matches**, never in **Rounds** and never as "games": a best-of-3 Series is up to **3 Matches**, won by the first **Team** to **clinch** 2 Match wins; best-of-5 is up to 5, clinch at 3. Each Match in the Series remains its own two-**Round** contest with the per-Match colour swap, so a Bo3 node simulates 4–6 Rounds. Because **Series length** is odd, a Series always produces a decisive winner — there is no Series-level tie-break (the tie-break operates per-**Match**). A **Bo1** Series (`series_length == 1`) is exactly the LG-02a single-Match node.
@@ -485,7 +505,7 @@ The odd integer N (1 / 3 / 5) fixing how many **Match** wins clinch a **Series**
 _Avoid_: confusing **Series length** (Matches-to-win-a-node) with the fixed two **Rounds** per **Match**; treating an even N as valid (a Series must be decisive); assuming every node in a Tournament shares one Series length (it is per-**Bracket round** under **Series escalation**).
 
 **Series escalation**:
-A **Tournament**'s rule for letting **Series length** grow toward the **Final** — Bo1 early rounds, longer Series in the late rounds (the canonical "Bo1 early → Bo5 final"). Configured at create time and frozen at lock, anchored to **depth from the final** (not absolute **Bracket round** number, which is unstable while the participant field changes during setup). The ladder is expressed in four fixed slots regardless of field size: **Final** (depth 0), **Semifinals** (depth 1), **Quarterfinals** (depth 2), and **Earlier rounds** (depth ≥ 3, a catch-all covering every round before the quarterfinals). At lock, each node's `bracket_round` maps to a depth (`total_rounds − bracket_round`) and resolves its Series length from the matching slot.
+A **Tournament**'s rule for letting **Series length** grow toward the **Final** — Bo1 early rounds, longer Series in the late rounds (the canonical "Bo1 early → Bo5 final"). Configured at create time and frozen at lock, anchored to **depth from the final** (not absolute **Bracket round** number, which is unstable while the participant field changes during setup). The ladder is expressed in four fixed slots regardless of field size: **Final** (depth 0), **Semifinals** (depth 1), **Quarterfinals** (depth 2), and **Earlier rounds** (depth ≥ 3, a catch-all covering every round before the quarterfinals). At lock, each node's `bracket_round` maps to a depth (`total_rounds − bracket_round`) and resolves its Series length from the matching slot. In **double-elimination** (LG-02c) the same four slots apply, but a node's depth is its distance to the **Grand final** rather than a single tree's final: GF1/GF2 are depth 0 (Final slot), the **Winners bracket** final and **Losers bracket** final are depth 1 (Semifinals slot), and so on — so the late stages of *both* coupled brackets escalate together.
 _Avoid_: anchoring the ladder to absolute **Bracket round** numbers (round 3 is the final in a 4-team field but a semifinal in an 8-team field — depth-from-final is stable, round number is not); expecting per-(round, position) granularity (escalation is per **Bracket round** depth, applied uniformly across a round's nodes).
 
 ## Relationships

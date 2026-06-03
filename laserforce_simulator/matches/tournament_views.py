@@ -143,9 +143,17 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
     quarterfinal_series_length = _parse_series_length("quarterfinal_series_length")
     earlier_series_length = _parse_series_length("earlier_series_length")
 
+    # LG-02c — bracket format. Forgiving fallback (mirrors the series-length
+    # parses): only the two known formats are accepted, anything else (absent,
+    # tampered) falls back to single-elimination.
+    tournament_format = request.POST.get("format")
+    if tournament_format not in ("single_elimination", "double_elimination"):
+        tournament_format = "single_elimination"
+
     tournament = Tournament.objects.create(
         name=name,
         state="setup",
+        format=tournament_format,
         final_series_length=final_series_length,
         semifinal_series_length=semifinal_series_length,
         quarterfinal_series_length=quarterfinal_series_length,
@@ -164,14 +172,26 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
     return redirect("tournament_detail", tournament_id=tournament.id)
 
 
-def _build_rounds(tournament: Tournament) -> list[dict]:
-    """Group nodes into a list of {bracket_round, nodes} for the tree render."""
+def _build_rounds(tournament: Tournament) -> dict:
+    """Group nodes into a 3-key dict (one slice per sub-bracket) for the tree
+    render: ``{"winners": [...], "losers": [...], "grand_final": [...]}``, each
+    slice a list of ``{bracket_round, nodes}`` ordered by round.
+
+    For a single-elim Tournament ``"losers"`` and ``"grand_final"`` are empty
+    lists and ``"winners"`` carries the whole tree (so the WB section renders
+    exactly the old bracket).
+    """
     nodes = list(
         tournament.nodes.select_related("team_a", "team_b", "winner")
         .prefetch_related("series_matches")
         .order_by("bracket_round", "position")
     )
-    by_round: dict[int, list] = {}
+    # by_section[bracket_type][bracket_round] -> list of node view-dicts.
+    by_section: dict[str, dict[int, list]] = {
+        "winners": {},
+        "losers": {},
+        "grand_final": {},
+    }
     for node in nodes:
         # LG-02b — Series win counts per slot, derived from SeriesMatch rows.
         series_matches = list(node.series_matches.all())
@@ -181,6 +201,7 @@ def _build_rounds(tournament: Tournament) -> list[dict]:
         view_dict = {
             "bracket_round": node.bracket_round,
             "position": node.position,
+            "bracket_type": node.bracket_type,
             "team_a": node.team_a,
             "team_b": node.team_b,
             "seed_a": node.seed_a,
@@ -192,8 +213,12 @@ def _build_rounds(tournament: Tournament) -> list[dict]:
             "series_matches": series_matches,
             "winner": node.winner,
         }
-        by_round.setdefault(node.bracket_round, []).append(view_dict)
-    return [{"bracket_round": r, "nodes": by_round[r]} for r in sorted(by_round)]
+        section = by_section.setdefault(node.bracket_type, {})
+        section.setdefault(node.bracket_round, []).append(view_dict)
+    return {
+        bt: [{"bracket_round": r, "nodes": rounds[r]} for r in sorted(rounds)]
+        for bt, rounds in by_section.items()
+    }
 
 
 def _detail_context(tournament: Tournament) -> dict:

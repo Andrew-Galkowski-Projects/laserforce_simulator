@@ -1843,6 +1843,262 @@ four-field shape). Tests assert on the pure function, the stamped
 field, the DOM ids, and `node.winner`/Advancement — **never on exact simulated
 point totals** (non-deterministic).
 
+## LG-02c double-elimination tournaments
+
+Extends the LG-02a/b single-elimination `BracketNode` tree into **two coupled
+brackets** — a **Winners bracket** and a **Losers bracket** joined by a **Grand
+final with Bracket reset** — as a second `Tournament.format` enum value driven by
+a new pure builder, hosting **both** sub-brackets in the *existing* `BracketNode`
+table (one table + a sub-bracket tag, **not** a second `LoserBracketNode` model).
+The single-elim path is **byte-unchanged** end to end. Builds directly on LG-02b
+(the `SeriesMatch` clinch engine) and LG-02b-2 (depth-from-final escalation, here
+re-anchored to depth-from-Grand-final). See
+[ADR-0021](../../docs/adr/0021-double-elimination-bracket.md) for the
+two-bracket-one-table / Bracket-reset / naive-same-position-drop decision and its
+rejected alternatives (separate LB table, single GF no reset, power-of-two-only,
+per-node Series override); seam contract:
+[`.claude/worktrees/lg-02c-seam-contract.md`](../../.claude/worktrees/lg-02c-seam-contract.md).
+CONTEXT.md `### Tournaments` carries **Winners bracket** / **Losers bracket** /
+**Drop** / **Grand final** / **Bracket reset** (added at grilling time — already
+written, not re-touched; ADR-0021 likewise already written). Migration:
+`matches/migrations/0036_*` (dep `0035_tournament_series_escalation`; ops in
+**pinned order** `AlterField(Tournament.format)` — choices-only widen, no DB-level
+enforcement, included so `makemigrations --check` is clean → 3×
+`AddField(BracketNode.bracket_type / loser_advances_to / loser_advances_to_slot)`
+→ `RemoveConstraint(uniq_tournament_round_position)` →
+`AddConstraint(uniq_tournament_bracket_round_position)` — **no `RunPython`, no
+backfill**, ADR-0004 disposable-sandbox precedent).
+
+**Model changes (`matches/models.py`).** `Tournament.FORMAT_CHOICES` gains
+`("double_elimination", "Double elimination")` — the `format` field declaration is
+otherwise unchanged (`CharField(max_length=32)`, `default="single_elimination"`).
+`BracketNode` gains three fields: **`bracket_type`** (`CharField(max_length=12)`,
+choices `"winners"`/`"losers"`/`"grand_final"`, **`default="winners"`** so
+single-elim rows default cleanly — the exact strings are LOCKED; the engine
+ordering, the view section split, and the DOM ids all key on them); a
+**loser-destination** pointer **`loser_advances_to`** (self-FK, `null=True`,
+`on_delete=SET_NULL`, related_name **`"loser_feeders"`** — parallels the winner
+`advances_to` / related_name `"feeders"`) carrying where **THIS node's loser**
+Drops; and **`loser_advances_to_slot`** (`CharField(max_length=1)`, choices
+`a`/`b`, nullable). LB nodes set `loser_advances_to = NULL` (their loser is
+eliminated); single-elim WB nodes likewise NULL (loser eliminated exactly as
+today — byte-unchanged). The LG-02a `uniq_tournament_round_position` constraint
+(fields `["tournament", "bracket_round", "position"]`) is **removed** and replaced
+by **`uniq_tournament_bracket_round_position`** which **adds `bracket_type`** to
+the field tuple — so a WB and an LB node may now share `(bracket_round, position)`
+while a duplicate within one `bracket_type` is still rejected. `Meta.ordering`
+stays `["bracket_round", "position"]` (the engine re-sorts via `find_next_node`'s
+total order; the view groups by `bracket_type`). `SeriesMatch` /
+`count_series_wins` / the `series_matches` join are **UNCHANGED**.
+
+**`lock_and_build` branches on `format` (`matches/models.py`).** A **single
+dispatch** at the top of the `@transaction.atomic` build: `if self.format ==
+"double_elimination":` build via `build_double_elim_bracket([ParticipantSpec(...)
+for p in participants])`, **else** `build_bracket(...)` (the existing path,
+byte-unchanged). The persist loop, the `advances_to` wiring pass, the
+`resolve_bye_chain` cascade pass, and the `series_length` stamping pass are
+**shared** across both formats, with three DE-only additions: (1) persist
+`bracket_type=spec.bracket_type` on every `BracketNode.objects.create(...)`; (2) a
+**third wiring pass** (after the `advances_to` pass) wires the
+`loser_advances_to` self-FK from `spec.loser_advances_to` — a **triple**
+`(bracket_type, bracket_round, position)` coord, since a WB→LB Drop crosses
+brackets — plus `loser_advances_to_slot = spec.loser_advances_to_slot` (the
+`node_by_pos` key becomes the triple for DE; single-elim may keep the 2-tuple or
+adopt `("winners", …)` — internal, not asserted); (3) `series_length` stamping
+uses **`series_length_for_depth(spec.depth, …)`** for DE (the spec carries `depth`
+directly) versus the existing `series_length_for_round(spec.bracket_round, …)` for
+single-elim, which is **byte-unchanged**. Every DE node — **including byes** — is
+stamped. The `>= 4` participant guard, the `state != "setup"` guard, and the
+`state="active"` flip are unchanged. `find_next_playable_node` keeps its
+signature; its prefetch **widens** to `select_related("advances_to",
+"loser_advances_to")` so `_node_to_dict` reads the loser pointer without an N+1,
+and the match-back loop adds `bracket_type` to the comparison key.
+
+**`_node_to_dict` gains three keys (`matches/models.py`).** On top of every
+existing key it adds **`bracket_type`** (`node.bracket_type`),
+**`loser_advances_to`** — a **3-tuple** `(node.loser_advances_to.bracket_type,
+.bracket_round, .position)` or `None` — and **`loser_advances_to_slot`**
+(`"a"`/`"b"`/`None`). **Deliberate asymmetry (LOCKED):** the existing
+`advances_to` key **stays a 2-tuple** `(bracket_round, position)` (back-compat with
+single-elim `advance_winner`, whose winner stays in the same bracket), while
+`loser_advances_to` is a **3-tuple** carrying the destination bracket (the Drop
+crosses brackets). For single-elim rows the three new keys read
+`("winners", None, None)` ⇒ no downstream behaviour change.
+
+**Pure `matches/bracket.py` additions** (frozen `dataclasses`/`typing`/`math`/
+`collections`-only allowlist **unchanged** — the new functions add **no new
+import**; `TestNoDjangoImportsLeaked` stays green). `BracketNodeSpec` gains four
+**appended-with-defaults** fields (`bracket_type="winners"`,
+`loser_advances_to=None` 3-tuple `(bracket_type, round, position)`,
+`loser_advances_to_slot=None`, `depth=None` — distance-to-GF1) so `build_bracket`'s
+existing first-10-field construction stays valid **byte-for-byte**.
+**`series_length_for_depth(depth, *, final, semifinal, quarterfinal, earlier) ->
+int`** is extracted as the pure depth→slot dispatch (0→final, 1→semifinal,
+2→quarterfinal, ≥3→earlier via an if/elif catch-all — total, never raises; the
+four slot args keyword-only); **`series_length_for_round` is refactored to
+delegate** to it (`series_length_for_depth(total_rounds - bracket_round, …)`) with
+**byte-identical** public signature + behaviour (single-elim escalation
+transparent). **`build_double_elim_bracket(participants) -> list[BracketNodeSpec]`**
+emits the full two-tree node-spec list for arbitrary **N ≥ 4 with byes**: the WB
+is the existing single-elim tree (size = next pow2 ≥ N, top `(size − N)` seeds get
+WB byes, reusing `build_bracket`'s seeding/pairing); the LB consumes WB-round
+losers via a **naive same-position drop** (loser of WB-round-*r* position *i* →
+the matching LB slot by position — **NO anti-rematch folding** this slice, a known
+limitation deferred); each WB node's `loser_advances_to` points at its LB
+destination + slot; GF1 (the lower `bracket_round`, `bracket_type="grand_final"`)
+takes the WB champ (slot "a") + LB champ (slot "b"), GF1's `loser_advances_to`
+points at **GF2** (so the LB-champ path Advances both into GF2), GF2's
+`advances_to`/`loser_advances_to` are `None` (final node); **GF1/GF2 depth = 0**,
+WB-final & LB-final depth 1, etc. Raises `ValueError` on `len < 4` or duplicate
+seeds/team_ids (mirrors `build_bracket`). The WB/LB `(bracket_round, position)`
+numbering is the builder's internal choice — only the cross-bracket wiring coords
++ `depth` are asserted.
+
+**`advance_loser` is a SEPARATE pure function (`matches/bracket.py`).**
+`advance_loser(nodes, node_position=(bracket_type, bracket_round, position),
+loser_id, loser_seed) -> list[dict]` returns the parent-slot mutations that Drop
+the loser into the resolved node's `loser_advances_to` slot — each mutation dict
+carries `bracket_type`/`bracket_round`/`position`/`slot`/`team_id`/`seed`; empty
+list when `loser_advances_to is None` (LB node, GF2, single-elim WB node).
+**DECISION LOCKED: this is NOT a generalization of `advance_winner`** —
+`advance_winner` stays **byte-unchanged** (its mutation dicts have **no
+`bracket_type` key**, preserving single-elim and every existing
+`test_advance_winner` case), and the engine makes **two explicit calls**
+(`advance_winner` then `advance_loser`) on a WB/GF1 clinch. `resolve_bye_chain` is
+**generalized to collapse Drop byes**: a WB **Bye** produces a winner but **no
+loser**, so the LB slot its `loser_advances_to` points at receives no Drop — if
+that slot's only feeder is the bye's loser-drop, the LB node has a permanently
+empty slot and **collapses** (surviving opponent auto-advances, `is_bye=True`,
+`winner_id` set), exactly as the existing winner-side bye cascade collapses an
+unopposed slot. Its single-elim behaviour is **byte-identical** (every existing
+`test_resolve_bye_chain` case green; still returns `[]` with no byes); DE
+collapse/loser-drop mutations gain a `bracket_type` key, winner-side mutations
+keep their existing shape. `find_next_node` keeps its **playable predicate
+byte-identical** and changes **only its sort key** to `(_BRACKET_RANK
+winners<losers<grand_final, bracket_round asc, position asc)` — for a single-elim
+field every node is rank-0 `"winners"` so the order **collapses to
+`(bracket_round, position)`** exactly as today; the bracket rank is purely a
+deterministic tiebreak when multiple cross-bracket nodes are simultaneously ready.
+`stage_progress` generalizes: **`total`** = count of distinct
+`(bracket_type, bracket_round)` groups (was `max(bracket_round)`; single-elim
+collapses to the same number, byte-unchanged), **`completed`** = count of groups
+where every non-bye, non-inert node has `winner_id is not None` (an inert
+auto-resolved GF2 already satisfies `winner_id is not None`, so no special-case),
+`(0, 0)` on empty. `clinch_threshold`, `series_winner_slot`, `count_series_wins`,
+`advance_winner`, `build_bracket`, `break_tie`, `default_seed_order`, and
+`ParticipantSpec` are **UNCHANGED**.
+
+**Engine (`matches/tournament_engine.py::play_next_node`).** Stays **ONE**
+per-Match-atomic loop for **both** formats — the body is **verbatim** through the
+clinch check (find next playable node → sim ONE Match → `break_tie` fallback →
+`SeriesMatch.objects.create` → recompute via `count_series_wins` →
+`series_winner_slot(…, node.series_length)` → return `node` un-advanced when
+`slot is None`). On clinch the tail changes: (1) stamp `node.winner` +
+`winner_seed`, `save(update_fields=["winner"])` (unchanged); (2) build the flat
+list via `_node_to_dict` over `tournament.nodes.select_related("advances_to",
+"loser_advances_to").prefetch_related("series_matches")` (adds
+`"loser_advances_to"`); (3) **winner advance** (`advance_winner` — unchanged
+shape, parent resolved within the winner's own `advances_to` target bracket so the
+GF1→GF2 cross is handled by GF1's own pointer); (4) **loser Drop** (DE only) —
+when `node.bracket_type in ("winners", "grand_final")` AND
+`node.loser_advances_to_id is not None`, compute the non-winning slot's team+seed
+and call `advance_loser`, applying each mutation to the LB/GF2 parent keyed by
+`(mut["bracket_type"], mut["bracket_round"], mut["position"])`; a **single-elim WB
+node** has `loser_advances_to_id is None` ⇒ `advance_loser` is skipped / returns
+`[]` ⇒ loser eliminated exactly as today; (5) **Grand-final Bracket reset** — on a
+clinched **GF1** (its `advances_to` points at GF2): if the GF1 winner **==** the
+WB champ (slot "a"), stamp **`GF2.winner` inert** (`save(update_fields=["winner"])`
+so `find_next_node` never returns GF2 — the bye-style auto-resolve precedent) +
+`tournament.champion` + `state="completed"` immediately; if the GF1 winner == the
+LB champ (slot "b"), the step-4 Drop has already Advanced the WB champ into GF2
+slot "a" and the winner-advance into GF2 slot "b" ⇒ **GF2 is now playable**, no
+champion yet; (6) **final node** (single-elim final OR GF2, `advances_to_id is
+None`) stamps `tournament.champion` + `state="completed"` (unchanged shape).
+**Callers unchanged in signature/route:** `tournament_play_next`,
+`play_tournament_task` (loops `play_next_node` unchanged), `tournament_play_all`,
+`tournament_play_status` keep their URLs + 5-key status JSON; `stage_progress`
+now reports stage completion across **both brackets + GF**.
+
+**View / template surface.** Create form (`tournament_create` /
+`tournament_create.html`): reads a new POST field **`format`** (forgiving-fallback
+mirroring the series-length parses — accept only `"single_elimination"` /
+`"double_elimination"`, anything absent/tampered falls back to
+`"single_elimination"`) and passes it as the `format=` kwarg into the existing
+`Tournament.objects.create(...)`; rendered as one `<select name="format">` with
+DOM id **`tournament-create-format`** (options "Single elimination" selected /
+"Double elimination"), placed above the four series-length selects — every other
+create-form id (`-name`, `-team-select`, `-generate-*`, the four `-*-series-length`,
+`-submit`, `-no-teams-notice`) unchanged. Detail page (`_build_rounds` /
+`tournament_detail.html`): each node view-dict gains **`bracket_type`**, and
+`_build_rounds`'s **return shape changes** from a flat `[{bracket_round, nodes}]`
+to a **3-key dict** `{"winners": […], "losers": […], "grand_final": […]}` — for a
+single-elim tournament `"losers"` and `"grand_final"` are **empty lists** and
+`"winners"` carries the full tree (no single-elim render regression). The frozen
+`_detail_context` keys are unchanged — **only the *value-shape* of `rounds`
+changes**, no new top-level context key. The template renders **three sections**
+(DOM ids `tournament-bracket-winners` / `-losers` / `-grand-final`, per-round
+column `tournament-bracket-{bracket_type}-round-{n}`) reusing the existing
+node-card + series-score + Bo-N-label markup. **Single-elim keeps the legacy DOM
+ids (LOCKED):** the template **branches on `tournament.format`** — single-elim
+renders `tournament-bracket` / `tournament-bracket-round-{n}` /
+`tournament-node-{round}-{position}` / `-series-score-{round}-{position}` /
+`-series-length-{round}-{position}` (every LG-02a/b view test stays green, Losers
+& Grand-final sections **absent**), while DE renders the namespaced
+**`tournament-node-{bracket_type}-{bracket_round}-{position}`** /
+`-series-score-{bracket_type}-{br}-{pos}` / `-series-length-{bracket_type}-{br}-{pos}`.
+The Grand-final section renders both GF1 and GF2 cards; the inert auto-resolved
+GF2 (WB-champ-wins case) carries the `bye-node` class so the existing "no
+series-score for bye nodes" branch suppresses its Bo-N label cleanly.
+`tournament-champion-banner`, the Play controls (`-lock-form` / `-play-next-form`
+/ `-play-all-form` / `-play-all-progress` / `-play-all-error` + the poll JS), the
+import + seeding form ids, and `tournaments-nav-link` are **unchanged**. The three
+new `BracketNode` fields auto-surface in the default `BracketNodeAdmin` change
+form and the widened `format` choices in `TournamentAdmin` — **no `list_display` /
+inline / registration change**.
+
+**Tests.** `matches/tests/test_bracket.py` (extend — `TestSeriesLengthForDepth`
+depth boundaries + keyword-only + delegation parity with
+`series_length_for_round`; `TestBuildDoubleElimBracket` N=4/8 no-bye + N=5/6 WB-bye
+node counts / loser-drop coords / GF1→GF2 / depth / `ValueError`;
+`TestAdvanceLoser`; `TestResolveByeChainDropBye` collapse; `TestFindNextNodeBracketOrder`;
+`TestStageProgressDoubleElim`; `TestNoDjangoImportsLeaked` + every existing
+single-elim case still green); `test_tournament_models.py` (extend —
+`TestBracketNodeDoubleElimFields` defaults/choices/renamed constraint,
+`TestLockAndBuildDoubleElim` N=4/6 wiring + per-depth `series_length` incl. byes,
+`TestLockAndBuildSingleElimUnchanged` regression, extended `Test_node_to_dict` DE
+3-tuple keys + single-elim `("winners", None, None)`); `test_tournament_views.py`
+(extend — `TestCreateFormFormat` select + persist + fallback,
+`TestDetailDoubleElimSections` three containers + DE ids,
+`TestDetailSingleElimIdsUnchanged` legacy-id regression);
+`test_tournament_engine.py` (extend — `TestPlayNextNodeDoubleElimDrop` WB loser
+Drop, `TestPlayNextNodeGrandFinalReset` both reset branches,
+`TestPlayNextNodeSingleElimUnchanged` regression); `test_tournament_tasks.py`
+(extend — `TestPlayTournamentTaskDoubleElim` drains a DE bracket to a champion,
+stage counts over both brackets + GF). Tests assert on the pure functions, the
+persisted `BracketNode` fields (`bracket_type` / `loser_advances_to` /
+`series_length`), `node.winner` / both-bracket Advancement / `tournament.champion`
+/ `state`, and the DOM ids — **never on exact simulated point totals**
+(non-deterministic ⇒ **no SIM-07/SIM-08 interaction, NO Score Calibration
+re-baseline**).
+
+**Scope-out (LOCKED — DEFERRED, do NOT build here):** **anti-rematch folding** in
+the Losers bracket (LB consumes WB losers via a naive same-position drop only —
+folding deferred to a follow-up); **round robin / RR→double-elim / Swiss** (the
+`format` enum is extensible but only `single_elimination` + `double_elimination`
+ship); a **single Grand final (no reset)** (rejected — the Bracket reset GF1+GF2
+is the locked ADR-0021 design); a **separate `LoserBracketNode` model / second
+table** (rejected — one table + `bracket_type` tag); **`advance_winner`
+generalization** (stays byte-unchanged; a separate `advance_loser` carries the
+loser path); **home/away side alternation** (sides fixed `team_a` red / `team_b`
+blue every Match, LG-02b locked); **deterministic / master-seed-replayable
+Series** (`simulate_match` draws fresh per-round seeds ⇒ non-deterministic);
+any `simulate_match` / `simulate_scheduled_round` change (consumed verbatim,
+`arena_map=None` 3-zone fallback per Match); **backfill / `RunPython`** (none —
+pure forward-only schema ops, ADR-0004); in-League / in-Season tournament
+embedding (Tournament stays standalone, `season`-less); any new CONTEXT.md term
+beyond **Winners bracket** / **Losers bracket** / **Drop** / **Grand final** /
+**Bracket reset** (already written) and any new ADR (ADR-0021 already written).
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)

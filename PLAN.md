@@ -426,12 +426,14 @@ columns → **STAT-PROXY-01**.
 
 ### LG-02 · Tournament formats
 
-**Status: PARTIAL — Part 1 LG-02a / LG-02a-2 / LG-02b / LG-02b-2 DONE; LG-02c+ /
-LG-02x NOT STARTED. Part 2 NOT STARTED.** LG-02 is a multi-step group; shipping
-LG-02a, its LG-02a-2 ergonomics follow-up, the LG-02b best-of-N Series and the
-LG-02b-2 per-round Series escalation does **not** complete it. The sandbox
-single-elimination slice — now with CSV participant import and async play-all —
-is built, but every other format and the in-League composer remain unstarted.
+**Status: PARTIAL — Part 1 LG-02a / LG-02a-2 / LG-02b / LG-02b-2 DONE + LG-02c
+double-elimination DONE; LG-02c round-robin / RR→DE / Swiss + LG-02x NOT STARTED.
+Part 2 NOT STARTED.** LG-02 is a multi-step group; shipping LG-02a, its LG-02a-2
+ergonomics follow-up, the LG-02b best-of-N Series, the LG-02b-2 per-round Series
+escalation, and the LG-02c double-elimination format does **not** complete it. The
+sandbox single- and double-elimination slices — with CSV participant import and
+async play-all — are built, but the remaining three formats (round robin, RR→DE,
+Swiss), the player-pool formats, and the in-League composer remain unstarted.
 
 The **LG-02 grill (2026-06-02)** split this monolith. A Tournament is a
 first-class **persisted, standalone sandbox** object — built and played in the
@@ -692,7 +694,8 @@ tournament completion.
     node reads its own `series_length`, Bo3 clinch at 2, Bo1 unchanged),
     `test_tournament_tasks.py` (migrate the `_active_series_tournament` helper to
     the four-field shape).
-- **LG-02c+ · [NOT STARTED] Additional bracket formats.** **Double elimination** (losers get a
+- **LG-02c+ · [PARTIAL — double-elim DONE; round-robin / RR→DE / Swiss NOT
+  STARTED] Additional bracket formats.** **Double elimination** (losers get a
   second chance via a losers bracket), **round robin** (all teams play each other,
   used for seeding), **round robin → double elimination** (RR seeding phase feeds a
   DE finals), and **Swiss** (pairings from current standings; rounds
@@ -701,6 +704,81 @@ tournament completion.
   as new enum values + new pure `matches/bracket.py` builders without a model
   migration; each format is its own grill (losers-bracket wiring, RR scheduling +
   seeding handoff, Swiss pairing) rather than a variant of single-elim.
+  - **Double elimination · [DONE].** Extended the single-elim `BracketNode` tree
+    into **two coupled brackets** — a **Winners bracket** and a **Losers bracket**
+    joined by a **Grand final with Bracket reset** — as a second
+    `Tournament.format` enum value (`("double_elimination", "Double elimination")`)
+    driven by a new pure builder, hosting **both** sub-brackets in the *existing*
+    `BracketNode` table (one table + a sub-bracket tag, **not** a second
+    `LoserBracketNode` model). Single-elim is **byte-unchanged** end to end
+    ([ADR-0021](docs/adr/0021-double-elimination-bracket.md); seam
+    [`.claude/worktrees/lg-02c-seam-contract.md`](.claude/worktrees/lg-02c-seam-contract.md)).
+    Builds on LG-02b (the `SeriesMatch` clinch engine) + LG-02b-2 (depth-from-final
+    escalation, re-anchored to depth-from-Grand-final). Model: `BracketNode` gains
+    **`bracket_type`** (`CharField`, choices `winners`/`losers`/`grand_final`,
+    `default="winners"`), **`loser_advances_to`** (self-FK, SET_NULL, related_name
+    `"loser_feeders"` — where THIS node's loser **Drops**), and
+    **`loser_advances_to_slot`** (`a`/`b`, nullable); LB nodes + single-elim WB
+    nodes leave the loser pointer NULL (loser eliminated). The
+    `uniq_tournament_round_position` constraint is **renamed**
+    `uniq_tournament_bracket_round_position` with `bracket_type` added to the field
+    tuple (a WB and LB node may share `(round, position)`). Migration
+    `matches/migrations/0036_*` (dep `0035_tournament_series_escalation`; ops
+    `AlterField(Tournament.format)` choices-widen → 3× `AddField(BracketNode.*)` →
+    `RemoveConstraint` → `AddConstraint` — **no `RunPython`, no backfill**,
+    ADR-0004). Pure `matches/bracket.py` (frozen allowlist unchanged, no new
+    import, `TestNoDjangoImportsLeaked` green): new
+    **`build_double_elim_bracket(participants)`** emits the full two-tree spec list
+    for arbitrary **N ≥ 4 with byes** (WB = the existing single-elim tree; LB
+    consumes WB losers via a **naive same-position drop** — **NO anti-rematch
+    folding**, a known limitation deferred; GF1 + GF2 built at lock); new
+    **`series_length_for_depth(depth, *, final, semifinal, quarterfinal,
+    earlier)`** (depth→slot dispatch — DE depth = distance-to-GF1, GF1/GF2 depth 0;
+    `series_length_for_round` **delegates** to it, byte-identical); new **SEPARATE
+    `advance_loser`** (parallel to a **byte-unchanged** `advance_winner` — the
+    engine makes two explicit calls on a WB/GF1 clinch); `resolve_bye_chain`
+    generalized to collapse **Drop byes** (a WB Bye produces no loser ⇒ its LB slot
+    collapses); `find_next_node` sort key → `(bracket_type rank
+    winners<losers<grand_final, round, position)` (single-elim collapses to
+    `(round, position)`); `stage_progress` counts distinct `(bracket_type,
+    bracket_round)` groups. `_node_to_dict` gains `bracket_type` + a **3-tuple**
+    `loser_advances_to` `(bracket_type, round, position)` + `loser_advances_to_slot`
+    (the deliberate 2-tuple-`advances_to` / 3-tuple-`loser_advances_to` asymmetry —
+    the Drop crosses brackets, the winner-advance does not). Engine
+    `play_next_node` stays **ONE** per-Match-atomic loop for both formats; on a
+    WB/GF1 clinch it Advances the winner **AND** Drops the loser into
+    `loser_advances_to`, then resolves the **Grand-final Bracket reset**: if the GF1
+    winner is the WB champ, stamp **`GF2.winner` inert** (bye-style auto-resolve, so
+    `find_next_node` never returns GF2) + champion + `completed` immediately; if the
+    GF1 winner is the LB champ, both Advance into GF2 (playable) and GF2's winner is
+    champion. View/template: create-form `<select>` DOM id
+    **`tournament-create-format`** (POST field `format`, forgiving fallback to
+    `single_elimination`); detail `_build_rounds` returns a **3-key dict**
+    `{"winners", "losers", "grand_final"}` (single-elim: only `"winners"` non-empty)
+    and renders three sections — the template **branches on `tournament.format`** so
+    **single-elim keeps the legacy** `tournament-node-{round}-{position}` ids while
+    DE uses **`tournament-node-{bracket_type}-{round}-{position}`** (containers
+    `tournament-bracket-winners` / `-losers` / `-grand-final`). The three new
+    `BracketNode` fields + the widened `format` choices auto-surface in admin (no
+    `list_display` change). **Non-deterministic** (`simulate_match` draws fresh
+    per-round seeds) ⇒ **no SIM-07/SIM-08 interaction, NO Score Calibration
+    re-baseline**. ADR-0021 + CONTEXT.md `### Tournaments` (Winners bracket / Losers
+    bracket / Drop / Grand final / Bracket reset) already written, not re-touched.
+    Tests: `test_bracket.py` (`series_length_for_depth`, `build_double_elim_bracket`,
+    `advance_loser`, Drop-bye cascade, bracket-order `find_next_node`, DE
+    `stage_progress`; single-elim cases green), `test_tournament_models.py` (DE
+    fields/renamed constraint, DE `lock_and_build` incl. depth-stamped byes,
+    single-elim regression, `_node_to_dict` DE keys), `test_tournament_views.py`
+    (format select + persist + fallback, DE three-section render, single-elim id
+    regression), `test_tournament_engine.py` (WB loser Drop, Grand-final Bracket
+    reset both branches, single-elim regression), `test_tournament_tasks.py`
+    (`play_tournament_task` drains a DE bracket, stage counts over both brackets).
+  - **Round robin / RR→double-elim / Swiss · [NOT STARTED].** The remaining three
+    formats still slot in as new `format` enum values + new pure builders; each is
+    its own grill (RR scheduling + seeding handoff, the RR→DE phase composition
+    reusing the LG-02c DE bracket as its finals stage, Swiss pairing-from-standings)
+    — see [ADR-0021](docs/adr/0021-double-elimination-bracket.md) Consequences for
+    the "new format = new enum value + new pure builder" precedent this slice sets.
 - **LG-02x · [NOT STARTED] Player-pool formats (Random Draw / Duos / Trios) — needs
   its own grill.** Formats with **no pre-set teams**: a pool of individual players
   registers, then the system assigns teams. **Random Draw** — randomize team
