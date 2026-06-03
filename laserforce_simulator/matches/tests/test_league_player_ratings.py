@@ -130,7 +130,10 @@ class TestPlayerRatingsScope(TestCase):
         response = player_ratings(_get(self.league.id), self.league.id)
         content = response.content.decode()
         self.assertIn(enrolled_player.name, content)
-        self.assertIn(f"/players/{enrolled_player.id}/stats/", content)
+        # LG-06h: player-name link repointed to league_player_detail.
+        self.assertIn(
+            f"/leagues/{self.league.id}/players/{enrolled_player.id}/", content
+        )
 
     def test_unenrolled_team_player_excluded(self) -> None:
         outsider = Team.objects.create(name="Outsiders")
@@ -138,7 +141,8 @@ class TestPlayerRatingsScope(TestCase):
         response = player_ratings(_get(self.league.id), self.league.id)
         content = response.content.decode()
         self.assertNotIn("Outsider Ace", content)
-        self.assertNotIn(f"/players/{op.id}/stats/", content)
+        # LG-06h: the excluded player has no in-League player-page link.
+        self.assertNotIn(f"/leagues/{self.league.id}/players/{op.id}/", content)
 
     def test_free_agent_pool_player_excluded(self) -> None:
         pool = get_free_agents_team()
@@ -146,7 +150,8 @@ class TestPlayerRatingsScope(TestCase):
         response = player_ratings(_get(self.league.id), self.league.id)
         content = response.content.decode()
         self.assertNotIn("Pool Drifter", content)
-        self.assertNotIn(f"/players/{fa.id}/stats/", content)
+        # LG-06h: the excluded player has no in-League player-page link.
+        self.assertNotIn(f"/leagues/{self.league.id}/players/{fa.id}/", content)
 
 
 # ---------------------------------------------------------------------------
@@ -177,9 +182,13 @@ class TestPlayerRatingsBody(TestCase):
         response = player_ratings(_get(self.league.id), self.league.id)
         self.assertIn("sidebar-stats-player_ratings", response.content.decode())
 
-    def test_player_links_to_career_page(self) -> None:
+    def test_player_links_to_in_league_player_page(self) -> None:
+        # LG-06h: player-name link repointed to league_player_detail.
         response = player_ratings(_get(self.league.id), self.league.id)
-        self.assertIn(f"/players/{self.player.id}/stats/", response.content.decode())
+        self.assertIn(
+            f"/leagues/{self.league.id}/players/{self.player.id}/",
+            response.content.decode(),
+        )
 
     def test_bio_and_proxy_columns_present(self) -> None:
         # Fixed bio columns + the deferred MMR / Rank / Potential proxies.

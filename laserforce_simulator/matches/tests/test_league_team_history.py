@@ -437,11 +437,12 @@ class TestTeamHistoryPlayers(TestCase):
         # The wanderer's row carries the blue colour class.
         self.assertIn("team-history-player-blue", content)
 
-    def test_player_links_to_career_page(self) -> None:
+    def test_player_links_to_in_league_player_page(self) -> None:
+        # LG-06h: player-name link repointed to league_player_detail.
         player = self.team_a.slot_heavy
         self._appear(player, "red", points_scored=5)
         content = team_history(_get(self.league.id), self.league.id).content.decode()
-        self.assertIn(f"/players/{player.id}/stats/", content)
+        self.assertIn(f"/leagues/{self.league.id}/players/{player.id}/", content)
 
     def test_career_stats_summed_and_games_counted(self) -> None:
         player = self.team_a.slot_scout_1

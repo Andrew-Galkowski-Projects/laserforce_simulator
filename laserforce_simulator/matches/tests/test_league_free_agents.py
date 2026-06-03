@@ -144,7 +144,8 @@ class TestFreeAgentsDefinition(TestCase):
         response = free_agents(_get(self.league.id), self.league.id)
         content = response.content.decode()
         self.assertIn("PoolStar", content)
-        self.assertIn(f"/players/{fa.id}/stats/", content)
+        # LG-06h: the player-name link now targets the in-League player page.
+        self.assertIn(f"/leagues/{self.league.id}/players/{fa.id}/", content)
 
     def test_player_on_unenrolled_team_is_not_a_free_agent(self) -> None:
         # A Player on any real Team — even one not enrolled in this Season —
@@ -198,9 +199,13 @@ class TestFreeAgentsBody(TestCase):
         response = free_agents(_get(self.league.id), self.league.id)
         self.assertIn("sidebar-players-free_agents", response.content.decode())
 
-    def test_player_links_to_career_page(self) -> None:
+    def test_player_links_to_in_league_player_page(self) -> None:
+        # LG-06h: player-name link repointed to league_player_detail.
         response = free_agents(_get(self.league.id), self.league.id)
-        self.assertIn(f"/players/{self.fa.id}/stats/", response.content.decode())
+        self.assertIn(
+            f"/leagues/{self.league.id}/players/{self.fa.id}/",
+            response.content.decode(),
+        )
 
     def test_bio_and_proxy_columns_present(self) -> None:
         # Fixed bio columns + the deferred MMR / Rank / Potential proxies.

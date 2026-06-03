@@ -114,8 +114,13 @@ def _make_prs(game_round, player, team_color, role, **stats):
 
 
 def _wl_row_player_ids(content: str) -> list[int]:
-    """Player ids in render order from the per-row career-stats links."""
-    return [int(m) for m in re.findall(r"/players/(\d+)/stats/", content)]
+    """Player ids in render order from the per-row in-League player links.
+
+    LG-06h: the Watch List player-name link repointed from the global
+    ``/players/<id>/stats/`` career page to the in-League player page
+    ``/leagues/<league_id>/players/<id>/``.
+    """
+    return [int(m) for m in re.findall(r"/leagues/\d+/players/(\d+)/", content)]
 
 
 # ===========================================================================
@@ -195,8 +200,9 @@ class TestWatchListZeroFill(TestCase):
             _get(self.league.id, watched=[self.player.id]), self.league.id
         ).content.decode()
         self.assertIn("watch-list-table", content)
-        # The watched player's career link is present (a row was rendered)...
-        self.assertIn(f"/players/{self.player.id}/stats/", content)
+        # The watched player's in-League player link is present (a row was
+        # rendered) — LG-06h repointed the player-name link.
+        self.assertIn(f"/leagues/{self.league.id}/players/{self.player.id}/", content)
         # ...and the player's name renders in that row.
         self.assertIn(self.player.name, content)
 
@@ -214,7 +220,8 @@ class TestWatchListZeroFill(TestCase):
         content = watch_list(
             _get(self.league.id, watched=[self.player.id]), self.league.id
         ).content.decode()
-        self.assertNotIn(f"/players/{other.id}/stats/", content)
+        # LG-06h: the unwatched player has no in-League player-page link row.
+        self.assertNotIn(f"/leagues/{self.league.id}/players/{other.id}/", content)
 
 
 # ===========================================================================

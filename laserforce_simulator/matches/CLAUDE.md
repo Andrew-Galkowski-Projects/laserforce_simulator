@@ -1125,6 +1125,110 @@ sort-header loop (DOM ids `season-standings-th-<key>`, ` ↑`/` ↓` glyphs) + 1
 `matches/tests/test_season_views.py` (view/DOM, classes
 `TestLg06gStandingsFormSideDetail` / `TestLg06gStandingsDraftPreview`).
 
+## LG-06h league player page
+
+A read-only **League player page** — the in-League destination of every
+player-name link on the 8 LG-06f league screens, mirroring the ZenGM player
+profile pinned to one League. Read-only — **no model, migration, simulator, RNG,
+or Score Calibration re-baseline; no ADR**; CONTEXT.md already carries the
+**League player page** term. Seam contract:
+[`.claude/worktrees/lg-06h-seam-contract.md`](../../.claude/worktrees/lg-06h-seam-contract.md).
+
+**Route + view.** URL name `league_player_detail`, path
+`/leagues/<int:league_id>/players/<int:player_id>/`, added to
+`matches/league_urls.py` among the `players/*` routes (after
+`players_free_agents` / `players_watch_list` / `watch_list_toggle`, before the
+`league_list` catch-all — the digit-only `<int:player_id>` converter cannot
+shadow the literal `players/free-agents/` / `players/watch-list/` routes). The
+view `matches/league_screens/player_detail.py::player_detail(request,
+league_id, player_id) -> HttpResponse` is **GET-only** (`HttpResponseNotAllowed(
+["GET"])` first line) and re-exported from `league_screens/__init__`
+(`from .player_detail import player_detail` + `__all__` append, mirroring
+`watch_list` / `free_agents`). Step order: GET guard → `get_object_or_404(
+League, pk=league_id)` → `get_object_or_404(Player, pk=player_id)` (404 only on a
+missing League OR missing Player — never on "player not in this League") →
+`request.session["last_league_id"] = league.id` → `displayed_season =
+league.active_season or league.seasons.filter(state="completed").order_by(
+"-id").first()` → `_build_league_sidebar_links(league, displayed_season,
+sidebar_active=None)` (no sidebar entry matches this page, so **every entry
+renders inactive**) → build the RS rows → `render(request,
+"leagues/player_detail.html", context)`.
+
+**LENIENT rendering.** Any valid `(League, Player)` pair renders 200. When the
+player has Rounds in zero of this League's Seasons, `rs_rows == []` and
+`career_row is None` ⇒ the template shows `league-player-rs-stats-empty` in place
+of `league-player-rs-stats-table`; the header, Potential placeholder, and all 5
+stubs still render (a current free agent with no League Rounds is a 200, not a
+404).
+
+**RS aggregation is VIEW-SIDE — no new pure module.** Reuse, by import,
+`_build_round_dicts` from `matches.league_screens.player_stats` and
+`aggregate_player_stats` (+ `PlayerStatRow`) from
+`matches.season_player_stats`. Per-Season rows: for each `season in
+league.seasons.all()` (newest-first, `order_by("-id")`), build a `prs_filter` of
+`{"game_round__match__season": season, "player_id": player.id}`, run
+`_build_round_dicts → aggregate_player_stats`, **skip the Season when the round
+dicts are empty**, else emit one row from `agg[0]`. Career-in-league row: one
+league-wide pass with `prs_filter = {"game_round__match__season__league":
+league, "player_id": player.id}` (the LG-06d Career scope filtered to this
+player), `year = "Career"`; empty ⇒ `career_row = None`. **Per-Season Team is
+derived from the player's actual Rounds that Season** — the aggregated row's
+last-seen `team_name`/`team_id` (resolved per-Round inside `_build_round_dicts`
+from `team_color` against `game_round.team_red`/`team_blue`), NOT the current
+`Player.team` — so a dropped/transferred player shows the team they played for.
+No MVP/accuracy recomputation in the view (those come from `get_mvp` /
+`get_accuracy` inside `_build_round_dicts`). The table is **not sortable and not
+paginated** (a single player across a handful of Seasons — a deliberate
+simplification vs. the multi-player Player Stats screen, so no `?sort` / `?dir` /
+`?per_page` handling).
+
+**Context keys (frozen).** `league` (the pinned League — used by the watch-flag
+partial's `{% url 'watch_list_toggle' league.id %}` + sidebar), `player`,
+`displayed_season` (`Season | None`), `sidebar_links` (the 23-entry
+`_build_league_sidebar_links` output), `sidebar_active` (locked `None`), `rs_rows`
+(`list[dict]`, newest-first, `[]` ⇒ empty-state), `career_row` (`dict | None`),
+`stat_columns`. The view does **not** add `watched_player_ids` — the global
+`core.context_processors.watch_list` processor supplies it. `stat_columns` is the
+STAT portion of `_PLAYER_STATS_COLUMNS` (imported from `player_stats`) sliced
+`[2:]` — drop the `name` (col 0, single player) and `team` (col 1, rendered as a
+dedicated per-Season prefix column) entries, leaving the 15 stat columns
+`games … combo_resupply_count`; the template prefixes **Year** + **Team** columns
+itself. Row dict shape (per-Season and Career identical): `{"year": str,
+"season_id": int | None, "team_name": str, "team_id": int, "games": int,
+"stats": Mapping[str, float]}` — Career uses `year = "Career"`, `season_id =
+None`, and the league-wide last-seen team.
+
+**Template + DOM ids.** `templates/leagues/player_detail.html` (NEW) extends
+`base.html` and uses the `d-flex` + `{% include "_partials/league_sidebar.html"
+%}` shell like the other `templates/leagues/*.html` screens. 11 locked DOM ids:
+`league-player-detail` (root), `league-player-header`, `league-player-overall`,
+`league-player-potential` (renders the literal `—` em-dash placeholder),
+`league-player-ratings`, `league-player-rs-stats-table` (only when rows exist),
+`league-player-rs-stats-empty` (only on the empty-state), and the 5 "coming soon"
+stubs `league-player-{playoffs,ratings-history,awards,salaries,transactions}-stub`
+(each contains the case-insensitive `Coming soon` substring; may cite its
+blocking task). The header's EXTERNAL link reverses `player_career_stats` (the
+one place in the league templates that still points at the global career page);
+the watch flag is `{% include "_partials/watch_flag.html" with
+player_id=player.id %}` with `{% include "_partials/watch_flag_script.html" %}`
+exactly **once** near the end of `{% block content %}` (never inside a loop).
+
+**8-screen repoint.** Every player-name link on the LG-06f league screens was
+repointed from `player_career_stats` (global) to `league_player_detail`
+(in-League), keeping the watch-flag include verbatim — only the `<a>` `href`
+changes: `player_stats` (`row.player_id`), `player_ratings` (`player.id`),
+`free_agents` (`player.id`), `league_leaders` (`row.player_id` ×4 boards),
+`statistical_feats` (`row.player_id` — previously plain text, **now wrapped** in a
+link), `team_roster` (`player.id` ×2 sections), `team_history` (`p.player_id`),
+and `watch_list` (`row.player_id`). The sandbox/global `templates/teams/
+player_list.html` and `templates/teams/player_detail.html` stay on
+`player_career_stats` (they are league-agnostic). Tests:
+`matches/tests/test_league_player_detail.py` (routing / 405 / 404-both-ids /
+session write / lenient empty-state / RS rows + Career row / per-Season Team
+derived from Rounds / watch flag + single script / external career link /
+Potential placeholder / 5 stubs / 23-entry sidebar with zero active); existing
+link-target assertions on the 8 screens were repointed to the new route.
+
 ## Tests
 
 `matches/tests/` package:

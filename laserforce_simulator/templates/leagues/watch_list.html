@@ -104,7 +104,7 @@
                         <tr>
                             <td>
                                 {% include "_partials/watch_flag.html" with player_id=row.player_id %}
-                                <a href="{% url 'player_career_stats' row.player_id %}">{{ row.player_name }}</a>
+                                <a href="{% url 'league_player_detail' league.id row.player_id %}">{{ row.player_name }}</a>
                             </td>
                             <td>{{ row.team_name }}</td>
                             <td>{{ row.games }}</td>

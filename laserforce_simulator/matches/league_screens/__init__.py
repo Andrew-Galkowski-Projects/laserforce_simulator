@@ -12,6 +12,7 @@ them directly from the package.
 from .free_agents import free_agents
 from .game_log import game_log
 from .league_leaders import league_leaders
+from .player_detail import player_detail
 from .player_ratings import player_ratings
 from .player_stats import player_stats
 from .power_rankings import power_rankings
@@ -25,6 +26,7 @@ __all__ = [
     "free_agents",
     "game_log",
     "league_leaders",
+    "player_detail",
     "player_ratings",
     "player_stats",
     "power_rankings",

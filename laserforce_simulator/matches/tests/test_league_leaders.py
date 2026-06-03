@@ -358,9 +358,10 @@ class TestLeagueLeadersBody(TestCase):
         content = league_leaders(_get(self.league.id), self.league.id).content.decode()
         self.assertIn("sidebar-stats-league_leaders", content)
 
-    def test_leader_links_to_career_page(self) -> None:
+    def test_leader_links_to_in_league_player_page(self) -> None:
+        # LG-06h: leader player-name link repointed to league_player_detail.
         content = league_leaders(_get(self.league.id), self.league.id).content.decode()
-        self.assertIn(f"/players/{self.star.id}/stats/", content)
+        self.assertIn(f"/leagues/{self.league.id}/players/{self.star.id}/", content)
 
     def test_context_leaderboards_have_four_keys(self) -> None:
         response = league_leaders(_get(self.league.id), self.league.id)
@@ -423,7 +424,8 @@ def _board_player_order(content: str, board_table_id: str) -> list[str]:
     ]
     end = min(nexts) if nexts else len(content)
     section = content[start:end]
-    return re.findall(r"/players/(\d+)/stats/", section)
+    # LG-06h: player-name links repointed to /leagues/<lid>/players/<id>/.
+    return re.findall(r"/leagues/\d+/players/(\d+)/", section)
 
 
 _BOARD_TABLE_ID = {
