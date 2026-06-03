@@ -383,7 +383,7 @@ _Avoid_: the pre-LG-06e "category best" model (one row = the single best of each
 
 **League**:
 The persistent container that owns one or more **Seasons** — the user-facing "competition" in **single-player league mode**. A League has a name, a `mode` (`sandbox` for the existing pre-LG-01 flows / `league` for the new single-player surface / `multiplayer` reserved for deferred Phase 6 work), a state (`active` / `archived`), and a chain of Seasons (Season FK → League). Persistent across cycles: when a Season completes, the next Season inside the *same* League inherits the team list (the seed of multi-season continuity — manager identity is layered on top in CAR-01). A **Team** is **not** owned by a League — Teams stay global so the existing sandbox flows (LG-00 generation, LG-00b roster import, per-team pages) keep working unchanged; a Team can be enrolled in multiple Leagues' Seasons simultaneously, with enrollment tracked on each Season's M2M. Owner / per-User scoping is **deferred to UX-01 + CAR-01** (there is no User model yet); for now Leagues are global.
-_Avoid_: treating a League as a single competition (it is the *chain* — one League may span many Seasons across many years); treating a League as the unit that owns Teams (Teams are global, enrollment lives on the Season's M2M); equating League with Tournament (a Tournament — LG-02 — is a bracketed format that *runs inside* a Season, not its own container).
+_Avoid_: treating a League as a single competition (it is the *chain* — one League may span many Seasons across many years); treating a League as the unit that owns Teams (Teams are global, enrollment lives on the Season's M2M); equating League with **Tournament** (LG-02 Part 1 — a Tournament is a standalone *sandbox-mode* bracketed competition with its own Teams, neither a League nor owned by one; Part 2 will later let a Season embed a Tournament block).
 
 **Season**:
 One cycle within a **League** — the bounded competition that produces a **Standings** table from its completed **Matches**. Has a name, start/end dates, a FK to its **League**, an M2M of enrolled **Teams** (the active roster for *this* cycle), a state (`draft` / `active` / `completed`), and a `schedule_format` enum (v1 only ships `single_round_robin`; the field is extensible for future formats). A **Match** is attached to at most one Season via a nullable FK; standalone **Rounds** (no `Match` parent) are **not** part of Season standings. Pre-LG-01 Matches stay `season=NULL` ([ADR-0004](docs/adr/0004-simulation-data-is-disposable.md) disposable-data precedent — no backfill).
@@ -444,6 +444,37 @@ _Avoid_: putting the Watch flag on league-agnostic / sandbox player surfaces (it
 **League player page**:
 The per-**Player** detail surface pinned to one **League** — the LG-06h route `/leagues/<league_id>/players/<player_id>/`, the in-League destination of every player-name link on the eight LG-06f League screens. Mirrors the reference product's player profile: a bio block, **Overall rating** + a grouped view of the Player's 19 current **Stats**, and (the one league-scoped body section) a **Regular-Season stats table** — one row per **Season** of *this* League the Player has **Rounds** in, plus a Career-in-League total row (the **Career view (league-scoped)** aggregation reused, never all-time). Carries the per-League **Watch flag** (the surface LG-06f could not cover, since the global career page has no `league_id`). **Lenient**: any existing (League, Player) pair renders — a Player with no history in this League (e.g. a current member of the League's `free_agent_pool` with no games yet) shows the profile with the league-scoped section in its empty state, never a 404. Distinct from the **global** per-Player career page (HX-01, `/players/<id>/stats/`), which spans every Round in any context and is league-agnostic; the League player page links *out* to it via a header link for the all-time view. Sections with no backing model yet — **Potential** (LG-05), Playoffs stats (LG-02), per-Season ratings history (LG-04/LG-05), Awards (LG-03), Salaries / Transactions (no finance/trade model) — render as inert "coming soon" stubs, not live data.
 _Avoid_: aggregating the Regular-Season table all-time across Leagues (it is League-bounded — that is the HX-01 global page); 404-ing a Player who has never played in the League (lenient render with empty league-scoped sections is the contract); exposing a real **Potential** value (LG-05 owns the field — the slot is a `"—"` stub until then).
+
+### Tournaments
+
+**Tournament**:
+A standalone bracketed competition run in **sandbox mode** (LG-02 Part 1) — its own container of enrolled **Teams** plus a chosen format, producing a **Bracket** that **Advances** winners toward a final. **Decoupled from League/Season**: a Tournament is *not* a Season phase and owns its own Teams, distinct from a **Season** (a flat league with cumulative **Standings**). Surfaced as a sandbox "Tournaments" tab alongside Batch Sim — pick a format, import/select/generate Teams, then play game-by-game or all-at-once. Persisted as a real model (the **Bracket** is results-contingent — the semifinal's participants depend on the quarterfinal's outcome — so it cannot use the **Season**'s deterministic, fixture-less `generate_schedule` model; see [ADR-0019](docs/adr/0019-tournament-bracket-model.md)). *Deferred (Part 2):* a composable league-structure builder will let a **Season** embed a Tournament as one block of its flow; until then Tournament = the sandbox surface only.
+_Avoid_: treating a Tournament as a **Season** phase or a **League** (Part 1 Tournament is its own sandbox container, not owned by a League); routing a Tournament's **Bracket** through the **Season** `schedule_format` / `generate_schedule` path (that path is deterministic from the team set and cannot model results-contingent advancement); confusing a Tournament's standalone Teams with a Season's enrolled M2M.
+
+**Bracket**:
+The tree of **Bracket nodes** for a **Tournament**; the visual structure (rendered as a tree) through which winners **Advance** round by round to a final. For a single-elimination field of N **Teams** the Bracket has `N-1` decisive nodes across `ceil(log2(N))` **Bracket rounds**.
+_Avoid_: calling the Bracket a "schedule" (a **Season** schedule is a flat fixture list from `generate_schedule`; a Bracket is a results-contingent tree).
+
+**Bracket round**:
+One tier of a **Bracket** — first round, Quarterfinal, Semifinal, Final, 3rd-Place — stored as an int depth (`bracket_round`) with a display label. **Never shortened to "Round."**
+_Avoid_: conflating a **Bracket round** with a **Round** (the 15-min game unit persisted as `GameRound`). A single **Match** at one **Bracket node** is itself two game **Rounds**; the bracket tier those Rounds sit in is the **Bracket round**.
+
+**Bracket node**:
+One structural slot in a **Bracket** — a `(bracket_round, position)` — holding two **Bracket seed** team-slots (filled by **Seeding** for the first round, by **Advancement** thereafter) and, once simulated, exactly one **Match** (node = one Match in v1; best-of-N **series** deferred). The node's winner is the **Match** winner, except a tied **Match** is broken **best single-Round score → higher Bracket seed** (a Bracket needs a decisive advancer; a `winner_id IS NULL` Match cannot stand here).
+_Avoid_: treating a tied **Match** at a node as terminal (Standings tolerates a tie; a Bracket must advance someone — apply the deterministic tiebreaker); reading a node as more than one **Match** in v1.
+
+**Bracket seed**:
+A **Team**'s tournament ranking within one **Bracket** (1 = top seed), determining its **Seeding** placement (1 plays the lowest seed, standard 1v8 / 4v5 pairing) and serving as the final **Bracket node** tiebreaker. An int `seed` on the tournament participant.
+_Avoid_: confusing a **Bracket seed** with an **RNG seed** / **Master seed** / **Seed chain** — those are `random.seed()` integers for reproducibility; a Bracket seed is a Team's competitive ranking and touches no RNG.
+
+**Seeding**:
+Assigning **Bracket seeds** to a **Tournament**'s enrolled **Teams** and placing them into the first **Bracket round**'s nodes by standard bracket pairing. Distinct from a **Bye**.
+
+**Advancement**:
+A **Bracket node**'s winner moving into its parent node's open team-slot — the mechanic that fills the **Bracket** round by round as Matches are played.
+
+**Bye**:
+A top **Bracket seed** with no first-round opponent (non-power-of-2 field) that auto-advances to the next **Bracket round**. Distinct from the round-robin "bye sentinel" already used by `matches/schedule_generator.py` for odd-N **Season** schedules.
 
 ## Relationships
 

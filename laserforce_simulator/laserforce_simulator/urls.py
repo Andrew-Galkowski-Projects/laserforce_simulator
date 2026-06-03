@@ -27,6 +27,7 @@ urlpatterns = [
     path("help/", include("core.help_urls")),
     path("teams/", include("teams.urls")),
     path("matches/", include("matches.urls")),
+    path("tournaments/", include("matches.tournament_urls")),
     path("seasons/", include("matches.season_urls")),
     path("leagues/", include("matches.league_urls")),
     path("maps/", include("core.urls")),

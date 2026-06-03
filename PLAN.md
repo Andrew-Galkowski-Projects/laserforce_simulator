@@ -426,28 +426,137 @@ columns → **STAT-PROXY-01**.
 
 ### LG-02 · Tournament formats
 
-Support the following tournament types:
+**Status: PARTIAL — Part 1 LG-02a DONE; LG-02a-2 / LG-02b / LG-02c+ / LG-02x
+NOT STARTED. Part 2 NOT STARTED.** LG-02 is a multi-step group; shipping LG-02a
+does **not** complete it. Only the sandbox single-elimination slice is built —
+every other format, the bulk-intake/async-play ergonomics, and the in-League
+composer remain unstarted.
 
-- **Single elimination** — 4/8/16 teams; standard knockout bracket.
-- **Double elimination** — losers get a second chance via the losers bracket.
-- **Round robin** — all teams play each other; used for seeding.
-- **Round robin → Double elimination** — round robin seeding phase feeds into a double elimination finals.
-- **Swiss** — pairings based on current standings; rounds auto-calculated from participant count
-  (typically ⌈log₂(N)⌉), overridable by tournament admin.
-- **Random Draw** — a pool of individual players with no pre-set teams. When all participants
-  are registered, the system randomizes team assignments. Tournament admin reviews and edits
-  the assignments, then confirms to lock them in. Format runs as Round Robin → Double Elimination.
-- **Duos** — players register as pairs. Pairs are placed on 6v6 teams alongside other pairs.
-  Pair performance is tracked independently across games. Requires `TournamentSubGroup` model.
-- **Trios** — same as Duos but groups of three.
+The **LG-02 grill (2026-06-02)** split this monolith. A Tournament is a
+first-class **persisted, standalone sandbox** object — built and played in the
+sandbox `/tournaments/` surface, **decoupled** from League / Season (no routing
+through `generate_schedule`) — and the LG-02x player-pool formats (Random Draw /
+Duos / Trios) were carved off as their own grill. The work is now sliced into
+**Part 1** (sandbox standalone tournaments — LG-02a … LG-02x) and **Part 2** (the
+in-League composable season-structure builder). See
+[ADR-0019](docs/adr/0019-tournament-bracket-model.md) for the persisted
+standalone-sandbox model decision and
+[`.claude/worktrees/lg-02a-seam-contract.md`](.claude/worktrees/lg-02a-seam-contract.md)
+for the locked LG-02a names.
 
-**TournamentSubGroup model:** links players as partners within a specific tournament. Used by Duos and Trios
-to track sub-group performance independently of the full team result.
+Bracket rendered as a visual tree; results auto-advance winners (look at the
+screenshots in `/Screenshots_and_video_examples/`). Once tournaments are wired
+into the League play loop (Part 2), relabel "Until end of season" → "Until
+playoffs" (LG-01d ships the former label) and extend the play loop through
+tournament completion.
 
-Bracket rendered as a visual tree. Results auto-advance winners.
-This should look at the screenshots existing within the /Screenshots_and_video_examples/ directory.
+#### Part 1 · Sandbox standalone tournaments
 
-Once tournaments land, relabel "Until end of season" → "Until playoffs" (LG-01d ships the former label) and extend the play loop through tournament completion.
+- **LG-02a · [DONE] Sandbox single-elimination Tournament.** A standalone,
+  persisted single-elimination bracket built and played entirely in the sandbox,
+  decoupled from League/Season. Single-elimination only; arbitrary **N ≥ 4** with
+  byes; a bracket node is exactly one 2-round `Match`; winners auto-advance; the
+  bracket renders as a visual tree on the detail page.
+  - completed: shipped the **sandbox single-elimination Tournament** at the new
+    `/tournaments/` mount (cite [ADR-0019](docs/adr/0019-tournament-bracket-model.md);
+    seam [`.claude/worktrees/lg-02a-seam-contract.md`](.claude/worktrees/lg-02a-seam-contract.md);
+    CONTEXT.md `### Tournaments` carries the 8 locked terms). **Standalone &
+    persisted** — three new models in `matches/models.py` (`Tournament` /
+    `TournamentParticipant` / `BracketNode`, migration
+    `matches/migrations/0033_tournament.py`, new models only — no `RunPython` /
+    backfill, ADR-0004 precedent), `season`-less and never touching
+    `generate_schedule`. **Single-elimination only** (`format` enum present but
+    single-valued `"single_elimination"`, extensible). `Tournament` runs a 3-state
+    machine `setup` → `active` → `completed`: `setup` is the **Seeding-editable**
+    window, the `BracketNode` tree is built + persisted + locked only on the
+    `setup` → `active` transition (`lock_and_build()`, `@transaction.atomic`,
+    `ValidationError` on N < 4), the final node resolving stamps `champion` +
+    `completed` (mirrors `Season.start_season`'s draft→active M2M lock).
+    **Node = one Match** (a `BracketNode` holds two team slots + an optional played
+    2-round `Match`; no series). **Tie-break** when `Match.winner is None`
+    (rounds + total points tied): best single-`GameRound` score advances, else the
+    **higher Bracket seed (lower seed int)** — pure integer compare, no re-sim.
+    **Arbitrary N ≥ 4 with byes**: bracket size = next power of two ≥ N, the top
+    `(size − N)` seeds get round-1 byes. **Seeding** = mean active-player
+    `overall_rating` **DESC** default (the LG-01c draft-preview talent order) +
+    manual reorder (`tournament_reseed`, rejected once locked). **Team source** =
+    select existing `Team.objects.regular()` **and/or** generate new via the LG-01b
+    cross-app `teams.views._generate_teams` seam (signature unchanged). Play is
+    **synchronous game-by-game** — one `tournament_play_next` POST sims exactly one
+    node's Match via `BatchSimulator().simulate_match(..., match_type="tournament")`
+    and Advances the winner. Pure bracket math lives in `matches/bracket.py`
+    (frozen allowlist `dataclasses`/`typing`/`math`/`collections`, no Django —
+    `TestNoDjangoImportsLeaked`); the view↔pure seam crosses **ints/dicts only**
+    (`_node_to_dict` flattener). Six views/URLs (`tournament_list` / `_create` /
+    `_detail` / `_reseed` / `_lock` / `_play_next`) under
+    `path("tournaments/", include("matches.tournament_urls"))`; a **bracket-tree
+    viz** on `tournament_detail` (DOM ids `tournament-bracket` /
+    `tournament-bracket-round-{n}` / `tournament-node-{round}-{position}`); a
+    sandbox-nav entry `tournaments-nav-link` in the `app_mode == "sandbox"` topnav
+    branch; admin for all three models. Tests: `matches/tests/test_bracket.py`
+    (pure-unit), `test_tournament_models.py`, `test_tournament_views.py`.
+- **LG-02a-2 · [NOT STARTED] Bulk team intake + async play-all.** Two ergonomics follow-ups
+  deferred from LG-02a so it could ship the minimal create + synchronous play loop
+  first. (1) **CSV participant import** — let a Tournament's participant list be
+  populated from a CSV roster via the **LG-00b roster importer** (reuse the
+  existing import path rather than a bespoke parser), on top of the LG-02a
+  select-existing + generate sources. (2) **Async "play-all"** — a one-click
+  "play every remaining node to a champion" that runs **off-request** as a Celery
+  task on the **ADR-0016 `play_season_task` precedent** (same task plumbing the
+  League play loop already uses), instead of the per-node synchronous
+  `tournament_play_next` POST. *Why deferred:* both are additive surfaces over the
+  shipped model — the sync single-step loop proves the bracket/advancement engine
+  end-to-end without the Celery/CSV surface area, and the async path wants the
+  proven engine underneath it.
+- **LG-02b · [NOT STARTED] Best-of-N series nodes.** Generalise a bracket node from **one**
+  2-round `Match` to a **best-of-3 / best-of-5 series**: the node resolves when one
+  side clinches the majority, then Advances. *Why deferred:* LG-02a locked
+  "node = exactly one Match" so the advancement + tie-break engine could be built
+  against a single deterministic result; a series re-opens node-resolution
+  semantics (per-game records, clinch detection, the tie-break's role) and is a
+  clean increment once single-game advancement is proven.
+- **LG-02c+ · [NOT STARTED] Additional bracket formats.** **Double elimination** (losers get a
+  second chance via a losers bracket), **round robin** (all teams play each other,
+  used for seeding), **round robin → double elimination** (RR seeding phase feeds a
+  DE finals), and **Swiss** (pairings from current standings; rounds
+  auto-calculated ⌈log₂(N)⌉, admin-overridable). *Why deferred:* the `format` enum
+  shipped extensible-but-single (`"single_elimination"`) precisely so these slot in
+  as new enum values + new pure `matches/bracket.py` builders without a model
+  migration; each format is its own grill (losers-bracket wiring, RR scheduling +
+  seeding handoff, Swiss pairing) rather than a variant of single-elim.
+- **LG-02x · [NOT STARTED] Player-pool formats (Random Draw / Duos / Trios) — needs
+  its own grill.** Formats with **no pre-set teams**: a pool of individual players
+  registers, then the system assigns teams. **Random Draw** — randomize team
+  assignments once the pool is full, admin reviews/edits, then locks; runs as Round
+  Robin → Double Elimination. **Duos / Trios** — players register as pairs / triples
+  placed on 6v6 teams alongside other groups, with sub-group performance tracked
+  **independently** of the full-team result via a new **`TournamentSubGroup` model**
+  (links players as partners within a specific tournament). *Why deferred (own
+  grill):* these break the LG-02a assumption that participants **are** existing
+  `Team`s — they need a player-pool registration surface, a draw/assignment step
+  with admin review, and the `TournamentSubGroup` model + per-subgroup stat
+  aggregation, none of which the LG-02a Tournament/Participant/BracketNode model
+  covers. Grill the pool-registration + assignment-lifecycle + sub-group-stats
+  domain before building.
+
+#### Part 2 · In-League composable season structure
+
+- **LG-02-Part2 · [NOT STARTED] League-create season-structure composer.** Replace the
+  **hardcoded** `draft → round-robin → playoff` assumption baked into
+  `generate_schedule` with a **dynamic builder at League-create**: dropdowns + a
+  "**+**" builder that lets the admin compose a Season flow from ordered blocks —
+  round-robin blocks, member nights, and **one or more embedded Tournament
+  blocks** — so a Season can be, e.g., RR → Tournament, or RR → member night →
+  Tournament → RR. A Tournament block **embeds the LG-02a `Tournament` model as a
+  block** rather than routing through `generate_schedule`; the composer drives the
+  League play loop across heterogeneous blocks. *Why this is Part 2, not Part 1:*
+  LG-02a deliberately built the Tournament **standalone in the sandbox** first
+  (decoupled from League/Season) so the bracket engine could be proven without
+  touching the League scheduler; embedding it as a composable Season block is the
+  separate, larger task of generalising the season-structure model — which is why
+  the LG-02 grill split the monolith here. When this lands, do the LG-01d
+  label/play-loop changes ("Until end of season" → "Until playoffs", extend the
+  play loop through tournament completion) noted above.
 
 ### LG-03 · Season-end awards
 

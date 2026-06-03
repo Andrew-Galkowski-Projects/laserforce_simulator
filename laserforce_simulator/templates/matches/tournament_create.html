@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Create Tournament{% endblock %}
+
+{% block content %}
+<h1>Create Tournament</h1>
+
+<form method="post" id="tournament-create-form">
+    {% csrf_token %}
+
+    <div class="mb-3">
+        <label for="tournament-create-name" class="form-label">Tournament name</label>
+        <input type="text" class="form-control" id="tournament-create-name" name="name" required>
+    </div>
+
+    <div class="mb-3">
+        <label for="tournament-create-team-select" class="form-label">Select existing teams</label>
+        {% if available_teams %}
+        <select multiple class="form-select" id="tournament-create-team-select" name="teams" size="10">
+            {% for team in available_teams %}
+            <option value="{{ team.id }}">{{ team.name }}</option>
+            {% endfor %}
+        </select>
+        <div class="form-text">Hold Ctrl/Cmd to select multiple teams.</div>
+        {% else %}
+        <div class="alert alert-warning" id="tournament-create-no-teams-notice">
+            No teams available. Generate new teams below instead.
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="mb-3">
+        <label for="tournament-create-generate-count" class="form-label">Generate new teams</label>
+        <input type="number" class="form-control" id="tournament-create-generate-count" name="generate_count" min="0" value="0">
+    </div>
+
+    <div class="mb-3">
+        <label for="tournament-create-generate-ppt" class="form-label">Players per generated team</label>
+        <input type="number" class="form-control" id="tournament-create-generate-ppt" name="generate_ppt" min="1" value="6">
+    </div>
+
+    <button type="submit" class="btn btn-primary" id="tournament-create-submit">Create Tournament</button>
+</form>
+{% endblock %}
