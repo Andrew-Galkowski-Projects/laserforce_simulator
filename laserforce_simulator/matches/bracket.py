@@ -353,6 +353,29 @@ def resolve_bye_chain(nodes: list[dict]) -> list[dict]:
     return mutations
 
 
+def stage_progress(nodes: list[dict]) -> tuple[int, int]:
+    """STAGE-based progress for a Tournament bracket.
+
+    Returns (completed_stages, total_stages):
+      - total_stages   = max ``bracket_round`` across ``nodes`` = the number of
+                         Bracket rounds = ceil(log2(size)). 0 when ``nodes`` is
+                         empty.
+      - completed_stages = count of Bracket rounds (1..total) where EVERY
+                         non-bye node in that round has ``winner_id`` set.
+                         A round with zero non-bye nodes counts as completed.
+    """
+    if not nodes:
+        return (0, 0)
+    total = max(nd["bracket_round"] for nd in nodes)
+    completed = 0
+    for r in range(1, total + 1):
+        round_nodes = [nd for nd in nodes if nd["bracket_round"] == r]
+        non_bye = [nd for nd in round_nodes if not nd["is_bye"]]
+        if all(nd["winner_id"] is not None for nd in non_bye):
+            completed += 1
+    return (completed, total)
+
+
 def break_tie(
     seed_a: int, best_round_score_a: int, seed_b: int, best_round_score_b: int
 ) -> int:

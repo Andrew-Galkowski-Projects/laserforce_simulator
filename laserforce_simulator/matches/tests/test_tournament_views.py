@@ -535,3 +535,357 @@ class TestTournamentPlayNextForcedTie(TestCase):
         self.assertIsNotNone(node.winner)
         # team_a's best single-round score (800) beats team_b's (700) ⇒ team_a.
         self.assertEqual(node.winner_id, team_a_id)
+
+
+# ===========================================================================
+# LG-02a-2 — CSV participant import + async play-all
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified).
+# Seam contract: ``.claude/worktrees/lg-02a-2-seam-contract.md`` §4 views,
+# §5 URLs, §6 templates.
+#
+# CSV import reuses the LG-00b roster importer (``teams.roster_importer``); the
+# CSV builders mirror ``teams/tests/test_roster_import_view.py``. Only the
+# Teams created by the import become participants; the whole field is re-seeded
+# by talent via ``default_seed_order``.
+
+from django.core.files.uploadedfile import SimpleUploadedFile  # noqa: E402
+
+from matches.bracket import default_seed_order  # noqa: E402
+from matches.tournament_views import _team_mean_rating  # noqa: E402
+from teams.roster_importer import REQUIRED_COLUMNS  # noqa: E402
+
+_REQUIRED_HEADER = ",".join(REQUIRED_COLUMNS)
+
+
+def _valid_required_row(
+    team: str,
+    name: str,
+    role: str = "commander",
+    age: int = 28,
+    started_playing_age: int = 16,
+    total_games: int = 100,
+    home_site: str = "Ultrazone Chicago",
+    height: str = "5'7\"",
+) -> str:
+    return (
+        f"{team},{name},{role},{age},{started_playing_age},"
+        f"{total_games},{home_site},{height}"
+    )
+
+
+def _six_role_rows_for(team_name: str, name_prefix: str) -> list[str]:
+    """Six well-formed rows covering every slot for ``team_name``."""
+    return [
+        _valid_required_row(team_name, f"{name_prefix}-Cdr", role="commander"),
+        _valid_required_row(team_name, f"{name_prefix}-Hvy", role="heavy"),
+        _valid_required_row(team_name, f"{name_prefix}-Sc1", role="scout"),
+        _valid_required_row(team_name, f"{name_prefix}-Sc2", role="scout"),
+        _valid_required_row(team_name, f"{name_prefix}-Med", role="medic"),
+        _valid_required_row(team_name, f"{name_prefix}-Amm", role="ammo"),
+    ]
+
+
+def _required_csv(*rows: str) -> bytes:
+    body = "\n".join([_REQUIRED_HEADER, *rows]) + "\n"
+    return body.encode("utf-8")
+
+
+def _upload(body: bytes, filename: str = "roster.csv") -> SimpleUploadedFile:
+    return SimpleUploadedFile(filename, body, content_type="text/csv")
+
+
+def _four_team_csv() -> bytes:
+    """A valid CSV creating 4 brand-new Teams (24 players)."""
+    rows: list[str] = []
+    for i in range(4):
+        rows.extend(_six_role_rows_for(f"ImpTeam{i}", f"I{i}"))
+    return _required_csv(*rows)
+
+
+# ---------------------------------------------------------------------------
+# TestTournamentImportParticipants
+# ---------------------------------------------------------------------------
+
+
+class TestTournamentImportParticipants(TestCase):
+    """POST /tournaments/<id>/import-participants/ — CSV reuse, created-only
+    participants, full re-seed by talent, setup-only guard, error rollback.
+    """
+
+    def test_only_created_teams_become_participants(self) -> None:
+        t = Tournament.objects.create(name="ImpCup")
+        before_participants = t.participants.count()
+        response = self.client.post(
+            reverse("tournament_import_participants", args=[t.id]),
+            {"csv_file": _upload(_four_team_csv())},
+        )
+        self.assertEqual(response.status_code, 302)
+        # The 4 brand-new Teams became participants.
+        self.assertEqual(t.participants.count() - before_participants, 4)
+        created_team_names = {
+            p.team.name for p in t.participants.select_related("team")
+        }
+        self.assertEqual(
+            created_team_names,
+            {"ImpTeam0", "ImpTeam1", "ImpTeam2", "ImpTeam3"},
+        )
+
+    def test_appended_teams_not_auto_added(self) -> None:
+        # Pre-existing Team that the CSV will APPEND to (not create) — it must
+        # NOT become a participant. Use a bare Team (no slots filled) so the
+        # appended commander row fills the free slot_commander with NO DB slot
+        # collision (a true append, not a create).
+        existing = Team.objects.create(name="Appendee")
+        # CSV that appends a player to the existing Team plus creates 4
+        # brand-new Teams.
+        rows = [
+            _valid_required_row(existing.name, "BenchGuy", role="commander"),
+        ]
+        for i in range(4):
+            rows.extend(_six_role_rows_for(f"FreshTeam{i}", f"F{i}"))
+        t = Tournament.objects.create(name="ImpAppendCup")
+        response = self.client.post(
+            reverse("tournament_import_participants", args=[t.id]),
+            {"csv_file": _upload(_required_csv(*rows))},
+        )
+        self.assertEqual(response.status_code, 302)
+        participant_team_ids = set(t.participants.values_list("team_id", flat=True))
+        self.assertNotIn(
+            existing.id,
+            participant_team_ids,
+            "an appended-to Team must NOT auto-join as a participant",
+        )
+
+    def test_full_field_reseeded_by_talent(self) -> None:
+        # Seed an existing participant first, then import — the WHOLE field
+        # (existing + newly created) is re-seeded by mean-rating talent order.
+        t = Tournament.objects.create(name="ImpReseedCup")
+        seed_team = make_team_with_slots("Seeded")[0]
+        TournamentParticipant.objects.create(tournament=t, team=seed_team, seed=1)
+        self.client.post(
+            reverse("tournament_import_participants", args=[t.id]),
+            {"csv_file": _upload(_four_team_csv())},
+        )
+        # Seeds are dense 1..N over the full field (existing + 4 created = 5).
+        parts = list(t.participants.all())
+        self.assertEqual(len(parts), 5)
+        seeds = sorted(p.seed for p in parts)
+        self.assertEqual(seeds, [1, 2, 3, 4, 5])
+        # Order matches default_seed_order over _team_mean_rating talent.
+        team_ratings = [(p.team_id, _team_mean_rating(p.team)) for p in parts]
+        expected_order = default_seed_order(team_ratings)
+        actual_order = [p.team_id for p in sorted(parts, key=lambda p: p.seed)]
+        self.assertEqual(actual_order, expected_order)
+
+    def test_setup_only_guard_rejects_locked_tournament(self) -> None:
+        t = _active_tournament(4, name="LockedImpCup")
+        before_participants = t.participants.count()
+        teams_before = Team.objects.count()
+        players_before = _player_count()
+        response = self.client.post(
+            reverse("tournament_import_participants", args=[t.id]),
+            {"csv_file": _upload(_four_team_csv())},
+        )
+        # Rejected — flash + redirect, ZERO writes.
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(t.participants.count(), before_participants)
+        self.assertEqual(Team.objects.count(), teams_before)
+        self.assertEqual(_player_count(), players_before)
+
+    def test_csv_error_re_renders_detail_with_row_errors_zero_writes(
+        self,
+    ) -> None:
+        t = Tournament.objects.create(name="ImpErrCup")
+        teams_before = Team.objects.count()
+        players_before = _player_count()
+        participants_before = t.participants.count()
+
+        # Row 1 has a bad role ("captain") ⇒ parse-level RowError.
+        bad_rows = [
+            _valid_required_row("BadTeam", "X", role="captain"),
+        ]
+        response = self.client.post(
+            reverse("tournament_import_participants", args=[t.id]),
+            {"csv_file": _upload(_required_csv(*bad_rows))},
+        )
+        # Re-renders the tournament_detail template (HTTP 200) with row errors.
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "matches/tournament_detail.html")
+        body = response.content.decode()
+        # Per-row error DOM id mirrors LG-00b: error-{row}-{field|row}.
+        self.assertIn("tournament-import-error-1-role", body)
+        # transaction.set_rollback(True) ⇒ ZERO writes.
+        self.assertEqual(Team.objects.count(), teams_before)
+        self.assertEqual(_player_count(), players_before)
+        self.assertEqual(t.participants.count(), participants_before)
+
+    def test_import_errors_block_rendered_on_error(self) -> None:
+        t = Tournament.objects.create(name="ImpErrBlockCup")
+        bad_rows = [_valid_required_row("BadTeam2", "Y", role="captain")]
+        response = self.client.post(
+            reverse("tournament_import_participants", args=[t.id]),
+            {"csv_file": _upload(_required_csv(*bad_rows))},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("tournament-import-errors", response.content.decode())
+
+
+# ---------------------------------------------------------------------------
+# TestTournamentPlayAll
+# ---------------------------------------------------------------------------
+
+
+class TestTournamentPlayAll(TestCase):
+    """POST /tournaments/<id>/play-all/ — 202 enqueue, 409 non-active, 405."""
+
+    def test_non_post_returns_405(self) -> None:
+        t = _active_tournament(4, name="PlayAll405")
+        response = self.client.get(reverse("tournament_play_all", args=[t.id]))
+        self.assertEqual(response.status_code, 405)
+
+    def test_play_all_enqueues_returns_202_json(self) -> None:
+        t = _active_tournament(4, name="PlayAll202")
+        # Patch the task's .delay so we assert the enqueue shape without running
+        # the (EAGER) task body here — the task is covered in test_tournament_tasks.
+        with patch("matches.tournament_views.play_tournament_task") as task_mock:
+            fake_result = task_mock.apply_async.return_value
+            fake_result.id = "job-abc-123"
+            response = self.client.post(reverse("tournament_play_all", args=[t.id]))
+        self.assertEqual(response.status_code, 202)
+        payload = response.json()
+        self.assertEqual(set(payload.keys()), {"job_id", "tournament_id"})
+        self.assertEqual(payload["job_id"], "job-abc-123")
+        self.assertEqual(payload["tournament_id"], t.id)
+        # apply_async(..., retry=False) so a dead broker fails fast, not hangs.
+        task_mock.apply_async.assert_called_once_with((t.id,), retry=False)
+
+    def test_play_all_on_non_active_returns_409(self) -> None:
+        t = _setup_tournament(4, name="PlayAll409")  # setup state, not active
+        with patch("matches.tournament_views.play_tournament_task") as task_mock:
+            response = self.client.post(reverse("tournament_play_all", args=[t.id]))
+        self.assertEqual(response.status_code, 409)
+        payload = response.json()
+        self.assertIn("error", payload)
+        # No task enqueued on the 409 path.
+        task_mock.apply_async.assert_not_called()
+
+    def test_play_all_404_on_missing_tournament(self) -> None:
+        response = self.client.post(reverse("tournament_play_all", args=[999999]))
+        self.assertEqual(response.status_code, 404)
+
+    def test_play_all_broker_down_returns_503_json(self) -> None:
+        # When the Celery broker is unreachable, .delay() raises
+        # kombu.exceptions.OperationalError; the view must return a clean JSON
+        # 503 (not a 500 HTML page) so the UI shows a readable message instead
+        # of a JSON-parse failure on the error page.
+        from kombu.exceptions import OperationalError
+
+        t = _active_tournament(4, name="PlayAllBrokerDown")
+        with patch("matches.tournament_views.play_tournament_task") as task_mock:
+            task_mock.apply_async.side_effect = OperationalError("broker unreachable")
+            response = self.client.post(reverse("tournament_play_all", args=[t.id]))
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertIn("error", payload)
+        # The message should point the user at the fix, not leak a traceback.
+        self.assertIn("LF_CELERY_EAGER", payload["error"])
+
+
+# ---------------------------------------------------------------------------
+# TestTournamentPlayStatus
+# ---------------------------------------------------------------------------
+
+
+class TestTournamentPlayStatus(TestCase):
+    """GET /tournaments/<id>/play-status/<job_id>/ — 5-key polling JSON."""
+
+    def test_non_get_returns_405(self) -> None:
+        t = _active_tournament(4, name="Status405")
+        response = self.client.post(
+            reverse("tournament_play_status", args=[t.id, "job-1"])
+        )
+        self.assertEqual(response.status_code, 405)
+
+    def test_404_on_missing_tournament(self) -> None:
+        response = self.client.get(
+            reverse("tournament_play_status", args=[999999, "job-1"])
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_status_json_has_five_locked_keys(self) -> None:
+        t = _active_tournament(4, name="Status5Key")
+        response = self.client.get(
+            reverse("tournament_play_status", args=[t.id, "no-such-job"])
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(
+            set(payload.keys()),
+            {"status", "completed", "total", "error", "tournament_id"},
+        )
+        # tournament_id is echoed from the URL kwarg (authoritative).
+        self.assertEqual(payload["tournament_id"], t.id)
+
+    def test_status_maps_pending_to_running(self) -> None:
+        # An unknown / never-submitted job id resolves to Celery PENDING which
+        # maps to "running" (expiry-asymmetry; reuses _celery_state_to_job_status).
+        t = _active_tournament(4, name="StatusPending")
+        response = self.client.get(
+            reverse("tournament_play_status", args=[t.id, "never-submitted"])
+        )
+        payload = response.json()
+        self.assertEqual(payload["status"], "running")
+        # No progress known for an unknown id ⇒ 0 / 0.
+        self.assertEqual(payload["completed"], 0)
+        self.assertEqual(payload["total"], 0)
+        self.assertIsNone(payload["error"])
+
+
+# ---------------------------------------------------------------------------
+# TestTournamentPlayNextStillResolvesOneNode — refactor regression
+# ---------------------------------------------------------------------------
+
+
+class TestTournamentPlayNextStillResolvesOneNode(TestCase):
+    """The sync ``tournament_play_next`` view is refactored to call
+    ``play_next_node`` but must still resolve exactly one node (no regression).
+    """
+
+    def test_sync_play_next_still_resolves_one_node(self) -> None:
+        t = _active_tournament(4, name="SyncRegression")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            response = self.client.post(reverse("tournament_play_next", args=[t.id]))
+        self.assertEqual(response.status_code, 302)
+        played = t.nodes.filter(match__isnull=False)
+        self.assertEqual(played.count(), 1)
+        self.assertIsNotNone(played.get().winner)
+
+    def test_sync_play_next_redirects_to_detail(self) -> None:
+        t = _active_tournament(4, name="SyncRedirect")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            response = self.client.post(reverse("tournament_play_next", args=[t.id]))
+        self.assertEqual(
+            response["Location"], reverse("tournament_detail", args=[t.id])
+        )
+
+    def test_sync_play_next_none_path_flashes_and_redirects(self) -> None:
+        # Active tournament already played to completion ⇒ play_next returns
+        # None and the view flashes + redirects (no crash).
+        t = _active_tournament(4, name="SyncNone")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(10):
+                t.refresh_from_db()
+                if t.state == "completed":
+                    break
+                self.client.post(reverse("tournament_play_next", args=[t.id]))
+            # State is completed now; a further POST hits the state guard.
+            response = self.client.post(reverse("tournament_play_next", args=[t.id]))
+        self.assertEqual(response.status_code, 302)
+
+
+def _player_count() -> int:
+    from teams.models import Player
+
+    return Player.objects.count()

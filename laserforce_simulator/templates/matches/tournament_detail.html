@@ -26,11 +26,49 @@
     {% csrf_token %}
     <button type="submit" class="btn btn-primary" id="tournament-lock-submit">Lock &amp; Build Bracket</button>
 </form>
+
+{# ---- Import participants (CSV) ---- #}
+<div class="card mb-3">
+    <div class="card-header"><strong>Import Participants (CSV)</strong></div>
+    <div class="card-body">
+        <form method="post" action="{% url 'tournament_import_participants' tournament.id %}"
+              enctype="multipart/form-data" id="tournament-import-form">
+            {% csrf_token %}
+            <div class="mb-2">
+                <span id="tournament-import-file">{{ import_form.csv_file }}</span>
+                {{ import_form.csv_file.errors }}
+            </div>
+            <button type="submit" class="btn btn-secondary" id="tournament-import-submit">Import Participants</button>
+            <a href="{% url 'import_roster_template' %}" id="tournament-import-template-link" class="ms-2">Download a template CSV</a>
+        </form>
+        {% if import_row_errors %}
+            <ul id="tournament-import-errors" class="alert alert-danger mt-2">
+                {% for err in import_row_errors %}
+                    <li id="tournament-import-error-{{ err.row_num }}-{% if err.field %}{{ err.field }}{% else %}row{% endif %}">
+                        Row {{ err.row_num }}{% if err.field %} (field: {{ err.field }}){% endif %}: {{ err.message }}
+                    </li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    </div>
+</div>
 {% elif tournament.state == "active" %}
 <form method="post" action="{% url 'tournament_play_next' tournament.id %}" id="tournament-play-next-form" class="mb-3">
     {% csrf_token %}
     <button type="submit" class="btn btn-primary" id="tournament-play-next-submit"{% if not can_play %} disabled{% endif %}>Play Next Match</button>
 </form>
+
+{# ---- Play All (async) ---- #}
+<form method="post" action="{% url 'tournament_play_all' tournament.id %}" id="tournament-play-all-form" class="mb-3">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-warning" id="tournament-play-all-submit">Play All</button>
+</form>
+<div id="tournament-play-all-progress" hidden>
+    <div class="alert alert-info mb-3">
+        <span class="play-progress-label">Running…</span>
+        <progress class="play-progress-bar" value="0" max="1"></progress>
+    </div>
+</div>
 {% endif %}
 
 {# ---- Bracket tree ---- #}
@@ -89,5 +127,148 @@
     </table>
     <button type="submit" class="btn btn-secondary" id="tournament-seeding-submit">Save Seeding</button>
 </form>
+{% endif %}
+
+{% if tournament.state == "active" %}
+<script>
+(function() {
+    "use strict";
+    var POLL_INTERVAL_MS = 1000;
+    var STATUS_URL_TEMPLATE = "{% url 'tournament_play_status' tournament.id 'JOB' %}";
+    var CSRF_TOKEN = document.querySelector("input[name=csrfmiddlewaretoken]");
+    CSRF_TOKEN = CSRF_TOKEN ? CSRF_TOKEN.value : "";
+
+    var form = document.getElementById("tournament-play-all-form");
+    var submitBtn = document.getElementById("tournament-play-all-submit");
+    var progressContainer = document.getElementById("tournament-play-all-progress");
+    var progressBar = progressContainer ? progressContainer.querySelector(".play-progress-bar") : null;
+    var progressLabel = progressContainer ? progressContainer.querySelector(".play-progress-label") : null;
+    var errorEl = null;
+
+    var pollTimer = null;
+
+    function ensureErrorEl() {
+        if (errorEl) return errorEl;
+        errorEl = document.getElementById("tournament-play-all-error");
+        if (errorEl) return errorEl;
+        errorEl = document.createElement("div");
+        errorEl.id = "tournament-play-all-error";
+        errorEl.className = "alert alert-danger";
+        progressContainer.parentNode.insertBefore(errorEl, progressContainer);
+        return errorEl;
+    }
+
+    function clearError() {
+        if (errorEl) { errorEl.textContent = ""; errorEl.hidden = true; }
+    }
+
+    function setDisabled(disabled) {
+        if (submitBtn) submitBtn.disabled = disabled;
+    }
+
+    function showStarting() {
+        // Immediate in-progress feedback before the first poll arrives.
+        if (!progressContainer) return;
+        progressContainer.hidden = false;
+        if (progressBar) progressBar.removeAttribute("value");  // indeterminate
+        if (progressLabel) progressLabel.textContent = "Starting…";
+    }
+
+    function showProgress(completed, total) {
+        if (!progressContainer) return;
+        progressContainer.hidden = false;
+        if (progressBar) {
+            progressBar.value = completed;
+            progressBar.max = total > 0 ? total : 1;
+        }
+        if (progressLabel) {
+            progressLabel.textContent = "Running… stage " + completed + " / " + total;
+        }
+    }
+
+    function hideProgress() {
+        if (progressContainer) progressContainer.hidden = true;
+    }
+
+    function clearPolling() {
+        if (pollTimer !== null) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+        }
+    }
+
+    function failStart(msg) {
+        clearPolling();
+        hideProgress();
+        setDisabled(false);
+        var el = ensureErrorEl();
+        el.hidden = false;
+        el.textContent = msg;
+    }
+
+    function startPolling(jobId) {
+        showProgress(0, 0);
+        pollTimer = setInterval(function() {
+            var url = STATUS_URL_TEMPLATE.replace("JOB", jobId);
+            fetch(url + "?tournament_id={{ tournament.id }}", {credentials: "same-origin"})
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    showProgress(data.completed || 0, data.total || 0);
+                    if (data.status === "complete") {
+                        clearPolling();
+                        window.location.reload();
+                    } else if (data.status === "error") {
+                        failStart(data.error || "The Play All job failed. See the server logs.");
+                    }
+                })
+                .catch(function() {
+                    // Network blip — keep polling.
+                });
+        }, POLL_INTERVAL_MS);
+    }
+
+    if (form) {
+        form.addEventListener("submit", function(e) {
+            e.preventDefault();
+            clearError();
+            setDisabled(true);
+            showStarting();
+            var fd = new FormData(form);
+            fetch(form.action, {
+                method: "POST",
+                body: fd,
+                headers: {"X-CSRFToken": CSRF_TOKEN},
+                credentials: "same-origin",
+            })
+                .then(function(r) {
+                    // Read as text first so a non-JSON error page (e.g. a 500
+                    // HTML page when the task broker is down) does not throw a
+                    // cryptic "Unexpected token '<'" JSON parse error.
+                    return r.text().then(function(text) {
+                        var json = null;
+                        try { json = JSON.parse(text); } catch (err) { json = null; }
+                        return {ok: r.ok, status: r.status, json: json};
+                    });
+                })
+                .then(function(res) {
+                    if (res.ok && res.json && res.json.job_id) {
+                        startPolling(res.json.job_id);
+                    } else if (res.json && res.json.error) {
+                        failStart(res.json.error);
+                    } else {
+                        failStart(
+                            "Couldn't start the Play All job (server returned " +
+                            res.status + "). The background task worker (Celery) " +
+                            "may not be running."
+                        );
+                    }
+                })
+                .catch(function() {
+                    failStart("Couldn't reach the server. Check your connection and try again.");
+                });
+        });
+    }
+})();
+</script>
 {% endif %}
 {% endblock %}

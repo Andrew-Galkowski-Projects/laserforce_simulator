@@ -1412,6 +1412,122 @@ standalone, `season`-less); batch-N tournament simulation; any
 `arena_map=None` 3-zone fallback per node); no per-Tournament arena-map config; no
 backfill / `RunPython`; no CONTEXT.md term beyond the 8 `### Tournaments` entries.
 
+## LG-02a-2 CSV participant import + async play-all
+
+Two ergonomics follow-ups over the shipped LG-02a Tournament — **CSV participant
+import** (LG-00b reuse) and **async play-all** (Celery). Seam contract:
+[`.claude/worktrees/lg-02a-2-seam-contract.md`](../../.claude/worktrees/lg-02a-2-seam-contract.md).
+**No model, no migration, no ADR** — per-node-atomic follows ADR-0016, CSV reuse
+follows LG-00b; both reversible. **No edit** to `simulate_match`, the bracket
+build/advance logic, or `teams/` (cross-app **read-only** imports only).
+
+**Pure addition — `matches/bracket.py::stage_progress(nodes: list[dict]) ->
+tuple[int, int]`.** STAGE-based progress for a bracket: `total` = max
+`bracket_round` = ⌈log₂(size)⌉ Bracket rounds (0 when empty); `completed` = count
+of rounds where **every non-bye node** (`not is_bye`) has `winner_id is not None`
+(a round of all byes is vacuously complete). Reads ONLY `bracket_round` / `is_bye`
+/ `winner_id` off the existing `_node_to_dict` flat dicts — respects the frozen
+`dataclasses`/`typing`/`math`/`collections`-only allowlist (no new import;
+`TestNoDjangoImportsLeaked` still passes).
+
+**Engine module — `matches/tournament_engine.py` (NEW).**
+`play_next_node(tournament) -> BracketNode | None` (`@transaction.atomic`)
+**extracts** the per-node resolve/advance body out of the old inline
+`tournament_play_next`: `find_next_playable_node()` → sim ONE Match
+`BatchSimulator().simulate_match(..., match_type="tournament")` (deferred import)
+→ resolve winner incl. the `break_tie` fallback on `match.winner is None` → stamp
+`winner` + `save(update_fields=["match","winner"])` → `advance_winner` parent-slot
+mutations applied to the ORM → stamp `champion` + `state="completed"` on the final
+node; returns `None` when nothing is playable. **One node = one transaction**
+(ADR-0016 per-node-atomic). The sync `tournament_views.py::tournament_play_next`
+is **refactored** to keep its HTTP shell (POST-only, `state != "active"` guard) and
+just call `play_next_node`; its inline sim/resolve/advance block is **deleted**.
+
+**Celery task — `matches/tasks.py::play_tournament_task(self, tournament_id) ->
+dict`** (`@shared_task(bind=True, name="matches.play_tournament")`, study
+`play_season_task`). Loops `while play_next_node(tournament) is not None`, after
+each node recomputing `stage_progress` and `self.update_state(state="PROGRESS",
+meta={"completed": int, "total": int})`; returns final `{"completed", "total"}`
+(**stage counts, NOT node counts**). Inactive-state (`state != "active"`)
+early-returns the current stage progress (no-op). **NO outer
+`@transaction.atomic`** — per-node atomicity comes from `play_next_node`'s
+decorator (a mid-loop FAILURE leaves every already-resolved node committed →
+resumable on re-invoke); `django.db.close_old_connections()` in `finally`.
+
+**Three new views/URLs (`tournament_views.py` / `tournament_urls.py`).**
+`tournament_play_all` (POST-only, `HttpResponseNotAllowed(["POST"])` first line;
+`play_tournament_task.apply_async((tournament_id,), retry=False)` → `JsonResponse({job_id,
+tournament_id}, status=202)`; **409** `{"error": ...}` when `state != "active"`;
+**503** `{"error": ...}` when the enqueue raises `kombu.exceptions.OperationalError`
+— a clean JSON broker-down error, NOT a 500 HTML page, so the UI never chokes on
+the response. `retry=False` so an unreachable broker fails after one bounded attempt
+instead of retry-hanging the request);
+`tournament_play_status` (GET-only → `JsonResponse(_build_tournament_play_status_response(
+AsyncResult(job_id), tournament_id=...))`, the locked 5-key JSON `{status,
+completed, total, error, tournament_id}` mirroring
+`matches/views.py::_build_play_status_response`, REUSING `_celery_state_to_job_status`
+verbatim, stage counts with defensive `int(... or 0)` / `isinstance` guards);
+`tournament_import_participants` (POST `@transaction.atomic`). URL order: the three
+paths (`<id>/play-all/`, `<id>/play-status/<job_id>/`, `<id>/import-participants/`)
+append after the existing `<id>/play-next/`.
+
+**CSV import (full LG-00b reuse).** `tournament_import_participants` is
+**setup-only** (`is_locked` ⇒ `messages.error` + redirect, no writes). Happy path:
+`RosterImportForm(request.POST, request.FILES)` → `parse_roster_csv` →
+`_check_db_slot_collisions` → `_apply_roster` returning `(created_teams,
+appended_teams, player_count)`; **ONLY `created_teams`** become
+`TournamentParticipant`s (brand-new Teams ⇒ no `uniq_tournament_team` collision;
+`appended_teams` are created/extended but **NOT auto-added**); then **re-seed the
+whole field by talent** (`_team_mean_rating` → `default_seed_order`, rewriting
+every `seed` via the same two-phase large-offset write `tournament_reseed` uses to
+dodge `uniq_tournament_seed`) → redirect. Error branch (`RosterImportError` OR
+form-invalid): `transaction.set_rollback(True)` + **re-render**
+`tournament_detail.html` HTTP 200 with the bound form + `exc.errors` (zero writes).
+New private `_detail_context(tournament)` helper shares the detail context between
+`tournament_detail` and the import-error re-render — the **6 frozen LG-02a keys**
+(`tournament` / `participants` / `rounds` / `next_node` / `is_locked` / `can_play`)
+**plus** `import_form` (`RosterImportForm()` unbound) and `import_row_errors`
+(`list[RowError]`, default `[]`).
+
+**Cross-app / cross-module imports** (read-only, added to `tournament_views.py`):
+`from teams.forms import RosterImportForm`; `from teams.roster_importer import
+parse_roster_csv, RosterImportError`; `from teams.views import
+_check_db_slot_collisions, _apply_roster`; `from matches.views import
+_celery_state_to_job_status`. Template-download URL name `import_roster_template`
+(LG-00b) is reused.
+
+**Template surfaces (`templates/matches/tournament_detail.html`).** Setup-state
+"Import Participants (CSV)" form (`<form enctype="multipart/form-data">`): DOM ids
+`tournament-import-form` / `-file` / `-submit` / `-template-link` / `-errors`
+(error block, only when `import_row_errors` non-empty) + per-row
+`tournament-import-error-{row_num}-{field|"row"}` (mirrors LG-00b
+`roster_import.html`). Active-state "Play All": `tournament-play-all-form` /
+`-submit` / `-progress` (progress `hidden` by default), with a single inline
+**1000 ms poll JS** block (mirrors the LG-01d seasons `dashboard.html`):
+on submit it **immediately** disables the button + shows a `Starting…` indicator
+(instant in-progress feedback before the first poll), reads the POST response as
+**text first** and `try/catch`-parses JSON so a non-JSON error page (e.g. a 500
+when the broker is down) shows a **friendly fallback** message — never the cryptic
+`Unexpected token '<'` JSON-parse crash — then fetch-POST → `startPolling(job_id)`
+against `tournament_play_status`, updates progress as `Running… stage X / Y` from
+`completed`/`total`, `reload()` on `status === "complete"`, surfaces `error` +
+re-enables on `status === "error"`, swallows network blips. The single-step
+`tournament-play-next-form` is **unchanged**.
+
+**Job-term extension.** The CONTEXT.md **Job** term gains a **4th kind** — a
+**Play Tournament job** (play every remaining decisive Bracket node to a champion;
+progress = completed Bracket stage) + the `/tournaments/<id>/play-all/` URL. **No
+new term** — the **Roster import** term is reused unedited.
+
+**Determinism / scope-out (LOCKED).** **Non-deterministic** — `simulate_match`
+draws fresh per-round seeds, so Play Tournament games are NOT
+master-seed-replayable: **no SIM-07 / SIM-08 interaction, NO Score Calibration
+re-baseline**. No CSV preview/commit UI, no per-tournament arena map, no async on
+the single-step `tournament-play-next` (stays synchronous). Tests:
+`test_bracket.py` (extend — `TestStageProgress` + purity assertion),
+`test_tournament_engine.py` (NEW), `test_tournament_tasks.py` (NEW, under
+`CELERY_TASK_ALWAYS_EAGER`), `test_tournament_views.py` (extend).
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)

@@ -8,15 +8,26 @@ GET-driven list / create / detail surfaces plus three POST write endpoints
 import random
 from statistics import mean
 
+from celery.result import AsyncResult
+from kombu.exceptions import OperationalError
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
+from django.http import (
+    HttpRequest,
+    HttpResponse,
+    HttpResponseNotAllowed,
+    JsonResponse,
+)
 from django.shortcuts import get_object_or_404, redirect, render
 
 from teams.constants import PLAYER_NAMES, TEAM_NAMES
+from teams.forms import RosterImportForm
 from teams.models import Team
-from teams.views import _generate_teams
+from teams.roster_importer import RosterImportError, parse_roster_csv
+from teams.views import _apply_roster, _check_db_slot_collisions, _generate_teams
+
+from matches.views import _celery_state_to_job_status
 
 from .bracket import (
     advance_winner,
@@ -25,6 +36,8 @@ from .bracket import (
 )
 from .models import BracketNode, Tournament, TournamentParticipant, _node_to_dict
 from .simulation.entrypoints import BatchSimulator
+from .tasks import play_tournament_task
+from .tournament_engine import play_next_node
 
 
 def _team_mean_rating(team: Team) -> float:
@@ -145,6 +158,23 @@ def _build_rounds(tournament: Tournament) -> list[dict]:
     return [{"bracket_round": r, "nodes": by_round[r]} for r in sorted(by_round)]
 
 
+def _detail_context(tournament: Tournament) -> dict:
+    """Shared tournament_detail context (LG-02a keys + LG-02a-2 import keys)."""
+    participants = list(tournament.participants.select_related("team").order_by("seed"))
+    rounds = _build_rounds(tournament)
+    next_node = tournament.find_next_playable_node()
+    return {
+        "tournament": tournament,
+        "participants": participants,
+        "rounds": rounds,
+        "next_node": next_node,
+        "is_locked": tournament.is_locked,
+        "can_play": tournament.state == "active" and next_node is not None,
+        "import_form": RosterImportForm(),
+        "import_row_errors": [],
+    }
+
+
 def tournament_detail(request: HttpRequest, tournament_id: int) -> HttpResponse:
     """Render the bracket tree + (in setup) the Seeding-edit form + play
     controls.
@@ -153,18 +183,9 @@ def tournament_detail(request: HttpRequest, tournament_id: int) -> HttpResponse:
         return HttpResponseNotAllowed(["GET"])
 
     tournament = get_object_or_404(Tournament, pk=tournament_id)
-    participants = list(tournament.participants.select_related("team").order_by("seed"))
-    rounds = _build_rounds(tournament)
-    next_node = tournament.find_next_playable_node()
-    context = {
-        "tournament": tournament,
-        "participants": participants,
-        "rounds": rounds,
-        "next_node": next_node,
-        "is_locked": tournament.is_locked,
-        "can_play": tournament.state == "active" and next_node is not None,
-    }
-    return render(request, "matches/tournament_detail.html", context)
+    return render(
+        request, "matches/tournament_detail.html", _detail_context(tournament)
+    )
 
 
 @transaction.atomic
@@ -222,10 +243,9 @@ def tournament_lock(request: HttpRequest, tournament_id: int) -> HttpResponse:
     return redirect("tournament_detail", tournament_id=tournament.id)
 
 
-@transaction.atomic
 def tournament_play_next(request: HttpRequest, tournament_id: int) -> HttpResponse:
     """Find next playable node, sim ONE Match, resolve winner (incl. tie-break),
-    Advance, stamp champion if final.
+    Advance, stamp champion if final. Delegates to ``play_next_node``.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -235,60 +255,161 @@ def tournament_play_next(request: HttpRequest, tournament_id: int) -> HttpRespon
         messages.error(request, "The tournament is not active.")
         return redirect("tournament_detail", tournament_id=tournament.id)
 
-    node = tournament.find_next_playable_node()
+    node = play_next_node(tournament)
     if node is None:
         messages.error(request, "No playable match is ready.")
         return redirect("tournament_detail", tournament_id=tournament.id)
 
-    # 1. Simulate one Match (team_a plays red, team_b plays blue).
-    match = BatchSimulator().simulate_match(
-        node.team_a, node.team_b, match_type="tournament"
-    )
-    node.match = match
+    return redirect("tournament_detail", tournament_id=tournament.id)
 
-    # 2-4. Resolve winner (with tie-break on a true tie).
-    winner_team = match.winner
-    if winner_team is None:
-        best_a = max(match.red_round1_points, match.red_round2_points)
-        best_b = max(match.blue_round1_points, match.blue_round2_points)
-        winning_seed = break_tie(node.seed_a, best_a, node.seed_b, best_b)
-        if winning_seed == node.seed_a:
-            winner_team = node.team_a
-            winner_seed = node.seed_a
-        else:
-            winner_team = node.team_b
-            winner_seed = node.seed_b
-    else:
-        if winner_team.id == node.team_a_id:
-            winner_seed = node.seed_a
-        else:
-            winner_seed = node.seed_b
 
-    # 5. Set winner, save node.
-    node.winner = winner_team
-    node.save(update_fields=["match", "winner"])
+@transaction.atomic
+def tournament_import_participants(
+    request: HttpRequest, tournament_id: int
+) -> HttpResponse:
+    """Import participants from a roster CSV (LG-00b reuse). Setup-only.
 
-    # Compute + apply parent mutations.
-    flat = [_node_to_dict(n) for n in tournament.nodes.select_related("advances_to")]
-    mutations = advance_winner(
-        flat, (node.bracket_round, node.position), winner_team.id, winner_seed
-    )
-    for mut in mutations:
-        parent = tournament.nodes.get(
-            bracket_round=mut["bracket_round"], position=mut["position"]
+    Only brand-new Teams (``created_teams``) become participants; appended
+    Teams are created/extended but NOT auto-added. The whole field is then
+    re-seeded by talent.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    if tournament.is_locked:
+        messages.error(request, "Participants can only be imported during setup.")
+        return redirect("tournament_detail", tournament_id=tournament.id)
+
+    form = RosterImportForm(request.POST, request.FILES)
+
+    def _render_error(import_row_errors: list) -> HttpResponse:
+        # Build the read-only detail context BEFORE flagging rollback — a
+        # rolled-back atomic block forbids further queries, so set_rollback
+        # must be the last DB-touching action before the render.
+        ctx = _detail_context(tournament)
+        ctx["import_form"] = form
+        ctx["import_row_errors"] = import_row_errors
+        transaction.set_rollback(True)
+        return render(request, "matches/tournament_detail.html", ctx)
+
+    if not form.is_valid():
+        return _render_error([])
+
+    try:
+        parsed = parse_roster_csv(form.cleaned_data["csv_file"])
+        _check_db_slot_collisions(parsed)
+        created_teams, _appended_teams, _player_count = _apply_roster(parsed)
+    except RosterImportError as exc:
+        return _render_error(exc.errors)
+
+    # Only brand-new Teams become participants (no uniq collision possible).
+    existing_team_ids = set(tournament.participants.values_list("team_id", flat=True))
+    next_seed = tournament.participants.count() + 1
+    for team in created_teams:
+        if team.id in existing_team_ids:
+            continue
+        TournamentParticipant.objects.create(
+            tournament=tournament, team=team, seed=next_seed
         )
-        if mut["slot"] == "a":
-            parent.team_a = winner_team
-            parent.seed_a = mut["seed"]
-        else:
-            parent.team_b = winner_team
-            parent.seed_b = mut["seed"]
-        parent.save(update_fields=["team_a", "team_b", "seed_a", "seed_b"])
+        next_seed += 1
 
-    # 6. Final node -> stamp champion + complete.
-    if node.advances_to_id is None:
-        tournament.champion = winner_team
-        tournament.state = "completed"
-        tournament.save(update_fields=["champion", "state"])
+    # Re-seed the WHOLE field by talent.
+    participants = list(tournament.participants.select_related("team"))
+    team_ratings = [(p.team_id, _team_mean_rating(p.team)) for p in participants]
+    seed_order = default_seed_order(team_ratings)
+    seed_by_team = {team_id: idx for idx, team_id in enumerate(seed_order, start=1)}
+
+    # Two-phase offset write to dodge the uniq (tournament, seed) constraint.
+    offset = 1000000
+    for participant in participants:
+        participant.seed = participant.seed + offset
+        participant.save(update_fields=["seed"])
+    for participant in participants:
+        participant.seed = seed_by_team[participant.team_id]
+        participant.save(update_fields=["seed"])
 
     return redirect("tournament_detail", tournament_id=tournament.id)
+
+
+def tournament_play_all(request: HttpRequest, tournament_id: int) -> JsonResponse:
+    """Enqueue the async Play Tournament job. POST-only. 202 + job JSON."""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    if tournament.state != "active":
+        return JsonResponse({"error": "Tournament is not active."}, status=409)
+
+    try:
+        # retry=False so an unreachable broker raises OperationalError after a
+        # single bounded attempt instead of retry-hanging the request.
+        result = play_tournament_task.apply_async((tournament_id,), retry=False)
+    except OperationalError:
+        # The Celery broker (Redis) is unreachable. Return a clean JSON error
+        # (503) instead of a 500 HTML page so the UI can show a clear message
+        # rather than a JSON-parse failure on the error page.
+        return JsonResponse(
+            {
+                "error": (
+                    "Couldn't start the Play All job — the background task "
+                    "queue is unavailable. Start a Celery worker + broker, or "
+                    "run the server with LF_CELERY_EAGER=1 for local play."
+                )
+            },
+            status=503,
+        )
+    return JsonResponse(
+        {"job_id": result.id, "tournament_id": tournament.id}, status=202
+    )
+
+
+def _build_tournament_play_status_response(
+    async_result: AsyncResult, *, tournament_id: int
+) -> dict:
+    """Locked 5-key polling JSON for a Play Tournament job."""
+    state = async_result.state
+    status = _celery_state_to_job_status(state)
+
+    completed = 0
+    total = 0
+    error: str | None = None
+
+    if state == "PROGRESS":
+        info = async_result.info or {}
+        if isinstance(info, dict):
+            completed = int(info.get("completed", 0) or 0)
+            total = int(info.get("total", 0) or 0)
+    elif state == "SUCCESS":
+        result = async_result.result or {}
+        if isinstance(result, dict):
+            completed = int(result.get("completed", 0) or 0)
+            total = int(result.get("total", 0) or 0)
+    elif state in ("FAILURE", "REVOKED"):
+        info = async_result.info
+        if info is not None:
+            error = str(info)
+
+    return {
+        "status": status,
+        "completed": completed,
+        "total": total,
+        "error": error,
+        "tournament_id": tournament_id,
+    }
+
+
+def tournament_play_status(
+    request: HttpRequest, tournament_id: int, job_id: str
+) -> JsonResponse:
+    """Poll a Play Tournament job. GET-only. Returns the locked 5-key JSON."""
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    get_object_or_404(Tournament, pk=tournament_id)
+    async_result = AsyncResult(job_id)
+    return JsonResponse(
+        _build_tournament_play_status_response(
+            async_result, tournament_id=tournament_id
+        )
+    )

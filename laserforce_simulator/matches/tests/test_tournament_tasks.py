@@ -1,0 +1,286 @@
+"""LG-02a-2 — direct task-level tests for ``play_tournament_task``.
+
+Pinned by ``.claude/worktrees/lg-02a-2-seam-contract.md`` §3 (task signature +
+``name="matches.play_tournament"``, body, return shape ``{"completed","total"}``
+as STAGE counts, ``update_state`` meta shape, inactive-state early return).
+
+Runs under ``CELERY_TASK_ALWAYS_EAGER = True`` (set by the project
+``conftest.py`` via ``LF_CELERY_EAGER=1``) so ``task.apply(args=...)`` executes
+synchronously in-process — no Redis required. Mirrors the API-03
+``test_batch_tasks.py`` EAGER idiom (``.apply(...)`` + the task registry under
+the pinned ``name=`` string for ``update_state`` spying).
+
+``ROUND_TICKS`` is patched small for speed; the REAL ``simulate_match`` seam
+(via ``play_next_node``) is exercised — no ``mock.patch`` on it — so signature
+drift fails loudly.
+
+These assertions WILL fail until the Code agent lands
+``matches/tasks.py::play_tournament_task``; that is expected.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import patch
+
+import pytest
+
+from matches.simulation import BatchSimulator
+from matches.tests.conftest import make_team_with_slots
+
+# Small tick window so a played Match round terminates fast.
+_FAST_TICKS = 40
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_teams(n: int, prefix: str) -> list:
+    return [make_team_with_slots(f"{prefix}{i}")[0] for i in range(n)]
+
+
+def _active_tournament(n: int, *, name: str, prefix: str):
+    """A locked/active Tournament with its bracket built."""
+    from matches.models import Tournament, TournamentParticipant
+
+    t = Tournament.objects.create(name=name)
+    for seed, team in enumerate(_make_teams(n, prefix), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+# ---------------------------------------------------------------------------
+# TestPlayTournamentTaskHappyPath
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestPlayTournamentTaskHappyPath:
+    """§3 — ``play_tournament_task.apply(args=(tournament_id,))`` under EAGER
+    plays an active Tournament to a champion and returns
+    ``{"completed": int, "total": int}`` (STAGE counts).
+    """
+
+    def test_plays_to_champion(self) -> None:
+        from matches.models import Tournament
+        from matches.tasks import play_tournament_task
+
+        t = _active_tournament(4, name="TaskHappy", prefix="TtHappy")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        assert result.state == "SUCCESS", (
+            f"expected EagerResult.state=='SUCCESS', got {result.state!r}; "
+            f"info={result.info!r}"
+        )
+        t.refresh_from_db()
+        assert (
+            t.state == "completed"
+        ), f"tournament must be completed after the task; got {t.state!r}"
+        assert t.champion_id is not None, "a champion must be stamped"
+
+    def test_return_shape_is_two_stage_counts(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_tournament(4, name="TaskShape", prefix="TtShape")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        assert result.state == "SUCCESS"
+        payload = result.result
+        assert isinstance(payload, dict)
+        assert set(payload.keys()) == {"completed", "total"}, (
+            f"return must carry exactly {{'completed','total'}} stage counts; "
+            f"got keys={set(payload.keys())!r}"
+        )
+        assert isinstance(payload["completed"], int)
+        assert isinstance(payload["total"], int)
+
+    def test_final_completed_equals_total_stages(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_tournament(4, name="TaskFinal", prefix="TtFinal")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        payload = result.result
+        # N=4 ⇒ 2 Bracket stages; played to completion ⇒ completed == total == 2.
+        assert (
+            payload["total"] == 2
+        ), f"a 4-team bracket has 2 Bracket stages; got total={payload['total']!r}"
+        assert payload["completed"] == payload["total"], (
+            f"a completed tournament must have completed == total; got "
+            f"completed={payload['completed']!r} total={payload['total']!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestPlayTournamentTaskProgress
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestPlayTournamentTaskProgress:
+    """§3 — under EAGER the task calls ``self.update_state(state='PROGRESS',
+    meta={"completed": int, "total": int})`` (STAGE counts, NOT node counts)
+    at least once.
+    """
+
+    def test_progress_emits_stage_count_meta(self) -> None:
+        from laserforce_simulator.celery_app import celery_app
+        from matches.tasks import play_tournament_task
+
+        t = _active_tournament(4, name="TaskProgress", prefix="TtProg")
+
+        calls: list[dict] = []
+
+        # The Proxy from ``@shared_task`` is not the bound Task; the real Task
+        # lives in the app registry under the pinned ``name=`` string.
+        actual_task = celery_app.tasks["matches.play_tournament"]
+
+        def _spy_update_state(*args, **kwargs) -> None:
+            calls.append({"args": args, "kwargs": kwargs})
+            return None
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            with patch.object(actual_task, "update_state", _spy_update_state):
+                result = play_tournament_task.apply(args=(t.id,))
+
+        assert result.state == "SUCCESS", (
+            f"task must succeed even with update_state spied; "
+            f"state={result.state!r} info={result.info!r}"
+        )
+
+        progress_calls = [c for c in calls if c["kwargs"].get("state") == "PROGRESS"]
+        assert progress_calls, (
+            "play_tournament_task did not emit any state='PROGRESS' "
+            f"update_state calls; observed calls={calls!r}"
+        )
+        for call in progress_calls:
+            meta = call["kwargs"].get("meta")
+            assert isinstance(
+                meta, dict
+            ), f"PROGRESS meta must be a dict; got {type(meta).__name__}"
+            assert set(meta.keys()) == {"completed", "total"}, (
+                f"PROGRESS meta must be exactly {{'completed','total'}} stage "
+                f"counts; got {set(meta.keys())!r}"
+            )
+            assert isinstance(meta["completed"], int)
+            assert isinstance(meta["total"], int)
+            # Stage counts, not node counts: total never exceeds the 2 stages.
+            assert meta["total"] == 2, (
+                f"meta['total'] is the STAGE count (2 for N=4), not the node "
+                f"count; got {meta['total']!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# TestPlayTournamentTaskResumable
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestPlayTournamentTaskResumable:
+    """§3 — resumable after a partial run: a first invocation that plays only
+    some nodes leaves the Tournament active; a second invocation finishes the
+    rest to a champion.
+    """
+
+    def test_second_invocation_finishes_after_partial(self) -> None:
+        from matches.models import Tournament
+        from matches.tasks import play_tournament_task
+        from matches.tournament_engine import play_next_node
+
+        t = _active_tournament(4, name="TaskResume", prefix="TtResume")
+
+        # Manually resolve ONE node (a partial run) so the task picks up the
+        # remainder. The Tournament stays active.
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_next_node(t)
+        t.refresh_from_db()
+        assert t.state == "active", "partial run must leave the tournament active"
+        played_before = t.nodes.filter(match__isnull=False).count()
+        assert played_before >= 1
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        assert result.state == "SUCCESS"
+        t.refresh_from_db()
+        assert t.state == "completed", "task must finish the remaining nodes"
+        assert t.champion_id is not None
+        # The earlier-resolved node was NOT re-played (its Match is reused).
+        assert t.nodes.filter(match__isnull=False).count() >= played_before
+
+
+# ---------------------------------------------------------------------------
+# TestPlayTournamentTaskInactiveEarlyReturn
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestPlayTournamentTaskInactiveEarlyReturn:
+    """§3 — an inactive-state Tournament (setup / completed) is an early-return
+    no-op: no nodes played, returns the CURRENT stage progress.
+    """
+
+    def test_setup_state_is_noop_returns_zero_progress(self) -> None:
+        from matches.models import (
+            Match,
+            Tournament,
+            TournamentParticipant,
+        )
+        from matches.tasks import play_tournament_task
+
+        # A setup-state (unlocked) Tournament has no nodes yet.
+        t = Tournament.objects.create(name="TaskSetup")
+        for seed, team in enumerate(_make_teams(4, "TtSetup"), start=1):
+            TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+        matches_before = Match.objects.count()
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        assert result.state == "SUCCESS"
+        payload = result.result
+        assert set(payload.keys()) == {"completed", "total"}
+        # No nodes built ⇒ stage_progress over an empty bracket ⇒ (0, 0).
+        assert payload == {"completed": 0, "total": 0}, (
+            f"setup-state early return must report current (empty) stage "
+            f"progress; got {payload!r}"
+        )
+        t.refresh_from_db()
+        assert t.state == "setup", "setup tournament must stay setup"
+        assert Match.objects.count() == matches_before, "no Match may be played"
+
+    def test_completed_state_is_noop_returns_final_progress(self) -> None:
+        from matches.models import Match
+        from matches.tasks import play_tournament_task
+
+        t = _active_tournament(4, name="TaskDone", prefix="TtDone")
+        # Play it to completion first.
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_tournament_task.apply(args=(t.id,))
+        t.refresh_from_db()
+        assert t.state == "completed"
+        matches_before = Match.objects.count()
+
+        # Re-invoking on a completed Tournament is a no-op.
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        assert result.state == "SUCCESS"
+        payload = result.result
+        assert payload == {"completed": 2, "total": 2}, (
+            f"completed-state early return must report final stage progress "
+            f"(2/2 for N=4); got {payload!r}"
+        )
+        assert (
+            Match.objects.count() == matches_before
+        ), "a completed-state re-invocation must play no further Matches"
