@@ -41,6 +41,7 @@ from .models import (
     _node_to_dict,
     count_series_wins,
 )
+from .schedule_generator import generate_schedule
 from .simulation.entrypoints import BatchSimulator
 from .tasks import play_tournament_task
 from .tournament_engine import play_next_node
@@ -147,7 +148,11 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
     # parses): only the two known formats are accepted, anything else (absent,
     # tampered) falls back to single-elimination.
     tournament_format = request.POST.get("format")
-    if tournament_format not in ("single_elimination", "double_elimination"):
+    if tournament_format not in (
+        "single_elimination",
+        "double_elimination",
+        "round_robin",
+    ):
         tournament_format = "single_elimination"
 
     tournament = Tournament.objects.create(
@@ -221,11 +226,146 @@ def _build_rounds(tournament: Tournament) -> dict:
     }
 
 
+def _build_rr_crosstable(tournament: Tournament, rows: list) -> list:
+    """LG-02c — N x N round-robin crosstable in Standings order.
+
+    ``rows`` is the already-computed ``round_robin_standings()`` output (passed
+    in by the caller so it is computed once and shared with the standings table).
+
+    Each persisted RR node carries the two legs of a fixture across two nodes
+    (round_number 1 and round_number 2). The node only stores
+    bracket_round=matchday + position, so the leg's round_number is recovered
+    by re-deriving the schedule (``generate_schedule(team_ids)``) and matching
+    each persisted node by ``(matchday, position-within-matchday)`` — the exact
+    key ``lock_and_build`` used.
+
+    Cell-mapping rule: leg round_number==1 -> cell[team_a][team_b]; leg
+    round_number==2 -> cell[team_b][team_a]; diagonal blank.
+
+    Returns ``list[{"team": Team, "cells": [<cell | None>, ...]}]`` — one row
+    per team in Standings order, each ``cells`` the N-long row of per-opponent
+    cells in the same team order. A ``<cell>`` is ``None`` (diagonal) or a dict
+    ``{"opponent_team_id", "leg1", "leg2"}`` where a leg is ``None`` or
+    ``{"node_id", "team_score", "opp_score", "played", "match_id"}`` from the
+    row team's perspective.
+    """
+    participants = list(tournament.participants.select_related("team"))
+    team_by_id = {p.team_id: p.team for p in participants}
+    team_ids = [p.team_id for p in participants]
+
+    # Order teams by Standings rank (rows already ranked); fall back to any
+    # enrolled team not yet ranked (defensive — compute_standings returns all).
+    ordered_team_ids = [r.team_id for r in rows]
+    for tid in team_ids:
+        if tid not in ordered_team_ids:
+            ordered_team_ids.append(tid)
+    order_index = {tid: i for i, tid in enumerate(ordered_team_ids)}
+    n = len(ordered_team_ids)
+
+    # Map each persisted RR node to its fixture's round_number via the
+    # (matchday, position-within-matchday) key the builder used.
+    fixtures = generate_schedule(team_ids)
+    fixture_round_by_key: dict[tuple[int, int], int] = {}
+    pos_by_matchday: dict[int, int] = {}
+    for fixture in fixtures:
+        pos = pos_by_matchday.get(fixture.matchday, 0)
+        fixture_round_by_key[(fixture.matchday, pos)] = fixture.round_number
+        pos_by_matchday[fixture.matchday] = pos + 1
+
+    nodes = list(
+        tournament.nodes.filter(bracket_type="round_robin")
+        .select_related("team_a", "team_b")
+        .prefetch_related("series_matches")
+        .order_by("bracket_round", "position")
+    )
+
+    # cell[row_index][col_index] -> {"opponent_team_id", "leg1", "leg2"} | None
+    grid: list[list] = [[None] * n for _ in range(n)]
+
+    def _leg_dict(node, row_is_team_a: bool):
+        series = list(node.series_matches.all())
+        played = bool(node.winner_id is not None and series and series[0].match)
+        team_score = None
+        opp_score = None
+        match_id = None
+        if played:
+            match = series[0].match
+            match_id = match.id
+            # Read from the persisted Match to be side-faithful: map node.team_a
+            # / team_b to physical points by which physical side each held.
+            if match.team_red_id == node.team_a_id:
+                a_points = match.red_total_points
+                b_points = match.blue_total_points
+            else:
+                a_points = match.blue_total_points
+                b_points = match.red_total_points
+            if row_is_team_a:
+                team_score, opp_score = a_points, b_points
+            else:
+                team_score, opp_score = b_points, a_points
+        return {
+            "node_id": node.id,
+            "team_score": team_score,
+            "opp_score": opp_score,
+            "played": played,
+            "match_id": match_id,
+        }
+
+    for node in nodes:
+        a_id = node.team_a_id
+        b_id = node.team_b_id
+        if a_id not in order_index or b_id not in order_index:
+            continue
+        # Recover the leg's round_number; position is the per-matchday index.
+        # Re-derive the position within the node's matchday from node ordering.
+        round_number = fixture_round_by_key.get((node.bracket_round, node.position))
+        if round_number == 1:
+            row_id, col_id = a_id, b_id
+        elif round_number == 2:
+            row_id, col_id = b_id, a_id
+        else:
+            # Defensive: unmatched node — skip rather than crash.
+            continue
+        ri = order_index[row_id]
+        ci = order_index[col_id]
+        cell = grid[ri][ci]
+        if cell is None:
+            cell = {"opponent_team_id": col_id, "leg1": None, "leg2": None}
+            grid[ri][ci] = cell
+        # The row team is whichever of (a, b) equals row_id.
+        row_is_team_a = row_id == a_id
+        leg = _leg_dict(node, row_is_team_a)
+        if round_number == 1:
+            cell["leg1"] = leg
+        else:
+            cell["leg2"] = leg
+
+    crosstable = []
+    for ri, row_id in enumerate(ordered_team_ids):
+        crosstable.append({"team": team_by_id.get(row_id), "cells": grid[ri]})
+    return crosstable
+
+
 def _detail_context(tournament: Tournament) -> dict:
     """Shared tournament_detail context (LG-02a keys + LG-02a-2 import keys)."""
     participants = list(tournament.participants.select_related("team").order_by("seed"))
     rounds = _build_rounds(tournament)
     next_node = tournament.find_next_playable_node()
+    # LG-02c — round-robin crosstable + standings (empty for elim formats).
+    if tournament.format == "round_robin":
+        # Compute the standings ONCE and feed both surfaces (the crosstable
+        # orders teams by rank, the table renders the rows) — avoids a second
+        # multi-join + compute_standings pass per render.
+        rr_rows = tournament.round_robin_standings()
+        rr_crosstable = _build_rr_crosstable(tournament, rr_rows)
+        # Pair each StandingsRow with its Team so the template can render the
+        # team NAME (StandingsRow carries only team_id) — the LG-01
+        # season-standings `rows_with_teams` precedent.
+        team_by_id = {p.team_id: p.team for p in participants}
+        rr_standings = [(row, team_by_id.get(row.team_id)) for row in rr_rows]
+    else:
+        rr_crosstable = []
+        rr_standings = []
     return {
         "tournament": tournament,
         "participants": participants,
@@ -235,6 +375,8 @@ def _detail_context(tournament: Tournament) -> dict:
         "can_play": tournament.state == "active" and next_node is not None,
         "import_form": RosterImportForm(),
         "import_row_errors": [],
+        "rr_crosstable": rr_crosstable,
+        "rr_standings": rr_standings,
     }
 
 

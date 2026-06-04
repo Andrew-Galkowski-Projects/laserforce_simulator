@@ -151,8 +151,76 @@ only new work is defining DE depth as distance-to-Grand-final.
   the tournament model; the "build both, auto-resolve the unused one" pattern
   is reusable for any future contingent node.
 
+## Extension — Round robin (LG-02c round-robin slice, 2026-06-03)
+
+The second LG-02c+ format. Where double elimination *added* edges (the loser
+Drop) to the tree, **round robin removes them entirely**: every Team plays
+every other, there is no Advancement, and the champion is the **Standings**
+leader after the last game — not a bracket final. This bends the ADR-0019
+premise that a Bracket is a *results-contingent tree*, so it is recorded here
+rather than treated as a routine new builder.
+
+**Decisions (grill, 2026-06-03):**
+
+- **`Tournament.format` gains `("round_robin", "Round robin")`.** Single- and
+  double-elimination Tournaments are byte-unchanged.
+- **Reuse the existing `BracketNode` table as a *flat, edge-less* graph.**
+  One node per pairing, both team-slots **fixed at lock time** (not filled by
+  Advancement), `advances_to = NULL` / `loser_advances_to = NULL`,
+  `is_bye = False`, `series_length = 1`. A fourth `bracket_type` value
+  `"round_robin"` discriminates the nodes (with a `_BRACKET_RANK` entry); the
+  `format` field is the primary switch the engine/detail branches read.
+- **Reuse `generate_schedule` for the pairings, NOT a new bracket builder.**
+  The grill chose the **double round-robin** (each pair meets twice) — the
+  full `generate_schedule(team_ids)` fixture list verbatim, one `BracketNode`
+  per fixture (leg `round_number==1` → crosstable cell [a][b], leg 2 →
+  [b][a]). This deliberately reuses the **Season**'s deterministic pairing
+  generator. It does **not** violate the CONTEXT "Bracket-is-not-a-schedule"
+  rule: that rule forbids routing *results-contingent advancement* through the
+  deterministic path, and round-robin has no advancement. The prohibition is
+  hereby scoped to *advancement formats* (the CONTEXT Tournament/Bracket
+  _Avoid_ notes were revised to say so).
+- **Champion + ranking reuse `matches/standings.py::compute_standings`.** The
+  same `league_points → round_wins → total_score → team-name` ladder a Season
+  uses; the view builds its 9-key match dicts + `season_rounds` from the
+  played nodes' Matches/GameRounds. Standings ties break on **team name**
+  (the `compute_standings` final tiebreaker) — the grill rejected a
+  seed-aware tiebreak for the first slice (Bracket seed handoff to seeding is
+  an RR→DE concern, deferred).
+- **Completion is an RR branch in `play_next_node`, parallel to
+  `Season.complete_if_finished`.** The elimination "final node decided" rule
+  (`advances_to_id is None ⇒ crown`) is wrong for round-robin (every node has
+  `advances_to = None`); instead the Tournament completes only once **every**
+  node is resolved, at which point the champion is stamped from
+  `compute_standings`. `find_next_node` is unchanged — its predicate (both
+  slots filled, not bye, Series unclinched) already picks the next unplayed
+  RR node, and its sort collapses to `(bracket_round, position)` for a single
+  `bracket_type`.
+- **Series escalation does not apply.** No final, no depth ⇒ every node is
+  Bo1; the four create-time Series-length selects are hidden/ignored when
+  `format = round_robin`.
+- **The detail page renders an N×N crosstable + a live Standings table, not a
+  tree.** `tournament_detail` branches on `tournament.format`.
+
+**Rejected (RR slice):** a separate `RoundRobinGame` model (rejected — an RR
+pairing *is* a `BracketNode` with no edges; a second table would fork the
+engine, the `SeriesMatch` join, and the play loop for no structural gain); a
+single round-robin (rejected in favour of the double, for standings robust to
+single-game variance); a seed-aware standings tiebreak (deferred to RR→DE).
+
+**Consequences (RR slice):** one migration widening the `format` enum and the
+`bracket_type` choices (**no `RunPython`, no backfill**); `matches/bracket.py`
+gains a thin round-robin builder (or the lock path consumes `generate_schedule`
+directly — a code-time seam decision) and the `_BRACKET_RANK["round_robin"]`
+entry; non-deterministic per-Match sims ⇒ **no SIM-07/08 interaction, no Score
+Calibration re-baseline**. The remaining LG-02c+ formats (RR→double-elim,
+Swiss) stay deferred; RR→DE will compose this round-robin as its seeding phase
+feeding the ADR-0021 DE bracket as its finals phase.
+
 ## See also
 
+- [ADR-0015](0015-schedule-on-demand-no-fixture-rows.md) — the `generate_schedule`
+  circle method reused for round-robin pairings.
 - [ADR-0019](0019-tournament-bracket-model.md) — the persisted,
   results-contingent single-elim Bracket model this ADR extends to a second
   coupled tree.

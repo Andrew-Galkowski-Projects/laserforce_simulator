@@ -1,3 +1,47 @@
+# Web testing — LG-02c (round-robin tournaments)
+
+Date: 2026-06-03
+Branch: `lg-02c-round-robin`
+Scope: smoke-test the LG-02c round-robin surfaces — the `Round robin` option on
+the `/tournaments/create/` format select (and the four series-length selects
+hiding when chosen), the crosstable + standings render at `/tournaments/<id>/`
+(instead of a bracket tree), and champion crowning only after every game.
+
+## Summary — LG-02c round robin
+
+| Area | Result |
+|---|---|
+| Create form — format select offers `Round robin`; the four `*-series-length` selects hide (`display:none`) when chosen | ✅ |
+| Create RR (4 existing teams) → tournament 8, setup state | ✅ |
+| Detail page renders `tournament-rr-crosstable` (N×N) + `tournament-rr-standings`, NOT a bracket tree | ✅ |
+| Lock & Build → state `active`; crosstable shows `—` in unplayed off-diagonal cells, blank diagonal | ✅ |
+| Drove 12 synchronous `Play Next` POSTs (= 4-team double round-robin: 3 opp × 2 legs × 4 / 2) → state `Completed` | ✅ |
+| Champion crowned ONLY after all 12 games (not on the first resolved node) | ✅ |
+| `tournament-champion-banner` shows `Champion: Phoenix` (Standings leader, 12 pts) | ✅ |
+| Crosstable home/away mapping: leg1 → cell[a][b], leg2 → cell[b][a] (e.g. Phoenix↔Vipers fills both [P][V] and [V][P]) | ✅ |
+| MP=6 per team, standings ordered by Pts→RW→TS | ✅ |
+| Regression: `/matches/`, `/tournaments/` list render, no console errors | ✅ |
+
+## Findings — LG-02c round robin
+
+- **[FIXED this pass] Standings "Team" column rendered the raw `team_id`, not the
+  team name.** `templates/matches/tournament_detail.html:135` rendered
+  `{{ row.team_id }}` (`StandingsRow` carries only `team_id`). Fixed by pairing
+  each row with its `Team` in `tournament_views.py::_detail_context`
+  (`rr_standings = [(row, team_by_id.get(row.team_id)) ...]`, the LG-01
+  `rows_with_teams` precedent) and unpacking `{% for row, team in rr_standings %}`
+  in the template with a `team.name` (fallback `row.team_id`). Verified in-browser:
+  standings now show Echo Eagles / Onyx Owls / Phoenix / Vipers. Test
+  `test_rr_standings_context_has_one_row_per_team` updated to the `(row, team)`
+  shape + strengthened to assert `row.team_id == team.id`.
+- **[NOT A BUG — environment] `Play All` (async) hangs at "Starting…"** on the
+  dev test server because no Celery worker / Redis broker is running. The inline
+  poll JS correctly shows "Starting…" and polls `play-status`; the task simply is
+  never consumed. Same dependency as elim `Play All`. Synchronous `Play Next`
+  drains the bracket correctly. No code defect.
+
+---
+
 # Web testing — LG-02c (double-elimination tournaments)
 
 Date: 2026-06-03

@@ -701,9 +701,13 @@ class TestBracketNodeDoubleElimFields(TestCase):
         node = BracketNode.objects.create(tournament=t, bracket_round=1, position=0)
         self.assertEqual(node.bracket_type, "winners")
 
-    def test_bracket_type_carries_three_choices(self) -> None:
+    def test_bracket_type_carries_four_choices(self) -> None:
+        # LG-02c round-robin added the 4th bracket_type value "round_robin"
+        # (alongside the LG-02c double-elim winners/losers/grand_final trio).
         choices = dict(BracketNode._meta.get_field("bracket_type").choices)
-        self.assertEqual(set(choices), {"winners", "losers", "grand_final"})
+        self.assertEqual(
+            set(choices), {"winners", "losers", "grand_final", "round_robin"}
+        )
 
     def test_loser_advances_to_defaults_none(self) -> None:
         t = Tournament.objects.create(name="Cup")
@@ -1006,3 +1010,345 @@ class TestNodeToDictDoubleElimKeys(TestCase):
             "advances_to_slot",
         ):
             self.assertIn(key, d, f"existing _node_to_dict key {key!r} dropped")
+
+
+# ===========================================================================
+# LG-02c — Round robin tournament format (model layer)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified — they
+# stay green as single/double-elim regression guards). Seam contract:
+# ``.claude/worktrees/lg-02c-round-robin-seam-contract.md`` §1 / §2 / §3 / §4 /
+# §10.
+#
+# A round-robin Tournament is a FLAT set of BracketNode rows — one node per
+# fixture from generate_schedule(team_ids) (the full double round-robin: each
+# pair appears twice, once per leg). Every RR node: bracket_type="round_robin",
+# series_length=1, advances_to / loser_advances_to both None, is_bye=False,
+# bracket_round=matchday, position=0-based-index-within-matchday, team_a/team_b
+# fixed at lock, seed_a/seed_b carried. lock_and_build's third format branch
+# builds them; round_robin_standings() + complete_round_robin_if_finished() are
+# the two NEW Tournament methods. NEVER assert exact simulated point totals —
+# standings rows are hand-stamped from played SeriesMatch/Match/GameRound rows.
+
+
+def _rr_tournament_setup(n: int, *, name: str = "RRCup") -> Tournament:
+    """A setup-state round_robin Tournament with ``n`` seeded participants."""
+    t = Tournament.objects.create(name=name, format="round_robin")
+    for seed, team in enumerate(_make_teams(n), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    return t
+
+
+def _rr_tournament_active(n: int, *, name: str = "RRCup") -> Tournament:
+    """A locked/active round_robin Tournament with its flat RR nodes built."""
+    t = _rr_tournament_setup(n, name=name)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+def _active_tournament_se(n: int = 4, *, name: str = "SECompleteGuard") -> Tournament:
+    """A locked/active SINGLE-elim Tournament (default format) for the non-RR
+    no-op guard test."""
+    t = Tournament.objects.create(name=name)
+    for seed, team in enumerate(_make_teams(n), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+def _stamp_rr_node_played(node: BracketNode, winner) -> None:
+    """Hand-stamp a round-robin node as a decisive played Bo1: set node.winner,
+    create a played Match (sides team_a=red / team_b=blue, two GameRounds) +
+    one SeriesMatch row.
+
+    The winner sweeps both rounds so Match.winner is non-null; the Match carries
+    decisive round + total points so the standings reflect a clean win without
+    running a real sim.
+    """
+    from matches.models import GameRound, Match, SeriesMatch
+
+    team_red = node.team_a
+    team_blue = node.team_b
+    if winner.id == team_red.id:
+        red_r1, blue_r1, red_r2, blue_r2 = 500, 10, 500, 10
+    else:
+        red_r1, blue_r1, red_r2, blue_r2 = 10, 500, 10, 500
+    match = Match.objects.create(
+        team_red=team_red,
+        team_blue=team_blue,
+        match_type="tournament",
+        red_round1_points=red_r1,
+        blue_round1_points=blue_r1,
+        red_round2_points=red_r2,
+        blue_round2_points=blue_r2,
+        is_completed=True,
+    )
+    # Two GameRounds with explicit physical sides + points so the side-split /
+    # round-grain standings columns have data to read.
+    GameRound.objects.create(
+        match=match,
+        round_number=1,
+        team_red=team_red,
+        team_blue=team_blue,
+        red_points=red_r1,
+        blue_points=blue_r1,
+    )
+    GameRound.objects.create(
+        match=match,
+        round_number=2,
+        team_red=team_red,
+        team_blue=team_blue,
+        red_points=red_r2,
+        blue_points=blue_r2,
+    )
+    SeriesMatch.objects.create(node=node, match=match, game_number=1, winner=winner)
+    node.winner = winner
+    node.save(update_fields=["winner"])
+
+
+class TestTournamentRoundRobinFormat(TestCase):
+    """``Tournament.format`` accepts/persists ``"round_robin"`` and
+    ``BracketNode.bracket_type`` accepts ``"round_robin"``."""
+
+    def test_format_choices_include_round_robin(self) -> None:
+        choices = dict(Tournament._meta.get_field("format").choices)
+        self.assertIn("round_robin", choices)
+        # Locked display label.
+        self.assertEqual(choices["round_robin"], "Round robin")
+
+    def test_round_robin_format_persists(self) -> None:
+        t = Tournament.objects.create(name="RR Cup", format="round_robin")
+        t.refresh_from_db()
+        self.assertEqual(t.format, "round_robin")
+
+    def test_bracket_type_choices_include_round_robin(self) -> None:
+        choices = dict(BracketNode._meta.get_field("bracket_type").choices)
+        self.assertIn("round_robin", choices)
+        self.assertEqual(choices["round_robin"], "Round robin")
+
+    def test_bracket_type_round_robin_persists(self) -> None:
+        t = Tournament.objects.create(name="RR Cup", format="round_robin")
+        node = BracketNode.objects.create(
+            tournament=t, bracket_type="round_robin", bracket_round=1, position=0
+        )
+        node.refresh_from_db()
+        self.assertEqual(node.bracket_type, "round_robin")
+
+
+class TestLockAndBuildRoundRobin(TestCase):
+    """``lock_and_build`` on an RR Tournament builds one node per fixture of the
+    full double round-robin — flat, no advancement, all Bo1."""
+
+    def test_n4_builds_twelve_nodes(self) -> None:
+        # N=4 double round-robin ⇒ 6 pairs × 2 legs = 12 fixtures = 12 nodes.
+        t = _rr_tournament_active(4)
+        self.assertEqual(t.nodes.count(), 12)
+
+    def test_n6_builds_thirty_nodes(self) -> None:
+        # N=6 double round-robin ⇒ 15 pairs × 2 legs = 30 fixtures = 30 nodes.
+        t = _rr_tournament_active(6)
+        self.assertEqual(t.nodes.count(), 30)
+
+    def test_state_flips_to_active(self) -> None:
+        t = _rr_tournament_active(4)
+        self.assertEqual(t.state, "active")
+
+    def test_every_node_is_round_robin_bracket_type(self) -> None:
+        t = _rr_tournament_active(4)
+        types = set(t.nodes.values_list("bracket_type", flat=True))
+        self.assertEqual(types, {"round_robin"})
+
+    def test_every_node_is_bo1(self) -> None:
+        t = _rr_tournament_active(4)
+        for node in t.nodes.all():
+            self.assertEqual(node.series_length, 1)
+
+    def test_no_node_advances(self) -> None:
+        t = _rr_tournament_active(4)
+        for node in t.nodes.all():
+            self.assertIsNone(node.advances_to_id)
+            self.assertIsNone(node.loser_advances_to_id)
+
+    def test_no_byes(self) -> None:
+        t = _rr_tournament_active(4)
+        self.assertFalse(t.nodes.filter(is_bye=True).exists())
+
+    def test_slots_fixed_and_seeds_populated(self) -> None:
+        t = _rr_tournament_active(4)
+        for node in t.nodes.all():
+            self.assertIsNotNone(node.team_a)
+            self.assertIsNotNone(node.team_b)
+            self.assertIsNotNone(node.seed_a)
+            self.assertIsNotNone(node.seed_b)
+
+    def test_each_unordered_pair_appears_exactly_twice(self) -> None:
+        from collections import Counter
+
+        t = _rr_tournament_active(4)
+        pairs = Counter(frozenset((n.team_a_id, n.team_b_id)) for n in t.nodes.all())
+        # 6 distinct unordered pairs, each appearing exactly twice (one per leg).
+        self.assertEqual(len(pairs), 6)
+        for pair, count in pairs.items():
+            self.assertEqual(count, 2, f"pair {pair} should appear twice")
+
+    def test_position_is_zero_based_within_each_matchday(self) -> None:
+        from collections import defaultdict
+
+        t = _rr_tournament_active(4)
+        by_matchday: dict = defaultdict(list)
+        for node in t.nodes.all():
+            by_matchday[node.bracket_round].append(node.position)
+        for matchday, positions in by_matchday.items():
+            positions.sort()
+            self.assertEqual(
+                positions,
+                list(range(len(positions))),
+                f"matchday {matchday} positions must be a dense 0-based range",
+            )
+
+    def test_seed_matches_participant_seed(self) -> None:
+        t = _rr_tournament_active(4)
+        seed_by_team = {p.team_id: p.seed for p in t.participants.all()}
+        for node in t.nodes.all():
+            self.assertEqual(node.seed_a, seed_by_team[node.team_a_id])
+            self.assertEqual(node.seed_b, seed_by_team[node.team_b_id])
+
+
+class TestRoundRobinStandings(TestCase):
+    """``round_robin_standings()`` returns one StandingsRow per enrolled team,
+    zero-filled before play and reflecting hand-stamped played nodes after."""
+
+    def test_one_row_per_enrolled_team(self) -> None:
+        t = _rr_tournament_active(4)
+        rows = t.round_robin_standings()
+        self.assertEqual(len(rows), 4)
+
+    def test_rows_zero_filled_before_any_play(self) -> None:
+        t = _rr_tournament_active(4)
+        rows = t.round_robin_standings()
+        for row in rows:
+            self.assertEqual(row.wins, 0)
+            self.assertEqual(row.losses, 0)
+            self.assertEqual(row.ties, 0)
+            self.assertEqual(row.league_points, 0)
+
+    def test_rows_cover_every_participant_team(self) -> None:
+        t = _rr_tournament_active(4)
+        rows = t.round_robin_standings()
+        row_team_ids = {row.team_id for row in rows}
+        participant_team_ids = set(t.participants.values_list("team_id", flat=True))
+        self.assertEqual(row_team_ids, participant_team_ids)
+
+    def test_returns_standings_row_instances(self) -> None:
+        from matches.standings import StandingsRow
+
+        t = _rr_tournament_active(4)
+        rows = t.round_robin_standings()
+        for row in rows:
+            self.assertIsInstance(row, StandingsRow)
+
+    def test_a_stamped_win_increments_winner_wins_and_points(self) -> None:
+        t = _rr_tournament_active(4)
+        node = t.nodes.order_by("bracket_round", "position").first()
+        winner = node.team_a
+        _stamp_rr_node_played(node, winner)
+
+        rows = t.round_robin_standings()
+        by_team = {row.team_id: row for row in rows}
+        # The winner has exactly one win; the loser exactly one loss.
+        self.assertEqual(by_team[node.team_a_id].wins, 1)
+        self.assertEqual(by_team[node.team_b_id].losses, 1)
+        # league_points = 3*wins + 1*ties ⇒ winner has 3, loser 0.
+        self.assertEqual(by_team[node.team_a_id].league_points, 3)
+        self.assertEqual(by_team[node.team_b_id].league_points, 0)
+
+    def test_standings_rank_orders_winner_above_loser(self) -> None:
+        # Hand-stamp one decisive node and assert ORDER, never exact points.
+        t = _rr_tournament_active(4)
+        node = t.nodes.order_by("bracket_round", "position").first()
+        winner = node.team_a
+        loser = node.team_b
+        _stamp_rr_node_played(node, winner)
+
+        rows = t.round_robin_standings()
+        rank_by_team = {row.team_id: row.rank for row in rows}
+        # The team with a win must rank ahead of (lower rank int) the team with a
+        # loss.
+        self.assertLess(rank_by_team[winner.id], rank_by_team[loser.id])
+
+    def test_ranks_are_dense_one_based(self) -> None:
+        t = _rr_tournament_active(4)
+        rows = t.round_robin_standings()
+        ranks = sorted(row.rank for row in rows)
+        self.assertEqual(ranks, [1, 2, 3, 4])
+
+
+class TestCompleteRoundRobinIfFinished(TestCase):
+    """``complete_round_robin_if_finished()`` is a no-op until every RR node is
+    resolved, then crowns the standings leader + flips state to completed;
+    idempotent; no-op for non-RR / non-active."""
+
+    def _stamp_all_nodes(self, t: Tournament) -> None:
+        for node in t.nodes.all():
+            _stamp_rr_node_played(node, node.team_a)
+
+    def test_noop_while_some_nodes_unresolved(self) -> None:
+        t = _rr_tournament_active(4)
+        # Resolve only ONE node, leave the rest unplayed.
+        node = t.nodes.order_by("bracket_round", "position").first()
+        _stamp_rr_node_played(node, node.team_a)
+
+        t.complete_round_robin_if_finished()
+        t.refresh_from_db()
+        self.assertEqual(t.state, "active")
+        self.assertIsNone(t.champion)
+
+    def test_crowns_leader_and_completes_when_all_resolved(self) -> None:
+        t = _rr_tournament_active(4)
+        self._stamp_all_nodes(t)
+
+        t.complete_round_robin_if_finished()
+        t.refresh_from_db()
+        self.assertEqual(t.state, "completed")
+        self.assertIsNotNone(t.champion)
+
+    def test_champion_is_standings_leader(self) -> None:
+        t = _rr_tournament_active(4)
+        self._stamp_all_nodes(t)
+
+        leader_team_id = t.round_robin_standings()[0].team_id
+        t.complete_round_robin_if_finished()
+        t.refresh_from_db()
+        self.assertEqual(t.champion_id, leader_team_id)
+
+    def test_idempotent_second_call_is_stable(self) -> None:
+        t = _rr_tournament_active(4)
+        self._stamp_all_nodes(t)
+
+        t.complete_round_robin_if_finished()
+        t.refresh_from_db()
+        champ_after_first = t.champion_id
+        # A second call must not crash or change the result.
+        t.complete_round_robin_if_finished()
+        t.refresh_from_db()
+        self.assertEqual(t.state, "completed")
+        self.assertEqual(t.champion_id, champ_after_first)
+
+    def test_noop_for_non_round_robin_format(self) -> None:
+        # A single-elim active Tournament must be untouched by the RR completer.
+        t = _active_tournament_se()
+        t.complete_round_robin_if_finished()
+        t.refresh_from_db()
+        self.assertNotEqual(t.state, "completed")
+        self.assertIsNone(t.champion)
+
+    def test_noop_for_non_active_state(self) -> None:
+        # A setup-state RR Tournament (no nodes) must not flip to completed.
+        t = _rr_tournament_setup(4)
+        t.complete_round_robin_if_finished()
+        t.refresh_from_db()
+        self.assertEqual(t.state, "setup")
+        self.assertIsNone(t.champion)

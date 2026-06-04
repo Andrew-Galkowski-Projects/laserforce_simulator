@@ -71,9 +71,81 @@
 </div>
 {% endif %}
 
-{# ---- Bracket tree ---- #}
+{# ---- Bracket / round-robin tables ---- #}
+{% if tournament.format == "round_robin" %}
+<h2>Crosstable</h2>
+<table class="table table-bordered" id="tournament-rr-crosstable">
+    <thead>
+        <tr>
+            <th></th>
+            {% for row in rr_crosstable %}
+            <th>{{ row.team.name|default:"—" }}</th>
+            {% endfor %}
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rr_crosstable %}
+        <tr>
+            <th>{{ row.team.name|default:"—" }}</th>
+            {% for cell in row.cells %}
+            <td>
+                {% if cell %}
+                    {% if cell.leg1 and cell.leg1.played %}
+                    <div>
+                        {% if cell.leg1.match_id %}
+                        <a href="{% url 'match_detail' cell.leg1.match_id %}">{{ cell.leg1.team_score }}–{{ cell.leg1.opp_score }}</a>
+                        {% else %}
+                        {{ cell.leg1.team_score }}–{{ cell.leg1.opp_score }}
+                        {% endif %}
+                    </div>
+                    {% elif cell.leg1 %}
+                    <div class="text-muted">—</div>
+                    {% endif %}
+                    {% if cell.leg2 and cell.leg2.played %}
+                    <div>
+                        {% if cell.leg2.match_id %}
+                        <a href="{% url 'match_detail' cell.leg2.match_id %}">{{ cell.leg2.team_score }}–{{ cell.leg2.opp_score }}</a>
+                        {% else %}
+                        {{ cell.leg2.team_score }}–{{ cell.leg2.opp_score }}
+                        {% endif %}
+                    </div>
+                    {% elif cell.leg2 %}
+                    <div class="text-muted">—</div>
+                    {% endif %}
+                {% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<h2 class="mt-4">Standings</h2>
+<table class="table" id="tournament-rr-standings">
+    <thead>
+        <tr>
+            <th>Rank</th><th>Team</th><th>MP</th><th>W</th><th>L</th><th>T</th>
+            <th>Pts</th><th>RW</th><th>TS</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row, team in rr_standings %}
+        <tr>
+            <td>{{ row.rank }}</td>
+            <td>{% if team %}{{ team.name }}{% else %}{{ row.team_id }}{% endif %}</td>
+            <td>{{ row.matches_played }}</td>
+            <td>{{ row.wins }}</td>
+            <td>{{ row.losses }}</td>
+            <td>{{ row.ties }}</td>
+            <td>{{ row.league_points }}</td>
+            <td>{{ row.round_wins }}</td>
+            <td>{{ row.total_score }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% elif tournament.format == "double_elimination" %}
 <h2>Bracket</h2>
-{% if tournament.format == "double_elimination" %}
     {# DE: three sections, each with bracket_type-namespaced DOM ids. #}
     <h3>Winners Bracket</h3>
     <div class="d-flex" id="tournament-bracket-winners">
@@ -98,6 +170,7 @@
 {% else %}
     {# Single-elim KEEPS the legacy DOM ids (tournament-bracket / -round-{n} /
        tournament-node-{round}-{position} / -series-score / -series-length). #}
+    <h2>Bracket</h2>
     <div class="d-flex" id="tournament-bracket">
         {% for round in rounds.winners %}
         <div class="me-4" id="tournament-bracket-round-{{ round.bracket_round }}">

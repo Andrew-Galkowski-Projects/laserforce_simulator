@@ -2069,3 +2069,236 @@ class TestStageProgressDoubleElim(SimpleTestCase):
         completed, total = stage_progress(nodes)
         # Two grand_final groups (round 1 + round 2), both complete.
         self.assertEqual((completed, total), (2, 2))
+
+
+# ===========================================================================
+# LG-02c — Round robin tournament format (pure-unit)
+# ===========================================================================
+#
+# NEW class appended below (existing classes above are NOT modified — every
+# single-elim / double-elim case stays green as a regression guard). Seam
+# contract: ``.claude/worktrees/lg-02c-round-robin-seam-contract.md`` §1 /
+# §10. The round-robin format adds NO new pure builder and NO new import to
+# ``bracket.py`` — the ONLY pure change is the ``_BRACKET_RANK`` dict gaining
+# the ``"round_robin": 3`` entry (a deterministic find_next_node tiebreak).
+# Every name is imported LAZILY inside each method so its absence (pre-Code-
+# landing) isolates the failure to THIS class only and does NOT break the
+# existing (passing) classes above at collection time.
+#
+# RR nodes are FLAT: ``bracket_type="round_robin"``, both slots filled at lock
+# time, ``is_bye=False``, ``series_length=1`` (Bo1), ``advances_to`` /
+# ``loser_advances_to`` both ``None`` (RR never advances). ``find_next_node`` is
+# UNCHANGED — an unplayed RR node (``wins_a=0, wins_b=0``) is playable
+# (``series_winner_slot(0, 0, 1) is None``) and a clinched one
+# (``series_winner_slot(1, 0, 1) == "a"``) is skipped. The sort key
+# ``(_BRACKET_RANK[bracket_type], bracket_round, position)`` orders RR nodes by
+# ``(3, matchday, position)`` — deterministic.
+
+
+def _rr_node_dict(
+    *,
+    bracket_round: int,
+    position: int,
+    team_a_id: int,
+    team_b_id: int,
+    seed_a: int | None = None,
+    seed_b: int | None = None,
+    winner_id: int | None = None,
+    wins_a: int = 0,
+    wins_b: int = 0,
+) -> dict:
+    """A flat round-robin node dict in the post-LG-02c ``_node_to_dict`` shape.
+
+    RR nodes are always ``bracket_type="round_robin"``, both slots filled,
+    ``is_bye=False``, ``series_length=1`` (Bo1), and both advance pointers
+    ``None``. ``bracket_round`` doubles as the matchday; ``position`` is the
+    0-based index within the matchday. Reuses the LG-02c ``_de_node_dict`` key
+    set so ``find_next_node`` reads every key it expects.
+    """
+    return _de_node_dict(
+        bracket_type="round_robin",
+        bracket_round=bracket_round,
+        position=position,
+        team_a_id=team_a_id,
+        team_b_id=team_b_id,
+        seed_a=seed_a,
+        seed_b=seed_b,
+        is_bye=False,
+        winner_id=winner_id,
+        wins_a=wins_a,
+        wins_b=wins_b,
+        series_length=1,
+        advances_to=None,
+        advances_to_slot=None,
+        loser_advances_to=None,
+        loser_advances_to_slot=None,
+    )
+
+
+class TestBracketRankRoundRobin(SimpleTestCase):
+    """``_BRACKET_RANK["round_robin"] == 3`` + ``find_next_node`` over a flat
+    list of RR-only nodes returns the lowest unplayed ``(matchday, position)``
+    and skips clinched (Bo1-played) nodes."""
+
+    def test_bracket_rank_has_round_robin_entry_3(self) -> None:
+        from matches.bracket import _BRACKET_RANK
+
+        self.assertEqual(_BRACKET_RANK["round_robin"], 3)
+
+    def test_bracket_rank_round_robin_get_does_not_fall_back_to_zero(self) -> None:
+        # Defence in depth: the .get(...) lookup find_next_node uses must resolve
+        # to 3 for an RR node, never the 0 default.
+        from matches.bracket import _BRACKET_RANK
+
+        self.assertEqual(_BRACKET_RANK.get("round_robin", 0), 3)
+
+    def test_returns_lowest_unplayed_matchday_position(self) -> None:
+        from matches.bracket import find_next_node
+
+        nodes = [
+            _rr_node_dict(
+                bracket_round=1,
+                position=1,
+                team_a_id=2,
+                team_b_id=3,
+                seed_a=2,
+                seed_b=3,
+            ),
+            _rr_node_dict(
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=4,
+                seed_a=1,
+                seed_b=4,
+            ),
+            _rr_node_dict(
+                bracket_round=2,
+                position=0,
+                team_a_id=1,
+                team_b_id=3,
+                seed_a=1,
+                seed_b=3,
+            ),
+        ]
+        nxt = find_next_node(nodes)
+        self.assertIsNotNone(nxt)
+        self.assertEqual((nxt["bracket_round"], nxt["position"]), (1, 0))
+
+    def test_skips_clinched_bo1_node(self) -> None:
+        from matches.bracket import find_next_node
+
+        # The (1, 0) node already has a Bo1 result (wins_a=1) ⇒ clinched ⇒
+        # skipped; the next playable is (1, 1).
+        nodes = [
+            _rr_node_dict(
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=4,
+                seed_a=1,
+                seed_b=4,
+                wins_a=1,
+                winner_id=1,
+            ),
+            _rr_node_dict(
+                bracket_round=1,
+                position=1,
+                team_a_id=2,
+                team_b_id=3,
+                seed_a=2,
+                seed_b=3,
+            ),
+        ]
+        nxt = find_next_node(nodes)
+        self.assertEqual((nxt["bracket_round"], nxt["position"]), (1, 1))
+
+    def test_unplayed_rr_node_is_playable(self) -> None:
+        from matches.bracket import find_next_node
+
+        nodes = [
+            _rr_node_dict(
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=2,
+                seed_a=1,
+                seed_b=2,
+            ),
+        ]
+        nxt = find_next_node(nodes)
+        self.assertIsNotNone(nxt)
+        self.assertEqual((nxt["bracket_round"], nxt["position"]), (1, 0))
+
+    def test_returns_none_when_every_rr_node_clinched(self) -> None:
+        from matches.bracket import find_next_node
+
+        nodes = [
+            _rr_node_dict(
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=2,
+                seed_a=1,
+                seed_b=2,
+                wins_a=1,
+                winner_id=1,
+            ),
+            _rr_node_dict(
+                bracket_round=1,
+                position=1,
+                team_a_id=3,
+                team_b_id=4,
+                seed_a=3,
+                seed_b=4,
+                wins_b=1,
+                winner_id=4,
+            ),
+        ]
+        self.assertIsNone(find_next_node(nodes))
+
+    def test_orders_across_matchdays_by_matchday_then_position(self) -> None:
+        from matches.bracket import find_next_node
+
+        # Matchday-1 nodes both clinched ⇒ the first playable is the lowest
+        # unplayed matchday-2 position.
+        nodes = [
+            _rr_node_dict(
+                bracket_round=2,
+                position=1,
+                team_a_id=2,
+                team_b_id=4,
+                seed_a=2,
+                seed_b=4,
+            ),
+            _rr_node_dict(
+                bracket_round=2,
+                position=0,
+                team_a_id=1,
+                team_b_id=3,
+                seed_a=1,
+                seed_b=3,
+            ),
+            _rr_node_dict(
+                bracket_round=1,
+                position=0,
+                team_a_id=1,
+                team_b_id=2,
+                seed_a=1,
+                seed_b=2,
+                wins_a=1,
+                winner_id=1,
+            ),
+            _rr_node_dict(
+                bracket_round=1,
+                position=1,
+                team_a_id=3,
+                team_b_id=4,
+                seed_a=3,
+                seed_b=4,
+                wins_a=1,
+                winner_id=3,
+            ),
+        ]
+        nxt = find_next_node(nodes)
+        self.assertEqual((nxt["bracket_round"], nxt["position"]), (2, 0))

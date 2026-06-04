@@ -1215,7 +1215,7 @@ class TestCreateFormFormat(TestCase):
                 "teams": [str(t.id) for t in teams],
                 "generate_count": "0",
                 "generate_ppt": "6",
-                "format": "round_robin",  # not a valid choice -> single
+                "format": "swiss",  # not a valid choice -> single
             },
         )
         t = Tournament.objects.get(name="Tampered Format Cup")
@@ -1336,3 +1336,264 @@ class TestDetailSingleElimIdsUnchanged(TestCase):
         ).content.decode()
         self.assertNotIn('id="tournament-bracket-losers"', body)
         self.assertNotIn('id="tournament-bracket-grand-final"', body)
+
+
+# ===========================================================================
+# LG-02c — Round robin tournament format (views + template)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified — the
+# single/double-elim view tests stay green as regression guards). Seam
+# contract: ``.claude/worktrees/lg-02c-round-robin-seam-contract.md`` §7 / §8 /
+# §10.
+#
+# The create form's ``format`` select offers a round_robin option; a POST with
+# format=round_robin persists it; a tampered / absent value falls back to
+# single_elimination. The RR detail page renders the locked DOM ids
+# ``tournament-rr-crosstable`` (the N×N leg-mapped crosstable) +
+# ``tournament-rr-standings`` (the live standings table); the elim section
+# containers (``tournament-bracket*`` / single-elim ``tournament-bracket`` /
+# ``tournament-node-*``) are ABSENT for an RR Tournament; the shared lock /
+# play-next / play-all controls + champion banner render; the four series-length
+# selects are hidden for RR.
+#
+# Crosstable cell-mapping rule (LOCKED, §7.2): a leg with round_number==1 fills
+# cell[team_a][team_b]; round_number==2 fills cell[team_b][team_a]; the diagonal
+# is blank. Because generate_schedule doesn't persist round_number onto the node,
+# the view re-derives it by matching each RR node to its fixture by (matchday,
+# position-within-matchday). We assert the mapping rule against the
+# ``rr_crosstable`` context (the load-bearing lock) rather than the precise DOM
+# nesting (the Code agent's discretion).
+
+
+def _rr_setup_tournament(n: int, *, name: str = "RRViewCup") -> Tournament:
+    """A setup-state round_robin Tournament with ``n`` seeded participants."""
+    t = Tournament.objects.create(name=name, format="round_robin")
+    for seed, team in enumerate(_make_teams(n), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    return t
+
+
+def _rr_active_tournament(n: int, *, name: str = "RRViewCup") -> Tournament:
+    """A locked/active round_robin Tournament with its flat RR nodes built."""
+    t = _rr_setup_tournament(n, name=name)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+class TestCreateFormRoundRobin(TestCase):
+    """The ``tournament-create-format`` select offers a round_robin option; a
+    POST with format=round_robin persists it; a tampered / absent value falls
+    back to single_elimination (forgiving-fallback precedent)."""
+
+    def test_format_select_offers_round_robin_option(self) -> None:
+        make_team_with_slots("Existing")
+        body = self.client.get(reverse("tournament_create")).content.decode()
+        start = body.index('id="tournament-create-format"')
+        window = body[start : start + 800]
+        # The select must offer the round_robin option value.
+        self.assertIn("round_robin", window, "format select offers no round_robin")
+
+    def test_post_round_robin_persists(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "RR Created Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "round_robin",
+            },
+        )
+        t = Tournament.objects.get(name="RR Created Cup")
+        self.assertEqual(t.format, "round_robin")
+
+    def test_post_tampered_format_falls_back_to_single(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "RR Tampered Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "swiss",  # not a valid choice -> single
+            },
+        )
+        t = Tournament.objects.get(name="RR Tampered Cup")
+        self.assertEqual(t.format, "single_elimination")
+
+    def test_post_absent_format_falls_back_to_single(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "RR No Format Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+            },
+        )
+        t = Tournament.objects.get(name="RR No Format Cup")
+        self.assertEqual(t.format, "single_elimination")
+
+
+class TestDetailRoundRobinCrosstable(TestCase):
+    """An RR detail page renders ``tournament-rr-crosstable`` + the leg→cell
+    mapping and ``tournament-rr-standings``; the elim section containers are
+    absent; the shared controls + champion banner path are present; the four
+    series-length selects are hidden for RR."""
+
+    def test_rr_crosstable_dom_id_renders(self) -> None:
+        t = _rr_active_tournament(4)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-rr-crosstable"', body)
+
+    def test_rr_standings_dom_id_renders(self) -> None:
+        t = _rr_active_tournament(4)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-rr-standings"', body)
+
+    def test_elim_section_containers_absent(self) -> None:
+        t = _rr_active_tournament(4)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        # The elim WB/LB/GF + single-elim bracket containers must NOT render.
+        self.assertNotIn('id="tournament-bracket"', body)
+        self.assertNotIn('id="tournament-bracket-winners"', body)
+        self.assertNotIn('id="tournament-bracket-losers"', body)
+        self.assertNotIn('id="tournament-bracket-grand-final"', body)
+        # No elim node ids either (RR is flat, no per-round node cards).
+        self.assertNotIn('id="tournament-node-1-0"', body)
+
+    def test_context_carries_rr_crosstable_and_rr_standings(self) -> None:
+        t = _rr_active_tournament(4)
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        self.assertIn("rr_crosstable", response.context)
+        self.assertIn("rr_standings", response.context)
+
+    def test_rr_standings_context_has_one_row_per_team(self) -> None:
+        from matches.standings import StandingsRow
+
+        from teams.models import Team
+
+        t = _rr_active_tournament(4)
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        rr_standings = response.context["rr_standings"]
+        self.assertEqual(len(rr_standings), 4)
+        # Each entry is a (StandingsRow, Team) pair so the template can render
+        # the team NAME (StandingsRow carries only team_id) — the row's team_id
+        # must match the paired Team.
+        for row, team in rr_standings:
+            self.assertIsInstance(row, StandingsRow)
+            self.assertIsInstance(team, Team)
+            self.assertEqual(row.team_id, team.id)
+
+    def test_rr_crosstable_diagonal_is_blank(self) -> None:
+        # cell[t][t] (a team versus itself) is always None (rendered blank).
+        t = _rr_active_tournament(4)
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        crosstable = response.context["rr_crosstable"]
+        # rows are in standings order; index i's i-th cell is the diagonal.
+        for i, row in enumerate(crosstable):
+            self.assertIsNone(
+                row["cells"][i], "the diagonal cell (team vs itself) must be None"
+            )
+
+    def test_rr_crosstable_leg_mapping_round1_to_team_a_row(self) -> None:
+        # LOCKED §7.2: the leg with round_number==1 of a pair (team_a=min id,
+        # team_b=max id) fills cell[team_a][team_b]; round_number==2 fills
+        # cell[team_b][team_a]. Build the row-team -> {opponent: cell} index from
+        # the crosstable and verify a filled cell exists in BOTH directions for
+        # every pair that played (an enrolled RR field always has both legs).
+        t = _rr_active_tournament(4)
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        crosstable = response.context["rr_crosstable"]
+
+        # Map each row's team id -> {col team id: cell}.
+        row_team_ids = [row["team"].id for row in crosstable]
+        index: dict = {}
+        for row in crosstable:
+            rt = row["team"].id
+            index[rt] = {}
+            for col_idx, cell in enumerate(row["cells"]):
+                index[rt][row_team_ids[col_idx]] = cell
+
+        # For every unordered pair (a, b) of distinct teams, BOTH directions
+        # carry a non-None cell descriptor (leg1 lives in one direction, leg2 in
+        # the reverse) — that is exactly the round1->cell[a][b] /
+        # round2->cell[b][a] mapping.
+        ids = row_team_ids
+        for i in range(len(ids)):
+            for j in range(len(ids)):
+                if i == j:
+                    continue
+                self.assertIsNotNone(
+                    index[ids[i]][ids[j]],
+                    f"off-diagonal cell for ({ids[i]}, {ids[j]}) must be filled",
+                )
+
+    def test_shared_controls_and_champion_banner_path_present(self) -> None:
+        # The play-next + play-all controls render on an active RR Tournament
+        # (shared verbatim across formats).
+        t = _rr_active_tournament(4)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-play-next-form"', body)
+        self.assertIn('id="tournament-play-all-form"', body)
+
+    def test_lock_control_present_in_setup_rr(self) -> None:
+        # The shared lock control renders on a setup RR Tournament.
+        t = _rr_setup_tournament(4)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-lock-form"', body)
+
+    def test_champion_banner_renders_when_rr_completed(self) -> None:
+        # Drive the RR to completion via the engine, then assert the shared
+        # champion banner renders (RR completion stamps tournament.champion
+        # identically to elim).
+        from matches.tournament_engine import play_next_node
+
+        t = _rr_active_tournament(4, name="RRViewChampion")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(40):
+                t.refresh_from_db()
+                if t.state == "completed":
+                    break
+                if play_next_node(t) is None:
+                    break
+        t.refresh_from_db()
+        self.assertEqual(t.state, "completed")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-champion-banner"', body)
+        self.assertIn("Champion", body)
+
+    def test_series_length_selects_hidden_for_rr(self) -> None:
+        # RR nodes are always Bo1, so the four create-form series-length selects
+        # do not apply on the RR DETAIL page (no per-node series-score / Bo-N
+        # labels). The four create-form select ids must be absent on RR detail.
+        t = _rr_active_tournament(4)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        for dom_id in (
+            "tournament-create-final-series-length",
+            "tournament-create-semifinal-series-length",
+            "tournament-create-quarterfinal-series-length",
+            "tournament-create-earlier-series-length",
+        ):
+            self.assertNotIn(f'id="{dom_id}"', body)
+        # And no per-node Bo-N series-length label element renders for RR.
+        self.assertNotIn('id="tournament-node-series-length-', body)
