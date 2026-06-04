@@ -2302,3 +2302,327 @@ class TestBracketRankRoundRobin(SimpleTestCase):
         ]
         nxt = find_next_node(nodes)
         self.assertEqual((nxt["bracket_round"], nxt["position"]), (2, 0))
+
+
+# ===========================================================================
+# LG-02c — RR -> Double-elimination finals builder (pure-unit)
+# ===========================================================================
+#
+# NEW class appended below (existing classes above are NOT modified — every
+# single-elim / double-elim / round-robin case stays green as a regression
+# guard). Seam contract:
+# ``.claude/worktrees/lg-02c-rr-de-seam-contract.md`` §"Pure builder spec" /
+# §"Test boundary".
+#
+# ``build_rr_de_finals_bracket(upper_specs, lower_specs)`` is the fused WB+LB+GF
+# finals builder for the new ``round_robin_double_elim`` format. It composes
+# ``build_bracket`` / ``build_double_elim_bracket`` and constructs
+# ``BracketNodeSpec``s — it adds NO new import, so ``TestNoDjangoImportsLeaked``
+# above stays green. Every name is imported LAZILY inside each method so its
+# absence (pre-Code-landing) isolates the failure to THIS class only and does
+# NOT break the existing (passing) classes above at collection time.
+#
+# Inputs: ``upper_specs`` = WB starters, RR-rank-ordered, seed 1..wb (a power of
+# two, wb in {4,8,16}). ``lower_specs`` = LB pre-seeds, RR-rank-ordered, seed
+# wb+1..wb+lb (len 0 or wb//2).
+#
+# When ``lower_specs == []`` the result MUST EQUAL ``build_double_elim_bracket(
+# upper_specs)`` (spec-list equality) — the simplest, locked delegation. When
+# ``lower_specs`` is non-empty (lb = wb/2) the WB is re-tagged ``winners``,
+# LB-R1 slot "a" is pre-filled with the ``lower_specs`` in seed order, each
+# WB-R1 node's ``loser_advances_to`` points at the matching LB-R1 slot "b", GF1
+# wires into GF2 (Bracket reset), GF1/GF2 are depth 0, there are ZERO ``is_bye``
+# nodes, and the LB has ``2*log2(wb) - 1`` rounds.
+
+
+class TestBuildRrDeFinalsBracket(SimpleTestCase):
+    """``build_rr_de_finals_bracket(upper_specs, lower_specs)`` — the fused
+    WB+LB+GF finals builder for the ``round_robin_double_elim`` format."""
+
+    def _upper(self, wb: int) -> list:
+        """``wb`` WB starters, seed 1..wb, team_id = 100 + seed (RR-rank order
+        carried as the Bracket seed)."""
+        from matches.bracket import ParticipantSpec
+
+        return [ParticipantSpec(team_id=100 + s, seed=s) for s in range(1, wb + 1)]
+
+    def _lower(self, wb: int, lb: int) -> list:
+        """``lb`` LB pre-seeds, seed wb+1..wb+lb, team_id = 100 + seed."""
+        from matches.bracket import ParticipantSpec
+
+        return [
+            ParticipantSpec(team_id=100 + s, seed=s) for s in range(wb + 1, wb + lb + 1)
+        ]
+
+    def _by_type(self, specs: list) -> dict:
+        out: dict[str, list] = {"winners": [], "losers": [], "grand_final": []}
+        for s in specs:
+            out[s.bracket_type].append(s)
+        return out
+
+    # -- lower_specs == [] -> EXACT plain-DE delegation -----------------------
+
+    def test_empty_lower_equals_plain_de_wb4(self) -> None:
+        from matches.bracket import (
+            build_double_elim_bracket,
+            build_rr_de_finals_bracket,
+        )
+
+        upper = self._upper(4)
+        self.assertEqual(
+            build_rr_de_finals_bracket(upper, []),
+            build_double_elim_bracket(upper),
+        )
+
+    def test_empty_lower_equals_plain_de_wb8(self) -> None:
+        from matches.bracket import (
+            build_double_elim_bracket,
+            build_rr_de_finals_bracket,
+        )
+
+        upper = self._upper(8)
+        self.assertEqual(
+            build_rr_de_finals_bracket(upper, []),
+            build_double_elim_bracket(upper),
+        )
+
+    def test_empty_lower_equals_plain_de_wb16(self) -> None:
+        from matches.bracket import (
+            build_double_elim_bracket,
+            build_rr_de_finals_bracket,
+        )
+
+        upper = self._upper(16)
+        self.assertEqual(
+            build_rr_de_finals_bracket(upper, []),
+            build_double_elim_bracket(upper),
+        )
+
+    def test_empty_lower_result_has_no_byes_power_of_two(self) -> None:
+        # A plain top-wb DE over a power-of-two field has zero byes.
+        from matches.bracket import build_rr_de_finals_bracket
+
+        for wb in (4, 8, 16):
+            specs = build_rr_de_finals_bracket(self._upper(wb), [])
+            self.assertFalse(
+                any(s.is_bye for s in specs),
+                f"wb={wb} plain-DE delegation must have no byes",
+            )
+
+    # -- lower_specs non-empty (lb = wb/2): fused WB+LB -----------------------
+
+    def test_wb_retagged_winners_wb4(self) -> None:
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 4
+        specs = build_rr_de_finals_bracket(self._upper(wb), self._lower(wb, wb // 2))
+        parts = self._by_type(specs)
+        # The WB is build_bracket re-tagged "winners" — a 4-team WB has 3 nodes.
+        self.assertEqual(len(parts["winners"]), 3)
+        self.assertTrue(all(s.bracket_type == "winners" for s in parts["winners"]))
+
+    def test_wb_retagged_winners_wb8(self) -> None:
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 8
+        specs = build_rr_de_finals_bracket(self._upper(wb), self._lower(wb, wb // 2))
+        parts = self._by_type(specs)
+        # An 8-team WB has 7 nodes.
+        self.assertEqual(len(parts["winners"]), 7)
+
+    def test_lb_round1_slot_a_prefilled_with_lower_seeds_in_order_wb4(self) -> None:
+        # LB-R1 (the lowest losers bracket_round) has wb/2 nodes; slot "a" of
+        # each is pre-filled with a lower_spec in seed order (pre-seed wb+1 ->
+        # pos 0 slot "a", wb+2 -> pos 1, ...).
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 4
+        lower = self._lower(wb, wb // 2)
+        specs = build_rr_de_finals_bracket(self._upper(wb), lower)
+        parts = self._by_type(specs)
+        lb_r1_round = min(s.bracket_round for s in parts["losers"])
+        lb_r1 = sorted(
+            (s for s in parts["losers"] if s.bracket_round == lb_r1_round),
+            key=lambda s: s.position,
+        )
+        self.assertEqual(len(lb_r1), wb // 2)
+        # Each LB-R1 node slot "a" carries the matching pre-seed; slot "b" empty.
+        for pos, node in enumerate(lb_r1):
+            self.assertEqual(
+                node.team_a_id,
+                lower[pos].team_id,
+                f"LB-R1 pos {pos} slot a should carry pre-seed {lower[pos].seed}",
+            )
+            self.assertEqual(node.seed_a, lower[pos].seed)
+            self.assertIsNone(node.team_b_id, "LB-R1 slot b is empty until a WB drop")
+            self.assertIsNone(node.seed_b)
+
+    def test_lb_round1_slot_a_prefilled_wb8(self) -> None:
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 8
+        lower = self._lower(wb, wb // 2)
+        specs = build_rr_de_finals_bracket(self._upper(wb), lower)
+        parts = self._by_type(specs)
+        lb_r1_round = min(s.bracket_round for s in parts["losers"])
+        lb_r1 = sorted(
+            (s for s in parts["losers"] if s.bracket_round == lb_r1_round),
+            key=lambda s: s.position,
+        )
+        self.assertEqual(len(lb_r1), wb // 2)
+        prefilled = {node.team_a_id for node in lb_r1}
+        self.assertEqual(prefilled, {ls.team_id for ls in lower})
+
+    def test_each_wb_r1_loser_advances_to_matching_lb_r1_slot_b(self) -> None:
+        # The naive same-position drop: WB-R1 pos i -> LB-R1 pos i, slot "b".
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 4
+        specs = build_rr_de_finals_bracket(self._upper(wb), self._lower(wb, wb // 2))
+        parts = self._by_type(specs)
+        wb_r1_round = min(s.bracket_round for s in parts["winners"])
+        lb_r1_round = min(s.bracket_round for s in parts["losers"])
+        wb_r1 = sorted(
+            (s for s in parts["winners"] if s.bracket_round == wb_r1_round),
+            key=lambda s: s.position,
+        )
+        for node in wb_r1:
+            self.assertIsNotNone(
+                node.loser_advances_to,
+                f"WB-R1 pos {node.position} must drop into the LB",
+            )
+            dest_bracket, dest_round, dest_pos = node.loser_advances_to
+            self.assertEqual(dest_bracket, "losers")
+            self.assertEqual(dest_round, lb_r1_round)
+            self.assertEqual(
+                dest_pos,
+                node.position,
+                "WB-R1 pos i drops into LB-R1 pos i (naive same-position drop)",
+            )
+            self.assertEqual(node.loser_advances_to_slot, "b")
+
+    def test_wb_r1_drop_count_matches_lb_r1_node_count(self) -> None:
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 8
+        specs = build_rr_de_finals_bracket(self._upper(wb), self._lower(wb, wb // 2))
+        parts = self._by_type(specs)
+        wb_r1_round = min(s.bracket_round for s in parts["winners"])
+        lb_r1_round = min(s.bracket_round for s in parts["losers"])
+        wb_r1 = [s for s in parts["winners"] if s.bracket_round == wb_r1_round]
+        lb_r1 = [s for s in parts["losers"] if s.bracket_round == lb_r1_round]
+        # wb/2 WB-R1 nodes pair exactly with wb/2 LB-R1 nodes.
+        self.assertEqual(len(wb_r1), wb // 2)
+        self.assertEqual(len(lb_r1), wb // 2)
+
+    # -- Grand final wiring + depth ------------------------------------------
+
+    def test_grand_final_has_two_nodes(self) -> None:
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 4
+        specs = build_rr_de_finals_bracket(self._upper(wb), self._lower(wb, wb // 2))
+        parts = self._by_type(specs)
+        self.assertEqual(len(parts["grand_final"]), 2)
+
+    def test_gf1_loser_advances_to_gf2(self) -> None:
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 4
+        specs = build_rr_de_finals_bracket(self._upper(wb), self._lower(wb, wb // 2))
+        parts = self._by_type(specs)
+        # GF1 = the grand_final node that advances_to GF2 (advances_to not None).
+        gf1 = next(g for g in parts["grand_final"] if g.advances_to is not None)
+        self.assertIsNotNone(gf1.loser_advances_to)
+        self.assertEqual(gf1.loser_advances_to[0], "grand_final")
+
+    def test_gf2_is_terminal(self) -> None:
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 4
+        specs = build_rr_de_finals_bracket(self._upper(wb), self._lower(wb, wb // 2))
+        parts = self._by_type(specs)
+        gf2 = next(g for g in parts["grand_final"] if g.advances_to is None)
+        self.assertIsNone(gf2.advances_to)
+        self.assertIsNone(gf2.loser_advances_to)
+
+    def test_grand_final_nodes_are_depth_zero(self) -> None:
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 4
+        specs = build_rr_de_finals_bracket(self._upper(wb), self._lower(wb, wb // 2))
+        parts = self._by_type(specs)
+        for gf in parts["grand_final"]:
+            self.assertEqual(gf.depth, 0, "GF1/GF2 are depth 0")
+
+    def test_finals_nodes_are_depth_one(self) -> None:
+        # WB-final & LB-final (the highest-round node of each bracket) sit one
+        # step below GF1 -> depth 1.
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 4
+        specs = build_rr_de_finals_bracket(self._upper(wb), self._lower(wb, wb // 2))
+        parts = self._by_type(specs)
+        wb_final = max(parts["winners"], key=lambda s: s.bracket_round)
+        lb_final = max(parts["losers"], key=lambda s: s.bracket_round)
+        self.assertEqual(wb_final.depth, 1, "WB final is depth 1")
+        self.assertEqual(lb_final.depth, 1, "LB final is depth 1")
+
+    def test_every_spec_carries_an_integer_depth(self) -> None:
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 8
+        specs = build_rr_de_finals_bracket(self._upper(wb), self._lower(wb, wb // 2))
+        for spec in specs:
+            self.assertIsInstance(spec.depth, int, f"{spec} has a non-int depth")
+
+    # -- no byes anywhere -----------------------------------------------------
+
+    def test_no_is_bye_nodes_wb4(self) -> None:
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 4
+        specs = build_rr_de_finals_bracket(self._upper(wb), self._lower(wb, wb // 2))
+        self.assertFalse(
+            any(s.is_bye for s in specs),
+            "the RRDE finals are exactly filled — zero is_bye nodes",
+        )
+
+    def test_no_is_bye_nodes_wb8(self) -> None:
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 8
+        specs = build_rr_de_finals_bracket(self._upper(wb), self._lower(wb, wb // 2))
+        self.assertFalse(any(s.is_bye for s in specs))
+
+    # -- LB round count == 2*log2(wb) - 1 ------------------------------------
+
+    def test_lb_round_count_wb4(self) -> None:
+        # W = log2(4) = 2 -> LB has 2W - 1 = 3 rounds.
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 4
+        specs = build_rr_de_finals_bracket(self._upper(wb), self._lower(wb, wb // 2))
+        parts = self._by_type(specs)
+        lb_rounds = {s.bracket_round for s in parts["losers"]}
+        self.assertEqual(len(lb_rounds), 3, "wb=4 LB has 2*log2(4)-1 = 3 rounds")
+
+    def test_lb_round_count_wb8(self) -> None:
+        # W = log2(8) = 3 -> LB has 2W - 1 = 5 rounds.
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 8
+        specs = build_rr_de_finals_bracket(self._upper(wb), self._lower(wb, wb // 2))
+        parts = self._by_type(specs)
+        lb_rounds = {s.bracket_round for s in parts["losers"]}
+        self.assertEqual(len(lb_rounds), 5, "wb=8 LB has 2*log2(8)-1 = 5 rounds")
+
+    # -- every spec carries a bracket_type from the locked vocabulary ---------
+
+    def test_every_spec_bracket_type_in_vocabulary(self) -> None:
+        from matches.bracket import build_rr_de_finals_bracket
+
+        wb = 8
+        specs = build_rr_de_finals_bracket(self._upper(wb), self._lower(wb, wb // 2))
+        for spec in specs:
+            self.assertIn(spec.bracket_type, ("winners", "losers", "grand_final"))

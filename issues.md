@@ -1,3 +1,45 @@
+# Web testing — LG-02c (round-robin → double-elimination)
+
+Date: 2026-06-03
+Branch: `lg-02c-rr-double-elim`
+Scope: smoke-test the LG-02c RR→double-elim format — the `Round robin → Double
+elimination` option + `rrde_combo` select on `/tournaments/create/`, the
+seeding-stage standings with WB/LB/OUT cut markers + stage badge, the deferred
+double-elim finals build, and play draining both stages to a champion; plus a
+regression pass over single-elim / double-elim / round-robin on the shared
+create/detail templates.
+
+## Summary — LG-02c RR→DE
+
+| Area | Result |
+|---|---|
+| Create form offers `Round robin → Double elimination`; `#tournament-create-rrde-combo` reveals (JS toggle) with the 6 combos `4/0…16/8` | ✅ |
+| Create RRDE (8 existing teams, combo `4/2`) → tournament 8, setup; lock → "Seeding stage" badge | ✅ |
+| Seeding standings cut markers exact: 4×`cut-wb` (ranks 1–4), 2×`cut-lb` (5–6), 2×`cut-out` (7–8) | ✅ |
+| Play All (EAGER) drained both stages (~90s); deferred DE finals built; state → "Completed", `Champion: Echo Eagles` | ✅ |
+| Finals tree renders all three sections — WB 3 nodes, LB 4, GF 2 (= 9 finals nodes, the expected `wb=4` count); seeding tables still shown | ✅ |
+| No console errors, no non-2xx network requests across the flow | ✅ |
+| Regression: single-elim (id 9) keeps legacy `#tournament-bracket`; double-elim (10) shows `#tournament-bracket-winners`; round-robin (11) shows `#tournament-rr-crosstable`; stage badge only on RRDE | ✅ |
+
+## Bugs found & FIXED in this run
+
+- **[High → fixed] Deferred DE finals never advanced winners (finals stalled, no champion).**
+  `tournament_engine.py::play_next_node` flattened *all* `tournament.nodes`
+  (including the resolved round-robin Seeding nodes) before `advance_winner`,
+  which matches on `(bracket_round, position)` bracket-type-blind. An RR node at
+  e.g. `(1,0)` (matchday 1) shadowed the WB-R1 node `(winners,1,0)`, returned an
+  empty mutation (`advances_to=None`), and the `if win_muts` guard skipped the
+  slot fill. Fix: `.exclude(bracket_type="round_robin")` on the elim-block
+  flatten (step 8) and in `_collapse_drop_byes`. Surfaced by the Tests agent's 7
+  red engine/task tests; all green after the fix.
+- **[Low → fixed] Django `{# #}` comments rendered as literal text on the detail page.**
+  Three multi-line `{# … #}` comments in `templates/matches/tournament_detail.html`
+  (lines 86–89, 165–167, 215–216) printed verbatim on the page — Django's `{# #}`
+  is single-line only. Fix: converted all three to `{% comment %} … {% endcomment %}`.
+  Verified gone after a server restart + reload.
+
+---
+
 # Web testing — LG-02c (round-robin tournaments)
 
 Date: 2026-06-03

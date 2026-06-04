@@ -1090,6 +1090,7 @@ class Tournament(models.Model):
         ("single_elimination", "Single elimination"),
         ("double_elimination", "Double elimination"),
         ("round_robin", "Round robin"),
+        ("round_robin_double_elim", "Round robin → Double elimination"),
     )
     STATE_CHOICES = (
         ("setup", "Setup"),  # participants chosen, Seeding editable, bracket NOT built
@@ -1133,6 +1134,14 @@ class Tournament(models.Model):
         choices=((1, "Best of 1"), (3, "Best of 3"), (5, "Best of 5")),
         default=1,
     )
+    # LG-02c (RR->DE) — the count of top RR-ranked Teams that advance into the
+    # Winners bracket (4 / 8 / 16) and the count that advance into the Losers
+    # bracket as pre-seeds (0 or wb//2). No choices — the create form's
+    # ``rrde_combo`` select is the single source of valid shape combos; the
+    # model holds the resolved ints (mirrors ``BracketNode.series_length``).
+    # Meaningful only for ``format == "round_robin_double_elim"``; 0 otherwise.
+    wb_advancers = models.PositiveSmallIntegerField(default=0)
+    lb_advancers = models.PositiveSmallIntegerField(default=0)
 
     def __str__(self) -> str:
         return self.name
@@ -1155,7 +1164,6 @@ class Tournament(models.Model):
         from .bracket import (
             build_bracket,
             build_double_elim_bracket,
-            resolve_bye_chain,
             ParticipantSpec,
             series_length_for_depth,
             series_length_for_round,
@@ -1167,11 +1175,26 @@ class Tournament(models.Model):
         if len(participants) < 4:
             raise ValidationError("A tournament requires at least 4 participants.")
 
-        # LG-02c — round-robin: a flat set of BracketNode rows, one per fixture
-        # from the FULL (double round-robin) output of generate_schedule. No
-        # advancement (advances_to / loser_advances_to stay None), no bye chain.
-        if self.format == "round_robin":
+        # LG-02c — round-robin (incl. the RR seeding stage of RR->DE): a flat set
+        # of BracketNode rows, one per fixture from the FULL (double round-robin)
+        # output of generate_schedule. No advancement (advances_to /
+        # loser_advances_to stay None), no bye chain. For RR->DE the DE finals
+        # are NOT built here — they are deferred until the last RR node resolves
+        # (see ``build_de_finals_if_rr_finished``).
+        if self.format in ("round_robin", "round_robin_double_elim"):
             from .schedule_generator import generate_schedule
+
+            # RR->DE lock-time COUNT validation: the SHAPE (power-of-two wb,
+            # lb in {0, wb//2}) is enforced by the create form; the COUNT fit
+            # (wb <= n and wb + lb <= n) is validated here.
+            if self.format == "round_robin_double_elim":
+                n = len(participants)
+                if self.wb_advancers > n:
+                    raise ValidationError("wb_advancers exceeds participant count.")
+                if self.wb_advancers + self.lb_advancers > n:
+                    raise ValidationError(
+                        "wb_advancers + lb_advancers exceeds participant count."
+                    )
 
             team_ids = [p.team_id for p in participants]
             fixtures = generate_schedule(team_ids)  # full double RR
@@ -1210,16 +1233,13 @@ class Tournament(models.Model):
         else:
             specs = build_bracket(part_specs)
 
-        team_by_id = {p.team_id: p.team for p in participants}
-        # The node map is keyed by the full (bracket_type, bracket_round,
-        # position) triple so a WB and LB node may share (round, position). For
-        # single-elim every node is bracket_type="winners", so the triple still
-        # resolves uniquely — output byte-unchanged.
-        node_by_pos = {}
         # LG-02b-2 — depth-from-final escalation. Single-elim resolves N from
         # depth-from-the-final (max bracket_round); DE specs carry an explicit
-        # ``depth`` (distance to GF1) instead.
+        # ``depth`` (distance to GF1) instead. The caller resolves each spec's
+        # series_length and hands it to the shared persist helper keyed on the
+        # full (bracket_type, bracket_round, position) triple.
         total_rounds = max(spec.bracket_round for spec in specs)
+        series_length_by_spec: dict[tuple[str, int, int], int] = {}
         for spec in specs:
             if is_de:
                 series_length = series_length_for_depth(
@@ -1238,6 +1258,45 @@ class Tournament(models.Model):
                     quarterfinal=self.quarterfinal_series_length,
                     earlier=self.earlier_series_length,
                 )
+            series_length_by_spec[
+                (spec.bracket_type, spec.bracket_round, spec.position)
+            ] = series_length
+
+        self._persist_elim_specs(specs, series_length_by_spec)
+
+        self.state = "active"
+        self.save(update_fields=["state"])
+
+    def _persist_elim_specs(
+        self,
+        specs: "list[BracketNodeSpec]",
+        series_length_by_spec: dict,
+    ) -> None:
+        """Persist + wire an elimination (single/double-elim or RR->DE finals)
+        spec list.
+
+        Runs the elim persist loop, the ``advances_to`` wiring pass, the
+        ``loser_advances_to`` wiring pass, and the ``resolve_bye_chain`` cascade
+        pass — shared verbatim by ``lock_and_build`` (single/double-elim) and
+        ``build_de_finals_if_rr_finished`` (the deferred RR->DE finals build).
+        The caller resolves each spec's ``series_length`` (depth-anchored) and
+        passes it via ``series_length_by_spec`` keyed on the full
+        ``(bracket_type, bracket_round, position)`` triple — so this helper is
+        format-agnostic and the single/double-elim persist behaviour stays
+        byte-identical.
+
+        ``team_by_id`` is built from ``self.participants`` (every finalist is an
+        enrolled participant, for both the lock path and the deferred build).
+        """
+        from .bracket import resolve_bye_chain
+
+        team_by_id = {p.team_id: p.team for p in self.participants.all()}
+        # The node map is keyed by the full (bracket_type, bracket_round,
+        # position) triple so a WB and LB node may share (round, position). For
+        # single-elim every node is bracket_type="winners", so the triple still
+        # resolves uniquely — output byte-unchanged.
+        node_by_pos = {}
+        for spec in specs:
             node = BracketNode.objects.create(
                 tournament=self,
                 bracket_round=spec.bracket_round,
@@ -1251,7 +1310,9 @@ class Tournament(models.Model):
                 advances_to_slot=spec.advances_to_slot,
                 loser_advances_to_slot=spec.loser_advances_to_slot,
                 winner=team_by_id.get(spec.winner_id),
-                series_length=series_length,
+                series_length=series_length_by_spec[
+                    (spec.bracket_type, spec.bracket_round, spec.position)
+                ],
             )
             node_by_pos[(spec.bracket_type, spec.bracket_round, spec.position)] = node
 
@@ -1282,7 +1343,8 @@ class Tournament(models.Model):
                 child.save(update_fields=dirty)
 
         # Cascade byes so a top seed's bye is reflected in the next round
-        # immediately (and, for DE, collapse Drop byes into the LB).
+        # immediately (and, for DE, collapse Drop byes into the LB). A no-op for
+        # the RR->DE finals (no byes — wb is a power of two of real teams).
         flat = [_node_to_dict(n) for n in node_by_pos.values()]
         for mut in resolve_bye_chain(flat):
             key = (
@@ -1299,9 +1361,6 @@ class Tournament(models.Model):
                 parent.team_b = team
                 parent.seed_b = mut["seed"]
             parent.save(update_fields=["team_a", "team_b", "seed_a", "seed_b"])
-
-        self.state = "active"
-        self.save(update_fields=["state"])
 
     def find_next_playable_node(self) -> "BracketNode | None":
         """Delegates to ``matches.bracket.find_next_node`` over this
@@ -1416,6 +1475,75 @@ class Tournament(models.Model):
         self.champion_id = rows[0].team_id
         self.state = "completed"
         self.save(update_fields=["champion", "state"])
+
+    @transaction.atomic
+    def build_de_finals_if_rr_finished(self) -> None:
+        """LG-02c (RR->DE) — build the deferred Double-elimination finals once
+        every RR (seeding-stage) node has resolved.
+
+        Triggered when the last RR node resolves. Guards (in order), no-op
+        unless ALL hold:
+          1. ``format == "round_robin_double_elim"``.
+          2. ``state == "active"``.
+          3. every ``bracket_type="round_robin"`` node has a winner.
+          4. idempotency: the finals are not already built (no non-RR node
+             exists).
+
+        When all guards pass, the top ``wb_advancers`` RR-ranked Teams seed the
+        Winners bracket and the next ``lb_advancers`` seed the Losers-bracket
+        pre-seeds (the rest are eliminated). The finals are built via
+        ``build_rr_de_finals_bracket`` and persisted via the shared
+        ``_persist_elim_specs`` helper. The Tournament STAYS ``active`` — the
+        champion is crowned later by the DE Grand final.
+        """
+        from .bracket import (
+            ParticipantSpec,
+            build_rr_de_finals_bracket,
+            series_length_for_depth,
+        )
+
+        if self.format != "round_robin_double_elim":
+            return
+        if self.state != "active":
+            return
+        # Every RR seeding node must be resolved.
+        if self.nodes.filter(bracket_type="round_robin", winner__isnull=True).exists():
+            return
+        # Idempotency: finals already built ⇒ no-op.
+        if self.nodes.exclude(bracket_type="round_robin").exists():
+            return
+
+        rows = self.round_robin_standings()
+        # Top wb_advancers RR-ranked teams -> WB seeds 1..wb (seed = 1-based RR
+        # rank); next lb_advancers -> LB pre-seeds, seeds wb+1..wb+lb; the rest
+        # are eliminated (never enter the finals).
+        upper = [
+            ParticipantSpec(team_id=rows[i].team_id, seed=i + 1)
+            for i in range(self.wb_advancers)
+        ]
+        lower = [
+            ParticipantSpec(
+                team_id=rows[self.wb_advancers + j].team_id,
+                seed=self.wb_advancers + j + 1,
+            )
+            for j in range(self.lb_advancers)
+        ]
+
+        specs = build_rr_de_finals_bracket(upper, lower)
+        series_length_by_spec: dict[tuple[str, int, int], int] = {}
+        for spec in specs:
+            series_length_by_spec[
+                (spec.bracket_type, spec.bracket_round, spec.position)
+            ] = series_length_for_depth(
+                spec.depth,
+                final=self.final_series_length,
+                semifinal=self.semifinal_series_length,
+                quarterfinal=self.quarterfinal_series_length,
+                earlier=self.earlier_series_length,
+            )
+
+        self._persist_elim_specs(specs, series_length_by_spec)
+        # The Tournament STAYS active — the DE Grand final crowns the champion.
 
 
 class TournamentParticipant(models.Model):

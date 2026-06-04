@@ -1597,3 +1597,271 @@ class TestDetailRoundRobinCrosstable(TestCase):
             self.assertNotIn(f'id="{dom_id}"', body)
         # And no per-node Bo-N series-length label element renders for RR.
         self.assertNotIn('id="tournament-node-series-length-', body)
+
+
+# ===========================================================================
+# LG-02c — RR -> Double-elimination tournament format (views + template)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified — the
+# single/double-elim/round-robin view tests stay green as regression guards).
+# Seam contract: ``.claude/worktrees/lg-02c-rr-de-seam-contract.md``
+# §"View / form / template spec" / §"Test boundary".
+#
+# The create form offers the round_robin_double_elim option and renders the
+# ``tournament-create-rrde-combo`` <select> with the 6 (wb, lb) combos
+# (4/0, 4/2, 8/0, 8/4, 16/0, 16/8). A POST persists format + wb_advancers +
+# lb_advancers parsed from the combo (forgiving fallback to (4, 0) on
+# absent/invalid combo on an RRDE create; 0/0 for non-RRDE). The detail page
+# renders ``tournament-stage-badge`` and tags each RR standings row with
+# ``tournament-standings-cut-{wb|lb|out}``; once finals are built the DE
+# three-section containers render alongside the RR tables.
+#
+# The exact rrde_combo value-string format is INTERNAL (not asserted) — the
+# locked combo values are the 6 shapes. We POST the suggested "wb/lb" value
+# string and assert the wb_advancers / lb_advancers that persist.
+
+
+def _rrde_setup_tournament(
+    n: int, *, wb: int, lb: int, name: str = "RRDEViewCup"
+) -> Tournament:
+    """A setup-state round_robin_double_elim Tournament with ``n`` seeded
+    participants and the advancer counts set."""
+    t = Tournament.objects.create(
+        name=name,
+        format="round_robin_double_elim",
+        wb_advancers=wb,
+        lb_advancers=lb,
+    )
+    for seed, team in enumerate(_make_teams(n), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    return t
+
+
+def _rrde_active_tournament(
+    n: int, *, wb: int, lb: int, name: str = "RRDEViewCup"
+) -> Tournament:
+    """A locked/active RRDE Tournament — only the RR Seeding nodes built."""
+    t = _rrde_setup_tournament(n, wb=wb, lb=lb, name=name)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+def _resolve_all_rr_view(t: Tournament) -> None:
+    """Drive all RR nodes to resolution via the engine (random sims), then the
+    deferred finals build fires on the last RR node."""
+    from matches.tournament_engine import play_next_node
+
+    rr_total = t.nodes.filter(bracket_type="round_robin").count()
+    with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+        for _ in range(rr_total):
+            play_next_node(t)
+    t.refresh_from_db()
+
+
+class TestCreateFormRrDeCombo(TestCase):
+    """The create form offers the round_robin_double_elim option and renders
+    ``tournament-create-rrde-combo`` with the 6 combos; a POST persists
+    format + wb_advancers + lb_advancers with forgiving fallback."""
+
+    def test_format_select_offers_rrde_option(self) -> None:
+        make_team_with_slots("Existing")
+        body = self.client.get(reverse("tournament_create")).content.decode()
+        start = body.index('id="tournament-create-format"')
+        window = body[start : start + 1000]
+        self.assertIn("round_robin_double_elim", window)
+
+    def test_rrde_combo_select_renders(self) -> None:
+        make_team_with_slots("Existing")
+        body = self.client.get(reverse("tournament_create")).content.decode()
+        self.assertIn('id="tournament-create-rrde-combo"', body)
+
+    def test_rrde_combo_offers_six_combos(self) -> None:
+        make_team_with_slots("Existing")
+        body = self.client.get(reverse("tournament_create")).content.decode()
+        start = body.index('id="tournament-create-rrde-combo"')
+        window = body[start : start + 1500]
+        # The 6 locked shape combos must each surface as an <option> value.
+        for combo in ("4/0", "4/2", "8/0", "8/4", "16/0", "16/8"):
+            self.assertIn(combo, window, f"combo {combo!r} missing from the select")
+
+    def test_post_rrde_persists_format_and_advancers(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "RRDE Created Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "round_robin_double_elim",
+                "rrde_combo": "4/2",
+            },
+        )
+        t = Tournament.objects.get(name="RRDE Created Cup")
+        self.assertEqual(t.format, "round_robin_double_elim")
+        self.assertEqual(t.wb_advancers, 4)
+        self.assertEqual(t.lb_advancers, 2)
+
+    def test_post_rrde_combo_eight_four(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "RRDE 8/4 Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "round_robin_double_elim",
+                "rrde_combo": "8/4",
+            },
+        )
+        t = Tournament.objects.get(name="RRDE 8/4 Cup")
+        self.assertEqual(t.wb_advancers, 8)
+        self.assertEqual(t.lb_advancers, 4)
+
+    def test_post_rrde_absent_combo_falls_back_to_four_zero(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "RRDE NoCombo Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "round_robin_double_elim",
+                # rrde_combo absent -> fall back to the first combo (4, 0).
+            },
+        )
+        t = Tournament.objects.get(name="RRDE NoCombo Cup")
+        self.assertEqual(t.wb_advancers, 4)
+        self.assertEqual(t.lb_advancers, 0)
+
+    def test_post_rrde_invalid_combo_falls_back_to_four_zero(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "RRDE BadCombo Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "round_robin_double_elim",
+                "rrde_combo": "7/3",  # not one of the 6 locked combos -> (4, 0)
+            },
+        )
+        t = Tournament.objects.get(name="RRDE BadCombo Cup")
+        self.assertEqual(t.wb_advancers, 4)
+        self.assertEqual(t.lb_advancers, 0)
+
+    def test_post_non_rrde_persists_zero_advancers(self) -> None:
+        # On a non-RRDE create the combo is ignored and both advancers are 0.
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "SE Zero Advancers Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "single_elimination",
+                "rrde_combo": "8/4",  # ignored for a non-RRDE create
+            },
+        )
+        t = Tournament.objects.get(name="SE Zero Advancers Cup")
+        self.assertEqual(t.format, "single_elimination")
+        self.assertEqual(t.wb_advancers, 0)
+        self.assertEqual(t.lb_advancers, 0)
+
+
+class TestDetailRrDeStageBadgeAndCutMarkers(TestCase):
+    """The RRDE detail page renders ``tournament-stage-badge`` (seeding vs
+    finals) and tags each RR standings row with the cut-line class substring
+    ``tournament-standings-cut-{wb|lb|out}`` for the right teams."""
+
+    def test_stage_badge_renders_in_seeding(self) -> None:
+        t = _rrde_active_tournament(6, wb=4, lb=2, name="RRDEBadgeSeed")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-stage-badge"', body)
+
+    def test_stage_value_is_seeding_before_finals(self) -> None:
+        t = _rrde_active_tournament(6, wb=4, lb=2, name="RRDEStageSeed")
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        self.assertEqual(response.context["tournament_stage"], "seeding")
+
+    def test_cut_markers_tag_wb_lb_out_rows(self) -> None:
+        # wb=4 + lb=2 over 6 teams ⇒ ranks 1-4 -> "wb", 5-6 -> "lb", none "out".
+        # Use wb=4 + lb=0 over 6 teams so ranks 5-6 are "out" and tagged.
+        t = _rrde_active_tournament(6, wb=4, lb=0, name="RRDECutMarkers")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        # All three cut-line class substrings must appear (4 wb, 0 lb, 2 out).
+        self.assertIn("tournament-standings-cut-wb", body)
+        self.assertIn("tournament-standings-cut-out", body)
+
+    def test_cut_labels_context_maps_team_ids(self) -> None:
+        t = _rrde_active_tournament(6, wb=4, lb=2, name="RRDECutLabels")
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        cut_labels = response.context["cut_labels"]
+        rows = t.round_robin_standings()
+        # Top 4 -> "wb", next 2 -> "lb", rest -> "out".
+        self.assertEqual(cut_labels[rows[0].team_id], "wb")
+        self.assertEqual(cut_labels[rows[3].team_id], "wb")
+        self.assertEqual(cut_labels[rows[4].team_id], "lb")
+        self.assertEqual(cut_labels[rows[5].team_id], "lb")
+
+    def test_cut_labels_marks_eliminated_out(self) -> None:
+        # 6 teams, wb=4 + lb=0 ⇒ ranks 5-6 are "out".
+        t = _rrde_active_tournament(6, wb=4, lb=0, name="RRDECutOut")
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        cut_labels = response.context["cut_labels"]
+        rows = t.round_robin_standings()
+        self.assertEqual(cut_labels[rows[4].team_id], "out")
+        self.assertEqual(cut_labels[rows[5].team_id], "out")
+
+
+class TestDetailRrDeFinalsSections(TestCase):
+    """Once the deferred finals are built, the RRDE detail page renders the DE
+    three-section containers alongside the RR tables, and the stage badge reads
+    'finals'."""
+
+    def test_stage_value_is_finals_after_build(self) -> None:
+        t = _rrde_active_tournament(4, wb=4, lb=0, name="RRDEStageFinals")
+        _resolve_all_rr_view(t)
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        self.assertEqual(response.context["tournament_stage"], "finals")
+
+    def test_de_three_section_containers_render(self) -> None:
+        t = _rrde_active_tournament(4, wb=4, lb=0, name="RRDEFinalsSections")
+        _resolve_all_rr_view(t)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-bracket-winners"', body)
+        self.assertIn('id="tournament-bracket-losers"', body)
+        self.assertIn('id="tournament-bracket-grand-final"', body)
+
+    def test_rr_tables_still_render_in_finals_stage(self) -> None:
+        # The RR crosstable + standings are reused verbatim; once finals exist
+        # the DE sections render ALONGSIDE the RR tables.
+        t = _rrde_active_tournament(4, wb=4, lb=0, name="RRDEFinalsRrTables")
+        _resolve_all_rr_view(t)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-rr-crosstable"', body)
+        self.assertIn('id="tournament-rr-standings"', body)
+
+    def test_rr_tables_render_in_seeding_stage(self) -> None:
+        t = _rrde_active_tournament(4, wb=4, lb=0, name="RRDESeedRrTables")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-rr-crosstable"', body)
+        self.assertIn('id="tournament-rr-standings"', body)
+        # No DE sections yet in the seeding stage.
+        self.assertNotIn('id="tournament-bracket-winners"', body)

@@ -46,6 +46,33 @@ from .simulation.entrypoints import BatchSimulator
 from .tasks import play_tournament_task
 from .tournament_engine import play_next_node
 
+# LG-02c (RR->DE) — the 6 locked (wb, lb) advancer shape combos, in select order.
+# value string format "wb/lb" (e.g. "4/0"). lb is 0 or wb//2.
+_RRDE_COMBOS: tuple[tuple[str, int, int], ...] = (
+    ("4/0", 4, 0),
+    ("4/2", 4, 2),
+    ("8/0", 8, 0),
+    ("8/4", 8, 4),
+    ("16/0", 16, 0),
+    ("16/8", 16, 8),
+)
+_RRDE_COMBO_BY_VALUE: dict[str, tuple[int, int]] = {
+    value: (wb, lb) for value, wb, lb in _RRDE_COMBOS
+}
+
+
+def _parse_rrde_combo(raw: "str | None", tournament_format: str) -> tuple[int, int]:
+    """Parse the ``rrde_combo`` select value into ``(wb_advancers,
+    lb_advancers)``.
+
+    A non-RRDE format ignores the combo and returns ``(0, 0)``. An RRDE format
+    with an absent / invalid value forgiving-falls-back to the first combo
+    ``(4, 0)``.
+    """
+    if tournament_format != "round_robin_double_elim":
+        return (0, 0)
+    return _RRDE_COMBO_BY_VALUE.get(raw or "", (4, 0))
+
 
 def _team_mean_rating(team: Team) -> float:
     """Mean active-player overall_rating for a Team (LG-01c draft-preview
@@ -145,15 +172,25 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
     earlier_series_length = _parse_series_length("earlier_series_length")
 
     # LG-02c — bracket format. Forgiving fallback (mirrors the series-length
-    # parses): only the two known formats are accepted, anything else (absent,
+    # parses): only the known formats are accepted, anything else (absent,
     # tampered) falls back to single-elimination.
     tournament_format = request.POST.get("format")
     if tournament_format not in (
         "single_elimination",
         "double_elimination",
         "round_robin",
+        "round_robin_double_elim",
     ):
         tournament_format = "single_elimination"
+
+    # LG-02c (RR->DE) — the (wb, lb) advancer combo. A single rrde_combo select
+    # enumerating the 6 locked shape combos ("4/0", "4/2", "8/0", "8/4",
+    # "16/0", "16/8"). For an RRDE create an absent/invalid combo falls back to
+    # the first combo (4, 0); for any non-RRDE create the combo is ignored and
+    # both advancers persist 0.
+    wb_advancers, lb_advancers = _parse_rrde_combo(
+        request.POST.get("rrde_combo"), tournament_format
+    )
 
     tournament = Tournament.objects.create(
         name=name,
@@ -163,6 +200,8 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
         semifinal_series_length=semifinal_series_length,
         quarterfinal_series_length=quarterfinal_series_length,
         earlier_series_length=earlier_series_length,
+        wb_advancers=wb_advancers,
+        lb_advancers=lb_advancers,
     )
 
     # Default Seeding via mean active-player overall_rating.
@@ -346,16 +385,64 @@ def _build_rr_crosstable(tournament: Tournament, rows: list) -> list:
     return crosstable
 
 
+def _tournament_stage(tournament: Tournament, has_finals: bool) -> str:
+    """LG-02c (RR->DE) — derive the display stage (NOT stored).
+
+    - ``"setup"`` when state == setup.
+    - ``"seeding"`` when RRDE, active, and no finals nodes exist yet.
+    - ``"finals"`` when RRDE and the finals nodes exist.
+    - ``"completed"`` when state == completed.
+
+    For non-RRDE formats the badge does not render meaningfully; we return a
+    benign value (the format name) so the key is always present.
+    """
+    if tournament.state == "setup":
+        return "setup"
+    if tournament.state == "completed":
+        return "completed"
+    if tournament.format == "round_robin_double_elim":
+        return "finals" if has_finals else "seeding"
+    return tournament.format
+
+
+def _rrde_cut_labels(tournament: Tournament, rr_rows: list) -> dict:
+    """LG-02c (RR->DE) — team_id -> "wb" | "lb" | "out" cut markers, built from
+    ``round_robin_standings()`` rank order.
+
+    Top ``wb_advancers`` rows -> "wb", next ``lb_advancers`` -> "lb", the rest
+    -> "out". Computed only in the RRDE seeding stage (caller passes ``[]``
+    otherwise so the result is empty).
+    """
+    labels: dict[int, str] = {}
+    wb = tournament.wb_advancers
+    lb = tournament.lb_advancers
+    for i, row in enumerate(rr_rows):
+        if i < wb:
+            labels[row.team_id] = "wb"
+        elif i < wb + lb:
+            labels[row.team_id] = "lb"
+        else:
+            labels[row.team_id] = "out"
+    return labels
+
+
 def _detail_context(tournament: Tournament) -> dict:
-    """Shared tournament_detail context (LG-02a keys + LG-02a-2 import keys)."""
+    """Shared tournament_detail context (LG-02a keys + LG-02a-2 import keys +
+    LG-02c RR / RR->DE keys)."""
     participants = list(tournament.participants.select_related("team").order_by("seed"))
     rounds = _build_rounds(tournament)
     next_node = tournament.find_next_playable_node()
-    # LG-02c — round-robin crosstable + standings (empty for elim formats).
-    if tournament.format == "round_robin":
-        # Compute the standings ONCE and feed both surfaces (the crosstable
-        # orders teams by rank, the table renders the rows) — avoids a second
-        # multi-join + compute_standings pass per render.
+    # LG-02c (RR->DE) — finals exist iff any non-RR node has been persisted.
+    has_finals = tournament.nodes.exclude(bracket_type="round_robin").exists()
+    stage = _tournament_stage(tournament, has_finals)
+    # LG-02c — round-robin crosstable + standings (also rendered during the
+    # RR->DE seeding stage). Empty for the elim formats.
+    is_rr_like = tournament.format in ("round_robin", "round_robin_double_elim")
+    cut_labels: dict[int, str] = {}
+    if is_rr_like:
+        # Compute the standings ONCE and feed every surface (the crosstable
+        # orders teams by rank, the table renders the rows, the cut markers tag
+        # them) — avoids a second multi-join + compute_standings pass per render.
         rr_rows = tournament.round_robin_standings()
         rr_crosstable = _build_rr_crosstable(tournament, rr_rows)
         # Pair each StandingsRow with its Team so the template can render the
@@ -363,6 +450,9 @@ def _detail_context(tournament: Tournament) -> dict:
         # season-standings `rows_with_teams` precedent.
         team_by_id = {p.team_id: p.team for p in participants}
         rr_standings = [(row, team_by_id.get(row.team_id)) for row in rr_rows]
+        # Cut markers only in the RRDE seeding stage.
+        if tournament.format == "round_robin_double_elim" and stage == "seeding":
+            cut_labels = _rrde_cut_labels(tournament, rr_rows)
     else:
         rr_crosstable = []
         rr_standings = []
@@ -377,6 +467,8 @@ def _detail_context(tournament: Tournament) -> dict:
         "import_row_errors": [],
         "rr_crosstable": rr_crosstable,
         "rr_standings": rr_standings,
+        "tournament_stage": stage,
+        "cut_labels": cut_labels,
     }
 
 
