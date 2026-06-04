@@ -1,3 +1,44 @@
+# Web testing — LG-02c (Swiss tournaments)
+
+Date: 2026-06-04
+Branch: `lg-02c-swiss`
+Scope: smoke-test the new `Swiss` `Tournament.format` — the create-form Swiss
+option + `swiss_rounds` input + the JS toggle hiding the series-length / rrde
+controls, the seed-fold round 1 built at lock, the **deferred per-round build**,
+Buchholz-ordered standings, and champion crowning. Walked create → lock →
+sync `Play Next` ×4 → completed, against existing dev teams.
+
+## Summary — LG-02c Swiss
+
+| Area | Result |
+|---|---|
+| Create form offers **Swiss**; selecting it reveals `#tournament-create-swiss-rounds` and hides the 4 `*-series-length` selects + the rrde-combo | ✅ |
+| Create (4 existing teams, `swiss_rounds=0` → auto 2) → tournament 8, setup | ✅ |
+| Setup detail: `Swiss Rounds` heading + zero-filled `Standings` + editable `Seeding` | ✅ |
+| Lock & Build → stage badge **"Swiss stage"**, state **Active**, R1 seed-fold `[1]v[3]` / `[2]v[4]`, each `Bo1` `0–0` | ✅ |
+| `Play Next Match` (sync) resolves one Match at a time; `Game N` deep-links to `/matches/<id>/`, Series score + standings update | ✅ |
+| **Deferred R2 build**: after R1's last node, Round 2 auto-appears pairing the two R1 winners + the two losers, **avoiding rematches** (greedy ranked-sweep) | ✅ |
+| **Champion** crowned only after the final round's last Match → state **Completed**, `Champion: Echo Eagles` via the reused `tournament-champion-banner` | ✅ |
+| **Buchholz** tiebreak exercised: Onyx Owls ranked above Phoenix on equal 3 pts (Onyx opponents summed 9 vs Phoenix 3) | ✅ |
+| Console errors/warnings | ✅ none |
+| Network non-2xx | ✅ none (document + Bootstrap CDN all 200) |
+
+## Findings — LG-02c Swiss
+
+- No bugs. Every browser-observable Swiss surface behaves per the seam contract:
+  the create toggle, R1 fold, the recurring deferred round build with rematch
+  avoidance, Buchholz-ordered standings, and Standings-leader champion crowning
+  all correct. Single/double-elim / RR / RR→DE renders unaffected.
+
+## Teardown — LG-02c Swiss
+
+- Test data in the **gitignored dev `db.sqlite3`** (disposable, ADR-0004):
+  Tournament 8 "ChromeTest Swiss Cup" (existing teams — no new teams created) +
+  Matches 159–162 + its BracketNode/SeriesMatch rows. Not part of the PR. Server
+  stopped after testing.
+
+---
+
 # Web testing — LG-02c (round-robin → double-elimination)
 
 Date: 2026-06-03

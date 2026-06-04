@@ -1351,7 +1351,16 @@ processor — **no processor change**). The six views / URL names:
 (GET form / POST `@transaction.atomic` — team source = **select existing** via
 `Team.objects.regular()` + **generate** via `from teams.views import
 _generate_teams` (the LG-01b cross-app seam, signature unchanged) — creates the
-`Tournament(state="setup")` + `TournamentParticipant` rows with default Seeding);
+`Tournament(state="setup")` + `TournamentParticipant` rows with default Seeding).
+**Roster-eligibility gate:** only Teams with a full valid roster
+(`Team.is_valid_roster` — all 6 slots filled, no duplicate player) may enter a
+Tournament. `available_teams` is the `Team.objects.regular()` list filtered to
+`is_valid_roster` (slot FKs `select_related`-ed so the property adds no
+per-Team query), so the select list never offers an incomplete-roster Team; a
+tampered/stale POST of an ineligible id is re-validated server-side and rejected
+with an error re-render (nothing created); and the generate path clamps
+players-per-team to **>= 6** (`generate_ppt = max(6, generate_ppt)`) so it can
+never create an unplayable participant;
 `tournament_detail` (GET-only, the bracket tree + seeding-edit form + play
 controls); `tournament_reseed` (POST `@transaction.atomic`, persists a manually
 reordered Seeding, **rejected once `is_locked`**); `tournament_lock` (POST,
@@ -2629,6 +2638,293 @@ BOTH stages — seeding RR nodes THEN the auto-built DE finals — to a champion
 groups then the WB/LB/GF groups). Tests assert on pure functions, persisted
 node/row/edge shapes, `bracket_type` / `series_length`, `node.winner` / `champion` /
 `state`, standings ORDER, and DOM ids — **never on exact simulated point totals**.
+
+## LG-02c swiss tournaments
+
+Adds a **fifth** `Tournament.format` enum value **`"swiss"`** (label `"Swiss"`):
+a **flat, edge-less** Swiss-system format for the standalone sandbox Tournament,
+built on the four shipped LG-02c formats. Every Swiss node is a Bo1 pairing with
+`advances_to=None`, `loser_advances_to=None`, `is_bye=False`, `series_length=1` —
+there is **no advancement tree** and **no final node**; the champion is the
+**Standings leader (Buchholz re-ranked)** after the last Swiss round resolves. The
+new work is (a) **two** pure functions — a single round builder that serves both
+the round-1 seed fold and the later greedy ranked sweep, plus a Buchholz re-rank
+layer — (b) a **per-round DEFERRED build** triggered each time a round's last node
+resolves, (c) a `compute_standings`-input assembly helper **extracted** from
+`round_robin_standings`, and (d) the create-form round-count input + the per-round
+pairings/standings detail page. **Non-deterministic** (`simulate_match` draws fresh
+per-round seeds) ⇒ **no SIM-07/SIM-08 interaction, NO Score Calibration
+re-baseline**. ADR-0021 is **EXTENDED** for the per-round deferred build + Buchholz
+re-rank decision; **no new ADR**, and **no new CONTEXT.md term** beyond the
+already-written **Swiss** + **Buchholz** terms (CONTEXT.md already carries them — do
+not edit). Seam contract:
+[`.claude/worktrees/lg-02c-swiss-seam-contract.md`](../../.claude/worktrees/lg-02c-swiss-seam-contract.md).
+
+**Enum / bracket_type / field (LOCKED).** `Tournament.FORMAT_CHOICES` gains
+`("swiss", "Swiss")` as its **fifth** entry (`format` field declaration otherwise
+unchanged — `CharField(max_length=32)`, `"swiss"` is 5 chars). `BracketNode`'s
+`bracket_type` choices gain `("swiss", "Swiss")` as their **fifth** entry
+(declaration unchanged: `CharField(max_length=12)`, `default="winners"` —
+`"swiss"` fits 12), and `matches/bracket.py`'s `_BRACKET_RANK` gains
+**`"swiss": 4`** (so `find_next_node`'s `_BRACKET_RANK.get(bracket_type, 0)` sort
+key slots Swiss in with **no `find_next_node` edit**; its playable predicate already
+treats an unplayed Bo1 Swiss node as playable and a resolved one as skipped). One
+NEW field: **`Tournament.swiss_rounds`**
+(`PositiveSmallIntegerField(default=0)`, declared **immediately after
+`lb_advancers`**, **no `choices`**) — the total number of Swiss rounds; `0` = auto.
+It is **create-time, resolved-and-frozen at lock**: at lock
+`total = swiss_rounds or math.ceil(math.log2(N))`, **clamped to `[1, N-1]`**, then
+**written back** into `swiss_rounds` so the played-out round count is fixed.
+Meaningful only for `format == "swiss"`; left `0` for every other format. Migration
+`matches/migrations/0039_tournament_swiss.py` (dep `0038_tournament_rr_de`; three
+ops in pinned order — `AlterField(Tournament.format)` choices-widen to the 5-tuple →
+`AlterField(BracketNode.bracket_type)` choices-widen to add `("swiss", "Swiss")` →
+`AddField(Tournament.swiss_rounds)`; **no `RunPython`, no backfill**, ADR-0004
+disposable-sandbox precedent).
+
+**EVEN-N only — no byes ever (LOCKED).** Swiss admits any **even** participant
+count; an **odd** count raises `django.core.exceptions.ValidationError` at
+`lock_and_build` with the EXACT message
+**`"Swiss requires an even number of participants."`** (surfaced by the lock view
+via `messages.error`, LG-02a precedent). There are **no bye nodes** at any point —
+every Swiss node is a real pairing, so `resolve_bye_chain` is never invoked (flat,
+like the RR branch).
+
+**Round-1 build at lock = seed "fold" (`matches/models.py`).** Inside the existing
+`@transaction.atomic` `lock_and_build`, AFTER the `setup`-guard and the `>= 4`
+participant guard, a **dedicated `if self.format == "swiss":` branch** (its own
+branch — NOT folded into the RR branch, because it needs the even-N guard + the
+round-count freeze + the fold pairing + the `bracket_type="swiss"` tag) does:
+raise on odd N; resolve+clamp+freeze `swiss_rounds`; compute the **seed fold** —
+sort participants by Bracket `seed` ascending, split in half, and interleave so
+consecutive pairs are `(seed[i], seed[i + N/2])` for `i` in `0..N/2-1`; then call
+`build_swiss_round(fold_order, seed_by_team, set(), bracket_round=1)` and persist
+each spec as a `BracketNode` (`bracket_type="swiss"`, `series_length=1`,
+`is_bye=False`, all advance/loser slots `None`, `winner=None`). Tail:
+`state="active"` then `save(update_fields=["state", "swiss_rounds"])`.
+`build_swiss_round` is **deferred-imported inside the branch** (mirrors the RR
+branch's deferred `from .schedule_generator import generate_schedule`); `import math`
+is used (already at module scope, or added). The R1 build emits **only** the
+round-1 nodes (`N/2` of them) — later rounds are deferred.
+
+**Later rounds DEFERRED — `advance_swiss_if_round_finished(self) -> None`
+(`@transaction.atomic`).** Triggered when the **current (highest) Swiss round's last
+node resolves**; no-op unless `format == "swiss"` and `state == "active"`. It finds
+the highest `bracket_round` among the Swiss nodes; if any node in that round still
+has `winner_id is None`, it no-ops (round not finished). When the round IS resolved:
+if `current_round < self.swiss_rounds` it builds the **next** round's nodes via a
+**greedy ranked sweep** — `rows = self.swiss_standings()`, `ranked_team_ids =
+[row.team_id for row in rows]`, `played_pairs = self._swiss_played_pairs()`, then
+`build_swiss_round(ranked_team_ids, seed_by_team, played_pairs,
+bracket_round=current_round + 1)` — persists the new nodes, and the Tournament
+**STAYS `active`**. If `current_round == self.swiss_rounds` it crowns:
+`champion_id = swiss_standings()[0].team_id`, `state="completed"`,
+`save(update_fields=["champion", "state"])`. The pairing walks
+`swiss_standings()` top-down, pairing each unpaired team with the **next unpaired
+team it has NOT already played**; if the trailing teams can only be paired by
+replaying, it **ALLOWS the rematch** (no backtracking — the last fallback pair is the
+next unpaired team regardless of `played_pairs`).
+
+**No draws ⇒ `league_points = 3 * wins`.** Each Bo1 Match resolves to a single
+winner via the inherited `break_tie` (unchanged in `play_next_node`), so there are
+no draws and a team's `league_points` are purely `3 * wins`.
+
+**Buchholz tiebreak — ORDERING-ONLY, over the frozen `compute_standings`.** A team's
+Buchholz = the **sum of its opponents' final `league_points`** across all Swiss
+pairings it played (a rematch counts twice — Buchholz sums per played pairing). The
+**Swiss ranking ladder** is `league_points desc → Buchholz desc → round_wins desc →
+total_score desc → team_name asc`. Buchholz is **NOT a displayed column** and
+`matches/standings.py::compute_standings` is a **FROZEN shared module — NOT
+modified**; instead a separate **pure re-rank layer** takes the `compute_standings`
+rows + the played-pairs opponent graph and re-sorts them. Because the input rows are
+already in `compute_standings`' final order (which ends `team_name asc`), the re-rank
+uses a **STABLE sort** keyed on `(-league_points, -buchholz, -round_wins,
+-total_score)` and the pre-existing `team_name asc` survives as the stable tiebreak —
+so **no team-name lookup crosses the pure seam**.
+
+**NEW pure functions — `matches/bracket.py` (frozen import allowlist UNCHANGED;
+`TestNoDjangoImportsLeaked` stays green).** Both add **no new import** (only
+`dataclasses` / `typing` / `math` / `collections`, all already present):
+
+- **`build_swiss_round(ranked_team_ids, seed_by_team, played_pairs, bracket_round)
+  -> list[BracketNodeSpec]`** — **ONE** function for BOTH the R1 fold and the later
+  greedy sweep; the variant is selected by the **caller** via what it passes. **R1
+  (fold):** caller passes `ranked_team_ids` = the pre-computed fold order +
+  `played_pairs = set()` — with an empty `played_pairs` the "not yet played" check
+  never fires, so greedily pairing consecutive teams reproduces exactly the fold
+  pairing. **Later rounds (greedy sweep):** caller passes `ranked_team_ids` = the
+  current `swiss_standings()` rank order + the non-empty `played_pairs`; the function
+  walks top-down, pairing each unpaired team with the next unpaired team it has NOT
+  already played, allowing a rematch only as the trailing fallback (no backtracking).
+  `seed_by_team` (`dict[int, int]`, **every** team id → its Bracket seed) is used
+  ONLY to stamp `seed_a`/`seed_b` on each node (so the engine's seed-keyed tie-break
+  works even though pairing order is rank/fold-based, not seed-based). `played_pairs`
+  is a `set[frozenset[int]]` (side-agnostic). Returns one `BracketNodeSpec` per
+  pairing, `position` 0-based ascending in pairing order, each
+  `bracket_type="swiss"`, `is_bye=False`, all advance/loser slots `None`,
+  `winner_id=None`, `depth=None` (the spec carries **no `series_length`** — the node
+  row gets `series_length=1` at create). **Pure / total** (never raises): an odd
+  `len(ranked_team_ids)` is the caller's responsibility (the even-N guard fires at
+  lock); defensively the trailing unpaired team is dropped.
+- **`swiss_buchholz_rerank(rows, opponents_by_team) -> list[StandingsRow]`** — the
+  pure Buchholz re-rank layer. `rows` is the `StandingsRow` list from
+  `compute_standings` (the 17-field frozen dataclass); `opponents_by_team` is
+  `team_id -> list[opponent_team_id]` (one entry per played pairing — a rematch
+  appears twice). Builds `points_by_team = {row.team_id: row.league_points}`, then
+  `buchholz(t) = sum(points_by_team.get(opp, 0) for opp in
+  opponents_by_team.get(t, []))`, re-sorts via the **STABLE sort** on
+  `(-league_points, -buchholz, -round_wins, -total_score)`, and returns a NEW list of
+  `StandingsRow` with `rank` renumbered **1-based dense**
+  (`dataclasses.replace(row, rank=i + 1)`), every other field copied verbatim — **no
+  Buchholz value leaks into the row**. Empty `rows` ⇒ `[]`. (`StandingsRow` is never
+  imported at module scope in `bracket.py`; the return annotation is a string
+  forward-ref, no import added.)
+
+The `BracketNodeSpec` / `ParticipantSpec` dataclasses and every existing pure
+function (`build_bracket` / `build_double_elim_bracket` /
+`build_rr_de_finals_bracket` / `find_next_node` / `advance_winner` /
+`advance_loser` / `resolve_bye_chain` / `series_length_for_*` /
+`default_seed_order` / `stage_progress` / `count_series_wins` / `break_tie`) are
+**UNCHANGED**.
+
+**Model helpers — `matches/models.py`.** The `compute_standings`-input assembly is
+**extracted** out of `round_robin_standings()` into a private
+**`_standings_over_nodes(self, node_qs) -> list[StandingsRow]`** (builds
+`enrolled_teams` + `completed_matches` + `season_rounds` from a queryset of resolved
+Bo1 nodes and returns `compute_standings(...)`); `round_robin_standings()` then
+becomes a one-liner over `self.nodes.filter(bracket_type="round_robin")` and its
+**external behaviour stays byte-identical** (pinned by a regression test). NEW
+**`swiss_standings(self) -> list[StandingsRow]`** = `_standings_over_nodes` over the
+Swiss nodes, fed through `swiss_buchholz_rerank` with the opponent graph. NEW private
+**`_swiss_opponent_graph(self) -> dict[int, list[int]]`** (builds the played-pairs
+opponent graph from every Swiss node with both slots filled — a rematch contributes
+to both lists each time) and **`_swiss_played_pairs(self) -> set[frozenset[int]]`**
+(side-agnostic frozenset pairing keys from the Swiss nodes). `_node_to_dict`,
+`find_next_playable_node`, `count_series_wins`,
+`complete_round_robin_if_finished`, `build_de_finals_if_rr_finished`,
+`_persist_elim_specs` are UNCHANGED — `_node_to_dict` already yields
+`bracket_type="swiss"` / `advances_to=None` / `loser_advances_to=None` /
+`series_length=1` with no edit.
+
+**Engine — `play_next_node` Swiss guard (`matches/tournament_engine.py`).** The body
+is verbatim through the clinch check + `node.winner` stamp. A Swiss branch is added
+**alongside** the existing RR/RR→DE `node.bracket_type == "round_robin"` guard and
+**before** the elim `_node_to_dict` flatten / `advance_winner` / `advance_loser` /
+crown block: `if node.bracket_type == "swiss":
+tournament.advance_swiss_if_round_finished(); return node`. The `return node` means a
+resolved Swiss node NEVER reaches the elim advance/crown block — without it the
+"crown when `advances_to is None`" elim rule would wrongly crown on the FIRST resolved
+Swiss node. Callers (`tournament_play_next`, `play_tournament_task`,
+`tournament_play_all`, `tournament_play_status`) are UNCHANGED in
+signature/route; `play_tournament_task`'s `while play_next_node(...) is not None`
+loop drains every Swiss node one Match at a time and naturally extends mid-run as each
+deferred round's pairings materialize; `stage_progress` (unchanged) reports
+per-`(bracket_type, bracket_round)` group completion — for Swiss, per-round progress.
+
+**View / template surface.** Create form (`tournament_create` /
+`tournament_create.html`): the `<select name="format">` (DOM id
+**`tournament-create-format`**) gains a fifth `<option value="swiss">Swiss</option>`;
+the view's format whitelist appends `"swiss"` (absent/tampered → `single_elimination`
+fallback). NEW numeric input (DOM id **`tournament-create-swiss-rounds`**, name
+`swiss_rounds`, `min="0"`, `value="0"`) wrapped in a `.tournament-create-swiss-rounds-row`
+(mirrors the `*-series-length-row` / `*-rrde-combo-row` pattern), shown client-side
+**only** when the format select reads `swiss`. A forgiving **`_parse_swiss_rounds(raw)
+-> int`** coerces the POST field to a non-negative int (absent/blank/invalid/negative
+⇒ `0` = auto; clamping happens at lock), passed as `swiss_rounds=` into
+`Tournament.objects.create(...)` (`0` and harmless for non-Swiss). The
+`tournamentCreateToggle(value)` JS shows `.tournament-create-swiss-rounds-row` only
+for `swiss`, and **hides** the series-length selects AND the rrde-combo control for
+`swiss` (Swiss is always Bo1, no DE finals — the existing `value === "round_robin"`
+hide rule widens to `value === "round_robin" || value === "swiss"`). Detail page
+(`_detail_context` / `tournament_detail.html`): two NEW context keys — **`swiss_rounds_view`**
+(`list[{round_number, pairings}]`, the Swiss nodes grouped by `bracket_round`, each
+pairing a node-view dict in the SAME shape `_build_rounds` builds — reusing the
+node-card include — assembled by a small helper, suggested
+`_build_swiss_rounds(tournament)`, NOT by overloading the 3-key elim `_build_rounds`)
+and **`swiss_standings`** (`list[(StandingsRow, Team)]`, the Buchholz-ranked rows
+paired with their Team via the LG-01 `rows_with_teams` precedent). Both default to
+`[]` for non-Swiss (mirrors `rr_crosstable=[]` / `rr_standings=[]`); every existing
+context key (`tournament`, `participants`, `rounds`, `next_node`, `is_locked`,
+`can_play`, `import_form`, `import_row_errors`, `rr_crosstable`, `rr_standings`,
+`tournament_stage`, `cut_labels`) is UNCHANGED. `_tournament_stage` gains an explicit
+`if tournament.format == "swiss": return "swiss"` for the active case (so the
+`tournament-stage-badge` reads "Swiss stage"; the badge guard widens to fire for
+swiss). NEW DOM ids (LOCKED): **`tournament-swiss-rounds`** (outer container of the
+per-round pairing sections), **`tournament-swiss-round-{n}`** (one section per Swiss
+round, `n` = 1-based), **`tournament-swiss-standings`** (the Buchholz-ranked standings
+table), and per-pairing **`tournament-node-swiss-{bracket_round}-{position}`** cards
+(reusing the existing `tournament-node-{bracket_type}-{bracket_round}-{position}`
+convention; Swiss nodes are Bo1 ⇒ NO per-node Series-score / Bo-N label, same as RR).
+The Swiss render block is gated `{% elif tournament.format == "swiss" %}` in the
+existing format ladder. **REUSED VERBATIM** (no new ids): `tournament-champion-banner`
+(stamped identically on the Swiss completion path), the lock control
+(`tournament-lock-form`/`-submit`), play-next (`tournament-play-next-form`/`-submit`),
+play-all (`tournament-play-all-form`/`-submit`/`-progress` + poll JS), the import +
+seeding forms, and `tournaments-nav-link`. The elim WB/LB/GF containers
+(`tournament-bracket*`) and the RR ids
+(`tournament-rr-crosstable`/`tournament-rr-standings`) are ABSENT for Swiss; the Swiss
+ids are ABSENT for every other format (the template branches on `tournament.format`).
+`_build_rounds`'s 3-key `{"winners", "losers", "grand_final"}` return is UNCHANGED —
+all three lists are empty for a Swiss Tournament (Swiss nodes are never bucketed into
+its three sections).
+
+**Determinism / scope.** **Non-deterministic** per-Match sims (`simulate_match` draws
+fresh per-round seeds) ⇒ **no SIM-07/SIM-08 interaction, NO Score Calibration
+re-baseline**. No `simulate_match` change. ADR-0021 **EXTENDED** for the per-round
+deferred build + the Swiss-only Buchholz re-rank layer (no new ADR); **no new
+CONTEXT.md term** (the **Swiss** + **Buchholz** terms were finalised at grilling and
+CONTEXT.md is left untouched). With Swiss shipped, all **four** LG-02c bracket
+formats are complete; the LG-02x player-pool formats remain the next LG-02 Part-1
+work.
+
+**Tests:** `matches/tests/test_bracket.py` (extend — `TestBuildSwissRound`: R1 fold
+for N=4/8/16 emits the exact fold pairing from the interleaved order + empty
+`played_pairs`, `bracket_type="swiss"`, advance/loser slots `None`, `is_bye=False`,
+no `series_length` on the spec, 0-based `position`, seeds from `seed_by_team`;
+later-round greedy sweep pairs each unpaired team with the next not-yet-played team;
+allow-rematch fallback forces a trailing rematch with no crash/no dropped team for
+even N. `TestSwissBuchholzRerank`: ladder correctness — Buchholz breaks an equal-points
+tie, then `round_wins`/`total_score`, `team_name asc` surviving via the stable sort;
+ORDERING-ONLY — all 17 fields preserved except `rank` renumbered 1-based dense, no
+Buchholz value in the row; empty input ⇒ `[]`. `TestBracketRankSwiss`:
+`_BRACKET_RANK["swiss"] == 4`. `TestNoDjangoImportsLeaked` STILL green).
+`matches/tests/test_tournament_models.py` (extend — `TestSwissRoundsField`
+(exists/default `0`/no choices); `TestSwissLockAndBuild` (even-N happy path builds
+ONLY R1 nodes, count `N/2`, all `swiss`/Bo1/no-edges/no-bye, `state="active"`, fold
+pairing; round-count resolve/clamp/freeze written back; odd-N ⇒ `ValidationError`
+with the EXACT message); `TestStandingsOverNodesExtraction` (`round_robin_standings()`
+byte-identical post-refactor); `TestSwissStandingsBuchholz` (hand-stamped Swiss nodes
+across ≥2 rounds, `swiss_standings()` ORDER reflects the Buchholz ladder — NOT exact
+points); `TestAdvanceSwissIfRoundFinished` (unfinished round ⇒ no-op; resolved +
+`current < swiss_rounds` ⇒ next round built greedily, stays active; resolved +
+`current == swiss_rounds` ⇒ champion = `swiss_standings()[0]`, `state="completed"`;
+played-pairs rematch only as trailing fallback)). `matches/tests/test_tournament_engine.py`
+(extend — `TestPlayNextNodeSwiss`: a resolved Swiss node never gets an
+`advance_winner` mutation; resolving the round's LAST node triggers the next-round
+build, stays active; the final round's completion crowns `swiss_standings()[0]` and
+flips `state="completed"`). `matches/tests/test_tournament_views.py` (extend —
+`TestCreateFormSwiss`: the format select offers `swiss`, a `swiss_rounds` input with
+DOM id `tournament-create-swiss-rounds` exists, a POST persists
+`format == "swiss"` + the coerced `swiss_rounds`, forgiving parse, format fallback;
+`TestDetailSwiss`: detail renders `tournament-swiss-rounds` with per-round
+`tournament-swiss-round-{n}` sections + `tournament-node-swiss-{br}-{pos}` cards +
+`tournament-swiss-standings`, the series-length selects + rrde-combo hidden for swiss,
+the reused champion/lock/play-next/play-all ids present, elim + RR ids absent).
+`matches/tests/test_tournament_tasks.py` (extend — `TestPlayTournamentTaskSwiss`:
+under `CELERY_TASK_ALWAYS_EAGER`, `play_tournament_task` drains a full Swiss
+Tournament (all rounds) to a champion + `state="completed"`; `stage_progress` reports
+per-round stage counts). Tests assert on pure functions, persisted node/row shapes,
+`bracket_type`/`series_length`, `node.winner`/`champion`/`state`, standings ORDER,
+and DOM ids — **never** on exact simulated point totals.
+
+**Locked names:** see the seam contract
+[`.claude/worktrees/lg-02c-swiss-seam-contract.md`](../../.claude/worktrees/lg-02c-swiss-seam-contract.md)
+for the authoritative list of every name / signature / dict-key / DOM-id / literal
+(format `"swiss"` + label, `_BRACKET_RANK["swiss"] = 4`, `swiss_rounds` field,
+`build_swiss_round` / `swiss_buchholz_rerank`, `_standings_over_nodes` /
+`swiss_standings` / `_swiss_opponent_graph` / `_swiss_played_pairs` /
+`advance_swiss_if_round_finished`, the new DOM ids + context keys, the even-N error
+string, and migration `0039_tournament_swiss`).
 
 ## Sub-packages
 

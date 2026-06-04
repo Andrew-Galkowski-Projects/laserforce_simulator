@@ -1215,7 +1215,7 @@ class TestCreateFormFormat(TestCase):
                 "teams": [str(t.id) for t in teams],
                 "generate_count": "0",
                 "generate_ppt": "6",
-                "format": "swiss",  # not a valid choice -> single
+                "format": "not_a_format",  # not a valid choice -> single
             },
         )
         t = Tournament.objects.get(name="Tampered Format Cup")
@@ -1419,7 +1419,7 @@ class TestCreateFormRoundRobin(TestCase):
                 "teams": [str(t.id) for t in teams],
                 "generate_count": "0",
                 "generate_ppt": "6",
-                "format": "swiss",  # not a valid choice -> single
+                "format": "not_a_format",  # not a valid choice -> single
             },
         )
         t = Tournament.objects.get(name="RR Tampered Cup")
@@ -1865,3 +1865,379 @@ class TestDetailRrDeFinalsSections(TestCase):
         self.assertIn('id="tournament-rr-standings"', body)
         # No DE sections yet in the seeding stage.
         self.assertNotIn('id="tournament-bracket-winners"', body)
+
+
+# ===========================================================================
+# LG-02c — Swiss tournament format (views + template)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified — the
+# single/double-elim/round-robin/RR->DE view tests stay green as regression
+# guards). Seam contract: ``.claude/worktrees/lg-02c-swiss-seam-contract.md``
+# (VIEW + TEMPLATE section + TEST BOUNDARY).
+#
+# The create form's ``format`` select offers a swiss option + a swiss_rounds
+# numeric input (DOM id ``tournament-create-swiss-rounds``). A POST persists
+# format=="swiss" + the coerced swiss_rounds (forgiving parse:
+# absent/blank/invalid/negative -> 0); a tampered/absent format falls back to
+# single_elimination. The swiss DETAIL page renders ``tournament-swiss-rounds``
+# (outer container) + per-round ``tournament-swiss-round-{n}`` + per-pairing
+# ``tournament-node-swiss-{br}-{pos}`` + ``tournament-swiss-standings``; the
+# series-length selects AND the rrde-combo control are hidden for swiss; the
+# shared champion / lock / play-next / play-all ids render; elim + RR ids absent.
+
+
+def _swiss_setup_tournament(
+    n: int, *, swiss_rounds: int = 0, name: str = "SwissViewCup"
+) -> Tournament:
+    """A setup-state swiss Tournament with ``n`` seeded participants."""
+    t = Tournament.objects.create(name=name, format="swiss", swiss_rounds=swiss_rounds)
+    for seed, team in enumerate(_make_teams(n), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    return t
+
+
+def _swiss_active_tournament(
+    n: int, *, swiss_rounds: int = 0, name: str = "SwissViewCup"
+) -> Tournament:
+    """A locked/active swiss Tournament — only the R1 fold nodes are built."""
+    t = _swiss_setup_tournament(n, swiss_rounds=swiss_rounds, name=name)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+class TestCreateFormSwiss(TestCase):
+    """The ``tournament-create-format`` select offers a swiss option; a
+    ``tournament-create-swiss-rounds`` numeric input exists; a POST persists
+    format=="swiss" + the coerced swiss_rounds (forgiving parse); a
+    tampered/absent format falls back to single_elimination."""
+
+    def test_format_select_offers_swiss_option(self) -> None:
+        make_team_with_slots("Existing")
+        body = self.client.get(reverse("tournament_create")).content.decode()
+        start = body.index('id="tournament-create-format"')
+        window = body[start : start + 1200]
+        self.assertIn("swiss", window, "format select offers no swiss")
+
+    def test_swiss_rounds_input_renders(self) -> None:
+        make_team_with_slots("Existing")
+        body = self.client.get(reverse("tournament_create")).content.decode()
+        self.assertIn('id="tournament-create-swiss-rounds"', body)
+
+    def test_post_swiss_persists_format_and_rounds(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Swiss Created Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "swiss",
+                "swiss_rounds": "3",
+            },
+        )
+        t = Tournament.objects.get(name="Swiss Created Cup")
+        self.assertEqual(t.format, "swiss")
+        self.assertEqual(t.swiss_rounds, 3)
+
+    def test_post_swiss_rounds_absent_coerces_to_zero(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Swiss NoRounds Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "swiss",
+                # swiss_rounds absent -> 0 (auto).
+            },
+        )
+        t = Tournament.objects.get(name="Swiss NoRounds Cup")
+        self.assertEqual(t.swiss_rounds, 0)
+
+    def test_post_swiss_rounds_blank_coerces_to_zero(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Swiss Blank Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "swiss",
+                "swiss_rounds": "",
+            },
+        )
+        t = Tournament.objects.get(name="Swiss Blank Cup")
+        self.assertEqual(t.swiss_rounds, 0)
+
+    def test_post_swiss_rounds_invalid_coerces_to_zero(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Swiss Junk Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "swiss",
+                "swiss_rounds": "abc",
+            },
+        )
+        t = Tournament.objects.get(name="Swiss Junk Cup")
+        self.assertEqual(t.swiss_rounds, 0)
+
+    def test_post_swiss_rounds_negative_coerces_to_zero(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Swiss Neg Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "swiss",
+                "swiss_rounds": "-5",
+            },
+        )
+        t = Tournament.objects.get(name="Swiss Neg Cup")
+        self.assertEqual(t.swiss_rounds, 0)
+
+    def test_post_tampered_format_falls_back_to_single(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Swiss Tampered Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "not_a_format",
+            },
+        )
+        t = Tournament.objects.get(name="Swiss Tampered Cup")
+        self.assertEqual(t.format, "single_elimination")
+
+    def test_post_absent_format_falls_back_to_single(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Swiss NoFormat Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+            },
+        )
+        t = Tournament.objects.get(name="Swiss NoFormat Cup")
+        self.assertEqual(t.format, "single_elimination")
+
+
+class TestDetailSwiss(TestCase):
+    """A swiss detail page renders ``tournament-swiss-rounds`` + per-round
+    ``tournament-swiss-round-{n}`` + per-pairing ``tournament-node-swiss-{br}-
+    {pos}`` + ``tournament-swiss-standings``; series-length selects + the rrde
+    combo are hidden; shared champion / lock / play-next / play-all ids render;
+    elim + RR ids absent."""
+
+    def test_swiss_rounds_container_renders(self) -> None:
+        t = _swiss_active_tournament(4, name="SwissViewContainer")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-swiss-rounds"', body)
+
+    def test_per_round_section_renders(self) -> None:
+        t = _swiss_active_tournament(4, name="SwissViewRound")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        # Round 1 exists at lock ⇒ its per-round section renders.
+        self.assertIn('id="tournament-swiss-round-1"', body)
+
+    def test_per_pairing_node_card_renders(self) -> None:
+        t = _swiss_active_tournament(4, name="SwissViewNode")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        # Each R1 pairing renders a tournament-node-swiss-{br}-{pos} card.
+        for node in t.nodes.filter(bracket_round=1):
+            dom_id = f"tournament-node-swiss-{node.bracket_round}-{node.position}"
+            self.assertIn(f'id="{dom_id}"', body, f"missing pairing card {dom_id}")
+
+    def test_swiss_standings_table_renders(self) -> None:
+        t = _swiss_active_tournament(4, name="SwissViewStandings")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-swiss-standings"', body)
+
+    def test_context_carries_swiss_keys(self) -> None:
+        t = _swiss_active_tournament(4, name="SwissViewContext")
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        self.assertIn("swiss_rounds_view", response.context)
+        self.assertIn("swiss_standings", response.context)
+
+    def test_swiss_standings_context_one_row_per_team_paired_with_team(self) -> None:
+        from matches.standings import StandingsRow
+
+        t = _swiss_active_tournament(4, name="SwissViewStdCtx")
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        swiss_standings = response.context["swiss_standings"]
+        self.assertEqual(len(swiss_standings), 4)
+        for row, team in swiss_standings:
+            self.assertIsInstance(row, StandingsRow)
+            self.assertIsInstance(team, Team)
+            self.assertEqual(row.team_id, team.id)
+
+    def test_series_length_selects_hidden_for_swiss(self) -> None:
+        t = _swiss_active_tournament(4, name="SwissViewNoSeries")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        for dom_id in (
+            "tournament-create-final-series-length",
+            "tournament-create-semifinal-series-length",
+            "tournament-create-quarterfinal-series-length",
+            "tournament-create-earlier-series-length",
+        ):
+            self.assertNotIn(f'id="{dom_id}"', body)
+
+    def test_rrde_combo_hidden_for_swiss(self) -> None:
+        t = _swiss_active_tournament(4, name="SwissViewNoCombo")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertNotIn('id="tournament-create-rrde-combo"', body)
+
+    def test_elim_and_rr_section_ids_absent(self) -> None:
+        t = _swiss_active_tournament(4, name="SwissViewNoElim")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        # Elim WB/LB/GF + single-elim bracket containers absent.
+        self.assertNotIn('id="tournament-bracket"', body)
+        self.assertNotIn('id="tournament-bracket-winners"', body)
+        self.assertNotIn('id="tournament-bracket-losers"', body)
+        self.assertNotIn('id="tournament-bracket-grand-final"', body)
+        # RR crosstable / standings ids absent (swiss has its own).
+        self.assertNotIn('id="tournament-rr-crosstable"', body)
+        self.assertNotIn('id="tournament-rr-standings"', body)
+
+    def test_shared_play_controls_present(self) -> None:
+        t = _swiss_active_tournament(4, name="SwissViewControls")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-play-next-form"', body)
+        self.assertIn('id="tournament-play-all-form"', body)
+
+    def test_lock_control_present_in_setup_swiss(self) -> None:
+        t = _swiss_setup_tournament(4, name="SwissViewLock")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-lock-form"', body)
+
+    def test_champion_banner_renders_when_swiss_completed(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _swiss_active_tournament(4, swiss_rounds=1, name="SwissViewChampion")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(20):
+                t.refresh_from_db()
+                if t.state == "completed":
+                    break
+                if play_next_node(t) is None:
+                    break
+        t.refresh_from_db()
+        self.assertEqual(t.state, "completed")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-champion-banner"', body)
+        self.assertIn("Champion", body)
+
+
+class TestTournamentCreateRosterEligibility(TestCase):
+    """Only Teams with a full valid roster (all 6 slots filled, no duplicate
+    player — ``Team.is_valid_roster``) may enter a Tournament. The create form
+    hides ineligible Teams, a tampered/stale POST of an ineligible Team id is
+    rejected, and the generate path can never create an unplayable participant
+    (players-per-team clamped to >= 6).
+    """
+
+    @staticmethod
+    def _invalid_team(prefix: str) -> Team:
+        """A Team missing one slot (Ammo) -> is_valid_roster is False."""
+        team = make_team_with_slots(prefix)[0]
+        team.slot_ammo = None
+        team.save()
+        assert not team.is_valid_roster
+        return team
+
+    def test_invalid_roster_team_excluded_from_select_list(self) -> None:
+        valid = make_team_with_slots("Valid")[0]
+        invalid = self._invalid_team("Incomplete")
+        response = self.client.get(reverse("tournament_create"))
+        self.assertEqual(response.status_code, 200)
+        available_ids = {t.id for t in response.context["available_teams"]}
+        self.assertIn(valid.id, available_ids)
+        self.assertNotIn(invalid.id, available_ids)
+        body = response.content.decode()
+        self.assertIn(f'value="{valid.id}"', body)
+        self.assertNotIn(f'value="{invalid.id}"', body)
+
+    def test_post_selecting_invalid_roster_team_rejected(self) -> None:
+        valid = [make_team_with_slots(f"OK{i}")[0] for i in range(3)]
+        invalid = self._invalid_team("Bad")
+        response = self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Bad Roster Cup",
+                "teams": [str(t.id) for t in valid] + [str(invalid.id)],
+                "generate_count": "0",
+                "generate_ppt": "6",
+            },
+        )
+        # Re-render (200), nothing created.
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Tournament.objects.filter(name="Bad Roster Cup").exists())
+
+    def test_post_all_valid_rosters_succeeds(self) -> None:
+        teams = _make_teams(4)
+        response = self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Valid Roster Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        t = Tournament.objects.get(name="Valid Roster Cup")
+        self.assertEqual(t.participants.count(), 4)
+
+    def test_generate_ppt_below_six_clamped_to_valid_rosters(self) -> None:
+        # A user requesting 3 players/team must still get full, playable rosters.
+        response = self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Clamped Cup",
+                "teams": [],
+                "generate_count": "4",
+                "generate_ppt": "3",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        t = Tournament.objects.get(name="Clamped Cup")
+        self.assertEqual(t.participants.count(), 4)
+        for p in t.participants.all():
+            self.assertTrue(
+                p.team.is_valid_roster,
+                f"{p.team.name} has an incomplete roster",
+            )

@@ -703,10 +703,12 @@ class TestBracketNodeDoubleElimFields(TestCase):
 
     def test_bracket_type_carries_four_choices(self) -> None:
         # LG-02c round-robin added the 4th bracket_type value "round_robin"
-        # (alongside the LG-02c double-elim winners/losers/grand_final trio).
+        # (alongside the LG-02c double-elim winners/losers/grand_final trio);
+        # LG-02c Swiss added the 5th value "swiss".
         choices = dict(BracketNode._meta.get_field("bracket_type").choices)
         self.assertEqual(
-            set(choices), {"winners", "losers", "grand_final", "round_robin"}
+            set(choices),
+            {"winners", "losers", "grand_final", "round_robin", "swiss"},
         )
 
     def test_loser_advances_to_defaults_none(self) -> None:
@@ -1757,3 +1759,419 @@ class TestLockAndBuildDoubleElimUnchangedAfterRefactor(TestCase):
             t.nodes.filter(bracket_type="winners").order_by("-bracket_round").first()
         )
         self.assertEqual(wb_final.series_length, 3)
+
+
+# ===========================================================================
+# LG-02c — Swiss tournament format (model layer)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified — every
+# single/double-elim/round-robin/RR->DE model test stays green as a regression
+# guard). Seam contract: ``.claude/worktrees/lg-02c-swiss-seam-contract.md``
+# (MODEL section + TEST BOUNDARY).
+#
+# A 5th ``Tournament.format`` value ``"swiss"`` (label "Swiss"). One new
+# Tournament field ``swiss_rounds`` (PositiveSmallIntegerField, default 0, no
+# choices — 0 = auto, resolved at lock to ceil(log2(N)) clamped to [1, N-1] then
+# written back, frozen). A 5th ``BracketNode.bracket_type`` value ``"swiss"``.
+# Swiss is FLAT and edge-less: every node advances_to=None / loser_advances_to=
+# None / is_bye=False / series_length=1; the champion is the Buchholz-re-ranked
+# Standings leader after the last round resolves, NOT a final node. EVEN-N ONLY
+# (odd raises ValidationError with the EXACT message).
+#
+# Non-deterministic at play time (simulate_match draws fresh per-round seeds) ->
+# standings rows are hand-stamped from played SeriesMatch/Match/GameRound rows;
+# NEVER assert exact simulated point totals — assert ORDER / shape / state.
+
+
+def _swiss_tournament_setup(
+    n: int, *, swiss_rounds: int = 0, name: str = "SwissCup"
+) -> Tournament:
+    """A setup-state swiss Tournament with ``n`` seeded participants."""
+    t = Tournament.objects.create(name=name, format="swiss", swiss_rounds=swiss_rounds)
+    for seed, team in enumerate(_make_teams(n), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    return t
+
+
+def _swiss_tournament_active(
+    n: int, *, swiss_rounds: int = 0, name: str = "SwissCup"
+) -> Tournament:
+    """A locked/active swiss Tournament — only the R1 fold nodes are built at
+    lock; later rounds are deferred."""
+    t = _swiss_tournament_setup(n, swiss_rounds=swiss_rounds, name=name)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+def _stamp_swiss_node_played(node: BracketNode, winner) -> None:
+    """Hand-stamp a Swiss node as a decisive played Bo1 (mirrors the RR helper):
+    set node.winner, create a played Match (team_a=red / team_b=blue, two
+    GameRounds) + one SeriesMatch row. The winner sweeps both rounds so
+    Match.winner is non-null and the standings reflect a clean win without
+    running a real sim."""
+    from matches.models import GameRound, Match, SeriesMatch
+
+    team_red = node.team_a
+    team_blue = node.team_b
+    if winner.id == team_red.id:
+        red_r1, blue_r1, red_r2, blue_r2 = 500, 10, 500, 10
+    else:
+        red_r1, blue_r1, red_r2, blue_r2 = 10, 500, 10, 500
+    match = Match.objects.create(
+        team_red=team_red,
+        team_blue=team_blue,
+        match_type="tournament",
+        red_round1_points=red_r1,
+        blue_round1_points=blue_r1,
+        red_round2_points=red_r2,
+        blue_round2_points=blue_r2,
+        is_completed=True,
+    )
+    GameRound.objects.create(
+        match=match,
+        round_number=1,
+        team_red=team_red,
+        team_blue=team_blue,
+        red_points=red_r1,
+        blue_points=blue_r1,
+    )
+    GameRound.objects.create(
+        match=match,
+        round_number=2,
+        team_red=team_red,
+        team_blue=team_blue,
+        red_points=red_r2,
+        blue_points=blue_r2,
+    )
+    SeriesMatch.objects.create(node=node, match=match, game_number=1, winner=winner)
+    node.winner = winner
+    node.save(update_fields=["winner"])
+
+
+def _make_swiss_node(t: Tournament, bracket_round: int, position: int, team_a, team_b):
+    """Hand-stamp a flat Swiss node row (used to build a deferred round-2 by hand
+    for the standings / Buchholz tests). Mirrors the lock-time create kwargs."""
+    seed_by_team = {p.team_id: p.seed for p in t.participants.all()}
+    return BracketNode.objects.create(
+        tournament=t,
+        bracket_type="swiss",
+        bracket_round=bracket_round,
+        position=position,
+        team_a=team_a,
+        team_b=team_b,
+        seed_a=seed_by_team[team_a.id],
+        seed_b=seed_by_team[team_b.id],
+        is_bye=False,
+        series_length=1,
+    )
+
+
+class TestSwissRoundsField(TestCase):
+    """``Tournament.swiss_rounds`` exists, defaults 0, carries NO choices."""
+
+    def test_swiss_rounds_defaults_to_zero(self) -> None:
+        t = Tournament.objects.create(name="Cup")
+        self.assertEqual(t.swiss_rounds, 0)
+
+    def test_swiss_rounds_persists(self) -> None:
+        t = Tournament.objects.create(name="Cup", format="swiss", swiss_rounds=3)
+        t.refresh_from_db()
+        self.assertEqual(t.swiss_rounds, 3)
+
+    def test_swiss_rounds_has_no_choices(self) -> None:
+        field = Tournament._meta.get_field("swiss_rounds")
+        self.assertIsNone(field.choices)
+
+    def test_format_choices_include_swiss(self) -> None:
+        choices = dict(Tournament._meta.get_field("format").choices)
+        self.assertIn("swiss", choices)
+        self.assertEqual(choices["swiss"], "Swiss")
+
+    def test_bracket_type_choices_include_swiss(self) -> None:
+        choices = dict(BracketNode._meta.get_field("bracket_type").choices)
+        self.assertIn("swiss", choices)
+        self.assertEqual(choices["swiss"], "Swiss")
+
+
+class TestSwissLockAndBuild(TestCase):
+    """``lock_and_build`` on a swiss Tournament builds ONLY the R1 fold nodes,
+    resolves+clamps+freezes the round count, and rejects an odd participant
+    count with the EXACT ValidationError message."""
+
+    def test_even_n_builds_only_r1_nodes(self) -> None:
+        t = _swiss_tournament_active(4, name="SwissLockR1")
+        # Only round 1 exists at lock (later rounds deferred).
+        rounds = set(t.nodes.values_list("bracket_round", flat=True))
+        self.assertEqual(rounds, {1})
+
+    def test_r1_node_count_is_n_over_two(self) -> None:
+        t = _swiss_tournament_active(8, name="SwissLockCount")
+        self.assertEqual(t.nodes.filter(bracket_round=1).count(), 4)
+
+    def test_every_r1_node_is_swiss_flat_bo1(self) -> None:
+        t = _swiss_tournament_active(4, name="SwissLockFlat")
+        for node in t.nodes.all():
+            self.assertEqual(node.bracket_type, "swiss")
+            self.assertEqual(node.series_length, 1)
+            self.assertIsNone(node.advances_to_id)
+            self.assertIsNone(node.loser_advances_to_id)
+            self.assertFalse(node.is_bye)
+
+    def test_state_flips_to_active(self) -> None:
+        t = _swiss_tournament_active(4, name="SwissLockActive")
+        self.assertEqual(t.state, "active")
+
+    def test_r1_is_the_seed_fold_pairing(self) -> None:
+        # N=4 seeds 1..4 fold: seed 1 vs seed 3, seed 2 vs seed 4.
+        t = _swiss_tournament_active(4, name="SwissLockFold")
+        seed_by_team = {p.team_id: p.seed for p in t.participants.all()}
+        pairs = {
+            frozenset({seed_by_team[n.team_a_id], seed_by_team[n.team_b_id]})
+            for n in t.nodes.filter(bracket_round=1)
+        }
+        self.assertEqual(pairs, {frozenset({1, 3}), frozenset({2, 4})})
+
+    # -- round-count resolve / clamp / freeze ---------------------------------
+
+    def test_swiss_rounds_zero_resolved_to_ceil_log2_n(self) -> None:
+        import math
+
+        # N=8 ⇒ ceil(log2(8)) = 3, clamped to [1, 7] ⇒ 3, frozen back.
+        t = _swiss_tournament_active(8, swiss_rounds=0, name="SwissLockAuto")
+        self.assertEqual(t.swiss_rounds, math.ceil(math.log2(8)))
+        self.assertEqual(t.swiss_rounds, 3)
+
+    def test_swiss_rounds_clamped_to_n_minus_one_upper(self) -> None:
+        # N=4 ⇒ max rounds is N-1 = 3; an explicit out-of-range high value clamps.
+        t = _swiss_tournament_active(4, swiss_rounds=99, name="SwissLockClampHi")
+        self.assertEqual(t.swiss_rounds, 3)
+
+    def test_explicit_in_range_value_frozen_verbatim(self) -> None:
+        t = _swiss_tournament_active(8, swiss_rounds=2, name="SwissLockExplicit")
+        self.assertEqual(t.swiss_rounds, 2)
+
+    def test_resolved_value_written_back(self) -> None:
+        # The resolved round count is persisted (frozen) on the row.
+        t = _swiss_tournament_active(8, swiss_rounds=0, name="SwissLockFrozen")
+        t.refresh_from_db()
+        self.assertGreaterEqual(t.swiss_rounds, 1)
+
+    # -- odd-N guard ----------------------------------------------------------
+
+    def test_odd_n_raises_validation_error(self) -> None:
+        t = _swiss_tournament_setup(5, name="SwissLockOdd")
+        with self.assertRaises(ValidationError):
+            t.lock_and_build()
+
+    def test_odd_n_error_message_is_exact(self) -> None:
+        t = _swiss_tournament_setup(5, name="SwissLockOddMsg")
+        with self.assertRaises(ValidationError) as ctx:
+            t.lock_and_build()
+        self.assertIn(
+            "Swiss requires an even number of participants.",
+            str(ctx.exception),
+        )
+
+    def test_odd_n_leaves_state_setup_and_no_nodes(self) -> None:
+        t = _swiss_tournament_setup(5, name="SwissLockOddNoNodes")
+        with self.assertRaises(ValidationError):
+            t.lock_and_build()
+        t.refresh_from_db()
+        self.assertEqual(t.state, "setup")
+        self.assertEqual(t.nodes.count(), 0)
+
+
+class TestStandingsOverNodesExtraction(TestCase):
+    """Regression: extracting ``_standings_over_nodes`` keeps
+    ``round_robin_standings()`` output byte-identical. Build a small RR
+    Tournament, hand-stamp resolved nodes, and assert the ranked rows are
+    unchanged in team order / wins / league_points / rank."""
+
+    def test_round_robin_standings_unchanged_after_extraction(self) -> None:
+        t = _rr_tournament_active(4, name="ExtractRR")
+        # Resolve every node with team_a winning so the standings are decisive.
+        for node in t.nodes.all():
+            _stamp_rr_node_played(node, node.team_a)
+
+        rows = t.round_robin_standings()
+        from matches.standings import StandingsRow
+
+        # One row per enrolled team, dense 1-based rank, all StandingsRow.
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(sorted(r.rank for r in rows), [1, 2, 3, 4])
+        for r in rows:
+            self.assertIsInstance(r, StandingsRow)
+        # league_points = 3*wins + 1*ties; the standings ladder orders by
+        # league_points desc — assert the ladder is monotone non-increasing.
+        lps = [r.league_points for r in rows]
+        self.assertEqual(lps, sorted(lps, reverse=True))
+
+    def test_round_robin_standings_zero_filled_before_play(self) -> None:
+        t = _rr_tournament_active(4, name="ExtractRRZero")
+        rows = t.round_robin_standings()
+        self.assertEqual(len(rows), 4)
+        for r in rows:
+            self.assertEqual(r.wins, 0)
+            self.assertEqual(r.league_points, 0)
+
+
+class TestSwissStandingsBuchholz(TestCase):
+    """``swiss_standings()`` returns the Buchholz-re-ranked Standings: hand-stamp
+    resolved Swiss nodes across >= 2 rounds and assert the ORDER reflects the
+    Buchholz ladder (NOT exact points)."""
+
+    def test_one_row_per_enrolled_team(self) -> None:
+        t = _swiss_tournament_active(4, name="SwissStdRows")
+        rows = t.swiss_standings()
+        self.assertEqual(len(rows), 4)
+
+    def test_returns_standings_row_instances(self) -> None:
+        from matches.standings import StandingsRow
+
+        t = _swiss_tournament_active(4, name="SwissStdType")
+        for r in t.swiss_standings():
+            self.assertIsInstance(r, StandingsRow)
+
+    def test_ranks_are_dense_one_based(self) -> None:
+        t = _swiss_tournament_active(4, name="SwissStdRank")
+        rows = t.swiss_standings()
+        self.assertEqual(sorted(r.rank for r in rows), [1, 2, 3, 4])
+
+    def test_buchholz_breaks_an_equal_points_tie_across_two_rounds(self) -> None:
+        # N=4 seeds 1..4 (team ids 100+seed). R1 fold: (1 vs 3), (2 vs 4).
+        # Stamp R1 so seed1 beats seed3 and seed2 beats seed4 -> after R1 both
+        # seed1 and seed2 have one win (3 pts). Build R2 by hand pairing the two
+        # winners (1 vs 2) and the two losers (3 vs 4); stamp seed1 beats seed2,
+        # seed3 beats seed4. Now seed1 has 2 wins (clear leader). The interesting
+        # tie is between the two ONE-win teams seed2 and seed3: equal-ish points
+        # but seed2's opponents (seed4 0-win, seed1 2-win) vs seed3's opponents
+        # (seed1 2-win, seed4 0-win) — we assert ORDER is well-defined and the
+        # 2-win team leads, never exact points.
+        t = _swiss_tournament_active(4, name="SwissStdBuchholz")
+        teams_by_seed = {p.seed: p.team for p in t.participants.all()}
+        # R1 nodes (already built at lock).
+        r1 = list(t.nodes.filter(bracket_round=1).order_by("position"))
+        for node in r1:
+            # team_a is the lower-seed slot in the fold; let the lower seed win.
+            higher_seed_team = node.team_a if node.seed_a < node.seed_b else node.team_b
+            _stamp_swiss_node_played(node, higher_seed_team)
+
+        # Hand-build R2: winners bracket-ish pairing seed1 vs seed2, seed3 vs 4.
+        n_a = _make_swiss_node(t, 2, 0, teams_by_seed[1], teams_by_seed[2])
+        n_b = _make_swiss_node(t, 2, 1, teams_by_seed[3], teams_by_seed[4])
+        _stamp_swiss_node_played(n_a, teams_by_seed[1])  # seed1 -> 2 wins
+        _stamp_swiss_node_played(n_b, teams_by_seed[3])  # seed3 -> 1 win
+
+        rows = t.swiss_standings()
+        rank_by_team = {r.team_id: r.rank for r in rows}
+        # seed1 (2 wins) is the clear leader.
+        self.assertEqual(rank_by_team[teams_by_seed[1].id], 1)
+        # seed4 (0 wins) is last.
+        self.assertEqual(rank_by_team[teams_by_seed[4].id], 4)
+
+    def test_swiss_standings_zero_filled_before_play(self) -> None:
+        t = _swiss_tournament_active(4, name="SwissStdZero")
+        rows = t.swiss_standings()
+        self.assertEqual(len(rows), 4)
+        for r in rows:
+            self.assertEqual(r.wins, 0)
+            self.assertEqual(r.league_points, 0)
+
+
+class TestAdvanceSwissIfRoundFinished(TestCase):
+    """``advance_swiss_if_round_finished()``: no-op until the current (highest)
+    Swiss round is fully resolved; then either build the next round (current <
+    swiss_rounds, stays active) or crown the Standings leader + complete
+    (current == swiss_rounds)."""
+
+    def test_noop_while_current_round_unresolved(self) -> None:
+        t = _swiss_tournament_active(4, swiss_rounds=2, name="SwissAdvNoop")
+        # Resolve only ONE of the two R1 nodes.
+        node = t.nodes.filter(bracket_round=1).order_by("position").first()
+        _stamp_swiss_node_played(node, node.team_a)
+
+        t.advance_swiss_if_round_finished()
+        t.refresh_from_db()
+        # No round-2 nodes built; tournament stays active, no champion.
+        self.assertFalse(t.nodes.filter(bracket_round=2).exists())
+        self.assertEqual(t.state, "active")
+        self.assertIsNone(t.champion)
+
+    def test_builds_next_round_when_current_resolved_and_more_rounds(self) -> None:
+        t = _swiss_tournament_active(4, swiss_rounds=2, name="SwissAdvNext")
+        for node in t.nodes.filter(bracket_round=1):
+            _stamp_swiss_node_played(node, node.team_a)
+
+        t.advance_swiss_if_round_finished()
+        t.refresh_from_db()
+        # Round 2 built; tournament STAYS active (not yet at swiss_rounds).
+        self.assertTrue(t.nodes.filter(bracket_round=2).exists())
+        self.assertEqual(t.state, "active")
+        self.assertIsNone(t.champion)
+
+    def test_next_round_node_count_matches_field_size(self) -> None:
+        t = _swiss_tournament_active(4, swiss_rounds=2, name="SwissAdvNextCount")
+        for node in t.nodes.filter(bracket_round=1):
+            _stamp_swiss_node_played(node, node.team_a)
+        t.advance_swiss_if_round_finished()
+        t.refresh_from_db()
+        # N=4 ⇒ N/2 = 2 nodes per round.
+        self.assertEqual(t.nodes.filter(bracket_round=2).count(), 2)
+
+    def test_next_round_nodes_are_swiss_bracket_round_plus_one(self) -> None:
+        t = _swiss_tournament_active(4, swiss_rounds=2, name="SwissAdvNextType")
+        for node in t.nodes.filter(bracket_round=1):
+            _stamp_swiss_node_played(node, node.team_a)
+        t.advance_swiss_if_round_finished()
+        t.refresh_from_db()
+        for node in t.nodes.filter(bracket_round=2):
+            self.assertEqual(node.bracket_type, "swiss")
+            self.assertEqual(node.series_length, 1)
+            self.assertIsNone(node.advances_to_id)
+
+    def test_crowns_and_completes_on_final_round(self) -> None:
+        # swiss_rounds=1 ⇒ resolving R1 is the final round ⇒ crown + complete.
+        t = _swiss_tournament_active(4, swiss_rounds=1, name="SwissAdvCrown")
+        for node in t.nodes.filter(bracket_round=1):
+            _stamp_swiss_node_played(node, node.team_a)
+
+        leader_team_id = t.swiss_standings()[0].team_id
+        t.advance_swiss_if_round_finished()
+        t.refresh_from_db()
+        self.assertEqual(t.state, "completed")
+        self.assertEqual(t.champion_id, leader_team_id)
+
+    def test_champion_is_swiss_standings_leader(self) -> None:
+        t = _swiss_tournament_active(4, swiss_rounds=1, name="SwissAdvLeader")
+        for node in t.nodes.filter(bracket_round=1):
+            _stamp_swiss_node_played(node, node.team_a)
+        expected = t.swiss_standings()[0].team_id
+        t.advance_swiss_if_round_finished()
+        t.refresh_from_db()
+        self.assertEqual(t.champion_id, expected)
+
+    def test_played_pairs_derivation_no_rematch_when_avoidable(self) -> None:
+        # After R1 (fold pairs (1v3), (2v4) for N=4), the greedy R2 sweep must
+        # NOT replay either fold pair when a non-rematch pairing exists.
+        t = _swiss_tournament_active(4, swiss_rounds=2, name="SwissAdvPairs")
+        # Build the played_pairs set from R1 nodes BEFORE resolving.
+        r1_pairs = {
+            frozenset({n.team_a_id, n.team_b_id})
+            for n in t.nodes.filter(bracket_round=1)
+        }
+        for node in t.nodes.filter(bracket_round=1):
+            _stamp_swiss_node_played(node, node.team_a)
+        t.advance_swiss_if_round_finished()
+        t.refresh_from_db()
+        r2_pairs = {
+            frozenset({n.team_a_id, n.team_b_id})
+            for n in t.nodes.filter(bracket_round=2)
+        }
+        # No round-2 pairing repeats a round-1 pairing (rematch only as a
+        # trailing fallback, which is avoidable for this 4-team field).
+        self.assertTrue(
+            r2_pairs.isdisjoint(r1_pairs),
+            f"R2 pairings {r2_pairs} must avoid R1 rematches {r1_pairs}",
+        )

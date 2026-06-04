@@ -702,3 +702,102 @@ class TestPlayTournamentTaskRrDe:
         t.refresh_from_db()
         assert t.state == "completed"
         assert t.champion_id is not None
+
+
+# ---------------------------------------------------------------------------
+# LG-02c — Swiss via the Play Tournament task
+# ---------------------------------------------------------------------------
+#
+# NEW class appended below (existing classes above are NOT modified — the
+# single/double-elim/round-robin/RR->DE task tests stay green). Seam contract:
+# ``.claude/worktrees/lg-02c-swiss-seam-contract.md`` (ENGINE + TEST BOUNDARY).
+#
+# ``play_tournament_task`` drains a FULL swiss Tournament (all rounds) to a
+# champion + state='completed' under CELERY_TASK_ALWAYS_EAGER. Each round's
+# pairings are deferred — built when the prior round's last node resolves — so
+# the while-loop naturally extends as later-round nodes materialize.
+# stage_progress reports per-round stage counts (each Swiss round is one
+# (bracket_type, bracket_round) group).
+
+
+def _active_swiss_tournament(n: int, *, swiss_rounds: int, name: str, prefix: str):
+    """A locked/active swiss Tournament — only the R1 fold nodes built at lock;
+    later rounds are deferred to advance_swiss_if_round_finished()."""
+    from matches.models import Tournament, TournamentParticipant
+
+    t = Tournament.objects.create(name=name, format="swiss", swiss_rounds=swiss_rounds)
+    for seed, team in enumerate(_make_teams(n, prefix), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+@pytest.mark.django_db
+class TestPlayTournamentTaskSwiss:
+    """A swiss Tournament plays all rounds to a champion via
+    ``play_tournament_task`` under EAGER."""
+
+    def test_swiss_plays_to_completion(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_swiss_tournament(4, swiss_rounds=2, name="TaskSwiss", prefix="TtSw")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        assert (
+            result.state == "SUCCESS"
+        ), f"expected SUCCESS, got {result.state!r}; info={result.info!r}"
+        t.refresh_from_db()
+        assert t.state == "completed"
+        assert t.champion_id is not None
+
+    def test_swiss_all_rounds_built_and_resolved(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_swiss_tournament(
+            4, swiss_rounds=2, name="TaskSwissRounds", prefix="TtSwR"
+        )
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_tournament_task.apply(args=(t.id,))
+
+        t.refresh_from_db()
+        # Both Swiss rounds materialized and every node has a winner.
+        rounds = set(t.nodes.values_list("bracket_round", flat=True))
+        assert rounds == {1, 2}
+        assert t.nodes.filter(winner__isnull=True).count() == 0
+
+    def test_swiss_champion_is_standings_leader(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_swiss_tournament(
+            4, swiss_rounds=2, name="TaskSwissLeader", prefix="TtSwL"
+        )
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_tournament_task.apply(args=(t.id,))
+
+        t.refresh_from_db()
+        leader_team_id = t.swiss_standings()[0].team_id
+        assert t.champion_id == leader_team_id
+
+    def test_swiss_return_shape_is_stage_counts_per_round(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_swiss_tournament(
+            4, swiss_rounds=2, name="TaskSwissShape", prefix="TtSwS"
+        )
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        payload = result.result
+        assert set(payload.keys()) == {"completed", "total"}
+        assert isinstance(payload["completed"], int)
+        assert isinstance(payload["total"], int)
+        # A completed swiss reports completed == total; both Swiss rounds are
+        # distinct (bracket_type, bracket_round) stage groups ⇒ total == 2.
+        assert payload["completed"] == payload["total"]
+        assert payload["total"] == 2

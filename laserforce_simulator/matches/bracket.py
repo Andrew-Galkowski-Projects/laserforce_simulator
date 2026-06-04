@@ -13,7 +13,7 @@ Frozen import allowlist (the ONLY modules this file may import):
 """
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 
@@ -559,6 +559,120 @@ def build_rr_de_finals_bracket(
     return rebuilt_wb + lb_specs + [gf1, gf2]
 
 
+def build_swiss_round(
+    ranked_team_ids: list[int],
+    seed_by_team: dict[int, int],
+    played_pairs: set[frozenset[int]],
+    bracket_round: int,
+) -> list[BracketNodeSpec]:
+    """LG-02c (Swiss) — build ONE Swiss round's node-spec list (R1 fold OR a
+    later greedy ranked sweep — the variant is selected by the CALLER).
+
+    - **R1 (fold):** the caller passes ``ranked_team_ids`` already in the seed
+      "fold" order (``seed[0], seed[N/2], seed[1], seed[1 + N/2], …`` so
+      consecutive pairs are the fold pairs) and ``played_pairs = set()``. With
+      an empty ``played_pairs`` the "not yet played" check never fires, so this
+      greedily pairs consecutive teams in the given order — exactly the fold.
+    - **Later rounds (greedy sweep):** the caller passes ``ranked_team_ids`` in
+      current Swiss-standings rank order and the non-empty ``played_pairs``. The
+      sweep walks top-down, pairing each unpaired team with the next unpaired
+      team it has NOT already played; if the trailing teams can only be paired
+      by replaying, it ALLOWS the rematch (no backtracking — the fallback pair
+      is the next unpaired team regardless of ``played_pairs``).
+
+    ``seed_by_team`` maps every team id → its Bracket seed (stamped onto each
+    node's ``seed_a`` / ``seed_b`` so the engine's seed-keyed tie-break works;
+    Swiss pairing order is rank/fold-based, not seed-based). ``played_pairs`` is
+    a side-agnostic ``set`` of ``frozenset({a, b})``.
+
+    Returns the round's ``BracketNodeSpec`` list, one per pairing, ordered by
+    ``position`` (0-based, in pairing order). Each spec is a flat, edge-less
+    Swiss node: ``bracket_type="swiss"``, ``advances_to=None``,
+    ``advances_to_slot=None``, ``loser_advances_to=None``,
+    ``loser_advances_to_slot=None``, ``is_bye=False``, ``winner_id=None``,
+    ``depth=None``. Pure: no Django, no ORM, no RNG. Total (never raises) — an
+    odd ``len(ranked_team_ids)`` is the caller's responsibility (the EVEN-N
+    guard fires at lock); defensively the trailing unpaired team (if any) is
+    dropped.
+    """
+    remaining = list(ranked_team_ids)
+    specs: list[BracketNodeSpec] = []
+    position = 0
+    while len(remaining) >= 2:
+        a = remaining.pop(0)
+        # Find the next remaining team ``a`` has NOT already played.
+        opponent_index = None
+        for i, candidate in enumerate(remaining):
+            if frozenset({a, candidate}) not in played_pairs:
+                opponent_index = i
+                break
+        # Allow-rematch fallback: no fresh opponent left ⇒ take the next one.
+        if opponent_index is None:
+            opponent_index = 0
+        b = remaining.pop(opponent_index)
+        specs.append(
+            BracketNodeSpec(
+                bracket_round=bracket_round,
+                position=position,
+                team_a_id=a,
+                team_b_id=b,
+                seed_a=seed_by_team[a],
+                seed_b=seed_by_team[b],
+                is_bye=False,
+                advances_to=None,
+                advances_to_slot=None,
+                winner_id=None,
+                bracket_type="swiss",
+                loser_advances_to=None,
+                loser_advances_to_slot=None,
+                depth=None,
+            )
+        )
+        position += 1
+    return specs
+
+
+def swiss_buchholz_rerank(
+    rows: list,
+    opponents_by_team: dict[int, list[int]],
+) -> list:
+    """LG-02c (Swiss) — Buchholz re-rank layer over ``compute_standings`` rows.
+
+    ``rows`` is the ``StandingsRow`` list from ``compute_standings`` (already in
+    its final order, which ends with ``team_name asc``). ``opponents_by_team``
+    maps ``team_id -> list[opponent_team_id]`` (one entry per played Swiss
+    pairing — a rematch appears twice, so Buchholz sums per played pairing).
+
+    A team's Buchholz = sum of its opponents' final ``league_points``. Re-sorts
+    ``rows`` on the locked Swiss ladder ``(-league_points, -buchholz,
+    -round_wins, -total_score)`` via a STABLE sort, so the pre-existing
+    ``team_name asc`` ordering of ``rows`` survives as the final tiebreak
+    (``team_name`` is not a ``StandingsRow`` field — it never crosses this
+    seam). Returns a NEW list of ``StandingsRow`` with ``rank`` renumbered
+    1-based dense in the re-sorted order (every other field copied verbatim via
+    ``dataclasses.replace``). Pure: no Django, no ORM, no RNG. Empty ⇒ ``[]``.
+    """
+    if not rows:
+        return []
+    points_by_team = {row.team_id: row.league_points for row in rows}
+
+    def _buchholz(team_id: int) -> int:
+        return sum(
+            points_by_team.get(opp, 0) for opp in opponents_by_team.get(team_id, [])
+        )
+
+    ordered = sorted(
+        rows,
+        key=lambda row: (
+            -row.league_points,
+            -_buchholz(row.team_id),
+            -row.round_wins,
+            -row.total_score,
+        ),
+    )
+    return [replace(row, rank=i + 1) for i, row in enumerate(ordered)]
+
+
 def clinch_threshold(series_length: int) -> int:
     """Games one slot must win to clinch a best-of-``series_length`` Series."""
     return (series_length // 2) + 1
@@ -629,7 +743,13 @@ def series_length_for_round(
     )
 
 
-_BRACKET_RANK = {"winners": 0, "losers": 1, "grand_final": 2, "round_robin": 3}
+_BRACKET_RANK = {
+    "winners": 0,
+    "losers": 1,
+    "grand_final": 2,
+    "round_robin": 3,
+    "swiss": 4,
+}
 
 
 def find_next_node(nodes: list[dict]) -> Optional[dict]:

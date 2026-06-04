@@ -1303,3 +1303,121 @@ class TestPlayNextNodeRrDeDrainsToChampion(TestCase):
         self._drain(t)
         t.refresh_from_db()
         self.assertIsNone(t.find_next_playable_node())
+
+
+# ===========================================================================
+# LG-02c — Swiss tournament format (engine)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified — the
+# single/double-elim/round-robin/RR->DE engine tests stay green as regression
+# guards). Seam contract: ``.claude/worktrees/lg-02c-swiss-seam-contract.md``
+# (ENGINE section + TEST BOUNDARY).
+#
+# A Swiss node has advances_to=None, so the elim "crown when advances_to is
+# None" rule would WRONGLY crown on the FIRST resolved node. play_next_node's
+# Swiss branch (``if node.bracket_type == "swiss":`` after stamping node.winner)
+# SKIPS the advance/crown block and calls advance_swiss_if_round_finished()
+# instead — building the next round (stays active) or crowning the Buchholz
+# leader + completing only when the FINAL round's last node resolves. A resolved
+# Swiss node NEVER gets an advance_winner mutation (no parent slot filled).
+#
+# The sims are RANDOM — we never assert WHICH team wins or exact points. We
+# assert structure: no parent advance, deferred next-round build on the round's
+# last node, and final-round completion crowns swiss_standings()[0].
+
+
+def _swiss_active_tournament(
+    n: int, *, swiss_rounds: int = 0, name: str = "SwissEngCup"
+) -> Tournament:
+    """A locked/active swiss Tournament — only the R1 fold nodes are built at
+    lock; later rounds are deferred to advance_swiss_if_round_finished()."""
+    t = Tournament.objects.create(name=name, format="swiss", swiss_rounds=swiss_rounds)
+    for seed, team in enumerate(_make_teams(n), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+class TestPlayNextNodeSwiss(TestCase):
+    """A resolved Swiss node never advances a parent; resolving a round's LAST
+    node triggers the next-round build (stays active); the final round's
+    completion crowns swiss_standings()[0] + state='completed'."""
+
+    def test_resolved_swiss_node_gets_no_parent_advance(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _swiss_active_tournament(4, swiss_rounds=2, name="SwissEngNoAdvance")
+        # Snapshot the fixed R1 slot pairs before play.
+        before = {
+            n.id: (n.team_a_id, n.team_b_id) for n in t.nodes.filter(bracket_round=1)
+        }
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            node = play_next_node(t)
+        node.refresh_from_db()
+        self.assertEqual(node.bracket_type, "swiss")
+        # The resolved node keeps advances_to=None and its slots are unchanged —
+        # nothing advanced into a parent.
+        self.assertIsNone(node.advances_to_id)
+        self.assertIsNone(node.loser_advances_to_id)
+        if node.bracket_round == 1:
+            self.assertEqual((node.team_a_id, node.team_b_id), before[node.id])
+
+    def test_first_call_does_not_crown_or_complete(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _swiss_active_tournament(4, swiss_rounds=2, name="SwissEngNoCrown")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_next_node(t)
+        t.refresh_from_db()
+        # No early crown despite advances_to=None on the resolved node.
+        self.assertEqual(t.state, "active")
+        self.assertIsNone(t.champion)
+
+    def test_round_last_node_triggers_next_round_build(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _swiss_active_tournament(4, swiss_rounds=2, name="SwissEngNextRound")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            # Resolve both R1 nodes (N=4 ⇒ 2 nodes); the 2nd resolution is the
+            # round's last node and triggers the deferred R2 build.
+            play_next_node(t)
+            play_next_node(t)
+        t.refresh_from_db()
+        # Round 2 materialized; tournament STAYS active (swiss_rounds=2).
+        self.assertTrue(t.nodes.filter(bracket_round=2).exists())
+        self.assertEqual(t.state, "active")
+        self.assertIsNone(t.champion)
+
+    def test_final_round_completion_crowns_swiss_leader(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        # swiss_rounds=1 ⇒ R1 IS the final round; draining it crowns + completes.
+        t = _swiss_active_tournament(4, swiss_rounds=1, name="SwissEngFinal")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(20):
+                t.refresh_from_db()
+                if t.state == "completed":
+                    break
+                if play_next_node(t) is None:
+                    break
+        t.refresh_from_db()
+        self.assertEqual(t.state, "completed")
+        self.assertIsNotNone(t.champion)
+        self.assertEqual(t.champion_id, t.swiss_standings()[0].team_id)
+
+    def test_full_multi_round_drain_completes(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _swiss_active_tournament(4, swiss_rounds=2, name="SwissEngDrain")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(40):
+                t.refresh_from_db()
+                if t.state == "completed":
+                    break
+                if play_next_node(t) is None:
+                    break
+        t.refresh_from_db()
+        self.assertEqual(t.state, "completed")
+        self.assertEqual(t.champion_id, t.swiss_standings()[0].team_id)

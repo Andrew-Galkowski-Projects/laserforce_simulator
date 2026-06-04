@@ -98,6 +98,14 @@ def play_next_node(tournament: Tournament) -> "BracketNode | None":
             tournament.build_de_finals_if_rr_finished()
         return node
 
+    # 7b. LG-02c (Swiss) — a Swiss node has advances_to=None, so the elim
+    # "crown on advances_to is None" rule would wrongly crown on the FIRST
+    # resolved node. SKIP the advance/crown block entirely; build the next round
+    # (or crown) only when the CURRENT round's last node resolves.
+    if node.bracket_type == "swiss":
+        tournament.advance_swiss_if_round_finished()
+        return node
+
     # 8. Flatten the bracket (LG-02c widens select_related to loser_advances_to).
     # Exclude round_robin nodes: in an RR->DE tournament the (resolved) Seeding
     # stage nodes share (bracket_round, position) coords with the deferred-built
