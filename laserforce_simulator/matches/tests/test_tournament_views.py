@@ -286,6 +286,20 @@ class TestTournamentDetail(TestCase):
         ):
             self.assertIn(key, response.context, f"missing context key {key!r}")
 
+    def test_bracket_team_names_link_to_team_game_list(self) -> None:
+        t = _active_tournament(4)
+        team = t.participants.first().team
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        expected = f'href="{reverse("team_match_history", args=[team.id])}"'
+        self.assertIn(expected, response.content.decode())
+
+    def test_seeding_team_names_link_to_team_game_list(self) -> None:
+        t = _setup_tournament(4)
+        team = t.participants.first().team
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        expected = f'href="{reverse("team_match_history", args=[team.id])}"'
+        self.assertIn(expected, response.content.decode())
+
 
 # ---------------------------------------------------------------------------
 # TestTournamentReseed

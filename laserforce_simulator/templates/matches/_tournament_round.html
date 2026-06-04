@@ -7,11 +7,11 @@
         <div class="card-body p-2">
             <div>
                 {% if node.seed_a %}<small class="text-muted">[{{ node.seed_a }}]</small>{% endif %}
-                {{ node.team_a.name|default:"—" }}
+                {% if node.team_a %}<a href="{% url 'team_match_history' node.team_a.id %}">{{ node.team_a.name }}</a>{% else %}—{% endif %}
             </div>
             <div>
                 {% if node.seed_b %}<small class="text-muted">[{{ node.seed_b }}]</small>{% endif %}
-                {{ node.team_b.name|default:"—" }}
+                {% if node.team_b %}<a href="{% url 'team_match_history' node.team_b.id %}">{{ node.team_b.name }}</a>{% else %}—{% endif %}
             </div>
             {% if node.is_bye %}
             <div><small class="text-muted">Bye</small></div>
@@ -35,7 +35,7 @@
             {% endif %}
             {% endif %}
             {% if node.winner %}
-            <div><strong>Winner: {{ node.winner.name }}</strong></div>
+            <div><strong>Winner: <a href="{% url 'team_match_history' node.winner.id %}">{{ node.winner.name }}</a></strong></div>
             {% endif %}
         </div>
     </div>
