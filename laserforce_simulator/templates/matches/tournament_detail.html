@@ -7,10 +7,11 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h1>{{ tournament.name }}</h1>
     <div>
-        {% if tournament.format == "round_robin_double_elim" %}
+        {% if tournament.format == "round_robin_double_elim" or tournament.format == "swiss" %}
         <span class="badge bg-info text-dark" id="tournament-stage-badge">
             {% if tournament_stage == "seeding" %}Seeding stage
             {% elif tournament_stage == "finals" %}Finals stage
+            {% elif tournament_stage == "swiss" %}Swiss stage
             {% elif tournament_stage == "completed" %}Completed
             {% else %}Setup{% endif %}
         </span>
@@ -192,6 +193,48 @@ only after the finals build).
         {% endfor %}
     </div>
 {% endif %}
+{% elif tournament.format == "swiss" %}
+{% comment %}
+LG-02c (Swiss) — flat, edge-less per-round pairing sections (Bo1) + the
+Buchholz-ranked Standings. Reuses the node-card include (bracket_type="swiss"
+yields the locked tournament-node-swiss-{bracket_round}-{position} ids).
+{% endcomment %}
+<h2>Swiss Rounds</h2>
+<div id="tournament-swiss-rounds">
+    {% for swiss_round in swiss_rounds_view %}
+    <div class="mb-3" id="tournament-swiss-round-{{ swiss_round.round_number }}">
+        <h3>Round {{ swiss_round.round_number }}</h3>
+        <div class="d-flex flex-wrap">
+            {% include "matches/_tournament_round.html" with round=swiss_round bracket_type="swiss" %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<h2 class="mt-4">Standings</h2>
+<table class="table" id="tournament-swiss-standings">
+    <thead>
+        <tr>
+            <th>Rank</th><th>Team</th><th>MP</th><th>W</th><th>L</th><th>T</th>
+            <th>Pts</th><th>RW</th><th>TS</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row, team in swiss_standings %}
+        <tr>
+            <td>{{ row.rank }}</td>
+            <td>{% if team %}{{ team.name }}{% else %}{{ row.team_id }}{% endif %}</td>
+            <td>{{ row.matches_played }}</td>
+            <td>{{ row.wins }}</td>
+            <td>{{ row.losses }}</td>
+            <td>{{ row.ties }}</td>
+            <td>{{ row.league_points }}</td>
+            <td>{{ row.round_wins }}</td>
+            <td>{{ row.total_score }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
 {% elif tournament.format == "double_elimination" %}
 <h2>Bracket</h2>
     {# DE: three sections, each with bracket_type-namespaced DOM ids. #}

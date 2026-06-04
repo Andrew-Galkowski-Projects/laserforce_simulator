@@ -74,6 +74,20 @@ def _parse_rrde_combo(raw: "str | None", tournament_format: str) -> tuple[int, i
     return _RRDE_COMBO_BY_VALUE.get(raw or "", (4, 0))
 
 
+def _parse_swiss_rounds(raw: "str | None") -> int:
+    """LG-02c (Swiss) — parse the ``swiss_rounds`` POST field into a
+    non-negative int (forgiving: absent/blank/invalid/negative -> 0 = auto).
+
+    Clamping happens at lock; the view just coerces to a non-negative int, 0
+    meaning auto.
+    """
+    try:
+        value = int(raw or 0)
+    except (TypeError, ValueError):
+        value = 0
+    return value if value > 0 else 0
+
+
 def _team_mean_rating(team: Team) -> float:
     """Mean active-player overall_rating for a Team (LG-01c draft-preview
     formula verbatim). 0.0 when the Team has no active players.
@@ -99,7 +113,22 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
     """GET -> render create form. POST valid -> create Tournament + participants
     with default Seeding, redirect to detail. POST invalid -> re-render (200).
     """
-    available_teams = Team.objects.regular()
+    # Only Teams with a full valid roster (all 6 slots filled, no duplicate
+    # player — ``Team.is_valid_roster``) may enter a Tournament; an incomplete
+    # roster cannot field a 6v6 game. ``select_related`` the 6 slot FKs so
+    # ``is_valid_roster`` touches no extra queries per Team.
+    available_teams = [
+        t
+        for t in Team.objects.regular().select_related(
+            "slot_commander",
+            "slot_heavy",
+            "slot_scout_1",
+            "slot_scout_2",
+            "slot_medic",
+            "slot_ammo",
+        )
+        if t.is_valid_roster
+    ]
 
     if request.method != "POST":
         return render(
@@ -118,6 +147,10 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
         generate_ppt = int(request.POST.get("generate_ppt") or 6)
     except (TypeError, ValueError):
         generate_ppt = 6
+    # A tournament Team must field a full 6-player roster, so generated teams
+    # always get at least 6 players — a smaller request is clamped up rather
+    # than producing an unplayable participant.
+    generate_ppt = max(6, generate_ppt)
 
     errors = []
     if not name:
@@ -125,7 +158,26 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
 
     teams: list[Team] = []
     if selected_ids:
-        teams.extend(list(Team.objects.filter(id__in=selected_ids)))
+        selected = list(
+            Team.objects.filter(id__in=selected_ids).select_related(
+                "slot_commander",
+                "slot_heavy",
+                "slot_scout_1",
+                "slot_scout_2",
+                "slot_medic",
+                "slot_ammo",
+            )
+        )
+        # Reject any selected Team without a full valid roster (defends a
+        # tampered/stale POST of an id the filtered select list never offered).
+        ineligible = [t for t in selected if not t.is_valid_roster]
+        if ineligible:
+            names = ", ".join(t.name for t in ineligible)
+            errors.append(
+                "These teams don't have a full 6-player roster and can't "
+                f"enter a tournament: {names}. Complete their rosters first."
+            )
+        teams.extend(selected)
 
     if generate_count and generate_count > 0:
         rng = random.Random()
@@ -180,6 +232,7 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
         "double_elimination",
         "round_robin",
         "round_robin_double_elim",
+        "swiss",
     ):
         tournament_format = "single_elimination"
 
@@ -192,6 +245,10 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
         request.POST.get("rrde_combo"), tournament_format
     )
 
+    # LG-02c (Swiss) — the requested round count (0 = auto). Persisted for every
+    # create (harmless — only read at lock when format == "swiss").
+    swiss_rounds = _parse_swiss_rounds(request.POST.get("swiss_rounds"))
+
     tournament = Tournament.objects.create(
         name=name,
         state="setup",
@@ -202,6 +259,7 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
         earlier_series_length=earlier_series_length,
         wb_advancers=wb_advancers,
         lb_advancers=lb_advancers,
+        swiss_rounds=swiss_rounds,
     )
 
     # Default Seeding via mean active-player overall_rating.
@@ -385,6 +443,58 @@ def _build_rr_crosstable(tournament: Tournament, rows: list) -> list:
     return crosstable
 
 
+def _build_swiss_rounds(tournament: Tournament) -> list:
+    """LG-02c (Swiss) — group the Swiss nodes by ``bracket_round`` into the
+    per-round pairing sections for the detail render.
+
+    Returns ``list[{"round_number": int, "pairings": [<node_view_dict>, ...]}]``
+    in ``bracket_round`` order, each ``<node_view_dict>`` the SAME shape
+    ``_build_rounds`` builds for RR/elim nodes (so the node-card include is
+    reused). Each section dict also carries the include-friendly aliases
+    ``bracket_round`` (== round_number) and ``nodes`` (== pairings) so it can be
+    handed straight to ``matches/_tournament_round.html``. Empty list for a
+    non-Swiss Tournament.
+    """
+    nodes = list(
+        tournament.nodes.filter(bracket_type="swiss")
+        .select_related("team_a", "team_b", "winner")
+        .prefetch_related("series_matches")
+        .order_by("bracket_round", "position")
+    )
+    by_round: dict[int, list] = {}
+    for node in nodes:
+        series_matches = list(node.series_matches.all())
+        wins_a, wins_b = count_series_wins(
+            series_matches, node.team_a_id, node.team_b_id
+        )
+        view_dict = {
+            "bracket_round": node.bracket_round,
+            "position": node.position,
+            "bracket_type": node.bracket_type,
+            "team_a": node.team_a,
+            "team_b": node.team_b,
+            "seed_a": node.seed_a,
+            "seed_b": node.seed_b,
+            "is_bye": node.is_bye,
+            "wins_a": wins_a,
+            "wins_b": wins_b,
+            "series_length": node.series_length,
+            "series_matches": series_matches,
+            "winner": node.winner,
+        }
+        by_round.setdefault(node.bracket_round, []).append(view_dict)
+    return [
+        {
+            "round_number": r,
+            "pairings": by_round[r],
+            # Include-friendly aliases for matches/_tournament_round.html.
+            "bracket_round": r,
+            "nodes": by_round[r],
+        }
+        for r in sorted(by_round)
+    ]
+
+
 def _tournament_stage(tournament: Tournament, has_finals: bool) -> str:
     """LG-02c (RR->DE) — derive the display stage (NOT stored).
 
@@ -402,6 +512,8 @@ def _tournament_stage(tournament: Tournament, has_finals: bool) -> str:
         return "completed"
     if tournament.format == "round_robin_double_elim":
         return "finals" if has_finals else "seeding"
+    if tournament.format == "swiss":
+        return "swiss"
     return tournament.format
 
 
@@ -456,6 +568,16 @@ def _detail_context(tournament: Tournament) -> dict:
     else:
         rr_crosstable = []
         rr_standings = []
+    # LG-02c (Swiss) — per-round pairing sections + Buchholz-ranked standings.
+    # Empty for non-Swiss formats so the template references them unconditionally.
+    if tournament.format == "swiss":
+        swiss_rounds_view = _build_swiss_rounds(tournament)
+        swiss_rows = tournament.swiss_standings()
+        team_by_id = {p.team_id: p.team for p in participants}
+        swiss_standings = [(row, team_by_id.get(row.team_id)) for row in swiss_rows]
+    else:
+        swiss_rounds_view = []
+        swiss_standings = []
     return {
         "tournament": tournament,
         "participants": participants,
@@ -469,6 +591,8 @@ def _detail_context(tournament: Tournament) -> dict:
         "rr_standings": rr_standings,
         "tournament_stage": stage,
         "cut_labels": cut_labels,
+        "swiss_rounds_view": swiss_rounds_view,
+        "swiss_standings": swiss_standings,
     }
 
 

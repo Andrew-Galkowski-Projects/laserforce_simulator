@@ -268,6 +268,62 @@ introduces one decision worth recording against this ADR:
   contract:
   [`.claude/worktrees/lg-02c-rr-de-seam-contract.md`](../../.claude/worktrees/lg-02c-rr-de-seam-contract.md).
 
+## Consequences / follow-up — Swiss per-round deferred build + Buchholz re-rank (LG-02c Swiss slice, 2026-06-04)
+
+The fourth and final LG-02c bracket format, **`("swiss", "Swiss")`**, applies the
+"new format = new enum value + reused/new pure seam" precedent yet again (a fifth
+`Tournament.format` value, a fifth `BracketNode.bracket_type`,
+`_BRACKET_RANK["swiss"] = 4`, two new pure functions in `matches/bracket.py`, one
+migration widening the two `choices` tuples + adding `swiss_rounds` — **no
+`RunPython`, no backfill**). It records three decisions worth pinning against this
+ADR:
+
+- **The build is DEFERRED *per round*, not one-shot.** RR→DE introduced a single
+  results-contingent deferred build (the Finals, built when the *last* Seeding node
+  resolves). Swiss generalises that: the round-1 fold is built at lock, but **every
+  later round is built lazily**, each time the *current round's last node resolves*,
+  via **`Tournament.advance_swiss_if_round_finished()`** (`@transaction.atomic`,
+  guarded). Where RR→DE's deferred build fires once, Swiss's fires up to
+  `swiss_rounds - 1` times — pairings for round *r+1* are computed from the live
+  Standings after round *r*, since Swiss pairing is **results-contingent by
+  construction**. The Tournament stays `state="active"` across every round boundary;
+  the champion is crowned not by a final node (there is none — Swiss is flat and
+  edge-less) but by **stamping the Standings leader** when the last round resolves.
+  The same `play_next_node` discipline applies: a Swiss node carries
+  `advances_to=None`, so the elim "crown when `advances_to is None`" rule would
+  wrongly crown on the *first* resolved node — the engine therefore routes Swiss
+  nodes to `advance_swiss_if_round_finished()` and `return`s **before** the elim
+  advance/crown block (a guard on `node.bracket_type == "swiss"`, alongside the RR
+  guard).
+
+- **Even-N only, no byes — and pairing is fold-then-greedy.** Unlike single/double-elim
+  (which pad to a power of two with byes), Swiss admits any **even** field and **never
+  creates a bye** — an odd count raises `ValidationError("Swiss requires an even
+  number of participants.")` at `lock_and_build`. Round 1 is the standard seed
+  **fold** (`seed[i]` vs `seed[i + N/2]`); later rounds use a **greedy ranked sweep**
+  over the current Standings, pairing each unpaired team with the next it has not yet
+  played, with an **allow-rematch fallback** for the trailing teams (no backtracking).
+  The round count is `swiss_rounds or ⌈log₂(N)⌉` clamped to `[1, N-1]`, resolved and
+  **frozen** at lock.
+
+- **Buchholz is a Swiss-only re-rank layer over the FROZEN `compute_standings`.** The
+  shared `matches/standings.py::compute_standings` ladder (`league_points →
+  round_wins → total_score → team_name`) is **not modified**. Instead a pure
+  **`swiss_buchholz_rerank(rows, opponents_by_team)`** re-sorts its rows on the Swiss
+  ladder `league_points → Buchholz → round_wins → total_score → team_name`, where a
+  team's Buchholz = the sum of its opponents' final `league_points` across played
+  pairings (a rematch counts twice). It is **ORDERING-ONLY** — Buchholz is never a
+  displayed/stored column; the re-rank renumbers `rank` 1-based dense and copies every
+  other `StandingsRow` field verbatim, using a **stable sort** so the input's
+  `team_name asc` survives as the final tiebreak without a name lookup crossing the
+  pure int/dataclass seam. The `compute_standings`-input assembly is **extracted** from
+  `round_robin_standings()` into a shared `Tournament._standings_over_nodes(node_qs)`
+  (RR's behaviour stays byte-identical) and reused by `swiss_standings()`. **Non-
+  deterministic** per-Match sims ⇒ **no SIM-07/08 interaction, no Score Calibration
+  re-baseline**. No new ADR and **no new CONTEXT.md term** (the **Swiss** + **Buchholz**
+  terms were written at grilling time). Seam contract:
+  [`.claude/worktrees/lg-02c-swiss-seam-contract.md`](../../.claude/worktrees/lg-02c-swiss-seam-contract.md).
+
 ## See also
 
 - [ADR-0015](0015-schedule-on-demand-no-fixture-rows.md) — the `generate_schedule`

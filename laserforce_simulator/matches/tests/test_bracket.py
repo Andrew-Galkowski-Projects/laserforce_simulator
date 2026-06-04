@@ -2626,3 +2626,404 @@ class TestBuildRrDeFinalsBracket(SimpleTestCase):
         specs = build_rr_de_finals_bracket(self._upper(wb), self._lower(wb, wb // 2))
         for spec in specs:
             self.assertIn(spec.bracket_type, ("winners", "losers", "grand_final"))
+
+
+# ===========================================================================
+# LG-02c — Swiss tournament format (pure-unit)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified — every
+# single-elim / double-elim / round-robin / RR->DE case stays green as a
+# regression guard). Seam contract:
+# ``.claude/worktrees/lg-02c-swiss-seam-contract.md`` (PURE section + TEST
+# BOUNDARY). The Swiss format adds TWO pure functions to ``bracket.py``
+# (``build_swiss_round`` + ``swiss_buchholz_rerank``) and ONE ``_BRACKET_RANK``
+# literal entry (``"swiss": 4``); neither adds a new import, so
+# ``TestNoDjangoImportsLeaked`` above stays green. Every name is imported LAZILY
+# inside each method so its absence (pre-Code-landing) isolates the failure to
+# THESE classes only and does NOT break the existing (passing) classes above at
+# collection time.
+#
+# Swiss nodes are FLAT and edge-less: ``bracket_type="swiss"``,
+# ``advances_to=None``, ``loser_advances_to=None``, ``is_bye=False``. The spec
+# has NO ``series_length`` field — the persist layer stamps ``series_length=1``
+# (Bo1) at create. ``build_swiss_round`` is ONE function for BOTH R1 fold (empty
+# ``played_pairs``) and later greedy sweeps (rank order + filled ``played_pairs``,
+# with an allow-rematch trailing fallback). ``swiss_buchholz_rerank`` re-ranks
+# ``compute_standings`` rows on the locked Swiss ladder via a STABLE sort.
+
+
+def _fold_order(n: int) -> list[int]:
+    """The seed "fold" team-id order the model's ``lock_and_build`` hands the
+    builder for R1: sort by seed asc (here seed == i, team_id = 100 + seed),
+    split in half, interleave so consecutive pairs are ``seed[i]`` vs
+    ``seed[i + n//2]``. Team id == 100 + seed (seeds 1..n)."""
+    half = n // 2
+    order: list[int] = []
+    for i in range(half):
+        order.append(100 + (i + 1))  # seed i+1
+        order.append(100 + (i + 1 + half))  # seed i+1+half
+    return order
+
+
+def _swiss_seed_by_team(n: int) -> dict[int, int]:
+    """team_id (100 + seed) -> Bracket seed, for seeds 1..n."""
+    return {100 + s: s for s in range(1, n + 1)}
+
+
+class TestBuildSwissRound(SimpleTestCase):
+    """``build_swiss_round(ranked_team_ids, seed_by_team, played_pairs,
+    bracket_round) -> list[BracketNodeSpec]`` — ONE function for R1 fold (empty
+    ``played_pairs``) and later greedy sweeps (rank order + filled
+    ``played_pairs`` + allow-rematch trailing fallback)."""
+
+    # -- R1 fold for N=4 / 8 / 16: exact seed[i] vs seed[i+N/2] pairing -------
+
+    def _assert_fold_pairing(self, n: int) -> None:
+        from matches.bracket import build_swiss_round
+
+        order = _fold_order(n)
+        seed_by_team = _swiss_seed_by_team(n)
+        specs = build_swiss_round(order, seed_by_team, set(), bracket_round=1)
+        # N/2 nodes, one per pairing.
+        self.assertEqual(len(specs), n // 2)
+        half = n // 2
+        # The fold pairing is seed i vs seed i + N/2 (team ids 100+seed).
+        expected_pairs = {
+            frozenset({100 + (i + 1), 100 + (i + 1 + half)}) for i in range(half)
+        }
+        got_pairs = {frozenset({s.team_a_id, s.team_b_id}) for s in specs}
+        self.assertEqual(got_pairs, expected_pairs)
+
+    def test_r1_fold_n4(self) -> None:
+        self._assert_fold_pairing(4)
+
+    def test_r1_fold_n8(self) -> None:
+        self._assert_fold_pairing(8)
+
+    def test_r1_fold_n16(self) -> None:
+        self._assert_fold_pairing(16)
+
+    # -- flat / edge-less spec fields (no series_length on the spec) ----------
+
+    def test_specs_are_swiss_bracket_type(self) -> None:
+        from matches.bracket import build_swiss_round
+
+        specs = build_swiss_round(_fold_order(8), _swiss_seed_by_team(8), set(), 1)
+        for s in specs:
+            self.assertEqual(s.bracket_type, "swiss")
+
+    def test_specs_have_no_advance_edges(self) -> None:
+        from matches.bracket import build_swiss_round
+
+        specs = build_swiss_round(_fold_order(8), _swiss_seed_by_team(8), set(), 1)
+        for s in specs:
+            self.assertIsNone(s.advances_to)
+            self.assertIsNone(s.advances_to_slot)
+            self.assertIsNone(s.loser_advances_to)
+            self.assertIsNone(s.loser_advances_to_slot)
+
+    def test_specs_are_not_byes(self) -> None:
+        from matches.bracket import build_swiss_round
+
+        specs = build_swiss_round(_fold_order(8), _swiss_seed_by_team(8), set(), 1)
+        for s in specs:
+            self.assertFalse(s.is_bye)
+
+    def test_specs_have_no_winner_preresolved(self) -> None:
+        from matches.bracket import build_swiss_round
+
+        specs = build_swiss_round(_fold_order(8), _swiss_seed_by_team(8), set(), 1)
+        for s in specs:
+            self.assertIsNone(s.winner_id)
+
+    def test_spec_has_no_series_length_field(self) -> None:
+        # The BracketNodeSpec field list has NO series_length — the node row gets
+        # series_length=1 at create. Assert on the spec's actual fields only.
+        from dataclasses import fields
+
+        from matches.bracket import build_swiss_round
+
+        specs = build_swiss_round(_fold_order(4), _swiss_seed_by_team(4), set(), 1)
+        spec_field_names = {f.name for f in fields(specs[0])}
+        self.assertNotIn("series_length", spec_field_names)
+
+    def test_position_is_zero_based_ascending(self) -> None:
+        from matches.bracket import build_swiss_round
+
+        specs = build_swiss_round(_fold_order(8), _swiss_seed_by_team(8), set(), 1)
+        positions = [s.position for s in specs]
+        self.assertEqual(positions, list(range(len(specs))))
+
+    def test_bracket_round_carried_through(self) -> None:
+        from matches.bracket import build_swiss_round
+
+        specs = build_swiss_round(_fold_order(8), _swiss_seed_by_team(8), set(), 3)
+        for s in specs:
+            self.assertEqual(s.bracket_round, 3)
+
+    def test_seed_a_seed_b_from_seed_by_team(self) -> None:
+        from matches.bracket import build_swiss_round
+
+        seed_by_team = _swiss_seed_by_team(8)
+        specs = build_swiss_round(_fold_order(8), seed_by_team, set(), 1)
+        for s in specs:
+            self.assertEqual(s.seed_a, seed_by_team[s.team_a_id])
+            self.assertEqual(s.seed_b, seed_by_team[s.team_b_id])
+
+    def test_every_team_paired_exactly_once_for_even_n(self) -> None:
+        from matches.bracket import build_swiss_round
+
+        specs = build_swiss_round(_fold_order(8), _swiss_seed_by_team(8), set(), 1)
+        paired = []
+        for s in specs:
+            paired.append(s.team_a_id)
+            paired.append(s.team_b_id)
+        # Every one of the 8 teams appears exactly once across the 4 pairings.
+        self.assertEqual(sorted(paired), sorted(_fold_order(8)))
+
+    # -- later-round greedy sweep with a non-empty played_pairs ---------------
+
+    def test_later_round_pairs_unplayed_opponents(self) -> None:
+        from matches.bracket import build_swiss_round
+
+        # Standings rank order 101, 102, 103, 104. The top two (101, 102) and the
+        # bottom two (103, 104) already played in R1, so the greedy sweep must
+        # pair 101 with the next UNPLAYED team (103) and 102 with 104.
+        ranked = [101, 102, 103, 104]
+        seed_by_team = _swiss_seed_by_team(4)
+        played = {frozenset({101, 102}), frozenset({103, 104})}
+        specs = build_swiss_round(ranked, seed_by_team, played, bracket_round=2)
+        got_pairs = {frozenset({s.team_a_id, s.team_b_id}) for s in specs}
+        self.assertEqual(got_pairs, {frozenset({101, 103}), frozenset({102, 104})})
+
+    def test_later_round_keeps_rank_walk_order(self) -> None:
+        from matches.bracket import build_swiss_round
+
+        # No prior pairings ⇒ greedy sweep pairs consecutive rank order.
+        ranked = [101, 102, 103, 104]
+        specs = build_swiss_round(ranked, _swiss_seed_by_team(4), set(), 2)
+        got_pairs = {frozenset({s.team_a_id, s.team_b_id}) for s in specs}
+        self.assertEqual(got_pairs, {frozenset({101, 102}), frozenset({103, 104})})
+
+    # -- allow-rematch trailing fallback --------------------------------------
+
+    def test_allow_rematch_when_trailing_teams_force_a_replay(self) -> None:
+        from matches.bracket import build_swiss_round
+
+        # 101 has already played BOTH 102 and 103; the only remaining unpaired
+        # team for 101 after the sweep is one it has already played. The function
+        # must ALLOW the rematch (no crash, no dropped team for even N).
+        ranked = [101, 102, 103, 104]
+        played = {
+            frozenset({101, 102}),
+            frozenset({101, 103}),
+            frozenset({104, 102}),  # 104 has played 102
+            frozenset({104, 103}),  # 104 has played 103
+        }
+        specs = build_swiss_round(ranked, _swiss_seed_by_team(4), played, 3)
+        # Even N=4 ⇒ exactly 2 pairings, no team dropped.
+        self.assertEqual(len(specs), 2)
+        paired = []
+        for s in specs:
+            paired.append(s.team_a_id)
+            paired.append(s.team_b_id)
+        self.assertEqual(sorted(paired), [101, 102, 103, 104])
+
+    def test_no_crash_and_no_dropped_team_on_rematch_fallback(self) -> None:
+        from matches.bracket import build_swiss_round
+
+        ranked = [101, 102, 103, 104]
+        # Force a fully-saturated graph: every pair has played.
+        played = {
+            frozenset({101, 102}),
+            frozenset({101, 103}),
+            frozenset({101, 104}),
+            frozenset({102, 103}),
+            frozenset({102, 104}),
+            frozenset({103, 104}),
+        }
+        specs = build_swiss_round(ranked, _swiss_seed_by_team(4), played, 4)
+        self.assertEqual(len(specs), 2)
+        paired = sorted(tid for s in specs for tid in (s.team_a_id, s.team_b_id))
+        self.assertEqual(paired, [101, 102, 103, 104])
+
+
+class TestSwissBuchholzRerank(SimpleTestCase):
+    """``swiss_buchholz_rerank(rows, opponents_by_team) -> list[StandingsRow]``
+    — re-sorts ``compute_standings`` rows on the locked Swiss ladder
+    (``league_points desc -> Buchholz desc -> round_wins desc -> total_score
+    desc -> team_name asc``) via a STABLE sort, with ``rank`` renumbered 1-based
+    dense and every other field preserved. ORDERING-ONLY: no Buchholz value
+    leaks into the row."""
+
+    def _row(
+        self,
+        *,
+        team_id: int,
+        league_points: int = 0,
+        round_wins: int = 0,
+        total_score: int = 0,
+        rank: int = 0,
+    ):
+        """A StandingsRow with the 17 fields populated — the non-ladder fields
+        carry distinct sentinel values so we can prove they survive verbatim."""
+        from matches.standings import StandingsRow
+
+        return StandingsRow(
+            team_id=team_id,
+            matches_played=team_id,  # sentinel
+            wins=team_id,  # sentinel
+            losses=team_id,  # sentinel
+            ties=team_id,  # sentinel
+            league_points=league_points,
+            round_wins=round_wins,
+            total_score=total_score,
+            rank=rank,
+            match_streak=("W", team_id),  # sentinel
+            match_l5=(team_id, 0, 0),  # sentinel
+            round_streak=("L", team_id),  # sentinel
+            round_l5=(0, team_id, 0),  # sentinel
+            red_wlt=(team_id, 0, 0),  # sentinel
+            blue_wlt=(0, team_id, 0),  # sentinel
+            red_points_for=team_id,  # sentinel
+            blue_points_for=team_id,  # sentinel
+        )
+
+    def test_empty_input_returns_empty(self) -> None:
+        from matches.bracket import swiss_buchholz_rerank
+
+        self.assertEqual(swiss_buchholz_rerank([], {}), [])
+
+    def test_higher_buchholz_breaks_equal_league_points_tie(self) -> None:
+        from matches.bracket import swiss_buchholz_rerank
+
+        # A and B both have 3 league points; A's opponents have more points
+        # (higher Buchholz) so A ranks ahead of B.
+        a = self._row(team_id=1, league_points=3)
+        b = self._row(team_id=2, league_points=3)
+        opp_strong = self._row(team_id=3, league_points=6)
+        opp_weak = self._row(team_id=4, league_points=0)
+        rows = [a, b, opp_strong, opp_weak]
+        opponents = {1: [3], 2: [4], 3: [1], 4: [2]}
+        out = swiss_buchholz_rerank(rows, opponents)
+        # A (team 1) ranks ahead of B (team 2) on Buchholz.
+        rank_by_team = {r.team_id: r.rank for r in out}
+        self.assertLess(rank_by_team[1], rank_by_team[2])
+
+    def test_round_wins_lower_tiebreak(self) -> None:
+        from matches.bracket import swiss_buchholz_rerank
+
+        # Equal league_points AND equal Buchholz (opponents have equal points);
+        # round_wins breaks the tie.
+        a = self._row(team_id=1, league_points=3, round_wins=5)
+        b = self._row(team_id=2, league_points=3, round_wins=1)
+        opp_a = self._row(team_id=3, league_points=3)
+        opp_b = self._row(team_id=4, league_points=3)
+        rows = [a, b, opp_a, opp_b]
+        opponents = {1: [3], 2: [4], 3: [1], 4: [2]}
+        out = swiss_buchholz_rerank(rows, opponents)
+        rank_by_team = {r.team_id: r.rank for r in out}
+        self.assertLess(rank_by_team[1], rank_by_team[2])
+
+    def test_total_score_lower_tiebreak(self) -> None:
+        from matches.bracket import swiss_buchholz_rerank
+
+        # Equal league_points / Buchholz / round_wins; total_score breaks it.
+        a = self._row(team_id=1, league_points=3, round_wins=2, total_score=900)
+        b = self._row(team_id=2, league_points=3, round_wins=2, total_score=100)
+        opp_a = self._row(team_id=3, league_points=3)
+        opp_b = self._row(team_id=4, league_points=3)
+        rows = [a, b, opp_a, opp_b]
+        opponents = {1: [3], 2: [4], 3: [1], 4: [2]}
+        out = swiss_buchholz_rerank(rows, opponents)
+        rank_by_team = {r.team_id: r.rank for r in out}
+        self.assertLess(rank_by_team[1], rank_by_team[2])
+
+    def test_team_name_asc_survives_via_stable_sort_on_preordered_input(self) -> None:
+        from matches.bracket import swiss_buchholz_rerank
+
+        # team_name is NOT a StandingsRow field: the input rows are already in
+        # compute_standings' final order (ending team_name asc). Two fully-tied
+        # rows must keep their INPUT order under the stable sort — so a pre-ordered
+        # input survives as the final tiebreak.
+        a = self._row(team_id=1, league_points=3, round_wins=2, total_score=500)
+        b = self._row(team_id=2, league_points=3, round_wins=2, total_score=500)
+        opp_a = self._row(team_id=3, league_points=3)
+        opp_b = self._row(team_id=4, league_points=3)
+        # a precedes b in the input (i.e. "team_name asc" already applied).
+        rows = [a, b, opp_a, opp_b]
+        opponents = {1: [3], 2: [4], 3: [1], 4: [2]}
+        out = swiss_buchholz_rerank(rows, opponents)
+        rank_by_team = {r.team_id: r.rank for r in out}
+        # The pre-existing order (a before b) survives the stable sort.
+        self.assertLess(rank_by_team[1], rank_by_team[2])
+
+    def test_rank_renumbered_one_based_dense(self) -> None:
+        from matches.bracket import swiss_buchholz_rerank
+
+        rows = [
+            self._row(team_id=1, league_points=0, rank=99),
+            self._row(team_id=2, league_points=6, rank=99),
+            self._row(team_id=3, league_points=3, rank=99),
+        ]
+        out = swiss_buchholz_rerank(rows, {})
+        ranks = [r.rank for r in out]
+        self.assertEqual(ranks, [1, 2, 3])
+
+    def test_every_returned_row_is_a_standings_row(self) -> None:
+        from matches.bracket import swiss_buchholz_rerank
+        from matches.standings import StandingsRow
+
+        rows = [self._row(team_id=1, league_points=3)]
+        out = swiss_buchholz_rerank(rows, {1: []})
+        for r in out:
+            self.assertIsInstance(r, StandingsRow)
+
+    def test_all_17_fields_preserved_except_rank(self) -> None:
+        from dataclasses import fields
+
+        from matches.bracket import swiss_buchholz_rerank
+
+        original = self._row(team_id=7, league_points=3, round_wins=4, total_score=50)
+        out = swiss_buchholz_rerank([original], {7: []})
+        result = out[0]
+        # 17 fields total; every field except rank is byte-identical to the input.
+        all_field_names = {f.name for f in fields(result)}
+        self.assertEqual(len(all_field_names), 17)
+        for name in all_field_names:
+            if name == "rank":
+                continue
+            self.assertEqual(
+                getattr(result, name),
+                getattr(original, name),
+                f"field {name!r} must survive the re-rank verbatim",
+            )
+        # rank is renumbered 1-based (single row -> 1).
+        self.assertEqual(result.rank, 1)
+
+    def test_no_buchholz_value_leaks_into_the_row(self) -> None:
+        # ORDERING-ONLY: the row dataclass still has exactly its 17 fields — no
+        # extra Buchholz attribute is attached.
+        from dataclasses import fields
+
+        from matches.bracket import swiss_buchholz_rerank
+
+        out = swiss_buchholz_rerank([self._row(team_id=1, league_points=3)], {1: []})
+        self.assertEqual(len({f.name for f in fields(out[0])}), 17)
+        self.assertFalse(hasattr(out[0], "buchholz"))
+
+
+class TestBracketRankSwiss(SimpleTestCase):
+    """``_BRACKET_RANK["swiss"] == 4`` — the 5th entry, slotting Swiss after
+    round_robin (rank 3) in ``find_next_node``'s deterministic tiebreak."""
+
+    def test_bracket_rank_has_swiss_entry_4(self) -> None:
+        from matches.bracket import _BRACKET_RANK
+
+        self.assertEqual(_BRACKET_RANK["swiss"], 4)
+
+    def test_bracket_rank_swiss_get_does_not_fall_back_to_zero(self) -> None:
+        from matches.bracket import _BRACKET_RANK
+
+        self.assertEqual(_BRACKET_RANK.get("swiss", 0), 4)

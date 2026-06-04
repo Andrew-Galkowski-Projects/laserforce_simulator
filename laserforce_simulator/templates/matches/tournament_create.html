@@ -47,7 +47,14 @@
             <option value="double_elimination">Double elimination</option>
             <option value="round_robin">Round robin</option>
             <option value="round_robin_double_elim">Round robin → Double elimination</option>
+            <option value="swiss">Swiss</option>
         </select>
+    </div>
+
+    <div class="mb-3 tournament-create-swiss-rounds-row" style="display:none">
+        <label for="tournament-create-swiss-rounds" class="form-label">Swiss rounds (0 = auto)</label>
+        <input type="number" class="form-control" id="tournament-create-swiss-rounds"
+               name="swiss_rounds" min="0" value="0">
     </div>
 
     <div class="mb-3 tournament-create-rrde-combo-row" style="display:none">
@@ -105,16 +112,22 @@
 <script>
 function tournamentCreateToggle(value) {
     "use strict";
-    // Series-length rows are hidden only for a plain round-robin (it is always
-    // Bo1). They stay visible for round_robin_double_elim — the DE finals use
-    // them. The rrde-combo row shows only for round_robin_double_elim.
-    var hideSeries = value === "round_robin";
+    // Series-length rows are hidden for a plain round-robin (always Bo1) and
+    // for Swiss (always Bo1). They stay visible for round_robin_double_elim —
+    // the DE finals use them. The rrde-combo row shows only for
+    // round_robin_double_elim (hidden for Swiss). The swiss-rounds row shows
+    // only for swiss.
+    var swiss = value === "swiss";
+    var hideSeries = value === "round_robin" || swiss;
     document.querySelectorAll(".tournament-create-series-length-row").forEach(function (el) {
         el.style.display = hideSeries ? "none" : "";
     });
     var rrde = value === "round_robin_double_elim";
     document.querySelectorAll(".tournament-create-rrde-combo-row").forEach(function (el) {
         el.style.display = rrde ? "" : "none";
+    });
+    document.querySelectorAll(".tournament-create-swiss-rounds-row").forEach(function (el) {
+        el.style.display = swiss ? "" : "none";
     });
 }
 // Apply the initial state on load (mirrors the default-selected format).

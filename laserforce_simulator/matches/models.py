@@ -1,3 +1,4 @@
+import math
 from datetime import datetime
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
@@ -1091,6 +1092,7 @@ class Tournament(models.Model):
         ("double_elimination", "Double elimination"),
         ("round_robin", "Round robin"),
         ("round_robin_double_elim", "Round robin → Double elimination"),
+        ("swiss", "Swiss"),
     )
     STATE_CHOICES = (
         ("setup", "Setup"),  # participants chosen, Seeding editable, bracket NOT built
@@ -1142,6 +1144,10 @@ class Tournament(models.Model):
     # Meaningful only for ``format == "round_robin_double_elim"``; 0 otherwise.
     wb_advancers = models.PositiveSmallIntegerField(default=0)
     lb_advancers = models.PositiveSmallIntegerField(default=0)
+    # LG-02c (Swiss) — total number of Swiss rounds. 0 = auto (resolved at lock
+    # to ceil(log2(N)), clamped to [1, N-1], then written back here — frozen).
+    # No choices. Meaningful only for format == "swiss"; 0 otherwise.
+    swiss_rounds = models.PositiveSmallIntegerField(default=0)
 
     def __str__(self) -> str:
         return self.name
@@ -1164,6 +1170,7 @@ class Tournament(models.Model):
         from .bracket import (
             build_bracket,
             build_double_elim_bracket,
+            build_swiss_round,
             ParticipantSpec,
             series_length_for_depth,
             series_length_for_round,
@@ -1222,6 +1229,52 @@ class Tournament(models.Model):
                 pos_by_matchday[fixture.matchday] = pos + 1
             self.state = "active"
             self.save(update_fields=["state"])
+            return
+
+        # LG-02c (Swiss) — even-N only, no byes ever; resolve + clamp + freeze
+        # the round count; build R1 via the seed "fold"; persist flat,
+        # edge-less Swiss nodes (Bo1). Later rounds are DEFERRED to
+        # ``advance_swiss_if_round_finished``.
+        if self.format == "swiss":
+            n = len(participants)
+            if n % 2 != 0:
+                raise ValidationError("Swiss requires an even number of participants.")
+
+            # Resolve + clamp + freeze the round count.
+            total = self.swiss_rounds or math.ceil(math.log2(n))
+            total = max(1, min(total, n - 1))
+            self.swiss_rounds = total
+
+            # R1 = seed "fold". Sort by Bracket seed asc, split in half,
+            # interleave so consecutive pairs are (seed[i], seed[i + n//2]).
+            by_seed = sorted(participants, key=lambda p: p.seed)
+            half = n // 2
+            fold_order: list[int] = []
+            for i in range(half):
+                fold_order.append(by_seed[i].team_id)
+                fold_order.append(by_seed[i + half].team_id)
+            seed_by_team = {p.team_id: p.seed for p in participants}
+            team_by_id = {p.team_id: p.team for p in participants}
+
+            specs = build_swiss_round(fold_order, seed_by_team, set(), bracket_round=1)
+            for spec in specs:
+                BracketNode.objects.create(
+                    tournament=self,
+                    bracket_round=spec.bracket_round,
+                    position=spec.position,
+                    bracket_type="swiss",
+                    team_a=team_by_id[spec.team_a_id],
+                    team_b=team_by_id[spec.team_b_id],
+                    seed_a=spec.seed_a,
+                    seed_b=spec.seed_b,
+                    is_bye=False,
+                    advances_to_slot=None,
+                    loser_advances_to_slot=None,
+                    winner=None,
+                    series_length=1,
+                )
+            self.state = "active"
+            self.save(update_fields=["state", "swiss_rounds"])
             return
 
         part_specs = [
@@ -1390,14 +1443,11 @@ class Tournament(models.Model):
                 return node
         return None
 
-    def round_robin_standings(self) -> "list[StandingsRow]":
-        """LG-02c — Standings rows for this round-robin Tournament.
-
-        Assembles the three ``compute_standings`` seam inputs from this
-        Tournament's resolved round-robin nodes and returns the ranked rows.
-        Used by both the engine (champion) and the detail view (standings
-        table). Returns one row per enrolled team (zero-filled before any node
-        is played).
+    def _standings_over_nodes(self, node_qs) -> "list[StandingsRow]":
+        """Assemble the three ``compute_standings`` seam inputs from a queryset
+        of resolved Bracket nodes (Bo1) and return the ranked rows. Shared by
+        ``round_robin_standings`` (RR nodes) and ``swiss_standings`` (Swiss
+        nodes).
         """
         from .standings import compute_standings
 
@@ -1405,9 +1455,9 @@ class Tournament(models.Model):
         enrolled_teams = [(p.team_id, p.team.name) for p in participants]
 
         nodes = list(
-            self.nodes.filter(bracket_type="round_robin")
-            .select_related("team_a", "team_b")
-            .prefetch_related("series_matches__match__game_rounds")
+            node_qs.select_related("team_a", "team_b").prefetch_related(
+                "series_matches__match__game_rounds"
+            )
         )
 
         completed_matches: list[dict] = []
@@ -1418,7 +1468,7 @@ class Tournament(models.Model):
             series = list(node.series_matches.all())
             if not series:
                 continue
-            # RR is Bo1 — exactly one played SeriesMatch once resolved.
+            # Bo1 — exactly one played SeriesMatch once resolved.
             match = series[0].match
             if match is None:
                 continue
@@ -1429,7 +1479,7 @@ class Tournament(models.Model):
                     "team_blue_id": match.team_blue_id,
                     # node.winner equals match.winner on a clean win and the
                     # break_tie result on a true tie — never None for a
-                    # resolved RR node.
+                    # resolved node.
                     "winner_team_id": node.winner_id,
                     "red_rounds_won": match.red_rounds_won,
                     "blue_rounds_won": match.blue_rounds_won,
@@ -1451,6 +1501,58 @@ class Tournament(models.Model):
                 )
 
         return compute_standings(completed_matches, enrolled_teams, season_rounds)
+
+    def round_robin_standings(self) -> "list[StandingsRow]":
+        """LG-02c — Standings rows for this round-robin Tournament.
+
+        Assembles the three ``compute_standings`` seam inputs from this
+        Tournament's resolved round-robin nodes and returns the ranked rows.
+        Used by both the engine (champion) and the detail view (standings
+        table). Returns one row per enrolled team (zero-filled before any node
+        is played).
+        """
+        return self._standings_over_nodes(self.nodes.filter(bracket_type="round_robin"))
+
+    def swiss_standings(self) -> "list[StandingsRow]":
+        """LG-02c (Swiss) — Buchholz-re-ranked Standings for this Swiss
+        Tournament.
+
+        Base rows come from ``_standings_over_nodes`` over the Swiss nodes; the
+        Buchholz re-rank layer (pure) re-sorts them on the locked Swiss ladder
+        (``league_points desc → Buchholz desc → round_wins desc → total_score
+        desc → team_name asc``).
+        """
+        from .bracket import swiss_buchholz_rerank
+
+        rows = self._standings_over_nodes(self.nodes.filter(bracket_type="swiss"))
+        opponents_by_team = self._swiss_opponent_graph()
+        return swiss_buchholz_rerank(rows, opponents_by_team)
+
+    def _swiss_opponent_graph(self) -> dict[int, list[int]]:
+        """LG-02c (Swiss) — the played-pairs opponent graph from the Swiss
+        nodes (each Swiss node = one pairing team_a / team_b). Only nodes whose
+        both slots are filled count; a rematch contributes to both lists each
+        time it was played (Buchholz sums per played pairing).
+        """
+        graph: dict[int, list[int]] = {}
+        for node in self.nodes.filter(bracket_type="swiss"):
+            a, b = node.team_a_id, node.team_b_id
+            if a is None or b is None:
+                continue
+            graph.setdefault(a, []).append(b)
+            graph.setdefault(b, []).append(a)
+        return graph
+
+    def _swiss_played_pairs(self) -> "set[frozenset[int]]":
+        """LG-02c (Swiss) — the side-agnostic set of played pairings derived
+        from existing Swiss nodes' team_a_id / team_b_id (every node IS a
+        pairing).
+        """
+        pairs: set[frozenset[int]] = set()
+        for node in self.nodes.filter(bracket_type="swiss"):
+            if node.team_a_id is not None and node.team_b_id is not None:
+                pairs.add(frozenset({node.team_a_id, node.team_b_id}))
+        return pairs
 
     @transaction.atomic
     def complete_round_robin_if_finished(self) -> None:
@@ -1544,6 +1646,69 @@ class Tournament(models.Model):
 
         self._persist_elim_specs(specs, series_length_by_spec)
         # The Tournament STAYS active — the DE Grand final crowns the champion.
+
+    @transaction.atomic
+    def advance_swiss_if_round_finished(self) -> None:
+        """LG-02c (Swiss) — build the next Swiss round, or crown, when the
+        current (highest) Swiss round's last node resolves.
+
+        No-op unless ``format == "swiss"`` and ``state == "active"``. Determine
+        the current (highest) Swiss bracket_round; if NOT all its nodes have a
+        winner, no-op. If resolved AND ``current_round < swiss_rounds``, build +
+        persist the next round's nodes (greedy ranked sweep from
+        ``swiss_standings`` + ``_swiss_played_pairs``). If resolved AND
+        ``current_round == swiss_rounds``, crown ``swiss_standings()[0]`` and
+        complete.
+        """
+        if self.format != "swiss" or self.state != "active":
+            return
+
+        swiss_nodes = list(self.nodes.filter(bracket_type="swiss"))
+        current_round = max((n.bracket_round for n in swiss_nodes), default=0)
+        if current_round == 0:
+            return
+        current_nodes = [n for n in swiss_nodes if n.bracket_round == current_round]
+        if any(n.winner_id is None for n in current_nodes):
+            return  # round not finished
+
+        if current_round < self.swiss_rounds:
+            from .bracket import build_swiss_round
+
+            rows = self.swiss_standings()
+            ranked_team_ids = [row.team_id for row in rows]
+            played_pairs = self._swiss_played_pairs()
+            participants = list(self.participants.all())
+            seed_by_team = {p.team_id: p.seed for p in participants}
+            team_by_id = {p.team_id: p.team for p in participants}
+            specs = build_swiss_round(
+                ranked_team_ids,
+                seed_by_team,
+                played_pairs,
+                bracket_round=current_round + 1,
+            )
+            for spec in specs:
+                BracketNode.objects.create(
+                    tournament=self,
+                    bracket_round=spec.bracket_round,
+                    position=spec.position,
+                    bracket_type="swiss",
+                    team_a=team_by_id[spec.team_a_id],
+                    team_b=team_by_id[spec.team_b_id],
+                    seed_a=spec.seed_a,
+                    seed_b=spec.seed_b,
+                    is_bye=False,
+                    advances_to_slot=None,
+                    loser_advances_to_slot=None,
+                    winner=None,
+                    series_length=1,
+                )
+            # Tournament STAYS active.
+        else:
+            rows = self.swiss_standings()
+            if rows:
+                self.champion_id = rows[0].team_id
+                self.state = "completed"
+                self.save(update_fields=["champion", "state"])
 
 
 class TournamentParticipant(models.Model):
@@ -1644,6 +1809,7 @@ class BracketNode(models.Model):
             ("losers", "Losers bracket"),
             ("grand_final", "Grand final"),
             ("round_robin", "Round robin"),
+            ("swiss", "Swiss"),
         ),
         default="winners",
     )
