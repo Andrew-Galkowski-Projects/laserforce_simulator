@@ -1009,3 +1009,140 @@ class TestPlayNextNodeSingleElimUnchanged(TestCase):
         t.refresh_from_db()
         self.assertEqual(t.state, "completed")
         self.assertIsNotNone(t.champion)
+
+
+# ===========================================================================
+# LG-02c — Round robin tournament format (engine)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified — the
+# single/double-elim engine tests stay green as regression guards). Seam
+# contract: ``.claude/worktrees/lg-02c-round-robin-seam-contract.md`` §5 / §10.
+#
+# RR nodes have advances_to=None on EVERY node, so the elim "crown when
+# advances_to is None" rule would WRONGLY crown on the FIRST resolved node.
+# play_next_node's RR guard (``if tournament.format == "round_robin":`` after
+# stamping node.winner) SKIPS the advance/crown block and instead defers
+# completion to complete_round_robin_if_finished() after ALL nodes resolve.
+#
+# The sims are RANDOM — we never assert WHICH team wins or exact points. We
+# assert: ONE node resolves per call, NO early crown, and draining to None
+# crowns the standings leader + completes with no advance_winner mutation ever
+# applied to any node's parent slot (RR nodes have no parent).
+
+
+def _rr_active_tournament(n: int, *, name: str = "RREngCup") -> Tournament:
+    """A locked/active round_robin Tournament with its flat RR nodes built."""
+    t = Tournament.objects.create(name=name, format="round_robin")
+    for seed, team in enumerate(_make_teams(n), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+class TestPlayNextNodeRoundRobinNoEarlyCrown(TestCase):
+    """The FIRST play_next_node on a locked RR Tournament resolves exactly ONE
+    node and does NOT crown a champion or complete the Tournament, despite every
+    RR node having advances_to=None (the elim crown-on-None rule is skipped)."""
+
+    def test_first_call_resolves_one_node(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _rr_active_tournament(4, name="RRNoCrownOne")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            node = play_next_node(t)
+        self.assertIsNotNone(node)
+        node.refresh_from_db()
+        self.assertEqual(node.bracket_type, "round_robin")
+        # Exactly one node has a SeriesMatch recorded so far.
+        played = t.nodes.filter(series_matches__isnull=False).distinct()
+        self.assertEqual(played.count(), 1)
+
+    def test_first_call_stamps_one_series_match_and_winner(self) -> None:
+        from matches.models import SeriesMatch
+        from matches.tournament_engine import play_next_node
+
+        t = _rr_active_tournament(4, name="RRNoCrownSM")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            node = play_next_node(t)
+        node.refresh_from_db()
+        # RR is Bo1 ⇒ one SeriesMatch clinches the node.
+        self.assertEqual(SeriesMatch.objects.filter(node=node).count(), 1)
+        self.assertIsNotNone(node.winner)
+
+    def test_first_call_does_not_crown_or_complete(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _rr_active_tournament(4, name="RRNoCrownState")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_next_node(t)
+        t.refresh_from_db()
+        # No early crown despite advances_to=None on the resolved node.
+        self.assertEqual(t.state, "active")
+        self.assertIsNone(t.champion)
+
+
+class TestPlayNextNodeRoundRobinCompletes(TestCase):
+    """Draining play_next_node until None resolves every RR node and exactly
+    then crowns the standings leader + state='completed'; no advance_winner
+    mutation is ever applied (RR nodes have no parent)."""
+
+    def _drain(self, t: Tournament) -> None:
+        from matches.tournament_engine import play_next_node
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            # N=4 RR ⇒ 12 nodes; guard the loop generously.
+            for _ in range(40):
+                t.refresh_from_db()
+                if t.state == "completed":
+                    break
+                if play_next_node(t) is None:
+                    break
+
+    def test_drains_every_node(self) -> None:
+        t = _rr_active_tournament(4, name="RRDrainAll")
+        self._drain(t)
+        # Every RR node resolved (has a winner).
+        self.assertEqual(t.nodes.filter(winner__isnull=True).count(), 0)
+        self.assertEqual(
+            t.nodes.filter(series_matches__isnull=False).distinct().count(),
+            t.nodes.count(),
+        )
+
+    def test_crowns_and_completes_after_full_drain(self) -> None:
+        t = _rr_active_tournament(4, name="RRDrainComplete")
+        self._drain(t)
+        t.refresh_from_db()
+        self.assertEqual(t.state, "completed")
+        self.assertIsNotNone(t.champion)
+
+    def test_champion_is_the_standings_leader(self) -> None:
+        t = _rr_active_tournament(4, name="RRDrainLeader")
+        self._drain(t)
+        t.refresh_from_db()
+        leader_team_id = t.round_robin_standings()[0].team_id
+        self.assertEqual(t.champion_id, leader_team_id)
+
+    def test_no_advance_mutation_applied_to_any_node(self) -> None:
+        # RR nodes never gain a parent or a slot team via advancement: every node
+        # keeps advances_to=None and its team_a/team_b are the FIXED lock-time
+        # pair (no node was ever filled by an advance_winner mutation).
+        t = _rr_active_tournament(4, name="RRDrainNoAdvance")
+        # Snapshot the fixed (team_a_id, team_b_id) pairs before play.
+        before = {
+            n.id: (n.team_a_id, n.team_b_id)
+            for n in t.nodes.order_by("bracket_round", "position")
+        }
+        self._drain(t)
+        for node in t.nodes.all():
+            self.assertIsNone(node.advances_to_id)
+            self.assertIsNone(node.loser_advances_to_id)
+            # The slots are unchanged from lock time — nothing advanced into them.
+            self.assertEqual((node.team_a_id, node.team_b_id), before[node.id])
+
+    def test_next_playable_is_none_when_complete(self) -> None:
+        t = _rr_active_tournament(4, name="RRDrainNoNext")
+        self._drain(t)
+        t.refresh_from_db()
+        self.assertIsNone(t.find_next_playable_node())

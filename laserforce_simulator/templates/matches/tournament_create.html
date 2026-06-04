@@ -41,13 +41,15 @@
 
     <div class="mb-3">
         <label for="tournament-create-format" class="form-label">Bracket format</label>
-        <select class="form-select" id="tournament-create-format" name="format">
+        <select class="form-select" id="tournament-create-format" name="format"
+                onchange="(function(sel){var rr=sel.value==='round_robin';document.querySelectorAll('.tournament-create-series-length-row').forEach(function(el){el.style.display=rr?'none':'';});})(this)">
             <option value="single_elimination" selected>Single elimination</option>
             <option value="double_elimination">Double elimination</option>
+            <option value="round_robin">Round robin</option>
         </select>
     </div>
 
-    <div class="mb-3">
+    <div class="mb-3 tournament-create-series-length-row">
         <label for="tournament-create-final-series-length" class="form-label">Final series length</label>
         <select class="form-select" id="tournament-create-final-series-length" name="final_series_length">
             <option value="1" selected>Best of 1</option>
@@ -56,7 +58,7 @@
         </select>
     </div>
 
-    <div class="mb-3">
+    <div class="mb-3 tournament-create-series-length-row">
         <label for="tournament-create-semifinal-series-length" class="form-label">Semifinal series length</label>
         <select class="form-select" id="tournament-create-semifinal-series-length" name="semifinal_series_length">
             <option value="1" selected>Best of 1</option>
@@ -65,7 +67,7 @@
         </select>
     </div>
 
-    <div class="mb-3">
+    <div class="mb-3 tournament-create-series-length-row">
         <label for="tournament-create-quarterfinal-series-length" class="form-label">Quarterfinal series length</label>
         <select class="form-select" id="tournament-create-quarterfinal-series-length" name="quarterfinal_series_length">
             <option value="1" selected>Best of 1</option>
@@ -74,7 +76,7 @@
         </select>
     </div>
 
-    <div class="mb-3">
+    <div class="mb-3 tournament-create-series-length-row">
         <label for="tournament-create-earlier-series-length" class="form-label">Earlier rounds series length</label>
         <select class="form-select" id="tournament-create-earlier-series-length" name="earlier_series_length">
             <option value="1" selected>Best of 1</option>

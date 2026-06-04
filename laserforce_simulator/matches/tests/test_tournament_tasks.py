@@ -476,3 +476,92 @@ class TestPlayTournamentTaskDoubleElim:
         # A completed DE tournament reports completed == total over all groups.
         assert payload["total"] == total_groups
         assert payload["completed"] == payload["total"]
+
+
+# ---------------------------------------------------------------------------
+# LG-02c — Round robin via the Play Tournament task
+# ---------------------------------------------------------------------------
+#
+# NEW class appended below (existing classes above are NOT modified — the
+# single/double-elim task tests stay green). Seam contract:
+# ``.claude/worktrees/lg-02c-round-robin-seam-contract.md`` §5 / §10.
+#
+# ``play_tournament_task`` drains a full round-robin field (N=4) to a champion
+# under CELERY_TASK_ALWAYS_EAGER: every RR node resolved, champion stamped,
+# state='completed'. The while-loop calls play_next_node once per node (RR is
+# Bo1) and completion is decided by complete_round_robin_if_finished once every
+# node has resolved — NOT by the elim crown-on-advances_to-None rule.
+
+
+def _active_rr_tournament(n: int, *, name: str, prefix: str):
+    """A locked/active round_robin Tournament with its flat RR nodes built."""
+    from matches.models import Tournament, TournamentParticipant
+
+    t = Tournament.objects.create(name=name, format="round_robin")
+    for seed, team in enumerate(_make_teams(n, prefix), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+@pytest.mark.django_db
+class TestPlayTournamentTaskRoundRobin:
+    """§5 — a round_robin Tournament plays to completion via
+    ``play_tournament_task`` under EAGER: every node resolved, champion stamped,
+    state='completed'."""
+
+    def test_rr_plays_to_completion(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_rr_tournament(4, name="TaskRR", prefix="TtRR")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        assert (
+            result.state == "SUCCESS"
+        ), f"expected SUCCESS, got {result.state!r}; info={result.info!r}"
+        t.refresh_from_db()
+        assert t.state == "completed"
+        assert t.champion_id is not None
+
+    def test_rr_every_node_resolved(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_rr_tournament(4, name="TaskRRNodes", prefix="TtRRN")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_tournament_task.apply(args=(t.id,))
+
+        t.refresh_from_db()
+        # N=4 double round-robin ⇒ 12 nodes, all resolved with a winner.
+        assert t.nodes.count() == 12
+        assert t.nodes.filter(winner__isnull=True).count() == 0
+
+    def test_rr_champion_is_standings_leader(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_rr_tournament(4, name="TaskRRLeader", prefix="TtRRL")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_tournament_task.apply(args=(t.id,))
+
+        t.refresh_from_db()
+        leader_team_id = t.round_robin_standings()[0].team_id
+        assert t.champion_id == leader_team_id
+
+    def test_rr_return_shape_is_stage_counts(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_rr_tournament(4, name="TaskRRShape", prefix="TtRRS")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        payload = result.result
+        assert set(payload.keys()) == {"completed", "total"}
+        assert isinstance(payload["completed"], int)
+        assert isinstance(payload["total"], int)
+        # A completed RR reports completed == total over its matchday stages.
+        assert payload["completed"] == payload["total"]

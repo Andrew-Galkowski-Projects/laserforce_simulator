@@ -427,13 +427,14 @@ columns → **STAT-PROXY-01**.
 ### LG-02 · Tournament formats
 
 **Status: PARTIAL — Part 1 LG-02a / LG-02a-2 / LG-02b / LG-02b-2 DONE + LG-02c
-double-elimination DONE; LG-02c round-robin / RR→DE / Swiss + LG-02x NOT STARTED.
-Part 2 NOT STARTED.** LG-02 is a multi-step group; shipping LG-02a, its LG-02a-2
-ergonomics follow-up, the LG-02b best-of-N Series, the LG-02b-2 per-round Series
-escalation, and the LG-02c double-elimination format does **not** complete it. The
-sandbox single- and double-elimination slices — with CSV participant import and
-async play-all — are built, but the remaining three formats (round robin, RR→DE,
-Swiss), the player-pool formats, and the in-League composer remain unstarted.
+double-elimination DONE + LG-02c round-robin DONE; LG-02c RR→DE / Swiss + LG-02x
+NOT STARTED. Part 2 NOT STARTED.** LG-02 is a multi-step group; shipping LG-02a, its
+LG-02a-2 ergonomics follow-up, the LG-02b best-of-N Series, the LG-02b-2 per-round
+Series escalation, the LG-02c double-elimination format, and the LG-02c round-robin
+format does **not** complete it. The sandbox single-elimination, double-elimination,
+and round-robin slices — with CSV participant import and async play-all — are built,
+but the remaining two bracket formats (RR→DE, Swiss), the player-pool formats, and
+the in-League composer remain unstarted.
 
 The **LG-02 grill (2026-06-02)** split this monolith. A Tournament is a
 first-class **persisted, standalone sandbox** object — built and played in the
@@ -694,7 +695,7 @@ tournament completion.
     node reads its own `series_length`, Bo3 clinch at 2, Bo1 unchanged),
     `test_tournament_tasks.py` (migrate the `_active_series_tournament` helper to
     the four-field shape).
-- **LG-02c+ · [PARTIAL — double-elim DONE; round-robin / RR→DE / Swiss NOT
+- **LG-02c+ · [PARTIAL — double-elim + round-robin DONE; RR→DE / Swiss NOT
   STARTED] Additional bracket formats.** **Double elimination** (losers get a
   second chance via a losers bracket), **round robin** (all teams play each other,
   used for seeding), **round robin → double elimination** (RR seeding phase feeds a
@@ -773,12 +774,82 @@ tournament completion.
     regression), `test_tournament_engine.py` (WB loser Drop, Grand-final Bracket
     reset both branches, single-elim regression), `test_tournament_tasks.py`
     (`play_tournament_task` drains a DE bracket, stage counts over both brackets).
-  - **Round robin / RR→double-elim / Swiss · [NOT STARTED].** The remaining three
-    formats still slot in as new `format` enum values + new pure builders; each is
-    its own grill (RR scheduling + seeding handoff, the RR→DE phase composition
-    reusing the LG-02c DE bracket as its finals stage, Swiss pairing-from-standings)
-    — see [ADR-0021](docs/adr/0021-double-elimination-bracket.md) Consequences for
-    the "new format = new enum value + new pure builder" precedent this slice sets.
+  - **Round robin · [DONE].** Added a third `Tournament.format` enum value
+    (`("round_robin", "Round robin")`): a **flat double round-robin** where every
+    enrolled team plays every other **twice** (one fixture per leg), with **NO
+    advancement** — the champion is the **Standings** leader once every node is
+    resolved. Unlike the elim formats it has no bracket tree: a **flat set of
+    `BracketNode` rows with no `advances_to` / `loser_advances_to` edges**. It reuses
+    three existing pure seams verbatim — `generate_schedule` (the fixture list, whose
+    full output **is** a double RR — each pair twice, once per leg), `compute_standings`
+    (the LG-06g ranked table), and the LG-02b `SeriesMatch` clinch engine (Bo1 per
+    fixture) — so it shipped as a **choices widen + two `Tournament` methods + one
+    engine guard + a `_BRACKET_RANK` entry**, with **no new pure builder** and **no
+    `matches/bracket.py` import-allowlist change** (only `_BRACKET_RANK["round_robin"]
+    = 3`, a literal edit; `TestNoDjangoImportsLeaked` green). Single- and double-elim
+    are **byte-unchanged**. `BracketNode.bracket_type` choices gain `"round_robin"`
+    (fits the existing `max_length=12`). Migration
+    `matches/migrations/0037_tournament_round_robin.py` (dep
+    `0036_bracketnode_double_elimination`; two `AlterField`s — `Tournament.format` +
+    `BracketNode.bracket_type` choices widen — **no `RunPython`, no backfill**,
+    ADR-0004). Build: a **third `format` branch in `Tournament.lock_and_build()`**
+    (model layer, **not** `bracket.py`) deferred-imports `generate_schedule` and
+    creates one node per fixture — `bracket_type="round_robin"`,
+    `bracket_round=matchday`, `position`=0-based index within the matchday,
+    `team_a`/`team_b` + `seed_a`/`seed_b` fixed at lock, `is_bye=False`,
+    `series_length=1` (Bo1), `advances_to`/`loser_advances_to` left `None` — and runs
+    **no wiring pass and no `resolve_bye_chain`** (RR nodes never advance; N=4 → 12
+    nodes, N=6 → 30). Two new `Tournament` methods (both deferred-import
+    `compute_standings`): **`round_robin_standings()`** assembles the 9-key
+    `completed_matches` / `(id, name)` `enrolled_teams` / 6-key `season_rounds` seam
+    inputs from the RR nodes and returns ranked `StandingsRow`s for every enrolled team
+    (zero-filled pre-play; `winner_team_id = node.winner_id`, never `None` for a
+    resolved node; no seed-aware tiebreak override — `compute_standings`' `team_name
+    asc` final tiebreak stands); **`complete_round_robin_if_finished()`** (idempotent,
+    parallel to `Season.complete_if_finished`) stamps `champion =
+    round_robin_standings()[0].team_id` + `state="completed"` once **every** RR node
+    has `winner_id is not None`. Engine `play_next_node` stays **ONE**
+    per-Match-atomic loop for all three formats; on an RR clinch a **guard `if
+    tournament.format == "round_robin":`** (after the `node.winner` stamp, before the
+    elim advance/crown block) calls `complete_round_robin_if_finished()` then `return
+    node` — **required** to skip the elim "crown when `advances_to` is `None`" rule,
+    which would otherwise wrongly crown on the first resolved node.
+    `find_next_node` is **UNCHANGED** (an unplayed RR node is playable, a resolved one
+    skipped; sort `(3, matchday, position)`). View/template: the create-form
+    `<select>` (`tournament-create-format`) gains a **`"Round robin"`** option
+    (forgiving fallback to `single_elimination`; the four series-length selects hidden
+    client-side for RR, their inert values harmless); the detail page keeps
+    `_build_rounds`' 3-key elim dict (all empty for RR) and rides on two NEW
+    `_detail_context` keys **`rr_crosstable`** + **`rr_standings`** (empty for elim),
+    rendering an N×N crosstable (DOM id **`tournament-rr-crosstable`** — leg
+    `round_number==1` → `cell[team_a][team_b]`, leg `2` → `cell[team_b][team_a]`,
+    diagonal blank; the view re-derives `round_number` via `generate_schedule` since
+    the node only stores `matchday`/`position`) + a live standings table (DOM id
+    **`tournament-rr-standings`**), reusing the lock / play-next / play-all controls +
+    `tournament-champion-banner` verbatim; no per-node series-score / Bo-N labels (RR
+    is Bo1). **Non-deterministic** (`simulate_match` draws fresh per-round seeds) ⇒
+    **no SIM-07/SIM-08 interaction, NO Score Calibration re-baseline**; **no new ADR**
+    (reversible — choices widen + two methods + a deferred import) and **no new
+    CONTEXT.md term** (reuses Tournament / Bracket node / Standings) — ADR-0021 +
+    CONTEXT.md `### Tournaments` extended at grilling time, not re-touched. Seam
+    [`.claude/worktrees/lg-02c-round-robin-seam-contract.md`](.claude/worktrees/lg-02c-round-robin-seam-contract.md).
+    Tests: `test_bracket.py` (`TestBracketRankRoundRobin`, `TestNoDjangoImportsLeaked`
+    green), `test_tournament_models.py` (`TestTournamentRoundRobinFormat`,
+    `TestLockAndBuildRoundRobin`, `TestRoundRobinStandings`,
+    `TestCompleteRoundRobinIfFinished`), `test_tournament_engine.py`
+    (`TestPlayNextNodeRoundRobinNoEarlyCrown`, `TestPlayNextNodeRoundRobinCompletes`),
+    `test_tournament_views.py` (`TestCreateFormRoundRobin`,
+    `TestDetailRoundRobinCrosstable`), `test_tournament_tasks.py`
+    (`TestPlayTournamentTaskRoundRobin`) — assert on pure functions, persisted
+    node/row shapes, `node.winner` / `champion` / `state`, standings ORDER, and DOM
+    ids, **never** exact simulated point totals.
+  - **RR→double-elim / Swiss · [NOT STARTED].** The remaining two formats still slot
+    in as new `format` enum values (Swiss likely a new pure builder; RR→DE composing
+    the now-shipped round-robin seeding phase with the LG-02c DE bracket as its finals
+    stage); each is its own grill (the RR→DE phase composition + seeding handoff,
+    Swiss pairing-from-standings) — see
+    [ADR-0021](docs/adr/0021-double-elimination-bracket.md) Consequences for the "new
+    format = new enum value + reused/new pure seam" precedent this slice extends.
 - **LG-02x · [NOT STARTED] Player-pool formats (Random Draw / Duos / Trios) — needs
   its own grill.** Formats with **no pre-set teams**: a pool of individual players
   registers, then the system assigns teams. **Random Draw** — randomize team

@@ -1089,6 +1089,7 @@ class Tournament(models.Model):
     FORMAT_CHOICES = (
         ("single_elimination", "Single elimination"),
         ("double_elimination", "Double elimination"),
+        ("round_robin", "Round robin"),
     )
     STATE_CHOICES = (
         ("setup", "Setup"),  # participants chosen, Seeding editable, bracket NOT built
@@ -1165,6 +1166,40 @@ class Tournament(models.Model):
         participants = list(self.participants.all())
         if len(participants) < 4:
             raise ValidationError("A tournament requires at least 4 participants.")
+
+        # LG-02c — round-robin: a flat set of BracketNode rows, one per fixture
+        # from the FULL (double round-robin) output of generate_schedule. No
+        # advancement (advances_to / loser_advances_to stay None), no bye chain.
+        if self.format == "round_robin":
+            from .schedule_generator import generate_schedule
+
+            team_ids = [p.team_id for p in participants]
+            fixtures = generate_schedule(team_ids)  # full double RR
+            seed_by_team = {p.team_id: p.seed for p in participants}
+            team_by_id = {p.team_id: p.team for p in participants}
+            # position = 0-based index within each matchday, in schedule order.
+            pos_by_matchday: dict[int, int] = {}
+            for fixture in fixtures:
+                pos = pos_by_matchday.get(fixture.matchday, 0)
+                BracketNode.objects.create(
+                    tournament=self,
+                    bracket_round=fixture.matchday,
+                    position=pos,
+                    bracket_type="round_robin",
+                    team_a=team_by_id[fixture.team_a_id],
+                    team_b=team_by_id[fixture.team_b_id],
+                    seed_a=seed_by_team[fixture.team_a_id],
+                    seed_b=seed_by_team[fixture.team_b_id],
+                    is_bye=False,
+                    advances_to_slot=None,
+                    loser_advances_to_slot=None,
+                    winner=None,
+                    series_length=1,
+                )
+                pos_by_matchday[fixture.matchday] = pos + 1
+            self.state = "active"
+            self.save(update_fields=["state"])
+            return
 
         part_specs = [
             ParticipantSpec(team_id=p.team_id, seed=p.seed) for p in participants
@@ -1296,6 +1331,92 @@ class Tournament(models.Model):
                 return node
         return None
 
+    def round_robin_standings(self) -> "list[StandingsRow]":
+        """LG-02c — Standings rows for this round-robin Tournament.
+
+        Assembles the three ``compute_standings`` seam inputs from this
+        Tournament's resolved round-robin nodes and returns the ranked rows.
+        Used by both the engine (champion) and the detail view (standings
+        table). Returns one row per enrolled team (zero-filled before any node
+        is played).
+        """
+        from .standings import compute_standings
+
+        participants = list(self.participants.select_related("team"))
+        enrolled_teams = [(p.team_id, p.team.name) for p in participants]
+
+        nodes = list(
+            self.nodes.filter(bracket_type="round_robin")
+            .select_related("team_a", "team_b")
+            .prefetch_related("series_matches__match__game_rounds")
+        )
+
+        completed_matches: list[dict] = []
+        season_rounds: list[dict] = []
+        for node in nodes:
+            if node.winner_id is None:
+                continue
+            series = list(node.series_matches.all())
+            if not series:
+                continue
+            # RR is Bo1 — exactly one played SeriesMatch once resolved.
+            match = series[0].match
+            if match is None:
+                continue
+            completed_matches.append(
+                {
+                    "match_id": match.id,
+                    "team_red_id": match.team_red_id,
+                    "team_blue_id": match.team_blue_id,
+                    # node.winner equals match.winner on a clean win and the
+                    # break_tie result on a true tie — never None for a
+                    # resolved RR node.
+                    "winner_team_id": node.winner_id,
+                    "red_rounds_won": match.red_rounds_won,
+                    "blue_rounds_won": match.blue_rounds_won,
+                    "red_total_points": match.red_total_points,
+                    "blue_total_points": match.blue_total_points,
+                    "date_played": match.date_played,
+                }
+            )
+            for gr in match.game_rounds.all():
+                season_rounds.append(
+                    {
+                        "round_id": gr.id,
+                        "team_red_id": gr.team_red_id,
+                        "team_blue_id": gr.team_blue_id,
+                        "red_points": gr.red_points,
+                        "blue_points": gr.blue_points,
+                        "date_played": gr.date_played,
+                    }
+                )
+
+        return compute_standings(completed_matches, enrolled_teams, season_rounds)
+
+    @transaction.atomic
+    def complete_round_robin_if_finished(self) -> None:
+        """LG-02c — crown the Standings leader once every RR node is resolved.
+
+        No-op unless ``format == "round_robin"`` and ``state == "active"``.
+        The RR is finished iff every RR node has a winner; then the rank-1
+        Standings row becomes the champion and ``state`` flips to
+        ``"completed"``. Idempotent (a second call after completion is a no-op
+        via the state guard).
+        """
+        if self.format != "round_robin" or self.state != "active":
+            return
+
+        nodes = self.nodes.filter(bracket_type="round_robin")
+        if any(node.winner_id is None for node in nodes):
+            return
+
+        rows = self.round_robin_standings()
+        if not rows:
+            return
+        self.champion_id = rows[0].team_id
+        self.state = "completed"
+        self.save(update_fields=["champion", "state"])
+
 
 class TournamentParticipant(models.Model):
     """LG-02a — one Team's enrolment + Bracket seed in a Tournament."""
@@ -1394,6 +1515,7 @@ class BracketNode(models.Model):
             ("winners", "Winners bracket"),
             ("losers", "Losers bracket"),
             ("grand_final", "Grand final"),
+            ("round_robin", "Round robin"),
         ),
         default="winners",
     )

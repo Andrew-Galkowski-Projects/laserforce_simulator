@@ -82,6 +82,15 @@ def play_next_node(tournament: Tournament) -> "BracketNode | None":
     node.winner = winner_team
     node.save(update_fields=["winner"])
 
+    # 7a. Round-robin: every node has advances_to=None, so the elim
+    # "crown on advances_to is None" rule would wrongly crown on the FIRST
+    # resolved node. SKIP the advance/crown block entirely; the champion +
+    # completion are decided by complete_round_robin_if_finished after every
+    # RR node has a winner.
+    if tournament.format == "round_robin":
+        tournament.complete_round_robin_if_finished()
+        return node
+
     # 8. Flatten the bracket (LG-02c widens select_related to loser_advances_to).
     flat = [
         _node_to_dict(n)

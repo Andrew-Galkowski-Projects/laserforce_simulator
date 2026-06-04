@@ -442,7 +442,7 @@ def series_length_for_round(
     )
 
 
-_BRACKET_RANK = {"winners": 0, "losers": 1, "grand_final": 2}
+_BRACKET_RANK = {"winners": 0, "losers": 1, "grand_final": 2, "round_robin": 3}
 
 
 def find_next_node(nodes: list[dict]) -> Optional[dict]:
