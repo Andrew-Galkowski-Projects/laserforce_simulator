@@ -2241,3 +2241,81 @@ class TestTournamentCreateRosterEligibility(TestCase):
                 p.team.is_valid_roster,
                 f"{p.team.name} has an incomplete roster",
             )
+
+
+# ===========================================================================
+# Match score node element (the 6-point Match score on each node card)
+# ===========================================================================
+#
+# Each played Series Match renders a per-game match-score element
+# (``tournament-node-match-scores-...`` with a ``match-score`` span) alongside
+# the existing ``Bo{n}`` label and ``wins_a–wins_b`` series-score. Single-elim
+# keeps the legacy ``{round}-{position}`` id shape; the other formats use the
+# ``{bracket_type}-{round}-{position}`` shape via the shared node-card include.
+
+
+def _play_one_node(t: Tournament) -> None:
+    """Resolve exactly one playable node's Series to a winner via the engine
+    (fast ticks), so a played Match exists to render a match score for."""
+    from matches.tournament_engine import play_next_node
+
+    with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+        # A Bo1 node clinches in one call; loop a few times defensively.
+        for _ in range(6):
+            node = play_next_node(t)
+            if node is not None and node.winner_id is not None:
+                break
+    t.refresh_from_db()
+
+
+class TestMatchScoreNodeElement(TestCase):
+    """A played node renders the 6-point match-score element; an unplayed node
+    does not."""
+
+    def test_single_elim_played_node_renders_match_score(self) -> None:
+        t = _active_tournament(4, name="MSViewSE")
+        _play_one_node(t)
+        resolved = t.nodes.filter(winner__isnull=False, is_bye=False).first()
+        self.assertIsNotNone(resolved, "expected one resolved node after play")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        dom_id = (
+            f"tournament-node-match-scores-"
+            f"{resolved.bracket_round}-{resolved.position}"
+        )
+        self.assertIn(f'id="{dom_id}"', body)
+        # The element carries a match-score span with an en-dash score.
+        start = body.index(f'id="{dom_id}"')
+        self.assertIn("match-score", body[start : start + 300])
+
+    def test_swiss_played_node_renders_match_score(self) -> None:
+        t = _swiss_active_tournament(4, name="MSViewSwiss")
+        _play_one_node(t)
+        resolved = t.nodes.filter(bracket_type="swiss", winner__isnull=False).first()
+        self.assertIsNotNone(resolved, "expected one resolved swiss node")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        dom_id = (
+            f"tournament-node-match-scores-swiss-"
+            f"{resolved.bracket_round}-{resolved.position}"
+        )
+        self.assertIn(f'id="{dom_id}"', body)
+
+    def test_unplayed_node_has_no_match_score_element(self) -> None:
+        t = _active_tournament(4, name="MSViewUnplayed")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        # No node has a played Match yet at lock, so no match-score element.
+        self.assertNotIn("tournament-node-match-scores-", body)
+
+    def test_swiss_standings_labels_match_points(self) -> None:
+        # The Swiss standings header makes the 6-point Match score explicit.
+        t = _swiss_active_tournament(4, name="MSViewStdHeader")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        start = body.index('id="tournament-swiss-standings"')
+        self.assertIn("Match Pts", body[start : start + 600])

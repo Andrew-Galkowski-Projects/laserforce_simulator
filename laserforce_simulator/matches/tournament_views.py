@@ -43,6 +43,7 @@ from .models import (
 )
 from .schedule_generator import generate_schedule
 from .simulation.entrypoints import BatchSimulator
+from .standings import match_score
 from .tasks import play_tournament_task
 from .tournament_engine import play_next_node
 
@@ -274,6 +275,42 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
     return redirect("tournament_detail", tournament_id=tournament.id)
 
 
+def _series_games(node: BracketNode, series_matches: list) -> list:
+    """Per-Match scores for a node's played Series Matches, in node-slot order.
+
+    Each entry is ``{game_number, match_id, score_a, score_b}`` where
+    ``score_a`` / ``score_b`` are the 6-point :func:`match_score` from the
+    perspective of the node's ``team_a`` / ``team_b`` slots (mapped through the
+    Match's physical sides — ``team_a`` plays red in a tournament Match). Skips
+    SeriesMatch rows with no played ``match``. Empty list for an unplayed node.
+    """
+    games = []
+    for sm in series_matches:
+        match = sm.match
+        if match is None:
+            continue
+        red_score, blue_score = match_score(
+            match.red_rounds_won,
+            match.blue_rounds_won,
+            match.winner_id,
+            match.team_red_id,
+            match.team_blue_id,
+        )
+        if match.team_red_id == node.team_a_id:
+            score_a, score_b = red_score, blue_score
+        else:
+            score_a, score_b = blue_score, red_score
+        games.append(
+            {
+                "game_number": sm.game_number,
+                "match_id": match.id,
+                "score_a": score_a,
+                "score_b": score_b,
+            }
+        )
+    return games
+
+
 def _build_rounds(tournament: Tournament) -> dict:
     """Group nodes into a 3-key dict (one slice per sub-bracket) for the tree
     render: ``{"winners": [...], "losers": [...], "grand_final": [...]}``, each
@@ -285,7 +322,7 @@ def _build_rounds(tournament: Tournament) -> dict:
     """
     nodes = list(
         tournament.nodes.select_related("team_a", "team_b", "winner")
-        .prefetch_related("series_matches")
+        .prefetch_related("series_matches__match")
         .order_by("bracket_round", "position")
     )
     # by_section[bracket_type][bracket_round] -> list of node view-dicts.
@@ -313,6 +350,7 @@ def _build_rounds(tournament: Tournament) -> dict:
             "wins_b": wins_b,
             "series_length": node.series_length,
             "series_matches": series_matches,
+            "games": _series_games(node, series_matches),
             "winner": node.winner,
         }
         section = by_section.setdefault(node.bracket_type, {})
@@ -458,7 +496,7 @@ def _build_swiss_rounds(tournament: Tournament) -> list:
     nodes = list(
         tournament.nodes.filter(bracket_type="swiss")
         .select_related("team_a", "team_b", "winner")
-        .prefetch_related("series_matches")
+        .prefetch_related("series_matches__match")
         .order_by("bracket_round", "position")
     )
     by_round: dict[int, list] = {}
@@ -480,6 +518,7 @@ def _build_swiss_rounds(tournament: Tournament) -> list:
             "wins_b": wins_b,
             "series_length": node.series_length,
             "series_matches": series_matches,
+            "games": _series_games(node, series_matches),
             "winner": node.winner,
         }
         by_round.setdefault(node.bracket_round, []).append(view_dict)

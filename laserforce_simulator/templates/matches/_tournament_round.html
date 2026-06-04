@@ -23,11 +23,16 @@
             <div id="tournament-node-series-score-{{ bracket_type }}-{{ node.bracket_round }}-{{ node.position }}">
                 <small class="text-muted">{{ node.wins_a }}–{{ node.wins_b }}</small>
             </div>
-            {% for sm in node.series_matches %}
-            {% if sm.match %}
-            <div><a href="{% url 'match_detail' sm.match.id %}">Game {{ sm.game_number }}</a></div>
+            {% if node.games %}
+            <div id="tournament-node-match-scores-{{ bracket_type }}-{{ node.bracket_round }}-{{ node.position }}">
+                {% for game in node.games %}
+                <div>
+                    <a href="{% url 'match_detail' game.match_id %}">Game {{ game.game_number }}</a>
+                    <small class="match-score">{{ game.score_a }}–{{ game.score_b }}</small>
+                </div>
+                {% endfor %}
+            </div>
             {% endif %}
-            {% endfor %}
             {% endif %}
             {% if node.winner %}
             <div><strong>Winner: {{ node.winner.name }}</strong></div>

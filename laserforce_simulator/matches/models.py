@@ -1443,14 +1443,15 @@ class Tournament(models.Model):
                 return node
         return None
 
-    def _standings_over_nodes(self, node_qs) -> "list[StandingsRow]":
-        """Assemble the three ``compute_standings`` seam inputs from a queryset
-        of resolved Bracket nodes (Bo1) and return the ranked rows. Shared by
-        ``round_robin_standings`` (RR nodes) and ``swiss_standings`` (Swiss
-        nodes).
-        """
-        from .standings import compute_standings
+    def _match_dicts_over_nodes(self, node_qs) -> tuple:
+        """Assemble the three ``compute_standings`` seam inputs —
+        ``(enrolled_teams, completed_matches, season_rounds)`` — from a queryset
+        of resolved Bracket nodes (Bo1).
 
+        Factored out of ``_standings_over_nodes`` so callers that need the raw
+        ``completed_matches`` dicts (Swiss's match-score points) can reuse the
+        same single multi-join walk rather than re-querying the nodes.
+        """
         participants = list(self.participants.select_related("team"))
         enrolled_teams = [(p.team_id, p.team.name) for p in participants]
 
@@ -1500,6 +1501,19 @@ class Tournament(models.Model):
                     }
                 )
 
+        return enrolled_teams, completed_matches, season_rounds
+
+    def _standings_over_nodes(self, node_qs) -> "list[StandingsRow]":
+        """Assemble the three ``compute_standings`` seam inputs from a queryset
+        of resolved Bracket nodes (Bo1) and return the ranked rows. Shared by
+        ``round_robin_standings`` (RR nodes) and ``swiss_standings`` (Swiss
+        nodes).
+        """
+        from .standings import compute_standings
+
+        enrolled_teams, completed_matches, season_rounds = self._match_dicts_over_nodes(
+            node_qs
+        )
         return compute_standings(completed_matches, enrolled_teams, season_rounds)
 
     def round_robin_standings(self) -> "list[StandingsRow]":
@@ -1517,14 +1531,27 @@ class Tournament(models.Model):
         """LG-02c (Swiss) — Buchholz-re-ranked Standings for this Swiss
         Tournament.
 
-        Base rows come from ``_standings_over_nodes`` over the Swiss nodes; the
-        Buchholz re-rank layer (pure) re-sorts them on the locked Swiss ladder
-        (``league_points desc → Buchholz desc → round_wins desc → total_score
-        desc → team_name asc``).
+        Swiss ranks on the accumulated 6-point **Match score** (``+2`` per Round
+        won, ``+2`` for winning the Match) rather than ``3*wins`` — so a dominant
+        sweep (6) outranks a scrappy split win (4) and pairings/Buchholz reflect
+        margin, not just the win/loss bit. Each row's ``league_points`` is
+        overridden with that per-team Match-score sum; the Buchholz re-rank layer
+        (pure) then re-sorts on the locked ladder (``league_points desc →
+        Buchholz desc → round_wins desc → total_score desc → team_name asc``) —
+        Buchholz sums opponents' ``league_points``, so it inherits the Match-score
+        scale automatically.
         """
-        from .bracket import swiss_buchholz_rerank
+        from dataclasses import replace
 
-        rows = self._standings_over_nodes(self.nodes.filter(bracket_type="swiss"))
+        from .bracket import swiss_buchholz_rerank
+        from .standings import compute_standings, swiss_points_by_team
+
+        enrolled_teams, completed_matches, season_rounds = self._match_dicts_over_nodes(
+            self.nodes.filter(bracket_type="swiss")
+        )
+        rows = compute_standings(completed_matches, enrolled_teams, season_rounds)
+        points = swiss_points_by_team(completed_matches)
+        rows = [replace(row, league_points=points.get(row.team_id, 0)) for row in rows]
         opponents_by_team = self._swiss_opponent_graph()
         return swiss_buchholz_rerank(rows, opponents_by_team)
 

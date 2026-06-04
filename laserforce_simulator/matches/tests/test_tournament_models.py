@@ -1850,6 +1850,54 @@ def _stamp_swiss_node_played(node: BracketNode, winner) -> None:
     node.save(update_fields=["winner"])
 
 
+def _stamp_swiss_node_split(node: BracketNode, match_winner) -> None:
+    """Stamp a Swiss node as a SPLIT decisive Bo1: team_a (red) wins Round 1,
+    team_b (blue) wins Round 2 (1-1 on rounds), and ``match_winner`` takes the
+    Match on total points. The 6-point Match score is then 4-2 in the winner's
+    favour (4 = one round + the match-win bonus, 2 = one round)."""
+    from matches.models import GameRound, Match, SeriesMatch
+
+    team_red = node.team_a  # team_a plays red in a tournament Match
+    team_blue = node.team_b
+    # Red always wins R1, Blue always wins R2 (the split); the total-points
+    # margin decides the Match winner.
+    if match_winner.id == team_red.id:
+        red_r1, blue_r1, red_r2, blue_r2 = 5000, 10, 10, 3000  # red total 5010 wins
+    else:
+        red_r1, blue_r1, red_r2, blue_r2 = 3000, 10, 10, 5000  # blue total 5010 wins
+    match = Match.objects.create(
+        team_red=team_red,
+        team_blue=team_blue,
+        match_type="tournament",
+        red_round1_points=red_r1,
+        blue_round1_points=blue_r1,
+        red_round2_points=red_r2,
+        blue_round2_points=blue_r2,
+        is_completed=True,
+    )
+    GameRound.objects.create(
+        match=match,
+        round_number=1,
+        team_red=team_red,
+        team_blue=team_blue,
+        red_points=red_r1,
+        blue_points=blue_r1,
+    )
+    GameRound.objects.create(
+        match=match,
+        round_number=2,
+        team_red=team_red,
+        team_blue=team_blue,
+        red_points=red_r2,
+        blue_points=blue_r2,
+    )
+    SeriesMatch.objects.create(
+        node=node, match=match, game_number=1, winner=match_winner
+    )
+    node.winner = match_winner
+    node.save(update_fields=["winner"])
+
+
 def _make_swiss_node(t: Tournament, bracket_round: int, position: int, team_a, team_b):
     """Hand-stamp a flat Swiss node row (used to build a deferred round-2 by hand
     for the standings / Buchholz tests). Mirrors the lock-time create kwargs."""
@@ -2078,6 +2126,42 @@ class TestSwissStandingsBuchholz(TestCase):
         for r in rows:
             self.assertEqual(r.wins, 0)
             self.assertEqual(r.league_points, 0)
+
+
+class TestSwissMatchScorePoints(TestCase):
+    """Swiss standings rank on the 6-point Match score (``+2`` per Round won,
+    ``+2`` for winning the Match) rather than ``3*wins``, so ``league_points``
+    is the per-team Match-score sum and a sweep (6) outranks a split win (4)."""
+
+    def _league_points_by_team(self, t: Tournament) -> dict:
+        return {row.team_id: row.league_points for row in t.swiss_standings()}
+
+    def test_clean_sweep_awards_six(self) -> None:
+        t = _swiss_tournament_active(4, name="SwissMS-Sweep")
+        for node in t.nodes.filter(bracket_round=1):
+            _stamp_swiss_node_played(node, node.team_a)  # team_a sweeps -> 6-0
+        pts = self._league_points_by_team(t)
+        for node in t.nodes.filter(bracket_round=1):
+            self.assertEqual(pts[node.team_a_id], 6)
+            self.assertEqual(pts[node.team_b_id], 0)
+
+    def test_split_win_awards_four_to_winner_two_to_loser(self) -> None:
+        t = _swiss_tournament_active(4, name="SwissMS-Split")
+        node = t.nodes.filter(bracket_round=1).order_by("position").first()
+        _stamp_swiss_node_split(node, node.team_a)  # team_a wins a 4-2 split
+        pts = self._league_points_by_team(t)
+        self.assertEqual(pts[node.team_a_id], 4)
+        self.assertEqual(pts[node.team_b_id], 2)
+
+    def test_sweep_winner_outranks_split_winner(self) -> None:
+        # Two R1 nodes: one decided by a sweep (winner 6), the other by a split
+        # (winner 4). The sweep winner ranks above the split winner.
+        t = _swiss_tournament_active(4, name="SwissMS-Order")
+        r1 = list(t.nodes.filter(bracket_round=1).order_by("position"))
+        _stamp_swiss_node_played(r1[0], r1[0].team_a)  # sweep -> 6
+        _stamp_swiss_node_split(r1[1], r1[1].team_a)  # split -> 4
+        rank_by_team = {row.team_id: row.rank for row in t.swiss_standings()}
+        self.assertLess(rank_by_team[r1[0].team_a_id], rank_by_team[r1[1].team_a_id])
 
 
 class TestAdvanceSwissIfRoundFinished(TestCase):
