@@ -1263,8 +1263,9 @@ class TestRoundRobinStandings(TestCase):
         # The winner has exactly one win; the loser exactly one loss.
         self.assertEqual(by_team[node.team_a_id].wins, 1)
         self.assertEqual(by_team[node.team_b_id].losses, 1)
-        # league_points = 3*wins + 1*ties ⇒ winner has 3, loser 0.
-        self.assertEqual(by_team[node.team_a_id].league_points, 3)
+        # league_points is the 6-point Match score: a sweep (both rounds + the
+        # match) is 6 for the winner, 0 for the loser.
+        self.assertEqual(by_team[node.team_a_id].league_points, 6)
         self.assertEqual(by_team[node.team_b_id].league_points, 0)
 
     def test_standings_rank_orders_winner_above_loser(self) -> None:
@@ -1286,6 +1287,57 @@ class TestRoundRobinStandings(TestCase):
         rows = t.round_robin_standings()
         ranks = sorted(row.rank for row in rows)
         self.assertEqual(ranks, [1, 2, 3, 4])
+
+
+class TestRoundRobinMatchScorePoints(TestCase):
+    """Round-robin standings carry the 6-point Match score (``+2`` per Round
+    won, ``+2`` for winning the Match) in ``league_points`` and rank on match
+    wins FIRST with the Match score as the tiebreaker — so a sweep (6) edges a
+    split win (4) only at equal wins."""
+
+    def _league_points_by_team(self, t: Tournament) -> dict:
+        return {row.team_id: row.league_points for row in t.round_robin_standings()}
+
+    def test_clean_sweep_awards_six(self) -> None:
+        t = _rr_tournament_active(4)
+        node = t.nodes.order_by("bracket_round", "position").first()
+        _stamp_rr_node_played(node, node.team_a)  # sweep -> 6-0
+        pts = self._league_points_by_team(t)
+        self.assertEqual(pts[node.team_a_id], 6)
+        self.assertEqual(pts[node.team_b_id], 0)
+
+    def test_split_win_awards_four_to_winner_two_to_loser(self) -> None:
+        t = _rr_tournament_active(4)
+        node = t.nodes.order_by("bracket_round", "position").first()
+        _stamp_node_split(node, node.team_a)  # 4-2 split win
+        pts = self._league_points_by_team(t)
+        self.assertEqual(pts[node.team_a_id], 4)
+        self.assertEqual(pts[node.team_b_id], 2)
+
+    def test_sweep_winner_outranks_split_winner(self) -> None:
+        # Two disjoint nodes: one decided by a sweep (winner 1 win / 6 pts), the
+        # other by a split (winner 1 win / 4 pts). At EQUAL match wins, the
+        # higher Match score (the tiebreaker) puts the sweep winner above.
+        t = _rr_tournament_active(4)
+        nodes = list(t.nodes.order_by("bracket_round", "position"))
+        sweep_node, split_node = nodes[0], None
+        for node in nodes[1:]:
+            # Find a node sharing no team with the sweep node so the two winners
+            # are distinct teams.
+            if node.team_a_id not in (
+                sweep_node.team_a_id,
+                sweep_node.team_b_id,
+            ) and node.team_b_id not in (sweep_node.team_a_id, sweep_node.team_b_id):
+                split_node = node
+                break
+        self.assertIsNotNone(split_node, "expected a disjoint fixture in the RR")
+        _stamp_rr_node_played(sweep_node, sweep_node.team_a)  # 6
+        _stamp_node_split(split_node, split_node.team_a)  # 4
+        rank_by_team = {row.team_id: row.rank for row in t.round_robin_standings()}
+        self.assertLess(
+            rank_by_team[sweep_node.team_a_id],
+            rank_by_team[split_node.team_a_id],
+        )
 
 
 class TestCompleteRoundRobinIfFinished(TestCase):
@@ -1850,11 +1902,12 @@ def _stamp_swiss_node_played(node: BracketNode, winner) -> None:
     node.save(update_fields=["winner"])
 
 
-def _stamp_swiss_node_split(node: BracketNode, match_winner) -> None:
-    """Stamp a Swiss node as a SPLIT decisive Bo1: team_a (red) wins Round 1,
-    team_b (blue) wins Round 2 (1-1 on rounds), and ``match_winner`` takes the
-    Match on total points. The 6-point Match score is then 4-2 in the winner's
-    favour (4 = one round + the match-win bonus, 2 = one round)."""
+def _stamp_node_split(node: BracketNode, match_winner) -> None:
+    """Stamp ANY node (Swiss / round-robin — both Bo1) as a SPLIT decisive Bo1:
+    team_a (red) wins Round 1, team_b (blue) wins Round 2 (1-1 on rounds), and
+    ``match_winner`` takes the Match on total points. The 6-point Match score is
+    then 4-2 in the winner's favour (4 = one round + the match-win bonus, 2 =
+    one round)."""
     from matches.models import GameRound, Match, SeriesMatch
 
     team_red = node.team_a  # team_a plays red in a tournament Match
@@ -2051,8 +2104,8 @@ class TestStandingsOverNodesExtraction(TestCase):
         self.assertEqual(sorted(r.rank for r in rows), [1, 2, 3, 4])
         for r in rows:
             self.assertIsInstance(r, StandingsRow)
-        # league_points = 3*wins + 1*ties; the standings ladder orders by
-        # league_points desc — assert the ladder is monotone non-increasing.
+        # league_points is the 6-point Match-score sum; the standings ladder
+        # orders by league_points desc — assert it is monotone non-increasing.
         lps = [r.league_points for r in rows]
         self.assertEqual(lps, sorted(lps, reverse=True))
 
@@ -2148,7 +2201,7 @@ class TestSwissMatchScorePoints(TestCase):
     def test_split_win_awards_four_to_winner_two_to_loser(self) -> None:
         t = _swiss_tournament_active(4, name="SwissMS-Split")
         node = t.nodes.filter(bracket_round=1).order_by("position").first()
-        _stamp_swiss_node_split(node, node.team_a)  # team_a wins a 4-2 split
+        _stamp_node_split(node, node.team_a)  # team_a wins a 4-2 split
         pts = self._league_points_by_team(t)
         self.assertEqual(pts[node.team_a_id], 4)
         self.assertEqual(pts[node.team_b_id], 2)
@@ -2159,7 +2212,7 @@ class TestSwissMatchScorePoints(TestCase):
         t = _swiss_tournament_active(4, name="SwissMS-Order")
         r1 = list(t.nodes.filter(bracket_round=1).order_by("position"))
         _stamp_swiss_node_played(r1[0], r1[0].team_a)  # sweep -> 6
-        _stamp_swiss_node_split(r1[1], r1[1].team_a)  # split -> 4
+        _stamp_node_split(r1[1], r1[1].team_a)  # split -> 4
         rank_by_team = {row.team_id: row.rank for row in t.swiss_standings()}
         self.assertLess(rank_by_team[r1[0].team_a_id], rank_by_team[r1[1].team_a_id])
 

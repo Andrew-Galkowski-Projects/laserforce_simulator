@@ -1540,6 +1540,43 @@ class TestDetailRoundRobinCrosstable(TestCase):
                     f"off-diagonal cell for ({ids[i]}, {ids[j]}) must be filled",
                 )
 
+    def test_played_leg_carries_match_score(self) -> None:
+        # A resolved leg dict carries the 6-point Match score (match_team /
+        # match_opp), row-team perspective, each in [0, 6].
+        t = _rr_active_tournament(4, name="RRViewLegMS")
+        _resolve_all_rr_view(t)
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        crosstable = response.context["rr_crosstable"]
+        seen_played = False
+        for row in crosstable:
+            for cell in row["cells"]:
+                if cell is None:
+                    continue
+                for leg in (cell["leg1"], cell["leg2"]):
+                    if leg and leg["played"]:
+                        seen_played = True
+                        self.assertIsInstance(leg["match_team"], int)
+                        self.assertIsInstance(leg["match_opp"], int)
+                        self.assertIn(leg["match_team"], range(0, 7))
+                        self.assertIn(leg["match_opp"], range(0, 7))
+        self.assertTrue(seen_played, "expected at least one played leg")
+
+    def test_crosstable_renders_match_score_span(self) -> None:
+        t = _rr_active_tournament(4, name="RRViewMSSpan")
+        _resolve_all_rr_view(t)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn("match-score", body)
+
+    def test_rr_standings_labels_match_points(self) -> None:
+        t = _rr_active_tournament(4, name="RRViewStdHeader")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        start = body.index('id="tournament-rr-standings"')
+        self.assertIn("Match Pts", body[start : start + 600])
+
     def test_shared_controls_and_champion_banner_path_present(self) -> None:
         # The play-next + play-all controls render on an active RR Tournament
         # (shared verbatim across formats).

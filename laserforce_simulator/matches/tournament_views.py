@@ -381,8 +381,10 @@ def _build_rr_crosstable(tournament: Tournament, rows: list) -> list:
     per team in Standings order, each ``cells`` the N-long row of per-opponent
     cells in the same team order. A ``<cell>`` is ``None`` (diagonal) or a dict
     ``{"opponent_team_id", "leg1", "leg2"}`` where a leg is ``None`` or
-    ``{"node_id", "team_score", "opp_score", "played", "match_id"}`` from the
-    row team's perspective.
+    ``{"node_id", "team_score", "opp_score", "match_team", "match_opp",
+    "played", "match_id"}`` from the row team's perspective — ``team_score`` /
+    ``opp_score`` are total points, ``match_team`` / ``match_opp`` the 6-point
+    Match score.
     """
     participants = list(tournament.participants.select_related("team"))
     team_by_id = {p.team_id: p.team for p in participants}
@@ -422,26 +424,39 @@ def _build_rr_crosstable(tournament: Tournament, rows: list) -> list:
         played = bool(node.winner_id is not None and series and series[0].match)
         team_score = None
         opp_score = None
+        match_team = None  # 6-point Match score (this leg), row-team perspective
+        match_opp = None
         match_id = None
         if played:
             match = series[0].match
             match_id = match.id
+            red_match, blue_match = match_score(
+                match.red_rounds_won,
+                match.blue_rounds_won,
+                match.winner_id,
+                match.team_red_id,
+                match.team_blue_id,
+            )
             # Read from the persisted Match to be side-faithful: map node.team_a
             # / team_b to physical points by which physical side each held.
             if match.team_red_id == node.team_a_id:
-                a_points = match.red_total_points
-                b_points = match.blue_total_points
+                a_points, b_points = match.red_total_points, match.blue_total_points
+                a_match, b_match = red_match, blue_match
             else:
-                a_points = match.blue_total_points
-                b_points = match.red_total_points
+                a_points, b_points = match.blue_total_points, match.red_total_points
+                a_match, b_match = blue_match, red_match
             if row_is_team_a:
                 team_score, opp_score = a_points, b_points
+                match_team, match_opp = a_match, b_match
             else:
                 team_score, opp_score = b_points, a_points
+                match_team, match_opp = b_match, a_match
         return {
             "node_id": node.id,
             "team_score": team_score,
             "opp_score": opp_score,
+            "match_team": match_team,
+            "match_opp": match_opp,
             "played": played,
             "match_id": match_id,
         }

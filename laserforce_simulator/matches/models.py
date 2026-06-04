@@ -1516,16 +1516,48 @@ class Tournament(models.Model):
         )
         return compute_standings(completed_matches, enrolled_teams, season_rounds)
 
+    def _match_point_rows(self, node_qs) -> tuple:
+        """``compute_standings`` rows with ``league_points`` overridden by the
+        per-team 6-point **Match score** sum (``+2`` per Round won, ``+2`` for
+        winning the Match), plus the ``completed_matches`` dicts.
+
+        The override is shared by ``round_robin_standings`` (re-ranked by the
+        Match-score ladder) and ``swiss_standings`` (re-ranked by the same
+        ladder + a Buchholz tiebreak). Returns ``(rows, completed_matches)`` —
+        the rows are still in ``compute_standings`` order; the caller re-ranks.
+        """
+        from dataclasses import replace
+
+        from .standings import compute_standings, match_points_by_team
+
+        enrolled_teams, completed_matches, season_rounds = self._match_dicts_over_nodes(
+            node_qs
+        )
+        rows = compute_standings(completed_matches, enrolled_teams, season_rounds)
+        points = match_points_by_team(completed_matches)
+        rows = [replace(row, league_points=points.get(row.team_id, 0)) for row in rows]
+        return rows, completed_matches
+
     def round_robin_standings(self) -> "list[StandingsRow]":
         """LG-02c — Standings rows for this round-robin Tournament.
 
-        Assembles the three ``compute_standings`` seam inputs from this
-        Tournament's resolved round-robin nodes and returns the ranked rows.
-        Used by both the engine (champion) and the detail view (standings
-        table). Returns one row per enrolled team (zero-filled before any node
-        is played).
+        Assembles the ``compute_standings`` seam inputs from this Tournament's
+        resolved round-robin nodes and returns the ranked rows. Used by both the
+        engine (champion) and the detail view (standings table). Returns one row
+        per enrolled team (zero-filled before any node is played).
+
+        Ranks on **match wins** first, with the accumulated 6-point **Match
+        score** (``+2`` per Round won, ``+2`` for winning the Match) as the
+        TIEBREAKER between teams level on wins — so a dominant sweep edges out a
+        scrappy split win at equal wins, but more wins always ranks higher
+        regardless of margin. ``league_points`` carries that per-team Match-score
+        sum (the ``"Match Pts"`` column); rows re-rank on the ``(wins desc,
+        league_points desc, round_wins desc, total_score desc)`` ladder.
         """
-        return self._standings_over_nodes(self.nodes.filter(bracket_type="round_robin"))
+        from .standings import rerank_round_robin
+
+        rows, _ = self._match_point_rows(self.nodes.filter(bracket_type="round_robin"))
+        return rerank_round_robin(rows)
 
     def swiss_standings(self) -> "list[StandingsRow]":
         """LG-02c (Swiss) — Buchholz-re-ranked Standings for this Swiss
@@ -1541,17 +1573,9 @@ class Tournament(models.Model):
         Buchholz sums opponents' ``league_points``, so it inherits the Match-score
         scale automatically.
         """
-        from dataclasses import replace
-
         from .bracket import swiss_buchholz_rerank
-        from .standings import compute_standings, swiss_points_by_team
 
-        enrolled_teams, completed_matches, season_rounds = self._match_dicts_over_nodes(
-            self.nodes.filter(bracket_type="swiss")
-        )
-        rows = compute_standings(completed_matches, enrolled_teams, season_rounds)
-        points = swiss_points_by_team(completed_matches)
-        rows = [replace(row, league_points=points.get(row.team_id, 0)) for row in rows]
+        rows, _ = self._match_point_rows(self.nodes.filter(bracket_type="swiss"))
         opponents_by_team = self._swiss_opponent_graph()
         return swiss_buchholz_rerank(rows, opponents_by_team)
 

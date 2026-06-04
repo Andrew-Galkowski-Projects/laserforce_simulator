@@ -115,6 +115,7 @@ finals nodes exist.
                         {% else %}
                         {{ cell.leg1.team_score }}–{{ cell.leg1.opp_score }}
                         {% endif %}
+                        <small class="match-score text-muted">({{ cell.leg1.match_team }}–{{ cell.leg1.match_opp }})</small>
                     </div>
                     {% elif cell.leg1 %}
                     <div class="text-muted">—</div>
@@ -126,6 +127,7 @@ finals nodes exist.
                         {% else %}
                         {{ cell.leg2.team_score }}–{{ cell.leg2.opp_score }}
                         {% endif %}
+                        <small class="match-score text-muted">({{ cell.leg2.match_team }}–{{ cell.leg2.match_opp }})</small>
                     </div>
                     {% elif cell.leg2 %}
                     <div class="text-muted">—</div>
@@ -142,8 +144,10 @@ finals nodes exist.
 <table class="table" id="tournament-rr-standings">
     <thead>
         <tr>
-            <th>Rank</th><th>Team</th><th>MP</th><th>W</th><th>L</th><th>T</th>
-            <th>Pts</th><th>RW</th><th>TS</th>
+            <th>Rank</th><th>Team</th><th>MP</th>
+            <th title="Match wins">W</th><th>L</th><th>T</th>
+            <th title="Match score: +2 per round won, +2 for winning the match">Match Pts</th>
+            <th>RW</th><th>TS</th>
         </tr>
     </thead>
     <tbody>
