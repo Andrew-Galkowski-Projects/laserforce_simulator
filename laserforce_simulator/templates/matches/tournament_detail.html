@@ -1,11 +1,22 @@
 {% extends "base.html" %}
+{% load team_extras %}
 
 {% block title %}{{ tournament.name }} — Tournament{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h1>{{ tournament.name }}</h1>
-    <span class="badge bg-secondary state-badge">{{ tournament.get_state_display }}</span>
+    <div>
+        {% if tournament.format == "round_robin_double_elim" %}
+        <span class="badge bg-info text-dark" id="tournament-stage-badge">
+            {% if tournament_stage == "seeding" %}Seeding stage
+            {% elif tournament_stage == "finals" %}Finals stage
+            {% elif tournament_stage == "completed" %}Completed
+            {% else %}Setup{% endif %}
+        </span>
+        {% endif %}
+        <span class="badge bg-secondary state-badge">{{ tournament.get_state_display }}</span>
+    </div>
 </div>
 
 {% if not participants %}
@@ -72,7 +83,13 @@
 {% endif %}
 
 {# ---- Bracket / round-robin tables ---- #}
-{% if tournament.format == "round_robin" %}
+{% comment %}
+LG-02c — the RR crosstable + standings render for a plain round-robin AND for
+the round-robin -> double-elim seeding/finals (the standings are the seeding
+source). The DE three-section tree renders for double-elim AND once the RRDE
+finals nodes exist.
+{% endcomment %}
+{% if tournament.format == "round_robin" or tournament.format == "round_robin_double_elim" %}
 <h2>Crosstable</h2>
 <table class="table table-bordered" id="tournament-rr-crosstable">
     <thead>
@@ -130,7 +147,8 @@
     </thead>
     <tbody>
         {% for row, team in rr_standings %}
-        <tr>
+        {% with cut=cut_labels|lookup:row.team_id %}
+        <tr{% if cut %} class="tournament-standings-cut-{{ cut }}"{% endif %}>
             <td>{{ row.rank }}</td>
             <td>{% if team %}{{ team.name }}{% else %}{{ row.team_id }}{% endif %}</td>
             <td>{{ row.matches_played }}</td>
@@ -141,9 +159,39 @@
             <td>{{ row.round_wins }}</td>
             <td>{{ row.total_score }}</td>
         </tr>
+        {% endwith %}
         {% endfor %}
     </tbody>
 </table>
+
+{% comment %}
+LG-02c (RR->DE) — once the deferred DE finals are built, ALSO render the
+three-section DE tree below the seeding tables (rounds.winners is non-empty
+only after the finals build).
+{% endcomment %}
+{% if rounds.winners %}
+<h2 class="mt-4">Finals Bracket</h2>
+    <h3>Winners Bracket</h3>
+    <div class="d-flex" id="tournament-bracket-winners">
+        {% for round in rounds.winners %}
+        {% include "matches/_tournament_round.html" with round=round bracket_type="winners" %}
+        {% endfor %}
+    </div>
+
+    <h3 class="mt-4">Losers Bracket</h3>
+    <div class="d-flex" id="tournament-bracket-losers">
+        {% for round in rounds.losers %}
+        {% include "matches/_tournament_round.html" with round=round bracket_type="losers" %}
+        {% endfor %}
+    </div>
+
+    <h3 class="mt-4">Grand Final</h3>
+    <div class="d-flex" id="tournament-bracket-grand-final">
+        {% for round in rounds.grand_final %}
+        {% include "matches/_tournament_round.html" with round=round bracket_type="grand_final" %}
+        {% endfor %}
+    </div>
+{% endif %}
 {% elif tournament.format == "double_elimination" %}
 <h2>Bracket</h2>
     {# DE: three sections, each with bracket_type-namespaced DOM ids. #}
@@ -168,8 +216,10 @@
         {% endfor %}
     </div>
 {% else %}
-    {# Single-elim KEEPS the legacy DOM ids (tournament-bracket / -round-{n} /
-       tournament-node-{round}-{position} / -series-score / -series-length). #}
+    {% comment %}
+    Single-elim KEEPS the legacy DOM ids (tournament-bracket / -round-{n} /
+    tournament-node-{round}-{position} / -series-score / -series-length).
+    {% endcomment %}
     <h2>Bracket</h2>
     <div class="d-flex" id="tournament-bracket">
         {% for round in rounds.winners %}

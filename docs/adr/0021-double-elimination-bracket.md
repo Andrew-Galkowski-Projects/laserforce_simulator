@@ -217,6 +217,57 @@ Calibration re-baseline**. The remaining LG-02c+ formats (RR→double-elim,
 Swiss) stay deferred; RR→DE will compose this round-robin as its seeding phase
 feeding the ADR-0021 DE bracket as its finals phase.
 
+## Consequences / follow-up — RR→double-elim deferred Finals build (LG-02c RR→DE slice, 2026-06-03)
+
+The third LG-02c+ format, **`("round_robin_double_elim", "Round robin → Double
+elimination")`**, composes the round-robin **Seeding stage** (the LG-02c
+round-robin extension above) with this DE bracket as its **Finals stage**. It
+introduces one decision worth recording against this ADR:
+
+- **The Finals bracket is built *lazily*, not at `lock_and_build`.** Every other
+  format — single-elim, double-elim, round-robin — builds its full bracket (or
+  flat node set) at lock, because its participants are known the moment the
+  Tournament locks. The RR→DE Finals are **results-contingent**: the WB starters
+  and LB pre-seeds are the *top of the round-robin Standings*, which do not exist
+  until the Seeding stage finishes. So the RR→DE lock builds **only** the
+  round-robin Seeding nodes (byte-identically to the round-robin format), and a new
+  **`Tournament.build_de_finals_if_rr_finished()`** (`@transaction.atomic`,
+  guarded + idempotent) builds the Finals **when the last Seeding node resolves** —
+  seeding the WB/LB from `round_robin_standings()` rank. This is the second
+  conditionally-built stage in the tournament model (the first being the Grand-final
+  **Bracket reset** above), and it reuses the same "build when the trigger fires,
+  leave the Tournament `active`" discipline — here the trigger is "all RR nodes
+  resolved" rather than "GF1 won by the LB champ". The Tournament stays
+  `state="active"` across the seeding→finals transition; the champion is still
+  crowned by the DE Grand final via the unchanged `play_next_node` crown block.
+
+- **A configurable WB/LB/eliminated split, not the whole field.** Unlike a plain DE
+  (which admits all N participants, with byes), the RR→DE Finals take only the
+  top-ranked teams: `wb ∈ {4, 8, 16}` advance to the Winners bracket and
+  `lb ∈ {0, wb//2}` pre-seed the Losers bracket (six locked combos —
+  `4/0, 4/2, 8/0, 8/4, 16/0, 16/8`), the rest of the round-robin field eliminated.
+  Two new `Tournament.PositiveSmallIntegerField`s (`wb_advancers`, `lb_advancers`,
+  create-time only) carry the resolved counts; the **SHAPE** is enforced at the
+  create form and the **COUNT fit** (`wb <= n`, `wb + lb <= n`) at `lock_and_build`
+  (`ValidationError`).
+
+- **Reuses the DE persist/wire machinery, adds one fused pure builder.** A new pure
+  **`build_rr_de_finals_bracket(upper_specs, lower_specs)`** emits the Finals
+  spec-list: with no LB pre-seeds it **delegates directly to
+  `build_double_elim_bracket`** (a plain top-`wb` DE); with `lb = wb//2` it re-tags
+  the WB as `winners` and pre-fills LB round 1's slot "a" with the RR-ranked
+  pre-seeds (each WB-R1 loser Drops into the matching LB-R1 slot "b") — same LB
+  topology as a power-of-two DE, **no byes**, no new import. The persist loop + the
+  two advance-edge wiring passes + the `resolve_bye_chain` cascade are **extracted**
+  from `lock_and_build` into a shared `Tournament._persist_elim_specs(...)` so both
+  the single/double-elim lock path and the deferred Finals build reuse them verbatim
+  (single/double-elim `lock_and_build` stays byte-identical). The depth→`series_length`
+  escalation, the loser-Drop machinery, and the Grand-final Bracket reset are all
+  consumed **unchanged** from this ADR. No new ADR and **no new CONTEXT.md term** (the
+  **Round robin → double elimination** term was written at grilling time). Seam
+  contract:
+  [`.claude/worktrees/lg-02c-rr-de-seam-contract.md`](../../.claude/worktrees/lg-02c-rr-de-seam-contract.md).
+
 ## See also
 
 - [ADR-0015](0015-schedule-on-demand-no-fixture-rows.md) — the `generate_schedule`

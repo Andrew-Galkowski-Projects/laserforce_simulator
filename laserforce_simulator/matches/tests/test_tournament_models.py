@@ -1352,3 +1352,408 @@ class TestCompleteRoundRobinIfFinished(TestCase):
         t.refresh_from_db()
         self.assertEqual(t.state, "setup")
         self.assertIsNone(t.champion)
+
+
+# ===========================================================================
+# LG-02c — RR -> Double-elimination tournament format (model layer)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified — they
+# stay green as single/double-elim/round-robin regression guards). Seam
+# contract: ``.claude/worktrees/lg-02c-rr-de-seam-contract.md`` §"Model spec" /
+# §"Test boundary".
+#
+# A 4th ``Tournament.format`` value ``"round_robin_double_elim"`` (label
+# "Round robin -> Double elimination"). Two new Tournament fields
+# ``wb_advancers`` / ``lb_advancers`` (PositiveSmallIntegerField, default 0, no
+# choices). RRDE ``lock_and_build`` builds ONLY round_robin nodes (the DE finals
+# are DEFERRED) and raises ValidationError on a bad count fit. The deferred
+# finals build ``build_de_finals_if_rr_finished()`` fires once the last RR node
+# resolves, seeding the finals from RR-standings rank. A shared
+# ``_persist_elim_specs`` helper is extracted from lock_and_build so the
+# single/double-elim node shapes stay byte-identical (the two regression
+# classes pin that).
+#
+# Non-deterministic (simulate_match draws fresh per-round seeds) -> standings
+# rows are hand-stamped from played SeriesMatch/Match/GameRound rows; NEVER
+# assert exact simulated point totals.
+
+
+def _rrde_tournament_setup(
+    n: int,
+    *,
+    wb: int,
+    lb: int,
+    name: str = "RRDECup",
+) -> Tournament:
+    """A setup-state round_robin_double_elim Tournament with ``n`` seeded
+    participants and the ``wb`` / ``lb`` advancer counts set at create time."""
+    t = Tournament.objects.create(
+        name=name,
+        format="round_robin_double_elim",
+        wb_advancers=wb,
+        lb_advancers=lb,
+    )
+    for seed, team in enumerate(_make_teams(n), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    return t
+
+
+def _rrde_tournament_active(
+    n: int,
+    *,
+    wb: int,
+    lb: int,
+    name: str = "RRDECup",
+) -> Tournament:
+    """A locked/active RRDE Tournament — only the round_robin Seeding nodes are
+    built at lock; the DE finals are deferred."""
+    t = _rrde_tournament_setup(n, wb=wb, lb=lb, name=name)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+def _resolve_all_rr_nodes(t: Tournament) -> None:
+    """Hand-stamp every round_robin node of an RRDE Tournament as a decisive
+    played Bo1 (reuses the RR ``_stamp_rr_node_played`` helper). team_a always
+    wins, so the standings rank is deterministic by seed talent / name order."""
+    for node in t.nodes.filter(bracket_type="round_robin"):
+        _stamp_rr_node_played(node, node.team_a)
+
+
+class TestRrDeFieldsAndFormat(TestCase):
+    """The two new advancer fields exist, default 0, carry NO choices; the
+    ``format`` enum accepts ``"round_robin_double_elim"``."""
+
+    def test_wb_advancers_defaults_to_zero(self) -> None:
+        t = Tournament.objects.create(name="Cup")
+        self.assertEqual(t.wb_advancers, 0)
+
+    def test_lb_advancers_defaults_to_zero(self) -> None:
+        t = Tournament.objects.create(name="Cup")
+        self.assertEqual(t.lb_advancers, 0)
+
+    def test_advancer_fields_persist(self) -> None:
+        t = Tournament.objects.create(
+            name="Cup",
+            format="round_robin_double_elim",
+            wb_advancers=4,
+            lb_advancers=2,
+        )
+        t.refresh_from_db()
+        self.assertEqual(t.wb_advancers, 4)
+        self.assertEqual(t.lb_advancers, 2)
+
+    def test_wb_advancers_has_no_choices(self) -> None:
+        field = Tournament._meta.get_field("wb_advancers")
+        self.assertIsNone(field.choices)
+
+    def test_lb_advancers_has_no_choices(self) -> None:
+        field = Tournament._meta.get_field("lb_advancers")
+        self.assertIsNone(field.choices)
+
+    def test_format_choices_include_round_robin_double_elim(self) -> None:
+        choices = dict(Tournament._meta.get_field("format").choices)
+        self.assertIn("round_robin_double_elim", choices)
+        # Locked label uses the em-dash arrow U+2192.
+        self.assertEqual(
+            choices["round_robin_double_elim"], "Round robin → Double elimination"
+        )
+
+    def test_round_robin_double_elim_format_persists(self) -> None:
+        t = Tournament.objects.create(name="RRDE Cup", format="round_robin_double_elim")
+        t.refresh_from_db()
+        self.assertEqual(t.format, "round_robin_double_elim")
+
+
+class TestRrDeLockAndBuild(TestCase):
+    """RRDE ``lock_and_build`` builds ONLY the round_robin Seeding nodes (no
+    WB/LB/GF at lock) and raises ValidationError on a bad count fit."""
+
+    def test_builds_only_round_robin_nodes(self) -> None:
+        t = _rrde_tournament_active(4, wb=4, lb=0, name="RRDELockRR")
+        types = set(t.nodes.values_list("bracket_type", flat=True))
+        self.assertEqual(types, {"round_robin"})
+
+    def test_no_elim_nodes_at_lock(self) -> None:
+        t = _rrde_tournament_active(6, wb=4, lb=2, name="RRDELockNoElim")
+        self.assertEqual(
+            t.nodes.exclude(bracket_type="round_robin").count(),
+            0,
+            "the DE finals are deferred — no WB/LB/GF nodes at lock time",
+        )
+
+    def test_n4_builds_twelve_rr_nodes(self) -> None:
+        # N=4 double round-robin Seeding stage ⇒ 12 nodes.
+        t = _rrde_tournament_active(4, wb=4, lb=0, name="RRDELock12")
+        self.assertEqual(t.nodes.filter(bracket_type="round_robin").count(), 12)
+
+    def test_state_flips_to_active(self) -> None:
+        t = _rrde_tournament_active(4, wb=4, lb=0, name="RRDELockActive")
+        self.assertEqual(t.state, "active")
+
+    def test_raises_when_wb_advancers_exceeds_participants(self) -> None:
+        # wb=8 but only 6 participants ⇒ ValidationError, no state flip.
+        t = _rrde_tournament_setup(6, wb=8, lb=0, name="RRDELockWbTooBig")
+        with self.assertRaises(ValidationError):
+            t.lock_and_build()
+        t.refresh_from_db()
+        self.assertEqual(t.state, "setup")
+        self.assertEqual(t.nodes.count(), 0)
+
+    def test_raises_when_wb_plus_lb_exceeds_participants(self) -> None:
+        # wb=4 + lb=2 = 6 > 5 participants ⇒ ValidationError.
+        t = _rrde_tournament_setup(5, wb=4, lb=2, name="RRDELockSumTooBig")
+        with self.assertRaises(ValidationError):
+            t.lock_and_build()
+        t.refresh_from_db()
+        self.assertEqual(t.state, "setup")
+        self.assertEqual(t.nodes.count(), 0)
+
+    def test_exact_fit_is_allowed(self) -> None:
+        # wb=4 + lb=2 = 6 == 6 participants ⇒ the boundary is allowed.
+        t = _rrde_tournament_active(6, wb=4, lb=2, name="RRDELockExactFit")
+        self.assertEqual(t.state, "active")
+        self.assertEqual(t.nodes.filter(bracket_type="round_robin").count(), 30)
+
+
+class TestBuildDeFinalsIfRrFinished(TestCase):
+    """``build_de_finals_if_rr_finished()`` is a no-op unless RRDE + active +
+    every RR node resolved + finals not already built; idempotent; when it
+    fires it seeds the finals from RR-standings RANK."""
+
+    def test_noop_while_some_rr_node_unresolved(self) -> None:
+        t = _rrde_tournament_active(4, wb=4, lb=0, name="RRDEFinNoop")
+        # Resolve only ONE RR node.
+        node = t.nodes.filter(bracket_type="round_robin").first()
+        _stamp_rr_node_played(node, node.team_a)
+
+        t.build_de_finals_if_rr_finished()
+        t.refresh_from_db()
+        # No finals nodes built; tournament stays active.
+        self.assertFalse(t.nodes.exclude(bracket_type="round_robin").exists())
+        self.assertEqual(t.state, "active")
+
+    def test_noop_for_non_rrde_format(self) -> None:
+        # A plain round_robin active Tournament must not gain DE finals.
+        t = _rr_tournament_active(4, name="RRDEFinNonRrde")
+        for node in t.nodes.filter(bracket_type="round_robin"):
+            _stamp_rr_node_played(node, node.team_a)
+        t.build_de_finals_if_rr_finished()
+        t.refresh_from_db()
+        self.assertFalse(t.nodes.exclude(bracket_type="round_robin").exists())
+
+    def test_fires_and_builds_finals_when_all_rr_resolved(self) -> None:
+        t = _rrde_tournament_active(4, wb=4, lb=0, name="RRDEFinFires")
+        _resolve_all_rr_nodes(t)
+        t.build_de_finals_if_rr_finished()
+        t.refresh_from_db()
+        # WB/LB/GF finals nodes now exist; tournament stays active.
+        self.assertTrue(t.nodes.exclude(bracket_type="round_robin").exists())
+        self.assertEqual(t.state, "active")
+        self.assertIsNone(t.champion)
+
+    def test_finals_have_grand_final_nodes(self) -> None:
+        t = _rrde_tournament_active(4, wb=4, lb=0, name="RRDEFinGF")
+        _resolve_all_rr_nodes(t)
+        t.build_de_finals_if_rr_finished()
+        t.refresh_from_db()
+        self.assertEqual(t.nodes.filter(bracket_type="grand_final").count(), 2)
+
+    def test_idempotent_second_call_builds_no_duplicate(self) -> None:
+        t = _rrde_tournament_active(4, wb=4, lb=0, name="RRDEFinIdem")
+        _resolve_all_rr_nodes(t)
+        t.build_de_finals_if_rr_finished()
+        t.refresh_from_db()
+        finals_after_first = t.nodes.exclude(bracket_type="round_robin").count()
+        # A second call is a no-op (finals already built).
+        t.build_de_finals_if_rr_finished()
+        t.refresh_from_db()
+        self.assertEqual(
+            t.nodes.exclude(bracket_type="round_robin").count(),
+            finals_after_first,
+        )
+
+    def test_wb_seed_one_is_rr_rank_one_team(self) -> None:
+        # The top RR-ranked team becomes WB seed 1 in the finals.
+        t = _rrde_tournament_active(4, wb=4, lb=0, name="RRDEFinSeed1")
+        _resolve_all_rr_nodes(t)
+        rr_rank_one = t.round_robin_standings()[0].team_id
+        t.build_de_finals_if_rr_finished()
+        t.refresh_from_db()
+        # The WB node carrying seed 1 must hold the RR rank-1 team.
+        wb_seed_one = (
+            t.nodes.filter(bracket_type="winners", seed_a=1).first()
+            or t.nodes.filter(bracket_type="winners", seed_b=1).first()
+        )
+        self.assertIsNotNone(wb_seed_one, "a WB node must carry Bracket seed 1")
+        seed_one_team = (
+            wb_seed_one.team_a_id if wb_seed_one.seed_a == 1 else wb_seed_one.team_b_id
+        )
+        self.assertEqual(seed_one_team, rr_rank_one)
+
+    def test_eliminated_team_has_no_finals_node(self) -> None:
+        # 6 participants, wb=4 + lb=0 ⇒ ranks 5 and 6 are eliminated (never
+        # appear in any finals node's team slots).
+        t = _rrde_tournament_active(6, wb=4, lb=0, name="RRDEFinElim")
+        _resolve_all_rr_nodes(t)
+        rows = t.round_robin_standings()
+        eliminated_team_id = rows[-1].team_id  # RR rank 6 (last)
+        t.build_de_finals_if_rr_finished()
+        t.refresh_from_db()
+        finals_team_ids: set = set()
+        for node in t.nodes.exclude(bracket_type="round_robin"):
+            finals_team_ids.add(node.team_a_id)
+            finals_team_ids.add(node.team_b_id)
+        self.assertNotIn(
+            eliminated_team_id,
+            finals_team_ids,
+            "an RR-eliminated team must have NO finals node slot",
+        )
+
+    def test_lb_preseeds_enter_finals_for_wb4_lb2(self) -> None:
+        # wb=4 + lb=2 over 6 teams: the next 2 RR ranks fill the LB pre-seeds, so
+        # all 6 teams appear in the finals (4 WB seeds + 2 LB pre-seeds).
+        t = _rrde_tournament_active(6, wb=4, lb=2, name="RRDEFinLbPreseed")
+        _resolve_all_rr_nodes(t)
+        rows = t.round_robin_standings()
+        wb_team_ids = {rows[i].team_id for i in range(4)}
+        lb_team_ids = {rows[4].team_id, rows[5].team_id}
+        t.build_de_finals_if_rr_finished()
+        t.refresh_from_db()
+        finals_team_ids: set = set()
+        for node in t.nodes.exclude(bracket_type="round_robin"):
+            if node.team_a_id is not None:
+                finals_team_ids.add(node.team_a_id)
+            if node.team_b_id is not None:
+                finals_team_ids.add(node.team_b_id)
+        # The top 4 are WB seeds; the next 2 are LB pre-seeds — all 6 present.
+        self.assertTrue(wb_team_ids <= finals_team_ids)
+        self.assertTrue(lb_team_ids <= finals_team_ids)
+
+    def test_finals_have_no_bye_nodes(self) -> None:
+        t = _rrde_tournament_active(6, wb=4, lb=2, name="RRDEFinNoBye")
+        _resolve_all_rr_nodes(t)
+        t.build_de_finals_if_rr_finished()
+        t.refresh_from_db()
+        self.assertFalse(
+            t.nodes.exclude(bracket_type="round_robin").filter(is_bye=True).exists(),
+            "the RRDE finals are exactly filled — zero bye nodes",
+        )
+
+
+class TestLockAndBuildSingleElimUnchangedAfterRefactor(TestCase):
+    """Regression: the extracted ``_persist_elim_specs`` helper keeps a
+    single-elim lock byte-identical — same node count, bracket_types, edges,
+    series_lengths."""
+
+    def _se_tournament(self, n: int, *, name: str) -> Tournament:
+        t = Tournament.objects.create(
+            name=name,
+            final_series_length=5,
+            semifinal_series_length=3,
+            quarterfinal_series_length=1,
+            earlier_series_length=1,
+        )
+        for seed, team in enumerate(_make_teams(n), start=1):
+            TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+        t.lock_and_build()
+        t.refresh_from_db()
+        return t
+
+    def test_node_count_unchanged_n4(self) -> None:
+        t = self._se_tournament(4, name="RRDESERegN4")
+        self.assertEqual(t.nodes.count(), 3)
+
+    def test_all_nodes_winners_bracket(self) -> None:
+        t = self._se_tournament(4, name="RRDESERegType")
+        self.assertEqual(
+            set(t.nodes.values_list("bracket_type", flat=True)), {"winners"}
+        )
+
+    def test_no_loser_advances_to_on_any_node(self) -> None:
+        t = self._se_tournament(4, name="RRDESERegLoser")
+        self.assertEqual(t.nodes.exclude(loser_advances_to__isnull=True).count(), 0)
+
+    def test_advances_to_edges_wired(self) -> None:
+        t = self._se_tournament(4, name="RRDESERegEdges")
+        # Two round-1 nodes feed the final; the final has advances_to None.
+        final = t.nodes.get(advances_to__isnull=True)
+        feeders = t.nodes.filter(advances_to=final)
+        self.assertEqual(feeders.count(), 2)
+        slots = sorted(feeders.values_list("advances_to_slot", flat=True))
+        self.assertEqual(slots, ["a", "b"])
+
+    def test_series_length_depth_stamped(self) -> None:
+        t = self._se_tournament(4, name="RRDESERegSeries")
+        final = t.nodes.get(advances_to__isnull=True)
+        self.assertEqual(final.series_length, 5)
+        for r1 in t.nodes.filter(bracket_round=1):
+            self.assertEqual(r1.series_length, 3)
+
+    def test_byes_preresolved_n5(self) -> None:
+        t = self._se_tournament(5, name="RRDESERegByes")
+        byes = t.nodes.filter(is_bye=True)
+        self.assertEqual(byes.count(), 3)
+        for node in byes:
+            self.assertIsNotNone(node.winner)
+
+
+class TestLockAndBuildDoubleElimUnchangedAfterRefactor(TestCase):
+    """Regression: the extracted ``_persist_elim_specs`` helper keeps a
+    double-elim lock byte-identical — same bracket_types, loser-drop edges,
+    GF1->GF2 wiring, series_lengths."""
+
+    def _de_tournament(self, n: int, *, name: str) -> Tournament:
+        t = Tournament.objects.create(
+            name=name,
+            format="double_elimination",
+            final_series_length=5,
+            semifinal_series_length=3,
+            quarterfinal_series_length=1,
+            earlier_series_length=1,
+        )
+        for seed, team in enumerate(_make_teams(n), start=1):
+            TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+        t.lock_and_build()
+        t.refresh_from_db()
+        return t
+
+    def test_persists_all_three_bracket_types(self) -> None:
+        t = self._de_tournament(4, name="RRDEDERegTypes")
+        types = set(t.nodes.values_list("bracket_type", flat=True))
+        self.assertEqual(types, {"winners", "losers", "grand_final"})
+
+    def test_grand_final_has_two_nodes(self) -> None:
+        t = self._de_tournament(4, name="RRDEDERegGF")
+        self.assertEqual(t.nodes.filter(bracket_type="grand_final").count(), 2)
+
+    def test_wb_node_loser_advances_to_lb(self) -> None:
+        t = self._de_tournament(4, name="RRDEDERegDrop")
+        wb_with_drop = (
+            t.nodes.filter(bracket_type="winners", is_bye=False)
+            .exclude(loser_advances_to__isnull=True)
+            .first()
+        )
+        self.assertIsNotNone(wb_with_drop)
+        self.assertEqual(wb_with_drop.loser_advances_to.bracket_type, "losers")
+
+    def test_gf1_loser_advances_to_gf2(self) -> None:
+        t = self._de_tournament(4, name="RRDEDERegGF1")
+        gf1 = (
+            t.nodes.filter(bracket_type="grand_final")
+            .exclude(advances_to__isnull=True)
+            .first()
+        )
+        self.assertIsNotNone(gf1)
+        self.assertEqual(gf1.loser_advances_to.bracket_type, "grand_final")
+
+    def test_series_length_depth_stamped(self) -> None:
+        t = self._de_tournament(4, name="RRDEDERegSeries")
+        for gf in t.nodes.filter(bracket_type="grand_final"):
+            self.assertEqual(gf.series_length, 5)
+        wb_final = (
+            t.nodes.filter(bracket_type="winners").order_by("-bracket_round").first()
+        )
+        self.assertEqual(wb_final.series_length, 3)

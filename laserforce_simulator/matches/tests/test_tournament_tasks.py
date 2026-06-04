@@ -565,3 +565,140 @@ class TestPlayTournamentTaskRoundRobin:
         assert isinstance(payload["total"], int)
         # A completed RR reports completed == total over its matchday stages.
         assert payload["completed"] == payload["total"]
+
+
+# ---------------------------------------------------------------------------
+# LG-02c — RR -> Double-elimination via the Play Tournament task
+# ---------------------------------------------------------------------------
+#
+# NEW class appended below (existing classes above are NOT modified — the
+# single/double-elim/round-robin task tests stay green). Seam contract:
+# ``.claude/worktrees/lg-02c-rr-de-seam-contract.md`` §"Engine spec" (Play-All
+# progress extends mid-run as the finals materialize) / §"Test boundary".
+#
+# ``play_tournament_task`` drains a full round_robin_double_elim Tournament
+# through BOTH stages — the RR Seeding nodes THEN the auto-built DE finals — to
+# a champion + state='completed' under CELERY_TASK_ALWAYS_EAGER. The deferred
+# finals build fires when the last RR node resolves, so the WB/LB/GF stage
+# groups appear only mid-run; the final {"completed","total"} reports
+# stage_progress over the RR groups PLUS the WB/LB/GF groups.
+
+
+def _active_rrde_tournament(n: int, *, wb: int, lb: int, name: str, prefix: str):
+    """A locked/active round_robin_double_elim Tournament — only the RR Seeding
+    nodes built at lock; the DE finals are deferred to the last RR node."""
+    from matches.models import Tournament, TournamentParticipant
+
+    t = Tournament.objects.create(
+        name=name,
+        format="round_robin_double_elim",
+        wb_advancers=wb,
+        lb_advancers=lb,
+    )
+    for seed, team in enumerate(_make_teams(n, prefix), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+@pytest.mark.django_db
+class TestPlayTournamentTaskRrDe:
+    """A round_robin_double_elim Tournament plays through BOTH stages to a
+    champion via ``play_tournament_task`` under EAGER."""
+
+    def test_rrde_plays_to_completion(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_rrde_tournament(4, wb=4, lb=0, name="TaskRRDE", prefix="TtRRDE")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        assert (
+            result.state == "SUCCESS"
+        ), f"expected SUCCESS, got {result.state!r}; info={result.info!r}"
+        t.refresh_from_db()
+        assert t.state == "completed"
+        assert t.champion_id is not None
+
+    def test_rrde_finals_built_during_run(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_rrde_tournament(
+            4, wb=4, lb=0, name="TaskRRDEFinals", prefix="TtRRDEF"
+        )
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_tournament_task.apply(args=(t.id,))
+
+        t.refresh_from_db()
+        # The deferred DE finals materialized during the run.
+        assert t.nodes.exclude(bracket_type="round_robin").exists()
+        assert t.nodes.filter(bracket_type="grand_final").count() == 2
+
+    def test_rrde_champion_is_a_grand_final_winner(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_rrde_tournament(
+            4, wb=4, lb=0, name="TaskRRDEChamp", prefix="TtRRDEC"
+        )
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_tournament_task.apply(args=(t.id,))
+
+        t.refresh_from_db()
+        gf_winner_ids = set(
+            t.nodes.filter(
+                bracket_type="grand_final", winner__isnull=False
+            ).values_list("winner_id", flat=True)
+        )
+        assert t.champion_id in gf_winner_ids
+
+    def test_rrde_return_shape_is_stage_counts_spanning_both_stages(self) -> None:
+        from matches.bracket import stage_progress
+        from matches.models import _node_to_dict
+        from matches.tasks import play_tournament_task
+
+        t = _active_rrde_tournament(
+            4, wb=4, lb=0, name="TaskRRDESpan", prefix="TtRRDES"
+        )
+
+        # Before the run only the RR matchday groups exist.
+        rr_flat = [
+            _node_to_dict(n)
+            for n in t.nodes.select_related("advances_to").prefetch_related(
+                "series_matches"
+            )
+        ]
+        _c, rr_only_groups = stage_progress(rr_flat)
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        payload = result.result
+        assert set(payload.keys()) == {"completed", "total"}
+        # After the deferred finals materialize, the total spans the RR matchday
+        # groups PLUS the WB/LB/GF groups -> strictly more than the RR-only count.
+        assert payload["total"] > rr_only_groups, (
+            "the final stage total must span the RR groups plus the WB/LB/GF "
+            f"finals groups; got total={payload['total']} vs RR-only "
+            f"{rr_only_groups}"
+        )
+        # A completed RRDE reports completed == total over all groups.
+        assert payload["completed"] == payload["total"]
+
+    def test_rrde_with_lb_preseeds_plays_to_completion(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_rrde_tournament(6, wb=4, lb=2, name="TaskRRDELb", prefix="TtRRDEL")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        assert (
+            result.state == "SUCCESS"
+        ), f"expected SUCCESS, got {result.state!r}; info={result.info!r}"
+        t.refresh_from_db()
+        assert t.state == "completed"
+        assert t.champion_id is not None

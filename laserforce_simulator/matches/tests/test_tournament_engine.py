@@ -1146,3 +1146,160 @@ class TestPlayNextNodeRoundRobinCompletes(TestCase):
         self._drain(t)
         t.refresh_from_db()
         self.assertIsNone(t.find_next_playable_node())
+
+
+# ===========================================================================
+# LG-02c — RR -> Double-elimination tournament format (engine)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified — the
+# single/double-elim/round-robin engine tests stay green as regression guards).
+# Seam contract: ``.claude/worktrees/lg-02c-rr-de-seam-contract.md``
+# §"Engine spec" / §"Test boundary".
+#
+# In an RRDE tournament every RR (Seeding) node has advances_to=None, so the
+# elim "crown when advances_to is None" rule would WRONGLY crown / complete on a
+# resolved RR node. play_next_node's RR guard rekeys on
+# ``node.bracket_type == "round_robin"`` and dispatches on format:
+# round_robin_double_elim -> tournament.build_de_finals_if_rr_finished(), then
+# returns the node WITHOUT falling through to the elim advance/drop/crown block.
+# When the LAST RR node resolves, the deferred finals materialize (WB/LB/GF now
+# exist) while state stays "active"; subsequent play_next_node calls drain the
+# DE finals normally and the Grand final crowns the champion.
+#
+# The sims are RANDOM — we never assert WHICH team wins or exact points. We
+# assert structure: the deferred build fires, a resolved RR node never gets an
+# advance_winner mutation, and draining the finals crowns a champion +
+# state="completed".
+
+
+def _rrde_active_tournament(n: int, *, wb: int, lb: int, name: str) -> Tournament:
+    """A locked/active round_robin_double_elim Tournament — only the
+    round_robin Seeding nodes are built at lock; the DE finals are deferred."""
+    t = Tournament.objects.create(
+        name=name,
+        format="round_robin_double_elim",
+        wb_advancers=wb,
+        lb_advancers=lb,
+    )
+    for seed, team in enumerate(_make_teams(n), start=1):
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+class TestPlayNextNodeRrDeDeferredBuild(TestCase):
+    """Resolving the LAST RR node of an RRDE tournament triggers the deferred
+    finals build: WB/LB/GF nodes now exist, state stays "active", no champion."""
+
+    def _resolve_all_but_last_rr_node(self, t: Tournament) -> None:
+        from matches.tournament_engine import play_next_node
+
+        rr_total = t.nodes.filter(bracket_type="round_robin").count()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(rr_total - 1):
+                play_next_node(t)
+
+    def test_no_finals_before_last_rr_node_resolves(self) -> None:
+        t = _rrde_active_tournament(4, wb=4, lb=0, name="RRDEEngBefore")
+        self._resolve_all_but_last_rr_node(t)
+        t.refresh_from_db()
+        # One RR node still unresolved -> no finals built yet.
+        self.assertFalse(t.nodes.exclude(bracket_type="round_robin").exists())
+        self.assertEqual(t.state, "active")
+
+    def test_last_rr_node_triggers_finals_build(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _rrde_active_tournament(4, wb=4, lb=0, name="RRDEEngTrigger")
+        self._resolve_all_but_last_rr_node(t)
+        # Resolve the final RR node -> deferred build fires.
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_next_node(t)
+        t.refresh_from_db()
+        self.assertTrue(
+            t.nodes.exclude(bracket_type="round_robin").exists(),
+            "the DE finals must materialize once the last RR node resolves",
+        )
+        # The tournament stays active; the champion is crowned later by the GF.
+        self.assertEqual(t.state, "active")
+        self.assertIsNone(t.champion)
+
+    def test_finals_have_grand_final_after_build(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _rrde_active_tournament(4, wb=4, lb=0, name="RRDEEngGF")
+        rr_total = t.nodes.filter(bracket_type="round_robin").count()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(rr_total):
+                play_next_node(t)
+        t.refresh_from_db()
+        self.assertEqual(t.nodes.filter(bracket_type="grand_final").count(), 2)
+
+    def test_resolved_rr_node_never_advances_a_parent(self) -> None:
+        # A resolved RR (seeding) node never receives an advance_winner mutation:
+        # it has advances_to=None and its team slots are the FIXED lock-time pair.
+        t = _rrde_active_tournament(4, wb=4, lb=0, name="RRDEEngNoAdvance")
+        before = {
+            n.id: (n.team_a_id, n.team_b_id)
+            for n in t.nodes.filter(bracket_type="round_robin")
+        }
+        from matches.tournament_engine import play_next_node
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(t.nodes.filter(bracket_type="round_robin").count()):
+                play_next_node(t)
+        for node in t.nodes.filter(bracket_type="round_robin"):
+            self.assertIsNone(node.advances_to_id)
+            self.assertEqual((node.team_a_id, node.team_b_id), before[node.id])
+
+
+class TestPlayNextNodeRrDeDrainsToChampion(TestCase):
+    """Draining play_next_node through the Seeding RR stage THEN the deferred DE
+    finals crowns a champion via the Grand final and flips state='completed'."""
+
+    def _drain(self, t: Tournament) -> None:
+        from matches.tournament_engine import play_next_node
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            # N=4 RR (12 nodes) + a small DE finals; guard the loop generously.
+            for _ in range(120):
+                t.refresh_from_db()
+                if t.state == "completed":
+                    break
+                if play_next_node(t) is None:
+                    break
+
+    def test_wb4_lb0_drains_to_champion(self) -> None:
+        t = _rrde_active_tournament(4, wb=4, lb=0, name="RRDEEngDrain40")
+        self._drain(t)
+        t.refresh_from_db()
+        self.assertEqual(t.state, "completed")
+        self.assertIsNotNone(t.champion)
+
+    def test_wb4_lb2_drains_to_champion(self) -> None:
+        t = _rrde_active_tournament(6, wb=4, lb=2, name="RRDEEngDrain42")
+        self._drain(t)
+        t.refresh_from_db()
+        self.assertEqual(t.state, "completed")
+        self.assertIsNotNone(t.champion)
+
+    def test_champion_is_a_grand_final_winner(self) -> None:
+        t = _rrde_active_tournament(4, wb=4, lb=0, name="RRDEEngGFChamp")
+        self._drain(t)
+        t.refresh_from_db()
+        # The champion is the winner of a grand_final node (GF2, or GF1 when the
+        # WB champ wins GF1 and GF2 is inert).
+        gf_winner_ids = set(
+            t.nodes.filter(
+                bracket_type="grand_final", winner__isnull=False
+            ).values_list("winner_id", flat=True)
+        )
+        self.assertIn(t.champion_id, gf_winner_ids)
+
+    def test_next_playable_is_none_when_complete(self) -> None:
+        t = _rrde_active_tournament(4, wb=4, lb=0, name="RRDEEngNoNext")
+        self._drain(t)
+        t.refresh_from_db()
+        self.assertIsNone(t.find_next_playable_node())

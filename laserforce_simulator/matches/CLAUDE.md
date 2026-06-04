@@ -2381,6 +2381,255 @@ ids: `tournament-rr-crosstable`, `tournament-rr-standings`. Reused verbatim:
 Crosstable rule: leg `round_number==1` → `cell[team_a][team_b]`; leg `2` →
 `cell[team_b][team_a]`; diagonal blank.
 
+## LG-02c round robin → double elimination tournaments
+
+Adds a fourth `Tournament.format` enum value
+**`"round_robin_double_elim"`** (label `"Round robin → Double elimination"`,
+em-dash arrow `→` U+2192): a **two-stage** format that composes the two shipped
+LG-02c formats. A round-robin **Seeding stage** (the SHIPPED double round-robin,
+verbatim — one `bracket_type="round_robin"` node per `generate_schedule` fixture,
+no edges, Bo1) plays to completion; its final **Standings rank** then seeds a
+double-elimination **Finals stage** (the SHIPPED ADR-0021 WB+LB+Grand-final tree)
+built **lazily** when the last Seeding node resolves. Builds on both predecessors'
+pure + persist machinery verbatim — the new work is (a) **one** pure builder that
+fuses a re-tagged Winners bracket with a pre-seeded Losers bracket, (b) a
+**deferred finals build** triggered when the last RR node resolves, (c) a shared
+persist helper **extracted** from `lock_and_build`, and (d) the create-form combo
+select + detail cut-line markers. **Non-deterministic** (`simulate_match` draws
+fresh per-round seeds) ⇒ **no SIM-07/SIM-08 interaction, NO Score Calibration
+re-baseline**. ADR-0021 is **EXTENDED** for the deferred-build decision; **no new
+ADR, no new CONTEXT.md term** beyond the already-written **Round robin → double
+elimination**. Seam contract:
+[`.claude/worktrees/lg-02c-rr-de-seam-contract.md`](../../.claude/worktrees/lg-02c-rr-de-seam-contract.md).
+
+**Enum / fields (LOCKED).** `Tournament.FORMAT_CHOICES` gains
+`("round_robin_double_elim", "Round robin → Double elimination")` as its **fourth**
+entry (label uses the em-dash arrow `→` U+2192); the `format` field declaration is
+otherwise unchanged (`CharField(max_length=32)`, `default="single_elimination"` —
+`"round_robin_double_elim"` is 23 chars, fits 32). Two NEW
+`PositiveSmallIntegerField(default=0)` fields, declared **immediately after the
+four `*_series_length` fields** (before `created_at`/`champion`):
+**`Tournament.wb_advancers`** (how many top-ranked teams enter the Winners bracket)
+and **`Tournament.lb_advancers`** (how many next-ranked teams pre-seed the Losers
+bracket). **Neither carries `choices`** — the create form's `rrde_combo` select is
+the single source of valid shape combos; the model holds the resolved ints (mirrors
+how `BracketNode.series_length` carries a resolved int with no choices). Both are
+**create-time only, frozen at lock** — no view rewrites them post-setup; meaningful
+only for `format == "round_robin_double_elim"`, left `0` for every other format. No
+`bracket_type` change (the Finals stage reuses `winners`/`losers`/`grand_final`); no
+`_BRACKET_RANK` change (`"round_robin": 3` already present). Migration
+`matches/migrations/0038_tournament_rr_de.py` (dep
+`0037_tournament_round_robin`; three ops — `AlterField(Tournament.format)` choices
+widen to the 4-tuple → `AddField(wb_advancers)` → `AddField(lb_advancers)`; **no
+`RunPython`, no backfill**, ADR-0004 disposable-sandbox precedent).
+
+**Locked constraints (shape vs count).** The valid `(wb_advancers, lb_advancers)`
+combos are exactly six: **`wb ∈ {4, 8, 16}`** (a power of two) and
+**`lb ∈ {0, wb // 2}`** — `4/0, 4/2, 8/0, 8/4, 16/0, 16/8`. The **SHAPE**
+(power-of-two `wb`, `lb ∈ {0, wb//2}`) is enforced at the **create form** (the
+`rrde_combo` select enumerates only the six combos); the **COUNT fit** (`wb <= n`
+and `wb + lb <= n`, where `n = len(participants)`) is validated at
+**`lock_and_build`** and raises `django.core.exceptions.ValidationError`
+(`"wb_advancers exceeds participant count."` / `"wb_advancers + lb_advancers
+exceeds participant count."`), surfaced by the existing lock view via
+`messages.error` (LG-02a precedent).
+
+**Seeding-stage build at lock (`matches/models.py`).** The existing RR guard in
+`lock_and_build` widens from `if self.format == "round_robin":` to **`if
+self.format in ("round_robin", "round_robin_double_elim"):`** — the RR-node build
+is **byte-identical** for both formats (one `BracketNode` per `generate_schedule`
+fixture, `bracket_type="round_robin"`, `series_length=1`, no advance edges, no
+`resolve_bye_chain`). Inside this branch, the RRDE format additionally runs the
+lock-time count validation above (raising `ValidationError` on a bad fit) before
+the shared `state="active"` + `save(update_fields=["state"])` tail. **The RRDE lock
+builds ONLY the RR Seeding nodes — the DE Finals are NOT built at lock**; they are
+deferred (below). The elim branch (single/double-elim) is unchanged.
+
+**Deferred Finals build — `build_de_finals_if_rr_finished(self) -> None`
+(`@transaction.atomic`).** Triggered when the **last** Seeding node resolves; no-op
+unless ALL guards hold (in order): (1) `self.format == "round_robin_double_elim"`;
+(2) `self.state == "active"`; (3) every `bracket_type="round_robin"` node has
+`winner_id is not None` (`not self.nodes.filter(bracket_type="round_robin",
+winner__isnull=True).exists()`); (4) **idempotency** — the finals are not already
+built (`not self.nodes.exclude(bracket_type="round_robin").exists()`; a second call
+no-ops). When all pass: read `rows = self.round_robin_standings()` (the SHIPPED
+RR-rank-ordered standings, `rows[0]` is RR rank 1), then split by rank —
+`upper = [ParticipantSpec(team_id=rows[i].team_id, seed=i + 1) for i in
+range(self.wb_advancers)]` (top `wb` → WB seeds `1..wb`, seed = 1-based RR rank),
+`lower = [ParticipantSpec(team_id=rows[self.wb_advancers + j].team_id,
+seed=self.wb_advancers + j + 1) for j in range(self.lb_advancers)]` (next `lb` → LB
+pre-seeds, seeds `wb+1..wb+lb`), and **the rest of `rows` are eliminated** (never
+enter the Finals). Call `specs = build_rr_de_finals_bracket(upper, lower)`, resolve
+each spec's `series_length` via `series_length_for_depth(spec.depth, final=...,
+semifinal=..., quarterfinal=..., earlier=...)` from the four create-time slots
+(distance-to-GF1 escalation, exactly as a plain DE), and persist + wire via
+`self._persist_elim_specs(specs, ...)`. The Tournament **STAYS `state="active"`**
+across the seeding→finals transition; the champion is crowned later by the DE Grand
+final (via `play_next_node`'s unchanged crown block). **No byes** in the finals
+(see invariant below), so the `resolve_bye_chain` pass inside the helper is a no-op.
+
+**NEW pure builder — `build_rr_de_finals_bracket(upper_specs, lower_specs) ->
+list[BracketNodeSpec]` (`matches/bracket.py`).** The fused WB+LB+GF finals builder.
+`upper_specs` are the Winners-bracket starters (RR-rank-ordered, `seed = RR rank`,
+`len == wb_advancers ∈ {4, 8, 16}`, a power of two); `lower_specs` are the
+Losers-bracket pre-seeds (RR-rank-ordered, `seed = wb+1 .. wb+lb`, `len` either `0`
+or `wb_advancers // 2`). Output is a `list[BracketNodeSpec]` consumed by the **SAME**
+persist+wire path as `build_double_elim_bracket` output — every spec carries
+`bracket_type` (`winners`/`losers`/`grand_final`), 2-tuple `advances_to` +
+`advances_to_slot`, 3-tuple `loser_advances_to` `(bracket_type, bracket_round,
+position)` + `loser_advances_to_slot`, `is_bye`, `winner_id`,
+`seed_a`/`seed_b`/`team_a_id`/`team_b_id`, and **`depth`** (distance to GF1: GF1/GF2
+= 0, WB-final & LB-final = 1, earlier rounds deeper). Two cases:
+
+- **`lower_specs == []` — plain DE delegation.** With no LB pre-seeds the finals are
+  a plain top-`wb` double-elimination: the builder **MUST produce EXACTLY
+  `build_double_elim_bracket(upper_specs)`** — it **delegates directly** (the
+  simplest, locked choice), so the result is provably identical (the pure test
+  asserts spec-list equality). No re-tagging, no LB pre-fill.
+- **`lower_specs` non-empty — fused WB+LB.** The WB is `build_bracket(upper_specs)`
+  **re-tagged `bracket_type="winners"`** (reuse `build_double_elim_bracket`'s own WB
+  re-tag pass — same seeding/pairing, no byes since `len(upper_specs)` is a power of
+  two). The **only** difference from a plain DE is the LB round-1 wiring: **LB-R1**
+  has `wb/2` nodes (== `lb_advancers`), each with **slot "a" PRE-FILLED with a
+  `lower_spec`** (`team_a_id`/`seed_a` set; `team_b_id`/`seed_b` left `None` until a
+  WB-R1 dropper arrives) in seed order (LB pre-seed `wb+1` → LB-R1 pos 0 slot "a", …);
+  and **each WB-R1 node's `loser_advances_to` points at the matching LB-R1 node's
+  slot "b"** (naive same-position drop, WB-R1 pos `i` → LB-R1 pos `i` slot "b" —
+  `wb/2` WB-R1 nodes ↔ `wb/2` LB-R1 nodes, exactly paired). WB-R(r≥2) losers drop
+  into the LB exactly as `build_double_elim_bracket` wires them (the existing naive
+  same-position drop — **NO anti-rematch folding**, inherited limitation). GF1/GF2
+  are emitted as in a plain DE (GF1 = WB champ slot "a" + LB champ slot "b", GF1's
+  `loser_advances_to` → GF2 for the Bracket reset; GF2 final, both pointers `None`;
+  GF1/GF2 `depth = 0`). **No-byes invariant:** `wb` is a power of two filled by
+  exactly `wb` real teams, and `lb = wb/2` exactly fills LB-R1 slot "a" (or `lb = 0`
+  ⇒ plain DE over a power-of-two field), so the output has **zero `is_bye` nodes**
+  and the deferred build's `resolve_bye_chain` pass is a no-op. **Import-allowlist
+  guarantee:** the builder adds **no new import** — it composes `build_bracket` /
+  `build_double_elim_bracket` and constructs `BracketNodeSpec`s, all in-module;
+  `TestNoDjangoImportsLeaked` stays green.
+
+**Extracted shared persist helper — `_persist_elim_specs(self, specs, ...) -> None`
+(`matches/models.py`).** The DE-node persist loop + the `advances_to` /
+`loser_advances_to` wiring passes + the `resolve_bye_chain` cascade pass are
+**extracted** out of `lock_and_build` into this private helper so BOTH the existing
+single/double-elim lock path AND the deferred finals build reuse it **verbatim**.
+The helper does: (1) the `BracketNode.objects.create(...)` persist loop (carrying
+`bracket_type`, `team_a`/`team_b` via a `team_by_id` map built from
+`self.participants`, `seed_a`/`seed_b`, `is_bye`, `advances_to_slot`,
+`loser_advances_to_slot`, `winner`, and the caller-resolved `series_length`); (2)
+the `advances_to` wiring pass (2-tuple coord); (3) the `loser_advances_to` wiring
+pass (3-tuple coord); (4) the `resolve_bye_chain` cascade. **Boundary note:**
+`series_length` stamping stays in the **CALLER** — the single/double-elim
+`lock_and_build` resolves `series_length_for_round` / `series_length_for_depth` per
+spec before persisting, and the deferred build resolves
+`series_length_for_depth(spec.depth, ...)` the same way; the exact length-resolution
+boundary (a parallel lookup vs four ints + an `is_de` flag) is **Code agent's
+discretion**, but the persist + three wiring passes MUST move into the helper
+unchanged and the existing single/double-elim `lock_and_build` behaviour MUST stay
+**byte-identical** (same nodes, edges, `series_length`, byes — pinned by
+`TestLockAndBuildSingleElimUnchanged` / `...DoubleElimUnchanged`). **Stage is
+DERIVED, not stored:** "Finals built" iff
+`self.nodes.exclude(bracket_type="round_robin").exists()` — **no `stage` column**.
+
+**Engine — `play_next_node` guard keyed on `node.bracket_type`
+(`matches/tournament_engine.py`).** The current RR guard (after the `node.winner`
+stamp) **rekeys** from `if tournament.format == "round_robin":` to
+**`if node.bracket_type == "round_robin":`** and dispatches on format:
+`format == "round_robin"` → `tournament.complete_round_robin_if_finished()`;
+`format == "round_robin_double_elim"` → `tournament.build_de_finals_if_rr_finished()`;
+then **`return node`** (a resolved Seeding node NEVER falls through to the elim
+advance/drop/GF-reset/crown block). DE-stage nodes (`bracket_type in
+winners`/`losers`/`grand_final`) **fall through to the UNCHANGED elim block** — even
+inside an RRDE tournament: winner advance, loser Drop, GF1 Bracket-reset, GF2 crown,
+all **byte-unchanged**. When the last RR node resolves in an RRDE tournament,
+`build_de_finals_if_rr_finished()` persists the Finals, the tournament stays
+`active`, and the next `play_next_node` call finds the first playable DE node.
+**Callers unchanged** (`tournament_play_next`, `play_tournament_task`,
+`tournament_play_all`, `tournament_play_status` keep their URLs + 5-key status JSON);
+`stage_progress` reports completion across the RR groups THEN the WB/LB/GF groups —
+the finals groups appear only after the deferred build, so Play-All progress
+naturally extends mid-run as the Finals materialize. `find_next_node` is unchanged.
+
+**View / template surface.** Create form (`tournament_create` /
+`tournament_create.html`): the `<select name="format">` (DOM id
+**`tournament-create-format`**) gains a fourth option — value
+**`round_robin_double_elim`**, label **`Round robin → Double elimination`**
+(em-dash arrow U+2192); the view's forgiving-fallback parse widens to accept it
+(absent/tampered → `single_elimination`). NEW single `<select name="rrde_combo">`
+(DOM id **`tournament-create-rrde-combo`**) enumerating the six valid combos
+(`4/0, 4/2, 8/0, 8/4, 16/0, 16/8` — exact value-string format at Code agent's
+discretion), parsed into `wb_advancers` / `lb_advancers`; parse is forgiving (absent/
+invalid on an RRDE create → first combo `(4, 0)`; ignored on a non-RRDE create,
+both advancers persist `0`). The combo select is shown client-side **only** when the
+format select reads `round_robin_double_elim` (hidden otherwise — reuse the existing
+inline `onchange` toggle that hides the series-length selects for `round_robin`;
+behaviour pinned, exact JS at Code agent's discretion). `Tournament.objects.create(...)`
+passes `wb_advancers=` / `lb_advancers=` (`0`/`0` for non-RRDE). Detail page
+(`_detail_context` / `tournament_detail.html`): two NEW context keys —
+**`tournament_stage`** (`str`, DERIVED not stored: `"setup"` / `"seeding"` /
+`"finals"` / `"completed"`) and **`cut_labels`** (`dict[int, str]`,
+`team_id -> "wb" | "lb" | "out"`, built from `round_robin_standings()`: top
+`wb_advancers` → `"wb"`, next `lb_advancers` → `"lb"`, rest → `"out"`; populated only
+in the seeding stage of an RRDE tournament, `{}` otherwise). The existing keys
+(`tournament`, `participants`, `rounds`, `next_node`, `is_locked`, `can_play`,
+`import_form`, `import_row_errors`, `rr_crosstable`, `rr_standings`) are
+**unchanged**. NEW DOM ids: **`tournament-stage-badge`** (renders `tournament_stage`,
+e.g. "Seeding stage" / "Finals stage") and a per-standings-row cut class substring
+**`tournament-standings-cut-wb`** / **`-lb`** / **`-out`** on each RR standings row in
+the seeding stage (so tests can assert which teams are tagged Winners / Losers /
+Eliminated). During seeding, reuse the RR crosstable + standings VERBATIM
+(`tournament-rr-crosstable` / `tournament-rr-standings`), adding the cut class + the
+stage badge; once Finals are built, ALSO render the DE three-section tree reusing the
+EXISTING DE rendering (`tournament-bracket-winners` / `-losers` / `-grand-final` +
+the per-section `tournament-bracket-{bracket_type}-round-{n}` columns +
+`tournament-champion-banner`). `_build_rounds` / `_build_rr_crosstable` are
+**unchanged** — `_build_rounds` already returns the 3-key
+`{"winners", "losers", "grand_final"}` dict, populated once finals nodes exist; the
+template branches on `tournament.format`.
+
+**Determinism / scope.** **Non-deterministic** per-Match sims (`simulate_match`
+draws fresh per-round seeds) ⇒ **no SIM-07/SIM-08 interaction, NO Score Calibration
+re-baseline**. No `simulate_match` change. ADR-0021 **EXTENDED** for the
+deferred-build decision (no new ADR — reversible: a fused builder + a deferred build
++ an extracted helper); **no new CONTEXT.md term** (the **Round robin → double
+elimination** term was finalised at grilling time). **Scope-out (LOCKED — DEFERRED):**
+**anti-rematch LB folding** (the LB consumes WB losers via the naive same-position
+drop, inherited from `build_double_elim_bracket`); **Swiss** seeding stage;
+**in-League / in-Season embedding** (the Tournament stays standalone, `season`-less);
+**fully-general `wb`/`lb` counts** (only the six locked combos ship); **home/away
+side alternation** (sides fixed, LG-02b locked); **deterministic / master-seed-
+replayable Series**.
+
+**Tests:** `matches/tests/test_bracket.py` (extend —
+`TestBuildRrDeFinalsBracket`: `lower_specs == []` ⇒ result EQUALS
+`build_double_elim_bracket(upper_specs)` for `wb = 4/8/16`; non-empty `lb = wb/2`
+for `wb = 4/8` — WB re-tagged `winners`, LB-R1 slot "a" pre-filled in seed order,
+each WB-R1 `loser_advances_to` → matching LB-R1 slot "b", GF1/GF2 wiring + `depth`,
+**no `is_bye` nodes**, LB-round count `== 2W - 1`; `TestNoDjangoImportsLeaked` green).
+`matches/tests/test_tournament_models.py` (extend — `wb_advancers`/`lb_advancers`
+exist/default `0`/no choices; `format` accepts `round_robin_double_elim`;
+`lock_and_build` builds ONLY RR nodes for RRDE and raises `ValidationError` on the two
+count-fit failures; `build_de_finals_if_rr_finished` no-op unless all guards hold +
+idempotent + seeds Finals from RR standings rank; `_persist_elim_specs` extraction
+keeps single/double-elim `lock_and_build` byte-identical via
+`TestLockAndBuildSingleElimUnchanged` / `...DoubleElimUnchanged`).
+`matches/tests/test_tournament_engine.py` (extend — resolving the LAST RR node
+triggers the deferred Finals build, tournament stays `active`; draining the Finals
+crowns the champion via the GF crown block; a Seeding node never gets an
+`advance_winner` mutation; a DE-stage node advances/drops/resets normally).
+`matches/tests/test_tournament_views.py` (extend — create form offers the
+`round_robin_double_elim` option + the `tournament-create-rrde-combo` select with the
+six combos; POST persists `format`/`wb_advancers`/`lb_advancers` with forgiving
+fallback; detail renders `tournament-stage-badge` seeding-vs-finals strings + the
+`tournament-standings-cut-{wb|lb|out}` substrings tagging the right teams; reused RR +
+DE DOM ids present). `matches/tests/test_tournament_tasks.py` (extend — under
+`CELERY_TASK_ALWAYS_EAGER`, `play_tournament_task` drains an RRDE tournament through
+BOTH stages — seeding RR nodes THEN the auto-built DE finals — to a champion +
+`state="completed"`; `stage_progress` reports per-group completion across the RR
+groups then the WB/LB/GF groups). Tests assert on pure functions, persisted
+node/row/edge shapes, `bracket_type` / `series_length`, `node.winner` / `champion` /
+`state`, standings ORDER, and DOM ids — **never on exact simulated point totals**.
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)

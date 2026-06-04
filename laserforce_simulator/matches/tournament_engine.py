@@ -82,21 +82,33 @@ def play_next_node(tournament: Tournament) -> "BracketNode | None":
     node.winner = winner_team
     node.save(update_fields=["winner"])
 
-    # 7a. Round-robin: every node has advances_to=None, so the elim
-    # "crown on advances_to is None" rule would wrongly crown on the FIRST
-    # resolved node. SKIP the advance/crown block entirely; the champion +
-    # completion are decided by complete_round_robin_if_finished after every
-    # RR node has a winner.
-    if tournament.format == "round_robin":
-        tournament.complete_round_robin_if_finished()
+    # 7a. Round-robin (seeding-stage) node: every RR node has advances_to=None,
+    # so the elim "crown on advances_to is None" rule would wrongly crown on the
+    # FIRST resolved node. SKIP the advance/crown block entirely. Dispatch on
+    # format: a plain round-robin completes once every RR node has a winner; a
+    # round-robin -> double-elim builds the deferred DE finals once the last RR
+    # node resolves (the tournament stays active; the next play_next_node call
+    # finds the first playable DE finals node). A DE-stage node
+    # (winners/losers/grand_final) of an RRDE tournament falls through to the
+    # UNCHANGED elim block below.
+    if node.bracket_type == "round_robin":
+        if tournament.format == "round_robin":
+            tournament.complete_round_robin_if_finished()
+        elif tournament.format == "round_robin_double_elim":
+            tournament.build_de_finals_if_rr_finished()
         return node
 
     # 8. Flatten the bracket (LG-02c widens select_related to loser_advances_to).
+    # Exclude round_robin nodes: in an RR->DE tournament the (resolved) Seeding
+    # stage nodes share (bracket_round, position) coords with the deferred-built
+    # Finals nodes (both number from 1), and advance_winner matches on
+    # (bracket_round, position) bracket-type-blind — a stray round_robin node
+    # (advances_to=None) would shadow the real WB/LB node and stall Advancement.
     flat = [
         _node_to_dict(n)
-        for n in tournament.nodes.select_related(
-            "advances_to", "loser_advances_to"
-        ).prefetch_related("series_matches")
+        for n in tournament.nodes.exclude(bracket_type="round_robin")
+        .select_related("advances_to", "loser_advances_to")
+        .prefetch_related("series_matches")
     ]
 
     # 8a. Winner advance. advance_winner stays the engine's winner-mutation
@@ -200,9 +212,9 @@ def _collapse_drop_byes(tournament: Tournament) -> None:
     while changed:
         changed = False
         nodes = list(
-            tournament.nodes.select_related(
-                "advances_to", "loser_advances_to"
-            ).prefetch_related("series_matches")
+            tournament.nodes.exclude(bracket_type="round_robin")
+            .select_related("advances_to", "loser_advances_to")
+            .prefetch_related("series_matches")
         )
         flat = [_node_to_dict(n) for n in nodes]
 

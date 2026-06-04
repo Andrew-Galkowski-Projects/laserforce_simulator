@@ -372,6 +372,193 @@ def build_double_elim_bracket(
     return rebuilt_wb + lb_specs + [gf1, gf2]
 
 
+def build_rr_de_finals_bracket(
+    upper_specs: list[ParticipantSpec],
+    lower_specs: list[ParticipantSpec],
+) -> list[BracketNodeSpec]:
+    """LG-02c (RR->DE) — the fused Winners + Losers + Grand-final finals builder.
+
+    ``upper_specs`` are the WB starters (RR-rank-ordered, ``seed = 1..wb``);
+    ``lower_specs`` are the LB pre-seeds (RR-rank-ordered, ``seed = wb+1..wb+lb``).
+    ``len(upper_specs)`` is a power of two (4 / 8 / 16); ``len(lower_specs)`` is
+    either 0 or ``len(upper_specs) // 2``.
+
+    - ``lower_specs == []`` ⇒ the finals are a plain top-``wb``
+      double-elimination: delegate EXACTLY to ``build_double_elim_bracket(
+      upper_specs)`` so the result is provably identical (no re-tag, no LB
+      pre-fill).
+    - ``lower_specs`` non-empty ⇒ the WB is ``build_bracket(upper_specs)``
+      re-tagged ``bracket_type="winners"`` (reusing the same WB re-tag pass
+      ``build_double_elim_bracket`` runs — no byes since ``wb`` is a power of
+      two of real teams), the LB-R1 slot "a" is PRE-FILLED with the
+      ``lower_specs`` in seed order, and each WB-R1 node's ``loser_advances_to``
+      points at the matching LB-R1 slot "b". The rest of the LB + the GF1/GF2 +
+      Bracket-reset wiring is identical to ``build_double_elim_bracket``.
+
+    Output is consumed by the SAME persist+wire path as
+    ``build_double_elim_bracket`` output. No byes anywhere (the WB is exactly a
+    power of two of real teams; the LB-R1 is exactly filled). Stays within the
+    frozen import allowlist (composes ``build_bracket`` /
+    ``build_double_elim_bracket`` + constructs ``BracketNodeSpec``s — no new
+    import).
+    """
+    if not lower_specs:
+        # No LB pre-seeds ⇒ a plain top-``wb`` double-elimination. Delegate
+        # directly so the result is provably identical.
+        return build_double_elim_bracket(upper_specs)
+
+    wb = len(upper_specs)
+    total_rounds = int(math.log2(wb))  # W = number of WB rounds (wb is pow2)
+    W = total_rounds
+
+    # --- Winners bracket: the single-elim tree, re-tagged "winners". ----------
+    # No byes (wb is a power of two of real teams). We re-tag exactly like
+    # build_double_elim_bracket but re-route the loser drops to the RRDE LB
+    # (which has wb/2 round-1 nodes, NOT the plain-DE wb/4).
+    wb_base = build_bracket(upper_specs)
+
+    # GF coordinates sit ABOVE the LB max round so a WB/LB final's 2-tuple
+    # advances_to coord is unambiguous by (bracket_round, position) alone.
+    lb_last_round = 2 * W - 1  # RRDE LB final round (one more than a plain DE)
+    gf1_coord = ("grand_final", lb_last_round + 1, 0)
+    gf2_coord = ("grand_final", lb_last_round + 2, 0)
+
+    def wb_loser_dest(r: int, i: int) -> tuple[tuple[str, int, int], str]:
+        """Where a WB-R``r`` loser at position ``i`` Drops in the RRDE LB.
+
+        WB-R1 loser pos i -> LB-R1 pos i slot "b" (the matching pre-seed holds
+        slot "a"). WB-R``r`` loser (r>=2) -> LB minor round (2r-1) pos i slot
+        "b" (the LB survivor holds slot "a").
+        """
+        if r == 1:
+            return ("losers", 1, i), "b"
+        return ("losers", 2 * r - 1, i), "b"
+
+    rebuilt_wb: list[BracketNodeSpec] = []
+    for spec in wb_base:
+        if spec.advances_to is None:
+            # WB final: its CHAMPION feeds GF1 slot "a"; its loser Drops to the LB.
+            adv = (gf1_coord[1], gf1_coord[2])
+            adv_slot = "a"
+        else:
+            adv = spec.advances_to
+            adv_slot = spec.advances_to_slot
+        ldest, lslot = wb_loser_dest(spec.bracket_round, spec.position)
+        depth = W - spec.bracket_round + 1
+        rebuilt_wb.append(
+            BracketNodeSpec(
+                bracket_round=spec.bracket_round,
+                position=spec.position,
+                team_a_id=spec.team_a_id,
+                team_b_id=spec.team_b_id,
+                seed_a=spec.seed_a,
+                seed_b=spec.seed_b,
+                is_bye=spec.is_bye,
+                advances_to=adv,
+                advances_to_slot=adv_slot,
+                winner_id=spec.winner_id,
+                bracket_type="winners",
+                loser_advances_to=ldest,
+                loser_advances_to_slot=lslot,
+                depth=depth,
+            )
+        )
+
+    # --- Losers bracket: wb/2 round-1 nodes, 2W-1 rounds. ---------------------
+    # LB-R1 pairs each pre-seed (slot "a") against the matching WB-R1 dropper
+    # (slot "b") -> wb/2 nodes. Thereafter even LB rounds are MAJOR (LB-vs-LB,
+    # halving) and odd LB rounds (>=3) are MINOR (consume WB-R(k+1) losers
+    # against LB survivors). The final LB round (2W-1) consumes the WB-final
+    # loser, narrowing to one LB champion.
+    lb_round_count: dict[int, int] = {1: wb // 2}
+    for m in range(2, 2 * W):
+        if m % 2 == 0:
+            # Major: halve the previous round's survivors.
+            lb_round_count[m] = lb_round_count[m - 1] // 2
+        else:
+            # Minor (m = 2k+1): consumes WB-R(k+1) losers = wb / 2**(k+1).
+            k = (m - 1) // 2
+            lb_round_count[m] = wb // (2 ** (k + 1))
+
+    def lb_parent(m: int, j: int) -> tuple[tuple[str, int, int], str]:
+        """Advancement of LB round ``m`` position ``j`` -> (coord, slot)."""
+        if m == lb_last_round:
+            # LB final winner -> GF1 slot "b" (the LB champion).
+            return gf1_coord, "b"
+        if m == 1:
+            # LB-R1 winner -> LB-R2 (major), paired two-at-a-time.
+            return ("losers", 2, j // 2), ("a" if j % 2 == 0 else "b")
+        if m % 2 == 0:
+            # Major round winner -> next minor round slot "a" (WB dropper fills "b").
+            return ("losers", m + 1, j), "a"
+        # Minor round winner -> next major round, paired two-at-a-time.
+        return ("losers", m + 1, j // 2), ("a" if j % 2 == 0 else "b")
+
+    # LB pre-seeds fill LB-R1 slot "a" in seed order (pre-seed at index i ->
+    # LB-R1 pos i). lower_specs is RR-rank-ordered with seed = wb+1..wb+lb.
+    lower_by_pos = {i: lower_specs[i] for i in range(len(lower_specs))}
+
+    lb_specs: list[BracketNodeSpec] = []
+    for m in sorted(lb_round_count):
+        for j in range(lb_round_count[m]):
+            adv, slot = lb_parent(m, j)
+            pre = lower_by_pos.get(j) if m == 1 else None
+            lb_specs.append(
+                BracketNodeSpec(
+                    bracket_round=m,
+                    position=j,
+                    team_a_id=pre.team_id if pre is not None else None,
+                    team_b_id=None,
+                    seed_a=pre.seed if pre is not None else None,
+                    seed_b=None,
+                    is_bye=False,
+                    advances_to=(adv[1], adv[2]),
+                    advances_to_slot=slot,
+                    winner_id=None,
+                    bracket_type="losers",
+                    loser_advances_to=None,  # an LB loss eliminates
+                    loser_advances_to_slot=None,
+                    depth=lb_last_round - m + 1,  # LB final depth 1, earlier deeper
+                )
+            )
+
+    # --- Grand final: GF1 + GF2 (Bracket reset) — identical to a plain DE. -----
+    gf1 = BracketNodeSpec(
+        bracket_round=gf1_coord[1],
+        position=gf1_coord[2],
+        team_a_id=None,
+        team_b_id=None,
+        seed_a=None,
+        seed_b=None,
+        is_bye=False,
+        advances_to=(gf2_coord[1], gf2_coord[2]),
+        advances_to_slot="b",  # the GF1 winner (LB-champ path) fills GF2 "b"
+        winner_id=None,
+        bracket_type="grand_final",
+        loser_advances_to=gf2_coord,  # GF1 loser -> GF2 slot "a" (WB champ holds)
+        loser_advances_to_slot="a",
+        depth=0,
+    )
+    gf2 = BracketNodeSpec(
+        bracket_round=gf2_coord[1],
+        position=gf2_coord[2],
+        team_a_id=None,
+        team_b_id=None,
+        seed_a=None,
+        seed_b=None,
+        is_bye=False,
+        advances_to=None,  # the final node
+        advances_to_slot=None,
+        winner_id=None,
+        bracket_type="grand_final",
+        loser_advances_to=None,
+        loser_advances_to_slot=None,
+        depth=0,
+    )
+
+    return rebuilt_wb + lb_specs + [gf1, gf2]
+
+
 def clinch_threshold(series_length: int) -> int:
     """Games one slot must win to clinch a best-of-``series_length`` Series."""
     return (series_length // 2) + 1
