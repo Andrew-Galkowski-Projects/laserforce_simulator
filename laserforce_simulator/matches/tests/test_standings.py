@@ -15,7 +15,13 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from matches.standings import StandingsRow, compute_standings
+from matches.standings import (
+    StandingsRow,
+    compute_standings,
+    match_points_by_team,
+    match_score,
+    rerank_round_robin,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers — build one match dict (9-key shape) and one round dict (6-key shape)
@@ -713,6 +719,134 @@ class TestComputeStandingsSideSplit(SimpleTestCase):
 # ---------------------------------------------------------------------------
 # §6b — Defensive: no Django imports leaked into the pure module
 # ---------------------------------------------------------------------------
+
+
+class TestMatchScore(SimpleTestCase):
+    """The 6-point Match score: +2 per Round won, +2 for winning the Match."""
+
+    def test_sweep_by_red_is_six_zero(self) -> None:
+        # Red wins both Rounds and the Match -> 2+2 (rounds) + 2 (match) = 6.
+        self.assertEqual(match_score(2, 0, 100, 100, 200), (6, 0))
+
+    def test_sweep_by_blue_is_zero_six(self) -> None:
+        self.assertEqual(match_score(0, 2, 200, 100, 200), (0, 6))
+
+    def test_split_rounds_match_winner_gets_bonus(self) -> None:
+        # The spec example: Red wins R1, Blue wins R2 (1-1 on rounds), Blue wins
+        # the Match on total points -> Red 2 (one round), Blue 2 (one round) + 2
+        # (match) = 4. Score 2-4 in favour of Blue.
+        self.assertEqual(match_score(1, 1, 200, 100, 200), (2, 4))
+
+    def test_split_rounds_red_wins_match(self) -> None:
+        self.assertEqual(match_score(1, 1, 100, 100, 200), (4, 2))
+
+    def test_tied_match_no_match_bonus(self) -> None:
+        # winner_team_id None (true tie) -> only the round points, no +2 bonus.
+        self.assertEqual(match_score(1, 1, None, 100, 200), (2, 2))
+
+
+class TestMatchPointsByTeam(SimpleTestCase):
+    """``match_points_by_team`` sums each team's Match score across Matches
+    (the ranking metric for both Swiss and round-robin standings)."""
+
+    @staticmethod
+    def _m(red_id, blue_id, rrw, brw, winner):
+        return {
+            "team_red_id": red_id,
+            "team_blue_id": blue_id,
+            "red_rounds_won": rrw,
+            "blue_rounds_won": brw,
+            "winner_team_id": winner,
+        }
+
+    def test_empty_input_is_empty_dict(self) -> None:
+        self.assertEqual(match_points_by_team([]), {})
+
+    def test_single_match_sweep(self) -> None:
+        pts = match_points_by_team([self._m(1, 2, 2, 0, 1)])
+        self.assertEqual(pts, {1: 6, 2: 0})
+
+    def test_accumulates_across_matches(self) -> None:
+        # Team 1: a 6-0 sweep then a scrappy 4-2 split win -> 10.
+        # Team 2: lost the sweep (0). Team 3: lost the split (2).
+        pts = match_points_by_team(
+            [
+                self._m(1, 2, 2, 0, 1),  # team1 sweeps team2
+                self._m(1, 3, 1, 1, 1),  # team1 wins split over team3
+            ]
+        )
+        self.assertEqual(pts[1], 10)
+        self.assertEqual(pts[2], 0)
+        self.assertEqual(pts[3], 2)
+
+    def test_split_win_scores_below_a_sweep(self) -> None:
+        # The whole point: a dominant sweep (6) outranks a scrappy split win (4),
+        # which 3*wins (both = 3) could not distinguish.
+        sweep = match_points_by_team([self._m(1, 2, 2, 0, 1)])
+        split = match_points_by_team([self._m(3, 4, 1, 1, 3)])
+        self.assertGreater(sweep[1], split[3])
+
+
+class TestRerankRoundRobin(SimpleTestCase):
+    """``rerank_round_robin`` re-ranks on (match wins desc, Match score desc,
+    round_wins desc, total_score desc) — wins PRIMARY, Match score (in
+    league_points) the TIEBREAKER — stably, renumbering rank 1-based dense."""
+
+    @staticmethod
+    def _row(team_id, wins, league_points, *, round_wins=0, total_score=0, rank=0):
+        return StandingsRow(
+            team_id=team_id,
+            matches_played=0,
+            wins=wins,
+            losses=0,
+            ties=0,
+            league_points=league_points,
+            round_wins=round_wins,
+            total_score=total_score,
+            rank=rank,
+            match_streak=("", 0),
+            match_l5=(0, 0, 0),
+            round_streak=("", 0),
+            round_l5=(0, 0, 0),
+            red_wlt=(0, 0, 0),
+            blue_wlt=(0, 0, 0),
+            red_points_for=0,
+            blue_points_for=0,
+        )
+
+    def test_empty_input(self) -> None:
+        self.assertEqual(rerank_round_robin([]), [])
+
+    def test_match_wins_are_primary(self) -> None:
+        # More match wins ranks higher even with FEWER Match-score points: two
+        # split wins (2 wins, 8 pts) beats one sweep (1 win, 6 pts).
+        rows = [self._row(1, 1, 6), self._row(2, 2, 8)]
+        ordered = rerank_round_robin(rows)
+        self.assertEqual([r.team_id for r in ordered], [2, 1])
+        self.assertEqual([r.rank for r in ordered], [1, 2])
+
+    def test_match_score_breaks_ties_at_equal_wins(self) -> None:
+        # Equal wins -> higher Match score first: two sweeps (12) over two splits
+        # (8), both at 2 wins.
+        rows = [self._row(1, 2, 8), self._row(2, 2, 12)]
+        ordered = rerank_round_robin(rows)
+        self.assertEqual([r.team_id for r in ordered], [2, 1])
+
+    def test_round_wins_then_total_score_break_further_ties(self) -> None:
+        rows = [
+            self._row(1, 2, 8, round_wins=2, total_score=100),
+            self._row(2, 2, 8, round_wins=3, total_score=50),
+            self._row(3, 2, 8, round_wins=2, total_score=200),
+        ]
+        ordered = rerank_round_robin(rows)
+        self.assertEqual([r.team_id for r in ordered], [2, 3, 1])
+
+    def test_stable_tail_preserved_on_full_tie(self) -> None:
+        # Fully tied rows keep their input order (the compute_standings
+        # team_name-asc tail survives as the final tiebreak).
+        rows = [self._row(5, 1, 3), self._row(2, 1, 3), self._row(9, 1, 3)]
+        ordered = rerank_round_robin(rows)
+        self.assertEqual([r.team_id for r in ordered], [5, 2, 9])
 
 
 class TestNoDjangoImportsLeaked(SimpleTestCase):

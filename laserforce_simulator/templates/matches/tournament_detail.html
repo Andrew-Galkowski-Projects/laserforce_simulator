@@ -97,14 +97,14 @@ finals nodes exist.
         <tr>
             <th></th>
             {% for row in rr_crosstable %}
-            <th>{{ row.team.name|default:"—" }}</th>
+            <th>{% if row.team %}<a href="{% url 'team_match_history' row.team.id %}">{{ row.team.name }}</a>{% else %}—{% endif %}</th>
             {% endfor %}
         </tr>
     </thead>
     <tbody>
         {% for row in rr_crosstable %}
         <tr>
-            <th>{{ row.team.name|default:"—" }}</th>
+            <th>{% if row.team %}<a href="{% url 'team_match_history' row.team.id %}">{{ row.team.name }}</a>{% else %}—{% endif %}</th>
             {% for cell in row.cells %}
             <td>
                 {% if cell %}
@@ -115,6 +115,7 @@ finals nodes exist.
                         {% else %}
                         {{ cell.leg1.team_score }}–{{ cell.leg1.opp_score }}
                         {% endif %}
+                        <small class="match-score text-muted">({{ cell.leg1.match_team }}–{{ cell.leg1.match_opp }})</small>
                     </div>
                     {% elif cell.leg1 %}
                     <div class="text-muted">—</div>
@@ -126,6 +127,7 @@ finals nodes exist.
                         {% else %}
                         {{ cell.leg2.team_score }}–{{ cell.leg2.opp_score }}
                         {% endif %}
+                        <small class="match-score text-muted">({{ cell.leg2.match_team }}–{{ cell.leg2.match_opp }})</small>
                     </div>
                     {% elif cell.leg2 %}
                     <div class="text-muted">—</div>
@@ -142,8 +144,10 @@ finals nodes exist.
 <table class="table" id="tournament-rr-standings">
     <thead>
         <tr>
-            <th>Rank</th><th>Team</th><th>MP</th><th>W</th><th>L</th><th>T</th>
-            <th>Pts</th><th>RW</th><th>TS</th>
+            <th>Rank</th><th>Team</th><th>MP</th>
+            <th title="Match wins">W</th><th>L</th><th>T</th>
+            <th title="Match score: +2 per round won, +2 for winning the match">Match Pts</th>
+            <th>RW</th><th>TS</th>
         </tr>
     </thead>
     <tbody>
@@ -151,7 +155,7 @@ finals nodes exist.
         {% with cut=cut_labels|lookup:row.team_id %}
         <tr{% if cut %} class="tournament-standings-cut-{{ cut }}"{% endif %}>
             <td>{{ row.rank }}</td>
-            <td>{% if team %}{{ team.name }}{% else %}{{ row.team_id }}{% endif %}</td>
+            <td>{% if team %}<a href="{% url 'team_match_history' team.id %}">{{ team.name }}</a>{% else %}{{ row.team_id }}{% endif %}</td>
             <td>{{ row.matches_played }}</td>
             <td>{{ row.wins }}</td>
             <td>{{ row.losses }}</td>
@@ -215,15 +219,17 @@ yields the locked tournament-node-swiss-{bracket_round}-{position} ids).
 <table class="table" id="tournament-swiss-standings">
     <thead>
         <tr>
-            <th>Rank</th><th>Team</th><th>MP</th><th>W</th><th>L</th><th>T</th>
-            <th>Pts</th><th>RW</th><th>TS</th>
+            <th>Rank</th><th>Team</th><th>MP</th>
+            <th title="Match wins">W</th><th>L</th><th>T</th>
+            <th title="Match score: +2 per round won, +2 for winning the match">Match Pts</th>
+            <th>RW</th><th>TS</th>
         </tr>
     </thead>
     <tbody>
         {% for row, team in swiss_standings %}
         <tr>
             <td>{{ row.rank }}</td>
-            <td>{% if team %}{{ team.name }}{% else %}{{ row.team_id }}{% endif %}</td>
+            <td>{% if team %}<a href="{% url 'team_match_history' team.id %}">{{ team.name }}</a>{% else %}{{ row.team_id }}{% endif %}</td>
             <td>{{ row.matches_played }}</td>
             <td>{{ row.wins }}</td>
             <td>{{ row.losses }}</td>
@@ -273,11 +279,11 @@ yields the locked tournament-node-swiss-{bracket_round}-{position} ids).
                 <div class="card-body p-2">
                     <div>
                         {% if node.seed_a %}<small class="text-muted">[{{ node.seed_a }}]</small>{% endif %}
-                        {{ node.team_a.name|default:"—" }}
+                        {% if node.team_a %}<a href="{% url 'team_match_history' node.team_a.id %}">{{ node.team_a.name }}</a>{% else %}—{% endif %}
                     </div>
                     <div>
                         {% if node.seed_b %}<small class="text-muted">[{{ node.seed_b }}]</small>{% endif %}
-                        {{ node.team_b.name|default:"—" }}
+                        {% if node.team_b %}<a href="{% url 'team_match_history' node.team_b.id %}">{{ node.team_b.name }}</a>{% else %}—{% endif %}
                     </div>
                     {% if node.is_bye %}
                     <div><small class="text-muted">Bye</small></div>
@@ -288,14 +294,19 @@ yields the locked tournament-node-swiss-{bracket_round}-{position} ids).
                     <div id="tournament-node-series-score-{{ node.bracket_round }}-{{ node.position }}">
                         <small class="text-muted">{{ node.wins_a }}–{{ node.wins_b }}</small>
                     </div>
-                    {% for sm in node.series_matches %}
-                    {% if sm.match %}
-                    <div><a href="{% url 'match_detail' sm.match.id %}">Game {{ sm.game_number }}</a></div>
+                    {% if node.games %}
+                    <div id="tournament-node-match-scores-{{ node.bracket_round }}-{{ node.position }}">
+                        {% for game in node.games %}
+                        <div>
+                            <a href="{% url 'match_detail' game.match_id %}">Game {{ game.game_number }}</a>
+                            <small class="match-score">{{ game.score_a }}–{{ game.score_b }}</small>
+                        </div>
+                        {% endfor %}
+                    </div>
                     {% endif %}
-                    {% endfor %}
                     {% endif %}
                     {% if node.winner %}
-                    <div><strong>Winner: {{ node.winner.name }}</strong></div>
+                    <div><strong>Winner: <a href="{% url 'team_match_history' node.winner.id %}">{{ node.winner.name }}</a></strong></div>
                     {% endif %}
                 </div>
             </div>
@@ -317,7 +328,7 @@ yields the locked tournament-node-swiss-{bracket_round}-{position} ids).
         <tbody>
             {% for participant in participants %}
             <tr>
-                <td>{{ participant.team.name }}</td>
+                <td><a href="{% url 'team_match_history' participant.team.id %}">{{ participant.team.name }}</a></td>
                 <td>
                     <input type="number" min="1" name="seed_{{ participant.team_id }}"
                            id="tournament-seed-input-{{ participant.team_id }}"

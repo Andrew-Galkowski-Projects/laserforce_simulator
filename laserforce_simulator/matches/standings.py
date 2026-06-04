@@ -13,6 +13,16 @@ Public surface:
   (every persisted Season Round) into a ranked Standings list. Sort
   order: ``(league_points desc, round_wins desc, total_score desc,
   team_name asc)``; rank is populated 1-based and dense.
+* ``match_score(...)`` — the 6-point **Match score** for one Match (``+2``
+  per Round won, ``+2`` for winning the Match). Returns ``(red, blue)``.
+* ``match_points_by_team(completed_matches)`` — per-team sum of
+  ``match_score`` over a list of completed-Match dicts; both the Swiss
+  and the round-robin standings rank on this instead of ``3*wins``.
+* ``rerank_round_robin(rows)`` — re-rank a ``StandingsRow`` list on
+  ``(match wins desc, Match score desc, round_wins desc, total_score
+  desc)`` (stable) and renumber ``rank``; the round-robin ladder, where
+  Match score (overridden into ``league_points``) is the tiebreaker
+  AFTER match wins.
 
 Frozen import allowlist (the only modules this file may import):
 ``dataclasses``, ``typing``, ``collections``. No Django, no ``random``,
@@ -23,7 +33,7 @@ check.
 """
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 
@@ -349,3 +359,73 @@ def compute_standings(
             )
         )
     return rows
+
+
+def match_score(
+    red_rounds_won: int,
+    blue_rounds_won: int,
+    winner_team_id,
+    team_red_id: int,
+    team_blue_id: int,
+) -> tuple:
+    """The 6-point **Match score** for one Match: ``+2`` per Round won plus
+    ``+2`` for winning the Match overall.
+
+    Returns ``(red_score, blue_score)``. A 2-Round Match distributes up to 6
+    points (sweep both Rounds = 4, win the Match = 2). Example: Red wins Round 1,
+    Blue wins Round 2, Blue wins the Match on total points ⇒ ``(2, 4)``. A tied
+    Match (``winner_team_id is None``) awards no Match-win bonus to either side.
+
+    Pure integer math over the same ``red_rounds_won`` / ``blue_rounds_won`` /
+    ``winner_team_id`` fields ``compute_standings`` already consumes — no Django,
+    no ORM.
+    """
+    red = 2 * red_rounds_won + (2 if winner_team_id == team_red_id else 0)
+    blue = 2 * blue_rounds_won + (2 if winner_team_id == team_blue_id else 0)
+    return red, blue
+
+
+def match_points_by_team(completed_matches: list) -> dict:
+    """Sum each team's :func:`match_score` over the given completed-Match dicts.
+
+    ``completed_matches`` is the same dict list ``compute_standings`` consumes
+    (the keys read here are ``red_rounds_won``, ``blue_rounds_won``,
+    ``winner_team_id``, ``team_red_id``, ``team_blue_id``). Returns
+    ``{team_id: total_match_points}``; a team absent from every Match is absent
+    from the dict (callers default missing teams to 0). Both the Swiss and the
+    round-robin standings rank on this instead of ``3*wins``. Pure — no Django,
+    no ORM.
+    """
+    points: dict = defaultdict(int)
+    for m in completed_matches:
+        red, blue = match_score(
+            m["red_rounds_won"],
+            m["blue_rounds_won"],
+            m["winner_team_id"],
+            m["team_red_id"],
+            m["team_blue_id"],
+        )
+        points[m["team_red_id"]] += red
+        points[m["team_blue_id"]] += blue
+    return dict(points)
+
+
+def rerank_round_robin(rows: list) -> list:
+    """Re-rank round-robin ``StandingsRow``s on the ladder ``(match wins desc,
+    Match score desc, round_wins desc, total_score desc)`` (STABLE) and renumber
+    ``rank`` 1-based dense.
+
+    Match wins (``StandingsRow.wins``) is the PRIMARY key; the 6-point **Match
+    score** sum — which the caller overrides into ``league_points`` via
+    :func:`match_points_by_team` — is only the TIEBREAKER between teams level on
+    wins (so a dominant sweep edges out a scrappy split win at equal wins, but
+    more wins always ranks higher regardless of margin). The stable sort
+    preserves the input order's tail — e.g. the ``team_name asc`` final tiebreak
+    ``compute_standings`` already applied — as the last discriminator. Pure — no
+    Django, no ORM. Empty input ⇒ ``[]``.
+    """
+    ordered = sorted(
+        rows,
+        key=lambda r: (-r.wins, -r.league_points, -r.round_wins, -r.total_score),
+    )
+    return [replace(row, rank=i + 1) for i, row in enumerate(ordered)]
