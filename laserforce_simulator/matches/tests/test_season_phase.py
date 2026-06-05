@@ -507,3 +507,132 @@ class TestCompletionEquivalence(TestCase):
 
         self.assertEqual(season.state, "completed")
         self.assertEqual(season.champion_team_id, champ)
+
+
+# ===========================================================================
+# LG-02-Part2b — the two NEW dormant ``SeasonPhase`` columns
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2b-seam-contract.md`` §1:
+# ``SeasonPhase`` gains two fields appended after ``phase_type`` —
+#   schedule_format = CharField(max_length=32, null=True, blank=True)
+#   tournament = ForeignKey("matches.Tournament", null=True, blank=True,
+#                           on_delete=SET_NULL, related_name="season_phases")
+# Both are DORMANT this slice (nothing reads them); ``tournament`` is ALWAYS
+# NULL in Part2b (the embed is Part2c). These tests pin the schema-level
+# behaviour: ``schedule_format`` accepts a value and is None-able; the
+# ``tournament`` FK is nullable, SET_NULL on delete, and reverse-accessible via
+# ``tournament.season_phases``.
+#
+# Appended as NEW classes; no existing class above is modified.
+
+
+from django.db.models import SET_NULL as _LG02_SET_NULL  # noqa: E402
+
+from matches.models import Tournament as _Lg02Tournament  # noqa: E402
+
+
+def _lg02_min_tournament(name: str = "T") -> _Lg02Tournament:
+    """A minimal ``setup``-state Tournament (no participants needed for the
+    FK-behaviour tests — the bracket is only built on lock)."""
+    return _Lg02Tournament.objects.create(name=name)
+
+
+class TestSeasonPhaseScheduleFormatField(TestCase):
+    """LG-02-Part2b — ``SeasonPhase.schedule_format`` (nullable CharField)."""
+
+    def test_schedule_format_accepts_a_value(self) -> None:
+        season = _draft_season("Lg02SF")
+        phase = SeasonPhase.objects.create(
+            season=season,
+            ordinal=1,
+            phase_type="round_robin",
+            schedule_format="single_round_robin",
+        )
+        phase.refresh_from_db()
+        self.assertEqual(phase.schedule_format, "single_round_robin")
+
+    def test_schedule_format_is_nullable(self) -> None:
+        # A tournament-type phase persists schedule_format=None.
+        season = _draft_season("Lg02SFNull")
+        phase = SeasonPhase.objects.create(
+            season=season,
+            ordinal=1,
+            phase_type="tournament",
+            schedule_format=None,
+        )
+        phase.refresh_from_db()
+        self.assertIsNone(phase.schedule_format)
+
+    def test_schedule_format_field_declared_null_and_blank(self) -> None:
+        field = SeasonPhase._meta.get_field("schedule_format")
+        self.assertTrue(field.null)
+        self.assertTrue(field.blank)
+        self.assertEqual(field.max_length, 32)
+
+
+class TestSeasonPhaseTournamentFK(TestCase):
+    """LG-02-Part2b — ``SeasonPhase.tournament`` (nullable FK, SET_NULL,
+    related_name ``season_phases``). ALWAYS NULL in production this slice;
+    these tests exercise the schema only."""
+
+    def test_tournament_fk_is_nullable(self) -> None:
+        season = _draft_season("Lg02FKNull")
+        phase = SeasonPhase.objects.create(
+            season=season, ordinal=1, phase_type="round_robin"
+        )
+        phase.refresh_from_db()
+        self.assertIsNone(phase.tournament_id)
+
+    def test_tournament_fk_field_declared_null_and_blank(self) -> None:
+        field = SeasonPhase._meta.get_field("tournament")
+        self.assertIsInstance(field, ForeignKey)
+        self.assertTrue(field.null)
+        self.assertTrue(field.blank)
+
+    def test_tournament_fk_on_delete_is_set_null(self) -> None:
+        field = SeasonPhase._meta.get_field("tournament")
+        self.assertEqual(field.remote_field.on_delete, _LG02_SET_NULL)
+
+    def test_tournament_fk_related_name_is_season_phases(self) -> None:
+        field = SeasonPhase._meta.get_field("tournament")
+        self.assertEqual(field.remote_field.related_name, "season_phases")
+
+    def test_phase_can_reference_a_tournament(self) -> None:
+        season = _draft_season("Lg02FKRef")
+        tournament = _lg02_min_tournament("Lg02RefT")
+        phase = SeasonPhase.objects.create(
+            season=season,
+            ordinal=1,
+            phase_type="tournament",
+            tournament=tournament,
+        )
+        phase.refresh_from_db()
+        self.assertEqual(phase.tournament_id, tournament.id)
+
+    def test_reverse_accessor_season_phases(self) -> None:
+        season = _draft_season("Lg02Reverse")
+        tournament = _lg02_min_tournament("Lg02RevT")
+        SeasonPhase.objects.create(
+            season=season,
+            ordinal=1,
+            phase_type="tournament",
+            tournament=tournament,
+        )
+        self.assertEqual(tournament.season_phases.count(), 1)
+        self.assertEqual(tournament.season_phases.get().season_id, season.id)
+
+    def test_deleting_tournament_nulls_fk_without_deleting_phase(self) -> None:
+        season = _draft_season("Lg02DelSetNull")
+        tournament = _lg02_min_tournament("Lg02DelT")
+        phase = SeasonPhase.objects.create(
+            season=season,
+            ordinal=1,
+            phase_type="tournament",
+            tournament=tournament,
+        )
+        phase_pk = phase.pk
+        tournament.delete()
+        # The phase row survives; its FK is nulled (SET_NULL).
+        phase = SeasonPhase.objects.get(pk=phase_pk)
+        self.assertIsNone(phase.tournament_id)

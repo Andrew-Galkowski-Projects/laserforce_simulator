@@ -1165,6 +1165,19 @@ class SeasonPhase(models.Model):
         choices=PHASE_TYPE_CHOICES,
         default="round_robin",
     )
+    # LG-02-Part2b — dormant phase columns (nothing reads them this slice).
+    # ``schedule_format`` carries the per-phase wire format: a round_robin
+    # phase copies ``Season.schedule_format``; a tournament phase is NULL.
+    # ``tournament`` is the forward one-directional embed pointer, ALWAYS
+    # NULL in Part2b (the build is Part2c).
+    schedule_format = models.CharField(max_length=32, null=True, blank=True)
+    tournament = models.ForeignKey(
+        "matches.Tournament",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="season_phases",
+    )
 
     class Meta:
         ordering = ["ordinal"]

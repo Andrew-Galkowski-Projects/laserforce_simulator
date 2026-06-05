@@ -713,6 +713,125 @@ class TestLg02Part2aSeasonPhaseOnCreate(TestCase):
         self.client.post(reverse("league_create"), _valid_payload())
         self.assertEqual(_Lg02SeasonPhase.objects.count(), before + 1)
 
+    # -- LG-02-Part2b empty-equivalence: omitting / blanking ``phases`` keeps
+    #    the Part2a single-RR shape (and the dormant columns populated). --
+
+    def test_empty_phases_field_persists_single_round_robin(self) -> None:
+        # ``phases`` absent from the POST ⇒ one round_robin phase (Part2a
+        # equivalence). The RR row's schedule_format copies the Season format.
+        self.client.post(reverse("league_create"), _valid_payload())
+        season = Season.objects.get(name="Season 1")
+        phases = list(season.phases.all())
+        self.assertEqual(len(phases), 1)
+        self.assertEqual(phases[0].phase_type, "round_robin")
+        self.assertEqual(phases[0].schedule_format, "single_round_robin")
+        self.assertIsNone(phases[0].tournament_id)
+
+    def test_blank_phases_field_persists_single_round_robin(self) -> None:
+        payload = _valid_payload()
+        payload["phases"] = ""
+        self.client.post(reverse("league_create"), payload)
+        season = Season.objects.get(name="Season 1")
+        phases = list(season.phases.all())
+        self.assertEqual(len(phases), 1)
+        self.assertEqual(phases[0].phase_type, "round_robin")
+        self.assertEqual(phases[0].schedule_format, "single_round_robin")
+        self.assertIsNone(phases[0].tournament_id)
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2b — composer writes MULTIPLE ordered SeasonPhase rows
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2b-seam-contract.md`` §4 / §5a /
+# §8: ``CreateLeagueForm`` gains a hidden ``phases`` field; ``clean()`` calls
+# ``parse_phase_composition`` and stashes ``cleaned_data["phase_specs"]``; the
+# ``league_create`` view loops over the specs creating one ``SeasonPhase`` per
+# spec inside the existing ``@transaction.atomic`` block — RR rows copy
+# ``schedule_format="single_round_robin"``, the tournament row's
+# ``schedule_format`` is None, and EVERY row's ``tournament`` FK is None
+# (always NULL in Part2b). A no-RR composition is rejected at the form layer
+# (form invalid, 200 re-render) with ZERO rows created (atomic boundary holds).
+#
+# Appended as NEW classes; no existing class above is modified.
+
+
+class TestLg02Part2bComposerMultiPhase(TestCase):
+    """LG-02-Part2b — a multi-phase composer POST persists ordered rows."""
+
+    def test_composer_persists_three_ordered_phase_rows(self) -> None:
+        payload = _valid_payload()
+        payload["phases"] = "round_robin,tournament,round_robin"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = Season.objects.get(name="Season 1")
+        phases = list(season.phases.all())  # Meta.ordering=["ordinal"]
+        self.assertEqual(len(phases), 3)
+        self.assertEqual([p.ordinal for p in phases], [1, 2, 3])
+        self.assertEqual(
+            [p.phase_type for p in phases],
+            ["round_robin", "tournament", "round_robin"],
+        )
+
+    def test_composer_rr_rows_copy_single_round_robin_format(self) -> None:
+        payload = _valid_payload()
+        payload["phases"] = "round_robin,tournament,round_robin"
+        self.client.post(reverse("league_create"), payload)
+        season = Season.objects.get(name="Season 1")
+        phases = list(season.phases.all())
+        # Ordinals 1 and 3 are round_robin rows; both copy the Season format.
+        self.assertEqual(phases[0].schedule_format, "single_round_robin")
+        self.assertEqual(phases[2].schedule_format, "single_round_robin")
+
+    def test_composer_tournament_row_schedule_format_is_none(self) -> None:
+        payload = _valid_payload()
+        payload["phases"] = "round_robin,tournament,round_robin"
+        self.client.post(reverse("league_create"), payload)
+        season = Season.objects.get(name="Season 1")
+        phases = list(season.phases.all())
+        self.assertEqual(phases[1].phase_type, "tournament")
+        self.assertIsNone(phases[1].schedule_format)
+
+    def test_composer_every_row_tournament_fk_is_none(self) -> None:
+        # Part2b: the tournament FK is ALWAYS NULL (the embed is Part2c).
+        payload = _valid_payload()
+        payload["phases"] = "round_robin,tournament,round_robin"
+        self.client.post(reverse("league_create"), payload)
+        season = Season.objects.get(name="Season 1")
+        for phase in season.phases.all():
+            self.assertIsNone(
+                phase.tournament_id,
+                f"phase ordinal={phase.ordinal} has a non-null tournament FK",
+            )
+
+
+class TestLg02Part2bComposerNoRoundRobinRejected(TestCase):
+    """LG-02-Part2b — a no-RR composition is rejected at the form layer with
+    ZERO League / Season / SeasonPhase rows created (atomic boundary holds)."""
+
+    def test_no_rr_composition_rerenders_form_200(self) -> None:
+        payload = _valid_payload(league_name="NoRrL")
+        payload["phases"] = "tournament"
+        response = self.client.post(reverse("league_create"), payload)
+        # Form invalid ⇒ re-render, NOT redirect.
+        self.assertEqual(response.status_code, 200)
+
+    def test_no_rr_composition_creates_zero_rows(self) -> None:
+        before_leagues = League.objects.count()
+        before_seasons = Season.objects.count()
+        before_phases = _Lg02SeasonPhase.objects.count()
+
+        payload = _valid_payload(league_name="NoRrZero")
+        payload["phases"] = "tournament"
+        self.client.post(reverse("league_create"), payload)
+
+        # The @transaction.atomic boundary + the form-layer rejection mean
+        # nothing is written.
+        self.assertEqual(League.objects.count(), before_leagues)
+        self.assertEqual(Season.objects.count(), before_seasons)
+        self.assertEqual(_Lg02SeasonPhase.objects.count(), before_phases)
+        self.assertFalse(League.objects.filter(name="NoRrZero").exists())
+
     def test_rollback_on_season_create_failure_leaves_zero_phases(self) -> None:
         """The phase is created INSIDE the same ``@transaction.atomic`` block,
         so a mid-flow ``Season.objects.create`` failure rolls the phase back

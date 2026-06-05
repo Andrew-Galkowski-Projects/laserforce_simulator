@@ -778,16 +778,32 @@ from matches.models import SeasonPhase as _Lg02SeasonPhase  # noqa: E402
 
 
 class TestLg02Part2aNextSeasonSeasonPhase(TestCase):
-    """LG-02-Part2a — ``next_season`` seeds one RR SeasonPhase on the new draft."""
+    """LG-02-Part2a/b — ``next_season`` carries the source's single RR phase
+    forward onto the new draft.
+
+    LG-02-Part2b superseded Part2a's "always create exactly one RR phase"
+    behaviour with verbatim carry-forward of the source Season's composition
+    (seam contract §5b). A real create-path Season always has >= 1 phase, so
+    ``_setup`` now seeds the source completed Season with the single RR phase
+    ``league_create`` would have written; ``next_season`` copies it forward.
+    """
 
     def _setup(self) -> League:
         league = _make_league("Lg02NextL")
         teams = _make_teams("Lg02Next", 2)
-        _make_completed_season(
+        prev = _make_completed_season(
             league,
             name="Season 1",
             start_date=date(2025, 1, 1),
             team_ids=[t.id for t in teams],
+        )
+        # The source completed Season carries the single RR phase a real
+        # create-path Season would have (the raw helper does not write one).
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=1,
+            phase_type="round_robin",
+            schedule_format="single_round_robin",
         )
         return league
 
@@ -806,9 +822,90 @@ class TestLg02Part2aNextSeasonSeasonPhase(TestCase):
         league = self._setup()
         self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
         new_season = league.seasons.order_by("-id").first()
-        # Exactly one phase row exists and it points at the NEW Season (the
-        # previous completed Season was created directly via the test helper
-        # and never went through next_season, so it carries no phase).
-        self.assertEqual(_Lg02SeasonPhase.objects.count(), 1)
-        phase = _Lg02SeasonPhase.objects.get()
+        # The new Season carries exactly one phase, pointing at itself — the
+        # carry-forward copies onto the NEW Season only (the source keeps its
+        # own row, so two rows exist in total).
+        self.assertEqual(new_season.phases.count(), 1)
+        self.assertEqual(_Lg02SeasonPhase.objects.count(), 2)
+        phase = new_season.phases.get()
         self.assertEqual(phase.season_id, new_season.id)
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2b — next_season copies the full phase composition forward
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2b-seam-contract.md`` §5b:
+# ``next_season`` has no composer — it carries the previous Season's
+# composition forward, copying ``ordinal`` / ``phase_type`` / ``schedule_format``
+# verbatim from each source phase while RESETTING ``tournament=None`` on every
+# new phase (always NULL in Part2b).
+#
+# Appended as a NEW class; no existing class is modified.
+
+
+class TestLg02Part2bNextSeasonCopiesComposition(TestCase):
+    """LG-02-Part2b — next_season copies a multi-row composition forward."""
+
+    def _setup_completed_with_phases(self) -> tuple[League, Season]:
+        league = _make_league("Lg02bCarryL")
+        teams = _make_teams("Lg02bCarry", 2)
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        # Build a 3-row composition on the SOURCE completed Season:
+        # round_robin -> tournament -> round_robin.
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=1,
+            phase_type="round_robin",
+            schedule_format="single_round_robin",
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=2,
+            phase_type="tournament",
+            schedule_format=None,
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=3,
+            phase_type="round_robin",
+            schedule_format="single_round_robin",
+        )
+        return league, prev
+
+    def test_next_season_copies_full_composition_forward(self) -> None:
+        league, _prev = self._setup_completed_with_phases()
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        new_phases = list(new_season.phases.all())  # Meta.ordering=["ordinal"]
+        self.assertEqual(len(new_phases), 3)
+        self.assertEqual([p.ordinal for p in new_phases], [1, 2, 3])
+        self.assertEqual(
+            [p.phase_type for p in new_phases],
+            ["round_robin", "tournament", "round_robin"],
+        )
+
+    def test_next_season_copies_schedule_format_verbatim(self) -> None:
+        league, _prev = self._setup_completed_with_phases()
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        new_phases = list(new_season.phases.all())
+        # RR rows keep single_round_robin; the tournament row keeps None.
+        self.assertEqual(new_phases[0].schedule_format, "single_round_robin")
+        self.assertIsNone(new_phases[1].schedule_format)
+        self.assertEqual(new_phases[2].schedule_format, "single_round_robin")
+
+    def test_next_season_resets_tournament_fk_to_none(self) -> None:
+        league, _prev = self._setup_completed_with_phases()
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        for phase in new_season.phases.all():
+            self.assertIsNone(
+                phase.tournament_id,
+                f"new phase ordinal={phase.ordinal} carried a non-null tournament FK",
+            )
