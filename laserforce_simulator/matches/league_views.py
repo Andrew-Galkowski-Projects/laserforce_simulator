@@ -33,8 +33,14 @@ from teams.models import Team
 from teams.views import _coerce_dir, _generate_free_agents, _generate_teams
 
 from .forms import CreateLeagueForm
-from .models import GameRound, League, Match, PlayerRoundState, Season
-from .schedule_generator import generate_schedule
+from .models import (
+    GameRound,
+    League,
+    Match,
+    PlayerRoundState,
+    Season,
+    SeasonPhase,
+)
 from .season_dashboard import (
     LeaderRow,
     compute_leaders,
@@ -335,8 +341,9 @@ def season_standings(request, season_id: int) -> HttpResponse:
 def season_schedule(request, season_id: int) -> HttpResponse:
     """LG-01 — Schedule page for a Season.
 
-    Renders the deterministic fixture list from ``generate_schedule``
-    with persisted ``GameRound``s overlaid. Fixtures are grouped by
+    Renders the deterministic fixture list from
+    ``Season.scheduled_fixtures()`` with persisted ``GameRound``s
+    overlaid. Fixtures are grouped by
     matchday; the display date for matchday ``n`` is
     ``season.start_date + (n - 1) * 7 days``.
     """
@@ -368,7 +375,10 @@ def season_schedule(request, season_id: int) -> HttpResponse:
         }
         return render(request, "seasons/schedule.html", context)
 
-    fixtures = generate_schedule(team_ids, season.schedule_format)
+    # LG-02-Part2a — source fixtures through the Season chokepoint. The
+    # ``< 2``-team early empty-render branch above is kept; for >= 2 teams
+    # ``scheduled_fixtures()`` reproduces the identical fixture list.
+    fixtures = season.scheduled_fixtures()
 
     teams_by_id: dict[int, Team] = {
         t.id: t for t in Team.objects.filter(id__in=team_ids)
@@ -538,6 +548,9 @@ def league_create(request) -> HttpResponse:
     # block. ``cleaned["map_pool"]`` is the ModelMultipleChoiceField's
     # QuerySet; ``.set()`` accepts an iterable of objects or PKs.
     season.map_pool.set(cleaned["map_pool"])
+    # LG-02-Part2a — create the explicit ordinal-1 round_robin phase
+    # inside the same atomic block (a rollback drops it with the Season).
+    SeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")
 
     return redirect("season_standings", season_id=season.id)
 
@@ -642,10 +655,9 @@ def _build_dashboard_context(
         standings_snippet = snippet_rows
 
         # --- Schedule + next fixture + round progress -----------------
-        if len(team_ids) >= 2:
-            fixtures = generate_schedule(team_ids, displayed_season.schedule_format)
-        else:
-            fixtures = []
+        # LG-02-Part2a — route through the Season chokepoint (returns []
+        # for < 2 teams, matching the prior guard).
+        fixtures = displayed_season.scheduled_fixtures()
 
         rounds_qs = GameRound.objects.filter(
             match__season=displayed_season
@@ -1509,9 +1521,10 @@ def play_week(request, season_id: int) -> HttpResponse:
             from core.models import ArenaMap
             from matches.tasks import _resolve_fixture_map
 
-            fixtures = generate_schedule(
-                season.starting_team_ids_json or [], season.schedule_format
-            )
+            # LG-02-Part2a — source the Play-Week fixtures through the
+            # Season chokepoint (active Season ⇒ snapshot team_ids, same
+            # list as before).
+            fixtures = season.scheduled_fixtures()
             played_keys = {
                 (
                     frozenset({gr.match.team_red_id, gr.match.team_blue_id}),
@@ -1819,7 +1832,8 @@ def team_schedule(request: HttpRequest, league_id: int, team_id: int) -> HttpRes
     else:
         team_ids = sorted(t.id for t in displayed_season.teams.all())
 
-    fixtures = generate_schedule(team_ids, displayed_season.schedule_format)
+    # LG-02-Part2a — route fixtures through the Season chokepoint.
+    fixtures = displayed_season.scheduled_fixtures()
     teams_by_id = Team.objects.in_bulk(team_ids)
 
     played_game_rounds = list(
@@ -1922,5 +1936,9 @@ def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
     map_pool_ids = latest_completed.starting_map_pool_ids_json or []
     if map_pool_ids:
         new_season.map_pool.set(ArenaMap.objects.filter(id__in=map_pool_ids))
+
+    # LG-02-Part2a — explicit ordinal-1 round_robin phase, in the same
+    # atomic block as the Season create.
+    SeasonPhase.objects.create(season=new_season, ordinal=1, phase_type="round_robin")
 
     return redirect("season_dashboard", season_id=new_season.id)

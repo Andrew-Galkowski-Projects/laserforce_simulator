@@ -1005,14 +1005,15 @@ class Season(models.Model):
         + ``round_number``. Returns False on degenerate inputs
         (snapshot < 2 team ids) so a malformed active Season never
         auto-completes.
+
+        LG-02-Part2a — the fixture list is now sourced through the
+        ``scheduled_fixtures()`` chokepoint (which applies the same
+        draft-vs-snapshot ``team_ids`` rule and the ``< 2``-team empty
+        guard). A phase-less Season produces the identical fixture list
+        via the implicit ``round_robin`` fallback, so behaviour is
+        unchanged.
         """
-        from .schedule_generator import generate_schedule
-
-        team_ids = self.starting_team_ids_json or []
-        if len(team_ids) < 2:
-            return False
-
-        fixtures = generate_schedule(team_ids, self.schedule_format)
+        fixtures = self.scheduled_fixtures()
         if not fixtures:
             return False
 
@@ -1037,6 +1038,63 @@ class Season(models.Model):
             if key not in played_keys:
                 return False
         return True
+
+    # ------------------------------------------------------------------
+    # LG-02-Part2a — SeasonPhase chokepoint (read-only pure derivations)
+    # ------------------------------------------------------------------
+
+    def _implicit_phase(self) -> "SeasonPhase":
+        """Build the UNSAVED implicit ``round_robin`` fallback phase.
+
+        Returns a real ``SeasonPhase`` instance constructed with NO
+        ``.save()`` (so ``pk is None``). Used by ``ordered_phases()`` for
+        a Season with zero persisted phase rows so a phase-less Season is
+        indistinguishable downstream from a Season carrying one explicit
+        ``round_robin`` phase.
+        """
+        return SeasonPhase(season=self, ordinal=1, phase_type="round_robin")
+
+    def ordered_phases(self) -> list["SeasonPhase"]:
+        """Return this Season's phases in ordinal order.
+
+        When the Season has >= 1 persisted ``SeasonPhase`` row, returns
+        ``list(self.phases.all())`` (``Meta.ordering = ["ordinal"]``
+        guarantees ordinal order). When the Season has ZERO rows, returns
+        a one-element list holding a SINGLE UNSAVED implicit fallback
+        phase (``pk is None``) so a phase-less Season is indistinguishable
+        downstream from a Season with one explicit ``round_robin`` phase.
+        """
+        persisted = list(self.phases.all())
+        if persisted:
+            return persisted
+        return [self._implicit_phase()]
+
+    def scheduled_fixtures(self) -> list["ScheduleFixture"]:
+        """Return the flat fixture list for this Season's schedule.
+
+        THIS SLICE: returns exactly the ``round_robin`` phase's fixture
+        list, sourced via ``generate_schedule(team_ids,
+        self.schedule_format)`` where ``team_ids`` is resolved by the
+        existing draft-vs-snapshot rule (draft Season ⇒ sorted live M2M;
+        active/completed Season ⇒ ``starting_team_ids_json``). Exactly ONE
+        ``round_robin`` phase exists this slice (explicit or implicit
+        fallback), so the return is the single RR fixture list. NO
+        cross-phase composition, NO matchday offsetting.
+
+        Returns ``[]`` when ``team_ids`` has ``< 2`` entries (mirrors the
+        guard at every existing call site) — never raises.
+        """
+        from .schedule_generator import generate_schedule
+
+        if self.state == "draft":
+            team_ids = sorted(t.id for t in self.teams.all())
+        else:
+            team_ids = list(self.starting_team_ids_json or [])
+
+        if len(team_ids) < 2:
+            return []
+
+        return generate_schedule(team_ids, self.schedule_format)
 
     def _stamp_champion(self) -> None:
         """Flip ``state="completed"`` and stamp ``champion_team``.
@@ -1075,6 +1133,50 @@ class Season(models.Model):
         self.state = "completed"
         self.champion_team = Team.objects.get(pk=rows[0].team_id)
         self.save()
+
+
+class SeasonPhase(models.Model):
+    """LG-02-Part2a — one ordered phase within a Season's schedule.
+
+    A Season's schedule is composed of one or more phases in ``ordinal``
+    order. THIS SLICE only ``round_robin`` has behaviour (it resolves
+    fixtures via the existing ``Season.schedule_format`` /
+    ``generate_schedule``); the ``tournament`` / ``member_night`` values
+    are declared in the enum but inert (Part2b/2c). A Season with zero
+    persisted ``SeasonPhase`` rows falls back to a single implicit
+    ``round_robin`` phase via ``Season.ordered_phases()`` — see that
+    method's ``_implicit_phase`` builder (``pk is None``).
+    """
+
+    PHASE_TYPE_CHOICES = (
+        ("round_robin", "Round-robin"),
+        ("tournament", "Tournament"),
+        ("member_night", "Member night"),
+    )
+
+    season = models.ForeignKey(
+        "matches.Season",
+        on_delete=models.CASCADE,
+        related_name="phases",
+    )
+    ordinal = models.PositiveSmallIntegerField()  # 1-based; set explicitly
+    phase_type = models.CharField(
+        max_length=16,
+        choices=PHASE_TYPE_CHOICES,
+        default="round_robin",
+    )
+
+    class Meta:
+        ordering = ["ordinal"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["season", "ordinal"],
+                name="uniq_season_phase_ordinal",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.season} — phase {self.ordinal} ({self.phase_type})"
 
 
 class Tournament(models.Model):

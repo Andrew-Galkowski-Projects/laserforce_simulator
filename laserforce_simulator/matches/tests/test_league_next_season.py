@@ -761,3 +761,54 @@ class TestNextSeasonMapConfigCarryForward(TestCase):
         # New Season inherits ONLY the snapshot (2 ids), NOT m3.
         self.assertEqual(ids, sorted([m1.id, m2.id]))
         self.assertNotIn(m3.id, ids)
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2a — next_season seeds one explicit round_robin SeasonPhase
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2a-seam-contract.md`` §1.5 / §4:
+# ``next_season`` creates the new draft Season AND its one explicit
+# ``SeasonPhase(ordinal=1, phase_type="round_robin")`` inside the same
+# ``@transaction.atomic`` block. Appended as a NEW class; no existing class is
+# modified.
+
+
+from matches.models import SeasonPhase as _Lg02SeasonPhase  # noqa: E402
+
+
+class TestLg02Part2aNextSeasonSeasonPhase(TestCase):
+    """LG-02-Part2a — ``next_season`` seeds one RR SeasonPhase on the new draft."""
+
+    def _setup(self) -> League:
+        league = _make_league("Lg02NextL")
+        teams = _make_teams("Lg02Next", 2)
+        _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        return league
+
+    def test_next_season_creates_exactly_one_round_robin_phase(self) -> None:
+        league = self._setup()
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        # The new draft Season was created.
+        self.assertEqual(new_season.state, "draft")
+        phases = list(new_season.phases.all())
+        self.assertEqual(len(phases), 1)
+        self.assertEqual(phases[0].ordinal, 1)
+        self.assertEqual(phases[0].phase_type, "round_robin")
+
+    def test_next_season_phase_linked_to_new_season_only(self) -> None:
+        league = self._setup()
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        # Exactly one phase row exists and it points at the NEW Season (the
+        # previous completed Season was created directly via the test helper
+        # and never went through next_season, so it carries no phase).
+        self.assertEqual(_Lg02SeasonPhase.objects.count(), 1)
+        phase = _Lg02SeasonPhase.objects.get()
+        self.assertEqual(phase.season_id, new_season.id)

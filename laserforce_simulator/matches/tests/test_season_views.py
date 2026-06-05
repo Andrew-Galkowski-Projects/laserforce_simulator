@@ -432,3 +432,95 @@ class TestLg06gStandingsDraftPreview(TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.context["sort"], "team")
         self.assertEqual(r.context["dir"], "desc")
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2a — read-path equivalence: phase-less vs explicit RR phase
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2a-seam-contract.md`` §4: the
+# rendered ``season_schedule`` / ``season_dashboard`` for a phase-less (legacy)
+# Season must be BYTE-IDENTICAL to the same Season once it carries an explicit
+# ``round_robin`` SeasonPhase — proving the ``Season.scheduled_fixtures()``
+# chokepoint's implicit-fallback path produces the same output the explicit
+# path does.
+#
+# Strategy: render the SAME Season twice with the SAME test client (so the
+# session-backed CSRF token is stable across both GETs and cannot introduce a
+# spurious byte diff). The first render is phase-less; we then create ONE
+# explicit ``round_robin`` SeasonPhase and render again. The Season pk, team
+# ids, names, and dates are identical across both renders, so any byte
+# difference would be attributable solely to the chokepoint fallback-vs-explicit
+# branch.
+
+from matches.models import SeasonPhase as _Lg02SeasonPhase  # noqa: E402
+
+
+class TestSeasonPhaseReadPathEquivalence(TestCase):
+    """LG-02-Part2a — schedule/dashboard render identically with/without phase."""
+
+    def _make_active_two_team_season(self, prefix: str) -> Season:
+        league = League.objects.create(name=f"{prefix} League")
+        season = Season.objects.create(
+            league=league, name=f"{prefix} Season", start_date=date(2026, 1, 1)
+        )
+        team_a, _ = make_team_with_slots(f"{prefix}A")
+        team_b, _ = make_team_with_slots(f"{prefix}B")
+        season.teams.add(team_a, team_b)
+        season.start_season()
+        return season
+
+    def test_season_schedule_byte_identical(self) -> None:
+        season = self._make_active_two_team_season("SchedEq")
+        url = reverse("season_schedule", args=[season.id])
+
+        before = self.client.get(url).content
+        # Add ONE explicit round_robin phase to the SAME Season.
+        _Lg02SeasonPhase.objects.create(
+            season=season, ordinal=1, phase_type="round_robin"
+        )
+        after = self.client.get(url).content
+
+        self.assertEqual(before, after)
+
+    @staticmethod
+    def _strip_csrf(html: bytes) -> bytes:
+        """Blank out per-render-masked CSRF token values.
+
+        Django re-masks the ``csrfmiddlewaretoken`` hidden-input value on
+        EVERY render (the underlying secret is stable per session, but the
+        masked rendering differs each time), so two renders of a page that
+        carries a ``{% csrf_token %}`` form are never raw-byte-identical even
+        when every other byte matches. The chokepoint equivalence we are
+        pinning is about ``scheduled_fixtures()`` output, NOT Django's CSRF
+        masking — so normalise the token value out before comparing.
+        """
+        import re
+
+        return re.sub(
+            rb'name="csrfmiddlewaretoken" value="[^"]*"',
+            b'name="csrfmiddlewaretoken" value="X"',
+            html,
+        )
+
+    def test_season_dashboard_byte_identical(self) -> None:
+        season = self._make_active_two_team_season("DashEq")
+        url = reverse("season_dashboard", args=[season.id])
+
+        before = self._strip_csrf(self.client.get(url).content)
+        _Lg02SeasonPhase.objects.create(
+            season=season, ordinal=1, phase_type="round_robin"
+        )
+        after = self._strip_csrf(self.client.get(url).content)
+
+        self.assertEqual(before, after)
+
+    def test_schedule_renders_fixtures_in_both_shapes(self) -> None:
+        """Sanity: the schedule page actually rendered fixtures (so the
+        byte-identity assertion is over non-trivial content, not two empty
+        pages)."""
+        season = self._make_active_two_team_season("SchedNonEmpty")
+        url = reverse("season_schedule", args=[season.id])
+        r = self.client.get(url)
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(b"season-schedule-matchday-1", r.content)

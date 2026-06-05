@@ -3243,6 +3243,188 @@ for the authoritative list of every name / signature / dict-key / DOM-id / liter
 `_detail_context` keys, the N-divisibility rule, and migrations
 `0040_tournament_random_draw` + `teams 00XX_team_is_draw_team`).
 
+## LG-02-Part2a season phase foundation
+
+Introduces the persisted **`SeasonPhase`** model and retrofits the **Season**
+read-path so the per-Season schedule is sourced through a single **chokepoint on
+`Season`** instead of reading `Season.schedule_format` / calling
+`generate_schedule(...)` inline at every site. This is the **foundation slice**
+of LG-02-Part2 — it generalises the previously-implicit "a Season *is* a single
+**round-robin**" assumption into an **ordered list of typed phases**. The
+**LG-02-Part2 grill (2026-06-04)** resolved that this phase model **IS** the
+LG-06 phased-lifecycle model — off-season / regular / tournament are *phase
+types*, not a parallel abstraction. **Zero user-visible change** in Part2a: a
+one-phase `round_robin` Season is byte-identical to today's Season, and existing
+phase-less Seasons keep playing via the implicit-single-phase fallback. The
+composer UI (Part2b), per-phase format (Part2b), the heterogeneous multi-phase
+play loop + `SeasonPhase → Tournament` embed (Part2c), and the `member_night`
+phase are all **scoped out** (see below). **NEW
+[ADR-0023](../../docs/adr/0023-season-phase-composable-structure.md)** records
+the ordered-typed-phase decision, the no-backfill defensive fallback, and the
+forward one-directional `SeasonPhase → Tournament` FK; the **Season phase**
+CONTEXT.md glossary term carries the domain language (do not edit). Seam
+contract:
+[`.claude/worktrees/lg-02-part2a-seam-contract.md`](../../.claude/worktrees/lg-02-part2a-seam-contract.md).
+
+**NEW model `SeasonPhase` (LOCKED) — `matches/models.py`, declared immediately
+after the `Season` class and before `Tournament`.** One ordered unit of a
+Season's structure. Fields: **`season`** (`FK("matches.Season",
+on_delete=CASCADE, related_name="phases")`); **`ordinal`**
+(`PositiveSmallIntegerField()` — **1-based** ordering within the Season, no
+default, set explicitly at create); **`phase_type`** (`CharField(max_length=16,
+choices=PHASE_TYPE_CHOICES, default="round_robin")` — `max_length=16` headroom
+for the 12-char `"member_night"`). The class attribute **`PHASE_TYPE_CHOICES`**
+declares **all three** values now even though only `round_robin` has behaviour
+this slice: `(("round_robin", "Round-robin"), ("tournament", "Tournament"),
+("member_night", "Member night"))`. `Meta.ordering = ["ordinal"]` and a
+**`UniqueConstraint(fields=["season", "ordinal"],
+name="uniq_season_phase_ordinal")`** — the structural guarantee that two phases
+of the *same* Season cannot share an ordinal (the same ordinal is fine across
+*different* Seasons). `__str__` (locked shape): `f"{self.season} — phase
+{self.ordinal} ({self.phase_type})"` (em-dash U+2014, matching the
+`Season.__str__` convention). **NO FK to `Tournament`** and **NO per-phase
+`schedule_format`** field this slice — the `round_robin` phase resolves fixtures
+via the legacy `Season.schedule_format` (which **stays as-is**); both are
+Part2b/Part2c.
+
+**Migration `0041_season_phase` — `CreateModel`-only, NO `RunPython`.** Single
+`CreateModel(SeasonPhase)` carrying the `UniqueConstraint` + `Meta.ordering`;
+dependency `("matches", "0040_tournament_random_draw")`. **No `RunPython`, no
+`RunSQL`, no backfill, no data migration** — the
+[ADR-0004](../../docs/adr/0004-simulation-data-is-disposable.md) disposable-data
+precedent (same as the LG-01 `0029` and every prior `Season`/`Match` add).
+Legacy phase-less Seasons rely on the in-memory fallback **forever** — they are
+never backfilled with a row.
+
+**Chokepoint on `Season` (LOCKED) — two read-only / pure-derivation methods (no
+DB write, no RNG).** **`Season.ordered_phases() -> list[SeasonPhase]`** returns
+the Season's phases in ordinal order: `list(self.phases.all())` when ≥ 1
+persisted row exists (`Meta.ordering` guarantees order); when **zero** rows
+exist it returns a **one-element list whose member is a real but UNSAVED
+`SeasonPhase`** — the implicit fallback (see below). **`Season.scheduled_fixtures()
+-> list[ScheduleFixture]`** returns the flat fixture list for the schedule: this
+slice it is exactly the `round_robin` phase's list, sourced via
+`generate_schedule(team_ids, self.schedule_format)` where `team_ids` follows the
+existing, now-centralised rule — **draft** Season ⇒ `sorted(t.id for t in
+season.teams.all())`; **active/completed** Season ⇒
+`list(season.starting_team_ids_json or [])`. Exactly ONE `round_robin` phase
+exists this slice (explicit or implicit), so the return is the single RR fixture
+list — **NO cross-phase composition, NO matchday offsetting** (Part2c). Returns
+**`[]`** when `len(team_ids) < 2` (mirrors the current per-site guard) — never
+raises. `ScheduleFixture` is the existing frozen dataclass from
+`matches/schedule_generator.py`, **consumed verbatim**. `scheduled_fixtures()`
+is the **sole** `generate_schedule(...)` caller for the Season read-path after
+this slice.
+
+**Implicit-fallback representation (LOCKED).** The phase-less fallback is a
+**real but UNSAVED `SeasonPhase` instance** — NOT a sentinel class, NOT a dict —
+built as `SeasonPhase(season=self, ordinal=1, phase_type="round_robin")` with
+**no `.save()`** (so `pk is None`; needs no DB row). Locked rationale: a real
+instance keeps the downstream type uniform (`list[SeasonPhase]`), exposes
+`.phase_type` / `.ordinal` / `.season` for Part2b/2c without a shim, and `pk is
+None` is the unambiguous "implicit" marker a test asserts on. A private
+`Season._implicit_phase()` builder is **Code-agent discretion** (only the
+returned type + field values + `pk is None` are pinned).
+
+**Read-path retrofit — every Season-read call site routes through the
+chokepoint.** Each was an inline `generate_schedule(team_ids,
+…schedule_format)`; each becomes `… = season.scheduled_fixtures()` (or
+`self.scheduled_fixtures()`), preserving byte-identical output: **`Season._is_finished`**
+(`models.py:1015` — the `< 2`-team / empty-fixtures early-`False` guard becomes
+`if not fixtures: return False`; behaviour-equivalence is load-bearing — a
+phase-less Season MUST return today's result); **`play_season_task`**
+(`tasks.py:190` — downstream `played_keys` build / `select_play_fixtures` /
+per-fixture `simulate_scheduled_round` loop unchanged); **`season_schedule`**
+(`league_views.py:371`); **`_build_dashboard_context`** (`league_views.py:646`);
+**`league_history`** Play-Week preview (`league_views.py:1512`);
+**`team_schedule`** (`league_views.py:1822`). `Season.complete_if_finished`
+(`models.py:984`) is **unchanged** (routes through `_is_finished`). The pure
+module **`matches/season_dashboard.py`** (`find_next_fixture` / `round_progress`
+/ `find_next_matchday` / `select_play_fixtures` / `compute_leaders` /
+`LeaderRow`) is **NOT edited** — it stays pure (frozen no-Django import
+allowlist, defended by `TestNoDjangoImportsLeaked`); the **caller** builds the
+fixtures via `scheduled_fixtures()` and passes the list in, exactly as today.
+**Deliberately NOT touched:** `Tournament.lock_and_build` (`models.py:1233`) and
+`tournament_views.py:435` both call `generate_schedule` for a **standalone
+Tournament**, not a Season — the chokepoint is Season-only.
+
+**Create-on-Season-create — one explicit `round_robin` phase per new Season.**
+Both `@transaction.atomic`-decorated draft-creation views gain one
+`SeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")`
+**inside the existing atomic block, after the `Season.objects.create(...)`** (so
+a rollback drops the phase too): **`league_create`** (`league_views.py`, after
+the create at `:527`) and **`next_season`** (after the create at `:1900`). No
+other site writes a Season this slice. **Admin-created Seasons get the fallback
+for free** (zero rows ⇒ implicit phase) — no admin-side creation hook.
+
+**Admin (`matches/admin.py`).** `SeasonPhase` is added to the model import and
+registered after the existing `SeasonAdmin` (no existing registration touched):
+`@admin.register(SeasonPhase)` `SeasonPhaseAdmin(list_display = ("season",
+"ordinal", "phase_type"))`. An optional `SeasonPhaseInline(TabularInline,
+model=SeasonPhase, extra=0)` on `SeasonAdmin.inlines` is **Code-agent
+discretion** (the standalone registration is the mandatory part).
+
+**Determinism.** **No simulator change**, **no RNG** consumed by any new code —
+the model methods are pure derivations over the ORM + the existing deterministic
+`generate_schedule`, which is a pure function of the *set* of `team_ids`, so
+routing it through the chokepoint changes nothing about which fixtures are
+produced. **No SIM-07 / SIM-08 contract interaction, NO Score Calibration
+re-baseline.** The `BatchSimulator` and `generate_schedule` are consumed
+verbatim.
+
+**Scope-out (LOCKED — DO NOT build here).** **Composer UI** (picking/ordering
+phases at create-League time) → Part2b. **Per-phase `schedule_format`** → none;
+the RR phase reads `Season.schedule_format`; Part2b. **Multi-phase play loop** /
+cross-phase matchday offsetting / per-phase standings scoping → Part2c
+(`scheduled_fixtures()` returns exactly ONE RR list this slice).
+**`SeasonPhase → Tournament` FK** + tournament embed → Part2b/2c.
+**`member_night` / `tournament` phase behaviour** → declared in the enum, inert
+this slice (only `round_robin` resolves fixtures); `member_night` is deferred to
+its own sandbox grill (see PLAN.md). **CONTEXT.md** ("Season phase" term) and
+**ADR-0023** are already written.
+
+**Tests:** `matches/tests/test_season_phase.py` (NEW — model fields / locked
+types + defaults / `PHASE_TYPE_CHOICES` declares all three; `Meta.ordering ==
+["ordinal"]` (phases inserted 2,1,3 iterate 1,2,3); the
+`uniq_season_phase_ordinal` constraint rejects a duplicate `(season, ordinal)`
+but allows the same ordinal across different Seasons; `season.phases` reverse
+accessor + CASCADE delete; `ordered_phases()` returns explicit phases in ordinal
+order, and a phase-less Season returns a one-element list whose member is an
+**unsaved** `SeasonPhase` with `pk is None`, `phase_type == "round_robin"`,
+`ordinal == 1`, `season == self`; the **behaviour-equivalence guarantee** — a
+Season with one explicit `round_robin` phase vs an otherwise-identical
+phase-less Season return the **identical** `scheduled_fixtures()` list and
+produce the **identical** `_is_finished()` / `complete_if_finished()` outcome
+(same state flip, same `champion_team` id) over hand-built `Match`/`GameRound`
+rows — asserting on schema-level outcomes, **not** simulated point totals;
+`scheduled_fixtures()` returns `[]` for a `< 2`-team Season without raising).
+`matches/tests/test_league_create.py` (extend — a successful `league_create`
+POST creates the Season AND exactly one `SeasonPhase(ordinal=1,
+phase_type="round_robin")`; the existing rollback test leaves **zero**
+`SeasonPhase` rows). `matches/tests/test_league_next_season.py` (extend —
+`next_season` creates the new draft Season AND its one `round_robin` phase).
+`matches/tests/views_tests.py` (extend — read-path equivalence at the view
+layer: the rendered schedule/dashboard for a phase-less Season is byte-identical
+to one with an explicit RR phase). `matches/tests/test_league_play.py` (extend —
+`play_season_task` over a phase-less Season plays the same fixtures it does
+today, under the existing `CELERY_TASK_ALWAYS_EAGER` conftest). Tests assert on
+persisted row shapes, the constraint, ordering, the fallback representation, and
+behaviour-equivalence — **never** on exact simulated point totals.
+
+**Locked names:** see the seam contract
+[`.claude/worktrees/lg-02-part2a-seam-contract.md`](../../.claude/worktrees/lg-02-part2a-seam-contract.md)
+for the authoritative list — `SeasonPhase` (fields `season` /
+`FK(Season, CASCADE, related_name="phases")`, `ordinal` /
+`PositiveSmallIntegerField` 1-based, `phase_type` / `CharField(max_length=16,
+default="round_robin")`), `PHASE_TYPE_CHOICES` (all three values),
+`Meta.ordering = ["ordinal"]` + `uniq_season_phase_ordinal`, the `Season.phases`
+reverse accessor, the chokepoint `Season.ordered_phases()` /
+`Season.scheduled_fixtures()`, the unsaved-`SeasonPhase` implicit fallback
+(optional `Season._implicit_phase()`), the two `SeasonPhase.objects.create(...)`
+creation sites (`league_create` / `next_season`), `SeasonPhaseAdmin`
+(+ optional `SeasonPhaseInline`), and the migration `0041_season_phase` (dep
+`0040_tournament_random_draw`, `CreateModel`-only).
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)
