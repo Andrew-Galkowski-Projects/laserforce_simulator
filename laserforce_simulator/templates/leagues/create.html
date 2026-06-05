@@ -60,6 +60,20 @@
             </div>
         </div>
 
+        {# LG-02-Part2b -- vanilla-JS phase composer. Writes the ordered #}
+        {# phase-type tokens into the hidden #league-create-phases field. #}
+        <div class="mb-3">
+            <label class="form-label">Season phases</label>
+            <div id="league-create-phases-composer"></div>
+            <button type="button" id="league-create-add-block"
+                    class="btn btn-outline-secondary btn-sm mt-2">+ Add block</button>
+            <div id="league-create-member-night-note" class="form-text">
+                Member nights coming soon.
+            </div>
+            {{ form.phases }}
+            {{ form.phases.errors }}
+        </div>
+
         <div class="mb-3">
             <label for="league-create-map-mode" class="form-label">Map mode</label>
             {{ form.map_mode }}
@@ -91,4 +105,105 @@
         <a href="/leagues/" class="btn btn-secondary">Cancel</a>
     </form>
 </div>
+
+<script>
+(function () {
+    "use strict";
+
+    var composer = document.getElementById("league-create-phases-composer");
+    var addBtn = document.getElementById("league-create-add-block");
+    var hidden = document.getElementById("league-create-phases");
+    var form = document.getElementById("league-create-form");
+    if (!composer || !addBtn || !hidden || !form) {
+        return;
+    }
+
+    var rowSeq = 0;
+
+    function buildRow() {
+        var i = rowSeq++;
+
+        var row = document.createElement("div");
+        row.id = "league-create-phase-row-" + i;
+        row.className = "phase-row card card-body mb-2";
+
+        // Phase-type select: round_robin / tournament.
+        var typeSelect = document.createElement("select");
+        typeSelect.id = "league-create-phase-type-" + i;
+        typeSelect.className = "phase-type-select form-select mb-2";
+        typeSelect.setAttribute("aria-label", "Phase type");
+        var optRR = document.createElement("option");
+        optRR.value = "round_robin";
+        optRR.textContent = "Round-robin";
+        var optT = document.createElement("option");
+        optT.value = "tournament";
+        optT.textContent = "Tournament";
+        typeSelect.appendChild(optRR);
+        typeSelect.appendChild(optT);
+
+        // Schedule-format select (shown for round_robin rows only).
+        var formatSelect = document.createElement("select");
+        formatSelect.id = "league-create-phase-format-" + i;
+        formatSelect.className = "phase-format-select form-select mb-2";
+        formatSelect.setAttribute("aria-label", "Schedule format");
+        var optSRR = document.createElement("option");
+        optSRR.value = "single_round_robin";
+        optSRR.textContent = "Single round-robin";
+        formatSelect.appendChild(optSRR);
+
+        // Per-tournament-block "build coming in a later release" flag.
+        var pending = document.createElement("div");
+        pending.className = "phase-tournament-pending form-text";
+        pending.textContent = "Tournament phase build coming in a later release.";
+        pending.style.display = "none";
+
+        var removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "phase-remove btn btn-outline-danger btn-sm";
+        removeBtn.textContent = "Remove";
+        removeBtn.addEventListener("click", function () {
+            composer.removeChild(row);
+            serialize();
+        });
+
+        function applyType() {
+            var isRR = typeSelect.value === "round_robin";
+            formatSelect.style.display = isRR ? "" : "none";
+            pending.style.display = isRR ? "none" : "";
+            serialize();
+        }
+        typeSelect.addEventListener("change", applyType);
+
+        row.appendChild(typeSelect);
+        row.appendChild(formatSelect);
+        row.appendChild(pending);
+        row.appendChild(removeBtn);
+        composer.appendChild(row);
+
+        applyType();
+        return row;
+    }
+
+    function serialize() {
+        var selects = composer.querySelectorAll(".phase-type-select");
+        var tokens = [];
+        for (var k = 0; k < selects.length; k++) {
+            tokens.push(selects[k].value);
+        }
+        hidden.value = tokens.join(",");
+    }
+
+    addBtn.addEventListener("click", function () {
+        buildRow();
+        serialize();
+    });
+
+    form.addEventListener("submit", serialize);
+
+    // Seed one default round_robin row so an unmodified submit composes a
+    // single round-robin phase (the Part2a default).
+    buildRow();
+    serialize();
+})();
+</script>
 {% endblock %}

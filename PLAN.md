@@ -9,7 +9,7 @@ Story IDs from `sm5_user_stories_v2.html` are referenced where applicable.
 
 ### LG-02 · Tournament formats
 
-**Status: PART 1 sandbox formats all DONE; LG-02x-2 (Duos / Trios) deferred; Part 2 foundation (Part2a) DONE; Part2b / Part2c NOT STARTED.**
+**Status: PART 1 sandbox formats all DONE; LG-02x-2 (Duos / Trios) deferred; Part 2 foundation (Part2a) DONE; Part2b (create-League composer + dormant phase columns) DONE; Part2c NOT STARTED.**
 Single-elimination (LG-02a), bulk intake + async play-all (LG-02a-2), best-of-N
 Series (LG-02b), per-round Series escalation (LG-02b-2), double-elimination /
 round-robin / RR→DE / Swiss (LG-02c+), and the Random Draw player pool
@@ -19,8 +19,9 @@ player-pool slice (+ `TournamentSubGroup`) is parked at the end of this plan (se
 **Parked — deferred Tournament work** below). **Part 2** (the in-League composer)
 is now sliced into **Part2a** (the `SeasonPhase` model + backward-compatible
 read-path retrofit — **DONE**), **Part2b** (the League-create composer UI +
-per-phase format — NOT STARTED) and **Part2c** (the heterogeneous multi-phase
-play loop + tournament embed — NOT STARTED). The **LG-02-Part2 grill
+the dormant per-phase `schedule_format` + `SeasonPhase → Tournament` columns —
+**DONE**) and **Part2c** (the heterogeneous multi-phase play loop + tournament
+embed — NOT STARTED). The **LG-02-Part2 grill
 (2026-06-04)** resolved that LG-02-Part2 **IS** the **LG-06** phased-lifecycle
 model (off-season / regular / tournament = phase types) — see
 [ADR-0023](docs/adr/0023-season-phase-composable-structure.md).
@@ -99,30 +100,76 @@ into Part2a (done) → Part2b → Part2c:
   `test_league_create.py` / `test_league_next_season.py` / `views_tests.py` /
   `test_league_play.py`.
 
-- **LG-02-Part2b · [NOT STARTED] League-create "+" composer UI + per-phase
-  format.** The create-League surface gains a "**+** Add block" composer that
-  writes **multiple ordered `SeasonPhase` rows** (the admin picks/orders phases
-  — e.g. RR → Tournament, or RR → member night → Tournament → RR — instead of
-  the single auto-created `round_robin` phase Part2a writes). Adds a **per-phase
-  `schedule_format`** sub-field so alternative regular-season formats
-  (double-round-robin, split-conference, stage-based) can land on the phase
-  rather than the Season; until then the RR phase reads `Season.schedule_format`.
-  Also lands the forward `SeasonPhase → Tournament` FK (the column; the build /
-  hand-off is Part2c). Read-path stays on the Part2a chokepoint. (Composer DOM
-  ids, the form, and the per-phase format choices get their own slice
-  contract.)
+- **LG-02-Part2b · [DONE] League-create "+" composer UI + per-phase format.**
+  The create-League surface gained a vanilla-JS "**+** Add block" composer
+  (LG-01d inline-`<script>` precedent) that writes **multiple ordered
+  `SeasonPhase` rows** — the admin picks/orders `round_robin` / `tournament`
+  blocks (e.g. RR → Tournament) instead of the single auto-created `round_robin`
+  phase Part2a wrote. Landed **two dormant `SeasonPhase` columns**: a per-phase
+  **`schedule_format`** (`CharField(32, null=True, blank=True)` — an RR phase
+  copies `Season.schedule_format`, a tournament phase is `NULL`) so alternative
+  regular-season formats can later land on the phase rather than the Season, and
+  the forward **`SeasonPhase → Tournament` FK** (`SET_NULL`,
+  `related_name="season_phases"`) — the column only, **ALWAYS NULL this slice**;
+  the build / hand-off is Part2c. A **NEW pure module**
+  `matches/phase_composer.py` (frozen `dataclasses` / `typing` allowlist,
+  `TestNoDjangoImportsLeaked`-defended) parses the composer's comma-separated
+  phase-type wire format into ordered `PhaseSpec(ordinal, phase_type,
+  schedule_format)` via `parse_phase_composition(raw, *,
+  season_schedule_format)` — empty input ⇒ a single RR default, ≥ 1 RR required,
+  `member_night` not selectable, three exact `ValueError` strings. The
+  `CreateLeagueForm` gained a hidden `phases` field whose `clean()` calls the
+  parser and stashes `cleaned_data["phase_specs"]`; both creation sites loop over
+  the specs — `league_create` (~553) from the composer, `next_season` (~1942)
+  by **carrying the previous Season's composition forward** verbatim (with
+  `tournament=None`). Migration `0042_seasonphase_format_tournament` (dep
+  `0041_season_phase`, two `AddField`, no `RunPython` —
+  [ADR-0004](docs/adr/0004-simulation-data-is-disposable.md)).
+  `SeasonPhaseAdmin.list_display` extended with the two new columns. **Read-path
+  UNCHANGED** — the Part2a chokepoint still plays the **first `round_robin`
+  phase** via `Season.schedule_format` and ignores the rest; **no simulator
+  change / no RNG / no Score Calibration re-baseline**. Seam contract:
+  [`.claude/worktrees/lg-02-part2b-seam-contract.md`](.claude/worktrees/lg-02-part2b-seam-contract.md);
+  app guide: `matches/CLAUDE.md` "LG-02-Part2b create-league phase composer";
+  [ADR-0023](docs/adr/0023-season-phase-composable-structure.md). Tests:
+  `matches/tests/test_phase_composer.py` (NEW) + extensions to
+  `test_season_phase.py` / `test_league_create.py` / `test_league_next_season.py`.
 
 - **LG-02-Part2c · [NOT STARTED] Heterogeneous multi-phase play loop +
   tournament embed.** Generalises `Season.scheduled_fixtures()` / the play loop
-  from "exactly one `round_robin` phase" to **iterating the Season's ordered
-  phases** — cross-phase matchday offsetting, per-phase standings scoping, and a
-  `tournament` phase that **lazily builds + seeds its `Tournament` from the
-  preceding phase's Standings** on activation (reusing the LG-02a–c RR→DE
-  deferred-build / bracket engine verbatim), advances it, and hands off to the
-  next phase. This is where the **LG-01d "Until end of season" → "Until
-  playoffs"** relabel lands, and where the play loop extends through tournament
-  completion. The `member_night` phase type stays inert (see its own PLAN item
-  below).
+  from "exactly one `round_robin` phase" (the Part2b read-path plays the **first**
+  `round_robin` phase only) to **iterating the Season's ordered phases** —
+  cross-phase matchday offsetting, per-phase standings scoping, and a
+  `tournament` phase that **lazily builds + seeds its `Tournament`** on
+  activation (reusing the LG-02a–c RR→DE deferred-build / bracket engine
+  verbatim), advances it, and hands off to the next phase. This is where the
+  **LG-01d "Until end of season" → "Until playoffs"** relabel lands, and where
+  the play loop extends through tournament completion. The `member_night` phase
+  type stays inert (see its own PLAN item below).
+
+  **Carried over from the LG-02-Part2b grill (2026-06-05) — Part2c must resolve:**
+  - **Per-phase seeding-mode field** on `SeasonPhase` (deferred from Part2b,
+    which captures ordered phase *types* only). A `tournament` phase has **two
+    flavours by Season role**: a **season-ending tournament** (playoff / closer)
+    is **seeded from the preceding phase's Standings** and *requires* a preceding
+    fixture-producing phase; a **mid-season tournament** (random draw / duos /
+    trios / swiss) needs **no preceding Standings** — seeded by *expected team
+    strength* or *not at all* — and may sit anywhere, including first. Add the
+    field + its compose-time validity rule (the Standings-seeded one needs a
+    preceding RR) here.
+  - **Wire the chokepoint to `phase.schedule_format`** (the Part2b dormant
+    column) alongside the first alternative regular-season format — until then
+    the read-path reads `Season.schedule_format`.
+  - **Per-tournament-block configuration** (format / `team_assembly` / seeding)
+    surfaced when the build / hand-off is implemented — Part2b's composer places
+    bare `tournament` blocks only.
+  - **(Deferred — own slice, post-Part2c)** A pre-selected per-League option to
+    **randomize the mid-season tournaments per season**: the non-season-ending
+    `tournament` phases that sit before the main `round_robin` + the end-of-year
+    tournament are re-drawn (format / seeding) each cycle by `next_season`
+    instead of carried forward verbatim. Selected beforehand as a League-level
+    toggle; only meaningful once the seeding-mode field + per-tournament-block
+    config above exist.
 
 ### LG-03 · Season-end awards
 

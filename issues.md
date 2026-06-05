@@ -1,3 +1,52 @@
+# Web testing — LG-02-Part2b (create-League phase composer + dormant phase columns)
+
+Date: 2026-06-05
+Branch: `lg-02-part2b`
+Scope: black-box pass over the new vanilla-JS "+" composer on `/leagues/create/`
+(add/remove blocks, hidden-field wire serialization), the two `SeasonPhase`
+persistence paths, the empty-composer default, the no-RR form rejection, the
+extended `SeasonPhaseAdmin` columns, and a regression smoke of the surrounding
+league pages. Read-path is unchanged this slice (the chokepoint still plays the
+first `round_robin` phase only), so no play-loop/standings behaviour was exercised.
+
+## Severity legend
+- 🔴 BLOCKER — broken/500/data loss · 🟠 HIGH — wrong behaviour · 🟡 MED — minor
+  functional gap · 🔵 LOW — cosmetic/a11y · ✅ working flow
+
+## Summary — LG-02-Part2b
+| Area | Result |
+|---|---|
+| `/leagues/create/` renders; composer ids `league-create-phases-composer` / `-add-block` / `-phases` / `-member-night-note` all present; default single `round_robin` row | ✅ |
+| "+ Add block" appends a row; row gets `league-create-phase-row-{i}` / `-phase-type-{i}` / `-phase-format-{i}` | ✅ |
+| Setting a row to **Tournament** hides its format select + shows the `phase-tournament-pending` "build coming in a later release" flag (RR rows keep it hidden) | ✅ |
+| Hidden `#league-create-phases` serializes to comma wire format — `round_robin` / `round_robin,tournament` / `tournament` / `` (empty after removing all) | ✅ |
+| Submit **RR→Tournament** → League+Season 25; phases persist `ord1 round_robin fmt='single_round_robin' tournament=None` + `ord2 tournament fmt=None tournament=None` | ✅ |
+| Submit **empty composer** → Season 26; defaults to a single `ord1 round_robin fmt='single_round_robin'` phase (Part2a equivalence) | ✅ |
+| Submit **Tournament-only (zero RR)** → form re-renders with exact error `composition must contain at least one round-robin phase`; **no League/Season created** (atomicity) | ✅ |
+| `/admin/matches/seasonphase/` changelist `list_display` now shows `Schedule format` + `Tournament` columns with correct values (`single_round_robin` / `-`) | ✅ |
+| Regression smoke: `/leagues/`, `/leagues/<id>/history/`, `/seasons/<id>/standings/` all 200, console + network clean | ✅ |
+
+## Findings — LG-02-Part2b
+- 🔵→✅ **RESOLVED** LOW (a11y) — the two JS-built composer selects had **no
+  associated `<label>` / `aria-label`**, so Chrome reported "No label associated
+  with a form field" on `/leagues/create/`. Fixed by adding
+  `aria-label="Phase type"` (`templates/leagues/create.html` `typeSelect`) and
+  `aria-label="Schedule format"` (`formatSelect`) to the JS-cloned rows.
+  Cosmetic/a11y only; the composer was fully functional throughout.
+- ℹ️ Note (not a Part2b issue) — `/admin/` emits a Django-admin built-in
+  "Deprecated feature used" console issue; unrelated to this task's code.
+
+## Result — ✅ ALL FUNCTIONAL CHECKS CLEAN
+Every browser-observable Part2b surface works end-to-end: the composer builds and
+serializes ordered phase rows, both creation paths persist the correct
+`SeasonPhase` rows (tournament FK always NULL per slice), the empty default and
+zero-RR rejection behave exactly per the seam contract's `ValueError` strings, and
+the admin surfaces the two new columns. Only finding is one low-severity a11y
+label gap on the new composer selects. Dev-DB test data (Seasons 25/26 + their
+ChromeTest leagues/teams, superuser `chrometest`) is disposable (ADR-0004).
+
+---
+
 # Web testing — LG-02-Part2a (SeasonPhase foundation)
 
 Date: 2026-06-05

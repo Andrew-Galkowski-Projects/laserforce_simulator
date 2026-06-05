@@ -3425,6 +3425,223 @@ creation sites (`league_create` / `next_season`), `SeasonPhaseAdmin`
 (+ optional `SeasonPhaseInline`), and the migration `0041_season_phase` (dep
 `0040_tournament_random_draw`, `CreateModel`-only).
 
+## LG-02-Part2b create-league phase composer
+
+Builds on the Part2a foundation by giving the **create-League** surface a
+vanilla-JS **"+" composer** that writes **multiple ordered `SeasonPhase` rows**
+(versus Part2a's single auto-created `round_robin` phase), plus two **dormant**
+`SeasonPhase` columns and a new **pure** parsing module. A Season's structure is
+now author-composable as an ordered list of phase *types* (RR / Tournament) at
+create time; the composer serializes the ordered rows into a hidden wire-format
+field, the form's `clean()` parses it through the pure module, and **both**
+`SeasonPhase`-creation sites (`league_create`, `next_season`) loop over the
+parsed specs. **The read-path is UNCHANGED** — the Part2a chokepoint
+`Season.scheduled_fixtures()` still calls `generate_schedule(team_ids,
+Season.schedule_format)` and **ignores the phase rows**: it plays the first
+`round_robin` phase and treats `tournament` phases as invisible. Part2b *writes*
+more rows but *reads* none of them. **No simulator change, no RNG, no SIM-07 /
+SIM-08 interaction, NO Score Calibration re-baseline, no read-path / chokepoint
+change.** The forward `SeasonPhase → Tournament` FK column lands here but is
+**ALWAYS NULL in Part2b** (the lazy build + hand-off is Part2c). The
+[ADR-0023](../../docs/adr/0023-season-phase-composable-structure.md)
+ordered-typed-phase decision and the **Season phase** CONTEXT.md glossary term
+already carry the domain language (both already written — do not edit). Seam
+contract:
+[`.claude/worktrees/lg-02-part2b-seam-contract.md`](../../.claude/worktrees/lg-02-part2b-seam-contract.md).
+
+**Two NEW dormant `SeasonPhase` columns (LOCKED) — `matches/models.py`, appended
+immediately after the existing `phase_type` field.** Everything else on
+`SeasonPhase` is UNCHANGED (`PHASE_TYPE_CHOICES`, `season`, `ordinal`,
+`phase_type`, `Meta.ordering = ["ordinal"]`, the `uniq_season_phase_ordinal`
+constraint, `__str__`). **`schedule_format`**
+(`CharField(max_length=32, null=True, blank=True)`) — **dormant**: nothing reads
+it this slice. At create, a `round_robin` phase **copies `Season.schedule_format`**
+(today's value `"single_round_robin"`); a `tournament` phase gets **`NULL`**.
+**`tournament`** (`ForeignKey("matches.Tournament", null=True, blank=True,
+on_delete=models.SET_NULL, related_name="season_phases")`) — the forward
+one-directional `SeasonPhase → Tournament` link, **ALWAYS NULL in Part2b**. The
+reverse accessor is `tournament.season_phases`; the ref is **same-app**
+(`matches.Tournament`) so there is **no cross-app dependency**. Tournament stays
+season-agnostic ([ADR-0019](../../docs/adr/0019-tournament-bracket-model.md)
+survives) — the FK points one way only.
+
+**Migration `0042_seasonphase_format_tournament` — two `AddField`, NO
+`RunPython`.** Dependency `("matches", "0041_season_phase")` (the latest matches
+migration ⇒ this is `0042`). Two `AddField` ops in order (`schedule_format`,
+then `tournament`). **No `RunPython`, no `RunSQL`, no backfill, no data
+migration** — the
+[ADR-0004](../../docs/adr/0004-simulation-data-is-disposable.md) disposable-data
+precedent (same posture as `0041`). The `tournament` FK references
+`matches.Tournament` (same app) so there is **no cross-app migration
+dependency**.
+
+**NEW pure module `matches/phase_composer.py` (LOCKED) — Django-free composer
+parser.** Mirrors the `matches/standings.py` / `matches/schedule_generator.py`
+purity discipline: a **frozen import allowlist of `dataclasses` and `typing`
+ONLY** — NO `django`, NO ORM, NO `random` / `datetime` / `json` / I/O /
+logging — defended by **`TestNoDjangoImportsLeaked`** (subprocess fresh-import +
+`sys.modules` walk). The **frozen dataclass** **`PhaseSpec`** has three fields:
+`ordinal` (`int`, 1-based, contiguous `1..N` in composer order), `phase_type`
+(`str`, `"round_robin"` | `"tournament"`), and `schedule_format`
+(`Optional[str]` — the season format for an RR phase, `None` for a tournament
+phase). The **function** **`parse_phase_composition(raw: str, *,
+season_schedule_format: str) -> list[PhaseSpec]`** parses the composer's
+serialized output. The **wire format (LOCKED) is comma-separated phase-type
+tokens** — e.g. `"round_robin,tournament"` — parsed with `str.split(",")` and a
+`str.strip()` per token (chosen over JSON to keep the allowlist minimal, no
+`json` import; the template serializes the ordered rows into this exact form).
+**Behaviour:** an **empty / blank `raw`** (`""` or whitespace-only after strip)
+**short-circuits to exactly one** `PhaseSpec(ordinal=1,
+phase_type="round_robin", schedule_format=season_schedule_format)` — the Part2a
+default — **before any validation** (so it is never treated as "zero RR").
+Otherwise: split on `,`, strip each token, assign **contiguous ordinals 1..N**
+in composer order, set `schedule_format = season_schedule_format` for
+`round_robin` specs and `None` for `tournament` specs. Valid phase types are
+**`"round_robin"` and `"tournament"` only** — `"member_night"` is **NOT
+selectable** in Part2b and is rejected as an unknown type. The module raises
+**plain `ValueError`** (NOT `django.core.exceptions.ValidationError` — keep it
+Django-free) with these **exact message strings**: zero `round_robin` in a
+non-empty composition ⇒ `"composition must contain at least one round-robin
+phase"`; an unknown phase type (incl. `"member_night"` or any non-RR /
+non-tournament token) ⇒ `f"unknown phase type: {token!r}"`; malformed input
+(an empty token between commas like `"round_robin,,tournament"`, or any token
+empty after strip) ⇒ `"malformed phase composition"`. **Validation order**
+within a non-empty `raw`: tokenise → reject malformed (empty token) → reject
+unknown type per token → after building specs, reject zero `round_robin`.
+
+**Form (`matches/forms.py`, `CreateLeagueForm`) — hidden `phases` field +
+`clean()` seam.** A new hidden field **`phases`** (`forms.CharField(widget=
+forms.HiddenInput(attrs={"id": "league-create-phases"}), required=False)`)
+carries the serialized composition; the existing **disabled Season-level
+`schedule_format` `ChoiceField` STAYS unchanged** (it is the live read-path
+source, locked at `"single_round_robin"`). `clean()` (preserving all existing
+LG-01j map-mode-vs-pool rules verbatim) calls the pure module
+`parse_phase_composition(cleaned_data.get("phases", "") or "",
+season_schedule_format=cleaned_data.get("schedule_format") or
+"single_round_robin")` inside a `try`; on `ValueError` it re-raises as a
+`forms.ValidationError(str(exc))` attached to the **`"phases"`** field, else it
+stashes the result under **`cleaned_data["phase_specs"]`** (`list[PhaseSpec]`).
+The `season_schedule_format` argument is the form's own `schedule_format` value
+(the disabled field's locked `"single_round_robin"`).
+
+**Views (`matches/league_views.py`) — both creation sites loop over the specs.**
+In **`league_create`** (~line 553, inside the existing `@transaction.atomic`
+block) the single `SeasonPhase.objects.create(season=season, ordinal=1,
+phase_type="round_robin")` is **replaced by a loop** over
+`form.cleaned_data["phase_specs"]`, each iteration creating a `SeasonPhase` with
+`season=season`, `ordinal=spec.ordinal`, `phase_type=spec.phase_type`,
+`schedule_format=spec.schedule_format`, and **`tournament=None`** (always). In
+**`next_season`** (~line 1942, inside its existing `@transaction.atomic` block)
+there is **no composer** — it **carries the previous Season's composition
+forward** (mirroring the team-id / map-pool carry-forward): the single
+`SeasonPhase.objects.create(...)` is replaced by a **copy loop** over the source
+Season's `phases.all()` (the `latest_completed` carry-forward source Season;
+`Meta.ordering=["ordinal"]` guarantees order), copying `ordinal`, `phase_type`,
+and `schedule_format` **verbatim** while **resetting `tournament=None`**. Both
+loops stay inside the existing atomic blocks so a rollback drops the phases too.
+
+**Template (`templates/leagues/create.html`) — vanilla-JS composer (no
+framework, inline `<script>`, per the LG-01d precedent).** A **"+ Add block"**
+button clones a row template into the composer container; each row has a
+phase-type `<select>` (`round_robin` / `tournament`) and, for a `round_robin`
+row, a `schedule_format` `<select>` with the single option `single_round_robin`
+(mirroring the disabled Season-level one); rows are removable (reorder optional).
+On submit the JS serializes the ordered rows into the hidden
+`#league-create-phases` input in the **wire format pinned above** (comma-joined
+phase-type tokens in row order, e.g. `"round_robin,tournament"`). A **"member
+nights coming soon"** note and a per-tournament-block **"build coming in a later
+release"** flag communicate the deferred surfaces. **LOCKED DOM ids / class
+substring:** `league-create-phases-composer` (outer composer container `<div>`);
+`league-create-add-block` (the "+ Add block" button); `league-create-phases`
+(the hidden input — also the form field's widget id above);
+`league-create-phase-row-{i}` (per-row wrapper, `{i}` = 0-based row index
+assigned by JS); `league-create-phase-type-{i}` (per-row phase-type `<select>`);
+`league-create-phase-format-{i}` (per-row `schedule_format` `<select>` on RR
+rows); `league-create-member-night-note` (the "member nights coming soon" note);
+and the CSS-class **substring** `phase-tournament-pending` (the per-tournament
+"build coming later" flag). All new ids are net-new and **do not collide** with
+the existing create.html ids (`league-create-form`, `league-create-league-name`,
+`league-create-season-name`, `league-create-start-date`,
+`league-create-num-teams`, `league-create-schedule-format`,
+`league-create-mean`, `league-create-std-dev`, `league-create-map-mode`,
+`league-create-map-pool`, `league-create-submit`).
+
+**Admin (`matches/admin.py`).** `SeasonPhaseAdmin.list_display` extends from
+`("season", "ordinal", "phase_type")` to **`("season", "ordinal",
+"phase_type", "schedule_format", "tournament")`** — no other admin change.
+
+**Composer scope + validity rules.** The composer offers **`round_robin` and
+`tournament` only** (no `member_night`), and the non-RR (`tournament`) phases are
+**persisted but dormant** — the Part2a chokepoint plays the **first `round_robin`
+phase** via `Season.schedule_format` and never reads the others. Validity (the
+pure module enforces): **≥ 1 `round_robin`** phase required; **`tournament`
+phases may sit anywhere** (no ordering constraint this slice); an **empty
+composer ⇒ a single `round_robin`** (Part2a equivalence); **contiguous ordinals
+1..N** in composer order.
+
+**Determinism / read-path-unchanged note.** **No simulator change, no RNG**
+consumed by any new code — the composer parser is a pure string→specs derivation
+and the creation loops are plain ORM writes. The Season read-path / chokepoint is
+**byte-identical to Part2a** (it still plays exactly the first RR phase), so
+there is **NO Score Calibration re-baseline** and no SIM-07 / SIM-08 contract
+interaction. The dormant columns are written-but-never-read this slice.
+
+**Deferred to Part2c (DO NOT build here).** The **per-phase seeding-mode /
+tournament-kind field** on `SeasonPhase` (season-ending Standings-seeded vs
+mid-season strength-/un-seeded, with its compose-time validity rule) → Part2c.
+**Wiring the chokepoint to `phase.schedule_format`** (this slice's dormant
+column) + the first alternative regular-season format → Part2c (until then the
+read-path reads `Season.schedule_format`). **Per-tournament-block configuration**
+(format / `team_assembly` / seeding) + the lazy tournament **build / hand-off**
+(populating the `tournament` FK) → Part2c. `member_night` stays inert (its own
+sandbox grill — see PLAN.md / LG-07).
+
+**Tests:** `matches/tests/test_phase_composer.py` (NEW — pure-unit +
+`TestNoDjangoImportsLeaked`): empty `raw` → the single RR default; an RR spec's
+`schedule_format` is copied from `season_schedule_format`; a tournament spec's
+`schedule_format` is `None`; contiguous ordinals `1..N`; multi-phase order
+preserved; a zero-RR composition raises `ValueError("composition must contain at
+least one round-robin phase")`; an unknown `phase_type` raises `ValueError`; a
+`member_night` token is rejected (unknown-type); a malformed `raw` (empty token)
+raises `ValueError("malformed phase composition")`; the purity subprocess check.
+`matches/tests/test_season_phase.py` (EXTEND — `schedule_format` nullable +
+default-`None` for a tournament phase; the `tournament` FK nullable + `SET_NULL`
++ `related_name="season_phases"`). `matches/tests/test_league_create.py` (EXTEND
+— the composer happy path persists multiple ordered `SeasonPhase` rows with
+correct ordinals / types / `schedule_format` and `tournament=None`; an empty
+composer ⇒ a single `round_robin` (Part2a equivalence); a no-RR composition is
+rejected at the form layer leaving **zero** League / Season / phase rows created
+— transaction atomicity; the existing single-phase tests still pass).
+`matches/tests/test_league_next_season.py` (EXTEND — `next_season` copies the
+previous Season's full phase composition forward — ordinals / types /
+`schedule_format` — with `tournament` reset to `NULL`).
+
+**Locked names:** see the seam contract
+[`.claude/worktrees/lg-02-part2b-seam-contract.md`](../../.claude/worktrees/lg-02-part2b-seam-contract.md)
+for the authoritative list — **model fields** `SeasonPhase.schedule_format`
+(`CharField(max_length=32, null=True, blank=True)`) / `SeasonPhase.tournament`
+(`FK(matches.Tournament, null=True, blank=True, on_delete=SET_NULL,
+related_name="season_phases")`); **migration**
+`0042_seasonphase_format_tournament` (dep `0041_season_phase`, two `AddField`, no
+`RunPython`); **pure module** `matches/phase_composer.py` — dataclass
+`PhaseSpec(ordinal, phase_type, schedule_format)`, fn
+`parse_phase_composition(raw, *, season_schedule_format) -> list[PhaseSpec]`;
+**wire format** comma-separated phase-type tokens (`"round_robin,tournament"`,
+`str.split(",")`); **`ValueError` strings** `"composition must contain at least
+one round-robin phase"` / `f"unknown phase type: {token!r}"` / `"malformed phase
+composition"`; **form** field `phases` (`HiddenInput`, id `league-create-phases`,
+`required=False`) + `cleaned_data["phase_specs"]` (existing disabled
+`schedule_format` field unchanged); **views** `league_create` (~553) spec loop /
+`next_season` (~1942) carry-forward copy loop, both inside the existing
+`@transaction.atomic`, `tournament=None` always; **template DOM ids**
+`league-create-phases-composer`, `league-create-add-block`,
+`league-create-phases`, `league-create-phase-row-{i}`,
+`league-create-phase-type-{i}`, `league-create-phase-format-{i}`,
+`league-create-member-night-note`, class substring `phase-tournament-pending`;
+**admin** `SeasonPhaseAdmin.list_display = ("season", "ordinal", "phase_type",
+"schedule_format", "tournament")`; **read-path UNCHANGED, `tournament` FK always
+NULL, no re-baseline.**
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)

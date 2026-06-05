@@ -2,6 +2,7 @@ from django import forms
 from django.utils import timezone
 from teams.models import Team
 from .models import Match, Season
+from .phase_composer import parse_phase_composition
 from core.models import ArenaMap
 
 
@@ -207,6 +208,13 @@ class CreateLeagueForm(forms.Form):
         ),
         label="Map pool",
     )
+    # LG-02-Part2b — hidden composer serialization. The create.html JS
+    # serializes the ordered phase rows into this field as a comma-joined
+    # list of phase-type tokens; ``clean()`` parses it into phase specs.
+    phases = forms.CharField(
+        widget=forms.HiddenInput(attrs={"id": "league-create-phases"}),
+        required=False,
+    )
 
     def clean(self):
         """LG-01j — cross-field mode-vs-pool count rules.
@@ -223,6 +231,20 @@ class CreateLeagueForm(forms.Form):
         absent in that case).
         """
         cleaned_data = super().clean()
+        # LG-02-Part2b — parse the composer wire format into phase specs.
+        # Empty/blank ``phases`` falls back to a single round_robin phase
+        # (the Part2a default). ``schedule_format`` is the disabled field's
+        # locked ``"single_round_robin"``; default defensively.
+        try:
+            specs = parse_phase_composition(
+                cleaned_data.get("phases", "") or "",
+                season_schedule_format=cleaned_data.get("schedule_format")
+                or "single_round_robin",
+            )
+        except ValueError as exc:
+            self.add_error("phases", forms.ValidationError(str(exc)))
+        else:
+            cleaned_data["phase_specs"] = specs
         mode = cleaned_data.get("map_mode")
         if mode is None:
             return cleaned_data

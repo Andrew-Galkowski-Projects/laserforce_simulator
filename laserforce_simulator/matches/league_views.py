@@ -548,9 +548,18 @@ def league_create(request) -> HttpResponse:
     # block. ``cleaned["map_pool"]`` is the ModelMultipleChoiceField's
     # QuerySet; ``.set()`` accepts an iterable of objects or PKs.
     season.map_pool.set(cleaned["map_pool"])
-    # LG-02-Part2a — create the explicit ordinal-1 round_robin phase
-    # inside the same atomic block (a rollback drops it with the Season).
-    SeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")
+    # LG-02-Part2b — create the composed phases inside the same atomic
+    # block (a rollback drops them with the Season). ``phase_specs`` is the
+    # parsed composer output stashed by ``CreateLeagueForm.clean()``; the
+    # ``tournament`` FK is ALWAYS NULL in Part2b.
+    for spec in form.cleaned_data["phase_specs"]:
+        SeasonPhase.objects.create(
+            season=season,
+            ordinal=spec.ordinal,
+            phase_type=spec.phase_type,
+            schedule_format=spec.schedule_format,
+            tournament=None,
+        )
 
     return redirect("season_standings", season_id=season.id)
 
@@ -1937,8 +1946,17 @@ def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
     if map_pool_ids:
         new_season.map_pool.set(ArenaMap.objects.filter(id__in=map_pool_ids))
 
-    # LG-02-Part2a — explicit ordinal-1 round_robin phase, in the same
-    # atomic block as the Season create.
-    SeasonPhase.objects.create(season=new_season, ordinal=1, phase_type="round_robin")
+    # LG-02-Part2b — carry the previous Season's full phase composition
+    # forward (mirrors the team-id / map-pool carry-forward). Copy
+    # ordinal / phase_type / schedule_format verbatim; reset tournament to
+    # NULL. ``Meta.ordering = ["ordinal"]`` guarantees the source order.
+    for src in latest_completed.phases.all():
+        SeasonPhase.objects.create(
+            season=new_season,
+            ordinal=src.ordinal,
+            phase_type=src.phase_type,
+            schedule_format=src.schedule_format,
+            tournament=None,
+        )
 
     return redirect("season_dashboard", season_id=new_season.id)
