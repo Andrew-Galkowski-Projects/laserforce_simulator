@@ -910,7 +910,645 @@ through its own grilling session before implementation.
   blockers tracked in [`sub-plan.md`](sub-plan.md); seam contract at
   `.claude/worktrees/lg-01z-seam-contract.md`.
 
+### LG-02 · Tournament formats — Part 1 (sandbox standalone tournaments)
+
+**Status: DONE — all Part-1 sandbox formats shipped.** Single-elimination, bulk
+intake + async play-all, best-of-N Series, per-round Series escalation,
+double-elimination / round-robin / RR→DE / Swiss, and the Random Draw player
+pool. The deferred LG-02x-2 (Duos / Trios) slice stays in [`PLAN.md`](PLAN.md).
+See [ADR-0019](docs/adr/0019-tournament-bracket-model.md) for the persisted
+standalone-sandbox model decision; the LG-02 grill (2026-06-02) split the work
+into Part 1 (sandbox) and Part 2 (in-League composer).
+
+#### Part 1 · Sandbox standalone tournaments
+
+- **LG-02a · [DONE] Sandbox single-elimination Tournament.** A standalone,
+  persisted single-elimination bracket built and played entirely in the sandbox,
+  decoupled from League/Season. Single-elimination only; arbitrary **N ≥ 4** with
+  byes; a bracket node is exactly one 2-round `Match`; winners auto-advance; the
+  bracket renders as a visual tree on the detail page.
+  - completed: shipped the **sandbox single-elimination Tournament** at the new
+    `/tournaments/` mount (cite [ADR-0019](docs/adr/0019-tournament-bracket-model.md);
+    seam [`.claude/worktrees/lg-02a-seam-contract.md`](.claude/worktrees/lg-02a-seam-contract.md);
+    CONTEXT.md `### Tournaments` carries the 8 locked terms). **Standalone &
+    persisted** — three new models in `matches/models.py` (`Tournament` /
+    `TournamentParticipant` / `BracketNode`, migration
+    `matches/migrations/0033_tournament.py`, new models only — no `RunPython` /
+    backfill, ADR-0004 precedent), `season`-less and never touching
+    `generate_schedule`. **Single-elimination only** (`format` enum present but
+    single-valued `"single_elimination"`, extensible). `Tournament` runs a 3-state
+    machine `setup` → `active` → `completed`: `setup` is the **Seeding-editable**
+    window, the `BracketNode` tree is built + persisted + locked only on the
+    `setup` → `active` transition (`lock_and_build()`, `@transaction.atomic`,
+    `ValidationError` on N < 4), the final node resolving stamps `champion` +
+    `completed` (mirrors `Season.start_season`'s draft→active M2M lock).
+    **Node = one Match** (a `BracketNode` holds two team slots + an optional played
+    2-round `Match`; no series). **Tie-break** when `Match.winner is None`
+    (rounds + total points tied): best single-`GameRound` score advances, else the
+    **higher Bracket seed (lower seed int)** — pure integer compare, no re-sim.
+    **Arbitrary N ≥ 4 with byes**: bracket size = next power of two ≥ N, the top
+    `(size − N)` seeds get round-1 byes. **Seeding** = mean active-player
+    `overall_rating` **DESC** default (the LG-01c draft-preview talent order) +
+    manual reorder (`tournament_reseed`, rejected once locked). **Team source** =
+    select existing `Team.objects.regular()` **and/or** generate new via the LG-01b
+    cross-app `teams.views._generate_teams` seam (signature unchanged). Play is
+    **synchronous game-by-game** — one `tournament_play_next` POST sims exactly one
+    node's Match via `BatchSimulator().simulate_match(..., match_type="tournament")`
+    and Advances the winner. Pure bracket math lives in `matches/bracket.py`
+    (frozen allowlist `dataclasses`/`typing`/`math`/`collections`, no Django —
+    `TestNoDjangoImportsLeaked`); the view↔pure seam crosses **ints/dicts only**
+    (`_node_to_dict` flattener). Six views/URLs (`tournament_list` / `_create` /
+    `_detail` / `_reseed` / `_lock` / `_play_next`) under
+    `path("tournaments/", include("matches.tournament_urls"))`; a **bracket-tree
+    viz** on `tournament_detail` (DOM ids `tournament-bracket` /
+    `tournament-bracket-round-{n}` / `tournament-node-{round}-{position}`); a
+    sandbox-nav entry `tournaments-nav-link` in the `app_mode == "sandbox"` topnav
+    branch; admin for all three models. Tests: `matches/tests/test_bracket.py`
+    (pure-unit), `test_tournament_models.py`, `test_tournament_views.py`.
+- **LG-02a-2 · [DONE] Bulk team intake + async play-all.** Two ergonomics follow-ups
+  deferred from LG-02a so it could ship the minimal create + synchronous play loop
+  first. (1) **CSV participant import** — let a Tournament's participant list be
+  populated from a CSV roster via the **LG-00b roster importer** (reuse the
+  existing import path rather than a bespoke parser), on top of the LG-02a
+  select-existing + generate sources. (2) **Async "play-all"** — a one-click
+  "play every remaining node to a champion" that runs **off-request** as a Celery
+  task on the **ADR-0016 `play_season_task` precedent** (same task plumbing the
+  League play loop already uses), instead of the per-node synchronous
+  `tournament_play_next` POST. *Why deferred:* both are additive surfaces over the
+  shipped model — the sync single-step loop proves the bracket/advancement engine
+  end-to-end without the Celery/CSV surface area, and the async path wants the
+  proven engine underneath it.
+  - completed: shipped **CSV participant import + async play-all** as additive
+    surfaces over the shipped LG-02a model (seam
+    [`.claude/worktrees/lg-02a-2-seam-contract.md`](.claude/worktrees/lg-02a-2-seam-contract.md);
+    **no model, no migration, no ADR** — per-node-atomic follows ADR-0016, CSV
+    reuse follows LG-00b, both reversible). **CSV import reuses LG-00b verbatim**
+    cross-app read-only — `teams.forms.RosterImportForm`,
+    `teams.roster_importer.parse_roster_csv` / `RosterImportError`, and
+    `teams.views._check_db_slot_collisions` / `_apply_roster` (signatures
+    unchanged, no `teams/` edit) — plus the **Celery** plumbing reuse
+    (`matches.views._celery_state_to_job_status` verbatim, the `play_season_task`
+    body precedent). One new **pure** bracket fn `matches/bracket.py::stage_progress(nodes:
+    list[dict]) -> tuple[int, int]` (STAGE-based progress = completed/total Bracket
+    rounds; reads `bracket_round` / `is_bye` / `winner_id` off `_node_to_dict`
+    output; respects the frozen `dataclasses`/`typing`/`math`/`collections`-only
+    allowlist — `TestNoDjangoImportsLeaked` still passes, no new import). New module
+    `matches/tournament_engine.py::play_next_node(tournament) -> BracketNode | None`
+    (`@transaction.atomic`) **extracts** the per-node resolve/advance body out of the
+    inline `tournament_play_next`; the sync view is **refactored** to call it (keeps
+    its POST-only / `state != "active"` HTTP shell, inline sim/resolve/advance block
+    deleted). New Celery task `matches/tasks.py::play_tournament_task(self,
+    tournament_id) -> dict` (`@shared_task(name="matches.play_tournament")`) loops
+    `play_next_node` to a champion — **per-node-atomic, NO outer
+    `@transaction.atomic`** (ADR-0016 precedent: a mid-loop FAILURE leaves every
+    already-resolved node committed; resumable), inactive-state early-return no-op,
+    `close_old_connections()` in `finally`, **stage-based** `update_state` meta +
+    return `{"completed": int, "total": int}` (stage counts, NOT node counts). Three
+    new views/URLs in `tournament_views.py` / `tournament_urls.py`:
+    `tournament_play_all` (POST → `play_tournament_task.delay`, HTTP **202**
+    `{job_id, tournament_id}`, **409** when not active),
+    `tournament_play_status` (GET, 5-key polling JSON `{status, completed, total,
+    error, tournament_id}` via the new `_build_tournament_play_status_response`
+    mirroring `_build_play_status_response`), and `tournament_import_participants`
+    (POST `@transaction.atomic`). **CSV import = created-teams-only** (only brand-new
+    `_apply_roster` `created_teams` become `TournamentParticipant`s — no
+    `uniq_tournament_team` collision; appended teams are NOT auto-added), then
+    **re-seed the whole field by talent** (`_team_mean_rating` →
+    `default_seed_order`, two-phase offset write dodging `uniq_tournament_seed`,
+    reusing the `tournament_reseed` idiom), **setup-only** (`is_locked` ⇒ flash +
+    redirect, no writes), error path **re-renders** `tournament_detail.html` HTTP 200
+    with `transaction.set_rollback(True)` + per-row errors (RosterImportError or bound
+    form-invalid). A new private `_detail_context(tournament)` helper shares the detail
+    context between `tournament_detail` and the import-error re-render (the 6 frozen
+    LG-02a keys + `import_form` / `import_row_errors`). New DOM ids on
+    `tournament_detail.html`: setup `tournament-import-{form,file,submit,template-link,errors}`
+    + per-row `tournament-import-error-{row_num}-{field|row}`; active
+    `tournament-play-all-{form,submit,progress}` (inline 1000 ms poll JS mirroring the
+    LG-01d seasons dashboard, reveal/update progress, reload on complete, surface error
+    on FAILURE) — the single-step `tournament-play-next-form` is unchanged. The
+    CONTEXT.md **Job** term is extended to a **4th kind** (**Play Tournament job**) +
+    the `/tournaments/<id>/play-all/` URL; **no new term** (the **Roster import** term
+    is reused unedited). **Non-deterministic** — `simulate_match` draws fresh per-round
+    seeds, so Play Tournament games are NOT master-seed-replayable: **no SIM-07 / SIM-08
+    interaction, NO Score Calibration re-baseline**. Tests:
+    `matches/tests/test_bracket.py` (extend — `TestStageProgress`),
+    `test_tournament_engine.py` (NEW), `test_tournament_tasks.py` (NEW, under
+    `CELERY_TASK_ALWAYS_EAGER`), `test_tournament_views.py` (extend).
+- **LG-02b · [DONE] Best-of-N series nodes.** Generalise a bracket node from **one**
+  2-round `Match` to a **best-of-3 / best-of-5 series**: the node resolves when one
+  side clinches the majority, then Advances. *Why deferred:* LG-02a locked
+  "node = exactly one Match" so the advancement + tie-break engine could be built
+  against a single deterministic result; a series re-opens node-resolution
+  semantics (per-game records, clinch detection, the tie-break's role) and is a
+  clean increment once single-game advancement is proven.
+  - completed: generalised a **Bracket node** from holding **one** 2-round `Match`
+    to a best-of-N **Series**, the node Advancing only once a Team clinches the
+    Match-win majority (seam
+    [`.claude/worktrees/lg-02b-seam-contract.md`](.claude/worktrees/lg-02b-seam-contract.md)).
+    New `Tournament.series_length` (`PositiveSmallIntegerField`, choices `1`/`3`/`5`
+    "Best of 1/3/5", `default=1`; create-time only, frozen on the setup→active
+    `lock_and_build` transition) — **Bo1 (`series_length == 1`) is byte-equivalent
+    to LG-02a** (one Match, clinch threshold 1, identical Advancement). New
+    `SeriesMatch` through-model (`node` FK CASCADE `related_name="series_matches"`,
+    `match` FK SET_NULL, 1-based `game_number`, `winner` FK to `teams.Team`
+    SET_NULL; `UniqueConstraint` `uniq_seriesmatch_node_game`,
+    `Meta.ordering=["game_number"]`) — **one row per played Series Match**; the
+    win tally is **derived** by counting `winner` rows per team-slot, **never
+    stored** as counters. The LG-02a `BracketNode.match` FK is **dropped wholesale**
+    (the per-Match link now lives on `SeriesMatch.match`). Migration
+    `matches/migrations/0034_*` in pinned order `AddField(Tournament.series_length)`
+    → `CreateModel(SeriesMatch)` → `RemoveField(BracketNode.match)` — **no
+    `RunPython`, no backfill** (ADR-0004 disposable-sandbox precedent). Pure
+    `matches/bracket.py` gains `clinch_threshold(series_length) -> int`
+    (`(series_length // 2) + 1`: Bo1→1, Bo3→2, Bo5→3) and `series_winner_slot(wins_a,
+    wins_b, series_length) -> Optional[str]` (`"a"`/`"b"`/`None`, total + never-raises,
+    `wins_a` checked first); the `find_next_node` playable predicate swaps the old
+    `winner_id IS NULL AND match_id IS NULL` checks for **`series_winner_slot(...)
+    is None`**; `_node_to_dict` gains `wins_a`/`wins_b`/`series_length` and **drops
+    `match_id`** (frozen `dataclasses`/`typing`/`math`/`collections`-only allowlist
+    unchanged — `TestNoDjangoImportsLeaked` still passes). `tournament_engine.py::
+    play_next_node` is rewritten to resolve **one Match per step**,
+    **per-Match-atomic** (extends ADR-0016 from per-node to per-Match): sim ONE Match
+    (sides fixed `team_a`/`team_b`) → per-Match `break_tie` on `match.winner is None`
+    → create the next `SeriesMatch` row → recompute the derived tally → clinch at
+    `(N//2)+1` ⇒ stamp `node.winner` + `advance_winner` + `champion`/`completed` on
+    the final, **else return the node with no Advancement**; dead-rubber Matches are
+    never simulated. The `stage_progress` / play-all / play-status routes are
+    **unchanged** (`stage_progress` still reads `winner_id`, which is stamped only on
+    clinch; the Celery loop simply iterates once per Match, so a Bo3/Bo5 drains over
+    more steps). Surface: a create-form **`series_length` `<select>`** (DOM id
+    `tournament-create-series-length`, options Bo1/Bo3/Bo5, default Bo1) + a per-node
+    **Series-score** element (DOM id `tournament-node-series-score-{br}-{pos}`
+    rendering `wins_a–wins_b`); the champion still surfaces via the unchanged
+    `tournament-champion-banner`. **Non-deterministic** (`simulate_match` draws fresh
+    per-round seeds) ⇒ **no SIM-07/08 interaction, NO Score Calibration re-baseline**.
+    New **ADR-0020** "Best-of-N series bracket nodes" (cross-ref ADR-0019 + ADR-0016).
+    Tests: `matches/tests/test_bracket.py` (extend — `clinch_threshold` /
+    `series_winner_slot` / Series `find_next_node` cases + purity),
+    `test_tournament_models.py` (extend — `SeriesMatch` + `series_length` +
+    `_node_to_dict`), `test_tournament_engine.py` (extend — per-Match step +
+    clinch-advance + Bo1-equivalence + tie-break), `test_tournament_views.py` (extend
+    — create-field + detail Series-score), `test_tournament_tasks.py` (extend —
+    play-all over a Bo3 Series). See seam
+    [`.claude/worktrees/lg-02b-seam-contract.md`](.claude/worktrees/lg-02b-seam-contract.md).
+- **LG-02b-2 · [DONE] Per-Bracket-round series escalation.** Let the
+  **Series length vary by Bracket round** — Bo1 early rounds → Bo3 semis → Bo5
+  final — instead of the single per-Tournament `series_length` LG-02b applies to
+  every node. The node reads its round's N (a per-round config persisted at
+  lock time) rather than `tournament.series_length`, building directly on the
+  LG-02b Series engine (clinch / `SeriesMatch` / per-Match-atomic play stay
+  verbatim — this task adds only the per-round N lookup + the create-time UI to
+  set it). *Why deferred:* a clean increment over LG-02b — the Series engine is
+  built once against a single per-Tournament length; escalation is purely a
+  config-resolution + UI layer on top, not a re-open of node-resolution semantics.
+  - completed: generalised the LG-02b best-of-N **Series length** from a **single
+    flat per-Tournament value applied to every node** into a **per-Bracket-round**
+    value anchored to **depth from the final** (seam
+    [`.claude/worktrees/lg-02b-2-seam-contract.md`](.claude/worktrees/lg-02b-2-seam-contract.md)).
+    A node's Series length resolves from `depth = total_rounds - bracket_round`:
+    **depth 0** final, **1** semifinal, **2** quarterfinal, **≥ 3** every earlier
+    round (all collapse to one `earlier` slot — no fifth tier). The pure clinch
+    engine (`clinch_threshold`, `series_winner_slot`, `count_series_wins`,
+    `SeriesMatch`, the per-Match-atomic `play_next_node` body) is **UNCHANGED** —
+    **only the *source* of the `series_length` argument moves from tournament-level
+    to node-level**. Model: the LG-02b flat `Tournament.series_length` is **DROPPED
+    wholesale** (no alias/shim) and replaced by **four** `PositiveSmallIntegerField`s
+    — `final_series_length` / `semifinal_series_length` / `quarterfinal_series_length`
+    / `earlier_series_length` (each choices `1`/`3`/`5` "Best of 1/3/5", `default=1`,
+    create-time only, frozen on the setup→active transition); plus new
+    `BracketNode.series_length` (`PositiveSmallIntegerField`, `default=1`, **no
+    choices**, the resolved int). **Bo1-everywhere (all four `1`, the migration
+    default) is byte-equivalent to LG-02b/LG-02a.** `lock_and_build` computes
+    `total_rounds = max(spec.bracket_round …)` and **stamps `node.series_length`**
+    on **every** persisted node (incl. byes — inert) in the existing
+    `BracketNode.objects.create(...)` loop via the new pure resolver. New pure
+    `matches/bracket.py::series_length_for_round(bracket_round, total_rounds, *,
+    final, semifinal, quarterfinal, earlier) -> int` (`depth = total_rounds -
+    bracket_round`; 0→final, 1→semifinal, 2→quarterfinal, `else`/≥3→earlier; four
+    slot args **keyword-only**; pure/total/never-raises; frozen `dataclasses`/
+    `typing`/`math`/`collections`-only allowlist unchanged — no new import,
+    `TestNoDjangoImportsLeaked` still passes). **Seam read swap**: `_node_to_dict`'s
+    `"series_length"` and `play_next_node`'s clinch check now read `node.series_length`
+    (was `node.tournament.series_length`); `select_related("tournament")` is
+    droppable from `play_next_node` + `find_next_playable_node` (no residual
+    `node.tournament` reader; nicety, not pinned). **No monotonicity** — the four
+    slots are independent `{1,3,5}` in any order. Migration `matches/migrations/
+    0035_*` in pinned order `RemoveField(Tournament.series_length)` → 4×
+    `AddField(Tournament.*_series_length)` → `AddField(BracketNode.series_length)`
+    — **no `RunPython`, no backfill** (ADR-0004 disposable-sandbox precedent; dep
+    `0034_tournament_series`). Surface: **four create-form `<select>`s** (DOM ids
+    `tournament-create-{final,semifinal,quarterfinal,earlier}-series-length`,
+    options Bo1/Bo3/Bo5, Bo1 default; POST fields `final_series_length` /
+    `semifinal_series_length` / `quarterfinal_series_length` / `earlier_series_length`,
+    each int-coerced + forced into `{1,3,5}` with independent forgiving fallback to
+    `1`; old single `tournament-create-series-length` id **removed**); detail page
+    `_build_rounds` node dict gains `series_length`, and each **non-bye** node
+    renders a Bo-N label (DOM id `tournament-node-series-length-{br}-{pos}`, text
+    `Bo{n}`) beside the unchanged `tournament-node-series-score-{br}-{pos}`; the
+    frozen `_detail_context` keys and `tournament-champion-banner` are unchanged.
+    The four `Tournament` fields + `BracketNode.series_length` auto-surface in the
+    default admin change forms (no `list_display` change). **ADR-0020 extended**
+    (not re-written) for the per-round escalation; CONTEXT.md `### Tournaments`
+    **Series length** (revised) + **Series escalation** (added) already written.
+    **Non-deterministic** (`simulate_match` draws fresh per-round seeds) ⇒ **no
+    SIM-07/SIM-08 interaction, NO Score Calibration re-baseline**. Tests:
+    `matches/tests/test_bracket.py` (extend — `series_length_for_round` depth
+    boundaries + N=4/8/16 worked cases + purity), `test_tournament_models.py`
+    (extend/migrate — `lock_and_build` stamps per depth incl. byes, four new fields
+    + node field exist/default/choices, old field gone, `_node_to_dict` reads node),
+    `test_tournament_views.py` (extend/migrate — four selects + POST persist +
+    fallback + detail Bo-N label), `test_tournament_engine.py` (extend/migrate —
+    node reads its own `series_length`, Bo3 clinch at 2, Bo1 unchanged),
+    `test_tournament_tasks.py` (migrate the `_active_series_tournament` helper to
+    the four-field shape).
+- **LG-02c+ · [DONE — double-elim + round-robin + RR→DE + Swiss all DONE; LG-02x-1
+  Random Draw player pool also DONE, LG-02x-2 Duos / Trios is the next LG-02 Part-1 work] Additional bracket formats.** **Double elimination** (losers get a
+  second chance via a losers bracket), **round robin** (all teams play each other,
+  used for seeding), **round robin → double elimination** (RR seeding phase feeds a
+  DE finals), and **Swiss** (pairings from current standings; rounds
+  auto-calculated ⌈log₂(N)⌉, admin-overridable). *Why deferred:* the `format` enum
+  shipped extensible-but-single (`"single_elimination"`) precisely so these slot in
+  as new enum values + new pure `matches/bracket.py` builders without a model
+  migration; each format is its own grill (losers-bracket wiring, RR scheduling +
+  seeding handoff, Swiss pairing) rather than a variant of single-elim.
+  - **Double elimination · [DONE].** Extended the single-elim `BracketNode` tree
+    into **two coupled brackets** — a **Winners bracket** and a **Losers bracket**
+    joined by a **Grand final with Bracket reset** — as a second
+    `Tournament.format` enum value (`("double_elimination", "Double elimination")`)
+    driven by a new pure builder, hosting **both** sub-brackets in the *existing*
+    `BracketNode` table (one table + a sub-bracket tag, **not** a second
+    `LoserBracketNode` model). Single-elim is **byte-unchanged** end to end
+    ([ADR-0021](docs/adr/0021-double-elimination-bracket.md); seam
+    [`.claude/worktrees/lg-02c-seam-contract.md`](.claude/worktrees/lg-02c-seam-contract.md)).
+    Builds on LG-02b (the `SeriesMatch` clinch engine) + LG-02b-2 (depth-from-final
+    escalation, re-anchored to depth-from-Grand-final). Model: `BracketNode` gains
+    **`bracket_type`** (`CharField`, choices `winners`/`losers`/`grand_final`,
+    `default="winners"`), **`loser_advances_to`** (self-FK, SET_NULL, related_name
+    `"loser_feeders"` — where THIS node's loser **Drops**), and
+    **`loser_advances_to_slot`** (`a`/`b`, nullable); LB nodes + single-elim WB
+    nodes leave the loser pointer NULL (loser eliminated). The
+    `uniq_tournament_round_position` constraint is **renamed**
+    `uniq_tournament_bracket_round_position` with `bracket_type` added to the field
+    tuple (a WB and LB node may share `(round, position)`). Migration
+    `matches/migrations/0036_*` (dep `0035_tournament_series_escalation`; ops
+    `AlterField(Tournament.format)` choices-widen → 3× `AddField(BracketNode.*)` →
+    `RemoveConstraint` → `AddConstraint` — **no `RunPython`, no backfill**,
+    ADR-0004). Pure `matches/bracket.py` (frozen allowlist unchanged, no new
+    import, `TestNoDjangoImportsLeaked` green): new
+    **`build_double_elim_bracket(participants)`** emits the full two-tree spec list
+    for arbitrary **N ≥ 4 with byes** (WB = the existing single-elim tree; LB
+    consumes WB losers via a **naive same-position drop** — **NO anti-rematch
+    folding**, a known limitation deferred; GF1 + GF2 built at lock); new
+    **`series_length_for_depth(depth, *, final, semifinal, quarterfinal,
+    earlier)`** (depth→slot dispatch — DE depth = distance-to-GF1, GF1/GF2 depth 0;
+    `series_length_for_round` **delegates** to it, byte-identical); new **SEPARATE
+    `advance_loser`** (parallel to a **byte-unchanged** `advance_winner` — the
+    engine makes two explicit calls on a WB/GF1 clinch); `resolve_bye_chain`
+    generalized to collapse **Drop byes** (a WB Bye produces no loser ⇒ its LB slot
+    collapses); `find_next_node` sort key → `(bracket_type rank
+    winners<losers<grand_final, round, position)` (single-elim collapses to
+    `(round, position)`); `stage_progress` counts distinct `(bracket_type,
+    bracket_round)` groups. `_node_to_dict` gains `bracket_type` + a **3-tuple**
+    `loser_advances_to` `(bracket_type, round, position)` + `loser_advances_to_slot`
+    (the deliberate 2-tuple-`advances_to` / 3-tuple-`loser_advances_to` asymmetry —
+    the Drop crosses brackets, the winner-advance does not). Engine
+    `play_next_node` stays **ONE** per-Match-atomic loop for both formats; on a
+    WB/GF1 clinch it Advances the winner **AND** Drops the loser into
+    `loser_advances_to`, then resolves the **Grand-final Bracket reset**: if the GF1
+    winner is the WB champ, stamp **`GF2.winner` inert** (bye-style auto-resolve, so
+    `find_next_node` never returns GF2) + champion + `completed` immediately; if the
+    GF1 winner is the LB champ, both Advance into GF2 (playable) and GF2's winner is
+    champion. View/template: create-form `<select>` DOM id
+    **`tournament-create-format`** (POST field `format`, forgiving fallback to
+    `single_elimination`); detail `_build_rounds` returns a **3-key dict**
+    `{"winners", "losers", "grand_final"}` (single-elim: only `"winners"` non-empty)
+    and renders three sections — the template **branches on `tournament.format`** so
+    **single-elim keeps the legacy** `tournament-node-{round}-{position}` ids while
+    DE uses **`tournament-node-{bracket_type}-{round}-{position}`** (containers
+    `tournament-bracket-winners` / `-losers` / `-grand-final`). The three new
+    `BracketNode` fields + the widened `format` choices auto-surface in admin (no
+    `list_display` change). **Non-deterministic** (`simulate_match` draws fresh
+    per-round seeds) ⇒ **no SIM-07/SIM-08 interaction, NO Score Calibration
+    re-baseline**. ADR-0021 + CONTEXT.md `### Tournaments` (Winners bracket / Losers
+    bracket / Drop / Grand final / Bracket reset) already written, not re-touched.
+    Tests: `test_bracket.py` (`series_length_for_depth`, `build_double_elim_bracket`,
+    `advance_loser`, Drop-bye cascade, bracket-order `find_next_node`, DE
+    `stage_progress`; single-elim cases green), `test_tournament_models.py` (DE
+    fields/renamed constraint, DE `lock_and_build` incl. depth-stamped byes,
+    single-elim regression, `_node_to_dict` DE keys), `test_tournament_views.py`
+    (format select + persist + fallback, DE three-section render, single-elim id
+    regression), `test_tournament_engine.py` (WB loser Drop, Grand-final Bracket
+    reset both branches, single-elim regression), `test_tournament_tasks.py`
+    (`play_tournament_task` drains a DE bracket, stage counts over both brackets).
+  - **Round robin · [DONE].** Added a third `Tournament.format` enum value
+    (`("round_robin", "Round robin")`): a **flat double round-robin** where every
+    enrolled team plays every other **twice** (one fixture per leg), with **NO
+    advancement** — the champion is the **Standings** leader once every node is
+    resolved. Unlike the elim formats it has no bracket tree: a **flat set of
+    `BracketNode` rows with no `advances_to` / `loser_advances_to` edges**. It reuses
+    three existing pure seams verbatim — `generate_schedule` (the fixture list, whose
+    full output **is** a double RR — each pair twice, once per leg), `compute_standings`
+    (the LG-06g ranked table), and the LG-02b `SeriesMatch` clinch engine (Bo1 per
+    fixture) — so it shipped as a **choices widen + two `Tournament` methods + one
+    engine guard + a `_BRACKET_RANK` entry**, with **no new pure builder** and **no
+    `matches/bracket.py` import-allowlist change** (only `_BRACKET_RANK["round_robin"]
+    = 3`, a literal edit; `TestNoDjangoImportsLeaked` green). Single- and double-elim
+    are **byte-unchanged**. `BracketNode.bracket_type` choices gain `"round_robin"`
+    (fits the existing `max_length=12`). Migration
+    `matches/migrations/0037_tournament_round_robin.py` (dep
+    `0036_bracketnode_double_elimination`; two `AlterField`s — `Tournament.format` +
+    `BracketNode.bracket_type` choices widen — **no `RunPython`, no backfill**,
+    ADR-0004). Build: a **third `format` branch in `Tournament.lock_and_build()`**
+    (model layer, **not** `bracket.py`) deferred-imports `generate_schedule` and
+    creates one node per fixture — `bracket_type="round_robin"`,
+    `bracket_round=matchday`, `position`=0-based index within the matchday,
+    `team_a`/`team_b` + `seed_a`/`seed_b` fixed at lock, `is_bye=False`,
+    `series_length=1` (Bo1), `advances_to`/`loser_advances_to` left `None` — and runs
+    **no wiring pass and no `resolve_bye_chain`** (RR nodes never advance; N=4 → 12
+    nodes, N=6 → 30). Two new `Tournament` methods (both deferred-import
+    `compute_standings`): **`round_robin_standings()`** assembles the 9-key
+    `completed_matches` / `(id, name)` `enrolled_teams` / 6-key `season_rounds` seam
+    inputs from the RR nodes and returns ranked `StandingsRow`s for every enrolled team
+    (zero-filled pre-play; `winner_team_id = node.winner_id`, never `None` for a
+    resolved node; no seed-aware tiebreak override — `compute_standings`' `team_name
+    asc` final tiebreak stands); **`complete_round_robin_if_finished()`** (idempotent,
+    parallel to `Season.complete_if_finished`) stamps `champion =
+    round_robin_standings()[0].team_id` + `state="completed"` once **every** RR node
+    has `winner_id is not None`. Engine `play_next_node` stays **ONE**
+    per-Match-atomic loop for all three formats; on an RR clinch a **guard `if
+    tournament.format == "round_robin":`** (after the `node.winner` stamp, before the
+    elim advance/crown block) calls `complete_round_robin_if_finished()` then `return
+    node` — **required** to skip the elim "crown when `advances_to` is `None`" rule,
+    which would otherwise wrongly crown on the first resolved node.
+    `find_next_node` is **UNCHANGED** (an unplayed RR node is playable, a resolved one
+    skipped; sort `(3, matchday, position)`). View/template: the create-form
+    `<select>` (`tournament-create-format`) gains a **`"Round robin"`** option
+    (forgiving fallback to `single_elimination`; the four series-length selects hidden
+    client-side for RR, their inert values harmless); the detail page keeps
+    `_build_rounds`' 3-key elim dict (all empty for RR) and rides on two NEW
+    `_detail_context` keys **`rr_crosstable`** + **`rr_standings`** (empty for elim),
+    rendering an N×N crosstable (DOM id **`tournament-rr-crosstable`** — leg
+    `round_number==1` → `cell[team_a][team_b]`, leg `2` → `cell[team_b][team_a]`,
+    diagonal blank; the view re-derives `round_number` via `generate_schedule` since
+    the node only stores `matchday`/`position`) + a live standings table (DOM id
+    **`tournament-rr-standings`**), reusing the lock / play-next / play-all controls +
+    `tournament-champion-banner` verbatim; no per-node series-score / Bo-N labels (RR
+    is Bo1). **Non-deterministic** (`simulate_match` draws fresh per-round seeds) ⇒
+    **no SIM-07/SIM-08 interaction, NO Score Calibration re-baseline**; **no new ADR**
+    (reversible — choices widen + two methods + a deferred import) and **no new
+    CONTEXT.md term** (reuses Tournament / Bracket node / Standings) — ADR-0021 +
+    CONTEXT.md `### Tournaments` extended at grilling time, not re-touched. Seam
+    [`.claude/worktrees/lg-02c-round-robin-seam-contract.md`](.claude/worktrees/lg-02c-round-robin-seam-contract.md).
+    Tests: `test_bracket.py` (`TestBracketRankRoundRobin`, `TestNoDjangoImportsLeaked`
+    green), `test_tournament_models.py` (`TestTournamentRoundRobinFormat`,
+    `TestLockAndBuildRoundRobin`, `TestRoundRobinStandings`,
+    `TestCompleteRoundRobinIfFinished`), `test_tournament_engine.py`
+    (`TestPlayNextNodeRoundRobinNoEarlyCrown`, `TestPlayNextNodeRoundRobinCompletes`),
+    `test_tournament_views.py` (`TestCreateFormRoundRobin`,
+    `TestDetailRoundRobinCrosstable`), `test_tournament_tasks.py`
+    (`TestPlayTournamentTaskRoundRobin`) — assert on pure functions, persisted
+    node/row shapes, `node.winner` / `champion` / `state`, standings ORDER, and DOM
+    ids, **never** exact simulated point totals.
+  - **Round robin → double elimination · [DONE].** Added a fourth
+    `Tournament.format` enum value
+    (`("round_robin_double_elim", "Round robin → Double elimination")`, em-dash arrow
+    `→` U+2192): a **two-stage** format composing the two shipped LG-02c formats — a
+    round-robin **Seeding stage** (the SHIPPED double round-robin, verbatim) whose
+    final **Standings rank** seeds a double-elimination **Finals stage** (the SHIPPED
+    ADR-0021 WB+LB+Grand-final tree) built **lazily** when the last Seeding node
+    resolves. Builds on the round-robin (seeding) + double-elimination (finals) slices,
+    reusing their pure + persist machinery verbatim. Single/double-elim and plain
+    round-robin are **byte-unchanged**
+    ([ADR-0021](docs/adr/0021-double-elimination-bracket.md) extended; seam
+    [`.claude/worktrees/lg-02c-rr-de-seam-contract.md`](.claude/worktrees/lg-02c-rr-de-seam-contract.md)).
+    - completed: Two NEW `Tournament` `PositiveSmallIntegerField(default=0)` fields —
+      **`wb_advancers`** (top-ranked teams into the Winners bracket) +
+      **`lb_advancers`** (next-ranked teams pre-seeding the Losers bracket), declared
+      after the four `*_series_length` fields, **no `choices`** (the create form's
+      `rrde_combo` select is the single source of valid shapes; the model holds
+      resolved ints, mirroring `BracketNode.series_length`), **create-time only, frozen
+      at lock**, `0` for non-RRDE formats. Locked shape: **`wb ∈ {4,8,16}`**,
+      **`lb ∈ {0, wb//2}`** — six combos (`4/0, 4/2, 8/0, 8/4, 16/0, 16/8`); the SHAPE
+      is enforced in the create form, the COUNT fit (`wb <= n`, `wb + lb <= n`)
+      validated at `lock_and_build` → `ValidationError` (surfaced via `messages.error`,
+      LG-02a precedent). The RRDE lock widens the RR guard to
+      `if self.format in ("round_robin", "round_robin_double_elim"):` and builds
+      **ONLY the RR Seeding nodes** (byte-identical to the round-robin build) — **the
+      DE Finals are NOT built at lock**. **Deferred Finals build:** new
+      **`build_de_finals_if_rr_finished(self)`** (`@transaction.atomic`) fires when the
+      last Seeding node resolves (guarded: RRDE + `active` + every RR node resolved +
+      idempotent), reads `round_robin_standings()`, splits by rank (top `wb` →
+      `ParticipantSpec` WB seeds `1..wb`; next `lb` → LB pre-seeds `wb+1..wb+lb`; rest
+      eliminated), calls the new pure builder, resolves each spec's `series_length` via
+      `series_length_for_depth(spec.depth, ...)`, and persists via the shared helper —
+      the Tournament **STAYS `active`**, the champion is crowned later by the DE Grand
+      final. **NEW pure builder `build_rr_de_finals_bracket(upper_specs, lower_specs)`**
+      (`matches/bracket.py`, **no new import**, `TestNoDjangoImportsLeaked` green):
+      `lower_specs == []` **delegates directly to `build_double_elim_bracket(upper_specs)`**
+      (provably identical, a plain top-`wb` DE); non-empty pre-fills LB-R1 slot "a" with
+      the `lb` pre-seeds in seed order and points each WB-R1 `loser_advances_to` at the
+      matching LB-R1 slot "b" (naive same-position drop — **NO anti-rematch folding**,
+      inherited limitation), WB re-tagged `winners` via the DE re-tag pass, GF1/GF2 as
+      a plain DE, **no byes anywhere**. **Extracted shared helper
+      `_persist_elim_specs(self, specs, ...)`** — the DE persist loop + the two wiring
+      passes (`advances_to` 2-tuple / `loser_advances_to` 3-tuple) + the
+      `resolve_bye_chain` cascade, pulled out of `lock_and_build` so BOTH the
+      single/double-elim lock path AND the deferred Finals build reuse it verbatim
+      (`series_length` stamping stays in the caller; single/double-elim `lock_and_build`
+      stays byte-identical, pinned by `TestLockAndBuildSingleElimUnchanged` /
+      `...DoubleElimUnchanged`). **Engine:** the `play_next_node` RR guard rekeys from
+      `tournament.format == "round_robin"` to **`node.bracket_type == "round_robin"`**
+      and dispatches on format (`round_robin` → `complete_round_robin_if_finished()`;
+      `round_robin_double_elim` → `build_de_finals_if_rr_finished()`) then
+      `return node` — a Seeding node never falls through; DE-stage nodes fall through to
+      the **byte-unchanged** elim advance/drop/GF-reset/crown block. **Migration
+      `matches/migrations/0038_tournament_rr_de.py`** (dep `0037_tournament_round_robin`;
+      `AlterField(Tournament.format)` choices-widen + `AddField(wb_advancers)` +
+      `AddField(lb_advancers)` — **no `RunPython`, no backfill**, ADR-0004).
+      **View/template:** create-form `<select name="format">`
+      (`tournament-create-format`) gains the `round_robin_double_elim` option + a NEW
+      `<select name="rrde_combo">` (`tournament-create-rrde-combo`) enumerating the six
+      combos (shown client-side only for RRDE; forgiving fallback to `(4, 0)`); detail
+      page gains DERIVED `tournament_stage` (`setup`/`seeding`/`finals`/`completed`) +
+      `cut_labels` (`team_id -> "wb"|"lb"|"out"` from standings rank) context keys, a
+      **`tournament-stage-badge`** DOM id, and per-standings-row cut-marker substrings
+      **`tournament-standings-cut-{wb|lb|out}`** in the seeding stage — reusing the RR
+      crosstable/standings and the DE three-section tree verbatim. **Stage is DERIVED,
+      not stored** (`nodes.exclude(bracket_type="round_robin").exists()`). **Non-
+      deterministic** (`simulate_match` fresh per-round seeds) ⇒ **no SIM-07/SIM-08
+      interaction, NO Score Calibration re-baseline**; **no new ADR** (ADR-0021 extended
+      for the deferred build) and **no new CONTEXT.md term** (Round robin → double
+      elimination finalised at grilling). Tests: `test_bracket.py`
+      (`TestBuildRrDeFinalsBracket` — `lb=0` equals `build_double_elim_bracket`, fused
+      `lb=wb/2` LB-R1 pre-fill + WB-R1 drop wiring + GF/`depth` + no byes + LB rounds
+      `2W-1`; `TestNoDjangoImportsLeaked`), `test_tournament_models.py` (fields/defaults/
+      no-choices, RRDE `lock_and_build` builds only RR nodes + count-fit
+      `ValidationError`, `build_de_finals_if_rr_finished` guards/idempotency/seeding,
+      `_persist_elim_specs` byte-identity regressions), `test_tournament_engine.py`
+      (last-RR-node triggers Finals build, drain crowns via GF, Seeding node never
+      advances), `test_tournament_views.py` (combo select + parse/persist + fallback,
+      stage badge + cut markers, reused RR/DE ids), `test_tournament_tasks.py`
+      (`play_tournament_task` drains both stages to a champion, `stage_progress` spans
+      RR then WB/LB/GF groups) — assert on pure functions, persisted node/row/edge
+      shapes, `node.winner`/`champion`/`state`, standings ORDER, DOM ids, **never** exact
+      simulated point totals.
+  - **Swiss · [DONE].** Added the fifth `Tournament.format` enum value
+    **`("swiss", "Swiss")`** (+ a fifth `BracketNode.bracket_type` `("swiss", "Swiss")`
+    and `_BRACKET_RANK["swiss"] = 4`) as a **flat, edge-less** Swiss-system format:
+    every Swiss node is a Bo1 pairing with `advances_to`/`loser_advances_to` `None`,
+    `is_bye=False`, `series_length=1` — **no advancement tree, no final node**; the
+    champion is the **Standings leader (Buchholz re-ranked)** once the last Swiss round
+    resolves. **EVEN-N only, no byes:** an odd participant count raises
+    `ValidationError("Swiss requires an even number of participants.")` at
+    `lock_and_build` (surfaced via `messages.error`, LG-02a precedent). New field
+    **`Tournament.swiss_rounds`** (`PositiveSmallIntegerField(default=0)`, after
+    `lb_advancers`, **no `choices`**, create-time): `0` = auto, resolved at lock to
+    `swiss_rounds or math.ceil(math.log2(N))` **clamped to `[1, N-1]`** and **written
+    back** (frozen). **R1 build at lock = seed "fold"** (sort by Bracket seed asc,
+    split in half, interleave `(seed[i], seed[i+N/2])`) in a **dedicated `swiss`
+    branch** of `lock_and_build` (its own branch — not folded into RR — for the even-N
+    guard + round-count freeze + fold pairing + `bracket_type="swiss"`); the R1 build
+    emits **only** the `N/2` round-1 nodes. **Later rounds DEFERRED per round:** new
+    **`advance_swiss_if_round_finished(self)`** (`@transaction.atomic`) fires when the
+    current (highest) Swiss round's last node resolves (no-op unless `swiss` + `active`
+    + every node in that round resolved); if `current < swiss_rounds` it builds the
+    next round via a **greedy ranked sweep** from `swiss_standings()` + `played_pairs`
+    (pair each unpaired team with the next not-yet-played team, **allow-rematch
+    fallback** for the trailing teams, no backtracking) and stays `active`; if
+    `current == swiss_rounds` it crowns `swiss_standings()[0]` and flips
+    `state="completed"`. **No draws** (`break_tie` forces a per-Match winner) ⇒
+    `league_points = 3 * wins`. **Buchholz tiebreak is ORDERING-ONLY:** ladder
+    `league_points desc → Buchholz desc → round_wins desc → total_score desc →
+    team_name asc`, Buchholz = sum of opponents' final `league_points` per played
+    pairing (rematch counts twice); `compute_standings` is **FROZEN/unmodified** —
+    Buchholz is a **separate pure re-rank layer** over its rows + the opponent graph
+    (stable sort, so `team_name asc` survives without a name lookup crossing the pure
+    seam). **NEW pure functions** (`matches/bracket.py`, **no new import**,
+    `TestNoDjangoImportsLeaked` green): **`build_swiss_round(ranked_team_ids,
+    seed_by_team, played_pairs, bracket_round)`** — ONE function for BOTH the R1 fold
+    (empty `played_pairs` ⇒ the not-yet-played check never fires) and the later greedy
+    sweep (rank order + filled `played_pairs`); and **`swiss_buchholz_rerank(rows,
+    opponents_by_team)`** — re-sorts + renumbers `rank` 1-based dense, ORDERING-ONLY.
+    **Model helpers:** **`_standings_over_nodes(self, node_qs)`** extracted from
+    `round_robin_standings()` (which stays byte-identical, pinned by a regression
+    test), reused by **`swiss_standings(self)`**; plus **`_swiss_opponent_graph(self)`**
+    and **`_swiss_played_pairs(self)`**. **Engine:** `play_next_node` gains a Swiss
+    guard alongside the RR/RR→DE guard — `if node.bracket_type == "swiss":
+    advance_swiss_if_round_finished(); return node` — so a resolved Swiss node never
+    falls through to the elim advance/crown block (which would wrongly crown on the
+    first resolved node, since `advances_to is None`); callers unchanged.
+    **Migration `matches/migrations/0039_tournament_swiss.py`** (dep
+    `0038_tournament_rr_de`; `AlterField(Tournament.format)` + `AlterField(BracketNode.
+    bracket_type)` choices-widen + `AddField(Tournament.swiss_rounds)` — **no
+    `RunPython`, no backfill**, ADR-0004). **View/template:** create-form `<select
+    name="format">` (`tournament-create-format`) gains the `swiss` option + a NEW
+    numeric `swiss_rounds` input (`tournament-create-swiss-rounds`, shown client-side
+    only for swiss; forgiving `_parse_swiss_rounds` ⇒ `0` on absent/blank/invalid/
+    negative; series-length + rrde-combo controls hidden for swiss); detail page gains
+    DERIVED context keys **`swiss_rounds_view`** (`[{round_number, pairings}]`, Swiss
+    nodes grouped by round, reusing the node-card include via `_build_swiss_rounds`) +
+    **`swiss_standings`** (`[(StandingsRow, Team)]`), the DOM ids
+    **`tournament-swiss-rounds`** / **`tournament-swiss-round-{n}`** /
+    **`tournament-swiss-standings`** / **`tournament-node-swiss-{br}-{pos}`**, and
+    `_tournament_stage` returns `"swiss"` (badge widened) — reusing the champion/lock/
+    play-next/play-all ids verbatim. **Non-deterministic** (`simulate_match` fresh
+    per-round seeds) ⇒ **no SIM-07/SIM-08 interaction, NO Score Calibration
+    re-baseline**; **no new ADR** (ADR-0021 extended for the per-round deferred build +
+    Swiss-only Buchholz re-rank) and **no new CONTEXT.md term** (Swiss + Buchholz
+    finalised at grilling). Tests: `test_bracket.py` (`TestBuildSwissRound` fold/greedy/
+    allow-rematch, `TestSwissBuchholzRerank` ladder + ORDERING-ONLY + empty,
+    `TestBracketRankSwiss`, `TestNoDjangoImportsLeaked`), `test_tournament_models.py`
+    (`swiss_rounds` field/default/no-choices, `lock_and_build` even-N + resolve/clamp/
+    freeze + odd-N `ValidationError`, `_standings_over_nodes` byte-identity regression,
+    `swiss_standings` Buchholz ORDER, `advance_swiss_if_round_finished` deferred build /
+    crown / no-op / rematch-fallback), `test_tournament_engine.py` (Swiss node never
+    advances, last-node-of-round triggers next build, final round crowns
+    `swiss_standings()[0]`), `test_tournament_views.py` (create form offers swiss + the
+    `tournament-create-swiss-rounds` input + forgiving parse/fallback; detail renders the
+    four new Swiss DOM ids, hides series/rrde controls, reuses champion/lock/play ids,
+    elim+RR ids absent), `test_tournament_tasks.py` (`play_tournament_task` drains a full
+    Swiss tournament to a champion, `stage_progress` per-round counts) — assert on pure
+    functions, persisted node/row shapes, `node.winner`/`champion`/`state`, standings
+    ORDER, DOM ids, **never** exact simulated point totals. See
+    [ADR-0021](docs/adr/0021-double-elimination-bracket.md) Consequences for the "new
+    format = new enum value + reused/new pure seam" precedent this slice extends again.
+- **LG-02x-1 · [DONE] Random Draw player pool.** A format with **no pre-set teams**:
+  a pool of individual players registers, the system runs a **deterministic
+  tier-balanced draw** into teams, and roles are assigned dynamically each game Round;
+  the drawn teams then play the shipped **Round Robin → Double Elimination** bracket.
+  *Why deferred (own grill):* it breaks the LG-02a assumption that participants **are**
+  existing `Team`s — it needs a player-pool registration surface, a draw/assignment
+  step with admin review, and dynamic per-Round role assignment, none of which the
+  LG-02a Tournament/Participant/BracketNode model covers. The **LG-02x-1 grill
+  (2026-06-04)** superseded the original one-line "randomize team assignments once the
+  pool is full" sketch with the **tier-balanced draw + per-Round dynamic roles** design
+  recorded below, and finalised the CONTEXT.md terms **Player pool / Drawn-team
+  membership / Random Draw / Tier / Role assignment mode**.
+  - completed: shipped the **Random Draw player-pool mode** as a NEW **orthogonal**
+    `Tournament.team_assembly == "random_draw"` axis (vs the default `"preset"`), **NOT
+    a new `format` value** (cite
+    [ADR-0022](docs/adr/0022-random-draw-player-pool-tournament.md); seam
+    [`.claude/worktrees/lg-02x-1-seam-contract.md`](.claude/worktrees/lg-02x-1-seam-contract.md);
+    CONTEXT.md carries the 5 locked terms — not edited). A `random_draw` Tournament
+    keeps `format="round_robin_double_elim"` and runs the **shipped LG-02c RR→DE
+    bracket byte-unchanged** (`lock_and_build`, `_persist_elim_specs`,
+    `round_robin_standings`, `build_de_finals_if_rr_finished`, `play_next_node`,
+    `stage_progress`, the detail crosstable / cut-labels / DE-finals surfaces all
+    untouched); pool intake, the draw, the relaxed roster rule, and per-Round dynamic
+    roles **all key off `team_assembly == "random_draw"`**. **Model:** two new
+    create-time `Tournament` fields — `team_assembly`
+    (`"preset"`/`"random_draw"`, default `"preset"`) and `role_assignment_mode`
+    (`"random"`/`"per_tier"`, default `"random"`, meaningful only for `random_draw`) —
+    plus a NEW **`TournamentPlayerEntry`** model (the durable **pool registration AND
+    draw result**: `tournament` CASCADE / `player` CASCADE / `tier` (1..6 post-draw,
+    null pre-draw) / `drawn_team` SET_NULL, `Meta.ordering = [tournament_id, tier,
+    player_id]`, `unique(tournament, player)` — a Player can be on draw teams across
+    **different** Tournaments but **never two in the same** one), and a new
+    `Team.is_draw_team` boolean (migrations `matches/0040_tournament_random_draw` +
+    `teams/00XX_team_is_draw_team`, cross-app dep, **no `RunPython`/backfill**,
+    ADR-0004 precedent). **Draw** = NEW pure module `matches/draw.py`
+    (`dataclasses`/`typing`/`random`/`collections`-only, `TestNoDjangoImportsLeaked`):
+    `compute_draw(pool)` is **STRAIGHT TIERS + GREEDY BALANCE, deterministic, no RNG**
+    (sort by `overall_rating` DESC / player-id ASC; 6 contiguous Tiers of `T = N/6`,
+    Tier 1 = strongest; strongest-remaining Tier player → currently-weakest team;
+    `ValueError` unless `N % 6 == 0 and N >= 24`), idempotent re-roll, **admin
+    hand-edit is the variation mechanism**; plus `build_random_role_assignment` /
+    `build_per_tier_role_assignment` (injected `random.Random`) over the fixed
+    `ROLE_SLOTS = (commander, heavy, scout_1, scout_2, medic, ammo)`. **Per-Round
+    dynamic roles** via an additive keyword-only `before_round_hook` on
+    `BatchSimulator.simulate_match` (default `None` ⇒ byte-unchanged for every existing
+    caller; fires once per Round, round 2 receiving swapped `(team_blue, team_red)`,
+    rewriting the drawn Teams' `slot_*` FKs **in memory only**) driven by a
+    `team_assembly`-keyed branch in `tournament_engine.play_next_node` +
+    `_build_role_hook(tournament)` (`else` branch byte-identical to today; `random` =
+    each team shuffles independently, `per_tier` = one Tier→slot bijection both sides;
+    fresh `random.Random()` per Round). **Roster relaxation:** `Team.roster_errors`
+    skips the belongs-to-team ownership check for `is_draw_team` Teams (drawn Teams
+    **reference borrowed Players** — `Player.team` is **never reassigned**, so career
+    stats stay unified); the duplicate-player + all-6-slots + role-distribution checks
+    **still fire**. **Views/URLs:** `tournament_create` reads `team_assembly` /
+    `role_assignment_mode` (forgiving fallbacks); 6 new player-pool views/URLs
+    (`tournament_pool_add_existing` / `_generate` / `_import` / `_remove` /
+    `tournament_draw` / `tournament_draw_edit`, all setup-only, `@transaction.atomic`)
+    mirroring LG-02a/a-2 intake at **Player** granularity — existing-select, LG-00
+    generate, and LG-00b CSV (`parse_roster_csv` reused, `by_team` grouping **ignored**,
+    each row = one pool Player on the Free Agents Team) — plus `_detail_context`
+    additions (`pool_entries` / `pool_size` / `is_drawn` / `pool_import_form` / …); the
+    existing `tournament_lock` reaches `active` over the drawn Teams **unchanged**. New
+    detail-page pool/draw surface (DOM ids `tournament-pool-*` / `tournament-draw-*`),
+    rendered only for `random_draw`. **Non-deterministic** (the per-Round role draw +
+    the per-Match sims use fresh RNG) ⇒ **no SIM-07/SIM-08 interaction, NO Score
+    Calibration re-baseline** (no simulation mechanics change — only which Player
+    occupies each role slot). Tests: NEW `matches/tests/test_draw.py` (pure) + extensions
+    to `test_tournament_models.py` / `test_tournament_views.py` / `test_tournament_engine.py`
+    / `test_tournament_tasks.py` / `test_simulation_view_paths.py` / `teams/tests/test_models.py`
+    (assert pure functions, persisted row/constraint shapes, the hook contract, the
+    relaxed-roster rule, DOM ids — **never** exact simulated point totals).
+
 ### LG-06 · ZenGM league-screen parity polish
+
+**Status: DONE — LG-06a through LG-06h all shipped.** The full ZenGM
+league-screen parity polish set is complete; per-step implementation notes follow.
 
 Follow-ups to the shipped LG-01z read-only screens, from the per-page comparison
 against the reference product (LOL GM) in
@@ -921,7 +1559,7 @@ priority than LG-02..LG-05; sequence after the screens have real multi-season
 data to justify the controls. Each step should go through its own grilling
 session before implementation.
 
-- **LG-06a · Page-size selector + Team History pagination.** Add the standard
+- **LG-06a · [DONE] Page-size selector + Team History pagination.** Add the standard
   10/25/50/100 page-size `<select>` (LG-01f `league_history` precedent) to
   **Free Agents**, **Player Ratings**, **Player Stats**; add pagination to
   **Team History** (currently unbounded — one row per player ever, no paging).
@@ -951,7 +1589,7 @@ session before implementation.
     reused verbatim (no new helpers). UI-only — no model, migration,
     CONTEXT.md, ADR, simulator, or score re-baseline. Seam contract at
     `.claude/worktrees/lg-06a-seam-contract.md`.
-- **LG-06b · Team filter.** Add an "All Teams" + per-enrolled-team filter
+- **LG-06b · [DONE] Team filter.** Add an "All Teams" + per-enrolled-team filter
   `<select>` to **Player Ratings**, **Player Stats**, **Statistical Feats** (the
   team list is already enrolled-season-scoped on those views). Cross-cutting
   **C5**. Docs:
@@ -979,7 +1617,7 @@ session before implementation.
     UI-only, read-only — no model, migration, URL, simulator, CONTEXT.md, ADR,
     or score re-baseline. Cross-cutting **C5**. Seam contract at
     `.claude/worktrees/lg-06b-seam-contract.md`.
-- **LG-06c · Sortable columns on the remaining tables.** Bring the LG-00c
+- **LG-06c · [DONE] Sortable columns on the remaining tables.** Bring the LG-00c
   `_coerce_sort` / `_coerce_dir` sort-header pattern (already used on Power
   Rankings / Free Agents / Player Ratings / Player Stats / Team Stats) to the
   five tables that lack it: **Team History**, **Game Log**, **League Leaders**,
@@ -989,27 +1627,332 @@ session before implementation.
   [`league-leaders.md`](docs/zengm-comparison/league-leaders.md),
   [`watch-list.md`](docs/zengm-comparison/watch-list.md),
   [`statistical-feats.md`](docs/zengm-comparison/statistical-feats.md).
-- **LG-06d · Season selector + rate/career toggles.** Add a `?season=` selector
+  - completed: the five screens (Team History, Game Log, League Leaders, Watch
+    List, Statistical Feats) gained the LG-00c sortable-column-header pattern,
+    sorting **view-side** with in-memory `sorted(key=…, reverse=(dir=="desc"))`
+    on the already-materialized rows — the pure modules `stat_feats.py`,
+    `team_history_logic.py`, and `league_leaders_logic.py` (incl. `LeaderRow`,
+    whose `rank` stays the frozen metric standing) are UNTOUCHED, sorted on
+    their OUTPUT. Sort-key coercion is the single new shared helper
+    `matches.league_views._coerce_sort_key(raw, allowed, default)` (returns
+    `raw` iff in the `allowed` frozenset, else `default`; mirrors
+    `_coerce_per_page` / `_coerce_team_id`), with `teams.views._coerce_dir`
+    imported and reused verbatim (no duplicate). Multi-table screens use
+    NAMESPACED params so sorting one table never resets a sibling: Team History
+    (`players_sort`/`players_dir`, `seasons_sort`/`seasons_dir`) and League
+    Leaders (per-board `<board>_sort`/`<board>_dir` across all four boards
+    `avg_tags`/`avg_score`/`fewest_tagged`/`tag_ratio`); single-table screens
+    (Game Log, Watch List, Statistical Feats) use a single `?sort=&dir=`. On the
+    LG-06a-paginated Team History Players table the sort runs BEFORE
+    `Paginator` (so the global, not per-page, top row leads), with the extended
+    `players_querystring_without_page` carrying `players_sort`/`players_dir` on
+    pagination links and a sibling `players_querystring_without_sort_page`
+    backing the headers so a sort change resets to page 1. Sort coexists with
+    the existing `?team_id=` filters on Game Log and Statistical Feats (header
+    hrefs carry `team_id`; team-picker forms carry `sort`/`dir` via hidden
+    inputs). Team History's Overall tab (a single W-L-T `dl`) stays unsorted.
+    Key tuples are `None`-safe (`(value is None, value)` so `None` sorts last
+    in asc) with a per-screen deterministic secondary tiebreak. New DOM ids
+    `<screen>[-<table>]-th-<key>` with the active header appending ` ↑`/` ↓`
+    glyphs. UI-only, read-only — no model, migration, URL, simulator, RNG,
+    CONTEXT.md, ADR, or score re-baseline. Cross-cutting **C6**. Seam contract
+    at `.claude/worktrees/lg-06c-seam-contract.md`.
+- **LG-06d · [DONE] Season selector + rate/career toggles.** Add a `?season=` selector
   (and, where it maps, ZenGM's Per Game / Per 36 / Totals + Career-Totals
   toggles) across the stats screens once leagues routinely span multiple
   Seasons — currently every screen renders only `displayed_season`. Cross-cutting
   **C1 / C2 / C7**. Lowest priority of the set. Doc:
   [`README.md`](docs/zengm-comparison/README.md) (cross-cutting table).
-- **LG-06e · Statistical Feats as a per-game feed.** Reshape the feats screen
+  - completed: a `?season=` selector landed on **6 screens** — Player Stats,
+    Team Stats, League Leaders, Statistical Feats, Game Log, Power Rankings —
+    listing each of this League's Seasons newest-first plus a **Career** entry
+    (aggregate across all of THIS League's Seasons); no `?season=` param keeps
+    the current `displayed_season` (backward-compatible). **Team History is
+    excluded** — it is natively all-time and its own Seasons tab already is the
+    per-season view, so a season selector would be redundant there. Two new
+    shared coercers in `matches.league_views` mirror the `_coerce_per_page` /
+    `_coerce_team_id` forgiving precedent: `_coerce_season(raw, valid_season_ids,
+    default)` (returns the literal `"career"` sentinel iff `raw == "career"`,
+    else the int id iff it parses **and** is in the valid set, else the caller's
+    `default` = the `displayed_season` id or `None`) and `_coerce_rate(raw,
+    default="total")` (one of the locked literals `"total"` / `"per_game"` /
+    `"per_10"`, else default). Career is a **view-side queryset switch** — each
+    screen swaps its round/match filter from `...match__season=<season>` to
+    `...match__season__league=league` and reuses its existing pure aggregation
+    module **verbatim** (`aggregate_player_stats`, `team_stats_logic`,
+    `league_leaders_logic`, `stat_feats`, the Game Log in-view round-row build,
+    `power_rankings_logic` are all indifferent to one-season vs. all-seasons).
+    Player Stats additionally gained a `?rate=` toggle — Totals / Per Game /
+    **Per 10 min** (the laser-tag analogue of ZenGM's Per-36) — via a new pure fn
+    `matches.season_player_stats.apply_rate(rows, rate)` that transforms the
+    summed count columns **only** (`SUMMED_KEYS`); MVP / Acc% / Tag Ratio /
+    Survival pass through untouched. Per-10 denominator = the player's total
+    uptime, `stats["survival"] * games` (survival is the per-Round mean
+    survival-seconds, so ×games rebuilds the summed uptime), i.e.
+    `count * 600 / (survival_mean * games)` with a `<= 0` → `0.0` guard; per-game
+    = `value / games`. The Player Stats pipeline is `aggregate_player_stats` →
+    `apply_rate` → `team_id` filter → `sort_player_stats` → `Paginator`, so the
+    sort runs on the **rate-adjusted** displayed value. `season` (and `rate` on
+    Player Stats) carries through every querystring helper, hidden per-page /
+    team-filter form input, and sort-header href; changing `season` or `rate`
+    omits `page` to reset to page 1 (LG-06a/b/c precedent). New DOM ids
+    `<screen>-season-filter-{form,select}` (prefixes `player-stats`, `team-stats`,
+    `league-leaders`, `statistical-feats`, `game-log`, `power-rankings`) plus
+    `player-stats-rate-{form,select}`. UI-only, read-only — no model, migration,
+    simulator, RNG, or Score Calibration re-baseline; CONTEXT.md was edited (the
+    **Per-10-minute rate** + **Career view (league-scoped)** terms); no ADR.
+    Cross-cutting **C1 / C2 / C7**. Seam contract at
+    `.claude/worktrees/lg-06d-seam-contract.md`.
+- **LG-06e · [DONE] Statistical Feats as a per-game feed.** Reshape the feats screen
   from the current ~9 fixed category-best entries into ZenGM's model: one
   sortable row per notable single-game performance with its box-score line +
   Opp / Result / Season, deep-linking to the Round. Larger than the other LG-06
   steps (changes `stat_feats.py` output shape + template). Doc:
   [`statistical-feats.md`](docs/zengm-comparison/statistical-feats.md).
-- **LG-06f · Watch List as a full stats view.** Replace the 3-column bookmark
+  - completed: the pure module `matches/stat_feats.py` had its OUTPUT SHAPE
+    rewritten from the 9-finder/single-`FeatRecord` design into a per-game feed —
+    `scan_feats(player_rounds, matches) -> tuple[list[FeatRow], list[TeamFeatRecord]]`
+    now emits **one `FeatRow` per (player, round)** that qualifies, each carrying
+    that round's full box-score line (the new pinned `BOX_SCORE_KEYS` tuple of 13:
+    the 12 `season_player_stats.STAT_KEYS` per-round PLUS `nuke_detonations`) as a
+    `stats` mapping plus view-computed Opp / per-Round Result / Season descriptors,
+    and a stacked non-empty `feats` tuple of `FeatBadge(kind, label, is_season_best)`
+    badges. **Hybrid qualification** — a row is included iff it crosses ANY
+    per-game threshold OR is a season-best leader: threshold constants ship at
+    conservative starting values (`TRIPLE_NUKE_THRESHOLD=3`, `HIGH_TAGS_THRESHOLD=20`,
+    `HIGH_POINTS_THRESHOLD=12000`, `HIGH_MVP_THRESHOLD=15`,
+    `HIGH_RESUPPLIES_THRESHOLD=20`, `HIGH_MISSILES_THRESHOLD=8`, plus the boolean
+    `medic_shutout` = medic & `times_tagged==0` and `perfect_heavy` = heavy &
+    `shots_missed==0` & `tags_made>0`), calibration explicitly deferred; the 5
+    `SEASON_BEST_STATS` (`mvp`/`points_scored`/`tags_made`/`resupplies_given`/
+    `missiles_landed`) each yield exactly one guaranteed leader row (tiebreak:
+    highest value -> highest `round_id` -> lowest `player_id`, all-zero-max stat
+    skipped) tagged `is_season_best=True`. A row both crossing a threshold AND
+    leading its kind collapses to ONE badge with `is_season_best=True` winning.
+    Feat kinds are pinned in `FEAT_KINDS` (8 `(kind, label)` pairs). `comeback_win`
+    moved OUT of the per-player feed into a separate **Team feats** section —
+    `find_comeback_win(matches) -> list[TeamFeatRecord]` (return type changed from
+    `Optional[FeatRecord]`; detection logic unchanged). `scan_feats` guarantees a
+    deterministic default order (`round_id` DESC, then `player_id` ASC); the module
+    stays Django-free (`TestNoDjangoImportsLeaked` retained). The view
+    `matches.league_screens.statistical_feats.statistical_feats` materialises the
+    extended per-(player,round) seam dicts (Opp / Result / Season computed
+    **view-side** from `GameRound.red_points`/`blue_points` per-ROUND — NOT the
+    Match outcome — and `Match.season`; `mvp = float(prs.get_mvp)` property,
+    `accuracy = float(prs.get_accuracy())` **method**, `nuke_detonations` from the
+    existing `event_type="special"`/`points_awarded=500` detonation pass), then
+    adds **LG-06a pagination** (`_coerce_per_page`/`_coerce_page`,
+    `_LG01F_PER_PAGE_OPTIONS`, `Paginator` AFTER sort) and **expanded LG-06c sort**
+    over the full box-score column set (`_FEATS_SORT_KEYS` frozenset of every
+    descriptor + 13 box-score keys, `_FEATS_SORT_KEYS_DISPLAY`, the
+    `_feat_row_sort_value` extractor, `teams.views._coerce_dir` reused) with
+    **default sort = most recent first** (`("round", "desc")`) and a deterministic
+    `(round_id desc, player_id asc)` secondary tiebreak; the Team-feats list is not
+    paginated. Coexists with the LG-06b `?team_id=` filter (applied to the seam
+    inputs) + the LG-06d `?season=` selector (incl. Career); changing season/team/
+    sort/per-page omits `page` to reset to page 1. The template
+    `templates/leagues/statistical_feats.html` was rewritten from a `<ul>` of
+    categories into the sortable `statistical-feats-table` (DOM ids
+    `statistical-feats-th-<key>` per column with ` ↑`/` ↓` glyphs,
+    `stat-feat-badge-<kind>` badges with a `(season best)`/`season-best` suffix,
+    `statistical-feats-per-page-{form,select}` / `-pagination`) plus the separate
+    `statistical-feats-team-feats` section (`stat-team-feat-<kind>`), preserving the
+    LG-06b/d filter ids and the `stat-feats-empty-notice`. Read-only — **no model,
+    migration, URL, simulator, RNG, or Score Calibration re-baseline; no CONTEXT.md
+    edit** (the **Statistical feat** term was already finalized) and no ADR. Tests
+    reshaped in `matches/tests/test_league_statistical_feats.py` (pure-unit +
+    view). Seam contract at
+    [`.claude/worktrees/lg-06e-seam-contract.md`](.claude/worktrees/lg-06e-seam-contract.md).
+- **LG-06f · [DONE] Watch List as a full stats view (+ per-League watch flag).** Replace the 3-column bookmark
   table with the Player-Stats column set filtered to watched players (ZenGM
   parity). Per-user (vs. current browser-session) persistence is **deferred to
   UX-01** (the watch list moves from `request.session` to a per-user model when
   accounts land). Doc: [`watch-list.md`](docs/zengm-comparison/watch-list.md).
-- **LG-06g · Standings form/side detail.** Surface Streak, Last-5 (L5), and a
+  - completed: watch lists became **per-League** in the browser session —
+    `request.session["watch_lists"]: dict[str, list[int]]` keyed by
+    `str(league_id)` (e.g. `{"3": [12, 47], "8": [12]}`); the pre-LG-06f global
+    singular `request.session["watch_list"]` key is **ABANDONED** with no
+    migration, no read-compat, and no fallback (session data is disposable,
+    ADR-0004 precedent). A single source-of-truth reader
+    `matches.league_views._watched_player_ids(request, league_id) -> set[int]`
+    (alongside `_coerce_per_page` / `_coerce_team_id` / `_coerce_season`) coerces
+    each stored entry to int (silently dropping non-ints), never raises, and is
+    consumed by BOTH the new context processor AND the screen view. A new context
+    processor `core.context_processors.watch_list(request) -> {"watched_player_ids":
+    set[int]}` (alongside `league_nav` / `app_mode`, lazy-importing
+    `_watched_player_ids` to dodge the apps cycle) resolves `league_id` from
+    `request.resolver_match.kwargs` defensively (off-League / no match ⇒ empty
+    set) and is **registered immediately AFTER `core.context_processors.app_mode`**
+    in `settings.TEMPLATES[0]["OPTIONS"]["context_processors"]`. A POST-only
+    CSRF-protected toggle endpoint
+    `matches.league_screens.watch_list.watch_list_toggle(request, league_id) ->
+    JsonResponse` (URL name `watch_list_toggle`, route
+    `/leagues/<int:league_id>/players/watch-list/toggle/` inserted right after the
+    `players_watch_list` route) flips a player's membership in **this League's**
+    list and returns `{"watched": bool, "player_id": int}` (200), `{"error":
+    "invalid player_id"}` / `{"error": "unknown player_id"}` (both 400),
+    `HttpResponseNotAllowed(["POST"])` (405), or 404 on missing League — per-League
+    isolation guaranteed by the `str(league_id)` key. The Watch List screen view
+    was **rewritten** into the Player-Stats column set filtered to watched players:
+    a new **pure** helper `season_player_stats.zero_fill_watched(rows, watched_ids,
+    identity_by_id) -> list[PlayerStatRow]` (alongside `aggregate_player_stats` /
+    `apply_rate` / `sort_player_stats`, **no new imports** — the module's frozen
+    no-Django allowlist is preserved) keeps only watched aggregated rows then
+    appends a zero row (`games=0`, every `STAT_KEYS + DERIVED_KEYS` key at `0.0`)
+    for each watched id with no Round in scope, in **ascending-id order**
+    (aggregated-rows-first / zero-rows-second deterministic output; a watched id
+    absent from `identity_by_id` is silently skipped). The locked view pipeline is
+    `_build_round_dicts` (imported from `player_stats.py`) → `aggregate_player_stats`
+    → `zero_fill_watched` → `apply_rate` → `sort_player_stats` → `Paginator`. The
+    reshaped screen carries the full Player-Stats kit **minus the team filter**
+    (the Watch List is a personal cross-team set) — season selector (+ Career) via
+    `_resolve_season_scope`, rate toggle via `_coerce_rate`, per-page via
+    `_coerce_per_page` / `_coerce_page`, sortable columns via `coerce_sort` /
+    `coerce_dir` / `sort_player_stats` — with new DOM ids
+    `watch-list-{per-page,season-filter,rate}-{form,select}` /
+    `watch-list-th-{key}` / `watch-list-pagination` mirroring `player-stats-*`,
+    preserving `watch-list-table` / `watch-list-empty-notice` (the `"No Season"`
+    substring branch retained) and `sidebar_active="watch_list"`. The **add-form is
+    DROPPED** (`watch-list-add` / `-select` and the old `watch-list-row-{id}` rows
+    removed); **Remove All / `?action=clear`** is retained (now clears
+    `watch_lists[str(league_id)]` then redirects to the bare URL); a per-row
+    **watch flag replaces the per-row Remove control**. Two new partials —
+    `templates/_partials/watch_flag.html` (a `<button class="watch-flag">` with
+    `.watch-flag-on` when watched, `data-player-id` + `data-toggle-url`, NO unique
+    `id` so duplicate-player rows don't collide) and
+    `templates/_partials/watch_flag_script.html` (one delegated-click `<script>`,
+    included exactly once per page, fetch-POSTs with the `X-CSRFToken` cookie and
+    toggles `.watch-flag-on` on **all** buttons sharing a `data-player-id`) — wire
+    the ZenGM-style flag onto the player-name cell of **8 league screens**
+    (`player_stats`, `player_ratings`, `free_agents`, `league_leaders` ×4 boards,
+    `statistical_feats`, `team_roster` ×2 sections, `team_history`, and the
+    rewritten `watch_list`). UI-only — **no model, no migration, no simulator, no
+    RNG, no Score Calibration re-baseline**; CONTEXT.md gained the **Watch list** /
+    **Watch flag** terms; no ADR. Tests in
+    `matches/tests/test_watch_flag.py`, `matches/tests/test_watch_toggle.py`, and
+    `matches/tests/test_league_watch_list.py` (the latter also hosts the pure
+    `zero_fill_watched` unit tests). The league-pinned **career-page** flag — the
+    one player surface this reshape could not cover (the global
+    `/players/<id>/stats/` page is league-agnostic, so its flag has no League to
+    toggle against) — was **split off to LG-06h** on 2026-06-02. Seam contract:
+    [`.claude/worktrees/lg-06f-seam-contract.md`](.claude/worktrees/lg-06f-seam-contract.md).
+- **LG-06g · [DONE] Standings form/side detail.** Surface Streak, Last-5 (L5), and a
   home-away (Red/Blue side) split on the Standings table — we already persist
   per-Round side data; this is presentation only. Doc:
   [`standings.md`](docs/zengm-comparison/standings.md).
+  - completed: the LG-01 Standings table gained **8 new columns in two grains**
+    plus made **all 17 columns sortable** (LG-06c pattern). The pure module
+    `matches/standings.py` was extended in place — `StandingsRow` grew from 9 to
+    **17 fields** (appended after `rank`, pinned order: `match_streak`,
+    `match_l5`, `round_streak`, `round_l5`, `red_wlt`, `blue_wlt`,
+    `red_points_for`, `blue_points_for`) and `compute_standings` gained a 3rd
+    positional param `season_rounds`. **Two corpora by design:** the Match-grain
+    columns (existing W/L/T/Pts/RW/TS + `match_streak` + `match_l5`) read the
+    completed-Match corpus (`completed_matches`, now a 9-key dict with the added
+    `date_played`); the Round-grain columns (`round_streak`, `round_l5`) and all
+    four side-split columns (`red_wlt`/`blue_wlt`/`red_points_for`/
+    `blue_points_for`) read **every persisted Season Round** including Rounds of
+    in-progress (`is_completed=False`) Matches (`season_rounds`, a 6-key dict
+    `round_id, team_red_id, team_blue_id, red_points, blue_points, date_played`).
+    The **side split is per PHYSICAL side** — read straight off `GameRound`'s
+    stored `team_red`/`team_blue` + `red_points`/`blue_points` (SIM-08: stored
+    sides are the actual physical sides), NEVER the Match-level `red_*`/`blue_*`
+    fields (those are team-position-keyed — `Match.red_round2_points` is
+    team_red's points while it physically played BLUE in R2). A Round result:
+    red wins iff `red_points > blue_points`, blue iff `blue_points > red_points`,
+    tie iff equal; `red_wlt`/`red_points_for` aggregate the Rounds the team
+    physically held red, `blue_*` symmetric, and a team aggregates into BOTH
+    across the Season. `round_streak`/`round_l5` are the team's own side-agnostic
+    W/L/T. **Streak** is stored as a `(kind, length)` tuple (`("W",3)` →
+    `"W3"`, `("L",2)` → `"L2"`, `("T",1)` → `"T1"`, `("",0)` → `"—"`) — the
+    `(kind, length)` shape avoids the T-vs-no-streak collision a signed int
+    would carry; **L5** and the side records are `(W,L,T)` int-tuples displayed
+    `"3-1-1"`. Both grains order chronologically by `(date_played, id)` asc,
+    most-recent = tail. The dataclass holds **structured numerics only**; the
+    template formats display strings and the view derives sort keys. **All 17
+    columns sortable** via the LG-06c pattern — `matches.league_views`
+    `_coerce_sort_key` (new frozenset `_STANDINGS_SORT_KEYS` of 17 keys, default
+    `("rank","asc")` so a no-`?sort` request renders today's order unchanged) +
+    `teams.views._coerce_dir` (newly imported into `league_views`), sorting
+    **view-side** on the materialized rows after `compute_standings` with new
+    helpers `_standings_sort_value` / `_streak_sort_value` / `_standings_row_attr`
+    (the last an attr-or-key adapter so the draft-preview dict rows sort through
+    the same path); record/L5 columns sort `(wins desc, losses asc)`, streaks by
+    signed run length, and **`rank` stays frozen** (never renumbered, the LG-06c
+    League-Leaders precedent) so sorting by another column reorders display while
+    the Rank cell shows the true standing. The view (`season_standings`) builds
+    `season_rounds` from `GameRound.objects.filter(match__season=season).values(
+    …)`, adds `date_played` to the Match dicts, and exposes new context keys
+    `sort` / `dir` / `sort_keys` (= `_STANDINGS_SORT_KEYS_DISPLAY`) /
+    `querystring_without_sort_dir`; the **draft-preview** branch emits the 8 new
+    fields zeroed (`("",0)` streaks → `"—"`, `(0,0,0)` → `"0-0-0"`, points `0`)
+    and still sorts. The template `templates/seasons/standings.html` swapped its
+    9 hardcoded `<th>` for the LG-06c sort-header loop (DOM ids
+    `season-standings-th-<key>` for all 17, ` ↑`/` ↓` glyph on the active header)
+    and renders 17 `<td>`, preserving `season-standings-table` / `-empty` /
+    `-draft-preview-banner` / `season-state-badge`. UI-only, read-only — **no
+    model, migration, URL, simulator, RNG, or Score Calibration re-baseline**;
+    CONTEXT.md gained the **Standings form** + **Side split** terms (no ADR).
+    Tests: `matches/tests/test_standings.py` (pure-unit — every callsite migrated
+    to the 3-arg signature, new classes for both grains + side split + ordering;
+    `TestNoDjangoImportsLeaked` retained) and `matches/tests/test_season_views.py`
+    (view/DOM — 17 header ids, two-corpora difference, physical-side split, sort
+    reorders with frozen rank, draft zeroed + sortable). Seam contract:
+    [`.claude/worktrees/lg-06g-seam-contract.md`](.claude/worktrees/lg-06g-seam-contract.md).
+- **LG-06h · [DONE] League-scoped player page (+ watch flag).** Introduce a
+  **league-pinned** player detail route (`/leagues/<league_id>/players/<player_id>/…`)
+  so a Player viewed from inside a League carries that League's context — and put the
+  ZenGM **watch flag** on it. This is the one player surface LG-06f could **not** cover:
+  the existing `player_career_stats` page at `/players/<id>/stats/` is league-agnostic, so
+  its flag has no League to toggle the (per-League) watch list against. Carved out of
+  **LG-06f** on 2026-06-02 because pinning the global HX-01 career page to a League is a
+  new route + view + template, not a watch-list reshape. Repoint the 8 LG-06f league
+  screens' player-name links at the new route. **Open questions for its own grill:** does
+  the page show **league-scoped** stats (only this League's Seasons) or the same global
+  HX-01 career aggregates; how a Player with games in two Leagues is handled (name overlap
+  is intentional — separate Player rows, separate per-League watch lists); whether to
+  reuse the HX-01 aggregation or a Season-scoped one; sidebar chrome + flag placement.
+  **Depends on LG-06f** — reuses the per-League watch-list storage, toggle endpoint,
+  context processor, and flag partial it ships, verbatim.
+  - completed: shipped the read-only **League player page** at the league-pinned
+    route `/leagues/<int:league_id>/players/<int:player_id>/` (URL name
+    `league_player_detail`, GET-only). The view
+    `matches/league_screens/player_detail.py::player_detail(request, league_id,
+    player_id)` is re-exported from `matches/league_screens/__init__` and lives
+    among the existing `players/*` routes in `matches/league_urls.py` (after
+    `players_free_agents` / `players_watch_list` / `watch_list_toggle`, before the
+    `league_list` catch-all — the digit-only `<int:player_id>` converter does not
+    shadow the literal `players/free-agents/` etc.). The page mirrors the ZenGM
+    player profile: a header (player bio + the LG-06f **watch flag** + an EXTERNAL
+    link out to the global HX-01 `player_career_stats` page at
+    `/players/<id>/stats/`), an **Overall** summary, grouped **current ratings**
+    read off the `Player` fields, and a **Potential** block rendering the literal
+    `—` placeholder (LG-05 owns the real Potential field — none exists yet). The
+    league-scoped **Regular-Season stats table** (one per-Season row plus a
+    Career-in-league row) is built **VIEW-SIDE** by reusing
+    `matches.league_screens.player_stats._build_round_dicts` +
+    `matches.season_player_stats.aggregate_player_stats` — **no new pure module**:
+    one aggregation pass per this-League Season the player has Rounds in (scope
+    `game_round__match__season=season, player_id=player.id`) plus one league-wide
+    Career pass (`game_round__match__season__league=league, player_id=player.id`).
+    Each per-Season row's **Team is derived from the player's actual Rounds that
+    Season** (the aggregated row's last-seen `team_name`/`team_id`, NOT the current
+    `Player.team`), so a dropped/transferred player shows the team they played for.
+    Rendering is **LENIENT**: any valid `(League, Player)` pair renders 200 (404
+    only on a missing League or missing Player); the league-scoped sections render a
+    blank empty-state when the player has no Rounds in the League (e.g. a free agent
+    or a player whose only Rounds are in another League) — the header, Potential,
+    and all stubs still render. Five inline **"coming soon" stub** sections
+    (Playoffs, Ratings-history, Awards, Salaries, Transactions) hold space for the
+    model-less ZenGM sections. The **8 LG-06f league screens'** player-name links
+    were repointed from the global `player_career_stats` to the in-League
+    `league_player_detail` route (Statistical Feats, previously plain text, gained a
+    link; the sandbox `teams/` surfaces stay league-agnostic on
+    `player_career_stats`). Read-only — **no model, migration, simulator, RNG, or
+    Score Calibration re-baseline; no ADR**. CONTEXT.md already carries the **League
+    player page** term. Template `templates/leagues/player_detail.html`; tests
+    `matches/tests/test_league_player_detail.py`. Seam contract:
+    [`.claude/worktrees/lg-06h-seam-contract.md`](.claude/worktrees/lg-06h-seam-contract.md).
 
 Structural divergences surfaced by the playthrough that map to **existing**
 tasks rather than LG-06 (see

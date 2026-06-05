@@ -1,3 +1,25 @@
+# Web testing — LG-02-Part2a (SeasonPhase foundation)
+
+Date: 2026-06-05
+Branch: `lg-02-part2a`
+Scope: focused smoke of the Part2a-touched surface — the `SeasonPhase`
+fixture-resolution chokepoint retrofit (intended zero user-visible change).
+Created a League (now auto-creates a `round_robin` `SeasonPhase`), loaded Season
+Standings / Schedule / Season dashboard, ran Start Season, played One Week
+(`play_week` → `Season.scheduled_fixtures()` → `simulate_scheduled_round`), and
+loaded the Team Schedule page.
+
+## Result — ✅ ALL CLEAN, no issues found
+- ✅ `/leagues/create/` → League+Season created, `round_robin` SeasonPhase row added; redirect to draft Standings renders the 4-team preview.
+- ✅ `/seasons/<id>/standings/` (draft preview) — renders, no console/network errors.
+- ✅ `/seasons/<id>/schedule/` — full 12-fixture double-leg round-robin renders (chokepoint == prior `generate_schedule` output).
+- ✅ `/seasons/<id>/` season dashboard — draft (Start Season) and active (Play Next, round-progress `0/12`→`2/12`, leaders) branches both render.
+- ✅ Start Season → Play One Week — 2 fixtures simulated via the retrofitted `play_week`/`scheduled_fixtures()` path; standings + leaders populate; next round advances. No 500/console/network errors.
+- ✅ `/leagues/<id>/team_schedule/<team>/` — Upcoming (from `scheduled_fixtures()`) + Completed (played MD1 R1, score + round-detail link) render correctly.
+- Cleanup: League/Season/SeasonPhase/4 teams/2 matches/2 rounds deleted; server stopped.
+
+---
+
 # Web testing — LG-02x-1 (Random Draw player-pool tournament)
 
 Date: 2026-06-04

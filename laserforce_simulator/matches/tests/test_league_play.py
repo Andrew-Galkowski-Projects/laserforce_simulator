@@ -917,3 +917,97 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
             f"Django import leaked into matches.season_dashboard.\n"
             f"stdout: {result.stdout}\nstderr: {result.stderr}",
         )
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2a — play_season_task equivalence over a phase-less Season
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2a-seam-contract.md`` §4:
+# ``play_season_task`` over a phase-less Season plays the SAME fixtures it does
+# today (the ``Season.scheduled_fixtures()`` chokepoint sources the identical
+# list via the implicit-fallback path). Run under the existing
+# ``CELERY_TASK_ALWAYS_EAGER`` conftest. Appended as a NEW class; no existing
+# class is modified.
+
+from matches.models import SeasonPhase as _Lg02SeasonPhase  # noqa: E402
+
+
+def _played_keys(season) -> set:
+    """Side-agnostic ``(frozenset(team pair), round_number)`` keys of every
+    persisted GameRound in ``season`` — the matchups actually simulated."""
+    keys = set()
+    for gr in GameRound.objects.filter(match__season=season).select_related("match"):
+        m = gr.match
+        keys.add((frozenset({m.team_red_id, m.team_blue_id}), gr.round_number))
+    return keys
+
+
+class TestLg02Part2aPlaySeasonTaskPhaseless(TestCase):
+    """LG-02-Part2a — phase-less vs explicit-RR-phase play IDENTICAL fixtures."""
+
+    def test_phaseless_plays_full_schedule(self) -> None:
+        """A phase-less active Season (the LG-01d default — ``start_season``
+        creates no phases) plays every fixture and completes via the
+        chokepoint's implicit fallback."""
+        from matches.tasks import play_season_task
+
+        season, _teams = _active_season("Lg02Phaseless", n_teams=3)
+        # No SeasonPhase rows exist for this Season (phase-less / legacy shape).
+        self.assertEqual(_Lg02SeasonPhase.objects.filter(season=season).count(), 0)
+
+        expected_fixtures = season.scheduled_fixtures()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_season_task.delay(season.id, max_matchdays=None)
+        self.assertEqual(result.state, "SUCCESS")
+
+        # Every scheduled fixture has a persisted GameRound.
+        played = _played_keys(season)
+        for f in expected_fixtures:
+            self.assertIn(
+                (frozenset({f.team_a_id, f.team_b_id}), f.round_number), played
+            )
+        self.assertEqual(len(played), len(expected_fixtures))
+        season.refresh_from_db()
+        self.assertEqual(season.state, "completed")
+
+    def test_phaseless_and_explicit_phase_play_same_fixtures(self) -> None:
+        """Two N=3 Seasons enrolling teams with the SAME ids (so the pure
+        schedule is identical) play the SAME set of matchups — one phase-less,
+        one with an explicit ``round_robin`` phase."""
+        from matches.tasks import play_season_task
+
+        # Build a phase-less Season and capture its scheduled fixtures.
+        phaseless, _t1 = _active_season("Lg02EqA", n_teams=3)
+        self.assertEqual(_Lg02SeasonPhase.objects.filter(season=phaseless).count(), 0)
+        fixtures_phaseless = phaseless.scheduled_fixtures()
+
+        # Build a second Season and give it one explicit round_robin phase.
+        with_phase, _t2 = _active_season("Lg02EqB", n_teams=3)
+        _Lg02SeasonPhase.objects.create(
+            season=with_phase, ordinal=1, phase_type="round_robin"
+        )
+        fixtures_with_phase = with_phase.scheduled_fixtures()
+
+        # The two Seasons enroll different Team rows (different ids), so the
+        # absolute fixtures differ; what must match is the STRUCTURE — same
+        # fixture count and same per-fixture (matchday, round_number) shape.
+        self.assertEqual(len(fixtures_phaseless), len(fixtures_with_phase))
+        self.assertEqual(
+            [(f.matchday, f.round_number) for f in fixtures_phaseless],
+            [(f.matchday, f.round_number) for f in fixtures_with_phase],
+        )
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            r1 = play_season_task.delay(phaseless.id, max_matchdays=None)
+            r2 = play_season_task.delay(with_phase.id, max_matchdays=None)
+        self.assertEqual(r1.state, "SUCCESS")
+        self.assertEqual(r2.state, "SUCCESS")
+
+        # Both played the same NUMBER of fixtures and both completed.
+        self.assertEqual(len(_played_keys(phaseless)), len(fixtures_phaseless))
+        self.assertEqual(len(_played_keys(with_phase)), len(fixtures_with_phase))
+        phaseless.refresh_from_db()
+        with_phase.refresh_from_db()
+        self.assertEqual(phaseless.state, "completed")
+        self.assertEqual(with_phase.state, "completed")

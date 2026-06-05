@@ -672,3 +672,67 @@ class TestLeagueCreateMapPool(TestCase):
         self.assertEqual(League.objects.count(), before_leagues)
         self.assertEqual(Team.objects.count(), before_teams)
         self.assertFalse(League.objects.filter(name="ShouldNotExist").exists())
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2a — one explicit round_robin SeasonPhase created per new Season
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2a-seam-contract.md`` §1.5 / §4:
+# a successful ``league_create`` POST creates the Season AND exactly one
+# ``SeasonPhase(ordinal=1, phase_type="round_robin")`` linked to it, inside the
+# same ``@transaction.atomic`` block — so the existing rollback test (patched
+# ``Season.objects.create``) leaves ZERO ``SeasonPhase`` rows.
+#
+# Appended as a NEW class; no existing class above is modified.
+
+
+from matches.models import SeasonPhase as _Lg02SeasonPhase  # noqa: E402
+
+
+class TestLg02Part2aSeasonPhaseOnCreate(TestCase):
+    """LG-02-Part2a — ``league_create`` seeds one explicit RR SeasonPhase."""
+
+    def test_post_creates_exactly_one_round_robin_phase(self) -> None:
+        self.client.post(reverse("league_create"), _valid_payload())
+        season = Season.objects.get(name="Season 1")
+        phases = list(season.phases.all())
+        self.assertEqual(len(phases), 1)
+        phase = phases[0]
+        self.assertEqual(phase.ordinal, 1)
+        self.assertEqual(phase.phase_type, "round_robin")
+
+    def test_phase_linked_to_the_created_season(self) -> None:
+        self.client.post(reverse("league_create"), _valid_payload())
+        season = Season.objects.get(name="Season 1")
+        phase = _Lg02SeasonPhase.objects.get(season=season)
+        self.assertEqual(phase.season_id, season.id)
+
+    def test_only_one_phase_row_total_for_a_single_create(self) -> None:
+        before = _Lg02SeasonPhase.objects.count()
+        self.client.post(reverse("league_create"), _valid_payload())
+        self.assertEqual(_Lg02SeasonPhase.objects.count(), before + 1)
+
+    def test_rollback_on_season_create_failure_leaves_zero_phases(self) -> None:
+        """The phase is created INSIDE the same ``@transaction.atomic`` block,
+        so a mid-flow ``Season.objects.create`` failure rolls the phase back
+        too — zero ``SeasonPhase`` rows persist.
+        """
+        before_phases = _Lg02SeasonPhase.objects.count()
+
+        try:
+            with patch(
+                "matches.league_views.Season.objects.create",
+                side_effect=Exception("boom"),
+            ):
+                with self.assertRaises(Exception):
+                    self.client.post(reverse("league_create"), _valid_payload())
+        except AttributeError:
+            with patch(
+                "matches.models.Season.objects.create",
+                side_effect=Exception("boom"),
+            ):
+                with self.assertRaises(Exception):
+                    self.client.post(reverse("league_create"), _valid_payload())
+
+        self.assertEqual(_Lg02SeasonPhase.objects.count(), before_phases)

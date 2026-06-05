@@ -4,6 +4,7 @@ from .models import (
     BracketNode,
     League,
     Season,
+    SeasonPhase,
     Tournament,
     TournamentParticipant,
     TournamentPlayerEntry,
@@ -17,12 +18,26 @@ class LeagueAdmin(admin.ModelAdmin):
     list_display = ("name", "mode", "state", "created_at")
 
 
+# LG-02-Part2a — SeasonPhase inline (optional) + standalone admin.
+
+
+class SeasonPhaseInline(admin.TabularInline):
+    model = SeasonPhase
+    extra = 0
+
+
 @admin.register(Season)
 class SeasonAdmin(admin.ModelAdmin):
     list_display = ("name", "league", "state", "schedule_format", "start_date")
     # LG-01j — extend the M2M dual-select widget to cover the new
     # ``map_pool`` field alongside the existing ``teams``.
     filter_horizontal = ("teams", "map_pool")
+    inlines = (SeasonPhaseInline,)
+
+
+@admin.register(SeasonPhase)
+class SeasonPhaseAdmin(admin.ModelAdmin):
+    list_display = ("season", "ordinal", "phase_type")
 
 
 # LG-02a — Tournament admin.

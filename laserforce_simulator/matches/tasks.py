@@ -157,7 +157,8 @@ def play_season_task(
 ) -> dict:
     """LG-01d — Drive the Play Two Months / Play Until End async run.
 
-    Loads the Season, materialises fixtures via ``generate_schedule``,
+    Loads the Season, materialises fixtures via
+    ``Season.scheduled_fixtures()``,
     builds ``played_keys`` from persisted ``GameRound``s, calls the pure
     ``select_play_fixtures(fixtures, played_keys, max_matchdays)`` to
     decide which Rounds to play, then loops calling
@@ -180,16 +181,15 @@ def play_season_task(
     try:
         from core.models import ArenaMap
         from matches.models import GameRound, Season
-        from matches.schedule_generator import generate_schedule
         from matches.season_dashboard import select_play_fixtures
         from matches.simulation import BatchSimulator
         from teams.models import Team
 
         season = Season.objects.get(id=season_id)
 
-        fixtures = generate_schedule(
-            season.starting_team_ids_json or [], season.schedule_format
-        )
+        # LG-02-Part2a — source fixtures through the Season chokepoint
+        # (active Season ⇒ snapshot team_ids; same list as before).
+        fixtures = season.scheduled_fixtures()
         played_keys = {
             (
                 frozenset({gr.match.team_red_id, gr.match.team_blue_id}),
