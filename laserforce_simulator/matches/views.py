@@ -22,7 +22,14 @@ from . import (
     round_comparison,
     round_summary,
 )
-from .models import Match, GameRound, PlayerRoundState, GameEvent
+from .models import (
+    Match,
+    GameRound,
+    PlayerRoundState,
+    GameEvent,
+    SeriesMatch,
+    TournamentPlayerEntry,
+)
 from .simulation import BatchSimulator
 from .sim_helpers.pdf_report import build_round_report
 from .forms import (
@@ -485,13 +492,12 @@ def team_match_history(request, team_id):
     """Display match history for a specific team"""
     team = get_object_or_404(Team, id=team_id)
 
-    matches = (
+    all_matches = list(
         Match.objects.filter(Q(team_red=team) | Q(team_blue=team))
         .select_related("team_red", "team_blue", "winner")
         .order_by("-date_played")
     )
-
-    detailed_rounds = (
+    standalone_rounds = list(
         GameRound.objects.filter(
             Q(team_red=team) | Q(team_blue=team),
             match__isnull=True,
@@ -500,40 +506,173 @@ def team_match_history(request, team_id):
         .order_by("-date_played")
     )
 
-    # Calculate stats
-    total_matches = matches.count()
-    wins = matches.filter(winner=team).count()
-    losses = matches.exclude(winner=team).exclude(winner=None).count()
-    ties = matches.filter(winner=None).count()
+    # Scope toggles: each Match belongs either to a Tournament (via its
+    # SeriesMatch -> BracketNode -> Tournament) or, lacking a SeriesMatch, to
+    # the "free-form" bucket (games played outside any tournament). The user
+    # can toggle Overall / Free-form / one-per-tournament to scope the whole
+    # page (roster, win-loss chart, and game log) to a subset of games.
+    match_tournament = {}
+    tournaments_by_id = {}
+    for sm in SeriesMatch.objects.filter(
+        match_id__in=[m.id for m in all_matches],
+        node__tournament__isnull=False,
+    ).select_related("node__tournament"):
+        tourney = sm.node.tournament
+        match_tournament[sm.match_id] = tourney
+        tournaments_by_id[tourney.id] = tourney
 
-    total_rounds = detailed_rounds.count()
-    round_wins = detailed_rounds.filter(winner=team).count()
-    round_losses = detailed_rounds.exclude(winner=team).exclude(winner=None).count()
-    round_ties = detailed_rounds.filter(winner=None).count()
+    def _match_scope(match_id):
+        tourney = match_tournament.get(match_id)
+        return f"t{tourney.id}" if tourney is not None else "freeform"
 
-    # Player performance stats
-    player_stats = []
-    for player in team.players.all():
-        performances = PlayerRoundState.objects.filter(player=player)
-        if performances.exists():
-            total_points = sum(p.points_scored for p in performances)
-            total_tags = sum(p.tags_made for p in performances)
-            total_deaths = sum(p.times_tagged for p in performances)
-            games_played = performances.count()
+    has_freeform = bool(standalone_rounds) or any(
+        m.id not in match_tournament for m in all_matches
+    )
 
-            player_stats.append(
+    scope_options = []
+    if has_freeform:
+        scope_options.append({"key": "freeform", "label": "Free-form matches"})
+    for tourney in sorted(tournaments_by_id.values(), key=lambda t: t.name.lower()):
+        scope_options.append({"key": f"t{tourney.id}", "label": tourney.name})
+    valid_scope_keys = {opt["key"] for opt in scope_options}
+
+    # "applied" is a hidden marker on the toggle form, so an explicit "nothing
+    # selected" (Overall toggled off) is distinguishable from a fresh page load
+    # (which defaults to Overall = every scope on).
+    if "applied" in request.GET:
+        selected_scopes = set(request.GET.getlist("scope")) & valid_scope_keys
+    else:
+        selected_scopes = set(valid_scope_keys)
+
+    for opt in scope_options:
+        opt["checked"] = opt["key"] in selected_scopes
+    overall_checked = bool(valid_scope_keys) and selected_scopes == valid_scope_keys
+    show_scope_filter = len(scope_options) >= 2
+
+    matches = [m for m in all_matches if _match_scope(m.id) in selected_scopes]
+    detailed_rounds = standalone_rounds if "freeform" in selected_scopes else []
+
+    # Calculate stats over the in-scope games.
+    total_matches = len(matches)
+    wins = sum(1 for m in matches if m.winner_id == team.id)
+    losses = sum(
+        1 for m in matches if m.winner_id is not None and m.winner_id != team.id
+    )
+    ties = sum(1 for m in matches if m.winner_id is None)
+
+    total_rounds = len(detailed_rounds)
+    round_wins = sum(1 for r in detailed_rounds if r.winner_id == team.id)
+    round_losses = sum(
+        1 for r in detailed_rounds if r.winner_id is not None and r.winner_id != team.id
+    )
+    round_ties = sum(1 for r in detailed_rounds if r.winner_id is None)
+
+    # Roster role-breakdown stats. Derived from PlayerRoundState rather than
+    # team.players so that DRAW teams — whose borrowed players keep
+    # Player.team = Free Agents (LG-02x-1) and so never appear in
+    # team.players — still surface a full roster. A PlayerRoundState belongs
+    # to this team in a given round iff its team_color matches the colour the
+    # team physically wore that round.
+    role_order = [
+        ("commander", "Commander"),
+        ("heavy", "Heavy Weapons"),
+        ("scout", "Scout"),
+        ("ammo", "Ammo Carrier"),
+        ("medic", "Medic"),
+    ]
+    role_keys = [key for key, _ in role_order]
+
+    # A round inherits its Match's scope; standalone rounds are free-form. Only
+    # in-scope rounds feed the roster aggregation.
+    color_by_round = {}
+    for gr in GameRound.objects.filter(Q(team_red=team) | Q(team_blue=team)).only(
+        "id", "team_red_id", "team_blue_id", "match_id"
+    ):
+        scope = "freeform" if gr.match_id is None else _match_scope(gr.match_id)
+        if scope not in selected_scopes:
+            continue
+        color_by_round[gr.id] = "red" if gr.team_red_id == team.id else "blue"
+
+    def _empty_roles():
+        return {key: {"games": 0, "mvp_sum": 0.0, "score_sum": 0} for key in role_keys}
+
+    roster = {}
+    states = PlayerRoundState.objects.filter(
+        game_round_id__in=color_by_round.keys()
+    ).select_related("player")
+    for st in states:
+        if st.team_color != color_by_round.get(st.game_round_id):
+            continue
+        entry = roster.get(st.player_id)
+        if entry is None:
+            entry = {
+                "player": st.player,
+                "games_played": 0,
+                "roles": _empty_roles(),
+            }
+            roster[st.player_id] = entry
+        entry["games_played"] += 1
+        bucket = entry["roles"].get(str(st.role).lower())
+        if bucket is not None:
+            bucket["games"] += 1
+            bucket["mvp_sum"] += st.get_mvp
+            bucket["score_sum"] += st.points_scored
+
+    # "Official" roster membership — drives the MERC flag (a player who played
+    # for the team but is not a rostered member). Draw teams own their roster
+    # via TournamentPlayerEntry; regular teams via Player.team.
+    if getattr(team, "is_draw_team", False):
+        member_ids = set(
+            TournamentPlayerEntry.objects.filter(drawn_team=team).values_list(
+                "player_id", flat=True
+            )
+        )
+        member_players = list(
+            Player.objects.filter(
+                id__in=member_ids,
+            )
+        )
+    else:
+        member_players = list(team.players.all())
+        member_ids = {p.id for p in member_players}
+
+    # Zero-fill rostered members who have not played a round yet.
+    for player in member_players:
+        if player.id not in roster:
+            roster[player.id] = {
+                "player": player,
+                "games_played": 0,
+                "roles": _empty_roles(),
+            }
+
+    roster_rows = []
+    for player_id, entry in roster.items():
+        role_cells = []
+        for key, _label in role_order:
+            bucket = entry["roles"][key]
+            games = bucket["games"]
+            role_cells.append(
                 {
-                    "player": player,
-                    "games_played": games_played,
-                    "total_points": total_points,
-                    "total_tags": total_tags,
-                    "total_deaths": total_deaths,
-                    "avg_points": (
-                        total_points / games_played if games_played > 0 else 0
-                    ),
-                    "avg_tags": total_tags / games_played if games_played > 0 else 0,
+                    "games": games,
+                    "avg_mvp": (bucket["mvp_sum"] / games) if games else None,
+                    "avg_score": (bucket["score_sum"] / games) if games else None,
                 }
             )
+        roster_rows.append(
+            {
+                "player": entry["player"],
+                "games_played": entry["games_played"],
+                "is_merc": player_id not in member_ids,
+                "roles": role_cells,
+            }
+        )
+
+    # Members first, then mercs; within each, most-played first.
+    roster_rows.sort(
+        key=lambda row: (row["is_merc"], -row["games_played"], row["player"].name)
+    )
+
+    role_columns = [label for _, label in role_order]
 
     # Unique opponents (HX-03 entry point — one anchor per opponent, not per
     # match row; matches the seam contract's per-unique-opponent wording).
@@ -556,9 +695,20 @@ def team_match_history(request, team_id):
         "matches": matches,
         "detailed_rounds": detailed_rounds,
         "unique_opponents": unique_opponents,
-        "player_stats": sorted(
-            player_stats, key=lambda x: x["avg_points"], reverse=True
-        ),
+        "scope_options": scope_options,
+        "show_scope_filter": show_scope_filter,
+        "overall_checked": overall_checked,
+        "has_any_games": bool(all_matches or standalone_rounds),
+        "roster_rows": roster_rows,
+        "role_columns": role_columns,
+        "winloss_chart": {
+            "match_wins": wins,
+            "match_losses": losses,
+            "match_ties": ties,
+            "round_wins": round_wins,
+            "round_losses": round_losses,
+            "round_ties": round_ties,
+        },
         "stats": {
             "total_matches": total_matches,
             "match_wins": wins,

@@ -23,7 +23,8 @@ from django.shortcuts import get_object_or_404, redirect, render
 
 from teams.constants import PLAYER_NAMES, TEAM_NAMES
 from teams.forms import RosterImportForm
-from teams.models import Team
+from teams.models import Player, Team, get_free_agents_team
+from teams.player_generator import draw_preferred_roles, draw_stats
 from teams.roster_importer import RosterImportError, parse_roster_csv
 from teams.views import _apply_roster, _check_db_slot_collisions, _generate_teams
 
@@ -34,10 +35,12 @@ from .bracket import (
     break_tie,
     default_seed_order,
 )
+from .draw import ROLE_SLOTS, compute_draw
 from .models import (
     BracketNode,
     Tournament,
     TournamentParticipant,
+    TournamentPlayerEntry,
     _node_to_dict,
     count_series_wins,
 )
@@ -140,6 +143,15 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
 
     name = (request.POST.get("name") or "").strip()
     selected_ids = request.POST.getlist("teams")
+
+    # LG-02x-1 — orthogonal team-assembly axis. Parse early so the preset-only
+    # participant-selection validation can be skipped for random_draw (a
+    # random_draw Tournament is created in setup with an EMPTY pool — the user
+    # fills the pool + runs the draw on the detail page).
+    team_assembly = request.POST.get("team_assembly")
+    if team_assembly not in ("preset", "random_draw"):
+        team_assembly = "preset"
+
     try:
         generate_count = int(request.POST.get("generate_count") or 0)
     except (TypeError, ValueError):
@@ -158,45 +170,47 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
         errors.append("Tournament name is required.")
 
     teams: list[Team] = []
-    if selected_ids:
-        selected = list(
-            Team.objects.filter(id__in=selected_ids).select_related(
-                "slot_commander",
-                "slot_heavy",
-                "slot_scout_1",
-                "slot_scout_2",
-                "slot_medic",
-                "slot_ammo",
+    if team_assembly == "preset":
+        if selected_ids:
+            selected = list(
+                Team.objects.filter(id__in=selected_ids).select_related(
+                    "slot_commander",
+                    "slot_heavy",
+                    "slot_scout_1",
+                    "slot_scout_2",
+                    "slot_medic",
+                    "slot_ammo",
+                )
             )
-        )
-        # Reject any selected Team without a full valid roster (defends a
-        # tampered/stale POST of an id the filtered select list never offered).
-        ineligible = [t for t in selected if not t.is_valid_roster]
-        if ineligible:
-            names = ", ".join(t.name for t in ineligible)
-            errors.append(
-                "These teams don't have a full 6-player roster and can't "
-                f"enter a tournament: {names}. Complete their rosters first."
+            # Reject any selected Team without a full valid roster (defends a
+            # tampered/stale POST of an id the filtered select list never
+            # offered).
+            ineligible = [t for t in selected if not t.is_valid_roster]
+            if ineligible:
+                names = ", ".join(t.name for t in ineligible)
+                errors.append(
+                    "These teams don't have a full 6-player roster and can't "
+                    f"enter a tournament: {names}. Complete their rosters first."
+                )
+            teams.extend(selected)
+
+        if generate_count and generate_count > 0:
+            rng = random.Random()
+            team_names_pool = list(TEAM_NAMES)
+            player_names_pool = list(PLAYER_NAMES)
+            generated = _generate_teams(
+                generate_count,
+                generate_ppt if generate_ppt > 0 else 6,
+                rng=rng,
+                mean=50,
+                std_dev=15,
+                team_names_pool=team_names_pool,
+                player_names_pool=player_names_pool,
             )
-        teams.extend(selected)
+            teams.extend(generated)
 
-    if generate_count and generate_count > 0:
-        rng = random.Random()
-        team_names_pool = list(TEAM_NAMES)
-        player_names_pool = list(PLAYER_NAMES)
-        generated = _generate_teams(
-            generate_count,
-            generate_ppt if generate_ppt > 0 else 6,
-            rng=rng,
-            mean=50,
-            std_dev=15,
-            team_names_pool=team_names_pool,
-            player_names_pool=player_names_pool,
-        )
-        teams.extend(generated)
-
-    if len(teams) < 4:
-        errors.append("A tournament requires at least 4 teams.")
+        if len(teams) < 4:
+            errors.append("A tournament requires at least 4 teams.")
 
     if errors:
         for err in errors:
@@ -250,6 +264,12 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
     # create (harmless — only read at lock when format == "swiss").
     swiss_rounds = _parse_swiss_rounds(request.POST.get("swiss_rounds"))
 
+    # LG-02x-1 — role-assignment mode (meaningful only for random_draw).
+    # Forgiving fallback to the default.
+    role_assignment_mode = request.POST.get("role_assignment_mode")
+    if role_assignment_mode not in ("random", "per_tier"):
+        role_assignment_mode = "random"
+
     tournament = Tournament.objects.create(
         name=name,
         state="setup",
@@ -261,16 +281,20 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
         wb_advancers=wb_advancers,
         lb_advancers=lb_advancers,
         swiss_rounds=swiss_rounds,
+        team_assembly=team_assembly,
+        role_assignment_mode=role_assignment_mode,
     )
 
-    # Default Seeding via mean active-player overall_rating.
-    team_ratings = [(t.id, _team_mean_rating(t)) for t in teams]
-    seed_order = default_seed_order(team_ratings)
-    team_by_id = {t.id: t for t in teams}
-    for idx, team_id in enumerate(seed_order, start=1):
-        TournamentParticipant.objects.create(
-            tournament=tournament, team=team_by_id[team_id], seed=idx
-        )
+    # Default Seeding via mean active-player overall_rating. For random_draw the
+    # pool is empty at create — participants are seeded by the draw, not here.
+    if team_assembly == "preset":
+        team_ratings = [(t.id, _team_mean_rating(t)) for t in teams]
+        seed_order = default_seed_order(team_ratings)
+        team_by_id = {t.id: t for t in teams}
+        for idx, team_id in enumerate(seed_order, start=1):
+            TournamentParticipant.objects.create(
+                tournament=tournament, team=team_by_id[team_id], seed=idx
+            )
 
     return redirect("tournament_detail", tournament_id=tournament.id)
 
@@ -389,6 +413,13 @@ def _build_rr_crosstable(tournament: Tournament, rows: list) -> list:
     participants = list(tournament.participants.select_related("team"))
     team_by_id = {p.team_id: p.team for p in participants}
     team_ids = [p.team_id for p in participants]
+
+    # A crosstable needs at least 2 teams. A random_draw Tournament sits in
+    # `setup` with NO participants until the draw runs, so the detail page is
+    # rendered (pool stage) before any team exists — short-circuit to an empty
+    # crosstable rather than letting `generate_schedule([])` raise.
+    if len(team_ids) < 2:
+        return []
 
     # Order teams by Standings rank (rows already ranked); fall back to any
     # enrolled team not yet ranked (defensive — compute_standings returns all).
@@ -632,6 +663,19 @@ def _detail_context(tournament: Tournament) -> dict:
     else:
         swiss_rounds_view = []
         swiss_standings = []
+    # LG-02x-1 — Random-Draw pool / draw surface. Empty / defaulted for preset.
+    if tournament.team_assembly == "random_draw":
+        pool_entries = list(
+            tournament.player_entries.select_related("player", "drawn_team").order_by(
+                "tier", "player_id"
+            )
+        )
+        is_drawn = tournament.player_entries.filter(drawn_team__isnull=False).exists()
+        all_players = list(Player.objects.order_by("name"))
+    else:
+        pool_entries = []
+        is_drawn = False
+        all_players = []
     return {
         "tournament": tournament,
         "participants": participants,
@@ -647,6 +691,15 @@ def _detail_context(tournament: Tournament) -> dict:
         "cut_labels": cut_labels,
         "swiss_rounds_view": swiss_rounds_view,
         "swiss_standings": swiss_standings,
+        # LG-02x-1 — Random-Draw keys.
+        "team_assembly": tournament.team_assembly,
+        "role_assignment_mode": tournament.role_assignment_mode,
+        "pool_entries": pool_entries,
+        "pool_size": len(pool_entries),
+        "is_drawn": is_drawn,
+        "all_players": all_players,
+        "pool_import_form": RosterImportForm(),
+        "pool_import_row_errors": [],
     }
 
 
@@ -888,3 +941,276 @@ def tournament_play_status(
             async_result, tournament_id=tournament_id
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# LG-02x-1 — Random-Draw player-pool intake, draw, re-roll, hand-edit.
+# ---------------------------------------------------------------------------
+
+
+def _pool_setup_guard(request: HttpRequest, tournament: Tournament):
+    """Shared guard for the pool-mutating views: reject once the bracket is
+    locked. Returns a redirect HttpResponse when blocked, else None.
+    """
+    if tournament.is_locked:
+        messages.error(request, "The player pool can only be edited during setup.")
+        return redirect("tournament_detail", tournament_id=tournament.id)
+    return None
+
+
+@transaction.atomic
+def tournament_pool_add_existing(
+    request: HttpRequest, tournament_id: int
+) -> HttpResponse:
+    """Add selected existing Players to the Random-Draw pool. POST-only,
+    setup-only.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    blocked = _pool_setup_guard(request, tournament)
+    if blocked is not None:
+        return blocked
+
+    player_ids = request.POST.getlist("players")
+    existing = set(tournament.player_entries.values_list("player_id", flat=True))
+    for player in Player.objects.filter(id__in=player_ids):
+        if player.id in existing:
+            continue
+        TournamentPlayerEntry.objects.create(tournament=tournament, player=player)
+        existing.add(player.id)
+
+    return redirect("tournament_detail", tournament_id=tournament.id)
+
+
+@transaction.atomic
+def tournament_pool_generate(request: HttpRequest, tournament_id: int) -> HttpResponse:
+    """Generate N fresh Players (LG-00 pure generator) on the Free Agents Team
+    and add them to the pool. POST-only, setup-only.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    blocked = _pool_setup_guard(request, tournament)
+    if blocked is not None:
+        return blocked
+
+    try:
+        count = int(request.POST.get("count") or 0)
+    except (TypeError, ValueError):
+        count = 0
+    try:
+        mean_val = int(request.POST.get("mean") or 50)
+    except (TypeError, ValueError):
+        mean_val = 50
+    try:
+        std_dev = int(request.POST.get("std_dev") or 15)
+    except (TypeError, ValueError):
+        std_dev = 15
+
+    if count <= 0:
+        messages.error(request, "Enter how many players to generate.")
+        return redirect("tournament_detail", tournament_id=tournament.id)
+
+    rng = random.Random()
+    free_agents = get_free_agents_team()
+    name_pool = list(PLAYER_NAMES)
+    rng.shuffle(name_pool)
+
+    for i in range(count):
+        if name_pool:
+            base_name = name_pool.pop()
+        else:
+            base_name = f"Player {i + 1}"
+        # Dedupe within the Free Agents Team (unique_together team+name).
+        name = base_name
+        k = 2
+        while Player.objects.filter(team=free_agents, name=name).exists():
+            name = f"{base_name} #{k}"
+            k += 1
+        stats = draw_stats(rng, mean_val, std_dev)
+        preferred_roles = draw_preferred_roles(rng)
+        player = Player.objects.create(
+            team=free_agents,
+            name=name,
+            preferred_roles=preferred_roles,
+            **stats,
+        )
+        TournamentPlayerEntry.objects.create(tournament=tournament, player=player)
+
+    return redirect("tournament_detail", tournament_id=tournament.id)
+
+
+@transaction.atomic
+def tournament_pool_import(request: HttpRequest, tournament_id: int) -> HttpResponse:
+    """Import pool Players from a roster CSV (LG-00b reuse). Each CSV ROW = one
+    pool Player on the Free Agents Team; team-grouping is IGNORED. POST-only,
+    setup-only.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    blocked = _pool_setup_guard(request, tournament)
+    if blocked is not None:
+        return blocked
+
+    form = RosterImportForm(request.POST, request.FILES)
+
+    def _render_error(pool_import_row_errors: list) -> HttpResponse:
+        # Build the read-only detail context BEFORE flagging rollback — a
+        # rolled-back atomic block forbids further queries.
+        ctx = _detail_context(tournament)
+        ctx["pool_import_form"] = form
+        ctx["pool_import_row_errors"] = pool_import_row_errors
+        transaction.set_rollback(True)
+        return render(request, "matches/tournament_detail.html", ctx)
+
+    if not form.is_valid():
+        return _render_error([])
+
+    try:
+        parsed = parse_roster_csv(form.cleaned_data["csv_file"])
+    except RosterImportError as exc:
+        return _render_error(exc.errors)
+
+    free_agents = get_free_agents_team()
+    # Each ParsedRow -> one pool Player. The CSV team / role columns are NOT
+    # used (slots are assigned per-Round by the draw; the pool is the team).
+    for row in parsed.rows:
+        name = row.name
+        k = 2
+        while Player.objects.filter(team=free_agents, name=name).exists():
+            name = f"{row.name} #{k}"
+            k += 1
+        player = Player.objects.create(
+            team=free_agents,
+            name=name,
+            preferred_roles=row.preferred_roles,
+            **row.profile,
+            **row.stats,
+        )
+        TournamentPlayerEntry.objects.create(tournament=tournament, player=player)
+
+    return redirect("tournament_detail", tournament_id=tournament.id)
+
+
+@transaction.atomic
+def tournament_pool_remove(request: HttpRequest, tournament_id: int) -> HttpResponse:
+    """Remove a pool entry (by player_id). POST-only, setup-only."""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    blocked = _pool_setup_guard(request, tournament)
+    if blocked is not None:
+        return blocked
+
+    player_id = request.POST.get("player_id")
+    if player_id:
+        tournament.player_entries.filter(player_id=player_id).delete()
+
+    return redirect("tournament_detail", tournament_id=tournament.id)
+
+
+@transaction.atomic
+def tournament_draw(request: HttpRequest, tournament_id: int) -> HttpResponse:
+    """Run the tier-balanced draw: validate the pool, build drawn Teams +
+    participants, fill each entry's tier + drawn_team. Re-runnable (re-roll)
+    while in setup. POST-only.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    blocked = _pool_setup_guard(request, tournament)
+    if blocked is not None:
+        return blocked
+
+    entries = list(tournament.player_entries.select_related("player"))
+    n = len(entries)
+    if n % 6 != 0 or n < 24:
+        messages.error(
+            request,
+            "The pool must be divisible by 6 and have at least 24 players "
+            f"(>= 4 teams). It currently has {n}.",
+        )
+        return redirect("tournament_detail", tournament_id=tournament.id)
+
+    # Build the (player_id, overall_rating) pool list.
+    pool = [(e.player_id, e.player.overall_rating) for e in entries]
+    plans = compute_draw(pool)
+
+    # Re-roll cleanup: drop any prior drawn Teams + participants for this
+    # tournament and null the entries' tier / drawn_team.
+    prior_team_ids = list(
+        tournament.player_entries.filter(drawn_team__isnull=False)
+        .values_list("drawn_team_id", flat=True)
+        .distinct()
+    )
+    if prior_team_ids:
+        tournament.participants.filter(team_id__in=prior_team_ids).delete()
+        tournament.player_entries.update(tier=None, drawn_team=None)
+        Team.objects.filter(id__in=prior_team_ids, is_draw_team=True).delete()
+
+    entry_by_player = {e.player_id: e for e in entries}
+    for plan in plans:
+        team = Team.objects.create(
+            name=f"Draw Team {plan.team_index + 1}", is_draw_team=True
+        )
+        # Initial valid assignment: tier order -> ROLE_SLOTS order (any valid
+        # no-duplicate assignment satisfies the relaxed roster_errors).
+        for slot, player_id in zip(ROLE_SLOTS, plan.player_ids):
+            setattr(team, f"slot_{slot}_id", player_id)
+        team.save()
+        TournamentParticipant.objects.create(
+            tournament=tournament, team=team, seed=plan.team_index + 1
+        )
+        for player_id, tier in zip(plan.player_ids, plan.tiers):
+            entry = entry_by_player[player_id]
+            entry.tier = tier
+            entry.drawn_team = team
+            entry.save(update_fields=["tier", "drawn_team"])
+
+    return redirect("tournament_detail", tournament_id=tournament.id)
+
+
+@transaction.atomic
+def tournament_draw_edit(request: HttpRequest, tournament_id: int) -> HttpResponse:
+    """Admin hand-edit of a drawn entry's tier / drawn_team (the variation
+    mechanism — the draw itself is deterministic). POST-only, setup-only.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    blocked = _pool_setup_guard(request, tournament)
+    if blocked is not None:
+        return blocked
+
+    player_id = request.POST.get("player_id")
+    entry = tournament.player_entries.filter(player_id=player_id).first()
+    if entry is None:
+        messages.error(request, "That player is not in the pool.")
+        return redirect("tournament_detail", tournament_id=tournament.id)
+
+    update_fields = []
+    raw_tier = request.POST.get("tier")
+    if raw_tier is not None and raw_tier != "":
+        try:
+            entry.tier = int(raw_tier)
+            update_fields.append("tier")
+        except (TypeError, ValueError):
+            pass
+    raw_team = request.POST.get("drawn_team")
+    if raw_team is not None and raw_team != "":
+        team = Team.objects.filter(id=raw_team, is_draw_team=True).first()
+        if team is not None:
+            entry.drawn_team = team
+            update_fields.append("drawn_team")
+    if update_fields:
+        entry.save(update_fields=update_fields)
+
+    return redirect("tournament_detail", tournament_id=tournament.id)

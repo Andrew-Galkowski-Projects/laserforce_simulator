@@ -26,6 +26,12 @@ Manages teams, players, and rosters. Serves as the homepage (`/`).
 
 `ROLE_STATS` is imported from `matches.sim_helpers.role_constants` — the canonical source for all role-level constants (`ROLE_STATS`, `MAX_LIVES`, `MAX_SHOTS`, `SPECIAL_COST`). Both `teams/models.py` and `sim_helpers/player_state.py` import from there; the duplicate definition that previously lived in `player_state.py` has been removed.
 
+### Team.is_draw_team
+
+`Team.is_draw_team` (`BooleanField(default=False)`, added by **LG-02x-1**) marks a Team that was assembled by a Random Draw Tournament's tier-balanced draw rather than hand-built. It carries **NO FK to the Tournament / Match** — the durable link from a drawn Team back to its Tournament and its drawn players lives on `matches.TournamentPlayerEntry` (avoiding a `teams → matches` dependency inversion). A drawn Team's `slot_*` FKs hold only the **transient** per-Round role assignment the simulator's `before_round_hook` rewrites in memory each Round; the source of truth for `(player, tier, drawn_team)` is `TournamentPlayerEntry`. Existing rows take `default=False` (no backfill; ADR-0004 disposable-data precedent).
+
+**`Team.roster_errors` relaxation (draw teams only).** Because a drawn Team **references borrowed Players** without `Player.team` ever being reassigned by the draw, the "all players belong to this team" ownership check is **skipped for draw teams**: the `for player, role, slot_name in filled:` belongs-to-team loop (the `player.team_id != self.pk` check) is wrapped in `if not self.is_draw_team:`. **All other validations stay enforced for draw teams** — the all-6-slots-filled check, the **duplicate-player** check, and the **role-distribution** (Scout-only-twice) check. A non-draw Team with a foreign player **still** errors. See [`matches/CLAUDE.md`](../matches/CLAUDE.md) `## LG-02x-1 random draw player-pool tournament` and [ADR-0022](../../docs/adr/0022-random-draw-player-pool-tournament.md).
+
 ## Constants (`teams/constants.py`)
 
 Static name pools used by `_random_player_profile()`:

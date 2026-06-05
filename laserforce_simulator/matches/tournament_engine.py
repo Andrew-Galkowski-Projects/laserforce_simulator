@@ -6,9 +6,16 @@ view and the async Celery task drive the bracket through this single
 ``play_next_node`` entry point.
 """
 
+import random
+
 from django.db import transaction
 
 from .bracket import advance_loser, advance_winner, break_tie, series_winner_slot
+from .draw import (
+    ROLE_SLOTS,
+    build_per_tier_role_assignment,
+    build_random_role_assignment,
+)
 from .models import (
     BracketNode,
     SeriesMatch,
@@ -16,6 +23,60 @@ from .models import (
     _node_to_dict,
     count_series_wins,
 )
+
+
+def _team_tier_map(tournament: Tournament, team) -> dict[int, int]:
+    """LG-02x-1 — ``{tier: player_id}`` for a drawn Team, from its
+    ``TournamentPlayerEntry`` rows in this Tournament.
+    """
+    return {
+        entry.tier: entry.player_id
+        for entry in tournament.player_entries.filter(drawn_team=team)
+        if entry.tier is not None
+    }
+
+
+def _apply_role_assignment(team, slot_to_player: dict[str, int]) -> None:
+    """LG-02x-1 — rewrite a drawn Team's 6 ``slot_*`` FKs IN MEMORY from a
+    ``{slot_suffix: player_id}`` map. No ``.save()`` — the per-Round assignment
+    is transient (the durable truth is the TournamentPlayerEntry tier).
+    """
+    for slot in ROLE_SLOTS:
+        setattr(team, f"slot_{slot}_id", slot_to_player[slot])
+
+
+def _build_role_hook(tournament: Tournament):
+    """LG-02x-1 — build the ``before_round_hook`` closure for a Random-Draw
+    Tournament.
+
+    The closure ``(round_number, team_red, team_blue)`` re-assigns BOTH drawn
+    Teams' role slots in memory before the round simulates. Roles re-draw every
+    Round (the hook fires once per round). The role draw consumes a fresh
+    ``random.Random()`` (tournament sims are non-deterministic — NOT the SIM-07
+    seed chain).
+    """
+    mode = tournament.role_assignment_mode
+
+    def hook(round_number, team_red, team_blue):
+        rng = random.Random()
+        tiers_red = _team_tier_map(tournament, team_red)
+        tiers_blue = _team_tier_map(tournament, team_blue)
+        if mode == "per_tier":
+            tier_to_slot = build_per_tier_role_assignment(rng)
+            for team, tier_map in ((team_red, tiers_red), (team_blue, tiers_blue)):
+                slot_to_player = {
+                    tier_to_slot[tier]: player_id
+                    for tier, player_id in tier_map.items()
+                }
+                _apply_role_assignment(team, slot_to_player)
+        else:  # "random" — each team shuffles independently.
+            for team, tier_map in ((team_red, tiers_red), (team_blue, tiers_blue)):
+                # tier_player_ids in tier order (index 0 = tier 1 .. 5 = tier 6).
+                tier_player_ids = [tier_map[tier] for tier in range(1, 7)]
+                slot_to_player = build_random_role_assignment(tier_player_ids, rng)
+                _apply_role_assignment(team, slot_to_player)
+
+    return hook
 
 
 @transaction.atomic
@@ -37,10 +98,21 @@ def play_next_node(tournament: Tournament) -> "BracketNode | None":
         return None
 
     # 1-3. Simulate ONE Match (team_a plays red, team_b plays blue) and resolve
-    # this Match's decisive winner (tie-break on a true tie).
-    match = BatchSimulator().simulate_match(
-        node.team_a, node.team_b, match_type="tournament"
-    )
+    # this Match's decisive winner (tie-break on a true tie). LG-02x-1 —
+    # Random-Draw tournaments re-assign drawn-Team role slots every Round via a
+    # before_round_hook; the preset path stays byte-identical (no hook).
+    if tournament.team_assembly == "random_draw":
+        hook = _build_role_hook(tournament)
+        match = BatchSimulator().simulate_match(
+            node.team_a,
+            node.team_b,
+            match_type="tournament",
+            before_round_hook=hook,
+        )
+    else:
+        match = BatchSimulator().simulate_match(
+            node.team_a, node.team_b, match_type="tournament"
+        )
     match_winner = match.winner
     if match_winner is None:
         best_a = max(match.red_round1_points, match.red_round2_points)

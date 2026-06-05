@@ -2312,3 +2312,200 @@ class TestAdvanceSwissIfRoundFinished(TestCase):
             r2_pairs.isdisjoint(r1_pairs),
             f"R2 pairings {r2_pairs} must avoid R1 rematches {r1_pairs}",
         )
+
+
+# ===========================================================================
+# LG-02x-1 — Random Draw player-pool Tournament (model layer)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified). Seam
+# contract: ``.claude/worktrees/lg-02x-1-seam-contract.md`` §1a / §1c / §7.
+#
+# ``Tournament`` gains two orthogonal CharFields: ``team_assembly``
+# (preset/random_draw, default "preset") + ``role_assignment_mode``
+# (random/per_tier, default "random"). NEW model ``TournamentPlayerEntry`` is
+# the durable pool registration AND draw result — (player, tier, drawn_team)
+# truth — with ``unique(tournament, player)``, CASCADE on tournament + player
+# delete, SET_NULL on drawn_team delete, and Meta.ordering
+# ["tournament_id", "tier", "player_id"].
+#
+# ``TournamentPlayerEntry`` is imported LAZILY inside each method so its absence
+# (pre-Code-landing) isolates the failure to these new classes and does NOT
+# break the existing (passing) classes above at collection time.
+
+
+class TestTournamentTeamAssemblyFields(TestCase):
+    """The two orthogonal ``Tournament`` fields: choices + defaults."""
+
+    def test_team_assembly_defaults_to_preset(self) -> None:
+        t = Tournament.objects.create(name="Cup")
+        self.assertEqual(t.team_assembly, "preset")
+
+    def test_team_assembly_choices(self) -> None:
+        choices = dict(Tournament._meta.get_field("team_assembly").choices)
+        self.assertEqual(set(choices), {"preset", "random_draw"})
+
+    def test_team_assembly_random_draw_persists(self) -> None:
+        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        t.refresh_from_db()
+        self.assertEqual(t.team_assembly, "random_draw")
+
+    def test_role_assignment_mode_defaults_to_random(self) -> None:
+        t = Tournament.objects.create(name="Cup")
+        self.assertEqual(t.role_assignment_mode, "random")
+
+    def test_role_assignment_mode_choices(self) -> None:
+        choices = dict(Tournament._meta.get_field("role_assignment_mode").choices)
+        self.assertEqual(set(choices), {"random", "per_tier"})
+
+    def test_role_assignment_mode_per_tier_persists(self) -> None:
+        t = Tournament.objects.create(name="Cup", role_assignment_mode="per_tier")
+        t.refresh_from_db()
+        self.assertEqual(t.role_assignment_mode, "per_tier")
+
+    def test_preset_default_leaves_existing_behaviour_byte_unchanged(self) -> None:
+        # A Tournament created without the new kwargs is a plain preset RR/elim
+        # tournament — the orthogonal fields take their defaults.
+        t = Tournament.objects.create(name="Legacy Cup")
+        self.assertEqual(t.team_assembly, "preset")
+        self.assertEqual(t.role_assignment_mode, "random")
+
+
+class TestTournamentPlayerEntryModel(TestCase):
+    """Create / fields / unique / cascade / set-null / ordering."""
+
+    def _player(self, name: str):
+        # A Player on the Free Agents Team mirrors the pool-intake path; any
+        # Team works for the model-shape tests.
+        from teams.models import Player, Team
+
+        team = Team.objects.create(name=f"{name} Owner")
+        return Player.objects.create(team=team, name=name)
+
+    def test_create_entry_with_nullable_tier_and_drawn_team(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        player = self._player("PoolP1")
+        entry = TournamentPlayerEntry.objects.create(tournament=t, player=player)
+        self.assertEqual(entry.tournament_id, t.id)
+        self.assertEqual(entry.player_id, player.id)
+        # Pre-draw: tier + drawn_team are NULL.
+        self.assertIsNone(entry.tier)
+        self.assertIsNone(entry.drawn_team)
+
+    def test_entry_carries_tier_and_drawn_team_after_draw(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        player = self._player("PoolP2")
+        drawn = make_team_with_slots("Draw")[0]
+        entry = TournamentPlayerEntry.objects.create(
+            tournament=t, player=player, tier=3, drawn_team=drawn
+        )
+        entry.refresh_from_db()
+        self.assertEqual(entry.tier, 3)
+        self.assertEqual(entry.drawn_team_id, drawn.id)
+
+    def test_related_name_player_entries(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        TournamentPlayerEntry.objects.create(tournament=t, player=self._player("A"))
+        TournamentPlayerEntry.objects.create(tournament=t, player=self._player("B"))
+        self.assertEqual(t.player_entries.count(), 2)
+
+    def test_related_name_tournament_entries_on_player(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        player = self._player("Shared")
+        TournamentPlayerEntry.objects.create(tournament=t, player=player)
+        self.assertEqual(player.tournament_entries.count(), 1)
+
+    def test_related_name_drawn_player_entries_on_team(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        drawn = make_team_with_slots("DrawTeam")[0]
+        TournamentPlayerEntry.objects.create(
+            tournament=t, player=self._player("Drawn"), tier=1, drawn_team=drawn
+        )
+        self.assertEqual(drawn.drawn_player_entries.count(), 1)
+
+    def test_unique_tournament_player_rejected(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        player = self._player("Dup")
+        TournamentPlayerEntry.objects.create(tournament=t, player=player)
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                TournamentPlayerEntry.objects.create(tournament=t, player=player)
+
+    def test_same_player_allowed_across_different_tournaments(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t1 = Tournament.objects.create(name="Cup1", team_assembly="random_draw")
+        t2 = Tournament.objects.create(name="Cup2", team_assembly="random_draw")
+        player = self._player("MultiTourney")
+        TournamentPlayerEntry.objects.create(tournament=t1, player=player)
+        # No collision — different Tournament; a Player may sit in many draws
+        # across different Tournaments.
+        TournamentPlayerEntry.objects.create(tournament=t2, player=player)
+        self.assertEqual(player.tournament_entries.count(), 2)
+
+    def test_cascade_on_tournament_delete(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        entry = TournamentPlayerEntry.objects.create(
+            tournament=t, player=self._player("Casc")
+        )
+        entry_id = entry.id
+        t.delete()
+        self.assertFalse(TournamentPlayerEntry.objects.filter(pk=entry_id).exists())
+
+    def test_cascade_on_player_delete(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        player = self._player("CascPlayer")
+        entry = TournamentPlayerEntry.objects.create(tournament=t, player=player)
+        entry_id = entry.id
+        player.delete()
+        self.assertFalse(TournamentPlayerEntry.objects.filter(pk=entry_id).exists())
+
+    def test_set_null_on_drawn_team_delete(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        drawn = make_team_with_slots("DropTeam")[0]
+        entry = TournamentPlayerEntry.objects.create(
+            tournament=t, player=self._player("KeepTier"), tier=2, drawn_team=drawn
+        )
+        drawn.delete()
+        entry.refresh_from_db()
+        # SET_NULL — the entry survives with its tier intact.
+        self.assertIsNone(entry.drawn_team_id)
+        self.assertEqual(entry.tier, 2)
+        self.assertTrue(TournamentPlayerEntry.objects.filter(pk=entry.id).exists())
+
+    def test_meta_ordering_iterates_tier_then_player_id(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        p1 = self._player("First")
+        p2 = self._player("Second")
+        p3 = self._player("Third")
+        # Insert deliberately out of order: (tier=2, p3), (tier=1, p2), (tier=1, p1).
+        TournamentPlayerEntry.objects.create(tournament=t, player=p3, tier=2)
+        TournamentPlayerEntry.objects.create(tournament=t, player=p2, tier=1)
+        TournamentPlayerEntry.objects.create(tournament=t, player=p1, tier=1)
+        ordered = list(t.player_entries.all())
+        keys = [(e.tier, e.player_id) for e in ordered]
+        # tier ASC, then player_id ASC within a tier — matches the draw tiebreak.
+        self.assertEqual(
+            keys,
+            [(1, min(p1.id, p2.id)), (1, max(p1.id, p2.id)), (2, p3.id)],
+        )

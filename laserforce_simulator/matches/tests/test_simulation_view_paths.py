@@ -635,3 +635,181 @@ class TestRV02MedicReset:
         scout.final_lives -= 1
         record_down(scout, 105, ctx)  # chain reaches 2 but role != medic
         assert self._count(ctx.events.entries) == 0
+
+
+# ===========================================================================
+# LG-02x-1 — simulate_match(before_round_hook=...) seam
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified). Seam
+# contract: ``.claude/worktrees/lg-02x-1-seam-contract.md`` §3 / §7.
+#
+# ``simulate_match`` gains a keyword-only ``before_round_hook=None``. Default
+# None ⇒ byte-unchanged for every existing caller (no hook invoked). When given,
+# the hook fires ONCE PER ROUND with ``(round_number, team_red, team_blue)`` —
+# round 1 gets ``(1, team_red, team_blue)`` and round 2 gets the SWAPPED
+# ``(2, team_blue, team_red)`` order (the same physical-side order the per-Match
+# colour swap uses). A hook that rewrites the drawn Teams' ``slot_*`` FKs in
+# memory changes the roster that round simulates against — asserted via a
+# recording hook + the resulting ``PlayerRoundState.role`` mapping, NOT via
+# point totals.
+#
+# These assertions WILL fail until the Code agent lands the additive kwarg + the
+# two hook-invocation lines; that is expected for the parallel build.
+
+
+@pytest.mark.django_db
+class TestSimulateMatchHookDefaultNone:
+    """``before_round_hook=None`` (and the bare default) leave the 2-round
+    Match structure intact and never invoke a hook."""
+
+    def _simulate(self, **kwargs):
+        random.seed(42)
+        red, _ = make_team_with_slots("HookNoneR")
+        blue, _ = make_team_with_slots("HookNoneB")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            match = BatchSimulator().simulate_match(red, blue, **kwargs)
+        return match
+
+    def test_explicit_none_accepted_and_two_rounds_persist(self):
+        match = self._simulate(before_round_hook=None)
+        assert isinstance(match, Match)
+        assert match.is_completed is True
+        rounds = list(match.game_rounds.order_by("round_number"))
+        assert len(rounds) == 2
+        assert [r.round_number for r in rounds] == [1, 2]
+
+    def test_bare_default_call_still_works(self):
+        # The default (no kwarg at all) must remain valid — byte-unchanged
+        # surface for every legacy caller.
+        match = self._simulate()
+        assert isinstance(match, Match)
+        assert match.is_completed is True
+
+    def test_default_call_invokes_no_hook(self):
+        # A recording sentinel passed as None can't record; instead prove the
+        # colour-swap structure (the only observable of the unchanged path) is
+        # intact: round 1 keeps sides, round 2 swaps them.
+        match = self._simulate(before_round_hook=None)
+        r1, r2 = list(match.game_rounds.order_by("round_number"))
+        assert r1.team_red_id == match.team_red_id
+        assert r2.team_red_id == match.team_blue_id
+
+
+@pytest.mark.django_db
+class TestSimulateMatchHookInvocation:
+    """The hook fires once per round with the physical-side ``(round_number,
+    team_red, team_blue)`` order; round 2 receives the swapped pair."""
+
+    def _run(self):
+        random.seed(7)
+        red, _ = make_team_with_slots("HookInvR")
+        blue, _ = make_team_with_slots("HookInvB")
+        calls: list[tuple] = []
+
+        def _hook(round_number, team_red, team_blue):
+            calls.append((round_number, team_red.id, team_blue.id))
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            BatchSimulator().simulate_match(red, blue, before_round_hook=_hook)
+        return calls, red, blue
+
+    def test_hook_invoked_exactly_twice(self):
+        calls, _red, _blue = self._run()
+        assert len(calls) == 2, f"hook must fire once per round; got {calls!r}"
+
+    def test_round_numbers_are_one_then_two(self):
+        calls, _red, _blue = self._run()
+        assert [c[0] for c in calls] == [1, 2]
+
+    def test_round1_receives_red_then_blue(self):
+        calls, red, blue = self._run()
+        # Round 1: (1, team_red, team_blue) in the physical-side order.
+        assert calls[0] == (1, red.id, blue.id)
+
+    def test_round2_receives_swapped_blue_then_red(self):
+        calls, red, blue = self._run()
+        # Round 2: the colour swap means the hook sees (2, team_blue, team_red).
+        assert calls[1] == (2, blue.id, red.id)
+
+
+@pytest.mark.django_db
+class TestSimulateMatchHookRewritesRoster:
+    """A hook that rewrites the Teams' ``slot_*`` FKs in memory changes the
+    roster the round actually simulates against — proven via the resulting
+    ``PlayerRoundState.role`` mapping (NOT point totals)."""
+
+    def _baseline_roles_by_player(self):
+        """Run a normal match (no hook) and return round-1's
+        {player_id: role} for the red team, the control mapping."""
+        random.seed(101)
+        red, _ = make_team_with_slots("HookRwBaseR")
+        blue, _ = make_team_with_slots("HookRwBaseB")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            match = BatchSimulator().simulate_match(red, blue)
+        r1 = match.game_rounds.get(round_number=1)
+        return {
+            s.player_id: s.role for s in r1.player_states.filter(team_color="red")
+        }, red
+
+    def test_swapping_two_slots_changes_a_players_role_in_the_round(self):
+        random.seed(101)
+        red, _ = make_team_with_slots("HookRwR")
+        blue, _ = make_team_with_slots("HookRwB")
+
+        # Capture the round-1 default role of the commander-slot player so we
+        # can prove the rewrite moved that player to a DIFFERENT role.
+        commander_player_id = red.slot_commander_id
+        ammo_player_id = red.slot_ammo_id
+
+        def _hook(round_number, team_red, team_blue):
+            # Only rewrite round 1's red team (the one we inspect): swap the
+            # commander and ammo slot FKs in memory before the round sims.
+            if round_number == 1 and team_red.id == red.id:
+                team_red.slot_commander_id = ammo_player_id
+                team_red.slot_ammo_id = commander_player_id
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            match = BatchSimulator().simulate_match(red, blue, before_round_hook=_hook)
+
+        r1 = match.game_rounds.get(round_number=1)
+        roles_by_player = {
+            s.player_id: s.role for s in r1.player_states.filter(team_color="red")
+        }
+        # The commander-slot player now occupies the ammo slot's role, and the
+        # ammo-slot player now occupies the commander slot's role — the swap the
+        # hook performed in memory took effect for the simulated round.
+        self_assert = roles_by_player.get(commander_player_id)
+        other = roles_by_player.get(ammo_player_id)
+        assert self_assert is not None and other is not None
+        # The two players' roles are the SWAP of each other vs the default
+        # layout: the commander-player's role == the role the ammo-player would
+        # normally have, and vice versa.
+        assert self_assert != other
+        # Specifically the commander-player now holds the ammo role and the
+        # ammo-player now holds the commander role.
+        assert "ammo" in self_assert.lower()
+        assert "commander" in other.lower()
+
+    def test_no_rewrite_keeps_default_role_layout(self):
+        # Control: a hook that does NOT touch slots leaves the role mapping at
+        # the default slot layout (commander-player keeps the commander role).
+        random.seed(101)
+        red, _ = make_team_with_slots("HookCtrlR")
+        blue, _ = make_team_with_slots("HookCtrlB")
+        commander_player_id = red.slot_commander_id
+
+        def _noop_hook(round_number, team_red, team_blue):
+            return None
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            match = BatchSimulator().simulate_match(
+                red, blue, before_round_hook=_noop_hook
+            )
+        r1 = match.game_rounds.get(round_number=1)
+        role = (
+            r1.player_states.filter(team_color="red")
+            .get(player_id=commander_player_id)
+            .role
+        )
+        assert "commander" in role.lower()

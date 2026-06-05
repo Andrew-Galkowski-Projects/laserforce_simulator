@@ -1148,6 +1148,32 @@ class Tournament(models.Model):
     # to ceil(log2(N)), clamped to [1, N-1], then written back here — frozen).
     # No choices. Meaningful only for format == "swiss"; 0 otherwise.
     swiss_rounds = models.PositiveSmallIntegerField(default=0)
+    # LG-02x-1 (Random Draw) — an ORTHOGONAL team-assembly axis (NOT a new
+    # ``format``). ``preset`` (default) is byte-unchanged: participants are
+    # chosen Teams. ``random_draw`` registers individual Players to a pool and
+    # a deterministic tier-balanced draw assembles them into marked 6-player
+    # Teams; roles re-assign dynamically every Round. Meaningful for any
+    # ``format``; the pool/draw/per-Round-roles machinery fires only when
+    # ``team_assembly == "random_draw"``. Create-time only.
+    TEAM_ASSEMBLY_CHOICES = (
+        ("preset", "Preset teams"),
+        ("random_draw", "Random draw player pool"),
+    )
+    team_assembly = models.CharField(
+        max_length=16, choices=TEAM_ASSEMBLY_CHOICES, default="preset"
+    )
+    # LG-02x-1 — how the drawn Teams' role slots are re-assigned each Round.
+    # Meaningful only when ``team_assembly == "random_draw"`` (ignored for
+    # preset). ``random`` shuffles each team's 6 tier-players into the 6 role
+    # slots independently per team per Round; ``per_tier`` draws one
+    # tier->slot bijection per Round applied to BOTH teams. Create-time only.
+    ROLE_ASSIGNMENT_CHOICES = (
+        ("random", "Random per team per Round"),
+        ("per_tier", "Per-tier bijection (both teams)"),
+    )
+    role_assignment_mode = models.CharField(
+        max_length=16, choices=ROLE_ASSIGNMENT_CHOICES, default="random"
+    )
 
     def __str__(self) -> str:
         return self.name
@@ -1928,6 +1954,50 @@ class SeriesMatch(models.Model):
 
     def __str__(self) -> str:
         return f"{self.node} game {self.game_number}"
+
+
+class TournamentPlayerEntry(models.Model):
+    """LG-02x-1 — a Player's registration in a Random-Draw Tournament's pool,
+    AND the durable record of the draw result.
+
+    The source of truth for ``(player, tier, drawn_team)``. A drawn Team's
+    ``slot_*`` FKs hold only the transient per-Round role assignment; the
+    (player, tier, team) truth lives here. ``tier`` is ``null`` after pool
+    intake / before the draw, ``1..6`` after (tier 1 = strongest band).
+    """
+
+    tournament = models.ForeignKey(
+        "matches.Tournament",
+        on_delete=models.CASCADE,
+        related_name="player_entries",
+    )
+    player = models.ForeignKey(
+        "teams.Player",
+        on_delete=models.CASCADE,
+        related_name="tournament_entries",
+    )
+    tier = models.PositiveSmallIntegerField(
+        null=True, blank=True
+    )  # 1..6, null pre-draw
+    drawn_team = models.ForeignKey(
+        "teams.Team",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="drawn_player_entries",
+    )
+
+    class Meta:
+        ordering = ["tournament_id", "tier", "player_id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tournament", "player"],
+                name="uniq_tournament_player_entry",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.tournament.name} :: {self.player.name} (tier {self.tier})"
 
 
 def count_series_wins(series_matches, team_a_id, team_b_id) -> tuple[int, int]:

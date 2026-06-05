@@ -1421,3 +1421,162 @@ class TestPlayNextNodeSwiss(TestCase):
         t.refresh_from_db()
         self.assertEqual(t.state, "completed")
         self.assertEqual(t.champion_id, t.swiss_standings()[0].team_id)
+
+
+# ===========================================================================
+# LG-02x-1 — random_draw routes play_next_node through the role hook
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified — the
+# preset-path engine tests stay green as regression guards). Seam contract:
+# ``.claude/worktrees/lg-02x-1-seam-contract.md`` §4 / §7.
+#
+# ``play_next_node`` branches on ``tournament.team_assembly``: for
+# "random_draw" it builds the role closure via the module-level
+# ``_build_role_hook(tournament)`` and passes it as the
+# ``before_round_hook=`` kwarg into ``simulate_match``; for "preset" it makes
+# the byte-identical no-hook call. We patch ``simulate_match`` to a fake that
+# RECORDS its kwargs (returning a decisive Match so the node resolves) so we can
+# assert WHICH branch ran WITHOUT depending on the (non-deterministic) sim. The
+# tournaments are single-elim (default format) — only ``team_assembly`` differs.
+
+
+def _draw_se_tournament(n: int, *, team_assembly: str, name: str) -> Tournament:
+    """A locked/active single-elim Tournament with the given ``team_assembly``.
+
+    For the engine-branch tests the bracket nodes reference fully-slotted Teams
+    (``make_team_with_slots``) exactly as a preset tournament does; the only
+    field that steers ``play_next_node``'s branch is ``team_assembly``. For the
+    ``random_draw`` case the bracket nodes are marked ``is_draw_team`` Teams so
+    the closure has drawn Teams to read (the closure itself is exercised
+    end-to-end in the simulation-view-path + view tests; here we only assert the
+    branch + the kwarg passed).
+    """
+    t = Tournament.objects.create(name=name, team_assembly=team_assembly)
+    for seed, team in enumerate(_make_teams(n), start=1):
+        if team_assembly == "random_draw":
+            team.is_draw_team = True
+            team.save(update_fields=["is_draw_team"])
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+def _decisive_match(team_red: Team, team_blue: Team) -> Match:
+    """A completed Match red sweeps both rounds (non-null winner, no tie-break)."""
+    return Match.objects.create(
+        team_red=team_red,
+        team_blue=team_blue,
+        match_type="tournament",
+        red_round1_points=500,
+        blue_round1_points=10,
+        red_round2_points=500,
+        blue_round2_points=10,
+        is_completed=True,
+    )
+
+
+class TestPlayNextNodeRandomDrawRoutesHook(TestCase):
+    """A ``random_draw`` Tournament builds + passes the role hook; a ``preset``
+    Tournament's ``simulate_match`` call gets no hook."""
+
+    def test_random_draw_passes_a_before_round_hook(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _draw_se_tournament(4, team_assembly="random_draw", name="DrawHookOn")
+        captured: dict = {}
+
+        def _fake(sim_self, team_red, team_blue, *args, **kwargs):
+            captured["before_round_hook"] = kwargs.get("before_round_hook")
+            return _decisive_match(team_red, team_blue)
+
+        with patch.object(
+            BatchSimulator, "simulate_match", autospec=True, side_effect=_fake
+        ):
+            play_next_node(t)
+
+        self.assertIn("before_round_hook", captured)
+        self.assertIsNotNone(
+            captured["before_round_hook"],
+            "random_draw must pass a non-None before_round_hook",
+        )
+        self.assertTrue(callable(captured["before_round_hook"]))
+
+    def test_random_draw_builds_the_hook_via_build_role_hook(self) -> None:
+        from matches import tournament_engine
+        from matches.tournament_engine import play_next_node
+
+        t = _draw_se_tournament(4, team_assembly="random_draw", name="DrawHookBuild")
+
+        sentinel_calls: list = []
+
+        def _spy_build_role_hook(tournament):
+            sentinel_calls.append(tournament.id)
+
+            def _closure(round_number, team_red, team_blue):
+                return None
+
+            return _closure
+
+        def _fake(sim_self, team_red, team_blue, *args, **kwargs):
+            return _decisive_match(team_red, team_blue)
+
+        with patch.object(tournament_engine, "_build_role_hook", _spy_build_role_hook):
+            with patch.object(
+                BatchSimulator, "simulate_match", autospec=True, side_effect=_fake
+            ):
+                play_next_node(t)
+
+        self.assertEqual(
+            sentinel_calls,
+            [t.id],
+            "_build_role_hook must be called once with the random_draw tournament",
+        )
+
+    def test_preset_passes_no_hook(self) -> None:
+        from matches.tournament_engine import play_next_node
+
+        t = _draw_se_tournament(4, team_assembly="preset", name="PresetNoHook")
+        captured: dict = {}
+
+        def _fake(sim_self, team_red, team_blue, *args, **kwargs):
+            captured["before_round_hook"] = kwargs.get("before_round_hook", "ABSENT")
+            return _decisive_match(team_red, team_blue)
+
+        with patch.object(
+            BatchSimulator, "simulate_match", autospec=True, side_effect=_fake
+        ):
+            play_next_node(t)
+
+        # The preset branch is byte-identical to today: no before_round_hook is
+        # passed (the kwarg is either absent or explicitly None — never a
+        # callable closure).
+        hook = captured.get("before_round_hook", "ABSENT")
+        self.assertIn(
+            hook,
+            ("ABSENT", None),
+            f"preset must not pass a role hook; got {hook!r}",
+        )
+
+    def test_preset_does_not_call_build_role_hook(self) -> None:
+        from matches import tournament_engine
+        from matches.tournament_engine import play_next_node
+
+        t = _draw_se_tournament(4, team_assembly="preset", name="PresetNoBuild")
+        build_calls: list = []
+
+        def _spy_build_role_hook(tournament):
+            build_calls.append(tournament.id)
+            return lambda *a, **k: None
+
+        def _fake(sim_self, team_red, team_blue, *args, **kwargs):
+            return _decisive_match(team_red, team_blue)
+
+        with patch.object(tournament_engine, "_build_role_hook", _spy_build_role_hook):
+            with patch.object(
+                BatchSimulator, "simulate_match", autospec=True, side_effect=_fake
+            ):
+                play_next_node(t)
+
+        self.assertEqual(build_calls, [], "preset must not build a role hook")

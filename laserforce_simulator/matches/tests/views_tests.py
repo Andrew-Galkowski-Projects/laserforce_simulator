@@ -64,6 +64,179 @@ class TestSingleRoundRemoval:
 
 
 @pytest.mark.django_db
+class TestTeamMatchHistoryRoster:
+    """The team history page surfaces a role-breakdown Roster + a Wins/Losses
+    chart derived from PlayerRoundState — so DRAW teams (whose borrowed players
+    keep Player.team = Free Agents and so never appear in team.players) still
+    show a roster.
+    """
+
+    def test_draw_team_roster_built_from_player_round_states(self):
+        from teams.models import Team, Player, get_free_agents_team
+        from matches.models import TournamentPlayerEntry
+
+        # A draw team owns no players directly; the pool lives on Free Agents.
+        draw_team = Team.objects.create(name="Team Turkey So Ez", is_draw_team=True)
+        opponent, _ = make_team_with_slots("Opp")
+        pool = get_free_agents_team()
+        drawn_player = Player.objects.create(team=pool, name="Odin's Fist")
+
+        # Minimal Tournament so the entry FK is satisfiable.
+        from matches.models import Tournament
+
+        tourney = Tournament.objects.create(name="Loveland Random Draw 2026")
+        TournamentPlayerEntry.objects.create(
+            tournament=tourney, player=drawn_player, drawn_team=draw_team
+        )
+
+        # The drawn player plays commander in one round and scout in another,
+        # wearing red both times.
+        gr1 = _make_round(draw_team, opponent, round_number=1)
+        gr2 = _make_round(draw_team, opponent, round_number=2)
+        _make_state(
+            gr1, drawn_player, team_color="red", role="commander", points_scored=8000
+        )
+        _make_state(
+            gr2, drawn_player, team_color="red", role="scout", points_scored=5000
+        )
+
+        client = Client()
+        response = client.get(
+            reverse("team_match_history", kwargs={"team_id": draw_team.id})
+        )
+        assert response.status_code == 200
+
+        roster_rows = response.context["roster_rows"]
+        assert len(roster_rows) == 1
+        row = roster_rows[0]
+        assert row["player"].id == drawn_player.id
+        assert row["games_played"] == 2
+        assert row["is_merc"] is False  # rostered via TournamentPlayerEntry
+
+        # roles list follows role_columns order: commander, heavy, scout, ammo, medic
+        commander_cell, _heavy, scout_cell, _ammo, _medic = row["roles"]
+        assert commander_cell["games"] == 1
+        assert commander_cell["avg_score"] == 8000
+        assert scout_cell["games"] == 1
+        assert scout_cell["avg_score"] == 5000
+
+        body = response.content.decode()
+        assert 'id="roster-table"' in body
+        assert "Odin&#x27;s Fist" in body or "Odin's Fist" in body
+        assert 'id="winloss-chart"' in body
+
+    def test_player_on_opposite_color_not_counted(self):
+        """A PlayerRoundState whose team_color != the team's colour that round
+        belongs to the opponent and must be excluded from the roster."""
+        from teams.models import Player
+
+        team, players = make_team_with_slots("Mine")
+        opponent, _ = make_team_with_slots("Other")
+        ringer = Player.objects.create(team=opponent, name="Ringer")
+
+        gr = _make_round(team, opponent, round_number=1)
+        # team wears red; the ringer plays blue (the opponent's side)
+        _make_state(gr, ringer, team_color="blue", role="commander", points_scored=999)
+
+        client = Client()
+        response = client.get(
+            reverse("team_match_history", kwargs={"team_id": team.id})
+        )
+        assert response.status_code == 200
+        roster_ids = {r["player"].id for r in response.context["roster_rows"]}
+        assert ringer.id not in roster_ids
+
+
+@pytest.mark.django_db
+class TestTeamMatchHistoryScopeFilter:
+    """Overall / Free-form / per-tournament toggles scope the whole page."""
+
+    def _setup(self):
+        from teams.models import Team
+        from matches.models import Tournament, BracketNode, SeriesMatch
+
+        team = Team.objects.create(name="Scoped")
+        opp = Team.objects.create(name="Foe")
+        freeform_match = Match.objects.create(team_red=team, team_blue=opp, winner=team)
+        tourney_match = Match.objects.create(team_red=team, team_blue=opp, winner=opp)
+        tourney = Tournament.objects.create(name="Spring Cup")
+        node = BracketNode.objects.create(
+            tournament=tourney, bracket_round=1, position=0
+        )
+        SeriesMatch.objects.create(node=node, match=tourney_match, game_number=1)
+        return team, freeform_match, tourney_match, tourney
+
+    def test_default_shows_all_scopes_selected(self):
+        team, freeform_match, tourney_match, tourney = self._setup()
+        response = Client().get(
+            reverse("team_match_history", kwargs={"team_id": team.id})
+        )
+        assert response.status_code == 200
+        assert response.context["show_scope_filter"] is True
+        assert response.context["overall_checked"] is True
+        keys = {opt["key"] for opt in response.context["scope_options"]}
+        assert keys == {"freeform", f"t{tourney.id}"}
+        match_ids = {m.id for m in response.context["matches"]}
+        assert match_ids == {freeform_match.id, tourney_match.id}
+
+    def test_freeform_scope_excludes_tournament_match(self):
+        team, freeform_match, tourney_match, tourney = self._setup()
+        response = Client().get(
+            reverse("team_match_history", kwargs={"team_id": team.id}),
+            {"applied": "1", "scope": "freeform"},
+        )
+        match_ids = {m.id for m in response.context["matches"]}
+        assert match_ids == {freeform_match.id}
+        assert response.context["overall_checked"] is False
+
+    def test_single_tournament_scope_excludes_freeform(self):
+        team, freeform_match, tourney_match, tourney = self._setup()
+        response = Client().get(
+            reverse("team_match_history", kwargs={"team_id": team.id}),
+            {"applied": "1", "scope": f"t{tourney.id}"},
+        )
+        match_ids = {m.id for m in response.context["matches"]}
+        assert match_ids == {tourney_match.id}
+
+    def test_all_off_shows_nothing(self):
+        team, freeform_match, tourney_match, tourney = self._setup()
+        response = Client().get(
+            reverse("team_match_history", kwargs={"team_id": team.id}),
+            {"applied": "1"},
+        )
+        assert list(response.context["matches"]) == []
+        assert list(response.context["detailed_rounds"]) == []
+        assert response.context["has_any_games"] is True
+        body = response.content.decode()
+        assert "No games match the current filter" in body
+        assert "No matches played yet" not in body
+
+    def test_genuinely_empty_team_shows_no_history_message(self):
+        from teams.models import Team
+
+        team = Team.objects.create(name="Brand New")
+        response = Client().get(
+            reverse("team_match_history", kwargs={"team_id": team.id})
+        )
+        assert response.context["has_any_games"] is False
+        body = response.content.decode()
+        assert "No matches played yet" in body
+        assert "No games match the current filter" not in body
+
+    def test_no_filter_panel_without_multiple_scopes(self):
+        """A team with only free-form games has a single scope -> no panel."""
+        from teams.models import Team
+
+        team = Team.objects.create(name="Lonely")
+        opp = Team.objects.create(name="Foe2")
+        Match.objects.create(team_red=team, team_blue=opp, winner=team)
+        response = Client().get(
+            reverse("team_match_history", kwargs={"team_id": team.id})
+        )
+        assert response.context["show_scope_filter"] is False
+
+
+@pytest.mark.django_db
 class TestCreateMatchView:
     def test_create_match_same_team_returns_form(self):
         """Submitting the same team for both sides must return the form (200), no Match created."""

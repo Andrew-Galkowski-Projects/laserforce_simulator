@@ -40,6 +40,27 @@
     </div>
 
     <div class="mb-3">
+        <label for="tournament-create-team-assembly" class="form-label">Team assembly</label>
+        <select class="form-select" id="tournament-create-team-assembly" name="team_assembly"
+                onchange="tournamentAssemblyToggle(this.value)">
+            <option value="preset" selected>Preset teams</option>
+            <option value="random_draw">Random draw player pool</option>
+        </select>
+        <div class="form-text">
+            Random draw: register individual players to a pool, then draw
+            tier-balanced teams on the tournament page.
+        </div>
+    </div>
+
+    <div class="mb-3 tournament-create-role-assignment-row" style="display:none">
+        <label for="tournament-create-role-assignment-mode" class="form-label">Role assignment (per Round)</label>
+        <select class="form-select" id="tournament-create-role-assignment-mode" name="role_assignment_mode">
+            <option value="random" selected>Random per team per Round</option>
+            <option value="per_tier">Per-tier bijection (both teams)</option>
+        </select>
+    </div>
+
+    <div class="mb-3">
         <label for="tournament-create-format" class="form-label">Bracket format</label>
         <select class="form-select" id="tournament-create-format" name="format"
                 onchange="tournamentCreateToggle(this.value)">
@@ -132,5 +153,16 @@ function tournamentCreateToggle(value) {
 }
 // Apply the initial state on load (mirrors the default-selected format).
 tournamentCreateToggle(document.getElementById("tournament-create-format").value);
+
+function tournamentAssemblyToggle(value) {
+    "use strict";
+    // The role-assignment-mode select is meaningful only for a random_draw
+    // tournament (roles re-assign every Round). Show it only then.
+    var draw = value === "random_draw";
+    document.querySelectorAll(".tournament-create-role-assignment-row").forEach(function (el) {
+        el.style.display = draw ? "" : "none";
+    });
+}
+tournamentAssemblyToggle(document.getElementById("tournament-create-team-assembly").value);
 </script>
 {% endblock %}

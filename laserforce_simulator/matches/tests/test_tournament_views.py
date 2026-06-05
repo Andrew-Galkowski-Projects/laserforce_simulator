@@ -2370,3 +2370,583 @@ class TestMatchScoreNodeElement(TestCase):
         ).content.decode()
         start = body.index('id="tournament-swiss-standings"')
         self.assertIn("Match Pts", body[start : start + 600])
+
+
+# ===========================================================================
+# LG-02x-1 — Random Draw player-pool Tournament (views)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified). Seam
+# contract: ``.claude/worktrees/lg-02x-1-seam-contract.md`` §5 / §7.
+#
+# Surfaces under test:
+#   - tournament_create: team_assembly + role_assignment_mode selects, POST
+#     persistence, forgiving fallback;
+#   - pool intake (existing / generate / CSV) creates TournamentPlayerEntry rows
+#     on the Free Agents Team; CSV error branch re-renders 200 + zero writes;
+#   - tournament_draw: validates N%6 / N>=24, builds drawn Teams
+#     (is_draw_team=True) + TournamentParticipant + fills tier/drawn_team,
+#     re-roll idempotent, hand-edit mutates one entry;
+#   - lock reached via the existing tournament_lock over the drawn Teams;
+#   - new _detail_context keys + pool/draw DOM ids render.
+#
+# Draw sims are NON-DETERMINISTIC, so these tests assert STRUCTURE (entries,
+# drawn Teams, participants, tiers, DOM, state) — never simulated point totals.
+#
+# Player / TournamentPlayerEntry / get_free_agents_team are imported LAZILY
+# inside methods/helpers so their absence pre-Code-landing isolates the failure
+# to these new classes.
+
+
+def _draw_player_pool(n: int, *, prefix: str = "PoolP") -> list:
+    """Create ``n`` Players on the Free Agents Team with DISTINCT, descending
+    overall ratings (so the rating-DESC tiering is deterministic).
+
+    Returns the list of Players (rating-descending). overall_rating is the mean
+    of the 19 stats; we set every stat to a single per-player value so the mean
+    equals that value and the ordering is unambiguous.
+    """
+    from teams.models import Player, get_free_agents_team
+
+    fa = get_free_agents_team()
+    # 19 stat field names (capital-O Offensive_synergy) — set them all so
+    # overall_rating is a clean, distinct integer per player.
+    stat_fields = [
+        "player_awareness",
+        "game_awareness",
+        "resource_awareness",
+        "decision_making",
+        "positioning",
+        "stamina",
+        "speed",
+        "flexibility",
+        "adaptability",
+        "communication",
+        "teamwork",
+        "Offensive_synergy",
+        "defensive_synergy",
+        "midfield_synergy",
+        "resupply_synergy",
+        "resupply_efficiency",
+        "accuracy",
+        "survival",
+        "special_usage",
+    ]
+    players = []
+    for i in range(n):
+        value = 90 - i  # strictly decreasing, distinct
+        stats = {f: value for f in stat_fields}
+        players.append(Player.objects.create(team=fa, name=f"{prefix}{i}", **stats))
+    return players
+
+
+def _random_draw_tournament(*, name: str) -> Tournament:
+    """A setup-state random_draw RR->DE Tournament with an EMPTY pool."""
+    return Tournament.objects.create(
+        name=name,
+        format="round_robin_double_elim",
+        team_assembly="random_draw",
+        role_assignment_mode="random",
+        wb_advancers=4,
+        lb_advancers=0,
+    )
+
+
+def _pool_entries(tournament, players) -> None:
+    """Register ``players`` as pool entries (tier/drawn_team null) on the
+    tournament — the post-intake, pre-draw state."""
+    from matches.models import TournamentPlayerEntry
+
+    for p in players:
+        TournamentPlayerEntry.objects.create(tournament=tournament, player=p)
+
+
+# ---------------------------------------------------------------------------
+# Create form — team_assembly / role_assignment_mode
+# ---------------------------------------------------------------------------
+
+
+class TestCreateFormTeamAssembly(TestCase):
+    """GET renders the two new selects; POST persists them with a forgiving
+    fallback (preset / random)."""
+
+    def test_get_renders_team_assembly_select(self) -> None:
+        make_team_with_slots("Existing")
+        body = self.client.get(reverse("tournament_create")).content.decode()
+        self.assertIn('id="tournament-create-team-assembly"', body)
+
+    def test_get_renders_role_assignment_mode_select(self) -> None:
+        make_team_with_slots("Existing")
+        body = self.client.get(reverse("tournament_create")).content.decode()
+        self.assertIn('id="tournament-create-role-assignment-mode"', body)
+
+    def test_post_random_draw_persists_team_assembly(self) -> None:
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Draw Cup",
+                "teams": [],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "format": "round_robin_double_elim",
+                "team_assembly": "random_draw",
+                "role_assignment_mode": "per_tier",
+            },
+        )
+        t = Tournament.objects.get(name="Draw Cup")
+        self.assertEqual(t.team_assembly, "random_draw")
+        self.assertEqual(t.role_assignment_mode, "per_tier")
+
+    def test_post_default_is_preset(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Preset Default Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+            },
+        )
+        t = Tournament.objects.get(name="Preset Default Cup")
+        self.assertEqual(t.team_assembly, "preset")
+        self.assertEqual(t.role_assignment_mode, "random")
+
+    def test_post_tampered_team_assembly_falls_back_to_preset(self) -> None:
+        teams = _make_teams(4)
+        self.client.post(
+            reverse("tournament_create"),
+            {
+                "name": "Tampered Assembly Cup",
+                "teams": [str(t.id) for t in teams],
+                "generate_count": "0",
+                "generate_ppt": "6",
+                "team_assembly": "not_a_mode",
+                "role_assignment_mode": "also_bad",
+            },
+        )
+        t = Tournament.objects.get(name="Tampered Assembly Cup")
+        self.assertEqual(t.team_assembly, "preset")
+        self.assertEqual(t.role_assignment_mode, "random")
+
+
+# ---------------------------------------------------------------------------
+# Pool intake — add-existing / generate / CSV
+# ---------------------------------------------------------------------------
+
+
+class TestTournamentPoolAddExisting(TestCase):
+    """POST add-existing creates TournamentPlayerEntry rows for selected
+    Players; setup-only."""
+
+    def test_adds_selected_players_as_entries(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = _random_draw_tournament(name="PoolAddCup")
+        players = _draw_player_pool(6, prefix="AddP")
+        response = self.client.post(
+            reverse("tournament_pool_add_existing", args=[t.id]),
+            {"players": [str(p.id) for p in players]},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(TournamentPlayerEntry.objects.filter(tournament=t).count(), 6)
+
+    def test_entries_have_null_tier_and_drawn_team(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = _random_draw_tournament(name="PoolAddNullCup")
+        players = _draw_player_pool(6, prefix="AddNull")
+        self.client.post(
+            reverse("tournament_pool_add_existing", args=[t.id]),
+            {"players": [str(p.id) for p in players]},
+        )
+        for entry in TournamentPlayerEntry.objects.filter(tournament=t):
+            self.assertIsNone(entry.tier)
+            self.assertIsNone(entry.drawn_team)
+
+    def test_setup_only_guard(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = _random_draw_tournament(name="PoolAddLockedCup")
+        t.state = "active"
+        t.save(update_fields=["state"])
+        players = _draw_player_pool(6, prefix="AddLocked")
+        self.client.post(
+            reverse("tournament_pool_add_existing", args=[t.id]),
+            {"players": [str(p.id) for p in players]},
+        )
+        # Locked ⇒ no entries created.
+        self.assertEqual(TournamentPlayerEntry.objects.filter(tournament=t).count(), 0)
+
+
+class TestTournamentPoolGenerate(TestCase):
+    """POST generate creates N fresh Players on the Free Agents Team + pool
+    entries (real LG-00 generator, no mocks)."""
+
+    def test_generate_creates_entries_on_free_agents_team(self) -> None:
+        from matches.models import TournamentPlayerEntry
+        from teams.models import get_free_agents_team
+
+        t = _random_draw_tournament(name="PoolGenCup")
+        fa = get_free_agents_team()
+        before = fa.players.count()
+        response = self.client.post(
+            reverse("tournament_pool_generate", args=[t.id]),
+            {"count": "6", "mean": "50", "std_dev": "15"},
+        )
+        self.assertEqual(response.status_code, 302)
+        entries = TournamentPlayerEntry.objects.filter(tournament=t)
+        self.assertEqual(entries.count(), 6)
+        # The generated Players live on the Free Agents Team.
+        self.assertEqual(fa.players.count() - before, 6)
+        for entry in entries:
+            self.assertEqual(entry.player.team_id, fa.id)
+
+
+class TestTournamentPoolImport(TestCase):
+    """POST CSV import — each row = one pool Player on the Free Agents Team;
+    error branch re-renders 200 + zero writes."""
+
+    def test_csv_import_creates_one_entry_per_row(self) -> None:
+        from matches.models import TournamentPlayerEntry
+        from teams.models import get_free_agents_team
+
+        t = _random_draw_tournament(name="PoolCsvCup")
+        fa = get_free_agents_team()
+        before_players = fa.players.count()
+        # 6 well-formed rows (the team column is IGNORED for a player pool).
+        rows = _six_role_rows_for("IgnoredTeam", "Csv")
+        response = self.client.post(
+            reverse("tournament_pool_import", args=[t.id]),
+            {"csv_file": _upload(_required_csv(*rows))},
+        )
+        self.assertEqual(response.status_code, 302)
+        entries = TournamentPlayerEntry.objects.filter(tournament=t)
+        self.assertEqual(entries.count(), 6)
+        # Each CSV row became a Player on the Free Agents Team + a pool entry.
+        self.assertEqual(fa.players.count() - before_players, 6)
+        for entry in entries:
+            self.assertEqual(entry.player.team_id, fa.id)
+
+    def test_csv_error_re_renders_200_with_zero_writes(self) -> None:
+        from matches.models import TournamentPlayerEntry
+        from teams.models import Player
+
+        t = _random_draw_tournament(name="PoolCsvErrCup")
+        players_before = Player.objects.count()
+        entries_before = TournamentPlayerEntry.objects.filter(tournament=t).count()
+        # A bad role ("captain") ⇒ parse-level RowError.
+        bad_rows = [_valid_required_row("BadTeam", "X", role="captain")]
+        response = self.client.post(
+            reverse("tournament_pool_import", args=[t.id]),
+            {"csv_file": _upload(_required_csv(*bad_rows))},
+        )
+        # Error branch re-renders the detail page (HTTP 200), zero writes.
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Player.objects.count(), players_before)
+        self.assertEqual(
+            TournamentPlayerEntry.objects.filter(tournament=t).count(),
+            entries_before,
+        )
+
+    def test_csv_setup_only_guard(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = _random_draw_tournament(name="PoolCsvLockedCup")
+        t.state = "active"
+        t.save(update_fields=["state"])
+        rows = _six_role_rows_for("IgnoredTeam", "CsvLocked")
+        self.client.post(
+            reverse("tournament_pool_import", args=[t.id]),
+            {"csv_file": _upload(_required_csv(*rows))},
+        )
+        self.assertEqual(TournamentPlayerEntry.objects.filter(tournament=t).count(), 0)
+
+
+class TestTournamentPoolRemove(TestCase):
+    """POST remove drops a pool entry while in setup."""
+
+    def test_remove_drops_entry(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = _random_draw_tournament(name="PoolRemoveCup")
+        players = _draw_player_pool(6, prefix="Rem")
+        _pool_entries(t, players)
+        victim = players[0]
+        response = self.client.post(
+            reverse("tournament_pool_remove", args=[t.id]),
+            {"player_id": str(victim.id)},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(
+            TournamentPlayerEntry.objects.filter(tournament=t, player=victim).exists()
+        )
+        self.assertEqual(TournamentPlayerEntry.objects.filter(tournament=t).count(), 5)
+
+
+# ---------------------------------------------------------------------------
+# Draw — validation / build / re-roll / hand-edit
+# ---------------------------------------------------------------------------
+
+
+class TestTournamentDrawValidation(TestCase):
+    """tournament_draw rejects N % 6 != 0 and N < 24 with no writes."""
+
+    def test_rejects_non_divisible_by_six(self) -> None:
+        from teams.models import Team
+
+        t = _random_draw_tournament(name="DrawBad6Cup")
+        _pool_entries(t, _draw_player_pool(25, prefix="Bad6"))
+        teams_before = Team.objects.filter(is_draw_team=True).count()
+        response = self.client.post(reverse("tournament_draw", args=[t.id]))
+        # Rejected — redirect (flash), no drawn Teams built.
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Team.objects.filter(is_draw_team=True).count(), teams_before)
+
+    def test_rejects_below_24(self) -> None:
+        from teams.models import Team
+
+        t = _random_draw_tournament(name="DrawBelow24Cup")
+        _pool_entries(t, _draw_player_pool(18, prefix="Below24"))
+        teams_before = Team.objects.filter(is_draw_team=True).count()
+        response = self.client.post(reverse("tournament_draw", args=[t.id]))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Team.objects.filter(is_draw_team=True).count(), teams_before)
+
+
+class TestTournamentDrawBuild(TestCase):
+    """A valid draw builds drawn Teams (is_draw_team=True) + participants and
+    fills each entry's tier/drawn_team."""
+
+    def _drawn(self, n: int = 24, *, name: str = "DrawBuildCup") -> Tournament:
+        t = _random_draw_tournament(name=name)
+        _pool_entries(t, _draw_player_pool(n, prefix=name))
+        self.client.post(reverse("tournament_draw", args=[t.id]))
+        t.refresh_from_db()
+        return t
+
+    def test_builds_n_over_6_drawn_teams(self) -> None:
+        from teams.models import Team
+
+        t = self._drawn(24, name="DrawBuild24")
+        drawn = Team.objects.filter(is_draw_team=True)
+        self.assertEqual(drawn.count(), 4)
+
+    def test_drawn_teams_become_participants(self) -> None:
+        t = self._drawn(30, name="DrawBuild30")
+        self.assertEqual(t.participants.count(), 5)
+        # Every participant Team is a draw team.
+        for p in t.participants.select_related("team"):
+            self.assertTrue(p.team.is_draw_team)
+
+    def test_every_entry_gets_tier_and_drawn_team(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = self._drawn(24, name="DrawBuildFill")
+        entries = TournamentPlayerEntry.objects.filter(tournament=t)
+        self.assertEqual(entries.count(), 24)
+        for entry in entries:
+            self.assertIsNotNone(entry.tier)
+            self.assertIn(entry.tier, range(1, 7))
+            self.assertIsNotNone(entry.drawn_team_id)
+            self.assertTrue(entry.drawn_team.is_draw_team)
+
+    def test_does_not_reassign_player_team(self) -> None:
+        from matches.models import TournamentPlayerEntry
+        from teams.models import get_free_agents_team
+
+        t = self._drawn(24, name="DrawBuildNoReassign")
+        fa = get_free_agents_team()
+        # Drawn Teams reference borrowed Players via slot FKs only; Player.team
+        # stays the Free Agents Team.
+        for entry in TournamentPlayerEntry.objects.filter(tournament=t):
+            self.assertEqual(entry.player.team_id, fa.id)
+
+
+class TestTournamentDrawReroll(TestCase):
+    """A re-roll over the SAME pool reproduces the same (deterministic) split —
+    idempotent; prior drawn Teams + participants are cleaned up first."""
+
+    def test_reroll_is_idempotent_split(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = _random_draw_tournament(name="DrawRerollCup")
+        _pool_entries(t, _draw_player_pool(24, prefix="Reroll"))
+
+        self.client.post(reverse("tournament_draw", args=[t.id]))
+        first = {
+            e.player_id: e.tier
+            for e in TournamentPlayerEntry.objects.filter(tournament=t)
+        }
+
+        # Re-roll: compute_draw is deterministic ⇒ the per-player tier split is
+        # reproduced exactly.
+        self.client.post(reverse("tournament_draw", args=[t.id]))
+        second = {
+            e.player_id: e.tier
+            for e in TournamentPlayerEntry.objects.filter(tournament=t)
+        }
+        self.assertEqual(first, second, "a re-roll reproduces the same tier split")
+
+    def test_reroll_does_not_multiply_drawn_teams(self) -> None:
+        from teams.models import Team
+
+        t = _random_draw_tournament(name="DrawRerollCountCup")
+        _pool_entries(t, _draw_player_pool(24, prefix="RerollCount"))
+        self.client.post(reverse("tournament_draw", args=[t.id]))
+        self.client.post(reverse("tournament_draw", args=[t.id]))
+        # Re-roll cleans up the prior drawn Teams ⇒ still exactly 4.
+        self.assertEqual(Team.objects.filter(is_draw_team=True).count(), 4)
+        t.refresh_from_db()
+        self.assertEqual(t.participants.count(), 4)
+
+
+class TestTournamentDrawEdit(TestCase):
+    """Hand-edit mutates a single entry's tier / drawn_team (the variation
+    mechanism over the deterministic draw)."""
+
+    def test_hand_edit_mutates_one_entry(self) -> None:
+        from matches.models import TournamentPlayerEntry
+
+        t = _random_draw_tournament(name="DrawEditCup")
+        _pool_entries(t, _draw_player_pool(24, prefix="Edit"))
+        self.client.post(reverse("tournament_draw", args=[t.id]))
+
+        # Pick an entry and move it to a different drawn Team (and/or tier).
+        entries = list(TournamentPlayerEntry.objects.filter(tournament=t))
+        victim = entries[0]
+        other_team = next(
+            e.drawn_team for e in entries if e.drawn_team_id != victim.drawn_team_id
+        )
+        new_tier = 6 if victim.tier != 6 else 1
+
+        response = self.client.post(
+            reverse("tournament_draw_edit", args=[t.id]),
+            {
+                "player_id": str(victim.player_id),
+                "tier": str(new_tier),
+                "drawn_team": str(other_team.id),
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        victim.refresh_from_db()
+        self.assertEqual(victim.tier, new_tier)
+        self.assertEqual(victim.drawn_team_id, other_team.id)
+
+
+# ---------------------------------------------------------------------------
+# Lock via the existing tournament_lock over the drawn Teams
+# ---------------------------------------------------------------------------
+
+
+class TestRandomDrawLockReusesTournamentLock(TestCase):
+    """Once drawn, the existing tournament_lock reaches 'active' over the drawn
+    Teams (lock_and_build is unchanged)."""
+
+    def test_lock_after_draw_activates(self) -> None:
+        t = _random_draw_tournament(name="DrawLockCup")
+        _pool_entries(t, _draw_player_pool(24, prefix="Lock"))
+        self.client.post(reverse("tournament_draw", args=[t.id]))
+        response = self.client.post(reverse("tournament_lock", args=[t.id]))
+        self.assertEqual(response.status_code, 302)
+        t.refresh_from_db()
+        self.assertEqual(t.state, "active")
+        # The RR Seeding nodes were built over the 4 drawn Teams.
+        self.assertTrue(t.nodes.filter(bracket_type="round_robin").exists())
+
+
+# ---------------------------------------------------------------------------
+# Detail context + pool/draw DOM ids
+# ---------------------------------------------------------------------------
+
+
+class TestRandomDrawDetailContextAndDom(TestCase):
+    """``_detail_context`` adds the random_draw keys and the detail page renders
+    the pool + draw DOM ids when team_assembly == 'random_draw'."""
+
+    def test_detail_context_has_random_draw_keys(self) -> None:
+        t = _random_draw_tournament(name="DrawCtxCup")
+        _pool_entries(t, _draw_player_pool(6, prefix="Ctx"))
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        ctx = response.context
+        for key in (
+            "team_assembly",
+            "role_assignment_mode",
+            "pool_entries",
+            "pool_size",
+            "is_drawn",
+            "pool_import_form",
+            "pool_import_row_errors",
+        ):
+            self.assertIn(key, ctx, f"missing _detail_context key {key!r}")
+
+    def test_pool_size_reflects_entry_count(self) -> None:
+        t = _random_draw_tournament(name="DrawSizeCup")
+        _pool_entries(t, _draw_player_pool(6, prefix="Size"))
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+        self.assertEqual(response.context["pool_size"], 6)
+
+    def test_is_drawn_false_before_draw_true_after(self) -> None:
+        t = _random_draw_tournament(name="DrawIsDrawnCup")
+        _pool_entries(t, _draw_player_pool(24, prefix="IsDrawn"))
+        before = self.client.get(reverse("tournament_detail", args=[t.id])).context[
+            "is_drawn"
+        ]
+        self.assertFalse(before)
+        self.client.post(reverse("tournament_draw", args=[t.id]))
+        after = self.client.get(reverse("tournament_detail", args=[t.id])).context[
+            "is_drawn"
+        ]
+        self.assertTrue(after)
+
+    def test_pool_section_dom_ids_render(self) -> None:
+        t = _random_draw_tournament(name="DrawPoolDomCup")
+        _pool_entries(t, _draw_player_pool(6, prefix="PoolDom"))
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        for dom_id in (
+            "tournament-pool-section",
+            "tournament-pool-add-existing-form",
+            "tournament-pool-generate-form",
+            "tournament-pool-import-form",
+            "tournament-pool-table",
+            "tournament-pool-size",
+            "tournament-draw-form",
+        ):
+            self.assertIn(f'id="{dom_id}"', body, f"missing pool DOM id {dom_id!r}")
+
+    def test_invalid_pool_notice_when_size_invalid(self) -> None:
+        t = _random_draw_tournament(name="DrawInvalidNoticeCup")
+        _pool_entries(t, _draw_player_pool(6, prefix="Invalid"))  # 6 < 24
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-pool-invalid-notice"', body)
+        # The notice mentions the locked constraints.
+        self.assertIn("at least 24", body)
+
+    def test_draw_table_and_reroll_render_after_draw(self) -> None:
+        t = _random_draw_tournament(name="DrawTableCup")
+        _pool_entries(t, _draw_player_pool(24, prefix="Table"))
+        self.client.post(reverse("tournament_draw", args=[t.id]))
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-draw-table"', body)
+        self.assertIn('id="tournament-draw-reroll-submit"', body)
+        # One section per drawn team.
+        for team in t.participants.all():
+            self.assertIn(
+                f'id="tournament-draw-team-{team.team_id}"',
+                body,
+                "missing per-drawn-team draw-table section",
+            )
+
+    def test_preset_tournament_omits_pool_section(self) -> None:
+        # A preset tournament must NOT render the pool surface.
+        t = _active_tournament(4, name="PresetNoPool")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertNotIn('id="tournament-pool-section"', body)
