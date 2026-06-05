@@ -1,6 +1,13 @@
 from django.contrib import admin
 
-from .models import BracketNode, League, Season, Tournament, TournamentParticipant
+from .models import (
+    BracketNode,
+    League,
+    Season,
+    Tournament,
+    TournamentParticipant,
+    TournamentPlayerEntry,
+)
 
 # Register your models here.
 
@@ -54,3 +61,11 @@ class BracketNodeAdmin(admin.ModelAdmin):
         "is_bye",
         "winner",
     )
+
+
+# LG-02x-1 — Random-Draw player-pool entries.
+
+
+@admin.register(TournamentPlayerEntry)
+class TournamentPlayerEntryAdmin(admin.ModelAdmin):
+    list_display = ("tournament", "player", "tier", "drawn_team")

@@ -1,3 +1,64 @@
+# Web testing — LG-02x-1 (Random Draw player-pool tournament)
+
+Date: 2026-06-04
+Branch: `lg-02x-1-random-draw`
+Scope: smoke-test the new `team_assembly == "random_draw"` flow — the create-form
+`Team assembly` + `Role assignment (per Round)` selects (JS toggle) + the RR→DE
+`wb/lb` combo, the detail-page pool/draw surface (generate a pool, divisibility
+notice, draw, re-roll, lock), and the per-Round dynamic-role hook firing through a
+real `simulate_match` (`Play Next`). Preset tournaments smoke-checked for regression.
+
+## Severity legend
+- 🔴 BLOCKER — broken/500/data loss · 🟠 HIGH — wrong behaviour · 🟡 MED — minor
+  functional gap · 🔵 LOW — cosmetic/a11y · ✅ working flow
+
+## Summary — LG-02x-1 Random Draw
+
+| Area | Result |
+|---|---|
+| Create form: `Team assembly` select (Preset / Random draw); selecting Random draw reveals `Role assignment (per Round)` via JS toggle | ✅ |
+| RR→DE `Bracket format` reveals the `wb/lb` advancers combo (`4 WB, 0 LB` default) | ✅ |
+| Create (random_draw + RR→DE + role mode) → tournament 14, `setup` | ✅ |
+| Detail pool stage: `Player Pool (0)`, divisibility notice, generate/add-existing/CSV-import forms, `Draw teams` **disabled** while pool empty | ✅ |
+| Generate pool (24) → `Player Pool (24)`, 24 entry rows, `Draw teams` **enabled**, invalid-notice gone | ✅ |
+| `Draw teams` → 4 tier-balanced drawn teams (named `Draw Team N`), draw table + per-team sections + **re-roll** + lock buttons | ✅ |
+| `Lock & Build Bracket` → stage badge **"Seeding stage"**, state Active, RR crosstable + standings render | ✅ |
+| **`Play Next` → per-Round dynamic-role hook fires through `simulate_match`**; match recorded (Draw Team 2: 1W/6 match pts), 9 crosstable match links | ✅ |
+| Preset double-elim detail (`/tournaments/7/`) renders, **pool section correctly hidden**, bracket shown — no regression | ✅ |
+| Console errors | ✅ none across create / pool / draw / lock / play-next |
+| Network non-2xx | ✅ none (all document + Bootstrap CDN 200) |
+
+## Findings — LG-02x-1 Random Draw
+
+- 🔴→✅ **RESOLVED (caught by pytest, fixed pre-browser-run):** rendering a
+  `random_draw` tournament's detail page during the **pool stage** (format
+  `round_robin_double_elim`, 0 participants pre-draw) 500'd —
+  `_build_rr_crosstable` called `generate_schedule([])` → `ValueError`. Fixed by an
+  early `if len(team_ids) < 2: return []` guard in
+  `laserforce_simulator/matches/tournament_views.py::_build_rr_crosstable`
+  (the 6 failing `test_tournament_views` tests now pass; full suite green).
+- 🔵 LOW (a11y): the random_draw detail page reports `No label associated with a
+  form field (count: 3)` — the new pool generate/import inputs lack explicit
+  `<label for>`. Cosmetic; not functional. `templates/matches/tournament_detail.html`.
+- 🔵 LOW (UX, by design): the create form permits `team_assembly=random_draw` with
+  ANY `format` (the orthogonal-field decision). A user could pick random_draw +
+  single-elim; the canonical flow is RR→DE. Not a bug — flexibility — but the help
+  text doesn't say RR→DE is the intended bracket.
+- 🔵 LOW (UX): on a random_draw tournament the legacy LG-02a-2 **"Import
+  Participants (CSV)"** team-import surface still renders alongside the new pool
+  intake — redundant for a player-pool tournament (the team-import path expects
+  preset teams). Cosmetic redundancy, harmless.
+
+## Teardown — LG-02x-1
+
+- Test data in the **gitignored dev `db.sqlite3`** (disposable, ADR-0004):
+  Tournament 14 "ChromeTest RandomDraw" + its 24 generated pool Players (on the
+  Free Agents Team) + 4 `Draw Team N` teams (`is_draw_team=True`) +
+  TournamentParticipant/BracketNode/Match rows from the one played match. Not part
+  of the PR. Server to be stopped after testing.
+
+---
+
 # Web testing — LG-02c (Swiss tournaments)
 
 Date: 2026-06-04

@@ -2926,6 +2926,323 @@ for the authoritative list of every name / signature / dict-key / DOM-id / liter
 `advance_swiss_if_round_finished`, the new DOM ids + context keys, the even-N error
 string, and migration `0039_tournament_swiss`).
 
+## LG-02x-1 random draw player-pool tournament
+
+Adds a NEW **orthogonal** `Tournament.team_assembly` mode **`"random_draw"`** (vs the
+default `"preset"`): instead of enrolling existing `Team`s, a **player pool** registers,
+the system runs a **deterministic tier-balanced draw** into marked `is_draw_team`
+Teams, and each game **Round** assigns roles dynamically before it sims. The draw
+Tournament then runs the **shipped LG-02c RR→DE bracket unchanged** —
+`team_assembly` is a SEPARATE field, **NOT a new `format` value**: a Random Draw
+Tournament keeps `format == "round_robin_double_elim"`, so every RR→DE path
+(`lock_and_build`, `_persist_elim_specs`, `round_robin_standings`,
+`build_de_finals_if_rr_finished`, `play_next_node`, `stage_progress`, the detail
+crosstable / cut-labels / DE-finals surfaces) is **byte-unchanged**. Pool intake,
+the draw, the relaxed roster rule, and per-Round dynamic roles **all key off
+`team_assembly == "random_draw"`**. **Non-deterministic** (the role draw consumes a
+fresh `random.Random()`, the per-Match sims draw fresh per-round seeds) ⇒ **no
+SIM-07 / SIM-08 interaction, NO Score Calibration re-baseline** (no simulation
+*mechanics* change — the hook only swaps which Player occupies each role slot before a
+normal round). **NEW [ADR-0022](../../docs/adr/0022-random-draw-player-pool-tournament.md)**
+records the tier-balanced draw + per-Round dynamic roles + relaxed draw-team roster
+ownership; **no new CONTEXT.md term** beyond the already-finalised **Player pool /
+Drawn-team membership / Random Draw / Tier / Role assignment mode** terms (CONTEXT.md
+carries them — do not edit). Duos / Trios + a `TournamentSubGroup` model are
+**DEFERRED to LG-02x-2**. Seam contract:
+[`.claude/worktrees/lg-02x-1-seam-contract.md`](../../.claude/worktrees/lg-02x-1-seam-contract.md).
+
+**Two NEW `Tournament` fields (LOCKED) — `matches/models.py`.**
+**`team_assembly`** (`CharField(max_length=16, choices=TEAM_ASSEMBLY_CHOICES,
+default="preset")`) where `TEAM_ASSEMBLY_CHOICES = (("preset", "Preset teams"),
+("random_draw", "Random draw player pool"))`. **`role_assignment_mode`**
+(`CharField(max_length=16, choices=ROLE_ASSIGNMENT_CHOICES, default="random")`) where
+`ROLE_ASSIGNMENT_CHOICES = (("random", "Random per team per Round"), ("per_tier",
+"Per-tier bijection (both teams)"))`. Both are **create-time only**, declared
+**immediately after** the `wb_advancers` / `lb_advancers` / `swiss_rounds` block and
+**before** `created_at` / `champion`. `team_assembly` default `"preset"` ⇒ every
+existing Tournament is `preset`, byte-unchanged; meaningful for any `format` but the
+pool/draw/per-Round-roles machinery fires **only** when `== "random_draw"`.
+`role_assignment_mode` is **meaningful only when `team_assembly == "random_draw"`**
+(ignored for `preset`).
+
+**NEW model `TournamentPlayerEntry` (LOCKED) — `matches/models.py`, after
+`BracketNode` / `SeriesMatch`.** The durable **pool registration AND draw result** —
+the source of truth for `(player, tier, drawn_team)`. A drawn Team's `slot_*` FKs hold
+only the **transient** per-Round role assignment; the (player, tier, team) truth lives
+here. Fields: `tournament` (FK `matches.Tournament`, **CASCADE**,
+`related_name="player_entries"`), `player` (FK `teams.Player`, **CASCADE**,
+`related_name="tournament_entries"`), `tier`
+(`PositiveSmallIntegerField(null=True, blank=True)` — `null` after pool intake /
+before the draw, `1..6` after, **tier 1 = strongest band**), `drawn_team` (FK
+`teams.Team`, **SET_NULL**, nullable, `related_name="drawn_player_entries"` — a drawn
+Team deleted out of band leaves the entry's tier intact). `Meta.ordering =
+["tournament_id", "tier", "player_id"]` (deterministic tier-ascending, player-id
+tiebreak — matches the draw's tiebreak) and a **`UniqueConstraint(fields=["tournament",
+"player"], name="uniq_tournament_player_entry")`** — the structural guarantee a Player
+cannot sit in two drawn Teams of the **same** Tournament; across **different**
+Tournaments a Player may belong to many drawn Teams (the cross-tournament sharing rule).
+
+**NEW `Team.is_draw_team` field + relaxed `roster_errors` — `teams/models.py`.**
+`is_draw_team = models.BooleanField(default=False)` marks a drawn Team (**NO FK to
+Tournament / Match** — the durable link lives on `TournamentPlayerEntry`, avoiding a
+`teams → matches` dependency inversion). The "all players belong to this team"
+`roster_errors` check is **relaxed for draw teams only** — the existing
+`for player, role, slot_name in filled:` belongs-to-team loop (the
+`player.team_id != self.pk` check) is wrapped in `if not self.is_draw_team:`. **Kept
+unchanged** for draw teams: the all-6-slots-filled check, the duplicate-player check,
+and the role-distribution (Scout-only-twice) check — only the ownership check is
+relaxed. See [`teams/CLAUDE.md`](../teams/CLAUDE.md) `### Team.is_draw_team`.
+
+**NEW pure module `matches/draw.py`.** Tier-balanced draw math + the two
+role-assignment-mode bijection builders — **pure Python, no Django / ORM / I/O /
+logging** (frozen import allowlist: `dataclasses`, `typing`, `random`, `collections`;
+NO `django.*`, NO `datetime`, NO file I/O), defended by `TestNoDjangoImportsLeaked`
+mirroring `matches/bracket.py` / `standings.py` / `schedule_generator.py`. `random`
+is allowlisted because the role-assignment builders consume an **injected**
+`random.Random` (the per-Round role draw); the **draw computation itself consumes NO
+RNG**. Public surface:
+
+- **`ROLE_SLOTS: tuple[str, ...] = ("commander", "heavy", "scout_1", "scout_2",
+  "medic", "ammo")`** — the 6 `Team.slot_*` suffixes, fixed order.
+- **`@dataclass(frozen=True) DrawnTeamPlan`** — `team_index: int` (0-based draw order),
+  `player_ids: tuple[int, ...]` (the 6 player ids, tier 1..6 order),
+  `tiers: tuple[int, ...]` (parallel to `player_ids`, the tier 1..6 of each).
+- **`compute_draw(pool: list[tuple[int, float]]) -> list[DrawnTeamPlan]`** — **STRAIGHT
+  TIERS + GREEDY BALANCE, deterministic, consumes NO RNG.** `pool` is `(player_id,
+  overall_rating)`. Precondition (caller-validated): `len(pool) % 6 == 0` and
+  `len(pool) >= 24` (≥ 4 teams) — raises `ValueError` otherwise. Algorithm: (1) sort
+  by `overall_rating` **DESC**, then `player_id` **ASC** (tiebreak); (2) `T =
+  len(pool) // 6` teams, form **6 contiguous tiers** of `T` players (tier 1 =
+  strongest band = first `T`, …, tier 6 = weakest); (3) for each tier 1..6 in order,
+  assign the strongest-remaining tier player to the **currently-weakest team** (lowest
+  running total rating across already-processed tiers; `team_index` ASC tiebreak),
+  one player per team per tier; (4) return one `DrawnTeamPlan` per team
+  (`team_index` 0..T-1, `player_ids`/`tiers` ordered tier 1..6). **Idempotent** — same
+  pool → identical output (a re-roll is a no-op; **admin hand-edits are the variation
+  mechanism**).
+- **`build_random_role_assignment(tier_player_ids: list[int], rng: random.Random) ->
+  dict[str, int]`** — `random` mode, per TEAM independently: shuffle the team's 6
+  tier-ordered ids into the 6 `ROLE_SLOTS`, returns `{slot_suffix: player_id}` over all
+  6 slots (one rng shuffle).
+- **`build_per_tier_role_assignment(rng: random.Random) -> dict[int, str]`** —
+  `per_tier` mode: draw ONE `{tier (1..6): slot_suffix}` bijection for the Round
+  (one rng shuffle), applied to **BOTH** teams (equal-tier players play the same role);
+  the caller applies it to each team's tier→player map.
+
+**Simulator seam — `BatchSimulator.simulate_match` (`matches/simulation/entrypoints.py`).**
+The signature gains an **additive, keyword-only** `before_round_hook=None`
+(`Optional[Callable[[int, Team, Team], None]]`): `simulate_match(self, team_red,
+team_blue, match_type="friendly", *, arena_map=None, before_round_hook=None) ->
+Match`. Default `None` ⇒ **byte-unchanged** for every existing caller (preset
+tournaments, sandbox, season play). Callable signature **`before_round_hook(round_number:
+int, team_red, team_blue) -> None`** where `round_number` is `1` or `2` and the Teams
+are **as passed into that round's internal `_simulate_and_flush_round` call** (round 2
+receives the swapped order). The hook mutates the drawn Teams' `slot_*` FKs **in
+memory** before the round sims. **Two insertion points:** immediately after
+`match = Match.objects.create(...)` and **before** the round-1
+`_simulate_and_flush_round(team_red, team_blue, ...)` call →
+`if before_round_hook is not None: before_round_hook(1, team_red, team_blue)`; after
+the round-1 column-copy block and **before** the round-2
+`_simulate_and_flush_round(team_blue, team_red, ...)` call →
+`if before_round_hook is not None: before_round_hook(2, team_blue, team_red)`
+(**same `(team_blue, team_red)` order** `simulate_match` uses for round 2). The hook
+fires **once per round** so the 2 Rounds of one Match get **independent** role
+assignments (re-draw every Round); `_simulate_and_flush_round` reads `team.active_roster`
+off the now-mutated `slot_*` FKs, so the in-memory rewrite takes effect for that
+round's sim. **No change to `_simulate_and_flush_round` itself.**
+
+**Engine seam — `play_next_node` draw branch + `_build_role_hook`
+(`matches/tournament_engine.py`).** `play_next_node`'s single
+`BatchSimulator().simulate_match(node.team_a, node.team_b, match_type="tournament")`
+call becomes a `team_assembly`-keyed branch: when `tournament.team_assembly ==
+"random_draw"`, build `hook = _build_role_hook(tournament)` and pass it as
+`before_round_hook=hook`; the `else` branch is **byte-identical** to today (preset path
+unchanged). Every other line of `play_next_node` (per-Match-atomic body, clinch,
+advance, RR / Swiss / RR→DE guards, crown) is **untouched**. The NEW module-level
+helper **`_build_role_hook(tournament) -> Callable`** reads
+`tournament.role_assignment_mode` and returns a closure `(round_number, team_red,
+team_blue)` that: (1) for each of the two drawn Teams loads its
+`TournamentPlayerEntry` rows (`tournament.player_entries.filter(drawn_team=team)`) and
+builds the tier→player_id map; (2) draws a **fresh per-Round RNG** `rng =
+random.Random()` (default OS entropy, fresh every call — tournament sims are
+non-deterministic); (3) **`random` mode:** call `build_random_role_assignment` **per
+team independently**; **`per_tier` mode:** call `build_per_tier_role_assignment`
+**once** and apply that single `{tier: slot}` bijection to BOTH teams' tier→player
+maps; (4) rewrite **both** drawn Teams' `slot_*` FKs **in memory** from the resulting
+`{slot_suffix: player_id}` maps (`team.slot_commander_id` … `team.slot_ammo_id`) —
+**no `.save()`** (transient per-Round assignment; the durable truth is the
+`TournamentPlayerEntry` tier + `drawn_team`). The role draw uses a fresh
+`random.Random()`, **NOT the SIM-07 seed chain** — no SIM-07/08 interaction, no Score
+Calibration re-baseline.
+
+**Views / URLs (`matches/tournament_views.py`, `matches/tournament_urls.py`).** All new
+URL names are **bare** (no `app_name`, mounted at `/tournaments/`).
+
+- **CHANGED — `tournament_create`.** Reads a new POST field **`team_assembly`**
+  (forgiving fallback: only `"preset"` / `"random_draw"`, else `"preset"`) and
+  **`role_assignment_mode`** (only `"random"` / `"per_tier"`, else `"random"`); stamps
+  both via `Tournament.objects.create(...)`. The `format` select is **unchanged** — a
+  `random_draw` Tournament uses `format="round_robin_double_elim"` (the `rrde_combo`
+  wb/lb select is reused verbatim). For `random_draw` **participants are NOT chosen at
+  create time** — the Tournament is created in `setup` with an **empty** pool, filled
+  on the detail page. NEW create-form DOM ids: **`tournament-create-team-assembly`**
+  (the `<select name="team_assembly">`), **`tournament-create-role-assignment-mode`**
+  (the `<select name="role_assignment_mode">`, shown by the existing
+  `tournamentCreateToggle` JS only when `team_assembly == "random_draw"`). Every
+  existing create-form id is unchanged.
+- **NEW — pool intake (three sources), draw, re-roll, hand-edit.** Mirror the
+  LG-02a/a-2 Team-intake at **Player** granularity. All POST, `@transaction.atomic`,
+  **setup-only** (reject with `messages.error` + redirect once `tournament.is_locked`).
+  All create `TournamentPlayerEntry` rows (tier `null`, `drawn_team` `null` until the
+  draw). Generated / CSV Players are created on the Free Agents Team via
+  `teams.models.get_free_agents_team()`.
+
+  | URL name | Path | View fn | What it does |
+  |---|---|---|---|
+  | `tournament_pool_add_existing` | `<id>/pool/add-existing/` | `tournament_pool_add_existing` | Add selected existing `Player`s as pool entries. |
+  | `tournament_pool_generate` | `<id>/pool/generate/` | `tournament_pool_generate` | Generate N fresh Players via the LG-00 pure generator (`draw_stats` / `draw_preferred_roles`) on the Free Agents Team, add as pool entries. |
+  | `tournament_pool_import` | `<id>/pool/import/` | `tournament_pool_import` | CSV import via the LG-00b `RosterImportForm` + `parse_roster_csv`; **each CSV row = one pool Player** (team-grouping IGNORED). |
+  | `tournament_pool_remove` | `<id>/pool/remove/` | `tournament_pool_remove` | Remove a pool entry (by `player_id` / entry id) while in setup. |
+  | `tournament_draw` | `<id>/draw/` | `tournament_draw` | Run / re-roll the draw: validate pool size, build drawn Teams + participants, persist. |
+  | `tournament_draw_edit` | `<id>/draw/edit/` | `tournament_draw_edit` | Admin hand-edit of a drawn entry's `tier` / `drawn_team` (the variation mechanism). |
+
+  Place these adjacent to the other `<int:tournament_id>/…` routes (after
+  `import-participants/`). The existing **`tournament_lock`** view is **reused
+  unchanged** to reach `active`: `lock_and_build()` takes the RR→DE branch over the
+  drawn Teams (now `TournamentParticipant` rows), validating `>= 4` participants as
+  today — **no `lock_and_build` change** (the draw must have produced participants +
+  drawn Teams before lock).
+
+- **CSV-for-a-player-pool reconciliation (`tournament_pool_import`).** The LG-00b /
+  LG-02a-2 `parse_roster_csv` groups rows by team (`ParsedRoster.by_team`); a player
+  pool needs players, not team-grouped rosters. So `tournament_pool_import` calls
+  `parse_roster_csv(decoded_text)` (reuse — header validation, per-row coercion,
+  bundled `RosterImportError`), **ignores `by_team`**, iterates `parsed.rows` (flat
+  CSV-order) and treats **each `ParsedRow` as one pool Player** —
+  `Player.objects.create(team=get_free_agents_team(), name=row.name,
+  preferred_roles=row.preferred_roles, **row.profile, **row.stats)` then a
+  `TournamentPlayerEntry`. The CSV `role` (slot intent) and `team` columns are **NOT
+  used** (slots are per-Round draw assignments; team membership is the pool). Does
+  **NOT** call `_check_db_slot_collisions` / `_apply_roster` (roster-slot helpers
+  irrelevant to a flat pool). Error branch: `transaction.set_rollback(True)` + re-render
+  the detail page (**HTTP 200**) with the bound form + `exc.errors` (mirrors
+  `tournament_import_participants`).
+
+- **`tournament_draw` persistence.** (1) Validate pool: `N =
+  tournament.player_entries.count()`; require `N % 6 == 0` AND `N >= 24` (≥ 4 teams) —
+  else `messages.error` + redirect, **no writes**. (2) Build the `(player_id,
+  overall_rating)` pool list (`entry.player.overall_rating`), call `compute_draw(pool)`
+  (pure). (3) **Re-roll cleanup:** if drawn Teams already exist, delete them
+  (`is_draw_team=True` for this tournament) + their `TournamentParticipant` rows and
+  null the entries' `tier` / `drawn_team` (idempotent — `compute_draw` is
+  deterministic, so a re-roll reproduces the same split; hand-edits are the variation).
+  (4) For each `DrawnTeamPlan`: create `Team.objects.create(name="<Draw Team N>",
+  is_draw_team=True)`, set the 6 `slot_*` FKs from the tier-ordered `player_ids` via an
+  **initial valid no-duplicate assignment** (e.g. tier order → `ROLE_SLOTS` order;
+  satisfies the relaxed `roster_errors`), `team.save()`; create
+  `TournamentParticipant(tournament=tournament, team=team, seed=N+1)` (1-based draw
+  order / RR seed, mirrors LG-02a); fill each member entry's `tier` + `drawn_team`. (5)
+  **Does NOT reassign `Player.team`** — drawn Teams reference borrowed Players via slot
+  FKs only; `PlayerRoundState` references the real Player so career stats stay unified.
+
+- **`_detail_context(tournament)` additions.** Keeps its existing 14 keys verbatim and
+  adds (empty/defaulted for `preset`): **`team_assembly`** (`str`),
+  **`role_assignment_mode`** (`str`), **`pool_entries`**
+  (`list[TournamentPlayerEntry]`, `select_related("player", "drawn_team")`, ordered
+  tier-then-player-id; `[]` for preset), **`pool_size`** (`int`), **`is_drawn`**
+  (`bool` = `tournament.player_entries.filter(drawn_team__isnull=False).exists()`),
+  **`pool_import_form`** (`RosterImportForm()`) and **`pool_import_row_errors`**
+  (`list[RowError]`, default `[]`) — the player-pool CSV intake form + errors (parallel
+  to the existing `import_form` / `import_row_errors`).
+
+**Template (`templates/matches/tournament_detail.html`) — new surface, LOCKED DOM
+ids.** Rendered **only** when `team_assembly == "random_draw"`. Pool intake (setup):
+`tournament-pool-section` (wrapper); `tournament-pool-add-existing-form` / `-select` /
+`-submit`; `tournament-pool-generate-form` / `-count` / `-mean` / `-std-dev` /
+`-submit`; `tournament-pool-import-form` / `-file` / `-submit` / `-template-link` /
+`-errors` + per-row `tournament-pool-import-error-{row_num}-{field|"row"}`;
+`tournament-pool-table` (one row `tournament-pool-entry-{player_id}` each) with
+per-entry `tournament-pool-remove-{player_id}`; `tournament-pool-size` (renders
+`pool_size`); `tournament-pool-invalid-notice` (shown when `pool_size % 6 != 0 or
+pool_size < 24`, carrying the substrings `divisible by 6` / `at least 24`). Draw:
+`tournament-draw-form` / `-submit` (enabled only when pool size valid + setup);
+`tournament-draw-reroll-submit` (re-roll, same endpoint, shown once drawn);
+`tournament-draw-table` (one section `tournament-draw-team-{team_id}` per drawn team,
+one row per member tagged with its `tier`); the hand-edit
+`tournament-draw-edit-form` / per-entry `tournament-draw-edit-{player_id}`. **Reused
+verbatim:** the lock control (`tournament-lock-form` / `-submit`), play controls
+(`tournament-play-next-*` / `tournament-play-all-*`), and the champion banner
+(`tournament-champion-banner`). Once drawn + locked, the Tournament renders the
+existing RR→DE crosstable / cut-labels / DE-finals surfaces over the drawn Teams
+**unchanged**.
+
+**Admin (`matches/admin.py`).** `TournamentPlayerEntry` registered after the existing
+tournament admins — `list_display = ("tournament", "player", "tier", "drawn_team")`.
+The two new `Tournament` fields and `Team.is_draw_team` auto-surface on the existing
+change forms; existing inlines reused; no existing registration touched.
+
+**Migrations (no `RunPython`, no backfill — ADR-0004 disposable-sandbox precedent).**
+**`matches/migrations/0040_tournament_random_draw.py`** (dep `0039_tournament_swiss`
++ the new `teams` migration — cross-app dependency, since
+`TournamentPlayerEntry.drawn_team` and the draw both reference the new `Team` field):
+ops in pinned order — `AddField(Tournament.team_assembly)` →
+`AddField(Tournament.role_assignment_mode)` → `CreateModel(TournamentPlayerEntry)`
+(incl. the `UniqueConstraint` + `Meta.ordering`). **`teams/migrations/00XX_team_is_draw_team.py`**
+(next sequential `teams` number, resolved via `makemigrations teams`): a single
+`AddField(Team.is_draw_team)`.
+
+**Determinism / scope.** **The draw is deterministic** (straight-tiers + greedy
+balance, no RNG — re-roll idempotent; admin hand-edit is the variation mechanism); the
+**per-Round role draw is non-deterministic** (fresh `random.Random()` every Round). The
+per-Match sims stay non-deterministic ⇒ **no SIM-07 / SIM-08 interaction, NO Score
+Calibration re-baseline** (no simulation mechanics change — only which Player occupies
+each role slot). **Players are referenced, not reassigned** — `Player.team` stays put;
+ownership lives on `TournamentPlayerEntry`; a Player may be on draw teams across
+different Tournaments but **never two in the same Tournament** (the
+`unique(tournament, player)` constraint). **Scope-out (DEFERRED to LG-02x-2):** Duos /
+Trios player pairs/triples on 6v6 teams, the `TournamentSubGroup` model, and
+per-subgroup stat tracking — this slice is **single-Player pool only**.
+
+**Tests:** `matches/tests/test_draw.py` (NEW — pure, no DB: `compute_draw`
+straight-tier formation + greedy-balance to the weakest team + deterministic /
+idempotent + rating-DESC / player-id-ASC sort + `ValueError` on `N % 6 != 0` and
+`N < 24` + N=24/30/48 worked cases; `build_random_role_assignment` permutation of all
+6 `ROLE_SLOTS` / one shuffle / no dup; `build_per_tier_role_assignment` `{tier: slot}`
+bijection / one shuffle; `TestNoDjangoImportsLeaked`). `test_tournament_models.py`
+(extend — `team_assembly` / `role_assignment_mode` choices + defaults;
+`TournamentPlayerEntry` create / `unique(tournament, player)` rejection / CASCADE on
+tournament delete / SET_NULL on team delete / `Meta.ordering`). `teams/tests/test_models.py`
+(extend — relaxed roster rule: a draw team with borrowed Players has no "does not
+belong" error, but a duplicate player OR a 3rd non-Scout role **still** errors, and a
+non-draw team with a foreign player **still** errors; `Team.is_draw_team` default +
+persistence). `test_simulation_view_paths.py` (extend — `before_round_hook=None` is
+byte-unchanged; a hook is invoked once per round with `(round_number, team_red,
+team_blue)`, round 2 receiving swapped `(team_blue, team_red)`; a hook rewriting
+`slot_*` FKs changes the roster the round sims against). `test_tournament_engine.py`
+(extend — a `random_draw` Tournament routes `play_next_node` through the hook path; a
+`preset` Tournament's `simulate_match` call is unchanged, no hook). `test_tournament_views.py`
+(extend — create-form selects + POST persistence + fallback; pool intake (existing /
+generate / CSV) creates entries on the Free Agents Team; CSV error branch re-renders
+200 with `exc.errors` and zero writes; `tournament_draw` validates `N % 6` / `N >= 24`,
+builds drawn Teams + participants + fills tier/drawn_team, re-roll idempotent,
+hand-edit mutates a single entry; lock reached via `tournament_lock` over drawn Teams;
+the new `_detail_context` keys + pool/draw DOM ids render). `test_tournament_tasks.py`
+(extend — `play_tournament_task` drains a `random_draw` RR→DE Tournament to a champion
+under `CELERY_TASK_ALWAYS_EAGER`, **non-deterministic** — assert champion stamped +
+`state="completed"`, never exact point totals). Tests assert on pure functions,
+persisted row shapes, constraints, the hook contract, DOM ids — **never** on exact
+simulated point totals.
+
+**Locked names:** see the seam contract
+[`.claude/worktrees/lg-02x-1-seam-contract.md`](../../.claude/worktrees/lg-02x-1-seam-contract.md)
+for the authoritative list of every name / signature / dict-key / DOM-id / literal
+(`team_assembly` / `role_assignment_mode` + choices, `TournamentPlayerEntry`,
+`compute_draw` / `DrawnTeamPlan` / `ROLE_SLOTS` / `build_random_role_assignment` /
+`build_per_tier_role_assignment`, `simulate_match(before_round_hook=...)`,
+`_build_role_hook`, the 7 view fns + URL names, `Team.is_draw_team`, the DOM ids +
+`_detail_context` keys, the N-divisibility rule, and migrations
+`0040_tournament_random_draw` + `teams 00XX_team_is_draw_team`).
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)

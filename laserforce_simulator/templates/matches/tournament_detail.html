@@ -32,6 +32,175 @@
 </div>
 {% endif %}
 
+{# ---- LG-02x-1 Random-Draw player-pool surface ---- #}
+{% if team_assembly == "random_draw" %}
+<div id="tournament-pool-section" class="mb-4">
+    <h2>Player Pool
+        (<span id="tournament-pool-size">{{ pool_size }}</span>)</h2>
+
+    {% if pool_size|divisibleby:6 and pool_size >= 24 %}
+    {% else %}
+    <div class="alert alert-warning" id="tournament-pool-invalid-notice">
+        The pool must be divisible by 6 and have at least 24 players
+        (4+ teams) before you can draw.
+    </div>
+    {% endif %}
+
+    {% if not is_locked %}
+    {# Intake: select existing players #}
+    <div class="card mb-3">
+        <div class="card-header"><strong>Add existing players</strong></div>
+        <div class="card-body">
+            <form method="post" action="{% url 'tournament_pool_add_existing' tournament.id %}"
+                  id="tournament-pool-add-existing-form">
+                {% csrf_token %}
+                <select multiple class="form-select" id="tournament-pool-add-existing-select"
+                        name="players" size="8">
+                    {% for player in all_players %}
+                    <option value="{{ player.id }}">{{ player.name }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-secondary mt-2"
+                        id="tournament-pool-add-existing-submit">Add selected</button>
+            </form>
+        </div>
+    </div>
+
+    {# Intake: generate fresh players (LG-00) #}
+    <div class="card mb-3">
+        <div class="card-header"><strong>Generate players</strong></div>
+        <div class="card-body">
+            <form method="post" action="{% url 'tournament_pool_generate' tournament.id %}"
+                  id="tournament-pool-generate-form" class="row g-2">
+                {% csrf_token %}
+                <div class="col-auto">
+                    <label class="form-label">How many</label>
+                    <input type="number" class="form-control" id="tournament-pool-generate-count"
+                           name="count" min="1" value="24">
+                </div>
+                <div class="col-auto">
+                    <label class="form-label">Mean</label>
+                    <input type="number" class="form-control" id="tournament-pool-generate-mean"
+                           name="mean" min="0" max="100" value="50">
+                </div>
+                <div class="col-auto">
+                    <label class="form-label">Std dev</label>
+                    <input type="number" class="form-control" id="tournament-pool-generate-std-dev"
+                           name="std_dev" min="1" max="40" value="15">
+                </div>
+                <div class="col-auto align-self-end">
+                    <button type="submit" class="btn btn-secondary"
+                            id="tournament-pool-generate-submit">Generate</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {# Intake: CSV import (LG-00b reuse, one row = one pool player) #}
+    <div class="card mb-3">
+        <div class="card-header"><strong>Import players (CSV)</strong></div>
+        <div class="card-body">
+            <form method="post" action="{% url 'tournament_pool_import' tournament.id %}"
+                  enctype="multipart/form-data" id="tournament-pool-import-form">
+                {% csrf_token %}
+                <div class="mb-2">
+                    <span id="tournament-pool-import-file">{{ pool_import_form.csv_file }}</span>
+                    {{ pool_import_form.csv_file.errors }}
+                </div>
+                <button type="submit" class="btn btn-secondary"
+                        id="tournament-pool-import-submit">Import players</button>
+                <a href="{% url 'import_roster_template' %}"
+                   id="tournament-pool-import-template-link" class="ms-2">Download a template CSV</a>
+            </form>
+            {% if pool_import_row_errors %}
+            <ul id="tournament-pool-import-errors" class="alert alert-danger mt-2">
+                {% for err in pool_import_row_errors %}
+                <li id="tournament-pool-import-error-{{ err.row_num }}-{% if err.field %}{{ err.field }}{% else %}row{% endif %}">
+                    Row {{ err.row_num }}{% if err.field %} (field: {{ err.field }}){% endif %}: {{ err.message }}
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# Pool roster table #}
+    <table class="table" id="tournament-pool-table">
+        <thead>
+            <tr><th>Player</th><th>Tier</th><th>Drawn team</th>{% if not is_locked %}<th></th>{% endif %}</tr>
+        </thead>
+        <tbody>
+            {% for entry in pool_entries %}
+            <tr id="tournament-pool-entry-{{ entry.player_id }}">
+                <td>{{ entry.player.name }}</td>
+                <td>{% if entry.tier %}{{ entry.tier }}{% else %}—{% endif %}</td>
+                <td>{% if entry.drawn_team %}{{ entry.drawn_team.name }}{% else %}—{% endif %}</td>
+                {% if not is_locked %}
+                <td>
+                    <form method="post" action="{% url 'tournament_pool_remove' tournament.id %}"
+                          class="d-inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="player_id" value="{{ entry.player_id }}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger"
+                                id="tournament-pool-remove-{{ entry.player_id }}">Remove</button>
+                    </form>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {# Draw / re-roll #}
+    {% if not is_locked %}
+    <form method="post" action="{% url 'tournament_draw' tournament.id %}"
+          id="tournament-draw-form" class="mb-3">
+        {% csrf_token %}
+        {% if is_drawn %}
+        <button type="submit" class="btn btn-warning" id="tournament-draw-reroll-submit"
+                {% if not pool_size|divisibleby:6 or pool_size < 24 %}disabled{% endif %}>Re-roll draw</button>
+        {% else %}
+        <button type="submit" class="btn btn-primary" id="tournament-draw-submit"
+                {% if not pool_size|divisibleby:6 or pool_size < 24 %}disabled{% endif %}>Draw teams</button>
+        {% endif %}
+    </form>
+    {% endif %}
+
+    {# Drawn teams + tiers #}
+    {% if is_drawn %}
+    <h3>Drawn Teams</h3>
+    <div id="tournament-draw-table">
+        {% for participant in participants %}
+        <div class="card mb-2" id="tournament-draw-team-{{ participant.team_id }}">
+            <div class="card-header"><strong>{{ participant.team.name }}</strong></div>
+            <ul class="list-group list-group-flush">
+                {% for entry in pool_entries %}
+                {% if entry.drawn_team_id == participant.team_id %}
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <span>{{ entry.player.name }} <small class="text-muted">tier {{ entry.tier }}</small></span>
+                    {% if not is_locked %}
+                    <form method="post" action="{% url 'tournament_draw_edit' tournament.id %}"
+                          class="d-inline" id="tournament-draw-edit-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="player_id" value="{{ entry.player_id }}">
+                        <input type="number" name="tier" min="1" max="6" value="{{ entry.tier }}"
+                               class="form-control form-control-sm d-inline-block" style="width:5rem"
+                               id="tournament-draw-edit-{{ entry.player_id }}">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary">Set tier</button>
+                    </form>
+                    {% endif %}
+                </li>
+                {% endif %}
+                {% endfor %}
+            </ul>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
 {# ---- Play controls ---- #}
 {% if tournament.state == "setup" %}
 <form method="post" action="{% url 'tournament_lock' tournament.id %}" id="tournament-lock-form" class="mb-3">

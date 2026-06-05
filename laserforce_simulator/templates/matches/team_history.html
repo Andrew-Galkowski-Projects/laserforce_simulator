@@ -9,6 +9,33 @@
     <a href="{% url 'team_detail' team.id %}" class="btn btn-secondary">Back to Team</a>
 </div>
 
+{% if show_scope_filter %}
+<div class="card mb-4" id="scope-filter">
+    <div class="card-body">
+        <form method="get" class="d-flex flex-wrap align-items-center gap-3" id="scope-filter-form">
+            <input type="hidden" name="applied" value="1">
+            <span class="fw-bold me-2">Show:</span>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="checkbox" id="scope-overall"
+                       {% if overall_checked %}checked{% endif %}
+                       onchange="this.form.querySelectorAll('.scope-toggle').forEach(function(c){c.checked=document.getElementById('scope-overall').checked;});this.form.submit();">
+                <label class="form-check-label fw-semibold" for="scope-overall">Overall</label>
+            </div>
+            {% for opt in scope_options %}
+            <div class="form-check form-check-inline">
+                <input class="form-check-input scope-toggle" type="checkbox" name="scope"
+                       value="{{ opt.key }}" id="scope-{{ opt.key }}"
+                       {% if opt.checked %}checked{% endif %}
+                       onchange="this.form.submit();">
+                <label class="form-check-label" for="scope-{{ opt.key }}">{{ opt.label }}</label>
+            </div>
+            {% endfor %}
+            <noscript><button type="submit" class="btn btn-sm btn-primary">Apply</button></noscript>
+        </form>
+    </div>
+</div>
+{% endif %}
+
 <div class="row mb-4">
     <div class="col-md-3">
         <div class="card bg-primary text-white">
@@ -62,47 +89,48 @@
 </div>
 {% endif %}
 
-{% if player_stats %}
+{% if roster_rows %}
 <div class="row mb-4">
     <div class="col-12">
         <div class="card">
             <div class="card-header">
-                <h5 class="mb-0">Player Performance Statistics</h5>
+                <h5 class="mb-0">Roster</h5>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
-                    <table class="table table-striped">
-                        <thead>
+                    <table class="table table-bordered table-sm align-middle" id="roster-table">
+                        <thead class="text-center">
                             <tr>
-                                <th>Player</th>
-                                <th>Role</th>
-                                <th>Games</th>
-                                <th>Total Points</th>
-                                <th>Avg Points</th>
-                                <th>Total Tags</th>
-                                <th>Avg Tags</th>
-                                <th>Deaths</th>
-                                <th>K/D Ratio</th>
+                                <th rowspan="2" class="align-middle">Merc</th>
+                                <th rowspan="2" class="align-middle text-start">Player</th>
+                                <th rowspan="2" class="align-middle">Games<br>Played</th>
+                                {% for col in role_columns %}
+                                <th colspan="3" class="border-start">{{ col }}</th>
+                                {% endfor %}
+                            </tr>
+                            <tr>
+                                {% for col in role_columns %}
+                                <th class="border-start">Games</th>
+                                <th>Avg.<br>MVP</th>
+                                <th>Avg.<br>Score</th>
+                                {% endfor %}
                             </tr>
                         </thead>
                         <tbody>
-                            {% for stat in player_stats %}
+                            {% for row in roster_rows %}
                             <tr>
-                                <td><strong>{{ stat.player.name }}</strong></td>
-                                <td><span class="badge bg-secondary">{{ stat.player.get_role_display }}</span></td>
-                                <td>{{ stat.games_played }}</td>
-                                <td>{{ stat.total_points }}</td>
-                                <td>{{ stat.avg_points|floatformat:1 }}</td>
-                                <td>{{ stat.total_tags }}</td>
-                                <td>{{ stat.avg_tags|floatformat:1 }}</td>
-                                <td>{{ stat.total_deaths }}</td>
-                                <td>
-                                    {% if stat.total_deaths > 0 %}
-                                    {{ stat.total_tags|div:stat.total_deaths|floatformat:2 }}
-                                    {% else %}
-                                    {{ stat.total_tags }}.00
+                                <td class="text-center">
+                                    {% if row.is_merc %}
+                                    <span class="text-warning" title="Mercenary (not a rostered member)">&#9888;</span>
                                     {% endif %}
                                 </td>
+                                <td><a href="{% url 'player_career_stats' row.player.id %}">{{ row.player.name }}</a></td>
+                                <td class="text-center">{{ row.games_played }}</td>
+                                {% for cell in row.roles %}
+                                <td class="text-center border-start{% if not cell.games %} text-muted{% endif %}">{{ cell.games }}</td>
+                                <td class="text-center{% if not cell.games %} text-muted{% endif %}">{% if cell.avg_mvp is not None %}{{ cell.avg_mvp|floatformat:2 }}{% else %}0{% endif %}</td>
+                                <td class="text-center{% if not cell.games %} text-muted{% endif %}">{% if cell.avg_score is not None %}{{ cell.avg_score|floatformat:0 }}{% else %}0{% endif %}</td>
+                                {% endfor %}
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -112,6 +140,60 @@
         </div>
     </div>
 </div>
+{% endif %}
+
+{% if stats.total_matches or stats.total_rounds %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Wins / Losses</h5>
+            </div>
+            <div class="card-body">
+                <div style="max-width: 340px; margin: 0 auto;">
+                    <canvas id="winloss-chart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{{ winloss_chart|json_script:"winloss-data" }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+(function () {
+    const el = document.getElementById("winloss-chart");
+    if (!el) return;
+    const d = JSON.parse(document.getElementById("winloss-data").textContent);
+    new Chart(el, {
+        type: "doughnut",
+        data: {
+            labels: ["Wins", "Losses", "Ties"],
+            datasets: [
+                {
+                    label: "Rounds",
+                    data: [d.round_wins, d.round_losses, d.round_ties],
+                    backgroundColor: ["#2e7d32", "#c62828", "#9e9e9e"],
+                },
+                {
+                    label: "Matches",
+                    data: [d.match_wins, d.match_losses, d.match_ties],
+                    backgroundColor: ["#66bb6a", "#ef5350", "#bdbdbd"],
+                },
+            ],
+        },
+        options: {
+            plugins: {
+                legend: { position: "bottom" },
+                tooltip: {
+                    callbacks: {
+                        title: (items) => items.length ? items[0].dataset.label : "",
+                    },
+                },
+            },
+        },
+    });
+})();
+</script>
 {% endif %}
 
 {% if matches or detailed_rounds %}
@@ -187,6 +269,11 @@
         <p class="text-muted">No single rounds played yet.</p>
         {% endif %}
     </div>
+</div>
+{% elif has_any_games %}
+<div class="text-center py-5">
+    <h3 class="text-muted">No games match the current filter</h3>
+    <p>Toggle <strong>Overall</strong> on (or pick a scope above) to see this team's games.</p>
 </div>
 {% else %}
 <div class="text-center py-5">

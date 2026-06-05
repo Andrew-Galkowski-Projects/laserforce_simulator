@@ -81,6 +81,14 @@ class Team(models.Model):
         "Player", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
 
+    # LG-02x-1 — marks a Team assembled by a Random-Draw Tournament's draw. A
+    # drawn Team references borrowed Players via its slot FKs only (their
+    # ``Player.team`` is never reassigned); ownership lives on
+    # ``TournamentPlayerEntry``. The flag relaxes the "belongs to this team"
+    # roster check below. No FK to Tournament/Match — the durable link lives on
+    # TournamentPlayerEntry (avoids a teams -> matches dependency inversion).
+    is_draw_team = models.BooleanField(default=False)
+
     def __str__(self):
         return self.name
 
@@ -187,10 +195,14 @@ class Team(models.Model):
                         f"{role_display} cannot appear twice (Scout-only rule)"
                     )
 
-        # Check that all players belong to team
-        for player, role, slot_name in filled:
-            if player.team_id != self.pk:
-                errors.append(f"{player.name} does not belong to this team")
+        # Check that all players belong to team — RELAXED for draw teams
+        # (drawn Teams reference borrowed Players via slot FKs; ownership lives
+        # on TournamentPlayerEntry, and Player.team is never reassigned by the
+        # draw).
+        if not self.is_draw_team:
+            for player, role, slot_name in filled:
+                if player.team_id != self.pk:
+                    errors.append(f"{player.name} does not belong to this team")
 
         return errors
 

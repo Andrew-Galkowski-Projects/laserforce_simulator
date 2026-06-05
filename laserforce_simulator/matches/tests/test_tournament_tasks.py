@@ -801,3 +801,141 @@ class TestPlayTournamentTaskSwiss:
         # distinct (bracket_type, bracket_round) stage groups ⇒ total == 2.
         assert payload["completed"] == payload["total"]
         assert payload["total"] == 2
+
+
+# ---------------------------------------------------------------------------
+# LG-02x-1 — Random Draw player-pool RR->DE via the Play Tournament task
+# ---------------------------------------------------------------------------
+#
+# NEW class appended below (existing classes above are NOT modified). Seam
+# contract: ``.claude/worktrees/lg-02x-1-seam-contract.md`` §4 / §7.
+#
+# A ``team_assembly="random_draw"`` Tournament running the existing RR->DE
+# bracket drains to a champion under CELERY_TASK_ALWAYS_EAGER. The per-Round
+# role hook (built by ``_build_role_hook`` and passed through ``simulate_match``)
+# rewrites the drawn Teams' slot FKs each Round — but tournament sims are
+# NON-DETERMINISTIC (fresh per-round seeds + fresh role RNG), so we assert ONLY
+# structure: champion stamped + ``state="completed"``. NEVER exact point totals.
+
+
+def _draw_team_with_entries(tournament, *, prefix: str):
+    """Create one ``is_draw_team`` Team (6 borrowed Players) and the 6
+    ``TournamentPlayerEntry`` rows linking those players to it, one per tier.
+
+    The drawn Team's slot FKs hold an initial valid assignment (tier order ->
+    the 6 role slots); the durable (player, tier, drawn_team) truth lives on the
+    entries, which the role hook reads to rebuild each Round's roster.
+    """
+    from matches.models import TournamentPlayerEntry
+
+    team, players = make_team_with_slots(prefix)
+    team.is_draw_team = True
+    team.save(update_fields=["is_draw_team"])
+    # players maps role keys -> Player; assign each to a distinct tier 1..6.
+    for tier, player in enumerate(
+        [
+            players["commander"],
+            players["heavy"],
+            players["scout"],
+            players["scout_2"],
+            players["medic"],
+            players["ammo"],
+        ],
+        start=1,
+    ):
+        TournamentPlayerEntry.objects.create(
+            tournament=tournament, player=player, tier=tier, drawn_team=team
+        )
+    return team
+
+
+def _active_random_draw_rrde(n_teams: int, *, wb: int, lb: int, name: str, prefix: str):
+    """A locked/active random_draw RR->DE Tournament: ``n_teams`` drawn Teams,
+    each with 6 entries, only the RR Seeding nodes built at lock (DE finals
+    deferred to the last RR node)."""
+    from matches.models import Tournament, TournamentParticipant
+
+    t = Tournament.objects.create(
+        name=name,
+        format="round_robin_double_elim",
+        team_assembly="random_draw",
+        role_assignment_mode="random",
+        wb_advancers=wb,
+        lb_advancers=lb,
+    )
+    for seed in range(1, n_teams + 1):
+        team = _draw_team_with_entries(t, prefix=f"{prefix}{seed}")
+        TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+    t.lock_and_build()
+    t.refresh_from_db()
+    return t
+
+
+@pytest.mark.django_db
+class TestPlayTournamentTaskRandomDraw:
+    """A random_draw RR->DE Tournament drains to a champion via
+    ``play_tournament_task`` under EAGER — structure only, never point totals."""
+
+    def test_random_draw_rrde_plays_to_completion(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_random_draw_rrde(
+            4, wb=4, lb=0, name="TaskDrawRRDE", prefix="TtDraw"
+        )
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        assert (
+            result.state == "SUCCESS"
+        ), f"expected SUCCESS, got {result.state!r}; info={result.info!r}"
+        t.refresh_from_db()
+        assert t.state == "completed"
+        assert t.champion_id is not None
+
+    def test_random_draw_rrde_per_tier_mode_plays_to_completion(self) -> None:
+        # The per_tier role-assignment mode drains identically — same RR->DE
+        # bracket, a different (single bijection) role draw per Round.
+        from matches.models import Tournament, TournamentParticipant
+        from matches.tasks import play_tournament_task
+
+        t = Tournament.objects.create(
+            name="TaskDrawPerTier",
+            format="round_robin_double_elim",
+            team_assembly="random_draw",
+            role_assignment_mode="per_tier",
+            wb_advancers=4,
+            lb_advancers=0,
+        )
+        for seed in range(1, 5):
+            team = _draw_team_with_entries(t, prefix=f"TtPerTier{seed}")
+            TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
+        t.lock_and_build()
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_tournament_task.apply(args=(t.id,))
+
+        assert (
+            result.state == "SUCCESS"
+        ), f"expected SUCCESS, got {result.state!r}; info={result.info!r}"
+        t.refresh_from_db()
+        assert t.state == "completed"
+        assert t.champion_id is not None
+
+    def test_random_draw_rrde_champion_is_a_grand_final_winner(self) -> None:
+        from matches.tasks import play_tournament_task
+
+        t = _active_random_draw_rrde(
+            4, wb=4, lb=0, name="TaskDrawGFChamp", prefix="TtDrawGF"
+        )
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_tournament_task.apply(args=(t.id,))
+
+        t.refresh_from_db()
+        gf_winner_ids = set(
+            t.nodes.filter(
+                bracket_type="grand_final", winner__isnull=False
+            ).values_list("winner_id", flat=True)
+        )
+        assert t.champion_id in gf_winner_ids

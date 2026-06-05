@@ -613,6 +613,7 @@ class BatchSimulator:
         match_type: str = "friendly",
         *,
         arena_map=None,
+        before_round_hook=None,
     ) -> Match:
         """Create a ``Match``, simulate its two rounds in-memory, and
         persist everything to the DB.
@@ -642,6 +643,11 @@ class BatchSimulator:
             team_red=team_red, team_blue=team_blue, match_type=match_type
         )
 
+        # LG-02x-1 — per-Round role re-draw hook (Random-Draw tournaments).
+        # When None (every existing caller), no hook fires — byte-unchanged.
+        if before_round_hook is not None:
+            before_round_hook(1, team_red, team_blue)
+
         # Round 1: canonical sides (team_red plays red, team_blue plays blue).
         round1 = self._simulate_and_flush_round(
             team_red,
@@ -657,6 +663,12 @@ class BatchSimulator:
         match.red_round1_eliminated = round1.red_team_eliminated
         match.blue_round1_eliminated = round1.blue_team_eliminated
         match.round1_eliminated_at = round1.eliminated_at
+
+        # LG-02x-1 — re-draw roles for round 2 (independent of round 1). Pass
+        # the same argument order round 2 uses (team_blue, team_red) so the hook
+        # sees the physical red/blue Teams for this round.
+        if before_round_hook is not None:
+            before_round_hook(2, team_blue, team_red)
 
         # Round 2: per-Match colour swap — the team that was team_blue in
         # round 1 is passed as team_red here, so the stored sides reflect

@@ -275,3 +275,125 @@ class RosterValidationTests(TestCase):
         self.team.slot_ammo = self.ammo
         self.team.save()
         self.assertTrue(self.team.is_valid_roster)
+
+
+# ===========================================================================
+# LG-02x-1 — Team.is_draw_team relaxes the belongs-to-team roster rule
+# ===========================================================================
+#
+# NEW class appended below (existing classes above are NOT modified). Seam
+# contract: ``.claude/worktrees/lg-02x-1-seam-contract.md`` §1b / §1d / §7.
+#
+# A draw team (``is_draw_team=True``) references BORROWED Players via its slot
+# FKs (``player.team_id != team.pk``); ownership lives on
+# ``TournamentPlayerEntry``, and ``Player.team`` is never reassigned by the
+# draw. So a draw team with foreign players has NO "does not belong" error —
+# but the duplicate-player check and the Scout-only role-distribution check
+# STILL apply (only the ownership check is relaxed). A NON-draw team with a
+# foreign player STILL errors (the default behaviour is unchanged).
+#
+# These assertions WILL fail until the Code agent lands the ``is_draw_team``
+# field + the ``if not self.is_draw_team:`` wrap around the belongs-to-team
+# loop in ``Team.roster_errors``.
+
+
+class DrawTeamRosterRelaxationTests(TestCase):
+    """The borrowed-player ownership check is relaxed for ``is_draw_team`` teams
+    only; duplicate + role-distribution checks remain enforced."""
+
+    def setUp(self):
+        # Six Players that belong to a DIFFERENT team — "borrowed" players, as
+        # a drawn Team references them via slot FKs without owning them.
+        self.owner = Team.objects.create(name="Owner Team")
+        self.p_cmd = Player.objects.create(team=self.owner, name="Borrowed Commander")
+        self.p_hvy = Player.objects.create(team=self.owner, name="Borrowed Heavy")
+        self.p_s1 = Player.objects.create(team=self.owner, name="Borrowed Scout 1")
+        self.p_s2 = Player.objects.create(team=self.owner, name="Borrowed Scout 2")
+        self.p_med = Player.objects.create(team=self.owner, name="Borrowed Medic")
+        self.p_ammo = Player.objects.create(team=self.owner, name="Borrowed Ammo")
+
+    def _fill_slots(self, team, *, scout_2=None) -> None:
+        team.slot_commander = self.p_cmd
+        team.slot_heavy = self.p_hvy
+        team.slot_scout_1 = self.p_s1
+        team.slot_scout_2 = scout_2 if scout_2 is not None else self.p_s2
+        team.slot_medic = self.p_med
+        team.slot_ammo = self.p_ammo
+        team.save()
+
+    def test_is_draw_team_defaults_false(self):
+        team = Team.objects.create(name="Default Flag")
+        self.assertFalse(team.is_draw_team)
+
+    def test_is_draw_team_persists(self):
+        team = Team.objects.create(name="Draw Flag", is_draw_team=True)
+        team.refresh_from_db()
+        self.assertTrue(team.is_draw_team)
+
+    def test_draw_team_with_borrowed_players_has_no_belong_error(self):
+        # Every slot player belongs to ``self.owner`` (team_id != draw_team.pk),
+        # yet a draw team produces NO "does not belong" error.
+        draw_team = Team.objects.create(name="Draw Team A", is_draw_team=True)
+        self._fill_slots(draw_team)
+        errors = draw_team.roster_errors
+        self.assertNotIn(
+            "does not belong to this team",
+            " ".join(errors),
+            f"a draw team must not flag borrowed players; got: {errors}",
+        )
+
+    def test_draw_team_with_full_borrowed_roster_is_valid(self):
+        # Relaxation makes a fully-slotted borrowed roster a VALID draw roster.
+        draw_team = Team.objects.create(name="Draw Team Valid", is_draw_team=True)
+        self._fill_slots(draw_team)
+        self.assertEqual(
+            draw_team.roster_errors,
+            [],
+            "a complete borrowed draw roster must have no errors",
+        )
+        self.assertTrue(draw_team.is_valid_roster)
+
+    def test_draw_team_with_duplicate_player_still_errors(self):
+        # The duplicate-player (multiple-slots) check is KEPT for draw teams.
+        draw_team = Team.objects.create(name="Draw Team Dup", is_draw_team=True)
+        # Same borrowed player in both Scout slots.
+        self._fill_slots(draw_team, scout_2=self.p_s1)
+        errors = draw_team.roster_errors
+        self.assertIn(
+            "cannot fill multiple slots",
+            " ".join(errors),
+            f"draw team must still reject a duplicate player; got: {errors}",
+        )
+
+    def test_draw_team_with_third_non_scout_role_still_errors(self):
+        # The Scout-only role-distribution check is KEPT for draw teams: a 3rd
+        # non-Scout role (Commander filling a Scout slot) still errors.
+        draw_team = Team.objects.create(name="Draw Team Role", is_draw_team=True)
+        # Put the borrowed Commander into the scout_2 slot -> the Commander role
+        # would appear in two slots (commander + a scout slot), which is the
+        # non-Scout doubling the distribution check rejects.
+        draw_team.slot_commander = self.p_cmd
+        draw_team.slot_heavy = self.p_hvy
+        draw_team.slot_scout_1 = self.p_s1
+        draw_team.slot_scout_2 = self.p_med  # medic in a scout slot -> non-Scout dup
+        draw_team.slot_medic = self.p_med
+        draw_team.slot_ammo = self.p_ammo
+        draw_team.save()
+        errors = draw_team.roster_errors
+        self.assertIn(
+            "cannot fill multiple slots",
+            " ".join(errors),
+            f"draw team must still enforce Scout-only doubling; got: {errors}",
+        )
+
+    def test_non_draw_team_with_foreign_player_still_errors(self):
+        # The default (is_draw_team=False) behaviour is UNCHANGED: a non-draw
+        # team referencing a foreign player still flags "does not belong".
+        non_draw = Team.objects.create(name="Regular Team")  # is_draw_team False
+        self._fill_slots(non_draw)
+        errors = non_draw.roster_errors
+        self.assertIn(
+            "does not belong to this team",
+            " ".join(errors),
+            f"a non-draw team must still flag foreign players; got: {errors}",
+        )

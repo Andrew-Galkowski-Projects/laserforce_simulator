@@ -44,4 +44,35 @@ urlpatterns = [
         views.tournament_import_participants,
         name="tournament_import_participants",
     ),
+    # LG-02x-1 — Random-Draw player-pool intake, draw, re-roll, hand-edit.
+    path(
+        "<int:tournament_id>/pool/add-existing/",
+        views.tournament_pool_add_existing,
+        name="tournament_pool_add_existing",
+    ),
+    path(
+        "<int:tournament_id>/pool/generate/",
+        views.tournament_pool_generate,
+        name="tournament_pool_generate",
+    ),
+    path(
+        "<int:tournament_id>/pool/import/",
+        views.tournament_pool_import,
+        name="tournament_pool_import",
+    ),
+    path(
+        "<int:tournament_id>/pool/remove/",
+        views.tournament_pool_remove,
+        name="tournament_pool_remove",
+    ),
+    path(
+        "<int:tournament_id>/draw/",
+        views.tournament_draw,
+        name="tournament_draw",
+    ),
+    path(
+        "<int:tournament_id>/draw/edit/",
+        views.tournament_draw_edit,
+        name="tournament_draw_edit",
+    ),
 ]

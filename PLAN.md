@@ -427,15 +427,17 @@ columns → **STAT-PROXY-01**.
 ### LG-02 · Tournament formats
 
 **Status: PARTIAL — Part 1 LG-02a / LG-02a-2 / LG-02b / LG-02b-2 DONE + LG-02c
-(double-elimination + round-robin + RR→DE + Swiss) FULLY DONE; LG-02x NOT STARTED.
-Part 2 NOT STARTED.** LG-02 is a multi-step group; shipping LG-02a, its LG-02a-2
-ergonomics follow-up, the LG-02b best-of-N Series, the LG-02b-2 per-round Series
-escalation, and all four LG-02c bracket formats (double-elimination, round-robin,
-round-robin → double-elimination, and Swiss) does **not** complete it. The sandbox
+(double-elimination + round-robin + RR→DE + Swiss) FULLY DONE + LG-02x-1 (Random Draw
+player pool) DONE; LG-02x-2 (Duos / Trios) NOT STARTED. Part 2 NOT STARTED.** LG-02 is
+a multi-step group; shipping LG-02a, its LG-02a-2 ergonomics follow-up, the LG-02b
+best-of-N Series, the LG-02b-2 per-round Series escalation, all four LG-02c bracket
+formats (double-elimination, round-robin, round-robin → double-elimination, and Swiss),
+and the LG-02x-1 Random Draw player-pool mode does **not** complete it. The sandbox
 single-elimination, double-elimination, round-robin, round-robin→double-elimination,
-and Swiss slices — with CSV participant import and async play-all — are built, but the
-player-pool formats (LG-02x) and the in-League composer (Part 2) remain unstarted; the
-next incomplete LG-02 Part-1 work is LG-02x.
+and Swiss slices — with CSV participant import, async play-all, and the orthogonal
+Random Draw team-assembly mode — are built, but the LG-02x-2 Duos / Trios player-pool
+slice (+ `TournamentSubGroup`) and the in-League composer (Part 2) remain unstarted;
+the next incomplete LG-02 Part-1 work is LG-02x-2.
 
 The **LG-02 grill (2026-06-02)** split this monolith. A Tournament is a
 first-class **persisted, standalone sandbox** object — built and played in the
@@ -696,8 +698,8 @@ tournament completion.
     node reads its own `series_length`, Bo3 clinch at 2, Bo1 unchanged),
     `test_tournament_tasks.py` (migrate the `_active_series_tournament` helper to
     the four-field shape).
-- **LG-02c+ · [DONE — double-elim + round-robin + RR→DE + Swiss all DONE; LG-02x
-  player-pool formats are the next LG-02 Part-1 work] Additional bracket formats.** **Double elimination** (losers get a
+- **LG-02c+ · [DONE — double-elim + round-robin + RR→DE + Swiss all DONE; LG-02x-1
+  Random Draw player pool also DONE, LG-02x-2 Duos / Trios is the next LG-02 Part-1 work] Additional bracket formats.** **Double elimination** (losers get a
   second chance via a losers bracket), **round robin** (all teams play each other,
   used for seeding), **round robin → double elimination** (RR seeding phase feeds a
   DE finals), and **Swiss** (pairings from current standings; rounds
@@ -1007,20 +1009,90 @@ tournament completion.
     ORDER, DOM ids, **never** exact simulated point totals. See
     [ADR-0021](docs/adr/0021-double-elimination-bracket.md) Consequences for the "new
     format = new enum value + reused/new pure seam" precedent this slice extends again.
-- **LG-02x · [NOT STARTED] Player-pool formats (Random Draw / Duos / Trios) — needs
-  its own grill.** Formats with **no pre-set teams**: a pool of individual players
-  registers, then the system assigns teams. **Random Draw** — randomize team
-  assignments once the pool is full, admin reviews/edits, then locks; runs as Round
-  Robin → Double Elimination. **Duos / Trios** — players register as pairs / triples
-  placed on 6v6 teams alongside other groups, with sub-group performance tracked
-  **independently** of the full-team result via a new **`TournamentSubGroup` model**
-  (links players as partners within a specific tournament). *Why deferred (own
-  grill):* these break the LG-02a assumption that participants **are** existing
-  `Team`s — they need a player-pool registration surface, a draw/assignment step
-  with admin review, and the `TournamentSubGroup` model + per-subgroup stat
-  aggregation, none of which the LG-02a Tournament/Participant/BracketNode model
-  covers. Grill the pool-registration + assignment-lifecycle + sub-group-stats
-  domain before building.
+- **LG-02x-1 · [DONE] Random Draw player pool.** A format with **no pre-set teams**:
+  a pool of individual players registers, the system runs a **deterministic
+  tier-balanced draw** into teams, and roles are assigned dynamically each game Round;
+  the drawn teams then play the shipped **Round Robin → Double Elimination** bracket.
+  *Why deferred (own grill):* it breaks the LG-02a assumption that participants **are**
+  existing `Team`s — it needs a player-pool registration surface, a draw/assignment
+  step with admin review, and dynamic per-Round role assignment, none of which the
+  LG-02a Tournament/Participant/BracketNode model covers. The **LG-02x-1 grill
+  (2026-06-04)** superseded the original one-line "randomize team assignments once the
+  pool is full" sketch with the **tier-balanced draw + per-Round dynamic roles** design
+  recorded below, and finalised the CONTEXT.md terms **Player pool / Drawn-team
+  membership / Random Draw / Tier / Role assignment mode**.
+  - completed: shipped the **Random Draw player-pool mode** as a NEW **orthogonal**
+    `Tournament.team_assembly == "random_draw"` axis (vs the default `"preset"`), **NOT
+    a new `format` value** (cite
+    [ADR-0022](docs/adr/0022-random-draw-player-pool-tournament.md); seam
+    [`.claude/worktrees/lg-02x-1-seam-contract.md`](.claude/worktrees/lg-02x-1-seam-contract.md);
+    CONTEXT.md carries the 5 locked terms — not edited). A `random_draw` Tournament
+    keeps `format="round_robin_double_elim"` and runs the **shipped LG-02c RR→DE
+    bracket byte-unchanged** (`lock_and_build`, `_persist_elim_specs`,
+    `round_robin_standings`, `build_de_finals_if_rr_finished`, `play_next_node`,
+    `stage_progress`, the detail crosstable / cut-labels / DE-finals surfaces all
+    untouched); pool intake, the draw, the relaxed roster rule, and per-Round dynamic
+    roles **all key off `team_assembly == "random_draw"`**. **Model:** two new
+    create-time `Tournament` fields — `team_assembly`
+    (`"preset"`/`"random_draw"`, default `"preset"`) and `role_assignment_mode`
+    (`"random"`/`"per_tier"`, default `"random"`, meaningful only for `random_draw`) —
+    plus a NEW **`TournamentPlayerEntry`** model (the durable **pool registration AND
+    draw result**: `tournament` CASCADE / `player` CASCADE / `tier` (1..6 post-draw,
+    null pre-draw) / `drawn_team` SET_NULL, `Meta.ordering = [tournament_id, tier,
+    player_id]`, `unique(tournament, player)` — a Player can be on draw teams across
+    **different** Tournaments but **never two in the same** one), and a new
+    `Team.is_draw_team` boolean (migrations `matches/0040_tournament_random_draw` +
+    `teams/00XX_team_is_draw_team`, cross-app dep, **no `RunPython`/backfill**,
+    ADR-0004 precedent). **Draw** = NEW pure module `matches/draw.py`
+    (`dataclasses`/`typing`/`random`/`collections`-only, `TestNoDjangoImportsLeaked`):
+    `compute_draw(pool)` is **STRAIGHT TIERS + GREEDY BALANCE, deterministic, no RNG**
+    (sort by `overall_rating` DESC / player-id ASC; 6 contiguous Tiers of `T = N/6`,
+    Tier 1 = strongest; strongest-remaining Tier player → currently-weakest team;
+    `ValueError` unless `N % 6 == 0 and N >= 24`), idempotent re-roll, **admin
+    hand-edit is the variation mechanism**; plus `build_random_role_assignment` /
+    `build_per_tier_role_assignment` (injected `random.Random`) over the fixed
+    `ROLE_SLOTS = (commander, heavy, scout_1, scout_2, medic, ammo)`. **Per-Round
+    dynamic roles** via an additive keyword-only `before_round_hook` on
+    `BatchSimulator.simulate_match` (default `None` ⇒ byte-unchanged for every existing
+    caller; fires once per Round, round 2 receiving swapped `(team_blue, team_red)`,
+    rewriting the drawn Teams' `slot_*` FKs **in memory only**) driven by a
+    `team_assembly`-keyed branch in `tournament_engine.play_next_node` +
+    `_build_role_hook(tournament)` (`else` branch byte-identical to today; `random` =
+    each team shuffles independently, `per_tier` = one Tier→slot bijection both sides;
+    fresh `random.Random()` per Round). **Roster relaxation:** `Team.roster_errors`
+    skips the belongs-to-team ownership check for `is_draw_team` Teams (drawn Teams
+    **reference borrowed Players** — `Player.team` is **never reassigned**, so career
+    stats stay unified); the duplicate-player + all-6-slots + role-distribution checks
+    **still fire**. **Views/URLs:** `tournament_create` reads `team_assembly` /
+    `role_assignment_mode` (forgiving fallbacks); 6 new player-pool views/URLs
+    (`tournament_pool_add_existing` / `_generate` / `_import` / `_remove` /
+    `tournament_draw` / `tournament_draw_edit`, all setup-only, `@transaction.atomic`)
+    mirroring LG-02a/a-2 intake at **Player** granularity — existing-select, LG-00
+    generate, and LG-00b CSV (`parse_roster_csv` reused, `by_team` grouping **ignored**,
+    each row = one pool Player on the Free Agents Team) — plus `_detail_context`
+    additions (`pool_entries` / `pool_size` / `is_drawn` / `pool_import_form` / …); the
+    existing `tournament_lock` reaches `active` over the drawn Teams **unchanged**. New
+    detail-page pool/draw surface (DOM ids `tournament-pool-*` / `tournament-draw-*`),
+    rendered only for `random_draw`. **Non-deterministic** (the per-Round role draw +
+    the per-Match sims use fresh RNG) ⇒ **no SIM-07/SIM-08 interaction, NO Score
+    Calibration re-baseline** (no simulation mechanics change — only which Player
+    occupies each role slot). Tests: NEW `matches/tests/test_draw.py` (pure) + extensions
+    to `test_tournament_models.py` / `test_tournament_views.py` / `test_tournament_engine.py`
+    / `test_tournament_tasks.py` / `test_simulation_view_paths.py` / `teams/tests/test_models.py`
+    (assert pure functions, persisted row/constraint shapes, the hook contract, the
+    relaxed-roster rule, DOM ids — **never** exact simulated point totals).
+- **LG-02x-2 · [NOT STARTED] Duos / Trios (+ `TournamentSubGroup`) — needs its own
+  grill.** The second player-pool slice, deferred from LG-02x-1. **Duos / Trios** —
+  players register as **pairs / triples** placed on 6v6 teams alongside other groups,
+  with sub-group performance tracked **independently** of the full-team result via a
+  new **`TournamentSubGroup` model** (links players as partners within a specific
+  tournament) + **per-subgroup stat aggregation**. *Why deferred:* LG-02x-1 shipped the
+  single-Player pool (intake + tier-balanced draw + per-Round roles) as the foundation;
+  Duos / Trios add a fundamentally different unit — a *bonded sub-group* that must be
+  kept together by the draw and have its own stat rollup — which the LG-02x-1
+  `TournamentPlayerEntry` (one row per *individual* Player) does not model. Grill the
+  sub-group registration + group-aware draw + per-subgroup-stats domain before building;
+  it composes the LG-02x-1 draw model rather than replacing it.
 
 #### Part 2 · In-League composable season structure
 
