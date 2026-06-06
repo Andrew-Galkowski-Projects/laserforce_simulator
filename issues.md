@@ -1,3 +1,45 @@
+# Web testing — LG-02-Part2c-1 (RR → single-elimination playoff embed)
+
+Date: 2026-06-05
+Branch: `lg-02-part2c-1-rr-playoff-embed`
+Scope: black-box pass over the new league/season dashboard playoff controls — the
+phase cursor, the conditional "Until Playoffs" relabel, the auto-built
+standings-seeded playoff bracket, "Play Single Round" / "Play Playoffs" / "View
+bracket", plus a regression smoke of the non-tournament dashboard path. Exercised
+end-to-end: created an RR→Tournament League via the composer, started + drained the
+RR (sync One Week), confirmed the auto-build, and advanced one playoff match.
+
+## Severity legend
+- 🔴 BLOCKER — broken/500/data loss · 🟠 HIGH — wrong behaviour · 🟡 MED — minor
+  functional gap · 🔵 LOW — cosmetic/a11y · ✅ working flow
+
+## Summary — LG-02-Part2c-1
+| Area | Result |
+|---|---|
+| Homepage + existing **single-RR** active league dashboard (`/leagues/22/`) render; "Play Next" only, **no** playoff buttons, label stays "Until End of Season" (no tournament phase) — non-tournament path not regressed | ✅ |
+| `/leagues/create/` composer accepts an RR→**Tournament** composition (preceding-RR guard passes since RR is first); creates League 28 / Season 27 | ✅ |
+| Draft + active RR-phase season dashboard (`/seasons/27/`) render, console + network clean | ✅ |
+| Play-Next dropdown shows **"Play Until Playoffs"** (conditional relabel fires because a tournament phase follows) | ✅ |
+| Draining the RR to 12/12 (sync `play_week`) auto-builds the playoff Tournament (id 15) on RR completion — no manual build click | ✅ |
+| Bracket `/tournaments/15/` renders **Active**, **seeded by final RR Standings** ([1] Ember Enforcers = rank-1 9pts, 1v4 / 2v3 single-elim) | ✅ |
+| Tournament-phase season dashboard renders all 6 playoff DOM ids (`season-dashboard-play-single-round-form`/`-submit`, `-play-playoffs-form`/`-submit`/`-progress`, `-view-bracket-link`); View-bracket → `/tournaments/15/` | ✅ |
+| **"Play Single Round"** (sync) advances **exactly one** node — [1] Ember beat [4] Aurora 6–0, advanced to the final; 2v3 stays unplayed; 302 back to dashboard | ✅ |
+| Console clean on every page; network all 2xx/3xx (no favicon hit observed) | ✅ |
+
+## Findings — LG-02-Part2c-1
+- 🔵 LOW (a11y, **pre-existing**, NOT Part2c-1) — `/leagues/create/` logs one console
+  `[issue] No label associated with a form field (count: 1)`. Present on the LG-01j/Part2b
+  create form independent of this slice (Part2c-1 added no fields to that form). Out of scope;
+  left logged.
+- ℹ️ "Play Playoffs" (async Celery `play_playoffs_task`) was **not exercised in-browser** —
+  the smoke env has no Redis broker / Celery worker, so the `.delay()` enqueue + 1s poll
+  would spin. Its drain→champion→Season-completion path is covered by the EAGER integration
+  test `matches/tests/test_season_playoffs.py::TestPlayPlayoffsTask`. Button + form + progress
+  DOM ids all render correctly.
+- ✅ No new bugs. All touched surfaces render and behave per the seam contract.
+
+---
+
 # Web testing — LG-02-Part2b (create-League phase composer + dormant phase columns)
 
 Date: 2026-06-05

@@ -984,19 +984,176 @@ class Season(models.Model):
     def complete_if_finished(self) -> None:
         """active -> completed (idempotent).
 
-        No-op if ``self.state != "active"``. Builds the deterministic
-        fixture list via ``generate_schedule`` and compares against
-        persisted ``GameRound``s (Side-agnostic match on
-        ``frozenset({team_red_id, team_blue_id})`` + ``round_number``).
-        When every fixture has a matching played Round, flips
-        ``state="completed"`` and stamps ``champion_team`` to the
-        rank-1 row of ``compute_standings``.
+        LG-02-Part2c-1 — REWRITTEN to gate on the FINAL phase (last
+        ordinal) being complete, then stamp the champion from that
+        phase's type. No-op if ``self.state != "active"``.
+
+        For a single-RR-phase Season (explicit or the implicit
+        ``pk is None`` fallback), the final phase IS that RR phase,
+        ``_phase_complete(final_phase) == _is_finished()``, and the
+        champion is stamped from ``compute_standings(...)[0]`` — the
+        same state flip + same ``champion_team`` id as before this slice.
         """
         if self.state != "active":
             return
-        if not self._is_finished():
+        phases = self.ordered_phases()
+        final_phase = phases[-1]
+        if not self._phase_complete(final_phase):
             return
-        self._stamp_champion()
+        self._stamp_champion_for_final_phase(final_phase)
+
+    # ------------------------------------------------------------------
+    # LG-02-Part2c-1 — phase cursor + tournament-embed lifecycle
+    # ------------------------------------------------------------------
+
+    def current_phase(self) -> "SeasonPhase | None":
+        """Return the first INCOMPLETE phase by ordinal, or ``None``.
+
+        Pure read-derivation (no DB write, no RNG). A phase-less /
+        single-RR-phase Season returns its (implicit or explicit)
+        ``round_robin`` phase while the RR is unfinished, then ``None``
+        once finished — exactly mirroring "the Season is done when all
+        fixtures are played".
+        """
+        for phase in self.ordered_phases():
+            if not self._phase_complete(phase):
+                return phase
+        return None
+
+    def _phase_complete(self, phase: "SeasonPhase") -> bool:
+        """Private phase-completion helper — the single derivation site.
+
+        Lives on ``Season`` (NOT ``SeasonPhase``) so it can reach
+        ``scheduled_fixtures()`` / ``_is_finished()`` without a
+        back-reference dance.
+
+        * ``round_robin`` ⇒ ``_is_finished()`` (the existing
+          all-fixtures-played check; byte-identical to today for the
+          one-RR-phase case).
+        * ``tournament`` ⇒ built (``tournament_id is not None``) AND
+          ``tournament.state == "completed"``.
+        * any other (inert this slice) ⇒ ``False`` (the cursor parks on
+          it; the compose guard forbids composing one, so unreachable).
+        """
+        if phase.phase_type == "round_robin":
+            return self._is_finished()
+        if phase.phase_type == "tournament":
+            return (
+                phase.tournament_id is not None
+                and phase.tournament.state == "completed"
+            )
+        return False
+
+    def _preceding_phase(self, phase: "SeasonPhase") -> "SeasonPhase | None":
+        """Return the phase one ordinal lower than ``phase``, or ``None``."""
+        prior = None
+        for candidate in self.ordered_phases():
+            if candidate.ordinal == phase.ordinal:
+                return prior
+            prior = candidate
+        return None
+
+    def _final_standings_for_phase(self, phase) -> "list[StandingsRow]":
+        """Assemble the exact ``compute_standings`` inputs ``_stamp_champion``
+        used, so the playoff seeding rank == the single-RR-phase champion
+        order.
+
+        Input shape (byte-for-byte the old ``_stamp_champion`` assembly):
+        8-key match dicts (no ``date_played``), ``enrolled_teams`` from
+        ``starting_team_ids_json``, ``season_rounds`` omitted. The ``phase``
+        argument is carried for forward compatibility (per-phase Match
+        scoping is deferred); all season Matches are RR Matches this slice
+        (tournament Matches stay ``season=NULL``), so they never pollute
+        the query.
+        """
+        from .standings import compute_standings
+
+        team_ids = self.starting_team_ids_json or []
+        matches_qs = Match.objects.filter(season=self, is_completed=True)
+        completed_matches: list[dict] = []
+        for match in matches_qs:
+            completed_matches.append(
+                {
+                    "match_id": match.id,
+                    "team_red_id": match.team_red_id,
+                    "team_blue_id": match.team_blue_id,
+                    "winner_team_id": match.winner_id,
+                    "red_rounds_won": match.red_rounds_won,
+                    "blue_rounds_won": match.blue_rounds_won,
+                    "red_total_points": match.red_total_points,
+                    "blue_total_points": match.blue_total_points,
+                }
+            )
+        enrolled_teams = list(
+            Team.objects.filter(id__in=team_ids).values_list("id", "name")
+        )
+        return compute_standings(completed_matches, enrolled_teams)
+
+    @transaction.atomic
+    def activate_pending_tournament_phase(self) -> None:
+        """Auto-build the standings-seeded playoff bracket on RR completion.
+
+        Idempotent no-op unless the cursor is on an unbuilt, persisted
+        ``tournament`` phase whose preceding phase is complete. Builds a
+        single-elimination ``Tournament`` seeded by the preceding phase's
+        final standings (rank 1 → seed 1), wires it onto the phase, then
+        ``lock_and_build()``s the bracket so matchups are visible
+        immediately.
+        """
+        phase = self.current_phase()
+        if phase is None:
+            return
+        if phase.phase_type != "tournament":
+            return
+        if phase.tournament_id is not None:
+            return
+        if phase.pk is None:
+            return
+        prior = self._preceding_phase(phase)
+        if prior is None or not self._phase_complete(prior):
+            return
+        rows = self._final_standings_for_phase(prior)
+        if not rows:
+            return
+        tournament = Tournament.objects.create(
+            name=f"{self.name} Playoffs",
+            format="single_elimination",
+            team_assembly="preset",
+            state="setup",
+        )
+        for row in rows:
+            TournamentParticipant.objects.create(
+                tournament=tournament,
+                team_id=row.team_id,
+                seed=row.rank,
+            )
+        phase.tournament = tournament
+        phase.save(update_fields=["tournament"])
+        tournament.lock_and_build()
+
+    def _stamp_champion_for_final_phase(self, final_phase) -> None:
+        """Stamp the Season champion from the FINAL phase's type.
+
+        Tournament final phase ⇒ ``phase.tournament.champion`` (defensive
+        ``None`` guard never blocks in practice — the engine stamps the
+        champion together with ``state="completed"``). Round-robin (or the
+        implicit fallback) final phase ⇒ ``compute_standings(...)[0]`` — the
+        same logic the old ``_stamp_champion`` carried.
+        """
+        if final_phase.phase_type == "tournament":
+            champion = final_phase.tournament.champion
+            if champion is None:
+                return
+            self.state = "completed"
+            self.champion_team = champion
+            self.save()
+            return
+        rows = self._final_standings_for_phase(final_phase)
+        if not rows:
+            return
+        self.state = "completed"
+        self.champion_team = Team.objects.get(pk=rows[0].team_id)
+        self.save()
 
     def _is_finished(self) -> bool:
         """True iff every fixture in this Season has a persisted GameRound.
@@ -1095,44 +1252,6 @@ class Season(models.Model):
             return []
 
         return generate_schedule(team_ids, self.schedule_format)
-
-    def _stamp_champion(self) -> None:
-        """Flip ``state="completed"`` and stamp ``champion_team``.
-
-        Computes Standings via ``compute_standings`` over the Season's
-        completed Matches (the 8-key dict shape that mirrors what
-        ``season_standings`` view builds) and writes the rank-1 row's
-        team as the Season champion. No-op if Standings is empty
-        (defensive; the caller — ``complete_if_finished`` — should have
-        already verified fixtures are all played).
-        """
-        from .standings import compute_standings
-
-        team_ids = self.starting_team_ids_json or []
-        matches_qs = Match.objects.filter(season=self, is_completed=True)
-        completed_matches: list[dict] = []
-        for match in matches_qs:
-            completed_matches.append(
-                {
-                    "match_id": match.id,
-                    "team_red_id": match.team_red_id,
-                    "team_blue_id": match.team_blue_id,
-                    "winner_team_id": match.winner_id,
-                    "red_rounds_won": match.red_rounds_won,
-                    "blue_rounds_won": match.blue_rounds_won,
-                    "red_total_points": match.red_total_points,
-                    "blue_total_points": match.blue_total_points,
-                }
-            )
-        enrolled_teams = list(
-            Team.objects.filter(id__in=team_ids).values_list("id", "name")
-        )
-        rows = compute_standings(completed_matches, enrolled_teams)
-        if not rows:
-            return
-        self.state = "completed"
-        self.champion_team = Team.objects.get(pk=rows[0].team_id)
-        self.save()
 
 
 class SeasonPhase(models.Model):

@@ -53,6 +53,10 @@ def parse_phase_composition(
     (``"member_night"`` is NOT selectable in Part2b — it raises
     unknown-type).
 
+    LG-02-Part2c-1 — after the zero-RR check, a ``tournament`` phase that
+    precedes the first ``round_robin`` phase raises
+    ``"a tournament phase requires a preceding round-robin phase"``.
+
     Raises plain :class:`ValueError` with the locked message strings.
     """
     if not raw.strip():
@@ -85,5 +89,15 @@ def parse_phase_composition(
 
     if not any(spec.phase_type == "round_robin" for spec in specs):
         raise ValueError("composition must contain at least one round-robin phase")
+
+    # LG-02-Part2c-1 — a tournament phase must follow a round-robin phase.
+    seen_round_robin = False
+    for spec in specs:
+        if spec.phase_type == "round_robin":
+            seen_round_robin = True
+        elif spec.phase_type == "tournament" and not seen_round_robin:
+            raise ValueError(
+                "a tournament phase requires a preceding round-robin phase"
+            )
 
     return specs

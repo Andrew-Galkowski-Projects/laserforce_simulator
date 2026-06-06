@@ -9,7 +9,7 @@ Story IDs from `sm5_user_stories_v2.html` are referenced where applicable.
 
 ### LG-02 · Tournament formats
 
-**Status: PART 1 sandbox formats all DONE; LG-02x-2 (Duos / Trios) deferred; Part 2 foundation (Part2a) DONE; Part2b (create-League composer + dormant phase columns) DONE; Part2c NOT STARTED.**
+**Status: PART 1 sandbox formats all DONE; LG-02x-2 (Duos / Trios) deferred; Part 2 foundation (Part2a) DONE; Part2b (create-League composer + dormant phase columns) DONE; Part2c-1 (RR → single-elimination playoff embed) DONE; Part2c-2 (multi-RR play loop + Match FK + per-phase format/seeding + non-single-elim embeds) NOT STARTED.**
 Single-elimination (LG-02a), bulk intake + async play-all (LG-02a-2), best-of-N
 Series (LG-02b), per-round Series escalation (LG-02b-2), double-elimination /
 round-robin / RR→DE / Swiss (LG-02c+), and the Random Draw player pool
@@ -20,8 +20,11 @@ player-pool slice (+ `TournamentSubGroup`) is parked at the end of this plan (se
 is now sliced into **Part2a** (the `SeasonPhase` model + backward-compatible
 read-path retrofit — **DONE**), **Part2b** (the League-create composer UI +
 the dormant per-phase `schedule_format` + `SeasonPhase → Tournament` columns —
-**DONE**) and **Part2c** (the heterogeneous multi-phase play loop + tournament
-embed — NOT STARTED). The **LG-02-Part2 grill
+**DONE**), and **Part2c** (the heterogeneous multi-phase play loop + tournament
+embed), itself re-sliced into **Part2c-1** (the RR → single-elimination playoff
+embed — **DONE**) and **Part2c-2** (the deferred remainder: multi-RR play loop +
+`Match.season_phase` FK + per-phase format/seeding + non-single-elim embeds —
+NOT STARTED). The **LG-02-Part2 grill
 (2026-06-04)** resolved that LG-02-Part2 **IS** the **LG-06** phased-lifecycle
 model (off-season / regular / tournament = phase types) — see
 [ADR-0023](docs/adr/0023-season-phase-composable-structure.md).
@@ -135,35 +138,107 @@ into Part2a (done) → Part2b → Part2c:
   `matches/tests/test_phase_composer.py` (NEW) + extensions to
   `test_season_phase.py` / `test_league_create.py` / `test_league_next_season.py`.
 
-- **LG-02-Part2c · [NOT STARTED] Heterogeneous multi-phase play loop +
-  tournament embed.** Generalises `Season.scheduled_fixtures()` / the play loop
-  from "exactly one `round_robin` phase" (the Part2b read-path plays the **first**
-  `round_robin` phase only) to **iterating the Season's ordered phases** —
-  cross-phase matchday offsetting, per-phase standings scoping, and a
-  `tournament` phase that **lazily builds + seeds its `Tournament`** on
-  activation (reusing the LG-02a–c RR→DE deferred-build / bracket engine
-  verbatim), advances it, and hands off to the next phase. This is where the
-  **LG-01d "Until end of season" → "Until playoffs"** relabel lands, and where
-  the play loop extends through tournament completion. The `member_night` phase
-  type stays inert (see its own PLAN item below).
+- **LG-02-Part2c-1 · [DONE] RR → single-elimination playoff embed.** The first
+  slice of Part2c — a thin orchestration layer that takes a Season composed of an
+  ordered `round_robin` phase then a `tournament` phase, plays the regular season,
+  **auto-builds** a standings-seeded single-elimination playoff bracket the moment
+  the RR phase completes (matchups visible **before** any playoff click), then
+  drains the bracket to crown the **Season champion**. Replaces Part2b's
+  "play the first `round_robin` phase only" read-path with a **phase cursor** +
+  two **lifecycle hooks** on `Season`. **Cursor / completion:**
+  `Season.current_phase() -> SeasonPhase | None` returns the first INCOMPLETE
+  phase by ordinal (`None` when all complete); completion is **derived**, not
+  stored (no `SeasonPhase.state`) via the private `Season._phase_complete(phase)`
+  — RR ⇔ the existing `_is_finished()` all-fixtures-played check, tournament ⇔
+  `phase.tournament_id is not None AND phase.tournament.state == "completed"`.
+  **Auto-build:** `Season.activate_pending_tournament_phase()`
+  (`@transaction.atomic`, idempotent) fires when the cursor reaches an unbuilt
+  `tournament` phase whose preceding RR phase is complete — it creates a
+  `Tournament(format="single_elimination", team_assembly="preset", state="setup",
+  name=f"{season.name} Playoffs")`, seeds **one `TournamentParticipant` per season
+  team from the preceding phase's Standings** (`seed = StandingsRow.rank`, rank 1 →
+  seed 1), wires `phase.tournament`, and calls `tournament.lock_and_build()`
+  (setup → active; bracket built). **Completion rewrite:**
+  `Season.complete_if_finished()` (REWRITTEN, `@transaction.atomic`) now gates on
+  the **FINAL phase** (last ordinal) being complete and stamps the champion from
+  that phase's type — `phase.tournament.champion` for a tournament final,
+  `compute_standings(...)[0]` for an RR final (via
+  `_stamp_champion_for_final_phase`, which supersedes the removed `_stamp_champion`);
+  a single-RR-phase Season (and the implicit phase-less fallback) stays
+  **byte-identical** to today. **Post-round hook:**
+  `simulate_scheduled_round` calls `season.activate_pending_tournament_phase()`
+  **then** `season.complete_if_finished()` after persistence in both the Round-1
+  and Round-2 branches (ordering load-bearing — build before complete-check so the
+  Season doesn't prematurely complete the instant the last RR fixture lands).
+  **Play actions:** RR-scoped play (`play_week` / `play_two_months` /
+  `play_until_end`) is behaviourally **UNCHANGED**; only the terminal play-dropdown
+  label flips **"Until End of Season" → "Until Playoffs"** when a tournament phase
+  follows (`has_following_tournament_phase`, label text only). Two NEW views drain
+  the bracket: `play_single_round` (sync POST, one bracket node/Match via
+  `play_next_node`, 302 redirect) and `play_playoffs` (async POST → 202 `{job_id,
+  season_id}`, 409 / 405) backed by Celery task `play_playoffs_task`
+  (`@shared_task(bind=True, name="matches.play_playoffs")`, returns
+  `{"completed", "total"}` STAGE counts from `matches.bracket.stage_progress`,
+  drains via `while play_next_node(...) is not None`); polling **reuses** the
+  LG-01d `play_status` view / `_build_play_status_response` verbatim. **Compose
+  guard:** `parse_phase_composition` gains one rule — a `tournament` phase requires
+  a **preceding** `round_robin` phase (`ValueError("a tournament phase requires a
+  preceding round-robin phase")`, fired after the zero-RR check). **Dashboard /
+  template:** `_build_dashboard_context` gains four keys (`playoff_phase_active` /
+  `playoff_tournament_id` / `playoff_completed` / `has_following_tournament_phase`)
+  computed from `current_phase()`; both the season and league dashboards render a
+  playoff button group (Play Single Round + Play Playoffs, only when
+  `playoff_phase_active`) and a **"View bracket"** link to the existing
+  `/tournaments/<id>/` page (when `playoff_tournament_id is not None`, do NOT embed
+  the bracket). **Tournament Matches stay `season=NULL`** (the tournament engine is
+  consumed verbatim — decision #3): **NO `Match.season_phase` FK, NO Match
+  migration, no re-baseline, no simulator/engine change** this slice. Seam
+  contract:
+  [`.claude/worktrees/lg-02-part2c-1-seam-contract.md`](.claude/worktrees/lg-02-part2c-1-seam-contract.md);
+  app guide: `matches/CLAUDE.md` "LG-02-Part2c-1 RR → single-elimination playoff
+  embed"; [ADR-0023](docs/adr/0023-season-phase-composable-structure.md) (extended
+  with a "Part2c-1 consequences" addendum). Tests: `matches/tests/test_season_playoff.py`
+  (NEW) + extensions to `test_phase_composer.py` / `test_season_phase.py`.
 
-  **Carried over from the LG-02-Part2b grill (2026-06-05) — Part2c must resolve:**
+- **LG-02-Part2c-2 · [NOT STARTED] Multi-RR play loop + Match FK +
+  per-phase format/seeding + non-single-elim embeds.** The deferred remainder of
+  Part2c. Generalises the Part2c-1 single-RR-then-single-elim path to the full
+  heterogeneous composition: **multi-RR play loop** + a **`Match.season_phase` FK**
+  (Part2c-1 keeps tournament Matches `season=NULL` and scopes RR Match queries to
+  the whole Season — the FK lands here so playoff Matches join season-scoped
+  history and per-phase RR fixtures can be scoped) + **cross-phase matchday
+  offsetting**; **wiring the per-phase `schedule_format` chokepoint** (the Part2b
+  dormant column — until then `Season.scheduled_fixtures()` reads
+  `Season.schedule_format`) alongside the first alternative regular-season format;
+  the **per-phase seeding-mode field** + **mid-season tournaments**;
+  **per-tournament-block config** (format / top-N cut); **non-single-elim embeds**
+  (double-elim / RR / Swiss / RR→DE as a Season finals stage); **season-linked
+  playoff Match history** (a Season game-log surface for playoff Matches, blocked
+  on the Match FK); and **weekly playoff pacing** (a per-week tournament cadence —
+  Part2c-1 plays one Match per "Play Single Round" click or the whole bracket per
+  "Play Playoffs"). The `member_night` phase type stays inert (see its own PLAN
+  item below).
+
+  **Carried over from the LG-02-Part2b grill (2026-06-05) — Part2c-2 must resolve:**
   - **Per-phase seeding-mode field** on `SeasonPhase` (deferred from Part2b,
-    which captures ordered phase *types* only). A `tournament` phase has **two
+    which captures ordered phase *types* only; Part2c-1 hardcodes
+    standings-rank-seeded, season-ending). A `tournament` phase has **two
     flavours by Season role**: a **season-ending tournament** (playoff / closer)
     is **seeded from the preceding phase's Standings** and *requires* a preceding
-    fixture-producing phase; a **mid-season tournament** (random draw / duos /
-    trios / swiss) needs **no preceding Standings** — seeded by *expected team
-    strength* or *not at all* — and may sit anywhere, including first. Add the
-    field + its compose-time validity rule (the Standings-seeded one needs a
-    preceding RR) here.
+    fixture-producing phase (the only flavour Part2c-1 builds); a **mid-season
+    tournament** (random draw / duos / trios / swiss) needs **no preceding
+    Standings** — seeded by *expected team strength* or *not at all* — and may sit
+    anywhere, including first. Add the field + its compose-time validity rule (the
+    Standings-seeded one needs a preceding RR — Part2c-1 already enforces the
+    preceding-RR guard for every `tournament` block) here.
   - **Wire the chokepoint to `phase.schedule_format`** (the Part2b dormant
     column) alongside the first alternative regular-season format — until then
     the read-path reads `Season.schedule_format`.
-  - **Per-tournament-block configuration** (format / `team_assembly` / seeding)
-    surfaced when the build / hand-off is implemented — Part2b's composer places
-    bare `tournament` blocks only.
-  - **(Deferred — own slice, post-Part2c)** A pre-selected per-League option to
+  - **Per-tournament-block configuration** (format / `team_assembly` / seeding /
+    top-N cut) surfaced when the multi-format build / hand-off is implemented —
+    Part2b's composer places bare `tournament` blocks only, and Part2c-1 hardcodes
+    full-field single-elimination.
+  - **(Deferred — own slice, post-Part2c-2)** A pre-selected per-League option to
     **randomize the mid-season tournaments per season**: the non-season-ending
     `tournament` phases that sit before the main `round_robin` + the end-of-year
     tournament are re-drawn (format / seeding) each cycle by `next_season`

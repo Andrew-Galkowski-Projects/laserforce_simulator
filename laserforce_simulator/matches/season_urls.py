@@ -34,6 +34,16 @@ urlpatterns = [
         name="play_until_end",
     ),
     path(
+        "<int:season_id>/play-single-round/",
+        league_views.play_single_round,
+        name="play_single_round",
+    ),
+    path(
+        "<int:season_id>/play-playoffs/",
+        league_views.play_playoffs,
+        name="play_playoffs",
+    ),
+    path(
         "<int:season_id>/play-status/<str:job_id>/",
         league_views.play_status,
         name="play_status",

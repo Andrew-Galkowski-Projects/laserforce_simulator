@@ -599,3 +599,200 @@ class TestLg01jSeasonDashboardMapConfig(TestCase):
         season.save()
         body = self._get_body(season)
         self.assertIn("Map: Random per Round (no maps)", body)
+
+
+# ===========================================================================
+# LG-02-Part2c-1 — playoff cursor dashboard context keys + DOM ids + relabel
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-1-seam-contract.md`` §6:
+#   New context keys ``playoff_phase_active`` / ``playoff_tournament_id`` /
+#   ``playoff_completed`` / ``has_following_tournament_phase`` per cursor
+#   sub-state; the new DOM ids render only in the tournament-phase sub-state;
+#   the View-bracket link points at ``/tournaments/<id>/``; the conditional
+#   "Until Playoffs" relabel of the terminal play-dropdown button.
+#
+# Appended as NEW classes; no existing class above is modified.
+
+from unittest.mock import patch as _Lg02c1_patch  # noqa: E402
+
+from matches.simulation import BatchSimulator as _Lg02c1_BatchSimulator  # noqa: E402
+from matches.models import SeasonPhase as _Lg02c1_SeasonPhase  # noqa: E402
+
+_LG02C1_FAST_TICKS = 30
+
+
+def _lg02c1_rr_tournament_season(name: str = "Pc1"):
+    """An active Season: ordinal-1 round_robin + ordinal-2 tournament, 4 teams."""
+    league, season, teams = _make_league_and_draft_season(name)
+    _Lg02c1_SeasonPhase.objects.create(
+        season=season, ordinal=1, phase_type="round_robin"
+    )
+    _Lg02c1_SeasonPhase.objects.create(
+        season=season, ordinal=2, phase_type="tournament"
+    )
+    season.start_season()
+    season.refresh_from_db()
+    return league, season, teams
+
+
+def _lg02c1_play_rr(season, teams):
+    by_id = {t.id: t for t in teams}
+    fixtures = season.scheduled_fixtures()
+    sim = _Lg02c1_BatchSimulator()
+    with _Lg02c1_patch.object(
+        _Lg02c1_BatchSimulator, "ROUND_TICKS", _LG02C1_FAST_TICKS
+    ):
+        for fixture in fixtures:
+            sim.simulate_scheduled_round(
+                season,
+                by_id[fixture.team_a_id],
+                by_id[fixture.team_b_id],
+                fixture.round_number,
+            )
+
+
+def _lg02c1_drain_tournament(tournament):
+    from matches.tournament_engine import play_next_node
+
+    with _Lg02c1_patch.object(
+        _Lg02c1_BatchSimulator, "ROUND_TICKS", _LG02C1_FAST_TICKS
+    ):
+        for _ in range(200):
+            if play_next_node(tournament) is None:
+                break
+    tournament.refresh_from_db()
+
+
+class TestSeasonDashboardPlayoffContext(TestCase):
+    """LG-02-Part2c-1 — playoff cursor context keys per sub-state."""
+
+    def _ctx(self, season):
+        return self.client.get(reverse("season_dashboard", args=[season.id])).context
+
+    def test_rr_active_substate_keys(self) -> None:
+        # RR phase active, a tournament phase follows.
+        _l, season, _teams = _lg02c1_rr_tournament_season("Pc1RR")
+        ctx = self._ctx(season)
+        self.assertFalse(ctx["playoff_phase_active"])
+        self.assertIsNone(ctx["playoff_tournament_id"])
+        self.assertFalse(ctx["playoff_completed"])
+        self.assertTrue(ctx["has_following_tournament_phase"])
+
+    def test_no_following_tournament_phase_for_single_rr_season(self) -> None:
+        # An active single-RR-phase Season: no tournament phase follows.
+        _l, season, _teams = _make_active_season("Pc1Single")
+        _Lg02c1_SeasonPhase.objects.create(
+            season=season, ordinal=1, phase_type="round_robin"
+        )
+        ctx = self._ctx(season)
+        self.assertFalse(ctx["has_following_tournament_phase"])
+        self.assertFalse(ctx["playoff_phase_active"])
+        self.assertIsNone(ctx["playoff_tournament_id"])
+        self.assertFalse(ctx["playoff_completed"])
+
+    def test_tournament_active_built_substate_keys(self) -> None:
+        _l, season, teams = _lg02c1_rr_tournament_season("Pc1Built")
+        _lg02c1_play_rr(season, teams)
+        season.refresh_from_db()
+        tournament_phase = season.phases.get(phase_type="tournament")
+        tournament_phase.refresh_from_db()
+        ctx = self._ctx(season)
+        self.assertTrue(ctx["playoff_phase_active"])
+        self.assertEqual(ctx["playoff_tournament_id"], tournament_phase.tournament_id)
+        self.assertFalse(ctx["playoff_completed"])
+
+    def test_tournament_completed_substate_keys(self) -> None:
+        _l, season, teams = _lg02c1_rr_tournament_season("Pc1Done")
+        _lg02c1_play_rr(season, teams)
+        season.refresh_from_db()
+        tournament_phase = season.phases.get(phase_type="tournament")
+        tournament_phase.refresh_from_db()
+        _lg02c1_drain_tournament(tournament_phase.tournament)
+        season.refresh_from_db()
+        ctx = self._ctx(season)
+        self.assertFalse(ctx["playoff_phase_active"])
+        self.assertEqual(ctx["playoff_tournament_id"], tournament_phase.tournament_id)
+        self.assertTrue(ctx["playoff_completed"])
+
+
+class TestSeasonDashboardPlayoffDomIds(TestCase):
+    """LG-02-Part2c-1 — playoff DOM ids render only in the active sub-state."""
+
+    def _body(self, season):
+        return self.client.get(
+            reverse("season_dashboard", args=[season.id])
+        ).content.decode()
+
+    def test_playoff_buttons_render_in_active_built_substate(self) -> None:
+        _l, season, teams = _lg02c1_rr_tournament_season("PdId1")
+        _lg02c1_play_rr(season, teams)
+        season.refresh_from_db()
+        body = self._body(season)
+        for dom_id in (
+            "season-dashboard-play-single-round-form",
+            "season-dashboard-play-single-round-submit",
+            "season-dashboard-play-playoffs-form",
+            "season-dashboard-play-playoffs-submit",
+            "season-dashboard-play-playoffs-progress",
+            "season-dashboard-view-bracket-link",
+        ):
+            self.assertIn(f'id="{dom_id}"', body)
+
+    def test_playoff_buttons_absent_in_rr_active_substate(self) -> None:
+        _l, season, _teams = _lg02c1_rr_tournament_season("PdId2")
+        body = self._body(season)
+        for dom_id in (
+            "season-dashboard-play-single-round-form",
+            "season-dashboard-play-playoffs-form",
+        ):
+            self.assertNotIn(f'id="{dom_id}"', body)
+
+    def test_view_bracket_link_points_at_tournament_detail(self) -> None:
+        _l, season, teams = _lg02c1_rr_tournament_season("PdId3")
+        _lg02c1_play_rr(season, teams)
+        season.refresh_from_db()
+        tournament_phase = season.phases.get(phase_type="tournament")
+        tournament_phase.refresh_from_db()
+        body = self._body(season)
+        self.assertIn(f"/tournaments/{tournament_phase.tournament_id}/", body)
+
+    def test_view_bracket_link_renders_when_completed(self) -> None:
+        # View-bracket renders for built tournament phase (active OR completed).
+        _l, season, teams = _lg02c1_rr_tournament_season("PdId4")
+        _lg02c1_play_rr(season, teams)
+        season.refresh_from_db()
+        tournament_phase = season.phases.get(phase_type="tournament")
+        tournament_phase.refresh_from_db()
+        _lg02c1_drain_tournament(tournament_phase.tournament)
+        season.refresh_from_db()
+        body = self._body(season)
+        self.assertIn('id="season-dashboard-view-bracket-link"', body)
+        # The active play buttons are gone once the tournament is completed.
+        self.assertNotIn('id="season-dashboard-play-single-round-form"', body)
+
+
+class TestSeasonDashboardUntilPlayoffsRelabel(TestCase):
+    """LG-02-Part2c-1 — terminal play-dropdown 'Until Playoffs' relabel."""
+
+    def _body(self, season):
+        return self.client.get(
+            reverse("season_dashboard", args=[season.id])
+        ).content.decode()
+
+    def test_until_playoffs_label_when_tournament_phase_follows(self) -> None:
+        # RR active with a following tournament phase ⇒ terminal label relabels.
+        _l, season, _teams = _lg02c1_rr_tournament_season("RelabelYes")
+        body = self._body(season)
+        # The until-end button DOM id is UNCHANGED; only the visible text swaps.
+        self.assertIn('id="season-dashboard-play-until-end"', body)
+        self.assertIn("Until Playoffs", body)
+
+    def test_until_end_label_when_no_tournament_phase_follows(self) -> None:
+        _l, season, _teams = _make_active_season("RelabelNo")
+        _Lg02c1_SeasonPhase.objects.create(
+            season=season, ordinal=1, phase_type="round_robin"
+        )
+        body = self._body(season)
+        self.assertNotIn("Until Playoffs", body)
+        self.assertIn("Until End of Season", body)
