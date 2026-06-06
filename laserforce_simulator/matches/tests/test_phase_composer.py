@@ -170,6 +170,73 @@ class TestZeroRoundRobinRejected(SimpleTestCase):
 
 
 # ---------------------------------------------------------------------------
+# LG-02-Part2c-1 — a ``tournament`` phase requires a PRECEDING ``round_robin``
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-1-seam-contract.md`` §5: a new
+# compose-time guard fires AFTER the existing zero-RR check — once all tokens
+# are known-valid AND at least one RR exists, walking the specs in order and
+# raising the LOCKED ValueError string if any ``tournament`` spec is seen before
+# the first ``round_robin`` spec. A valid ``round_robin,tournament`` composition
+# parses to 2 ordered specs with no raise. The new guard NEVER fires before the
+# zero-RR check (a no-RR composition still raises the existing zero-RR error).
+
+
+class TestTournamentRequiresPrecedingRoundRobin(SimpleTestCase):
+    """LG-02-Part2c-1 — ``tournament`` before the first ``round_robin``."""
+
+    _MSG = "a tournament phase requires a preceding round-robin phase"
+
+    def test_tournament_before_round_robin_raises_exact_message(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "tournament,round_robin", season_schedule_format=_SSF
+            )
+        self.assertEqual(str(ctx.exception), self._MSG)
+
+    def test_round_robin_then_tournament_parses_to_two_ordered_specs(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament", season_schedule_format=_SSF
+        )
+        self.assertEqual(len(specs), 2)
+        self.assertEqual([s.phase_type for s in specs], ["round_robin", "tournament"])
+        self.assertEqual([s.ordinal for s in specs], [1, 2])
+
+    def test_tournament_between_two_round_robins_is_valid(self) -> None:
+        # The tournament sits after a leading round_robin, so the guard never
+        # fires even though another tournament-eligible RR follows.
+        specs = parse_phase_composition(
+            "round_robin,tournament,round_robin", season_schedule_format=_SSF
+        )
+        self.assertEqual(
+            [s.phase_type for s in specs],
+            ["round_robin", "tournament", "round_robin"],
+        )
+
+    def test_guard_fires_only_after_zero_rr_check(self) -> None:
+        # A composition with NO round_robin at all (and a leading tournament)
+        # must raise the EXISTING zero-RR error, NOT the new preceding-RR guard
+        # — the zero-RR check runs first.
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "tournament,tournament", season_schedule_format=_SSF
+            )
+        self.assertEqual(
+            str(ctx.exception),
+            "composition must contain at least one round-robin phase",
+        )
+
+    def test_single_tournament_token_raises_zero_rr_not_preceding_guard(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition("tournament", season_schedule_format=_SSF)
+        # Zero-RR error (one RR is required), NOT the preceding-RR guard.
+        self.assertEqual(
+            str(ctx.exception),
+            "composition must contain at least one round-robin phase",
+        )
+
+
+# ---------------------------------------------------------------------------
 # §3 — unknown phase type raises ValueError ``f"unknown phase type: {token!r}"``
 # ---------------------------------------------------------------------------
 

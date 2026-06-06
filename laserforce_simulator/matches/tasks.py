@@ -238,6 +238,64 @@ def play_season_task(
         django.db.close_old_connections()
 
 
+@shared_task(bind=True, name="matches.play_playoffs")
+def play_playoffs_task(self, season_id: int) -> dict:
+    """LG-02-Part2c-1 — drain a Season's embedded playoff bracket to a champion.
+
+    Mirrors ``play_tournament_task``: loads the Season, resolves the
+    current (tournament) phase's ``Tournament``, then loops
+    ``play_next_node(tournament)`` until it returns ``None``, emitting
+    STAGE-based progress (``stage_progress``) after each resolved node.
+    After draining, calls ``season.complete_if_finished()`` so the Season
+    champion is crowned once the final bracket node resolves.
+
+    Per-node commits — NO outer ``@transaction.atomic`` (``play_next_node``
+    is already per-node atomic; ADR-0016). Inactive / unbuilt guard returns
+    ``{"completed": 0, "total": 0}``.
+
+    Returns:
+        ``{"completed": int, "total": int}`` (STAGE counts, NOT node counts).
+    """
+    import django.db
+
+    try:
+        from matches.bracket import stage_progress
+        from matches.models import Season, _node_to_dict
+        from matches.tournament_engine import play_next_node
+
+        season = Season.objects.get(id=season_id)
+        phase = season.current_phase()
+        if (
+            phase is None
+            or phase.phase_type != "tournament"
+            or phase.tournament_id is None
+        ):
+            return {"completed": 0, "total": 0}
+        tournament = phase.tournament
+
+        def _stage_counts() -> tuple[int, int]:
+            flat = [
+                _node_to_dict(n)
+                for n in tournament.nodes.select_related(
+                    "advances_to", "tournament"
+                ).prefetch_related("series_matches")
+            ]
+            return stage_progress(flat)
+
+        while play_next_node(tournament) is not None:
+            completed, total = _stage_counts()
+            self.update_state(
+                state="PROGRESS",
+                meta={"completed": completed, "total": total},
+            )
+
+        season.complete_if_finished()
+        completed, total = _stage_counts()
+        return {"completed": completed, "total": total}
+    finally:
+        django.db.close_old_connections()
+
+
 @shared_task(bind=True, name="matches.play_tournament")
 def play_tournament_task(self, tournament_id: int) -> dict:
     """LG-02a-2 — Play every remaining decisive Bracket node to a champion.

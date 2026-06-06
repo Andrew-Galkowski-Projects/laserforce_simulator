@@ -37,7 +37,7 @@
                             <li>
                                 <form id="season-dashboard-play-until-end" method="post" action="{% url 'play_until_end' season_id=season.id %}" class="px-2">
                                     {% csrf_token %}
-                                    <button type="submit" class="dropdown-item">Play Until End of Season</button>
+                                    <button type="submit" class="dropdown-item">{% if has_following_tournament_phase %}Play Until Playoffs{% else %}Play Until End of Season{% endif %}</button>
                                 </form>
                             </li>
                         </ul>
@@ -59,11 +59,37 @@
     {% endif %}
 
     <div id="season-dashboard-play-progress" hidden>
-        <div class="alert alert-info mb-3">
+        <div class="alert alert-info mb-3 d-flex align-items-center">
+            <span class="play-progress-spinner spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
             <span class="play-progress-label">Running…</span>
-            <progress class="play-progress-bar" value="0" max="1"></progress>
+            <progress class="play-progress-bar ms-2" value="0" max="1"></progress>
         </div>
     </div>
+
+    {% if playoff_phase_active or playoff_tournament_id is not None %}
+    <div class="mb-3">
+        {% if playoff_phase_active %}
+            <form id="season-dashboard-play-single-round-form" method="post" action="{% url 'play_single_round' season_id=season.id %}" class="d-inline">
+                {% csrf_token %}
+                <button id="season-dashboard-play-single-round-submit" type="submit" class="btn btn-outline-primary btn-sm">Play Single Round</button>
+            </form>
+            <form id="season-dashboard-play-playoffs-form" method="post" action="{% url 'play_playoffs' season_id=season.id %}" class="d-inline">
+                {% csrf_token %}
+                <button id="season-dashboard-play-playoffs-submit" type="submit" class="btn btn-outline-primary btn-sm">Play Playoffs</button>
+            </form>
+        {% endif %}
+        {% if playoff_tournament_id is not None %}
+            <a id="season-dashboard-view-bracket-link" href="{% url 'tournament_detail' playoff_tournament_id %}" class="btn btn-outline-secondary btn-sm">View bracket</a>
+        {% endif %}
+        <div id="season-dashboard-play-playoffs-progress" hidden>
+            <div class="alert alert-info mt-2 mb-0 d-flex align-items-center">
+                <span class="playoffs-progress-spinner spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                <span class="playoffs-progress-label">Running…</span>
+                <progress class="playoffs-progress-bar ms-2" value="0" max="1"></progress>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 
     <div id="season-dashboard-map-config" class="text-muted small mt-1">
         {{ map_config_label }}
@@ -154,7 +180,7 @@
 <script>
 (function() {
     "use strict";
-    var POLL_INTERVAL_MS = 1000;
+    var POLL_INTERVAL_MS = 500;
     var STATUS_URL_TEMPLATE = "{% url 'play_status' season_id=season.id job_id='JOB' %}";
     var CSRF_TOKEN = document.querySelector("input[name=csrfmiddlewaretoken]");
     CSRF_TOKEN = CSRF_TOKEN ? CSRF_TOKEN.value : "";
@@ -190,6 +216,8 @@
     function showProgress(completed, total) {
         if (!progressContainer) return;
         progressContainer.hidden = false;
+        var spinnerEl = progressContainer.querySelector(".spinner-border");
+        if (spinnerEl) { spinnerEl.hidden = false; }
         if (progressBar) {
             progressBar.value = completed;
             progressBar.max = total > 0 ? total : 1;
@@ -203,6 +231,10 @@
         if (pollTimer !== null) {
             clearInterval(pollTimer);
             pollTimer = null;
+        }
+        if (progressContainer) {
+            var sp = progressContainer.querySelector(".spinner-border");
+            if (sp) { sp.hidden = true; }
         }
     }
 
@@ -261,6 +293,112 @@
 
     interceptAsync(twoMonthsForm);
     interceptAsync(untilEndForm);
+})();
+</script>
+{% endif %}
+
+{% if playoff_phase_active %}
+<script>
+(function() {
+    "use strict";
+    var POLL_INTERVAL_MS = 500;
+    var STATUS_URL_TEMPLATE = "{% url 'play_status' season_id=season.id job_id='JOB' %}";
+    var CSRF_TOKEN = document.querySelector("input[name=csrfmiddlewaretoken]");
+    CSRF_TOKEN = CSRF_TOKEN ? CSRF_TOKEN.value : "";
+
+    var form = document.getElementById("season-dashboard-play-playoffs-form");
+    var submitBtn = document.getElementById("season-dashboard-play-playoffs-submit");
+    var singleRoundBtn = document.getElementById("season-dashboard-play-single-round-submit");
+    var progressContainer = document.getElementById("season-dashboard-play-playoffs-progress");
+    var progressBar = progressContainer ? progressContainer.querySelector(".playoffs-progress-bar") : null;
+    var progressLabel = progressContainer ? progressContainer.querySelector(".playoffs-progress-label") : null;
+    var pollTimer = null;
+
+    function setDisabled(disabled) {
+        if (submitBtn) submitBtn.disabled = disabled;
+        if (singleRoundBtn) singleRoundBtn.disabled = disabled;
+    }
+
+    function showProgress(completed, total) {
+        if (!progressContainer) return;
+        progressContainer.hidden = false;
+        var spinnerEl = progressContainer.querySelector(".spinner-border");
+        if (spinnerEl) { spinnerEl.hidden = false; }
+        if (progressBar) {
+            progressBar.value = completed;
+            progressBar.max = total > 0 ? total : 1;
+        }
+        if (progressLabel) {
+            progressLabel.textContent = "Running… " + completed + " / " + total;
+        }
+    }
+
+    function clearPolling() {
+        if (pollTimer !== null) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+        }
+        if (progressContainer) {
+            var sp = progressContainer.querySelector(".spinner-border");
+            if (sp) { sp.hidden = true; }
+        }
+    }
+
+    function startPolling(jobId) {
+        setDisabled(true);
+        showProgress(0, 0);
+        pollTimer = setInterval(function() {
+            var url = STATUS_URL_TEMPLATE.replace("JOB", jobId);
+            fetch(url + "?season_id={{ season.id }}", {credentials: "same-origin"})
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    showProgress(data.completed || 0, data.total || 0);
+                    if (data.status === "complete") {
+                        clearPolling();
+                        window.location.reload();
+                    } else if (data.status === "error") {
+                        clearPolling();
+                        if (progressLabel) progressLabel.textContent = data.error || "Playoffs job failed.";
+                        setDisabled(false);
+                    }
+                })
+                .catch(function() {
+                    // Network blip — keep polling.
+                });
+        }, POLL_INTERVAL_MS);
+    }
+
+    if (form) {
+        form.addEventListener("submit", function(e) {
+            e.preventDefault();
+            var fd = new FormData(form);
+            fetch(form.action, {
+                method: "POST",
+                body: fd,
+                headers: {"X-CSRFToken": CSRF_TOKEN},
+                credentials: "same-origin",
+            })
+                .then(function(r) { return r.json().then(function(j) { return {ok: r.ok, json: j}; }); })
+                .then(function(res) {
+                    if (res.ok && res.json && res.json.job_id) {
+                        startPolling(res.json.job_id);
+                    } else if (progressContainer) {
+                        progressContainer.hidden = false;
+                        var sp = progressContainer.querySelector(".spinner-border");
+                        if (sp) { sp.hidden = true; }
+                        if (progressLabel) progressLabel.textContent = (res.json && res.json.error) || "Failed to start job.";
+                    }
+                })
+                .catch(function(err) {
+                    if (progressContainer) {
+                        progressContainer.hidden = false;
+                        var sp = progressContainer.querySelector(".spinner-border");
+                        if (sp) { sp.hidden = true; }
+                    }
+                    if (progressLabel) progressLabel.textContent = String(err);
+                });
+        });
+    }
 })();
 </script>
 {% endif %}

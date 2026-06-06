@@ -636,3 +636,352 @@ class TestSeasonPhaseTournamentFK(TestCase):
         # The phase row survives; its FK is nulled (SET_NULL).
         phase = SeasonPhase.objects.get(pk=phase_pk)
         self.assertIsNone(phase.tournament_id)
+
+
+# ===========================================================================
+# LG-02-Part2c-1 — Season cursor + completion derivation + auto-build
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-1-seam-contract.md`` §1 + §8:
+#   - Season.current_phase() -> first INCOMPLETE phase / None when all complete.
+#   - Season._phase_complete(phase) -> RR via _is_finished(); tournament via
+#     tournament_id is not None AND tournament.state == "completed".
+#   - Season.activate_pending_tournament_phase() — no-op until the RR phase is
+#     complete, then builds a Tournament with one TournamentParticipant per
+#     season team seeded by standings rank (seed == rank, rank 1 -> seed 1),
+#     wires phase.tournament, leaves it state="active" (locked+built), IDEMPOTENT.
+#   - Season.complete_if_finished() stamps champion == phase.tournament.champion
+#     when the final phase is a completed tournament; a single-RR-phase Season
+#     stays byte-identical (champion == standings[0]) as a regression.
+#
+# Tests assert SCHEMA-LEVEL outcomes (phase advanced, participant count + seeds,
+# champion identity, state) — NEVER exact simulated point totals. RR→tournament
+# fixtures use N=4 small seeded sims.
+#
+# Appended as NEW classes; no existing class above is modified.
+
+from matches.models import (  # noqa: E402
+    BracketNode as _Lg02c1BracketNode,
+)
+from matches.models import (  # noqa: E402
+    TournamentParticipant as _Lg02c1Participant,
+)
+from matches.standings import (
+    compute_standings as _lg02c1_compute_standings,
+)  # noqa: E402
+
+
+def _lg02c1_rr_tournament_season(prefix: str, n: int = 4):
+    """An active Season with an ordinal-1 ``round_robin`` + ordinal-2
+    ``tournament`` SeasonPhase, ``n`` slotted teams enrolled, started.
+
+    Returns ``(season, teams, rr_phase, tournament_phase)``.
+    """
+    league = League.objects.create(name=f"{prefix} League")
+    season = Season.objects.create(
+        league=league, name="S1", start_date=date(2026, 1, 1)
+    )
+    teams = []
+    for i in range(n):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        teams.append(t)
+        season.teams.add(t)
+    rr_phase = SeasonPhase.objects.create(
+        season=season, ordinal=1, phase_type="round_robin"
+    )
+    tournament_phase = SeasonPhase.objects.create(
+        season=season, ordinal=2, phase_type="tournament"
+    )
+    season.start_season()
+    season.refresh_from_db()
+    return season, teams, rr_phase, tournament_phase
+
+
+def _lg02c1_play_rr(season: Season, teams: list) -> None:
+    """Play every RR fixture of ``season`` via the real simulator under a small
+    ROUND_TICKS patch.
+
+    NOTE: ``scheduled_fixtures()`` is the Part2a RR-scoped chokepoint, so this
+    plays only the round-robin phase's fixtures (the tournament phase is not in
+    the fixture list).
+    """
+    by_id = {t.id: t for t in teams}
+    fixtures = season.scheduled_fixtures()
+    sim = BatchSimulator()
+    with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+        for fixture in fixtures:
+            team_a = by_id[fixture.team_a_id]
+            team_b = by_id[fixture.team_b_id]
+            sim.simulate_scheduled_round(season, team_a, team_b, fixture.round_number)
+
+
+def _lg02c1_drain_tournament(tournament) -> None:
+    """Drain a built tournament bracket to a champion via the real engine."""
+    from matches.tournament_engine import play_next_node
+
+    with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+        # Bound the loop generously; a 4-team single-elim drains in a few nodes.
+        for _ in range(200):
+            if play_next_node(tournament) is None:
+                break
+    tournament.refresh_from_db()
+
+
+class TestCurrentPhase(TestCase):
+    """``Season.current_phase()`` — first INCOMPLETE phase / None."""
+
+    def test_returns_rr_phase_while_rr_unplayed(self) -> None:
+        season, _teams, rr_phase, _t = _lg02c1_rr_tournament_season("CPUnplayed")
+        current = season.current_phase()
+        self.assertIsNotNone(current)
+        self.assertEqual(current.pk, rr_phase.pk)
+        self.assertEqual(current.phase_type, "round_robin")
+
+    def test_returns_tournament_phase_once_rr_complete_and_built(self) -> None:
+        season, teams, _rr, tournament_phase = _lg02c1_rr_tournament_season("CPBuilt")
+        _lg02c1_play_rr(season, teams)
+        season.refresh_from_db()
+        # The build hook fires inside simulate_scheduled_round when the last RR
+        # fixture lands, so the tournament phase is now built + active.
+        current = season.current_phase()
+        self.assertIsNotNone(current)
+        self.assertEqual(current.pk, tournament_phase.pk)
+        self.assertEqual(current.phase_type, "tournament")
+
+    def test_returns_none_once_tournament_completed(self) -> None:
+        season, teams, _rr, tournament_phase = _lg02c1_rr_tournament_season("CPDone")
+        _lg02c1_play_rr(season, teams)
+        season.refresh_from_db()
+        tournament_phase.refresh_from_db()
+        self.assertIsNotNone(tournament_phase.tournament_id)
+        _lg02c1_drain_tournament(tournament_phase.tournament)
+        season.refresh_from_db()
+        # Every phase complete ⇒ cursor parks on None.
+        self.assertIsNone(season.current_phase())
+
+
+class TestPhaseCompleteRule(TestCase):
+    """``Season._phase_complete(phase)`` per phase type."""
+
+    def test_rr_phase_complete_tracks_is_finished(self) -> None:
+        season, teams, rr_phase, _t = _lg02c1_rr_tournament_season("PCRR")
+        # Before play: RR phase not complete (matches _is_finished()).
+        self.assertFalse(season._phase_complete(rr_phase))
+        self.assertEqual(season._phase_complete(rr_phase), season._is_finished())
+        _lg02c1_play_rr(season, teams)
+        season.refresh_from_db()
+        rr_phase.refresh_from_db()
+        self.assertTrue(season._phase_complete(rr_phase))
+        self.assertEqual(season._phase_complete(rr_phase), season._is_finished())
+
+    def test_tournament_phase_incomplete_when_unbuilt(self) -> None:
+        season, _teams, _rr, tournament_phase = _lg02c1_rr_tournament_season(
+            "PCUnbuilt"
+        )
+        # tournament_id is None ⇒ not complete.
+        self.assertIsNone(tournament_phase.tournament_id)
+        self.assertFalse(season._phase_complete(tournament_phase))
+
+    def test_tournament_phase_incomplete_when_built_but_active(self) -> None:
+        season, teams, _rr, tournament_phase = _lg02c1_rr_tournament_season("PCActive")
+        _lg02c1_play_rr(season, teams)
+        tournament_phase.refresh_from_db()
+        self.assertIsNotNone(tournament_phase.tournament_id)
+        self.assertEqual(tournament_phase.tournament.state, "active")
+        # Built + active is NOT complete.
+        self.assertFalse(season._phase_complete(tournament_phase))
+
+    def test_tournament_phase_complete_when_built_and_completed(self) -> None:
+        season, teams, _rr, tournament_phase = _lg02c1_rr_tournament_season(
+            "PCComplete"
+        )
+        _lg02c1_play_rr(season, teams)
+        tournament_phase.refresh_from_db()
+        _lg02c1_drain_tournament(tournament_phase.tournament)
+        tournament_phase.refresh_from_db()
+        self.assertEqual(tournament_phase.tournament.state, "completed")
+        self.assertTrue(season._phase_complete(tournament_phase))
+
+
+class TestActivatePendingTournamentPhase(TestCase):
+    """``Season.activate_pending_tournament_phase()`` — the auto-build."""
+
+    def test_noop_while_rr_incomplete(self) -> None:
+        season, _teams, _rr, tournament_phase = _lg02c1_rr_tournament_season("APNoop")
+        season.activate_pending_tournament_phase()
+        tournament_phase.refresh_from_db()
+        # No tournament built while the RR phase is still unplayed.
+        self.assertIsNone(tournament_phase.tournament_id)
+
+    def test_builds_tournament_when_rr_complete(self) -> None:
+        # Play the RR WITHOUT the auto-build hook to isolate the explicit call.
+        # (The hook fires inside simulate_scheduled_round, so by the time RR is
+        #  fully played the tournament is already built; we instead assert the
+        #  resulting built tournament's shape, which is what the hook produces.)
+        season, teams, _rr, tournament_phase = _lg02c1_rr_tournament_season("APBuild")
+        _lg02c1_play_rr(season, teams)
+        # Explicit call must be idempotent on an already-built phase.
+        season.activate_pending_tournament_phase()
+        tournament_phase.refresh_from_db()
+        self.assertIsNotNone(tournament_phase.tournament_id)
+        tournament = tournament_phase.tournament
+        self.assertEqual(tournament.format, "single_elimination")
+        self.assertEqual(tournament.team_assembly, "preset")
+        # Locked + built ⇒ active, and a bracket exists.
+        self.assertEqual(tournament.state, "active")
+        self.assertTrue(
+            _Lg02c1BracketNode.objects.filter(tournament=tournament).exists()
+        )
+
+    def test_one_participant_per_team_seeded_by_standings_rank(self) -> None:
+        season, teams, _rr, tournament_phase = _lg02c1_rr_tournament_season("APSeed")
+        _lg02c1_play_rr(season, teams)
+        tournament_phase.refresh_from_db()
+        tournament = tournament_phase.tournament
+
+        participants = list(
+            _Lg02c1Participant.objects.filter(tournament=tournament).order_by("seed")
+        )
+        # One participant per season team.
+        self.assertEqual(len(participants), len(teams))
+        # Seeds are the dense 1..N standings ranks (rank 1 -> seed 1).
+        self.assertEqual([p.seed for p in participants], list(range(1, len(teams) + 1)))
+
+        # Seed order == standings rank order: rebuild standings the same way the
+        # build hook does and assert seed-i team == standings-rank-i team.
+        team_ids = season.starting_team_ids_json or []
+        from matches.models import Match
+        from teams.models import Team
+
+        completed = []
+        for m in Match.objects.filter(season=season, is_completed=True):
+            completed.append(
+                {
+                    "match_id": m.id,
+                    "team_red_id": m.team_red_id,
+                    "team_blue_id": m.team_blue_id,
+                    "winner_team_id": m.winner_id,
+                    "red_rounds_won": m.red_rounds_won,
+                    "blue_rounds_won": m.blue_rounds_won,
+                    "red_total_points": m.red_total_points,
+                    "blue_total_points": m.blue_total_points,
+                }
+            )
+        enrolled = list(Team.objects.filter(id__in=team_ids).values_list("id", "name"))
+        rows = _lg02c1_compute_standings(completed, enrolled)
+        rank_to_team = {row.rank: row.team_id for row in rows}
+        for p in participants:
+            self.assertEqual(p.team_id, rank_to_team[p.seed])
+
+    def test_idempotent_second_call_does_not_rebuild(self) -> None:
+        season, teams, _rr, tournament_phase = _lg02c1_rr_tournament_season("APIdem")
+        _lg02c1_play_rr(season, teams)
+        tournament_phase.refresh_from_db()
+        tournament_id = tournament_phase.tournament_id
+        self.assertIsNotNone(tournament_id)
+        node_count = _Lg02c1BracketNode.objects.filter(
+            tournament_id=tournament_id
+        ).count()
+
+        # A second activate call is a no-op (hits the already-built guard).
+        season.activate_pending_tournament_phase()
+        tournament_phase.refresh_from_db()
+        self.assertEqual(tournament_phase.tournament_id, tournament_id)
+        self.assertEqual(
+            _Lg02c1BracketNode.objects.filter(tournament_id=tournament_id).count(),
+            node_count,
+        )
+
+
+class TestCompleteIfFinishedTournamentChampion(TestCase):
+    """``complete_if_finished`` champion = ``phase.tournament.champion``."""
+
+    def test_season_not_completed_while_tournament_active(self) -> None:
+        season, teams, _rr, tournament_phase = _lg02c1_rr_tournament_season("CIFActive")
+        _lg02c1_play_rr(season, teams)
+        season.refresh_from_db()
+        # RR done + tournament built but not drained ⇒ Season still active.
+        self.assertEqual(season.state, "active")
+        self.assertIsNone(season.champion_team_id)
+
+    def test_season_champion_is_tournament_champion(self) -> None:
+        season, teams, _rr, tournament_phase = _lg02c1_rr_tournament_season("CIFChamp")
+        _lg02c1_play_rr(season, teams)
+        tournament_phase.refresh_from_db()
+        _lg02c1_drain_tournament(tournament_phase.tournament)
+        tournament_phase.refresh_from_db()
+        tournament = tournament_phase.tournament
+        self.assertEqual(tournament.state, "completed")
+        self.assertIsNotNone(tournament.champion_id)
+
+        season.complete_if_finished()
+        season.refresh_from_db()
+        self.assertEqual(season.state, "completed")
+        self.assertEqual(season.champion_team_id, tournament.champion_id)
+
+
+class TestSingleRrPhaseChampionRegression(TestCase):
+    """A single-RR-phase Season stays byte-identical: champion == standings[0]."""
+
+    def _started_single_rr_season(self, prefix: str, n: int = 2):
+        league = League.objects.create(name=f"{prefix} League")
+        season = Season.objects.create(
+            league=league, name="S1", start_date=date(2026, 1, 1)
+        )
+        teams = [make_team_with_slots(f"{prefix}{i}")[0] for i in range(n)]
+        for t in teams:
+            season.teams.add(t)
+        # Exactly one explicit round_robin phase — no tournament phase.
+        SeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")
+        season.start_season()
+        season.refresh_from_db()
+        return season, teams
+
+    def test_single_rr_phase_completes_with_standings_leader(self) -> None:
+        season, teams = self._started_single_rr_season("RegRR", 2)
+        _lg02c1_play_rr(season, teams)
+        season.refresh_from_db()
+        self.assertEqual(season.state, "completed")
+        self.assertIsNotNone(season.champion_team_id)
+
+        # The champion is the standings rank-1 team (the LG-01 rule, preserved).
+        team_ids = season.starting_team_ids_json or []
+        from matches.models import Match
+        from teams.models import Team
+
+        completed = []
+        for m in Match.objects.filter(season=season, is_completed=True):
+            completed.append(
+                {
+                    "match_id": m.id,
+                    "team_red_id": m.team_red_id,
+                    "team_blue_id": m.team_blue_id,
+                    "winner_team_id": m.winner_id,
+                    "red_rounds_won": m.red_rounds_won,
+                    "blue_rounds_won": m.blue_rounds_won,
+                    "red_total_points": m.red_total_points,
+                    "blue_total_points": m.blue_total_points,
+                }
+            )
+        enrolled = list(Team.objects.filter(id__in=team_ids).values_list("id", "name"))
+        rows = _lg02c1_compute_standings(completed, enrolled)
+        self.assertEqual(season.champion_team_id, rows[0].team_id)
+
+    def test_phaseless_season_still_completes_with_standings_leader(self) -> None:
+        # A genuinely phase-less Season (implicit fallback) is the other
+        # byte-identical regression path.
+        league = League.objects.create(name="RegPhaseless League")
+        season = Season.objects.create(
+            league=league, name="S1", start_date=date(2026, 1, 1)
+        )
+        teams = [make_team_with_slots(f"RegPL{i}")[0] for i in range(2)]
+        for t in teams:
+            season.teams.add(t)
+        season.start_season()
+        season.refresh_from_db()
+        self.assertEqual(season.phases.count(), 0)
+
+        _lg02c1_play_rr(season, teams)
+        season.refresh_from_db()
+        self.assertEqual(season.state, "completed")
+        self.assertIsNotNone(season.champion_team_id)

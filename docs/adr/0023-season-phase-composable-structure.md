@@ -141,6 +141,57 @@ multi-phase play loop + the tournament-phase lazy build / advance / hand-off).
 - A new PLAN.md item is opened for the deferred **member night simulator
   (sandbox mode)** phase type.
 
+## Part2c-1 consequences (RR → single-elimination playoff embed, 2026-06-05)
+
+The first slice of LG-02-Part2c (the RR → single-elimination playoff embed)
+lands the tournament-phase build / advance / hand-off promised by the
+"Forward decision" above, for the **season-ending playoff** case only. It adds
+no new ADR; these are its consequences on the decisions recorded above.
+
+- **Tournament-phase Matches stay `season=NULL`.** The playoff is built by
+  wiring an existing standalone `Tournament` (consumed verbatim) into the
+  `tournament` phase via the one-directional `SeasonPhase → Tournament` FK; the
+  playoff's Matches are written by the tournament engine
+  (`simulate_match(match_type="tournament")`), which **never sets a `season`
+  FK**. So the playoff is **invisible to season-scoped history**
+  (`Match.objects.filter(season=...)`), and `Season._final_standings_for_phase`
+  filters `Match.objects.filter(season=self, is_completed=True)` without
+  tournament Matches polluting the RR standings. **A `Match.season_phase` FK was
+  deliberately NOT added this slice** — it is deferred to Part2c-2 alongside the
+  multi-RR play loop (where per-phase Match scoping and a season-linked playoff
+  Match-history surface need it). This is the load-bearing surprise a future
+  reader will ask about: *why can't I find the playoff in the Season's Matches?*
+  — because there is no Match FK yet, by design.
+- **Phase completion is DERIVED, not stored; a phase cursor drives the
+  read-path.** No `SeasonPhase.state` field is added. `Season.current_phase()`
+  returns the first incomplete phase by ordinal (the cursor); the private
+  `Season._phase_complete(phase)` is the single derivation site — RR ⇔ the
+  existing `_is_finished()` all-fixtures-played check, tournament ⇔
+  `phase.tournament_id is not None AND phase.tournament.state == "completed"`.
+  `complete_if_finished` is rewritten to gate on the **final** phase being
+  complete and to stamp the champion from that phase's type
+  (`tournament.champion`, else `compute_standings(...)[0]`); a single-RR-phase
+  Season stays **byte-identical** to today.
+- **The play loop is split, not merged.** RR-scoped play (`play_week` /
+  `play_two_months` / `play_until_end`) is behaviourally unchanged and drains the
+  regular season; only the terminal label flips **"Until End of Season" → "Until
+  Playoffs"** when a tournament phase follows. Two new actions drain the bracket:
+  **Play Single Round** (sync, one bracket node/Match) and **Play Playoffs**
+  (async Celery, drains the whole bracket to the Season champion). The build
+  itself is automatic — `Season.activate_pending_tournament_phase()` fires from
+  the post-round hook the moment the RR phase completes, so the bracket is
+  visible before any playoff click.
+- **The playoff is hardcoded single-elimination / all-teams / standings-seeded.**
+  The auto-build always creates a `single_elimination` `Tournament` with one
+  `TournamentParticipant` per season team seeded by Standings rank (rank 1 →
+  seed 1). The **per-phase seeding-mode field** (season-ending Standings-seeded
+  vs mid-season strength-/un-seeded), per-tournament-block config (format /
+  top-N cut), mid-season tournaments, and non-single-elim embeds are all
+  **deferred to Part2c-2**. The compose-time guard added here — *a `tournament`
+  phase requires a preceding `round_robin` phase* — encodes the season-ending
+  flavour's structural requirement; the mid-season flavour (no preceding
+  Standings, may sit first) is not yet composable.
+
 ## See also
 
 - [ADR-0014](0014-league-season-foundation.md) — the League/Season model and

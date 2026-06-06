@@ -818,6 +818,7 @@ class BatchSimulator:
                 match, game_round, round_number=1, swapped=False
             )
             match.save()  # is_completed stays False; no calculate_winner yet
+            season.activate_pending_tournament_phase()
             season.complete_if_finished()
             return game_round
 
@@ -845,6 +846,7 @@ class BatchSimulator:
         self._persist_round_results(match, game_round, round_number=2, swapped=True)
         match.is_completed = True
         match.save()  # triggers calculate_winner via the save override
+        season.activate_pending_tournament_phase()
         season.complete_if_finished()
         return game_round
 

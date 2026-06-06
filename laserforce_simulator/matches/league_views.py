@@ -50,7 +50,7 @@ from .season_dashboard import (
 )
 from .simulation import BatchSimulator
 from .standings import StandingsRow, compute_standings
-from .tasks import play_season_task
+from .tasks import play_playoffs_task, play_season_task
 from .views import _celery_state_to_job_status
 
 # Abbreviated column headers for the wide rating tables (Player Ratings,
@@ -746,6 +746,15 @@ def _build_dashboard_context(
     # live M2M (the snapshot is None pre-activation).
     map_config_label = _build_map_config_label(displayed_season, season_mode)
 
+    # LG-02-Part2c-1 — playoff-cursor keys, derived from the displayed
+    # Season's phase cursor.
+    (
+        playoff_phase_active,
+        playoff_tournament_id,
+        playoff_completed,
+        has_following_tournament_phase,
+    ) = _playoff_cursor_keys(displayed_season)
+
     return {
         "displayed_season": displayed_season,
         "season_mode": season_mode,
@@ -760,7 +769,73 @@ def _build_dashboard_context(
         "action_button_state": action_button_state,
         # LG-01j — 12th key.
         "map_config_label": map_config_label,
+        # LG-02-Part2c-1 — playoff-cursor keys.
+        "playoff_phase_active": playoff_phase_active,
+        "playoff_tournament_id": playoff_tournament_id,
+        "playoff_completed": playoff_completed,
+        "has_following_tournament_phase": has_following_tournament_phase,
     }
+
+
+def _playoff_cursor_keys(
+    displayed_season: Optional[Season],
+) -> tuple[bool, Optional[int], bool, bool]:
+    """LG-02-Part2c-1 — derive the 4 dashboard playoff-cursor keys.
+
+    Returns ``(playoff_phase_active, playoff_tournament_id,
+    playoff_completed, has_following_tournament_phase)``:
+
+    * ``playoff_phase_active`` — ``current_phase()`` is a built + active
+      tournament phase (``tournament_id is not None`` AND
+      ``tournament.state == "active"``).
+    * ``playoff_tournament_id`` — the tournament id of a built tournament
+      phase (active OR completed), else ``None``. When ``current_phase()``
+      is ``None`` (Season finished), inspect the final phase.
+    * ``playoff_completed`` — a built tournament phase exists with
+      ``tournament.state == "completed"``.
+    * ``has_following_tournament_phase`` — the phase list contains a
+      ``tournament`` phase at an ordinal AFTER the current phase.
+    """
+    if displayed_season is None:
+        return (False, None, False, False)
+
+    phases = displayed_season.ordered_phases()
+    current = displayed_season.current_phase()
+
+    playoff_phase_active = False
+    playoff_tournament_id: Optional[int] = None
+    playoff_completed = False
+    has_following_tournament_phase = False
+
+    if current is not None:
+        has_following_tournament_phase = any(
+            phase.phase_type == "tournament" and phase.ordinal > current.ordinal
+            for phase in phases
+        )
+        if current.phase_type == "tournament" and current.tournament_id is not None:
+            playoff_tournament_id = current.tournament_id
+            if current.tournament.state == "active":
+                playoff_phase_active = True
+            elif current.tournament.state == "completed":
+                playoff_completed = True
+    else:
+        # Season finished — inspect the final phase for a completed
+        # tournament (the tournament-completed sub-state).
+        final_phase = phases[-1]
+        if (
+            final_phase.phase_type == "tournament"
+            and final_phase.tournament_id is not None
+        ):
+            playoff_tournament_id = final_phase.tournament_id
+            if final_phase.tournament.state == "completed":
+                playoff_completed = True
+
+    return (
+        playoff_phase_active,
+        playoff_tournament_id,
+        playoff_completed,
+        has_following_tournament_phase,
+    )
 
 
 def _build_map_config_label(
@@ -1608,6 +1683,58 @@ def play_until_end(request, season_id: int) -> HttpResponse:
         )
 
     result = play_season_task.delay(season.id, max_matchdays=None)
+    return JsonResponse({"job_id": result.id, "season_id": season.id}, status=202)
+
+
+def play_single_round(request, season_id: int) -> HttpResponse:
+    """LG-02-Part2c-1 — POST entry point for Play Single Round (one playoff
+    Match).
+
+    Sync. POST only (405 on GET). Requires the cursor be on a built + active
+    tournament phase; otherwise re-renders the Season dashboard with a
+    ``play_error`` (HTTP 400, the LG-01d ``play_error`` pattern). Plays
+    exactly one playoff Match via ``play_next_node``, then
+    ``complete_if_finished()`` crowns the Season when the final node
+    resolves. 302 redirect to the dashboard on success.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
+
+    phase = season.current_phase()
+    if phase is None or phase.phase_type != "tournament" or phase.tournament_id is None:
+        return _render_season_dashboard_error(
+            request, season, "No active playoff bracket to play."
+        )
+
+    from matches.tournament_engine import play_next_node
+
+    play_next_node(phase.tournament)
+    season.complete_if_finished()
+    return redirect("season_dashboard", season_id=season.id)
+
+
+def play_playoffs(request, season_id: int) -> JsonResponse:
+    """LG-02-Part2c-1 — POST entry point for the Play Playoffs async run.
+
+    POST only (405 on GET). Requires the cursor be on a built + active
+    tournament phase; otherwise 409 JSON ``{"error": ...}``. Happy path
+    enqueues ``play_playoffs_task.delay(season_id)`` and returns
+    ``JsonResponse({"job_id", "season_id"}, status=202)``.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
+
+    phase = season.current_phase()
+    if phase is None or phase.phase_type != "tournament" or phase.tournament_id is None:
+        return JsonResponse({"error": "No active playoff bracket to play."}, status=409)
+
+    result = play_playoffs_task.delay(season.id)
     return JsonResponse({"job_id": result.id, "season_id": season.id}, status=202)
 
 
