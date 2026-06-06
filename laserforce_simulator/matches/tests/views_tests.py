@@ -3404,6 +3404,48 @@ class TestLg01fLg01dSessionWrites(_Lg01dTestCase):
         self.assertEqual(self.client.session["last_league_id"], season.league_id)
 
 
+class TestPlayStatusSessionWriteGuard(_Lg01dTestCase):
+    """SQLite write-contention fix — ``play_status`` only writes
+    ``last_league_id`` when it changes. Polling every ~0.5s with an
+    unconditional session write forced a ``django_session`` write on every
+    poll that collided with the play loop and raised "database is locked".
+    """
+
+    class _Fake:
+        state = "PENDING"
+        info = None
+        result = None
+
+    def _call_play_status(self, season, *, preset_league_id):
+        from django.contrib.sessions.backends.db import SessionStore
+        from django.test import RequestFactory
+
+        from matches.league_views import play_status
+
+        request = RequestFactory().get("/ignored/")
+        request.session = SessionStore()
+        if preset_league_id is not None:
+            request.session["last_league_id"] = preset_league_id
+        # Reset the modified flag so we only observe the view's own write.
+        request.session.modified = False
+        with patch("matches.league_views.AsyncResult", return_value=self._Fake()):
+            play_status(request, season_id=season.id, job_id="anything")
+        return request
+
+    def test_no_session_write_when_value_unchanged(self) -> None:
+        season, _teams = _lg01d_active_season("LfPStGuardSame", n_teams=2)
+        request = self._call_play_status(season, preset_league_id=season.league_id)
+        self.assertFalse(request.session.modified)
+
+    def test_session_write_when_value_changes(self) -> None:
+        season, _teams = _lg01d_active_season("LfPStGuardDiff", n_teams=2)
+        request = self._call_play_status(
+            season, preset_league_id=season.league_id + 999
+        )
+        self.assertTrue(request.session.modified)
+        self.assertEqual(request.session["last_league_id"], season.league_id)
+
+
 @pytest.mark.django_db
 class TestPlayerRowEliminationSemantic:
     """Regression coverage for the ``_player_row`` ``is_eliminated`` /

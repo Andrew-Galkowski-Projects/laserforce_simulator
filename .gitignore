@@ -13,6 +13,9 @@ __pycache__/
 # ignore database file in project root (keep this explicit)
 /db.sqlite3
 *.sqlite3
+# WAL journal-mode sidecar files (not matched by *.sqlite3)
+*.sqlite3-wal
+*.sqlite3-shm
 media/
 
 # VSCode settings

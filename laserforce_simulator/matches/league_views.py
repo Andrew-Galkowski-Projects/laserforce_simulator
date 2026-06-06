@@ -1790,7 +1790,14 @@ def play_status(request, season_id: int, job_id: str) -> JsonResponse:
         return HttpResponseNotAllowed(["GET"])
 
     season = get_object_or_404(Season, pk=season_id)
-    request.session["last_league_id"] = season.league_id
+    # Only write when the value actually changes. play_status is polled every
+    # ~0.5s for the whole "Play …" run; an unconditional assignment marks the
+    # session modified on every poll, forcing a django_session write that
+    # competes with the play loop's per-Round write transactions and triggers
+    # "database is locked" on SQLite. The guard keeps last_league_id fresh
+    # (first poll writes it) without writing on every subsequent poll.
+    if request.session.get("last_league_id") != season.league_id:
+        request.session["last_league_id"] = season.league_id
 
     async_result = AsyncResult(job_id)
     return JsonResponse(_build_play_status_response(async_result, season_id=season_id))

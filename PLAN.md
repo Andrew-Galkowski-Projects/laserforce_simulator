@@ -279,6 +279,49 @@ Each player carries a `potential` attribute: a dynamically computed estimate of 
   their current average.
 - `potential` is not exposed in the UI until this phase is complete.
 
+### INFRA-01 · Migrate from SQLite to PostgreSQL
+
+**Status: NOT STARTED.** Motivated by recurring `OperationalError: database is
+locked` errors during long "Play Until End of Season" runs — SQLite is a
+single-writer database and the app now has genuinely concurrent writers (the
+Celery "Play …" tasks run a loop of per-Round write transactions while the
+dashboard polls `play_status`). A WAL + busy-timeout mitigation
+([commit on `lg-fix-sqlite-database-locked`]) buys headroom, but the durable
+fix is a concurrent-writer database.
+
+- **Why now-ish:** the Celery/Redis async executor (ADR-0013) and the per-Round
+  commit play loop (ADR-0016) made background-writer-vs-web-request contention a
+  permanent part of the architecture. SQLite's single-writer lock will keep
+  surfacing under load (long seasons, multiple leagues, future multiplayer).
+- **Low-friction switch:** the app already reads its DB config from
+  `DATABASE_URL` via `dj_database_url` (`settings.py`), so the runtime change is
+  a single env var (`DATABASE_URL=postgres://…`). The work is in provisioning +
+  parity, not code.
+- **Scope:**
+  - Add `psycopg[binary]>=3.1` (or `psycopg2-binary`) to `requirements.txt`.
+  - Provision a local Postgres for dev (Docker Compose service) and a hosted
+    instance for deploy; document the `DATABASE_URL` for each.
+  - Make the SQLite-only hardening conditional, not load-bearing: the
+    `OPTIONS` block in `settings.py` (`timeout` / `transaction_mode`) and the
+    `core/db_pragmas.py` WAL `connection_created` hook are already guarded on
+    `ENGINE == sqlite3` / `connection.vendor == "sqlite"`, so they no-op on
+    Postgres — verify this holds after the switch (no Postgres should ever run
+    the SQLite PRAGMAs).
+  - Audit for SQLite-specific assumptions: JSONField behaviour (Postgres has
+    native `jsonb` — generally an upgrade), any raw SQL, case-sensitivity of
+    text lookups (Postgres is case-sensitive by default where SQLite was not),
+    and `dbshell`/management-command docs in `CLAUDE.md`.
+  - CI: decide whether to run the suite against Postgres (closer to prod) or
+    keep SQLite for test speed; the conftest already forces
+    `CELERY_TASK_ALWAYS_EAGER`, so no broker is needed either way.
+  - Data: dev/test data is disposable (ADR-0004), so **no migration of existing
+    rows** — a fresh `migrate` on Postgres is sufficient. Only production data
+    (if any exists by then) would need a `dumpdata`/`loaddata` or `pg`-level
+    transfer plan.
+- **Done when:** the app runs end-to-end on Postgres locally and in deploy, the
+  full `pytest` suite passes, and a full "Play Until End of Season" run on a
+  multi-team league completes with no lock errors and no SQLite PRAGMAs executed.
+
 ---
 
 ---

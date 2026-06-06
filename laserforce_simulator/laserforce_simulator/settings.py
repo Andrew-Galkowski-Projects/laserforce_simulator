@@ -88,6 +88,23 @@ DATABASES = {
     )
 }
 
+# SQLite write-contention hardening. The Celery "Play …" tasks run a long loop
+# of per-Round write transactions while the dashboard JS polls play_status; on
+# SQLite (single writer, default 5s busy timeout) that collision surfaces as
+# "database is locked". Raise the busy timeout and open each transaction in
+# IMMEDIATE mode so a blocked writer waits instead of erroring. WAL journal mode
+# (which lets a reader and a writer coexist) is enabled per-connection via the
+# connection_created signal in core/apps.py — it cannot live in init_command
+# because Django runs that as a single cursor.execute() (one statement only).
+if DATABASES["default"]["ENGINE"] == "django.db.backends.sqlite3":
+    DATABASES["default"].setdefault("OPTIONS", {})
+    DATABASES["default"]["OPTIONS"].update(
+        {
+            "timeout": 30,
+            "transaction_mode": "IMMEDIATE",
+        }
+    )
+
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
