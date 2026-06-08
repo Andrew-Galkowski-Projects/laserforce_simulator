@@ -70,13 +70,21 @@ def _rr_tournament_season(prefix: str, n: int = 4):
 def _play_rr(season: Season, teams: list) -> None:
     """Play every RR fixture (auto-builds the tournament phase on completion)."""
     by_id = {t.id: t for t in teams}
-    fixtures = season.scheduled_fixtures()
     sim = BatchSimulator()
     with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-        for fixture in fixtures:
-            team_a = by_id[fixture.team_a_id]
-            team_b = by_id[fixture.team_b_id]
-            sim.simulate_scheduled_round(season, team_a, team_b, fixture.round_number)
+        # Mirror the production play loop: tag each Match with its owning RR
+        # phase (LG-02-Part2c-2 per-phase completion scopes by season_phase).
+        for phase, fixtures in season.scheduled_fixtures_by_phase():
+            for fixture in fixtures:
+                team_a = by_id[fixture.team_a_id]
+                team_b = by_id[fixture.team_b_id]
+                sim.simulate_scheduled_round(
+                    season,
+                    team_a,
+                    team_b,
+                    fixture.round_number,
+                    season_phase=phase if phase.pk is not None else None,
+                )
 
 
 def _built_playoff_season(prefix: str, n: int = 4):
@@ -233,3 +241,116 @@ class TestPlayPlayoffs(TestCase):
     def test_post_missing_season_returns_404(self) -> None:
         response = self.client.post(reverse("play_playoffs", args=[9_999_999]))
         self.assertEqual(response.status_code, 404)
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2c-2 — multi-RR → playoff cumulative-seed regression
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-2-seam-contract.md`` §7:
+# a TWO-RR-phase Season then a trailing tournament auto-builds the playoff
+# seeded by the CUMULATIVE standings (both RR phases) once RR2 completes, then
+# drains to the Season champion — alongside the existing single-RR playoff
+# regression above. Appended as a NEW class; no existing class is modified.
+
+
+def _multi_rr_tournament_season(prefix: str, n: int = 4):
+    """An active Season: RR1 (ordinal 1) + RR2 (ordinal 2) + tournament
+    (ordinal 3), ``n`` slotted teams enrolled, started.
+
+    Returns ``(season, teams, rr1, rr2, tournament_phase)``.
+    """
+    league = League.objects.create(name=f"{prefix} League")
+    season = Season.objects.create(
+        league=league, name="S1", start_date=date(2026, 1, 1)
+    )
+    teams = []
+    for i in range(n):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        teams.append(t)
+        season.teams.add(t)
+    rr1 = SeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")
+    rr2 = SeasonPhase.objects.create(season=season, ordinal=2, phase_type="round_robin")
+    tournament_phase = SeasonPhase.objects.create(
+        season=season, ordinal=3, phase_type="tournament"
+    )
+    season.start_season()
+    season.refresh_from_db()
+    return season, teams, rr1, rr2, tournament_phase
+
+
+def _play_one_phase(season, teams, phase) -> None:
+    by_id = {t.id: t for t in teams}
+    fixtures = None
+    for candidate, phase_fixtures in season.scheduled_fixtures_by_phase():
+        if candidate.pk == phase.pk:
+            fixtures = phase_fixtures
+            break
+    assert fixtures is not None
+    sim = BatchSimulator()
+    with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+        for fixture in fixtures:
+            sim.simulate_scheduled_round(
+                season,
+                by_id[fixture.team_a_id],
+                by_id[fixture.team_b_id],
+                fixture.round_number,
+                season_phase=phase,
+            )
+
+
+def _drain(tournament) -> None:
+    from matches.tournament_engine import play_next_node
+
+    with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+        for _ in range(200):
+            if play_next_node(tournament) is None:
+                break
+    tournament.refresh_from_db()
+
+
+class TestMultiRrPlayoffCumulativeSeedRegression(TestCase):
+    """A two-RR-phase Season's trailing playoff seeds from CUMULATIVE standings
+    and drains to the Season champion."""
+
+    def test_playoff_not_built_until_rr2_done(self) -> None:
+        season, teams, rr1, _rr2, tp = _multi_rr_tournament_season("MrrBuild", n=4)
+        _play_one_phase(season, teams, rr1)
+        tp.refresh_from_db()
+        # RR1 complete but RR2 not — no playoff yet.
+        self.assertIsNone(tp.tournament_id)
+
+    def test_playoff_seeds_match_cumulative_standings(self) -> None:
+        season, teams, rr1, rr2, tp = _multi_rr_tournament_season("MrrSeed", n=4)
+        _play_one_phase(season, teams, rr1)
+        _play_one_phase(season, teams, rr2)
+        tp.refresh_from_db()
+        self.assertIsNotNone(tp.tournament_id)
+
+        from matches.models import TournamentParticipant
+
+        participants = list(
+            TournamentParticipant.objects.filter(tournament=tp.tournament).order_by(
+                "seed"
+            )
+        )
+        self.assertEqual(len(participants), len(teams))
+        rows = season._final_standings_for_phase(rr2)
+        rank_to_team = {row.rank: row.team_id for row in rows}
+        for p in participants:
+            self.assertEqual(p.team_id, rank_to_team[p.seed])
+
+    def test_draining_playoff_crowns_season_champion(self) -> None:
+        season, teams, rr1, rr2, tp = _multi_rr_tournament_season("MrrCrown", n=4)
+        _play_one_phase(season, teams, rr1)
+        _play_one_phase(season, teams, rr2)
+        tp.refresh_from_db()
+        _drain(tp.tournament)
+        # The raw engine drains the bracket; complete_if_finished stamps the
+        # Season champion (mirrors the Part2c-1 single-RR playoff precedent).
+        season.complete_if_finished()
+        season.refresh_from_db()
+        tp.refresh_from_db()
+        self.assertEqual(tp.tournament.state, "completed")
+        self.assertEqual(season.state, "completed")
+        self.assertEqual(season.champion_team_id, tp.tournament.champion_id)

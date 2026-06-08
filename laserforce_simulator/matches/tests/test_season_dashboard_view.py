@@ -638,18 +638,21 @@ def _lg02c1_rr_tournament_season(name: str = "Pc1"):
 
 def _lg02c1_play_rr(season, teams):
     by_id = {t.id: t for t in teams}
-    fixtures = season.scheduled_fixtures()
     sim = _Lg02c1_BatchSimulator()
     with _Lg02c1_patch.object(
         _Lg02c1_BatchSimulator, "ROUND_TICKS", _LG02C1_FAST_TICKS
     ):
-        for fixture in fixtures:
-            sim.simulate_scheduled_round(
-                season,
-                by_id[fixture.team_a_id],
-                by_id[fixture.team_b_id],
-                fixture.round_number,
-            )
+        # Mirror the production play loop: tag each Match with its owning RR
+        # phase (LG-02-Part2c-2 per-phase completion scopes by season_phase).
+        for phase, fixtures in season.scheduled_fixtures_by_phase():
+            for fixture in fixtures:
+                sim.simulate_scheduled_round(
+                    season,
+                    by_id[fixture.team_a_id],
+                    by_id[fixture.team_b_id],
+                    fixture.round_number,
+                    season_phase=phase if phase.pk is not None else None,
+                )
 
 
 def _lg02c1_drain_tournament(tournament):

@@ -3446,6 +3446,102 @@ class TestPlayStatusSessionWriteGuard(_Lg01dTestCase):
         self.assertEqual(request.session["last_league_id"], season.league_id)
 
 
+# ===========================================================================
+# LG-02-Part2c-2 — play_week advances exactly one global matchday and crosses
+# the RR1 -> RR2 boundary on the boundary click.
+#
+# Seam contract: ``.claude/worktrees/lg-02-part2c-2-seam-contract.md`` §5.2 + §7.
+# Appended as a NEW class; no existing class is modified.
+# ===========================================================================
+
+
+from matches.models import SeasonPhase as _Lg02c2SeasonPhase  # noqa: E402
+
+
+def _lg02c2_two_rr_active_season(prefix: str, n_teams: int = 2):
+    """An active Season with two ordinal-ordered ``round_robin`` phases.
+
+    Returns ``(season, teams, rr1, rr2)``.
+    """
+    league = _Lg01dLeague.objects.create(name=f"L{prefix}")
+    season = _Lg01dSeason.objects.create(
+        league=league, name="S1", start_date=_lg01d_date.today()
+    )
+    teams = []
+    for i in range(n_teams):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        teams.append(t)
+        season.teams.add(t)
+    rr1 = _Lg02c2SeasonPhase.objects.create(
+        season=season, ordinal=1, phase_type="round_robin"
+    )
+    rr2 = _Lg02c2SeasonPhase.objects.create(
+        season=season, ordinal=2, phase_type="round_robin"
+    )
+    season.start_season()
+    season.refresh_from_db()
+    return season, teams, rr1, rr2
+
+
+class TestLg02c2PlayWeekMultiRr(_Lg01dTestCase):
+    """``play_week`` on a two-RR-phase Season advances exactly one global
+    matchday and crosses the RR1->RR2 boundary on the boundary click."""
+
+    def test_play_week_advances_one_global_matchday_attributed_to_rr1(
+        self,
+    ) -> None:
+        # N=2 ⇒ RR1 spans 2 global matchdays (round-1, then round-2 mirror).
+        season, _teams, rr1, rr2 = _lg02c2_two_rr_active_season("PWMrr1", n_teams=2)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            response = self.client.post(reverse("play_week", args=[season.id]))
+        self.assertEqual(response.status_code, 302)
+        # Exactly one matchday's worth of Rounds ran, all attributed to RR1.
+        self.assertEqual(
+            GameRound.objects.filter(match__season_phase=rr1).count(), 1
+        )
+        self.assertEqual(
+            GameRound.objects.filter(match__season_phase=rr2).count(), 0
+        )
+
+    def test_play_week_crosses_boundary_into_rr2_after_rr1_exhausted(
+        self,
+    ) -> None:
+        """Once every RR1 matchday is played, the next ``play_week`` click
+        lands on the first RR2 matchday — the global calendar crosses the
+        phase boundary.
+        """
+        season, _teams, rr1, rr2 = _lg02c2_two_rr_active_season("PWMrrX", n_teams=2)
+        # N=2 ⇒ RR1 has 2 global matchdays. Click play_week until RR1 is
+        # exhausted (defensively bounded).
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            for _ in range(2):
+                self.client.post(reverse("play_week", args=[season.id]))
+        season.refresh_from_db()
+        # RR1 fully played; RR2 still untouched.
+        self.assertTrue(season._phase_complete(rr1))
+        self.assertEqual(
+            GameRound.objects.filter(match__season_phase=rr2).count(), 0
+        )
+
+        # The boundary click now lands on RR2's first matchday.
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            response = self.client.post(reverse("play_week", args=[season.id]))
+        self.assertEqual(response.status_code, 302)
+        self.assertGreater(
+            GameRound.objects.filter(match__season_phase=rr2).count(), 0
+        )
+
+    def test_season_not_completed_mid_rr2(self) -> None:
+        season, _teams, rr1, rr2 = _lg02c2_two_rr_active_season("PWMrrMid", n_teams=2)
+        # Play just the first global matchday (RR1 round 1).
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            self.client.post(reverse("play_week", args=[season.id]))
+        season.refresh_from_db()
+        # Season stays active until the FINAL RR phase finishes.
+        self.assertEqual(season.state, "active")
+        self.assertIsNone(season.champion_team_id)
+
+
 @pytest.mark.django_db
 class TestPlayerRowEliminationSemantic:
     """Regression coverage for the ``_player_row`` ``is_eliminated`` /

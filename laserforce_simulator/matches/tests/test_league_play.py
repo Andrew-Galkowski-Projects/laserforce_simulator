@@ -618,8 +618,11 @@ class _F:
 
 
 class TestFindNextMatchday(SimpleTestCase):
-    """``find_next_matchday`` returns the first unplayed matchday or
-    ``None`` on empty / all-played input. Side-agnostic frozenset match.
+    """LG-02-Part2c-2 — ``find_next_matchday`` is phase-aware: ``fixtures`` is
+    a list of ``(phase_id, ScheduleFixture)`` pairs and ``played_keys`` is a set
+    of ``(phase_id, frozenset({team ids}), round_number)`` 3-tuples. It returns
+    the global matchday of the first unplayed pair, or ``None`` on empty /
+    all-played input. Side-agnostic frozenset match within a phase.
     """
 
     def test_empty_fixtures_returns_none(self) -> None:
@@ -627,44 +630,44 @@ class TestFindNextMatchday(SimpleTestCase):
 
     def test_no_played_returns_first_matchday(self) -> None:
         fixtures = [
-            _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2),
-            _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3),
-            _F(matchday=3, round_number=1, team_a_id=2, team_b_id=3),
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (10, _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3)),
+            (10, _F(matchday=3, round_number=1, team_a_id=2, team_b_id=3)),
         ]
         self.assertEqual(find_next_matchday(fixtures, set()), 1)
 
     def test_partial_played_returns_first_unplayed_matchday(self) -> None:
         fixtures = [
-            _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2),
-            _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3),
-            _F(matchday=3, round_number=1, team_a_id=2, team_b_id=3),
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (10, _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3)),
+            (10, _F(matchday=3, round_number=1, team_a_id=2, team_b_id=3)),
         ]
-        played = {(frozenset({1, 2}), 1)}
+        played = {(10, frozenset({1, 2}), 1)}
         self.assertEqual(find_next_matchday(fixtures, played), 2)
 
     def test_all_played_returns_none(self) -> None:
         fixtures = [
-            _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2),
-            _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3),
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (10, _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3)),
         ]
         played = {
-            (frozenset({1, 2}), 1),
-            (frozenset({1, 3}), 1),
+            (10, frozenset({1, 2}), 1),
+            (10, frozenset({1, 3}), 1),
         }
         self.assertIsNone(find_next_matchday(fixtures, played))
 
     def test_side_agnostic_frozenset_match(self) -> None:
-        """A played key ``(frozenset({1, 2}), 1)`` matches a fixture with
-        ``team_a_id=1, team_b_id=2, round_number=1`` regardless of which
-        physical side each team played.
+        """A played key ``(phase_id, frozenset({1, 2}), 1)`` matches a fixture
+        with ``team_a_id=1, team_b_id=2, round_number=1`` (same phase)
+        regardless of which physical side each team played.
         """
         fixtures = [
-            _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2),
-            _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3),
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (10, _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3)),
         ]
         # Played key carried with the pair-set reversed — should still
         # match fixture 1 via frozenset semantics.
-        played = {(frozenset({2, 1}), 1)}
+        played = {(10, frozenset({2, 1}), 1)}
         self.assertEqual(find_next_matchday(fixtures, played), 2)
 
     def test_round_2_matchday_unplayed_while_round_1_played(self) -> None:
@@ -673,11 +676,37 @@ class TestFindNextMatchday(SimpleTestCase):
         even for the same pair.
         """
         fixtures = [
-            _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2),
-            _F(matchday=2, round_number=2, team_a_id=1, team_b_id=2),
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (10, _F(matchday=2, round_number=2, team_a_id=1, team_b_id=2)),
         ]
-        played = {(frozenset({1, 2}), 1)}
+        played = {(10, frozenset({1, 2}), 1)}
         # Round 1 played; the round-2 mirror is matchday 2.
+        self.assertEqual(find_next_matchday(fixtures, played), 2)
+
+    def test_phase_discrimination_same_pair_different_phase(self) -> None:
+        """An identical ``(frozenset, round_number)`` played in phase 10 does
+        NOT mark the SAME pairing in phase 20 played — the ``phase_id`` is part
+        of the key. The next unplayed matchday is the phase-20 fixture.
+        """
+        fixtures = [
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (20, _F(matchday=2, round_number=1, team_a_id=1, team_b_id=2)),
+        ]
+        # Only the phase-10 pairing is played.
+        played = {(10, frozenset({1, 2}), 1)}
+        # The phase-20 pairing (same teams, same round) is still unplayed.
+        self.assertEqual(find_next_matchday(fixtures, played), 2)
+
+    def test_first_unplayed_spans_rr1_rr2_boundary(self) -> None:
+        """When every RR1 (phase 10) fixture is played, the first unplayed
+        matchday is the first RR2 (phase 20) matchday — the global calendar
+        crosses the phase boundary monotonically.
+        """
+        fixtures = [
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (20, _F(matchday=2, round_number=1, team_a_id=1, team_b_id=2)),
+        ]
+        played = {(10, frozenset({1, 2}), 1)}
         self.assertEqual(find_next_matchday(fixtures, played), 2)
 
 
@@ -687,9 +716,15 @@ class TestFindNextMatchday(SimpleTestCase):
 
 
 class TestSelectPlayFixtures(SimpleTestCase):
-    """``select_play_fixtures`` returns the unplayed fixtures spanning the
-    next ``max_matchdays`` distinct unplayed matchdays starting at
-    ``find_next_matchday``. ``max_matchdays=None`` returns ALL unplayed.
+    """LG-02-Part2c-2 — ``select_play_fixtures`` is phase-aware: it carries
+    ``(phase_id, ScheduleFixture)`` pairs and ``(phase_id, frozenset, round)``
+    3-tuple keys, and returns the unplayed pairs spanning the next
+    ``max_matchdays`` distinct unplayed GLOBAL matchdays. ``max_matchdays=None``
+    returns ALL unplayed pairs. The distinct-matchday window naturally spans the
+    RR1->RR2 boundary because the play loop feeds OFFSET (global) matchdays.
+
+    Output is the list of unplayed ``(phase_id, fixture)`` pairs in iteration
+    order.
     """
 
     def test_empty_fixtures_returns_empty_list(self) -> None:
@@ -698,18 +733,19 @@ class TestSelectPlayFixtures(SimpleTestCase):
 
     def test_max_matchdays_1_returns_one_matchday_unplayed_only(self) -> None:
         """Play One Week happy path — exactly the next unplayed matchday's
-        fixtures.
+        pairs.
         """
         fixtures = [
-            _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2),
-            _F(matchday=1, round_number=1, team_a_id=3, team_b_id=4),
-            _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3),
-            _F(matchday=2, round_number=1, team_a_id=2, team_b_id=4),
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (10, _F(matchday=1, round_number=1, team_a_id=3, team_b_id=4)),
+            (10, _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3)),
+            (10, _F(matchday=2, round_number=1, team_a_id=2, team_b_id=4)),
         ]
         result = select_play_fixtures(fixtures, set(), max_matchdays=1)
         self.assertEqual(len(result), 2)
-        # All returned fixtures are matchday 1.
-        for f in result:
+        # Each entry is a (phase_id, fixture) pair; all returned are matchday 1.
+        for phase_id, f in result:
+            self.assertEqual(phase_id, 10)
             self.assertEqual(f.matchday, 1)
 
     def test_max_matchdays_8_returns_up_to_8_distinct_matchdays(self) -> None:
@@ -718,9 +754,11 @@ class TestSelectPlayFixtures(SimpleTestCase):
         """
         fixtures = []
         for md in range(1, 13):  # 12 matchdays
-            fixtures.append(_F(matchday=md, round_number=1, team_a_id=1, team_b_id=2))
+            fixtures.append(
+                (10, _F(matchday=md, round_number=1, team_a_id=1, team_b_id=2))
+            )
         result = select_play_fixtures(fixtures, set(), max_matchdays=8)
-        distinct_matchdays = {f.matchday for f in result}
+        distinct_matchdays = {f.matchday for _pid, f in result}
         self.assertEqual(len(distinct_matchdays), 8)
         # The 8 matchdays are the FIRST 8 (1..8).
         self.assertEqual(sorted(distinct_matchdays), list(range(1, 9)))
@@ -730,137 +768,193 @@ class TestSelectPlayFixtures(SimpleTestCase):
         returns those 3.
         """
         fixtures = [
-            _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2),
-            _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3),
-            _F(matchday=3, round_number=1, team_a_id=2, team_b_id=3),
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (10, _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3)),
+            (10, _F(matchday=3, round_number=1, team_a_id=2, team_b_id=3)),
         ]
         result = select_play_fixtures(fixtures, set(), max_matchdays=8)
-        # All 3 fixtures returned; only 3 distinct matchdays exist.
+        # All 3 pairs returned; only 3 distinct matchdays exist.
         self.assertEqual(len(result), 3)
-        distinct = {f.matchday for f in result}
+        distinct = {f.matchday for _pid, f in result}
         self.assertEqual(distinct, {1, 2, 3})
 
     def test_max_matchdays_none_returns_all_unplayed(self) -> None:
-        """Play Until End happy path — every unplayed fixture regardless of
+        """Play Until End happy path — every unplayed pair regardless of
         matchday.
         """
         fixtures = [
-            _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2),
-            _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3),
-            _F(matchday=3, round_number=1, team_a_id=2, team_b_id=3),
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (10, _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3)),
+            (10, _F(matchday=3, round_number=1, team_a_id=2, team_b_id=3)),
         ]
-        played = {(frozenset({1, 2}), 1)}
+        played = {(10, frozenset({1, 2}), 1)}
         result = select_play_fixtures(fixtures, played, max_matchdays=None)
         self.assertEqual(len(result), 2)
         # The played fixture is not in result.
-        for f in result:
+        for phase_id, f in result:
             self.assertNotEqual(
-                (frozenset({f.team_a_id, f.team_b_id}), f.round_number),
-                (frozenset({1, 2}), 1),
+                (phase_id, frozenset({f.team_a_id, f.team_b_id}), f.round_number),
+                (10, frozenset({1, 2}), 1),
             )
 
     def test_boundary_at_last_matchday_returns_that_matchdays_unplayed(
         self,
     ) -> None:
         """If only matchday K remains and ``max_matchdays >= 1``, returns
-        exactly matchday K's unplayed fixtures.
+        exactly matchday K's unplayed pairs.
         """
         fixtures = [
-            _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2),
-            _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3),
-            _F(matchday=3, round_number=1, team_a_id=2, team_b_id=3),
-            _F(matchday=3, round_number=1, team_a_id=1, team_b_id=4),
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (10, _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3)),
+            (10, _F(matchday=3, round_number=1, team_a_id=2, team_b_id=3)),
+            (10, _F(matchday=3, round_number=1, team_a_id=1, team_b_id=4)),
         ]
         played = {
-            (frozenset({1, 2}), 1),
-            (frozenset({1, 3}), 1),
+            (10, frozenset({1, 2}), 1),
+            (10, frozenset({1, 3}), 1),
         }
         result = select_play_fixtures(fixtures, played, max_matchdays=1)
         self.assertEqual(len(result), 2)
-        for f in result:
+        for _pid, f in result:
             self.assertEqual(f.matchday, 3)
 
     def test_all_played_returns_empty_list(self) -> None:
         fixtures = [
-            _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2),
-            _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3),
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (10, _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3)),
         ]
         played = {
-            (frozenset({1, 2}), 1),
-            (frozenset({1, 3}), 1),
+            (10, frozenset({1, 2}), 1),
+            (10, frozenset({1, 3}), 1),
         }
         self.assertEqual(select_play_fixtures(fixtures, played, max_matchdays=1), [])
         self.assertEqual(select_play_fixtures(fixtures, played, max_matchdays=None), [])
 
     def test_preserves_generate_schedule_iteration_order(self) -> None:
         """Output list's iteration order matches the input ``fixtures``
-        order (canonical iteration order is preserved).
+        order (canonical iteration order is preserved); the pairs come back
+        verbatim.
         """
         fixtures = [
-            _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2),
-            _F(matchday=1, round_number=1, team_a_id=3, team_b_id=4),
-            _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3),
-            _F(matchday=2, round_number=1, team_a_id=2, team_b_id=4),
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (10, _F(matchday=1, round_number=1, team_a_id=3, team_b_id=4)),
+            (10, _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3)),
+            (10, _F(matchday=2, round_number=1, team_a_id=2, team_b_id=4)),
         ]
         result = select_play_fixtures(fixtures, set(), max_matchdays=None)
         self.assertEqual(result, fixtures)
 
     def test_side_agnostic_key_matching(self) -> None:
-        """A played key whose ``frozenset`` matches an unplayed fixture is
-        treated as played, regardless of which physical side each team
-        played.
+        """A played key whose ``frozenset`` matches an unplayed fixture (same
+        phase) is treated as played, regardless of which physical side each
+        team played.
         """
         fixtures = [
-            _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2),
-            _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3),
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (10, _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3)),
         ]
         # Played key carried as the reversed pair-set.
-        played = {(frozenset({2, 1}), 1)}
+        played = {(10, frozenset({2, 1}), 1)}
         result = select_play_fixtures(fixtures, played, max_matchdays=None)
         # The matchday-1 fixture is treated as played; only the matchday-2
         # fixture comes back.
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0].matchday, 2)
+        self.assertEqual(result[0][1].matchday, 2)
 
     def test_max_matchdays_1_with_zero_unplayed_matchdays_returns_empty(
         self,
     ) -> None:
         """Defensive — all-played input + ``max_matchdays=1`` ⇒ ``[]``."""
         fixtures = [
-            _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2),
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
         ]
-        played = {(frozenset({1, 2}), 1)}
+        played = {(10, frozenset({1, 2}), 1)}
         self.assertEqual(select_play_fixtures(fixtures, played, max_matchdays=1), [])
 
     def test_partial_matchday_played_still_returns_remaining_fixtures(
         self,
     ) -> None:
-        """If 2 of 4 fixtures on matchday 3 are played and 2 are unplayed,
+        """If 2 of 4 pairs on matchday 3 are played and 2 are unplayed,
         ``max_matchdays=1`` starting from matchday 3 returns just those 2
-        remaining fixtures.
+        remaining pairs.
         """
         fixtures = [
-            _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2),
-            _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3),
-            _F(matchday=3, round_number=1, team_a_id=1, team_b_id=4),
-            _F(matchday=3, round_number=1, team_a_id=2, team_b_id=5),
-            _F(matchday=3, round_number=1, team_a_id=3, team_b_id=6),
-            _F(matchday=3, round_number=1, team_a_id=7, team_b_id=8),
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (10, _F(matchday=2, round_number=1, team_a_id=1, team_b_id=3)),
+            (10, _F(matchday=3, round_number=1, team_a_id=1, team_b_id=4)),
+            (10, _F(matchday=3, round_number=1, team_a_id=2, team_b_id=5)),
+            (10, _F(matchday=3, round_number=1, team_a_id=3, team_b_id=6)),
+            (10, _F(matchday=3, round_number=1, team_a_id=7, team_b_id=8)),
         ]
         played = {
-            (frozenset({1, 2}), 1),
-            (frozenset({1, 3}), 1),
+            (10, frozenset({1, 2}), 1),
+            (10, frozenset({1, 3}), 1),
             # Two of the four matchday-3 fixtures are played.
-            (frozenset({1, 4}), 1),
-            (frozenset({2, 5}), 1),
+            (10, frozenset({1, 4}), 1),
+            (10, frozenset({2, 5}), 1),
         }
         result = select_play_fixtures(fixtures, played, max_matchdays=1)
         self.assertEqual(len(result), 2)
         # Both remaining are matchday 3.
-        for f in result:
+        for _pid, f in result:
             self.assertEqual(f.matchday, 3)
-        pair_sets = {frozenset({f.team_a_id, f.team_b_id}) for f in result}
+        pair_sets = {frozenset({f.team_a_id, f.team_b_id}) for _pid, f in result}
         self.assertEqual(pair_sets, {frozenset({3, 6}), frozenset({7, 8})})
+
+    # ---- LG-02-Part2c-2 phase-discrimination + boundary-spanning cases ----
+
+    def test_phase_discrimination_same_pair_different_phase_not_marked_played(
+        self,
+    ) -> None:
+        """An identical ``(frozenset, round_number)`` played in RR1 (phase 10)
+        does NOT mark the RR2 (phase 20) pairing played — the ``phase_id`` is
+        part of the key. The RR2 pairing comes back as unplayed.
+        """
+        fixtures = [
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (20, _F(matchday=2, round_number=1, team_a_id=1, team_b_id=2)),
+        ]
+        played = {(10, frozenset({1, 2}), 1)}
+        result = select_play_fixtures(fixtures, played, max_matchdays=None)
+        self.assertEqual(len(result), 1)
+        phase_id, f = result[0]
+        self.assertEqual(phase_id, 20)
+        self.assertEqual(f.matchday, 2)
+
+    def test_next_global_matchday_crosses_rr1_rr2_boundary(self) -> None:
+        """With RR1 (phase 10, matchday 1) played, ``max_matchdays=1`` selects
+        the first RR2 (phase 20) global matchday — the contiguous window spans
+        the boundary.
+        """
+        fixtures = [
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (20, _F(matchday=2, round_number=1, team_a_id=1, team_b_id=2)),
+            (20, _F(matchday=3, round_number=2, team_a_id=1, team_b_id=2)),
+        ]
+        played = {(10, frozenset({1, 2}), 1)}
+        result = select_play_fixtures(fixtures, played, max_matchdays=1)
+        # Exactly the next single global matchday (matchday 2, phase 20).
+        self.assertEqual(len(result), 1)
+        phase_id, f = result[0]
+        self.assertEqual(phase_id, 20)
+        self.assertEqual(f.matchday, 2)
+
+    def test_window_spans_boundary_when_budget_covers_both_phases(self) -> None:
+        """A ``max_matchdays`` budget large enough to cover the tail of RR1 and
+        the head of RR2 returns pairs from BOTH phases in one contiguous global
+        window.
+        """
+        fixtures = [
+            (10, _F(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+            (10, _F(matchday=2, round_number=2, team_a_id=1, team_b_id=2)),
+            (20, _F(matchday=3, round_number=1, team_a_id=1, team_b_id=2)),
+            (20, _F(matchday=4, round_number=2, team_a_id=1, team_b_id=2)),
+        ]
+        result = select_play_fixtures(fixtures, set(), max_matchdays=3)
+        phases = {pid for pid, _f in result}
+        # The 3-matchday window covers matchdays 1,2 (phase 10) + 3 (phase 20).
+        self.assertEqual(phases, {10, 20})
+        self.assertEqual({f.matchday for _pid, f in result}, {1, 2, 3})
 
 
 # ---------------------------------------------------------------------------
@@ -1011,3 +1105,124 @@ class TestLg02Part2aPlaySeasonTaskPhaseless(TestCase):
         with_phase.refresh_from_db()
         self.assertEqual(phaseless.state, "completed")
         self.assertEqual(with_phase.state, "completed")
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2c-2 — play_season_task over a TWO-RR-phase Season
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-2-seam-contract.md`` §5.1 + §7:
+# ``play_season_task`` iterates by phase, builds phase-aware played_keys, and
+# attributes each Round's Match to the correct ``season_phase``. It plays RR1
+# FULLY before any RR2 fixture (matchday order is global-continuous), and the
+# Season completes only when the final RR phase finishes. Appended as NEW
+# classes; no existing class is modified.
+
+from matches.models import Match as _Lg02c2Match  # noqa: E402
+
+
+def _two_rr_phase_active_season(prefix: str, n_teams: int = 2):
+    """An active Season composed of two ordinal-ordered ``round_robin``
+    phases (RR1 ordinal 1, RR2 ordinal 2), ``n_teams`` enrolled, started.
+
+    Returns ``(season, teams, rr1, rr2)``.
+    """
+    league = League.objects.create(name=f"L{prefix}")
+    season = Season.objects.create(league=league, name="S1", start_date=date.today())
+    teams = []
+    for i in range(n_teams):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        teams.append(t)
+        season.teams.add(t)
+    rr1 = _Lg02SeasonPhase.objects.create(
+        season=season, ordinal=1, phase_type="round_robin"
+    )
+    rr2 = _Lg02SeasonPhase.objects.create(
+        season=season, ordinal=2, phase_type="round_robin"
+    )
+    season.start_season()
+    season.refresh_from_db()
+    return season, teams, rr1, rr2
+
+
+class TestLg02Part2cPlaySeasonTaskMultiRr(TestCase):
+    """LG-02-Part2c-2 — ``play_season_task`` over a two-RR-phase Season."""
+
+    def test_until_end_plays_both_rr_phases_and_completes(self) -> None:
+        from matches.tasks import play_season_task
+
+        season, _teams, _rr1, _rr2 = _two_rr_phase_active_season("MrrEnd", n_teams=2)
+        # N=2 ⇒ 2 fixtures per RR phase ⇒ 4 fixtures total across two phases.
+        expected_total = len(season.scheduled_fixtures())
+        self.assertEqual(expected_total, 4)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_season_task.delay(season.id, max_matchdays=None)
+        self.assertEqual(result.state, "SUCCESS")
+        self.assertEqual(
+            GameRound.objects.filter(match__season=season).count(), expected_total
+        )
+        season.refresh_from_db()
+        self.assertEqual(season.state, "completed")
+        self.assertIsNotNone(season.champion_team_id)
+
+    def test_rounds_attributed_to_correct_season_phase(self) -> None:
+        from matches.tasks import play_season_task
+
+        season, _teams, rr1, rr2 = _two_rr_phase_active_season("MrrAttr", n_teams=2)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(season.id, max_matchdays=None)
+        # Each RR phase's Rounds are attributed to its own season_phase.
+        rr1_rounds = GameRound.objects.filter(match__season_phase=rr1).count()
+        rr2_rounds = GameRound.objects.filter(match__season_phase=rr2).count()
+        self.assertEqual(rr1_rounds, 2)
+        self.assertEqual(rr2_rounds, 2)
+        # No Round is left with a NULL season_phase (every Round is by-phase).
+        self.assertEqual(
+            GameRound.objects.filter(
+                match__season=season, match__season_phase__isnull=True
+            ).count(),
+            0,
+        )
+
+    def test_same_pairing_across_phases_yields_two_distinct_matches(self) -> None:
+        from matches.tasks import play_season_task
+
+        season, _teams, rr1, rr2 = _two_rr_phase_active_season("MrrDist", n_teams=2)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(season.id, max_matchdays=None)
+        # N=2 ⇒ one pairing; across two RR phases that is two distinct Matches.
+        matches = _Lg02c2Match.objects.filter(season=season)
+        self.assertEqual(matches.count(), 2)
+        phase_ids = sorted(m.season_phase_id for m in matches)
+        self.assertEqual(phase_ids, sorted([rr1.pk, rr2.pk]))
+
+    def test_play_one_matchday_starts_in_rr1_not_rr2(self) -> None:
+        from matches.tasks import play_season_task
+
+        season, _teams, rr1, rr2 = _two_rr_phase_active_season("MrrFirst", n_teams=2)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(season.id, max_matchdays=1)
+        # The first global matchday belongs to RR1 — RR2 has no Rounds yet.
+        self.assertGreater(
+            GameRound.objects.filter(match__season_phase=rr1).count(), 0
+        )
+        self.assertEqual(
+            GameRound.objects.filter(match__season_phase=rr2).count(), 0
+        )
+        season.refresh_from_db()
+        self.assertEqual(season.state, "active")
+
+    def test_does_not_complete_after_rr1_only(self) -> None:
+        from matches.tasks import play_season_task
+
+        season, _teams, rr1, rr2 = _two_rr_phase_active_season("MrrMid", n_teams=2)
+        # Play just RR1's two fixtures via a 2-matchday window (N=2 RR1 spans
+        # two global matchdays: round-1 then the round-2 mirror).
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(season.id, max_matchdays=2)
+        season.refresh_from_db()
+        # RR1 complete but RR2 (the final phase) is not ⇒ Season stays active.
+        self.assertTrue(season._phase_complete(rr1))
+        self.assertFalse(season._phase_complete(rr2))
+        self.assertEqual(season.state, "active")
+        self.assertIsNone(season.champion_team_id)

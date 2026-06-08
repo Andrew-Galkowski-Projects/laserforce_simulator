@@ -1,3 +1,27 @@
+# Web testing — LG-02-Part2c-2 (multi-RR play loop + Match.season_phase FK)
+
+Date: 2026-06-06
+Branch: `lg-02-part2c-2-multi-rr`
+Scope: read-path smoke of the surfaces this backend slice touches (no template/URL/DOM
+changes). Confirmed the rewritten `scheduled_fixtures()` (flat concatenation via the new
+`scheduled_fixtures_by_phase()`), `current_phase()`, and `_build_dashboard_context` still
+render existing data byte-identically. Multi-RR play-loop logic itself is covered by the
+green integration suite (3852 passed); a persistent multi-RR league was deliberately NOT
+created in-browser (create spawns global random-named teams the teardown can't clean).
+
+## Summary — LG-02-Part2c-2
+| Area | Result |
+|---|---|
+| `/leagues/create/` + Part2b "+ Add block" composer render; console/network clean (one pre-existing a11y label issue, unrelated) | ✅ |
+| League dashboard `/leagues/22/` — `Play Next`, top standings, "Next round: Matchday 2 · Round 1", "Rounds played: 2/12", leaders all render (driven by changed `current_phase()`/`scheduled_fixtures()`/`_build_dashboard_context`); console clean | ✅ |
+| Season schedule `/seasons/21/schedule/` — single-RR season renders matchdays 1–6 with continuous weekly dates (05-31 → 07-05), R1 in MD 1–3 / R2 in MD 4–6 = byte-identical `scheduled_fixtures()` (offset-0 single-phase path); console clean | ✅ |
+| No regression in the chokepoint rewrite on existing data; no data created (read-only views) | ✅ |
+
+## Findings — LG-02-Part2c-2
+- No bugs found. The one console a11y "issue" on `/leagues/create/` (form field without a label) is **pre-existing** and unrelated (Part2c-2 touched no templates).
+
+---
+
 # Web testing — LG-02-Part2c-1 (RR → single-elimination playoff embed)
 
 Date: 2026-06-05

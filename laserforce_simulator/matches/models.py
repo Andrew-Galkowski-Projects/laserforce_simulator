@@ -63,6 +63,17 @@ class Match(models.Model):
         on_delete=models.SET_NULL,
         related_name="matches",
     )
+    # LG-02-Part2c-2: optional FK to the owning SeasonPhase. RR Matches gain it;
+    # tournament/playoff Matches stay season_phase=NULL (engine consumed verbatim).
+    # Legacy phase-less seasons keep season_phase=NULL. SET_NULL — deleting a
+    # SeasonPhase must NOT cascade-delete its Matches.
+    season_phase = models.ForeignKey(
+        "matches.SeasonPhase",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="matches",
+    )
     is_completed = models.BooleanField(default=False)
 
     class Meta:
@@ -1036,13 +1047,67 @@ class Season(models.Model):
           it; the compose guard forbids composing one, so unreachable).
         """
         if phase.phase_type == "round_robin":
-            return self._is_finished()
+            if phase.pk is None:
+                # implicit fallback (phase-less Season) — byte-identical
+                # legacy whole-season path (LG-02-Part2c-2).
+                return self._is_finished()
+            return self._rr_phase_complete(phase)
         if phase.phase_type == "tournament":
             return (
                 phase.tournament_id is not None
                 and phase.tournament.state == "completed"
             )
         return False
+
+    def _rr_phase_complete(self, phase: "SeasonPhase") -> bool:
+        """True iff every fixture of THIS RR phase has a persisted GameRound.
+
+        LG-02-Part2c-2 — per-phase analogue of ``_is_finished``. Scoped by
+        ``match__season_phase=phase`` so RR1 must finish before RR2 opens.
+        Only called for a PERSISTED RR phase (``pk is not None``); the
+        implicit fallback routes through ``_is_finished`` in
+        ``_phase_complete``.
+        """
+        phase_fixtures = self._fixtures_for_phase(phase)
+        if not phase_fixtures:
+            return False
+        rounds_qs = GameRound.objects.filter(match__season_phase=phase).select_related(
+            "match"
+        )
+        played_keys: set[tuple[frozenset[int], int]] = set()
+        for game_round in rounds_qs:
+            match = game_round.match
+            if match is None or match.team_red_id is None or match.team_blue_id is None:
+                continue
+            played_keys.add(
+                (
+                    frozenset({match.team_red_id, match.team_blue_id}),
+                    game_round.round_number,
+                )
+            )
+        for fixture in phase_fixtures:
+            key = (
+                frozenset({fixture.team_a_id, fixture.team_b_id}),
+                fixture.round_number,
+            )
+            if key not in played_keys:
+                return False
+        return True
+
+    def _fixtures_for_phase(self, phase: "SeasonPhase") -> "list[ScheduleFixture]":
+        """Return THIS phase's OFFSET fixtures (LG-02-Part2c-2).
+
+        The single place ``_rr_phase_complete`` reads its fixtures from, so
+        completion and play agree on the global-continuous matchday offset.
+        Selects the matching ``scheduled_fixtures_by_phase()`` entry by ``pk``;
+        returns ``[]`` when the phase contributes no fixtures.
+        """
+        if phase.pk is None:
+            return []
+        for candidate, fixtures in self.scheduled_fixtures_by_phase():
+            if candidate.pk == phase.pk:
+                return fixtures
+        return []
 
     def _preceding_phase(self, phase: "SeasonPhase") -> "SeasonPhase | None":
         """Return the phase one ordinal lower than ``phase``, or ``None``."""
@@ -1226,32 +1291,78 @@ class Season(models.Model):
             return persisted
         return [self._implicit_phase()]
 
-    def scheduled_fixtures(self) -> list["ScheduleFixture"]:
-        """Return the flat fixture list for this Season's schedule.
+    def _scheduled_team_ids(self) -> list[int]:
+        """Resolve the enrolled team-id list for schedule generation.
 
-        THIS SLICE: returns exactly the ``round_robin`` phase's fixture
-        list, sourced via ``generate_schedule(team_ids,
-        self.schedule_format)`` where ``team_ids`` is resolved by the
-        existing draft-vs-snapshot rule (draft Season ⇒ sorted live M2M;
-        active/completed Season ⇒ ``starting_team_ids_json``). Exactly ONE
-        ``round_robin`` phase exists this slice (explicit or implicit
-        fallback), so the return is the single RR fixture list. NO
-        cross-phase composition, NO matchday offsetting.
-
-        Returns ``[]`` when ``team_ids`` has ``< 2`` entries (mirrors the
-        guard at every existing call site) — never raises.
+        LG-02-Part2c-2 — extracted from the old inline ``scheduled_fixtures``
+        rule so both ``scheduled_fixtures_by_phase`` and ``_fixtures_for_phase``
+        read one source. Behaviour byte-identical: draft Season ⇒ sorted live
+        M2M; active/completed Season ⇒ ``starting_team_ids_json``.
         """
-        from .schedule_generator import generate_schedule
-
         if self.state == "draft":
-            team_ids = sorted(t.id for t in self.teams.all())
-        else:
-            team_ids = list(self.starting_team_ids_json or [])
+            return sorted(t.id for t in self.teams.all())
+        return list(self.starting_team_ids_json or [])
 
+    def scheduled_fixtures_by_phase(
+        self,
+    ) -> "list[tuple[SeasonPhase, list[ScheduleFixture]]]":
+        """Return per-phase fixture lists with global-continuous matchday offset.
+
+        LG-02-Part2c-2 — one ``(phase, fixtures)`` tuple per ``round_robin``
+        phase in ordinal order (tournament phases contribute NO fixtures —
+        they are drained via the bracket, not ``generate_schedule``). Phase k's
+        fixtures are offset by the SUM of all prior RR phases' matchday counts
+        so the whole season is one monotonic 1..N matchday calendar. Each
+        fixture is a NEW ``ScheduleFixture`` with
+        ``matchday = original_matchday + offset`` (round_number / team ids
+        unchanged). Returns ``[]`` when no RR phase has >= 2 teams.
+        """
+        from .schedule_generator import ScheduleFixture, generate_schedule
+
+        team_ids = self._scheduled_team_ids()
         if len(team_ids) < 2:
             return []
 
-        return generate_schedule(team_ids, self.schedule_format)
+        result: list[tuple["SeasonPhase", list[ScheduleFixture]]] = []
+        offset = 0
+        for phase in self.ordered_phases():
+            if phase.phase_type != "round_robin":
+                continue
+            base = generate_schedule(
+                team_ids, phase.schedule_format or self.schedule_format
+            )
+            if not base:
+                continue
+            offset_fixtures = [
+                ScheduleFixture(
+                    matchday=f.matchday + offset,
+                    round_number=f.round_number,
+                    team_a_id=f.team_a_id,
+                    team_b_id=f.team_b_id,
+                )
+                for f in base
+            ]
+            result.append((phase, offset_fixtures))
+            offset += max(f.matchday for f in base)
+        return result
+
+    def scheduled_fixtures(self) -> list["ScheduleFixture"]:
+        """Flat fixture list for this Season's schedule.
+
+        LG-02-Part2c-2 — now the concatenation of every RR phase's OFFSET
+        fixtures (``scheduled_fixtures_by_phase``), so the matchday numbering
+        is global-continuous across multi-RR. For a single-RR-phase (or
+        phase-less) Season the output is byte-identical to before (one phase,
+        offset 0). NO matchday offsetting beyond what
+        ``scheduled_fixtures_by_phase`` applies.
+
+        Returns ``[]`` when fewer than 2 teams are enrolled (mirrors the guard
+        at every existing call site) — never raises.
+        """
+        flat: list["ScheduleFixture"] = []
+        for _phase, fixtures in self.scheduled_fixtures_by_phase():
+            flat.extend(fixtures)
+        return flat
 
 
 class SeasonPhase(models.Model):
