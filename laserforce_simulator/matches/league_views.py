@@ -1605,12 +1605,18 @@ def play_week(request, season_id: int) -> HttpResponse:
             from core.models import ArenaMap
             from matches.tasks import _resolve_fixture_map
 
-            # LG-02-Part2a — source the Play-Week fixtures through the
-            # Season chokepoint (active Season ⇒ snapshot team_ids, same
-            # list as before).
-            fixtures = season.scheduled_fixtures()
+            # LG-02-Part2c-2 — by-phase fixtures (global-continuous matchday
+            # offset already applied) + phase-aware played_keys.
+            by_phase = season.scheduled_fixtures_by_phase()
+            phase_by_id = {phase.id: phase for phase, _ in by_phase}
+            fixtures = [
+                (phase.id, fixture)
+                for phase, phase_fixtures in by_phase
+                for fixture in phase_fixtures
+            ]
             played_keys = {
                 (
+                    gr.match.season_phase_id,
                     frozenset({gr.match.team_red_id, gr.match.team_blue_id}),
                     gr.round_number,
                 )
@@ -1621,12 +1627,14 @@ def play_week(request, season_id: int) -> HttpResponse:
             to_play = select_play_fixtures(fixtures, played_keys, 1)
             if not to_play:
                 return redirect("season_dashboard", season_id=season.id)
-            team_ids = {f.team_a_id for f in to_play} | {f.team_b_id for f in to_play}
+            team_ids = {f.team_a_id for _pid, f in to_play} | {
+                f.team_b_id for _pid, f in to_play
+            }
             team_by_id = Team.objects.in_bulk(team_ids)
             # LG-01j — bulk-load the frozen-snapshot map pool once.
             pool_ids = season.starting_map_pool_ids_json or []
             pool_by_id: dict[int, ArenaMap] = ArenaMap.objects.in_bulk(pool_ids)
-            for fixture in to_play:
+            for phase_id, fixture in to_play:
                 team_a = team_by_id[fixture.team_a_id]
                 team_b = team_by_id[fixture.team_b_id]
                 arena_map = _resolve_fixture_map(season, fixture, pool_by_id)
@@ -1636,6 +1644,7 @@ def play_week(request, season_id: int) -> HttpResponse:
                     team_b,
                     fixture.round_number,
                     arena_map=arena_map,
+                    season_phase=phase_by_id.get(phase_id),
                 )
     except (ValidationError, ValueError) as exc:
         return _render_season_dashboard_error(request, season, str(exc))

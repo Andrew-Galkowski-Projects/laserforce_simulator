@@ -187,11 +187,18 @@ def play_season_task(
 
         season = Season.objects.get(id=season_id)
 
-        # LG-02-Part2a — source fixtures through the Season chokepoint
-        # (active Season ⇒ snapshot team_ids; same list as before).
-        fixtures = season.scheduled_fixtures()
+        # LG-02-Part2c-2 — by-phase fixtures (global-continuous matchday
+        # offset already applied) + phase-aware played_keys.
+        by_phase = season.scheduled_fixtures_by_phase()
+        phase_by_id = {phase.id: phase for phase, _ in by_phase}
+        fixtures = [
+            (phase.id, fixture)
+            for phase, phase_fixtures in by_phase
+            for fixture in phase_fixtures
+        ]
         played_keys = {
             (
+                gr.match.season_phase_id,
                 frozenset({gr.match.team_red_id, gr.match.team_blue_id}),
                 gr.round_number,
             )
@@ -205,7 +212,9 @@ def play_season_task(
         if n == 0:
             return {"completed": 0, "total": 0}
 
-        team_ids = {f.team_a_id for f in to_play} | {f.team_b_id for f in to_play}
+        team_ids = {f.team_a_id for _pid, f in to_play} | {
+            f.team_b_id for _pid, f in to_play
+        }
         team_by_id = Team.objects.in_bulk(team_ids)
         # LG-01j — bulk-load the frozen-snapshot map pool ONCE outside
         # the per-fixture loop (single ORM query regardless of
@@ -214,7 +223,7 @@ def play_season_task(
         pool_ids = season.starting_map_pool_ids_json or []
         pool_by_id: dict[int, ArenaMap] = ArenaMap.objects.in_bulk(pool_ids)
 
-        for k, fixture in enumerate(to_play):
+        for k, (phase_id, fixture) in enumerate(to_play):
             team_a = team_by_id[fixture.team_a_id]
             team_b = team_by_id[fixture.team_b_id]
             # LG-01j — resolve the per-Round arena_map via the locked
@@ -227,6 +236,7 @@ def play_season_task(
                 team_b,
                 fixture.round_number,
                 arena_map=arena_map,
+                season_phase=phase_by_id.get(phase_id),
             )
             self.update_state(
                 state="PROGRESS",

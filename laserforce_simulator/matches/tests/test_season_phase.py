@@ -82,13 +82,22 @@ def _play_every_fixture(season: Season, teams: list) -> None:
     real simulator under a small ``ROUND_TICKS`` patch.
     """
     by_id = {t.id: t for t in teams}
-    fixtures = season.scheduled_fixtures()
     sim = BatchSimulator()
     with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-        for fixture in fixtures:
-            team_a = by_id[fixture.team_a_id]
-            team_b = by_id[fixture.team_b_id]
-            sim.simulate_scheduled_round(season, team_a, team_b, fixture.round_number)
+        # Mirror the production play loop: tag each Match with its owning RR
+        # phase (LG-02-Part2c-2 per-phase completion scopes by season_phase;
+        # the implicit/phase-less fallback has pk is None -> untagged).
+        for phase, fixtures in season.scheduled_fixtures_by_phase():
+            for fixture in fixtures:
+                team_a = by_id[fixture.team_a_id]
+                team_b = by_id[fixture.team_b_id]
+                sim.simulate_scheduled_round(
+                    season,
+                    team_a,
+                    team_b,
+                    fixture.round_number,
+                    season_phase=phase if phase.pk is not None else None,
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -706,13 +715,22 @@ def _lg02c1_play_rr(season: Season, teams: list) -> None:
     the fixture list).
     """
     by_id = {t.id: t for t in teams}
-    fixtures = season.scheduled_fixtures()
     sim = BatchSimulator()
     with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-        for fixture in fixtures:
-            team_a = by_id[fixture.team_a_id]
-            team_b = by_id[fixture.team_b_id]
-            sim.simulate_scheduled_round(season, team_a, team_b, fixture.round_number)
+        # Mirror the production play loop: tag each Match with its owning RR
+        # phase (LG-02-Part2c-2 per-phase completion scopes by season_phase;
+        # the implicit/phase-less fallback has pk is None -> untagged).
+        for phase, fixtures in season.scheduled_fixtures_by_phase():
+            for fixture in fixtures:
+                team_a = by_id[fixture.team_a_id]
+                team_b = by_id[fixture.team_b_id]
+                sim.simulate_scheduled_round(
+                    season,
+                    team_a,
+                    team_b,
+                    fixture.round_number,
+                    season_phase=phase if phase.pk is not None else None,
+                )
 
 
 def _lg02c1_drain_tournament(tournament) -> None:
@@ -985,3 +1003,175 @@ class TestSingleRrPhaseChampionRegression(TestCase):
         season.refresh_from_db()
         self.assertEqual(season.state, "completed")
         self.assertIsNotNone(season.champion_team_id)
+
+
+# ===========================================================================
+# LG-02-Part2c-2 — multi-round-robin fixture seam + per-phase completion
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-2-seam-contract.md`` §7
+# (model-level fixture-seam + per-phase completion) + the single-RR-phase /
+# phase-less byte-identical regression. Appended as NEW classes; no existing
+# class above is modified.
+
+
+def _lg02c2_two_rr_season(prefix: str, n: int = 2):
+    """An active Season with ordinal-1 + ordinal-2 ``round_robin`` phases,
+    ``n`` slotted teams enrolled, started. Returns ``(season, teams, rr1, rr2)``.
+    """
+    league = League.objects.create(name=f"{prefix} League")
+    season = Season.objects.create(
+        league=league, name="S1", start_date=date(2026, 1, 1)
+    )
+    teams = []
+    for i in range(n):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        teams.append(t)
+        season.teams.add(t)
+    rr1 = SeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")
+    rr2 = SeasonPhase.objects.create(season=season, ordinal=2, phase_type="round_robin")
+    season.start_season()
+    season.refresh_from_db()
+    return season, teams, rr1, rr2
+
+
+def _lg02c2_play_phase(season, teams, phase) -> None:
+    """Play every fixture of ONE phase, attributing each Round to that phase."""
+    by_id = {t.id: t for t in teams}
+    fixtures = None
+    for candidate, phase_fixtures in season.scheduled_fixtures_by_phase():
+        if candidate.pk == phase.pk:
+            fixtures = phase_fixtures
+            break
+    assert fixtures is not None
+    sim = BatchSimulator()
+    with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+        for fixture in fixtures:
+            sim.simulate_scheduled_round(
+                season,
+                by_id[fixture.team_a_id],
+                by_id[fixture.team_b_id],
+                fixture.round_number,
+                season_phase=phase,
+            )
+
+
+class TestLg02c2FixtureSeamByPhase(TestCase):
+    """``scheduled_fixtures_by_phase()`` per-phase ordinal order + monotonic
+    global matchday calendar; ``scheduled_fixtures()`` == concatenation."""
+
+    def test_one_entry_per_rr_phase_ordinal_order(self) -> None:
+        season, _teams, rr1, rr2 = _lg02c2_two_rr_season("C2Order", n=3)
+        by_phase = season.scheduled_fixtures_by_phase()
+        self.assertEqual([p.pk for p, _ in by_phase], [rr1.pk, rr2.pk])
+
+    def test_phase2_offset_past_phase1(self) -> None:
+        season, _teams, _rr1, _rr2 = _lg02c2_two_rr_season("C2Offset", n=3)
+        (_p1, f1), (_p2, f2) = season.scheduled_fixtures_by_phase()
+        self.assertGreater(min(f.matchday for f in f2), max(f.matchday for f in f1))
+
+    def test_flat_equals_concatenation(self) -> None:
+        season, _teams, _rr1, _rr2 = _lg02c2_two_rr_season("C2Concat", n=3)
+        concat = []
+        for _p, fixtures in season.scheduled_fixtures_by_phase():
+            concat.extend(fixtures)
+        self.assertEqual(season.scheduled_fixtures(), concat)
+
+    def test_global_calendar_contiguous(self) -> None:
+        season, _teams, _rr1, _rr2 = _lg02c2_two_rr_season("C2Calendar", n=3)
+        matchdays = sorted({f.matchday for f in season.scheduled_fixtures()})
+        self.assertEqual(matchdays, list(range(1, len(matchdays) + 1)))
+
+
+class TestLg02c2PerPhaseCompletionModel(TestCase):
+    """Model-level per-phase RR completion: ``_phase_complete(rr1)`` True only
+    once RR1 played (scoped ``match__season_phase=rr1``); ``current_phase()``
+    returns RR2 only after RR1 is complete."""
+
+    def test_phase_complete_rr1_only_after_rr1_played(self) -> None:
+        season, teams, rr1, rr2 = _lg02c2_two_rr_season("C2CompRr1", n=2)
+        self.assertFalse(season._phase_complete(rr1))
+        _lg02c2_play_phase(season, teams, rr1)
+        season.refresh_from_db()
+        self.assertTrue(season._phase_complete(rr1))
+        self.assertFalse(season._phase_complete(rr2))
+
+    def test_current_phase_returns_rr2_only_after_rr1(self) -> None:
+        season, teams, rr1, rr2 = _lg02c2_two_rr_season("C2Cursor", n=2)
+        self.assertEqual(season.current_phase().pk, rr1.pk)
+        _lg02c2_play_phase(season, teams, rr1)
+        season.refresh_from_db()
+        self.assertEqual(season.current_phase().pk, rr2.pk)
+
+    def test_rr_phase_complete_scoped_to_owning_phase(self) -> None:
+        """Playing under rr1's season_phase does NOT make rr2 complete — the
+        per-phase scope is ``match__season_phase=phase``."""
+        season, teams, rr1, rr2 = _lg02c2_two_rr_season("C2Scope", n=2)
+        _lg02c2_play_phase(season, teams, rr1)
+        season.refresh_from_db()
+        self.assertFalse(season._phase_complete(rr2))
+
+
+class TestLg02c2SingleRrPhaselessRegression(TestCase):
+    """A single-RR-phase Season (and the phase-less implicit fallback) is
+    byte-identical: the implicit-fallback ``_phase_complete`` routes through
+    ``_is_finished()`` and the same fixtures / completion result hold."""
+
+    def _started_phaseless(self, prefix: str, n: int = 2):
+        league = League.objects.create(name=f"{prefix} League")
+        season = Season.objects.create(
+            league=league, name="S1", start_date=date(2026, 1, 1)
+        )
+        teams = [make_team_with_slots(f"{prefix}{i}")[0] for i in range(n)]
+        for t in teams:
+            season.teams.add(t)
+        season.start_season()
+        season.refresh_from_db()
+        return season, teams
+
+    def test_phaseless_phase_complete_routes_through_is_finished(self) -> None:
+        season, _teams = self._started_phaseless("C2RegFallback", 2)
+        self.assertEqual(season.phases.count(), 0)
+        implicit = season.ordered_phases()[0]
+        self.assertIsNone(implicit.pk)
+        # Before play: implicit fallback _phase_complete == _is_finished == False.
+        self.assertEqual(season._phase_complete(implicit), season._is_finished())
+        self.assertFalse(season._phase_complete(implicit))
+
+    def test_phaseless_single_rr_completes_byte_identically(self) -> None:
+        season, teams = self._started_phaseless("C2RegComplete", 2)
+        by_id = {t.id: t for t in teams}
+        sim = BatchSimulator()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for fixture in season.scheduled_fixtures():
+                sim.simulate_scheduled_round(
+                    season,
+                    by_id[fixture.team_a_id],
+                    by_id[fixture.team_b_id],
+                    fixture.round_number,
+                )
+        season.refresh_from_db()
+        self.assertEqual(season.state, "completed")
+        self.assertIsNotNone(season.champion_team_id)
+        # season_phase stays NULL for the legacy/phase-less path.
+        from matches.models import Match as _M
+
+        for m in _M.objects.filter(season=season):
+            self.assertIsNone(m.season_phase_id)
+
+    def test_single_explicit_rr_phase_complete_matches_is_finished(self) -> None:
+        league = League.objects.create(name="C2RegExplicit League")
+        season = Season.objects.create(
+            league=league, name="S1", start_date=date(2026, 1, 1)
+        )
+        teams = [make_team_with_slots(f"C2RegExp{i}")[0] for i in range(2)]
+        for t in teams:
+            season.teams.add(t)
+        rr1 = SeasonPhase.objects.create(
+            season=season, ordinal=1, phase_type="round_robin"
+        )
+        season.start_season()
+        season.refresh_from_db()
+        # Before play: a single explicit RR phase mirrors _is_finished.
+        self.assertFalse(season._phase_complete(rr1))
+        self.assertFalse(season._is_finished())

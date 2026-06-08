@@ -14,11 +14,13 @@ Public surface:
 * ``round_progress(fixtures, played_keys)`` — return
   ``(completed, total)`` Round counts where ``completed`` is the number
   of fixtures whose Side-agnostic key appears in ``played_keys``.
-* ``find_next_matchday(fixtures, played_keys)`` — return the matchday
-  number of the first unplayed fixture (LG-01d).
+* ``find_next_matchday(fixtures, played_keys)`` — return the global
+  matchday of the first unplayed ``(phase_id, fixture)`` pair (LG-01d;
+  phase-aware via plain-int phase-ids since LG-02-Part2c-2).
 * ``select_play_fixtures(fixtures, played_keys, max_matchdays)`` —
-  return the unplayed fixtures spanning the next ``max_matchdays``
-  distinct unplayed matchdays; ``None`` returns ALL unplayed (LG-01d).
+  return the unplayed ``(phase_id, fixture)`` pairs spanning the next
+  ``max_matchdays`` distinct unplayed global matchdays; ``None`` returns
+  ALL unplayed (LG-01d; phase-aware since LG-02-Part2c-2).
 
 Frozen import allowlist (the only modules this file may import):
 ``dataclasses``, ``typing``, ``collections``. No Django, no ORM, no
@@ -162,27 +164,22 @@ def find_next_matchday(
     fixtures: "list",
     played_keys: "set",
 ) -> "Optional[int]":
-    """Return the matchday number of the first unplayed fixture.
+    """Return the global matchday number of the first unplayed fixture.
 
-    Walks ``fixtures`` in canonical ``generate_schedule(...)`` iteration
-    order (already sorted by ``(matchday, team_a_id)``) and returns the
-    ``matchday`` of the first fixture whose Side-agnostic
-    ``(frozenset({team_a_id, team_b_id}), round_number)`` key is NOT in
-    ``played_keys``.
+    LG-02-Part2c-2 — phase-aware. ``fixtures`` is now a list of
+    ``(phase_id, ScheduleFixture)`` pairs (``phase_id`` a plain
+    ``int | None``) in canonical global-continuous iteration order;
+    ``played_keys`` is a set of ``(phase_id, frozenset({team_red_id,
+    team_blue_id}), round_number)`` 3-tuples (plain-int / frozenset only —
+    the module stays Django-free).
 
-    Args:
-        fixtures: list of ``ScheduleFixture`` in iteration order.
-        played_keys: set of ``(frozenset({team_red_id, team_blue_id}),
-            round_number)`` tuples for every persisted ``GameRound`` in
-            the Season.
-
-    Returns:
-        The matchday number (1-based, ``int``) of the first unplayed
-        fixture, or ``None`` if every fixture has been played (or the
-        input is empty).
+    Returns the global ``matchday`` of the first ``(phase_id, fixture)`` pair
+    whose 3-tuple key is NOT in ``played_keys``, or ``None`` if every fixture
+    has been played (or the input is empty).
     """
-    for fixture in fixtures:
+    for phase_id, fixture in fixtures:
         key = (
+            phase_id,
             frozenset({fixture.team_a_id, fixture.team_b_id}),
             fixture.round_number,
         )
@@ -196,21 +193,28 @@ def select_play_fixtures(
     played_keys: "set",
     max_matchdays: "Optional[int]",
 ) -> "list":
-    """Return the unplayed fixtures spanning the next ``max_matchdays``
-    distinct unplayed matchdays starting at ``find_next_matchday``.
+    """Return the unplayed ``(phase_id, fixture)`` pairs spanning the next
+    ``max_matchdays`` distinct unplayed global matchdays.
+
+    LG-02-Part2c-2 — phase-aware. ``fixtures`` is a list of
+    ``(phase_id, ScheduleFixture)`` pairs (``phase_id`` a plain
+    ``int | None``) in canonical global-continuous iteration order;
+    ``played_keys`` is a set of ``(phase_id, frozenset[int], int)`` 3-tuples.
+    Because the play loop feeds OFFSET fixtures (their ``matchday`` is already
+    global), the distinct-matchday sweep over ``fixture.matchday`` selects a
+    contiguous global window that naturally spans the RR1->RR2 boundary.
 
     Args:
-        fixtures: list of ``ScheduleFixture`` in canonical iteration
-            order.
-        played_keys: as in ``find_next_matchday``.
-        max_matchdays: if an ``int``, return only fixtures whose
-            ``matchday`` is among the next ``max_matchdays`` distinct
-            unplayed matchdays from the canonical sweep. If ``None``,
-            return ALL unplayed fixtures (Play Until End of Season).
+        fixtures: list of ``(phase_id, ScheduleFixture)`` pairs.
+        played_keys: set of ``(phase_id, frozenset[int], int)`` 3-tuples.
+        max_matchdays: if an ``int``, return only pairs whose ``matchday`` is
+            among the next ``max_matchdays`` distinct unplayed global
+            matchdays. If ``None``, return ALL unplayed pairs (Play Until
+            End of Season).
 
     Returns:
-        The unplayed fixtures in canonical iteration order. Empty list
-        when ``fixtures`` is empty or every fixture has been played.
+        The unplayed ``(phase_id, fixture)`` pairs in iteration order. Empty
+        list when ``fixtures`` is empty or every fixture has been played.
     """
     if not fixtures:
         return []
@@ -218,8 +222,10 @@ def select_play_fixtures(
     selected: list = []
     distinct_matchdays: list[int] = []
 
-    for fixture in fixtures:
+    for entry in fixtures:
+        phase_id, fixture = entry
         key = (
+            phase_id,
             frozenset({fixture.team_a_id, fixture.team_b_id}),
             fixture.round_number,
         )
@@ -227,17 +233,17 @@ def select_play_fixtures(
             continue
 
         if max_matchdays is None:
-            selected.append(fixture)
+            selected.append(entry)
             continue
 
-        # max_matchdays is an int. Track distinct unplayed matchdays in
-        # iteration order; accept fixtures whose matchday is in the set,
-        # add new matchdays only while we have headroom.
+        # max_matchdays is an int. Track distinct unplayed (global) matchdays
+        # in iteration order; accept pairs whose matchday is in the set, add
+        # new matchdays only while we have headroom.
         if fixture.matchday in distinct_matchdays:
-            selected.append(fixture)
+            selected.append(entry)
         elif len(distinct_matchdays) < max_matchdays:
             distinct_matchdays.append(fixture.matchday)
-            selected.append(fixture)
+            selected.append(entry)
         # else: skip — past our matchday budget.
 
     return selected

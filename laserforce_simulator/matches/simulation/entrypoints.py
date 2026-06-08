@@ -742,6 +742,7 @@ class BatchSimulator:
         round_number: int,
         *,
         arena_map=None,
+        season_phase=None,
     ) -> "GameRound":
         """Simulate one Round of a Season Match.
 
@@ -778,6 +779,14 @@ class BatchSimulator:
         if round_number not in (1, 2):
             raise ValueError(f"round_number must be 1 or 2; got {round_number!r}")
 
+        # LG-02-Part2c-2: the implicit-fallback SeasonPhase (phase-less /
+        # legacy Season) is an UNSAVED instance (pk is None) and cannot be
+        # used in an ORM ``filter()``. Coerce it to None so the find-or-create
+        # key is (season, NULL, frozenset(teams)) — byte-identical to the
+        # pre-Part2c-2 single-phase behaviour.
+        if season_phase is not None and season_phase.pk is None:
+            season_phase = None
+
         movement_ctx, zone_size = load_map_context(arena_map)
 
         # Side-agnostic Match lookup (the team that played red in one
@@ -785,11 +794,11 @@ class BatchSimulator:
         # swap is applied at round 2). Two ORM queries, first match
         # wins.
         match = (
-            Match.objects.filter(season=season)
+            Match.objects.filter(season=season, season_phase=season_phase)
             .filter(team_red=team_a, team_blue=team_b)
             .first()
         ) or (
-            Match.objects.filter(season=season)
+            Match.objects.filter(season=season, season_phase=season_phase)
             .filter(team_red=team_b, team_blue=team_a)
             .first()
         )
@@ -799,6 +808,7 @@ class BatchSimulator:
             if match is None:
                 match = Match.objects.create(
                     season=season,
+                    season_phase=season_phase,
                     team_red=team_a,
                     team_blue=team_b,
                     is_completed=False,

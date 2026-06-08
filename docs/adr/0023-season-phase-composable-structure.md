@@ -192,6 +192,60 @@ no new ADR; these are its consequences on the decisions recorded above.
   flavour's structural requirement; the mid-season flavour (no preceding
   Standings, may sit first) is not yet composable.
 
+## Part2c-2 consequences (multi-RR play loop + Match.season_phase FK, 2026-06-06)
+
+The second slice of LG-02-Part2c generalises the Part2c-1 single-RR-then-playoff
+path into a **multi-round-robin** season (RR1→RR2, RR1→RR2→playoff). It adds no
+new ADR; these are its consequences on the decisions above.
+
+- **A `Match.season_phase` FK is finally added — and it keeps `season` set.** The
+  Part2c-1 "load-bearing surprise" (no Match FK; you can't find the playoff in the
+  Season's Matches) is resolved *for RR Matches only*: an RR Match now carries
+  **both** `season=<season>` **and** `season_phase=<rr phase>`. The FK mirrors
+  `Match.season`'s `SET_NULL` (deleting a `SeasonPhase` must not cascade-delete its
+  Matches) and reuses the `related_name="matches"` label without collision
+  (`Season.matches` vs `SeasonPhase.matches`). It is added by a single `AddField`
+  migration (`0043_match_season_phase`) with **no `RunPython` / no backfill** — the
+  same [ADR-0004](0004-simulation-data-is-disposable.md) disposable-data posture
+  the `SeasonPhase` model itself shipped under. The FK is load-bearing because it
+  makes the `simulate_scheduled_round` find-or-create key
+  `(season, season_phase, frozenset({team ids}))` phase-aware — without it, the same
+  pairing in RR1 and RR2 would collide onto one Match.
+- **Tournament Matches STILL stay `season=NULL, season_phase=NULL`.** The
+  tournament engine is consumed verbatim and never sets either FK, so the
+  Part2c-1 statement survives: the playoff remains invisible to season-scoped
+  history, and a **season-linked playoff Match-history surface stays DEFERRED**
+  (now to Part2c-3). Adding the FK did not, by itself, join playoff Matches to the
+  season game log.
+- **Standings are cumulative across RR phases — `_final_standings_for_phase` is
+  unchanged.** It keeps the whole-season filter
+  `Match.objects.filter(season=self, is_completed=True)`, so a multi-RR season's
+  standings aggregate every RR phase's Matches. A trailing playoff seeds from the
+  cumulative leader; an RR-final-phase champion is the cumulative leader. This was
+  a deliberate decision, not a deferral — per-phase standings scoping is explicitly
+  rejected for this composition.
+- **Phase completion becomes per-phase for RR, while standings stay cumulative.**
+  `_phase_complete`'s `round_robin` branch now routes a *persisted* RR phase
+  through a new per-phase `_rr_phase_complete` (scoped by
+  `match__season_phase=phase`), so the cursor finishes RR1 before RR2 opens; the
+  *implicit* `pk is None` fallback phase still routes through the whole-season
+  `_is_finished()`, keeping phase-less and single-RR seasons byte-identical. The
+  tension is intentional: completion is per-phase (which RR is done) but standings
+  are cumulative (the whole season's record).
+- **Matchday becomes global-continuous across RR phases via a per-phase offset.**
+  A new `scheduled_fixtures_by_phase()` seam offsets phase k's fixtures by the sum
+  of all prior RR phases' matchday spans, yielding one monotonic 1..N calendar;
+  `scheduled_fixtures()` becomes the flat concatenation of those offset fixtures
+  (byte-identical for the single-RR / phase-less case). The
+  `date = start_date + (matchday-1)*7` derivation and every flat caller are
+  unchanged. The pure dashboard helpers `select_play_fixtures` / `find_next_matchday`
+  gain phase-awareness via **plain-int phase-ids** so `matches/season_dashboard.py`
+  stays Django-free.
+- **No simulator / tournament-engine change, no re-baseline.** `generate_schedule`,
+  `BatchSimulator`, and the bracket engine are consumed verbatim; the per-Round RNG
+  contract is untouched (only the Match a Round attaches to changes), so there is
+  **no Score Calibration re-baseline and no SIM-07 / SIM-08 interaction**.
+
 ## See also
 
 - [ADR-0014](0014-league-season-foundation.md) — the League/Season model and

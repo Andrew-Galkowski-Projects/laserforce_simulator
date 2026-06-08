@@ -3915,6 +3915,213 @@ See the seam contract
 [`.claude/worktrees/lg-02-part2c-1-seam-contract.md`](../../.claude/worktrees/lg-02-part2c-1-seam-contract.md)
 for the authoritative names + behaviours.
 
+## LG-02-Part2c-2 multi-round-robin season
+
+The next slice of LG-02-Part2c — a **thin orchestration layer** that generalises
+the Part2c-1 single-RR-then-single-elim path into a **multi-round-robin** season.
+It adds a `Match.season_phase` FK, a per-phase find-or-create key, per-phase RR
+completion, a multi-RR play loop, and **cross-phase global-continuous matchday
+offsetting**. The supported + tested composition is **one-or-more `round_robin`
+phases then an OPTIONAL trailing `tournament`** (RR1→RR2, RR1→RR2→playoff). The
+tournament engine (`simulate_match(match_type="tournament")` / `play_next_node`)
+and the Part2c-1 auto-build / cursor / completion machinery are consumed
+**VERBATIM**; legacy phase-less and single-RR seasons stay **byte-identical**.
+**No simulator mechanics change, no tournament-engine change, no composer/form/
+template change, no Score Calibration re-baseline, no SIM-07/08 interaction.** The
+[ADR-0023](../../docs/adr/0023-season-phase-composable-structure.md)
+ordered-typed-phase decision (extended with a "Part2c-2 consequences" addendum)
+and the **Matchday** / **Season phase** CONTEXT.md glossary touch-ups carry the
+domain language. Seam contract:
+[`.claude/worktrees/lg-02-part2c-2-seam-contract.md`](../../.claude/worktrees/lg-02-part2c-2-seam-contract.md).
+
+**`Match.season_phase` FK + migration `0043` (`matches/models.py`).** A new
+optional FK on `Match` mirrors the existing `Match.season` SET_NULL block:
+`season_phase = models.ForeignKey("matches.SeasonPhase", null=True, blank=True,
+on_delete=models.SET_NULL, related_name="matches")`, declared immediately after
+`Match.season`. **RR Matches now carry BOTH `season=<season>` AND
+`season_phase=<rr phase>`**; tournament/playoff Matches stay `season=NULL,
+season_phase=NULL` (engine consumed verbatim) and legacy phase-less seasons
+(implicit `pk is None` phase) keep `season_phase=NULL` — byte-identical. The
+reverse accessor `SeasonPhase.matches` reuses the same `related_name` label
+`Season.matches` uses, but the owning models differ (`Season` vs `SeasonPhase`)
+so the two reverse accessors don't collide. Migration
+`matches/migrations/0043_match_season_phase.py` (dep
+`0042_seasonphase_format_tournament`) is a **single `AddField`** — **NO
+`RunPython`, NO backfill, NO data migration** (the [ADR-0004](../../docs/adr/0004-simulation-data-is-disposable.md)
+disposable-data posture, same as `0029` / `0041` / `0042`). The FK is the
+load-bearing reason this slice exists: it makes the find-or-create key
+phase-aware so identical pairings in different RR phases are DISTINCT Matches.
+
+**By-phase fixture seam + global-continuous matchday offset (`Season`, in
+`matches/models.py`).** A NEW `Season.scheduled_fixtures_by_phase(self) ->
+list[tuple[SeasonPhase, list[ScheduleFixture]]]` returns one `(phase, fixtures)`
+tuple per `round_robin` phase in ordinal order (tournament phases contribute no
+fixtures — they drain via the bracket, not `generate_schedule`). **Phase k's
+fixtures are offset by the SUM of all prior RR phases' matchday spans** (a phase's
+un-offset span is `max(f.matchday for f in <base>)`), so the whole season is one
+monotonic 1..N matchday calendar and the `date = start_date + (matchday-1)*7`
+derivation keeps working. Each offset fixture is a NEW `ScheduleFixture` with
+`matchday = original + offset` (round_number / team ids unchanged); fixtures come
+from `generate_schedule(team_ids, phase.schedule_format or self.schedule_format)`
+(both currently resolve to `single_round_robin`, so output is byte-identical for
+the single-RR case). `Season.scheduled_fixtures(self) -> list[ScheduleFixture]` is
+**REWRITTEN to be the flat concatenation** of every phase's offset fixtures —
+preserving its return type, its `[]`-on-`<2`-teams guard, and byte-identical
+output for a single-RR (or phase-less) Season (one phase, offset 0) so every flat
+caller (`_is_finished`, `season_schedule`, `_build_dashboard_context`,
+`league_history`, `team_schedule`) is unchanged. A new private
+`Season._scheduled_team_ids(self) -> list[int]` extracts the draft-vs-snapshot
+`team_ids` rule (no behaviour change) so the by-phase seam and per-phase
+completion read one source.
+
+**Per-phase RR completion (`Season`, in `matches/models.py`).**
+`Season._phase_complete(self, phase)` is **REWRITTEN** so the `round_robin` branch
+is **per-phase EXCEPT the implicit fallback**: `phase.pk is None` ⇒ the
+whole-season `_is_finished()` (byte-identical legacy path); a persisted RR phase ⇒
+the NEW private `Season._rr_phase_complete(self, phase) -> bool`. The tournament
+branch and trailing `return False` are unchanged. `_rr_phase_complete` is the
+per-phase analogue of `_is_finished`: it reads THIS phase's offset fixtures (via
+the NEW private `Season._fixtures_for_phase(self, phase) -> list[ScheduleFixture]`,
+the matching entry from `scheduled_fixtures_by_phase()`) and scopes the
+played-rounds query by **`GameRound.objects.filter(match__season_phase=phase)`**,
+comparing against the same Side-agnostic `(frozenset({team ids}), round_number)`
+key `_is_finished` uses (the offset only changes `matchday`, which the key does not
+read). This makes the cursor finish RR1 before RR2 opens — and because
+`current_phase()` already walks `ordered_phases()` calling `_phase_complete` per
+phase, **no `current_phase` edit is needed**. `_final_standings_for_phase` stays
+**whole-season** (`Match.objects.filter(season=self, is_completed=True)`) so
+standings are **cumulative across all RR phases** (a trailing playoff seeds from
+the cumulative leader; an RR-final-phase champion = cumulative leader).
+
+**Phase-aware find-or-create key (`matches/simulation/entrypoints.py`).**
+`simulate_scheduled_round` gains a **keyword-only `season_phase=None`** appended
+after `arena_map=None` (`def simulate_scheduled_round(self, season, team_a,
+team_b, round_number, *, arena_map=None, season_phase=None) -> GameRound`).
+**Default `None` = legacy/sandbox unchanged.** The Side-agnostic find-or-create
+key becomes **`(season, season_phase, frozenset({team_a_id, team_b_id}))`** — both
+lookup queries filter `season=season, season_phase=season_phase`, and the Round-1
+create stamps `season_phase=season_phase`. So identical pairings in DIFFERENT RR
+phases become DISTINCT Matches; `season_phase=None` keeps the key
+`(season, NULL, frozenset)`, byte-identical to today's `(season, frozenset)`. The
+two post-round hooks (`activate_pending_tournament_phase()` then
+`complete_if_finished()`) are **UNCHANGED** — `complete_if_finished` already gates
+on the final phase, and `_phase_complete` now resolves per-phase RR, so the season
+completes only when the truly-final phase finishes. **No new RNG draw** — only the
+Match the round attaches to changes.
+
+**Phase-aware pure helpers (`matches/season_dashboard.py`).** The module stays
+**Django-free** (frozen `collections`/`dataclasses`/`typing` allowlist;
+`TestNoDjangoImportsLeaked` must keep passing). `select_play_fixtures` and
+`find_next_matchday` become phase-aware via **PLAIN INT phase-ids** — no Django,
+no `SeasonPhase` import. Their `fixtures` arg is now a
+`list[tuple[int | None, ScheduleFixture]]` (each `(phase_id, fixture)`) and
+`played_keys` is `set[tuple[int | None, frozenset[int], int]]`; the per-fixture
+key built inside the sweep becomes the 3-tuple `(phase_id, frozenset({team ids}),
+round_number)`. Because the play loop feeds OFFSET fixtures, the existing "next
+`max_matchdays` distinct matchdays" sweep selects a contiguous GLOBAL window that
+naturally spans the RR1→RR2 boundary (`max_matchdays is None` ⇒ all unplayed
+pairs). **`find_next_fixture` / `round_progress` / `compute_leaders` / `LeaderRow`
+stay UNCHANGED on the FLAT 2-tuple key shape** `(frozenset, round_number)` — they
+serve the dashboard's whole-season next/progress display over the flat
+`scheduled_fixtures()` + flat `played_keys` (already global-continuous via the
+offset), so no phase-aware variant is needed for them. The seam split:
+play-loop helpers attribute each Round to its owning phase (3-tuple); dashboard
+helpers need only whole-season next/progress (2-tuple); both shapes are plain-int
+/ frozenset / dataclass, so the module stays Django-free.
+
+**Play-loop wiring (`matches/tasks.py::play_season_task`,
+`matches/league_views.py::play_week`).** Both sites are rewritten to iterate
+**by phase**: build `by_phase = season.scheduled_fixtures_by_phase()`, a
+`phase_by_id = {phase.id: phase for phase, _ in by_phase}` map, a flat
+`fixtures = [(phase.id, fixture) for phase, pf in by_phase for fixture in pf]`
+list, and a phase-aware `played_keys = {(gr.match.season_phase_id,
+frozenset({gr.match.team_red_id, gr.match.team_blue_id}), gr.round_number) for gr
+in GameRound.objects.filter(match__season=season).select_related("match")}`. The
+per-fixture loop unpacks `(phase_id, fixture)` and passes
+`season_phase=phase_by_id.get(phase_id)` into `simulate_scheduled_round`. For a
+phase-less season `scheduled_fixtures_by_phase()` yields one tuple whose
+`phase.id is None`, so `phase_by_id.get(None)` → `None` → `season_phase=None`
+flows through, preserving legacy `season_phase=NULL` Matches. The
+`_resolve_fixture_map` / `in_bulk` / progress / `close_old_connections`
+machinery, the 405 guard, `last_league_id` write, and the success/error responses
+are otherwise unchanged. **`play_two_months` / `play_until_end` are UNCHANGED** —
+they enqueue `play_season_task`; the `max_matchdays=8 | None` window carries
+through `select_play_fixtures` unchanged over the global-continuous matchdays.
+
+**Scope-out (DEFERRED to Part2c-3 — DO NOT build here).** Per-phase
+`schedule_format` wiring beyond the read + the first alternative regular-season
+format; the per-phase seeding-mode field + mid-season tournaments; per-tournament-
+block config (format / top-N cut); non-single-elim embeds (double-elim / RR /
+Swiss / RR→DE as a finals stage); a season-linked playoff Match-history surface;
+weekly playoff pacing. `_final_standings_for_phase` stays whole-season (cumulative
+standings are the intended behaviour, not a deferral).
+
+**Determinism.** RR sims are byte-identical per Round (no mechanics change).
+Tournament sims stay **non-deterministic** — tests assert on `state` /
+`champion_team` id / bracket-node winners and on Match counts / `season_phase_id`
+attribution, **NEVER** on exact simulated point totals. **No SIM-07 / SIM-08
+interaction, NO Score Calibration re-baseline** (extend ADR-0023, no new ADR).
+
+**Locked names (quick index):**
+- **Model + migration (`matches/models.py`):** `Match.season_phase =
+  models.ForeignKey("matches.SeasonPhase", null=True, blank=True,
+  on_delete=models.SET_NULL, related_name="matches")`; reverse accessor
+  `SeasonPhase.matches`; migration
+  `matches/migrations/0043_match_season_phase.py` (dep
+  `0042_seasonphase_format_tournament`, single `AddField`, NO `RunPython`).
+- **`Season` methods (`matches/models.py`):**
+  `scheduled_fixtures_by_phase(self) -> list[tuple[SeasonPhase,
+  list[ScheduleFixture]]]` (NEW — per-phase offset fixtures);
+  `scheduled_fixtures(self) -> list[ScheduleFixture]` (REWRITTEN — flat
+  concatenation of by-phase offset fixtures);
+  `_phase_complete(self, phase) -> bool` (REWRITTEN — RR branch per-phase via
+  `_rr_phase_complete`, `pk is None` ⇒ `_is_finished()`);
+  `_rr_phase_complete(self, phase) -> bool` (NEW — per-phase RR, scoped
+  `match__season_phase=phase`);
+  `_fixtures_for_phase(self, phase) -> list[ScheduleFixture]` (NEW private — THIS
+  phase's offset fixtures);
+  `_scheduled_team_ids(self) -> list[int]` (NEW private — extracted
+  draft-vs-snapshot rule). UNCHANGED: `current_phase`, `_preceding_phase`,
+  `_final_standings_for_phase` (whole-season — cumulative standings),
+  `activate_pending_tournament_phase`, `_stamp_champion_for_final_phase`,
+  `complete_if_finished`, `_is_finished`, `ordered_phases`, `_implicit_phase`,
+  `start_season`.
+- **Matchday offset:** phase k offset = sum of prior RR phases' matchday spans;
+  per-phase span = `max(f.matchday for f in <un-offset base>)`; result is one
+  monotonic 1..N calendar; `date = start_date + (matchday-1)*7` unchanged.
+- **Find-or-create key (`matches/simulation/entrypoints.py`):**
+  `(season, season_phase, frozenset({team_a_id, team_b_id}))`; signature gains
+  keyword-only `season_phase=None`
+  (`simulate_scheduled_round(self, season, team_a, team_b, round_number, *,
+  arena_map=None, season_phase=None) -> GameRound`); post-round hooks
+  (`activate_pending_tournament_phase()` then `complete_if_finished()`) UNCHANGED.
+- **Pure helpers (`matches/season_dashboard.py`) — phase-aware, Django-free:**
+  `select_play_fixtures(fixtures, played_keys, max_matchdays)` and
+  `find_next_matchday(fixtures, played_keys)` where `fixtures: list[tuple[int |
+  None, ScheduleFixture]]`, `played_keys: set[tuple[int | None, frozenset[int],
+  int]]`. UNCHANGED on the FLAT 2-tuple shape: `find_next_fixture`,
+  `round_progress`, `compute_leaders`, `LeaderRow`. `TestNoDjangoImportsLeaked`
+  must keep passing.
+- **played_keys shape (play loop):** `(season_phase_id, frozenset({team_red_id,
+  team_blue_id}), round_number)` from `match.season_phase_id` (plain `int |
+  None`). FLAT dashboard `played_keys` stays the 2-tuple `(frozenset,
+  round_number)`.
+- **Play-loop sites:** `matches/tasks.py::play_season_task` and
+  `matches/league_views.py::play_week` — both build `by_phase` / `phase_by_id` /
+  flat `[(phase.id, fixture)]` / phase-aware `played_keys`, call
+  `select_play_fixtures(...)`, pass `season_phase=phase_by_id.get(phase_id)`.
+  `play_two_months` / `play_until_end` UNCHANGED.
+- **Composer / form / template:** UNCHANGED (`parse_phase_composition` already
+  permits multiple `round_robin` tokens, ≥1 RR, no cap; the Part2c-1
+  tournament-must-follow-RR guard stays).
+- **ADR:** extend [ADR-0023](../../docs/adr/0023-season-phase-composable-structure.md)
+  with a "Part2c-2 consequences" addendum (no new ADR). **No new CONTEXT.md
+  domain term, no simulator/engine change, no re-baseline.**
+
+See the seam contract
+[`.claude/worktrees/lg-02-part2c-2-seam-contract.md`](../../.claude/worktrees/lg-02-part2c-2-seam-contract.md)
+for the authoritative names + behaviours.
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)
