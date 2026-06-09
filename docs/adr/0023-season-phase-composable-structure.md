@@ -288,6 +288,47 @@ decisions above.
   **no Score Calibration re-baseline and no SIM-07 / SIM-08 interaction**, and no
   new ADR — only this addendum.
 
+## Part2c-3b consequences (per-phase `tournament_mode` field — dormant, 2026-06-08)
+
+The "Forward decision" noted that a `tournament` phase comes in two flavours by
+Season role (season-ending Standings-seeded vs mid-season strength-/un-seeded) and
+deferred the field that captures it. This slice lands that field as a **fully
+dormant** addition; it adds no new ADR — these are its consequences on the
+decisions above.
+
+- **`SeasonPhase` gains `tournament_mode`, declaring all four flavours but
+  building only one.** A new `CharField(max_length=16, default="standings")` with
+  `TOURNAMENT_MODE_CHOICES = {standings, strength, unseeded, random_draw}` (migration
+  `0045_seasonphase_tournament_mode`, single `AddField`, no `RunPython` — the same
+  [ADR-0004](0004-simulation-data-is-disposable.md) posture as `0041`/`0042`/`0043`/
+  `0044`). All four values are declared now (the `member_night` declared-but-inert
+  precedent), but only `standings` has build behaviour this slice — the default
+  matches the hardcoded standings-seeding in `activate_pending_tournament_phase`, so
+  that method is **untouched and byte-identical**. **`unseeded` ≠ `random_draw`**:
+  unseeded randomly seeds the season's existing preset teams; random_draw builds
+  fresh balanced teams from a player pool (reusing the LG-02x-1
+  `team_assembly="random_draw"` machinery).
+- **The field is threaded through the seam but the wire format is unchanged.**
+  `PhaseSpec` gains a trailing defaulted `tournament_mode` (the c-3a
+  `ScheduleFixture.leg` append-with-default precedent), and both `SeasonPhase`
+  creation sites (`league_create` / `next_season`) stamp it so the carry-forward is
+  forward-compatible. But `parse_phase_composition` does **not** parse a mode from
+  the wire — a `tournament:<mode>` token still raises `"malformed phase
+  composition"`, reserving the `:` syntax for the c-3c picker — so every phase this
+  slice resolves to `"standings"`.
+- **The compose-time validity rule is unchanged.** The `standings`-mode
+  "requires a preceding `round_robin` phase" constraint is already enforced for
+  every `tournament` block by the existing blanket preceding-RR guard; c-3b adds no
+  new parser rule and does **not** relax the guard (relaxation for mid-season modes
+  is c-3c — without the differential build, a settable mid-season mode would either
+  build a standings bracket anyway or park the season cursor forever).
+- **No read-path / simulator / RNG change, no re-baseline.** A dormant column add +
+  a defaulted dataclass field + two creation kwargs + an admin column; nothing
+  branches on the field yet. **No Score Calibration re-baseline, no SIM-07 / SIM-08
+  interaction**, no new ADR — only this addendum. The mid-season *behaviour* (guard
+  relaxation + strength/unseeded/random_draw build + the composer picker) is
+  Part2c-3c.
+
 ## See also
 
 - [ADR-0014](0014-league-season-foundation.md) — the League/Season model and

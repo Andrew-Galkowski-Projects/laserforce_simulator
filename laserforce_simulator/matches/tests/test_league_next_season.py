@@ -909,3 +909,60 @@ class TestLg02Part2bNextSeasonCopiesComposition(TestCase):
                 phase.tournament_id,
                 f"new phase ordinal={phase.ordinal} carried a non-null tournament FK",
             )
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2c-3b — next_season carries tournament_mode forward verbatim
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3b-seam-contract.md``: the
+# carry-forward loop copies ``tournament_mode`` verbatim. The load-bearing
+# forward-compat guard for Part2c-3c: a non-default mode set directly on a
+# source phase (the composer can't write one yet) must reproduce across seasons.
+#
+# Appended as a NEW class; no existing class is modified.
+
+
+class TestLg02Part2c3bNextSeasonCarriesTournamentMode(TestCase):
+    """LG-02-Part2c-3b — next_season copies tournament_mode forward verbatim."""
+
+    def _setup_completed_with_mode(self, mode: str) -> League:
+        league = _make_league("Lg02c3bModeL")
+        teams = _make_teams("Lg02c3bMode", 2)
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=1,
+            phase_type="round_robin",
+            schedule_format="single_round_robin",
+        )
+        # A tournament phase carrying a NON-default mode set directly via the
+        # ORM (the composer cannot write one yet — this simulates a future
+        # Part2c-3c composition).
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=2,
+            phase_type="tournament",
+            schedule_format=None,
+            tournament_mode=mode,
+        )
+        return league
+
+    def test_non_default_mode_is_carried_forward(self) -> None:
+        league = self._setup_completed_with_mode("strength")
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        new_phases = list(new_season.phases.all())
+        self.assertEqual(new_phases[0].tournament_mode, "standings")  # RR row default
+        self.assertEqual(new_phases[1].tournament_mode, "strength")  # carried verbatim
+
+    def test_standings_mode_is_carried_forward(self) -> None:
+        league = self._setup_completed_with_mode("standings")
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        self.assertEqual(new_season.phases.all()[1].tournament_mode, "standings")

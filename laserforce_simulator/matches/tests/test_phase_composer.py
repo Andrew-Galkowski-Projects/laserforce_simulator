@@ -514,3 +514,65 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
             0,
             msg=f"stdout={result.stdout!r} stderr={result.stderr!r}",
         )
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2c-3b — PhaseSpec.tournament_mode (dormant, defaulted)
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3b-seam-contract.md``:
+# ``PhaseSpec`` gains a trailing ``tournament_mode: str = "standings"`` field
+# that is NOT parsed from the wire format this slice (the ``:`` syntax stays
+# reserved for the Part2c-3c picker), so every parsed spec carries the
+# ``"standings"`` default and a ``tournament:<mode>`` token is still malformed.
+# Appended as NEW classes; no existing class above is modified.
+
+
+class TestPhaseSpecTournamentModeDefault(SimpleTestCase):
+    """``PhaseSpec.tournament_mode`` defaults to ``"standings"`` and is the
+    LAST positional field (existing 3-field constructions stay valid)."""
+
+    def test_default_is_standings(self) -> None:
+        spec = PhaseSpec(ordinal=1, phase_type="round_robin", schedule_format=_SSF)
+        self.assertEqual(spec.tournament_mode, "standings")
+
+    def test_explicit_value_is_carried(self) -> None:
+        spec = PhaseSpec(
+            ordinal=1,
+            phase_type="tournament",
+            schedule_format=None,
+            tournament_mode="strength",
+        )
+        self.assertEqual(spec.tournament_mode, "strength")
+
+
+class TestParseStampsStandingsMode(SimpleTestCase):
+    """``parse_phase_composition`` leaves every spec at the ``"standings"``
+    default — the wire format does not carry a mode this slice."""
+
+    def test_round_robin_only_default(self) -> None:
+        specs = parse_phase_composition("round_robin", season_schedule_format=_SSF)
+        self.assertEqual([s.tournament_mode for s in specs], ["standings"])
+
+    def test_empty_default_spec(self) -> None:
+        specs = parse_phase_composition("", season_schedule_format=_SSF)
+        self.assertEqual(specs[0].tournament_mode, "standings")
+
+    def test_round_robin_then_tournament_both_standings(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament", season_schedule_format=_SSF
+        )
+        self.assertEqual([s.tournament_mode for s in specs], ["standings", "standings"])
+
+
+class TestTournamentModeTokenStillMalformed(SimpleTestCase):
+    """A ``tournament:<mode>`` wire token is still malformed — the mode syntax
+    is reserved for the Part2c-3c picker (the existing tournament-takes-no-format
+    rule fires)."""
+
+    def test_tournament_strength_token_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:strength", season_schedule_format=_SSF
+            )
+        self.assertEqual(str(ctx.exception), "malformed phase composition")
