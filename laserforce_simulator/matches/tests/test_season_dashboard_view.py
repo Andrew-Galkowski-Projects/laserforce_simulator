@@ -799,3 +799,113 @@ class TestSeasonDashboardUntilPlayoffsRelabel(TestCase):
         body = self._body(season)
         self.assertNotIn("Until Playoffs", body)
         self.assertIn("Until End of Season", body)
+
+
+# ===========================================================================
+# LG-02-Part2c-3c — dashboard terminal-label split: "Until Playoffs" (final
+# tournament phase) vs "Until Tournament" (mid-season tournament phase)
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3c-seam-contract.md`` §7 / §9:
+#   When the NEXT tournament phase after the current RR phase is the FINAL phase
+#   (last ordinal) ⇒ label "Until Playoffs"; when it is mid-season (not last
+#   ordinal) ⇒ label "Until Tournament". The terminal play-dropdown button's
+#   DOM id (``season-dashboard-play-until-end`` / ``league-dashboard-play-until-end``)
+#   and the ``play_until_end`` action are UNCHANGED — only the visible label
+#   text varies. Both the Season AND the League dashboard render the split.
+#
+# Appended as NEW classes; no existing class above is modified. These WILL fail
+# until the Code agent lands the Part2c-3c terminal-label split — the TDD red
+# state, not a defect in this file.
+
+
+def _lg3c_final_tournament_season(name: str = "L3cFinal"):
+    """An active Season: ordinal-1 round_robin + ordinal-2 (FINAL) tournament,
+    4 teams. The current RR phase is followed by a FINAL tournament phase."""
+    league, season, teams = _make_league_and_draft_season(name)
+    _Lg02c1_SeasonPhase.objects.create(
+        season=season, ordinal=1, phase_type="round_robin"
+    )
+    _Lg02c1_SeasonPhase.objects.create(
+        season=season, ordinal=2, phase_type="tournament", tournament_mode="standings"
+    )
+    season.start_season()
+    season.refresh_from_db()
+    return league, season, teams
+
+
+def _lg3c_mid_season_tournament_season(name: str = "L3cMid"):
+    """An active Season: ordinal-1 round_robin + ordinal-2 (MID-SEASON)
+    tournament + ordinal-3 round_robin, 4 teams. The current RR phase is
+    followed by a tournament phase that is NOT the final phase."""
+    league, season, teams = _make_league_and_draft_season(name)
+    _Lg02c1_SeasonPhase.objects.create(
+        season=season, ordinal=1, phase_type="round_robin"
+    )
+    _Lg02c1_SeasonPhase.objects.create(
+        season=season, ordinal=2, phase_type="tournament", tournament_mode="strength"
+    )
+    _Lg02c1_SeasonPhase.objects.create(
+        season=season, ordinal=3, phase_type="round_robin"
+    )
+    season.start_season()
+    season.refresh_from_db()
+    return league, season, teams
+
+
+class TestSeasonDashboardTerminalLabelSplit(TestCase):
+    """LG-02-Part2c-3c — Season-dashboard terminal label split."""
+
+    def _body(self, season):
+        return self.client.get(
+            reverse("season_dashboard", args=[season.id])
+        ).content.decode()
+
+    def test_until_playoffs_when_final_tournament_phase(self) -> None:
+        _l, season, _teams = _lg3c_final_tournament_season("L3cSeasonFinal")
+        body = self._body(season)
+        # The until-end button DOM id is UNCHANGED; only the visible text swaps.
+        self.assertIn('id="season-dashboard-play-until-end"', body)
+        self.assertIn("Until Playoffs", body)
+        self.assertNotIn("Until Tournament", body)
+
+    def test_until_tournament_when_mid_season_tournament_phase(self) -> None:
+        _l, season, _teams = _lg3c_mid_season_tournament_season("L3cSeasonMid")
+        body = self._body(season)
+        # DOM id + action unchanged; the mid-season label is "Until Tournament".
+        self.assertIn('id="season-dashboard-play-until-end"', body)
+        self.assertIn("Until Tournament", body)
+        self.assertNotIn("Until Playoffs", body)
+
+    def test_play_until_end_action_unchanged_both_cases(self) -> None:
+        # The form action still POSTs to play_until_end in BOTH label cases.
+        _l, final_season, _t = _lg3c_final_tournament_season("L3cActFinal")
+        _l2, mid_season, _t2 = _lg3c_mid_season_tournament_season("L3cActMid")
+        final_action = reverse("play_until_end", args=[final_season.id])
+        mid_action = reverse("play_until_end", args=[mid_season.id])
+        self.assertIn(final_action, self._body(final_season))
+        self.assertIn(mid_action, self._body(mid_season))
+
+
+class TestLeagueDashboardTerminalLabelSplit(TestCase):
+    """LG-02-Part2c-3c — League-dashboard terminal label split (mirrors the
+    Season dashboard; the League dashboard renders the active Season)."""
+
+    def _body(self, league):
+        return self.client.get(
+            reverse("league_dashboard", args=[league.id])
+        ).content.decode()
+
+    def test_until_playoffs_when_final_tournament_phase(self) -> None:
+        league, _season, _teams = _lg3c_final_tournament_season("L3cLeagueFinal")
+        body = self._body(league)
+        self.assertIn('id="league-dashboard-play-until-end"', body)
+        self.assertIn("Until Playoffs", body)
+        self.assertNotIn("Until Tournament", body)
+
+    def test_until_tournament_when_mid_season_tournament_phase(self) -> None:
+        league, _season, _teams = _lg3c_mid_season_tournament_season("L3cLeagueMid")
+        body = self._body(league)
+        self.assertIn('id="league-dashboard-play-until-end"', body)
+        self.assertIn("Until Tournament", body)
+        self.assertNotIn("Until Playoffs", body)

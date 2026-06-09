@@ -1228,3 +1228,532 @@ class TestLg02c2SingleRrPhaselessRegression(TestCase):
         # Before play: a single explicit RR phase mirrors _is_finished.
         self.assertFalse(season._phase_complete(rr1))
         self.assertFalse(season._is_finished())
+
+
+# ===========================================================================
+# LG-02-Part2c-3c — mid-season tournaments (strength / unseeded build at
+# start_season; standings build post-RR; the RR-loop barrier; champion still
+# from the final phase)
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3c-seam-contract.md`` §4 / §5 /
+# §6 / §9:
+#   - A FIRST-phase strength/unseeded tournament builds the instant the Season
+#     ACTIVATES (start_season -> activate_pending_tournament_phase): phase
+#     tournament_id set, Tournament.state == "active", one participant per team,
+#     dense 1..N seeds. For ``strength`` the seed order matches
+#     ``default_seed_order`` of the teams' mean overall_rating (injected
+#     deterministic ratings). For ``unseeded`` the seed SET is a valid
+#     permutation of all team ids with dense seeds 1..N (NOT an exact order).
+#   - A mid-season tournament (RR -> tournament -> RR) builds via the existing
+#     post-round hook when the preceding RR phase completes.
+#   - The play-loop barrier: ``playable_fixtures_by_phase()`` excludes RR phases
+#     at/after the incomplete tournament ordinal; once the tournament completes
+#     (hand-stamp Tournament.state="completed"), later RR phases become playable.
+#   - A mid-season ``standings`` tournament seeds from the cumulative
+#     standings-so-far (rank order of ``_final_standings_for_phase(prior)``).
+#   - The champion is STILL stamped from the FINAL phase (complete_if_finished
+#     unchanged).
+#
+# Tests assert SCHEMA-LEVEL outcomes (participant seeds, excluded fixtures,
+# state flips, champion id) — NEVER raw simulated point totals (tournament sims
+# are non-deterministic). Appended as NEW classes; no existing class above is
+# modified.
+
+from matches.bracket import default_seed_order as _lg3c_default_seed_order  # noqa: E402
+from matches.models import TournamentParticipant as _Lg3cParticipant  # noqa: E402
+
+# The 19 stat fields summed by ``Player.overall_rating`` (the mean). Injecting a
+# single constant value per team's players makes that team's mean == the value,
+# so ``default_seed_order`` (mean DESC, team_id ASC) is deterministic.
+_LG3C_STAT_FIELDS = (
+    "player_awareness",
+    "game_awareness",
+    "resource_awareness",
+    "decision_making",
+    "positioning",
+    "stamina",
+    "speed",
+    "flexibility",
+    "adaptability",
+    "communication",
+    "teamwork",
+    "Offensive_synergy",
+    "defensive_synergy",
+    "midfield_synergy",
+    "resupply_synergy",
+    "resupply_efficiency",
+    "accuracy",
+    "survival",
+    "special_usage",
+)
+
+
+def _lg3c_set_team_rating(team, value: int) -> None:
+    """Set every stat of every active player on ``team`` to ``value`` so the
+    team's mean ``overall_rating`` == ``value`` (deterministic strength)."""
+    for player in team.active_players:
+        for field in _LG3C_STAT_FIELDS:
+            setattr(player, field, value)
+        player.save()
+
+
+def _lg3c_team_mean_rating(team) -> float:
+    players = list(team.active_players)
+    if not players:
+        return 0.0
+    return sum(p.overall_rating for p in players) / len(players)
+
+
+def _lg3c_first_phase_tournament_season(
+    prefix: str, mode: str, n: int = 4, *, ratings: list[int] | None = None
+):
+    """A draft Season whose FIRST phase is a ``mode`` tournament (ordinal 1),
+    followed by an ordinal-2 round_robin (so the >=1-RR rule holds). ``n``
+    slotted teams enrolled, NOT yet started.
+
+    When ``ratings`` is given (len == n) each team's players are set to that
+    rating so ``strength`` seeding is deterministic.
+
+    Returns ``(season, teams, tournament_phase, rr_phase)``.
+    """
+    league = League.objects.create(name=f"{prefix} League")
+    season = Season.objects.create(
+        league=league, name="S1", start_date=date(2026, 1, 1)
+    )
+    teams = []
+    for i in range(n):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        if ratings is not None:
+            _lg3c_set_team_rating(t, ratings[i])
+        teams.append(t)
+        season.teams.add(t)
+    tournament_phase = SeasonPhase.objects.create(
+        season=season, ordinal=1, phase_type="tournament", tournament_mode=mode
+    )
+    rr_phase = SeasonPhase.objects.create(
+        season=season, ordinal=2, phase_type="round_robin"
+    )
+    return season, teams, tournament_phase, rr_phase
+
+
+class TestBuildAtStartSeasonStrength(TestCase):
+    """A first-phase ``strength`` tournament builds on activation, seeded by
+    ``default_seed_order`` of the teams' mean overall_rating."""
+
+    def test_builds_on_activation(self) -> None:
+        # Distinct ratings so the seed order is unambiguous.
+        season, _teams, tournament_phase, _rr = _lg3c_first_phase_tournament_season(
+            "StrBuild", "strength", n=4, ratings=[40, 80, 60, 20]
+        )
+        season.start_season()
+        season.refresh_from_db()
+        tournament_phase.refresh_from_db()
+        self.assertIsNotNone(tournament_phase.tournament_id)
+        self.assertEqual(tournament_phase.tournament.state, "active")
+
+    def test_one_participant_per_team_dense_seeds(self) -> None:
+        season, teams, tournament_phase, _rr = _lg3c_first_phase_tournament_season(
+            "StrDense", "strength", n=4, ratings=[40, 80, 60, 20]
+        )
+        season.start_season()
+        tournament_phase.refresh_from_db()
+        participants = list(
+            _Lg3cParticipant.objects.filter(
+                tournament=tournament_phase.tournament
+            ).order_by("seed")
+        )
+        self.assertEqual(len(participants), len(teams))
+        self.assertEqual([p.seed for p in participants], list(range(1, len(teams) + 1)))
+
+    def test_seed_order_matches_default_seed_order(self) -> None:
+        season, teams, tournament_phase, _rr = _lg3c_first_phase_tournament_season(
+            "StrOrder", "strength", n=4, ratings=[40, 80, 60, 20]
+        )
+        season.start_season()
+        tournament_phase.refresh_from_db()
+        participants = list(
+            _Lg3cParticipant.objects.filter(
+                tournament=tournament_phase.tournament
+            ).order_by("seed")
+        )
+        # Rebuild the expected order the same way the build hook does:
+        # default_seed_order of (team_id, mean overall_rating).
+        team_ids = season.starting_team_ids_json or []
+        from teams.models import Team
+
+        team_ratings = [
+            (tid, _lg3c_team_mean_rating(Team.objects.get(pk=tid))) for tid in team_ids
+        ]
+        expected_order = _lg3c_default_seed_order(team_ratings)
+        actual_order = [p.team_id for p in participants]
+        self.assertEqual(actual_order, expected_order)
+        # Highest-rated team (80) is seed 1.
+        best_team = max(teams, key=_lg3c_team_mean_rating)
+        self.assertEqual(participants[0].team_id, best_team.id)
+
+
+class TestBuildAtStartSeasonUnseeded(TestCase):
+    """A first-phase ``unseeded`` tournament builds on activation; the seed set
+    is a valid permutation of all team ids with dense seeds 1..N (NOT an exact
+    order — it is a fresh-RNG shuffle)."""
+
+    def test_builds_on_activation(self) -> None:
+        season, _teams, tournament_phase, _rr = _lg3c_first_phase_tournament_season(
+            "UnsBuild", "unseeded", n=4
+        )
+        season.start_season()
+        tournament_phase.refresh_from_db()
+        self.assertIsNotNone(tournament_phase.tournament_id)
+        self.assertEqual(tournament_phase.tournament.state, "active")
+
+    def test_seed_set_is_permutation_with_dense_seeds(self) -> None:
+        season, teams, tournament_phase, _rr = _lg3c_first_phase_tournament_season(
+            "UnsPerm", "unseeded", n=4
+        )
+        season.start_season()
+        tournament_phase.refresh_from_db()
+        participants = list(
+            _Lg3cParticipant.objects.filter(
+                tournament=tournament_phase.tournament
+            ).order_by("seed")
+        )
+        # One participant per team.
+        self.assertEqual(len(participants), len(teams))
+        # Dense 1..N seeds.
+        self.assertEqual([p.seed for p in participants], list(range(1, len(teams) + 1)))
+        # The team-id SET is a valid permutation of all enrolled team ids
+        # (NOT an exact order — the shuffle is non-deterministic).
+        self.assertEqual({p.team_id for p in participants}, {t.id for t in teams})
+
+
+class TestBuildPostRoundMidSeason(TestCase):
+    """A mid-season tournament (RR -> tournament -> RR) builds via the existing
+    post-round hook when the preceding RR phase completes."""
+
+    def _mid_season_strength_season(self, prefix: str, n: int = 4):
+        league = League.objects.create(name=f"{prefix} League")
+        season = Season.objects.create(
+            league=league, name="S1", start_date=date(2026, 1, 1)
+        )
+        teams = []
+        for i in range(n):
+            t, _ = make_team_with_slots(f"{prefix}{i}")
+            teams.append(t)
+            season.teams.add(t)
+        rr1 = SeasonPhase.objects.create(
+            season=season, ordinal=1, phase_type="round_robin"
+        )
+        mid = SeasonPhase.objects.create(
+            season=season,
+            ordinal=2,
+            phase_type="tournament",
+            tournament_mode="strength",
+        )
+        rr2 = SeasonPhase.objects.create(
+            season=season, ordinal=3, phase_type="round_robin"
+        )
+        season.start_season()
+        season.refresh_from_db()
+        return season, teams, rr1, mid, rr2
+
+    def _play_phase(self, season, teams, phase) -> None:
+        by_id = {t.id: t for t in teams}
+        fixtures = None
+        for candidate, phase_fixtures in season.scheduled_fixtures_by_phase():
+            if candidate.pk == phase.pk:
+                fixtures = phase_fixtures
+                break
+        assert fixtures is not None
+        sim = BatchSimulator()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for fixture in fixtures:
+                sim.simulate_scheduled_round(
+                    season,
+                    by_id[fixture.team_a_id],
+                    by_id[fixture.team_b_id],
+                    fixture.round_number,
+                    season_phase=phase,
+                )
+
+    def test_not_built_before_rr1_complete(self) -> None:
+        season, _teams, _rr1, mid, _rr2 = self._mid_season_strength_season("MidPre")
+        mid.refresh_from_db()
+        self.assertIsNone(mid.tournament_id)
+
+    def test_builds_after_rr1_completes(self) -> None:
+        season, teams, rr1, mid, _rr2 = self._mid_season_strength_season("MidBuild")
+        self._play_phase(season, teams, rr1)
+        mid.refresh_from_db()
+        # The post-round hook fires when the last RR1 fixture lands.
+        self.assertIsNotNone(mid.tournament_id)
+        self.assertEqual(mid.tournament.state, "active")
+
+
+class TestMidSeasonStandingsSeedsFromCumulativeStandings(TestCase):
+    """A mid-season ``standings`` tournament seeds from the standings-so-far
+    (rank order of ``_final_standings_for_phase(prior)``)."""
+
+    def _mid_standings_season(self, prefix: str, n: int = 4):
+        league = League.objects.create(name=f"{prefix} League")
+        season = Season.objects.create(
+            league=league, name="S1", start_date=date(2026, 1, 1)
+        )
+        teams = []
+        for i in range(n):
+            t, _ = make_team_with_slots(f"{prefix}{i}")
+            teams.append(t)
+            season.teams.add(t)
+        rr1 = SeasonPhase.objects.create(
+            season=season, ordinal=1, phase_type="round_robin"
+        )
+        mid = SeasonPhase.objects.create(
+            season=season,
+            ordinal=2,
+            phase_type="tournament",
+            tournament_mode="standings",
+        )
+        SeasonPhase.objects.create(season=season, ordinal=3, phase_type="round_robin")
+        season.start_season()
+        season.refresh_from_db()
+        return season, teams, rr1, mid
+
+    def _play_phase(self, season, teams, phase) -> None:
+        by_id = {t.id: t for t in teams}
+        fixtures = None
+        for candidate, phase_fixtures in season.scheduled_fixtures_by_phase():
+            if candidate.pk == phase.pk:
+                fixtures = phase_fixtures
+                break
+        assert fixtures is not None
+        sim = BatchSimulator()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for fixture in fixtures:
+                sim.simulate_scheduled_round(
+                    season,
+                    by_id[fixture.team_a_id],
+                    by_id[fixture.team_b_id],
+                    fixture.round_number,
+                    season_phase=phase,
+                )
+
+    def test_seeds_match_standings_so_far(self) -> None:
+        season, teams, rr1, mid = self._mid_standings_season("MidStd")
+        self._play_phase(season, teams, rr1)
+        mid.refresh_from_db()
+        self.assertIsNotNone(mid.tournament_id)
+
+        participants = list(
+            _Lg3cParticipant.objects.filter(tournament=mid.tournament).order_by("seed")
+        )
+        self.assertEqual(len(participants), len(teams))
+        self.assertEqual([p.seed for p in participants], list(range(1, len(teams) + 1)))
+        # Seed i team == standings rank i team of the preceding RR phase.
+        rows = season._final_standings_for_phase(rr1)
+        rank_to_team = {row.rank: row.team_id for row in rows}
+        for p in participants:
+            self.assertEqual(p.team_id, rank_to_team[p.seed])
+
+
+class TestTournamentBarrierPlayableFixtures(TestCase):
+    """``playable_fixtures_by_phase()`` excludes RR phases at/after the
+    incomplete tournament ordinal; later RR phases become playable once the
+    tournament completes."""
+
+    def _mid_season_season(self, prefix: str, n: int = 4):
+        league = League.objects.create(name=f"{prefix} League")
+        season = Season.objects.create(
+            league=league, name="S1", start_date=date(2026, 1, 1)
+        )
+        teams = []
+        for i in range(n):
+            t, _ = make_team_with_slots(f"{prefix}{i}")
+            teams.append(t)
+            season.teams.add(t)
+        rr1 = SeasonPhase.objects.create(
+            season=season, ordinal=1, phase_type="round_robin"
+        )
+        mid = SeasonPhase.objects.create(
+            season=season,
+            ordinal=2,
+            phase_type="tournament",
+            tournament_mode="strength",
+        )
+        rr2 = SeasonPhase.objects.create(
+            season=season, ordinal=3, phase_type="round_robin"
+        )
+        season.start_season()
+        season.refresh_from_db()
+        return season, teams, rr1, mid, rr2
+
+    def _play_phase(self, season, teams, phase) -> None:
+        by_id = {t.id: t for t in teams}
+        fixtures = None
+        for candidate, phase_fixtures in season.scheduled_fixtures_by_phase():
+            if candidate.pk == phase.pk:
+                fixtures = phase_fixtures
+                break
+        assert fixtures is not None
+        sim = BatchSimulator()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for fixture in fixtures:
+                sim.simulate_scheduled_round(
+                    season,
+                    by_id[fixture.team_a_id],
+                    by_id[fixture.team_b_id],
+                    fixture.round_number,
+                    season_phase=phase,
+                )
+
+    def _playable_ordinals(self, season) -> set[int]:
+        return {phase.ordinal for phase, _fx in season.playable_fixtures_by_phase()}
+
+    def test_barrier_excludes_rr2_while_tournament_incomplete(self) -> None:
+        season, teams, rr1, mid, rr2 = self._mid_season_season("BarPre")
+        # Build the mid-season tournament by completing RR1.
+        self._play_phase(season, teams, rr1)
+        mid.refresh_from_db()
+        self.assertIsNotNone(mid.tournament_id)
+        # RR1 (ordinal 1) is < the incomplete tournament's ordinal (2) ⇒ playable.
+        # RR2 (ordinal 3) is at/after the barrier ⇒ excluded.
+        playable = self._playable_ordinals(season)
+        self.assertIn(rr1.ordinal, playable)
+        self.assertNotIn(rr2.ordinal, playable)
+
+    def test_rr2_playable_once_tournament_completed(self) -> None:
+        season, teams, rr1, mid, rr2 = self._mid_season_season("BarPost")
+        self._play_phase(season, teams, rr1)
+        mid.refresh_from_db()
+        self.assertIsNotNone(mid.tournament_id)
+        # Hand-stamp the tournament completed (schema-level — do NOT drain via
+        # the non-deterministic engine for a barrier assertion).
+        tournament = mid.tournament
+        tournament.state = "completed"
+        tournament.save(update_fields=["state"])
+        # The barrier advances past the now-complete tournament ⇒ RR2 playable.
+        playable = self._playable_ordinals(season)
+        self.assertIn(rr2.ordinal, playable)
+
+    def test_no_barrier_when_no_tournament_phase(self) -> None:
+        # A two-RR-phase Season (no tournament) has no barrier — both RR phases
+        # are playable from the start.
+        league = League.objects.create(name="NoBar League")
+        season = Season.objects.create(
+            league=league, name="S1", start_date=date(2026, 1, 1)
+        )
+        teams = []
+        for i in range(4):
+            t, _ = make_team_with_slots(f"NoBar{i}")
+            teams.append(t)
+            season.teams.add(t)
+        rr1 = SeasonPhase.objects.create(
+            season=season, ordinal=1, phase_type="round_robin"
+        )
+        rr2 = SeasonPhase.objects.create(
+            season=season, ordinal=2, phase_type="round_robin"
+        )
+        season.start_season()
+        season.refresh_from_db()
+        playable = self._playable_ordinals(season)
+        self.assertIn(rr1.ordinal, playable)
+        self.assertIn(rr2.ordinal, playable)
+
+
+class TestChampionStillFromFinalPhase(TestCase):
+    """``complete_if_finished`` is unchanged: the champion is stamped from the
+    FINAL phase. A mid-season tournament does NOT crown the Season early."""
+
+    def _play_phase(self, season, teams, phase) -> None:
+        by_id = {t.id: t for t in teams}
+        fixtures = None
+        for candidate, phase_fixtures in season.scheduled_fixtures_by_phase():
+            if candidate.pk == phase.pk:
+                fixtures = phase_fixtures
+                break
+        assert fixtures is not None
+        sim = BatchSimulator()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for fixture in fixtures:
+                sim.simulate_scheduled_round(
+                    season,
+                    by_id[fixture.team_a_id],
+                    by_id[fixture.team_b_id],
+                    fixture.round_number,
+                    season_phase=phase,
+                )
+
+    def test_season_not_crowned_by_mid_season_tournament(self) -> None:
+        # RR -> mid-season tournament -> RR: completing RR1 builds the mid-season
+        # tournament, but the Season is NOT yet complete (the final phase is RR2).
+        league = League.objects.create(name="ChampMid League")
+        season = Season.objects.create(
+            league=league, name="S1", start_date=date(2026, 1, 1)
+        )
+        teams = []
+        for i in range(4):
+            t, _ = make_team_with_slots(f"ChampMid{i}")
+            teams.append(t)
+            season.teams.add(t)
+        rr1 = SeasonPhase.objects.create(
+            season=season, ordinal=1, phase_type="round_robin"
+        )
+        mid = SeasonPhase.objects.create(
+            season=season,
+            ordinal=2,
+            phase_type="tournament",
+            tournament_mode="strength",
+        )
+        SeasonPhase.objects.create(season=season, ordinal=3, phase_type="round_robin")
+        season.start_season()
+        season.refresh_from_db()
+
+        self._play_phase(season, teams, rr1)
+        season.refresh_from_db()
+        mid.refresh_from_db()
+        # Mid-season tournament built, but the Season is still active (final
+        # phase RR2 unplayed) and no champion stamped yet.
+        self.assertIsNotNone(mid.tournament_id)
+        self.assertEqual(season.state, "active")
+        self.assertIsNone(season.champion_team_id)
+
+    def test_final_standings_tournament_crowns_its_champion(self) -> None:
+        # A season-ending standings tournament (RR -> standings tournament) still
+        # crowns the Season champion as the tournament champion once drained.
+        league = League.objects.create(name="ChampFinal League")
+        season = Season.objects.create(
+            league=league, name="S1", start_date=date(2026, 1, 1)
+        )
+        teams = []
+        for i in range(4):
+            t, _ = make_team_with_slots(f"ChampFinal{i}")
+            teams.append(t)
+            season.teams.add(t)
+        rr1 = SeasonPhase.objects.create(
+            season=season, ordinal=1, phase_type="round_robin"
+        )
+        final_t = SeasonPhase.objects.create(
+            season=season,
+            ordinal=2,
+            phase_type="tournament",
+            tournament_mode="standings",
+        )
+        season.start_season()
+        season.refresh_from_db()
+
+        self._play_phase(season, teams, rr1)
+        final_t.refresh_from_db()
+        self.assertIsNotNone(final_t.tournament_id)
+
+        # Drain the bracket via the real engine, then complete the Season.
+        from matches.tournament_engine import play_next_node
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(200):
+                if play_next_node(final_t.tournament) is None:
+                    break
+        final_t.refresh_from_db()
+        season.complete_if_finished()
+        season.refresh_from_db()
+        self.assertEqual(final_t.tournament.state, "completed")
+        self.assertEqual(season.state, "completed")
+        self.assertEqual(season.champion_team_id, final_t.tournament.champion_id)
