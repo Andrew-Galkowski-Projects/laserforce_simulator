@@ -37,7 +37,14 @@ class SeasonAdmin(admin.ModelAdmin):
 
 @admin.register(SeasonPhase)
 class SeasonPhaseAdmin(admin.ModelAdmin):
-    list_display = ("season", "ordinal", "phase_type", "schedule_format", "tournament")
+    list_display = (
+        "season",
+        "ordinal",
+        "phase_type",
+        "schedule_format",
+        "tournament",
+        "tournament_mode",
+    )
 
 
 # LG-02a — Tournament admin.

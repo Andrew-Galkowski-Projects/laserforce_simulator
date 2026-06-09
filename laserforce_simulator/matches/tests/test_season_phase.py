@@ -647,6 +647,59 @@ class TestSeasonPhaseTournamentFK(TestCase):
         self.assertIsNone(phase.tournament_id)
 
 
+# ---------------------------------------------------------------------------
+# LG-02-Part2c-3b — SeasonPhase.tournament_mode (dormant CharField)
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3b-seam-contract.md``:
+#   tournament_mode = CharField(max_length=16, choices=TOURNAMENT_MODE_CHOICES,
+#                               default="standings")
+# All four values declared now (member_night precedent); DORMANT this slice
+# (nothing branches on it — the composer only ever writes "standings").
+
+
+class TestSeasonPhaseTournamentModeField(TestCase):
+    """LG-02-Part2c-3b — locked field type / default / choices."""
+
+    def test_tournament_mode_default_is_standings(self) -> None:
+        season = _draft_season("ModeDefault")
+        phase = SeasonPhase.objects.create(season=season, ordinal=1)
+        self.assertEqual(phase.tournament_mode, "standings")
+
+    def test_tournament_mode_choices_declare_all_four_values(self) -> None:
+        values = {value for value, _label in SeasonPhase.TOURNAMENT_MODE_CHOICES}
+        self.assertEqual(values, {"standings", "strength", "unseeded", "random_draw"})
+
+    def test_tournament_mode_choices_pairs_exact(self) -> None:
+        self.assertEqual(
+            tuple(SeasonPhase.TOURNAMENT_MODE_CHOICES),
+            (
+                ("standings", "Season-ending: from Standings"),
+                ("strength", "Mid-season: by team strength"),
+                ("unseeded", "Mid-season: random seed"),
+                ("random_draw", "Mid-season: drawn pool -> RR->DE"),
+            ),
+        )
+
+    def test_tournament_mode_max_length_is_16(self) -> None:
+        field = SeasonPhase._meta.get_field("tournament_mode")
+        self.assertEqual(field.max_length, 16)
+
+    def test_all_four_tournament_mode_values_persist(self) -> None:
+        season = _draft_season("ModeAllFour")
+        for ordinal, value in enumerate(
+            ("standings", "strength", "unseeded", "random_draw"), start=1
+        ):
+            phase = SeasonPhase.objects.create(
+                season=season,
+                ordinal=ordinal,
+                phase_type="tournament",
+                tournament_mode=value,
+            )
+            phase.refresh_from_db()
+            self.assertEqual(phase.tournament_mode, value)
+
+
 # ===========================================================================
 # LG-02-Part2c-1 — Season cursor + completion derivation + auto-build
 # ===========================================================================

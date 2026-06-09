@@ -947,3 +947,42 @@ class TestLg02Part2c3aComposerUnknownFormatRejected(TestCase):
         self.assertEqual(Season.objects.count(), before_seasons)
         self.assertEqual(_Lg02SeasonPhase.objects.count(), before_phases)
         self.assertFalse(League.objects.filter(name="BadFmtZero").exists())
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2c-3b — composer stamps tournament_mode="standings" on every phase
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3b-seam-contract.md``: the
+# ``league_create`` spec loop stamps ``tournament_mode=spec.tournament_mode``.
+# DORMANT this slice — the composer does not write a mode, so every phase
+# (RR + tournament) persists the ``"standings"`` default.
+#
+# Appended as a NEW class; no existing class above is modified.
+
+
+class TestLg02Part2c3bComposerTournamentMode(TestCase):
+    """LG-02-Part2c-3b — every composed phase persists tournament_mode=standings."""
+
+    def test_composed_tournament_phase_is_standings(self) -> None:
+        payload = _valid_payload(league_name="ModeStdL")
+        payload["phases"] = "round_robin,tournament"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="ModeStdL").seasons.get()
+        phases = list(season.phases.all())
+        self.assertEqual(phases[1].phase_type, "tournament")
+        self.assertEqual(phases[1].tournament_mode, "standings")
+
+    def test_every_composed_phase_is_standings(self) -> None:
+        payload = _valid_payload(league_name="ModeAllStdL")
+        payload["phases"] = "round_robin,tournament,round_robin"
+        self.client.post(reverse("league_create"), payload)
+        season = League.objects.get(name="ModeAllStdL").seasons.get()
+        for phase in season.phases.all():
+            self.assertEqual(phase.tournament_mode, "standings")
+
+    def test_default_create_phase_is_standings(self) -> None:
+        self.client.post(reverse("league_create"), _valid_payload())
+        season = Season.objects.get(name="Season 1")
+        self.assertEqual(season.phases.get().tournament_mode, "standings")

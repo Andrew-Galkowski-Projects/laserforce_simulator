@@ -33,11 +33,20 @@ class PhaseSpec:
     ``phase_type`` is ``"round_robin"`` or ``"tournament"``.
     ``schedule_format`` is the season format for a round_robin phase and
     ``None`` for a tournament phase.
+
+    LG-02-Part2c-3b — ``tournament_mode`` carries the per-phase tournament
+    flavour (season-ending ``standings`` vs mid-season ``strength`` /
+    ``unseeded`` / ``random_draw``). DORMANT this slice: it is **not** parsed
+    from the wire format (the ``:`` syntax stays reserved for the Part2c-3c
+    picker), so every spec defaults to ``"standings"``. Appended LAST with a
+    default so existing keyword constructions stay equality-identical (the
+    Part2c-3a ``ScheduleFixture.leg`` precedent).
     """
 
     ordinal: int
     phase_type: str
     schedule_format: Optional[str]
+    tournament_mode: str = "standings"
 
 
 def parse_phase_composition(

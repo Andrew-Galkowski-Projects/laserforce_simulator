@@ -562,6 +562,9 @@ def league_create(request) -> HttpResponse:
             phase_type=spec.phase_type,
             schedule_format=spec.schedule_format,
             tournament=None,
+            # LG-02-Part2c-3b — always "standings" this slice (dormant; the
+            # composer does not yet write a tournament_mode).
+            tournament_mode=spec.tournament_mode,
         )
 
     return redirect("season_standings", season_id=season.id)
@@ -2109,6 +2112,8 @@ def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
     # forward (mirrors the team-id / map-pool carry-forward). Copy
     # ordinal / phase_type / schedule_format verbatim; reset tournament to
     # NULL. ``Meta.ordering = ["ordinal"]`` guarantees the source order.
+    # LG-02-Part2c-3b — also carry ``tournament_mode`` verbatim so a future
+    # non-``standings`` mode (Part2c-3c) reproduces across seasons.
     for src in latest_completed.phases.all():
         SeasonPhase.objects.create(
             season=new_season,
@@ -2116,6 +2121,7 @@ def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
             phase_type=src.phase_type,
             schedule_format=src.schedule_format,
             tournament=None,
+            tournament_mode=src.tournament_mode,
         )
 
     return redirect("season_dashboard", season_id=new_season.id)

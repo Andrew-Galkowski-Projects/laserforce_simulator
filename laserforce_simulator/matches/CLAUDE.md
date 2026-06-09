@@ -4341,6 +4341,74 @@ See the seam contract
 [`.claude/worktrees/lg-02-part2c-3a-seam-contract.md`](../../.claude/worktrees/lg-02-part2c-3a-seam-contract.md)
 for the authoritative names + behaviours.
 
+## LG-02-Part2c-3b per-phase tournament_mode field
+
+A **fully dormant** slice that adds the per-phase **`SeasonPhase.tournament_mode`**
+field — the season-ending (`standings`) vs mid-season (`strength` / `unseeded` /
+`random_draw`) flavour selector — and threads it through the compose/creation/
+carry-forward seam **always as `"standings"` this slice**. No composer picker, no
+wire-format mode token, no compose-guard relaxation, no build branch — all
+deferred to Part2c-3c. No simulator / RNG change → **no Score Calibration
+re-baseline**. Extends
+[ADR-0023](../../docs/adr/0023-season-phase-composable-structure.md) (Part2c-3b
+consequences addendum, no new ADR); the CONTEXT.md **Season phase** entry carries
+the `tournament_mode` vocabulary (+ the stale Part2c-2 → Part2c-3b fix). Seam
+contract:
+[`.claude/worktrees/lg-02-part2c-3b-seam-contract.md`](../../.claude/worktrees/lg-02-part2c-3b-seam-contract.md).
+
+**Model (`matches/models.py`, `SeasonPhase`).** Class attr
+**`TOURNAMENT_MODE_CHOICES`** declares all four values now (the `member_night`
+declared-but-inert precedent — only `standings` has build behaviour this slice):
+`("standings", "Season-ending: from Standings")`, `("strength", "Mid-season: by
+team strength")`, `("unseeded", "Mid-season: random seed")`, `("random_draw",
+"Mid-season: drawn pool -> RR->DE")`. The field
+**`tournament_mode = models.CharField(max_length=16, choices=TOURNAMENT_MODE_CHOICES,
+default="standings")`** is declared immediately after the `tournament` FK — no
+constraint, no `db_index`. Meaningful only for `tournament` phases (`round_robin`
+phases carry the inert default). **`unseeded` ≠ `random_draw`**: `unseeded`
+randomly seeds the season's *existing preset teams*; `random_draw` builds *fresh
+balanced teams from a player pool* (reuses the LG-02x-1 `team_assembly="random_draw"`
++ `format="round_robin_double_elim"` machinery). **Only `standings` requires a
+preceding `round_robin` phase** — already enforced for every `tournament` block by
+the existing blanket `parse_phase_composition` preceding-RR guard (the compose-time
+validity rule is UNCHANGED this slice).
+
+**Migration `0045_seasonphase_tournament_mode`** (dep `0044_match_leg`): a single
+`AddField`, **NO `RunPython` / NO backfill** ([ADR-0004](../../docs/adr/0004-simulation-data-is-disposable.md)
+posture — existing standings-playoff phases inherit `default="standings"`).
+
+**Pure module (`matches/phase_composer.py`).** `PhaseSpec` gains a trailing
+**`tournament_mode: str = "standings"`** (appended LAST with a default ⇒ existing
+keyword constructions stay equality-identical, the c-3a `ScheduleFixture.leg`
+precedent). **Wire format UNCHANGED** — `tournament_mode` is **not** parsed from
+the wire this slice; `parse_phase_composition` leaves every spec at the
+`"standings"` default and a `tournament:<mode>` token still raises
+`"malformed phase composition"` (the existing tournament-takes-no-format rule),
+reserving the `:` syntax for the c-3c picker. The frozen import allowlist
+(`dataclasses` / `typing`) + `TestNoDjangoImportsLeaked` are unchanged.
+
+**Creation / carry-forward (`matches/league_views.py`).** Both
+`SeasonPhase.objects.create(...)` loops stamp the field — `league_create` adds
+`tournament_mode=spec.tournament_mode` and `next_season` adds
+`tournament_mode=src.tournament_mode` (verbatim carry-forward, mirroring the
+`schedule_format` copy) so a future non-`standings` mode (c-3c) reproduces across
+seasons. Both edits sit inside the existing `@transaction.atomic` blocks.
+
+**Admin (`matches/admin.py`).** `SeasonPhaseAdmin.list_display` appends
+`"tournament_mode"`.
+
+**UNCHANGED (→ c-3c).** `Season.activate_pending_tournament_phase` still hardcodes
+standings-seeding (the default already matches, so byte-identical); the composer
+template / wire format / guard; the read-path, simulator, RNG, and `Match` model.
+**No re-baseline.**
+
+**Tests.** `test_season_phase.py` (field default / choices / `max_length==16` /
+all-four-persist), `test_phase_composer.py` (`PhaseSpec` default + parser stamps
+`"standings"` + `tournament:<mode>` still malformed + purity), `test_league_create.py`
+(every composed phase persists `"standings"`), `test_league_next_season.py`
+(**hand-set a source phase's `tournament_mode="strength"` via ORM, assert the
+carry-forward preserves it** — the load-bearing forward-compat guard for c-3c).
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)

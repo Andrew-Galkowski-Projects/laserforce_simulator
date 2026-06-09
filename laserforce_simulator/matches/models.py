@@ -1400,6 +1400,24 @@ class SeasonPhase(models.Model):
         ("member_night", "Member night"),
     )
 
+    # LG-02-Part2c-3b — the per-phase tournament-mode field. Captures the
+    # season-ending (``standings``) vs mid-season (``strength`` / ``unseeded`` /
+    # ``random_draw``) flavour of a ``tournament`` phase. All four declared now
+    # (the ``member_night`` precedent — declared-but-inert); only ``standings``
+    # has build behaviour this slice (``activate_pending_tournament_phase``
+    # hardcodes standings-seeding and the default already matches). The
+    # mid-season behaviour — relaxing the preceding-RR compose guard + the
+    # differential strength/unseeded/random_draw build — is Part2c-3c.
+    # ``unseeded`` != ``random_draw``: unseeded randomly seeds the season's
+    # existing preset teams; random_draw builds fresh balanced teams from a
+    # player pool (reuses the LG-02x-1 ``team_assembly="random_draw"`` machinery).
+    TOURNAMENT_MODE_CHOICES = (
+        ("standings", "Season-ending: from Standings"),
+        ("strength", "Mid-season: by team strength"),
+        ("unseeded", "Mid-season: random seed"),
+        ("random_draw", "Mid-season: drawn pool -> RR->DE"),
+    )
+
     season = models.ForeignKey(
         "matches.Season",
         on_delete=models.CASCADE,
@@ -1423,6 +1441,15 @@ class SeasonPhase(models.Model):
         blank=True,
         on_delete=models.SET_NULL,
         related_name="season_phases",
+    )
+    # LG-02-Part2c-3b — DORMANT this slice: nothing branches on it yet (the
+    # composer always writes the ``"standings"`` default; the read/build path
+    # is unchanged). Threaded through PhaseSpec + both creation sites so the
+    # carry-forward is forward-compatible for the Part2c-3c picker.
+    tournament_mode = models.CharField(
+        max_length=16,
+        choices=TOURNAMENT_MODE_CHOICES,
+        default="standings",
     )
 
     class Meta:

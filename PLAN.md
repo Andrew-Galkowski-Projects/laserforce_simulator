@@ -9,7 +9,7 @@ Story IDs from `sm5_user_stories_v2.html` are referenced where applicable.
 
 ### LG-02 · Tournament formats
 
-**Status: PART 1 sandbox formats all DONE; LG-02x-2 (Duos / Trios) deferred; Part 2 foundation (Part2a) DONE; Part2b (create-League composer + dormant phase columns) DONE; Part2c-1 (RR → single-elimination playoff embed) DONE; Part2c-2 SPINE (multi-RR play loop + `Match.season_phase` FK + cross-phase matchday offsetting) DONE; Part2c-3a (first alternative regular-season format — `double_round_robin` + `Match.leg`, wiring the Part2b dormant per-phase `schedule_format` column end-to-end) DONE; Part2c-3 remainder (c-3b per-phase seeding-mode field; c-3c mid-season tournaments; c-3d per-tournament-block config; c-3e non-single-elim finals embeds; c-3f season-linked playoff Match history + weekly playoff pacing) NOT STARTED.**
+**Status: PART 1 sandbox formats all DONE; LG-02x-2 (Duos / Trios) deferred; Part 2 foundation (Part2a) DONE; Part2b (create-League composer + dormant phase columns) DONE; Part2c-1 (RR → single-elimination playoff embed) DONE; Part2c-2 SPINE (multi-RR play loop + `Match.season_phase` FK + cross-phase matchday offsetting) DONE; Part2c-3a (first alternative regular-season format — `double_round_robin` + `Match.leg`, wiring the Part2b dormant per-phase `schedule_format` column end-to-end) DONE; Part2c-3b (dormant per-phase `SeasonPhase.tournament_mode` field) DONE; Part2c-3 remainder (c-3c mid-season tournaments; c-3d per-tournament-block config; c-3e non-single-elim finals embeds; c-3f season-linked playoff Match history + weekly playoff pacing) NOT STARTED.**
 Single-elimination (LG-02a), bulk intake + async play-all (LG-02a-2), best-of-N
 Series (LG-02b), per-round Series escalation (LG-02b-2), double-elimination /
 round-robin / RR→DE / Swiss (LG-02c+), and the Random Draw player pool
@@ -313,17 +313,55 @@ into Part2a (done) → Part2b → Part2c:
   / `test_league_play.py` / `test_season_multi_rr.py` / `test_league_create.py` /
   `test_season_dashboard_logic.py`.
 
-- **LG-02-Part2c-3b · [NOT STARTED] Per-phase seeding-mode field on `SeasonPhase`.**
-  Carried over from the LG-02-Part2b grill (2026-06-05). Part2b captures ordered
-  phase *types* only; Part2c-1/Part2c-2/Part2c-3a hardcode standings-rank-seeded,
-  season-ending. A `tournament` phase has **two flavours by Season role**: a
-  **season-ending tournament** (playoff / closer) is **seeded from the preceding
-  phase's Standings** and *requires* a preceding fixture-producing phase (the only
-  flavour built so far); a **mid-season tournament** (random draw / duos / trios /
-  swiss) needs **no preceding Standings** — seeded by *expected team strength* or
-  *not at all* — and may sit anywhere, including first. Add the field + its
-  compose-time validity rule (the Standings-seeded one needs a preceding RR —
-  already enforced for every `tournament` block via the Part2c-1 preceding-RR guard).
+- **LG-02-Part2c-3b · [DONE] Per-phase `tournament_mode` field on `SeasonPhase`
+  (dormant).** Carried over from the LG-02-Part2b grill (2026-06-05). Part2b
+  captures ordered phase *types* only; Part2c-1/Part2c-2/Part2c-3a hardcode
+  standings-rank-seeded, season-ending. A `tournament` phase has **two flavours by
+  Season role**: a **season-ending tournament** (playoff / closer) is **seeded from
+  the preceding phase's Standings** and *requires* a preceding fixture-producing
+  phase (the only flavour built so far); a **mid-season tournament** needs **no
+  preceding Standings** — seeded by *expected team strength*, by a *random seed* of
+  the preset teams, or drawn from a *player pool* — and may sit anywhere, including
+  first. This slice lands the field that captures the distinction as a **fully
+  dormant** addition (the `member_night` declared-but-inert precedent): a NEW
+  **`SeasonPhase.tournament_mode`** `CharField(max_length=16, default="standings")`
+  whose `TOURNAMENT_MODE_CHOICES` declares all four values now —
+  **`standings`** (season-ending: from Standings), **`strength`** (mid-season: by
+  team strength), **`unseeded`** (mid-season: random seed of the preset teams), and
+  **`random_draw`** (mid-season: drawn pool → RR→DE, reusing the LG-02x-1
+  `team_assembly="random_draw"` machinery). **`unseeded` ≠ `random_draw`** —
+  unseeded randomly seeds the season's *existing preset teams*, random_draw builds
+  *fresh balanced teams from a pool*. Migration `0045_seasonphase_tournament_mode`
+  (dep `0044_match_leg`, single `AddField`, **no `RunPython` / no backfill** —
+  [ADR-0004](docs/adr/0004-simulation-data-is-disposable.md); existing
+  standings-playoff phases inherit `default="standings"`). The field is **threaded
+  through the seam** but **always `"standings"` this slice**: the pure
+  `PhaseSpec` (matches/phase_composer.py) gains a trailing
+  **`tournament_mode: str = "standings"`** (appended LAST with a default ⇒ existing
+  keyword constructions stay equality-identical, the c-3a `ScheduleFixture.leg`
+  precedent) — but the **wire format is UNCHANGED** (the mode is **not** parsed
+  from the wire; a `tournament:<mode>` token still raises `"malformed phase
+  composition"`, reserving the `:` syntax for the c-3c picker); both
+  `SeasonPhase`-creation sites (`league_create` / `next_season`) stamp
+  `tournament_mode=spec.tournament_mode` / `=src.tournament_mode` so the
+  carry-forward is **forward-compatible for c-3c** (a non-default mode set on a
+  source phase reproduces across seasons). **Compose-time validity rule
+  UNCHANGED** — the `standings`-requires-a-preceding-RR rule is already enforced
+  for every `tournament` block by the existing blanket `parse_phase_composition`
+  preceding-RR guard. **`activate_pending_tournament_phase` UNCHANGED** (still
+  hardcodes standings-seeding; the default already matches, so byte-identical);
+  read-path / simulator / RNG UNCHANGED, **no Score Calibration re-baseline**.
+  `SeasonPhaseAdmin.list_display` gains `tournament_mode`. Extends
+  [ADR-0023](docs/adr/0023-season-phase-composable-structure.md) (Part2c-3b
+  consequences addendum, no new ADR); CONTEXT.md **Season phase** entry carries the
+  `tournament_mode` vocabulary (+ the stale Part2c-2 → Part2c-3b fix). **Scope-out
+  (→ c-3c):** the composer picker / `tournament:<mode>` wire token, the guard
+  relaxation that lets a mid-season tournament sit anywhere, and the differential
+  strength/unseeded/random_draw build. Seam contract:
+  [`.claude/worktrees/lg-02-part2c-3b-seam-contract.md`](.claude/worktrees/lg-02-part2c-3b-seam-contract.md);
+  app guide: `matches/CLAUDE.md` "LG-02-Part2c-3b per-phase tournament_mode field".
+  Tests: extensions to `test_season_phase.py` / `test_phase_composer.py` /
+  `test_league_create.py` / `test_league_next_season.py`.
 
 - **LG-02-Part2c-3c · [NOT STARTED] Mid-season tournaments.** A `tournament` phase
   that sits **between two `round_robin` phases** (or first), not as the season
