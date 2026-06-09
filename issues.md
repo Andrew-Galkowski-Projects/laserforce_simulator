@@ -689,3 +689,22 @@ fails) — identical to the shipped LG-01d Play Two Months / Until End buttons
 (`league_views.py:1569/1588`, no try/except on `.delay()`). Fix: run with
 `LF_CELERY_EAGER=1` (dev) or Redis + a Celery worker (prod), per
 ADR-0013 / CLAUDE.md "Async execution (Celery)". Not a code defect in LG-02a-2.
+
+---
+
+## LG-02-Part2c-3c mid-season tournaments — web smoke (2026-06-09)
+
+✅ **Create-League composer (mode picker)** — `/leagues/create/`: adding a Tournament
+block reveals the Tournament-mode `<select id="league-create-phase-mode-0">` with
+options `standings` / `strength` / `unseeded` selectable + `random_draw`
+("Mid-season (drawn pool) — coming soon") **disabled**. `serialize()` writes the
+hidden `#league-create-phases` as `round_robin:single_round_robin,tournament:strength`
+— the exact wire format the parser consumes. No console/network errors.
+
+✅ **Create + activate flow** — submitting the RR + `tournament:strength` composition
+created the League/Season and redirected to the standings page (no errors); the draft
+season dashboard rendered; **Start Season** activated it and the play-dropdown terminal
+button correctly read **"Play Until Playoffs"** (the tournament is the final phase ⇒
+`following_tournament_is_final` = True). Zero console messages on every page.
+
+No bugs found. Test data (league + season + 4 auto-teams + 24 players) cleaned up.

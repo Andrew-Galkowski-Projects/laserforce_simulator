@@ -329,6 +329,71 @@ decisions above.
   relaxation + strength/unseeded/random_draw build + the composer picker) is
   Part2c-3c.
 
+## Part2c-3c consequences (mid-season tournaments — strength/unseeded build, 2026-06-09)
+
+The "Forward decision" anticipated a mid-season `tournament` flavour that needs no
+preceding Standings and may sit anywhere; Part2c-3b landed the dormant
+`tournament_mode` field that names it. This slice makes that flavour BUILD for the
+**`strength`** and **`unseeded`** modes (`random_draw` stays deferred). It adds no new
+ADR — these are its consequences on the decisions above.
+
+- **The c-3b dormant `tournament_mode` field goes live for two of its modes; the
+  build branches on it.** `Season.activate_pending_tournament_phase` — until now
+  hardcoding standings-rank seeding — gains a private
+  `Season._seed_order_for_phase(phase)` that branches: `standings` →
+  preceding-phase Standings rank order (byte-identical to today); `strength` →
+  `bracket.default_seed_order` of `(team_id, mean active-player overall rating)` (DESC
+  mean, ASC id tiebreak) over the season's starting teams; `unseeded` → a fresh
+  `random.Random()` shuffle of the starting team ids. The build **tail** is
+  mode-independent — a `single_elimination`/`preset` Tournament with `seed = position +
+  1` (byte-identical to today's `seed=row.rank` for the dense-1..N `standings` case),
+  named `"{name} Playoffs"` (standings) or `"{name} Tournament"` (mid-season), then
+  `lock_and_build()`. `random_draw` remains **deferred** — the parser rejects it and the
+  composer offers it only as a disabled "coming soon" option.
+- **The preceding-RR compose guard is relaxed to standings-only.** The Part2c-1
+  guard — *a `tournament` phase requires a preceding `round_robin` phase* — kept its
+  string but now fires ONLY for a `standings`-mode tournament. A `strength` / `unseeded`
+  phase may sit anywhere, including FIRST, and a mid-season `standings` tournament is
+  allowed (there is no "standings-must-be-final" rule, only
+  "standings-must-have-a-preceding-RR"). The ≥1-round-robin rule is unchanged. The
+  generalised build gate mirrors this: a NULL preceding phase is now permitted for a
+  non-`standings` first phase. The `tournament` wire token becomes `tournament[:mode]`
+  (the format-part is the mode for a tournament token), with a new locked
+  `ValueError("unknown tournament_mode: ...")`; every pre-existing `ValueError` string
+  is preserved verbatim and the parser stays Django-free.
+- **A play-loop barrier halts the RR loop at an incomplete tournament phase; the
+  bracket drains through the existing playoff views.** This is the load-bearing
+  structural decision of the slice. A new `Season.playable_fixtures_by_phase()` filters
+  `scheduled_fixtures_by_phase()` to RR phases whose ordinal is strictly below the first
+  incomplete `tournament` phase's ordinal (`_tournament_barrier_ordinal()`); the two
+  RR-play-loop sites (`play_season_task` / `play_week`) swap one call onto it. So when a
+  mid-season tournament is reached, no later RR phase plays until that bracket has been
+  fully drained through the **existing** `play_single_round` / `play_playoffs` views
+  (Part2c-1, consumed verbatim) — the slice adds **no new play action**, it gates the
+  RR loop and reuses the playoff drain. Once the tournament phase completes, the barrier
+  advances and the later RR phases become playable. The pure helpers
+  (`select_play_fixtures` / `find_next_matchday`) and the display-path
+  `scheduled_fixtures*` stay byte-unchanged; `matches/season_dashboard.py` is untouched
+  (`TestNoDjangoImportsLeaked` stays green) — the barrier is a new READER over those.
+- **The build fires at `start_season` for a first-phase tournament.**
+  `Season.start_season` gains an `activate_pending_tournament_phase()` call inside its
+  existing `@transaction.atomic` block (after the snapshot writes + `state="active"`), so
+  a first-phase `strength` / `unseeded` tournament builds the instant the Season
+  activates. The existing post-round hook (which already calls the same method before
+  `complete_if_finished`) is unchanged and covers the mid-season-after-RR case; the
+  method is idempotent, so calling it at both sites is safe. The champion is still
+  stamped from the FINAL phase (`complete_if_finished` /
+  `_stamp_champion_for_final_phase` unchanged) — a mid-season tournament crowns no Season
+  champion.
+- **No migration, no simulator/RNG/engine change, no re-baseline.** `tournament_mode`
+  already exists (Part2c-3b, migration `0045`), so there is **no migration** this slice;
+  the simulator, RNG contract, and bracket engine are consumed verbatim — **no Score
+  Calibration re-baseline, no SIM-07 / SIM-08 interaction**, no new ADR. The `unseeded`
+  shuffle uses a fresh `random.Random()`, deliberately OUTSIDE the SIM-07 deterministic
+  seed chain (a mid-season draw is non-deterministic by design). The dashboard label
+  split ("Until Playoffs" final vs "Until Tournament" mid-season) is label text only —
+  the playoff button-group DOM ids + `play_until_end` action are unchanged.
+
 ## See also
 
 - [ADR-0014](0014-league-season-foundation.md) — the League/Season model and
