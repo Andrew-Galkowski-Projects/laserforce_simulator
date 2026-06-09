@@ -855,3 +855,95 @@ class TestLg02Part2bComposerNoRoundRobinRejected(TestCase):
                     self.client.post(reverse("league_create"), _valid_payload())
 
         self.assertEqual(_Lg02SeasonPhase.objects.count(), before_phases)
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2c-3a — composer persists a double_round_robin RR phase
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3a-seam-contract.md`` §2.12 /
+# §2.13 / §4. A composer POST whose wire value carries a
+# ``round_robin:double_round_robin`` row persists a ``SeasonPhase`` with
+# ``schedule_format == "double_round_robin"``; the default / bare composer still
+# persists ``single_round_robin``; an unknown-format token is rejected at the
+# form layer leaving ZERO League / Season / SeasonPhase rows (transaction
+# atomicity).
+#
+# Appended as NEW classes; no existing class above is modified. These WILL fail
+# until the Code agent lands the per-token ``type:format`` parse in
+# ``parse_phase_composition`` and the ``double_round_robin`` ``<select>`` option
+# in the composer — the TDD red state, not a defect in this file.
+
+
+class TestLg02Part2c3aComposerDoubleRoundRobin(TestCase):
+    """LG-02-Part2c-3a — composer persists a ``double_round_robin`` RR phase."""
+
+    def test_double_rr_token_persists_double_round_robin_phase(self) -> None:
+        payload = _valid_payload(league_name="DoubleRrL")
+        payload["phases"] = "round_robin:double_round_robin"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="DoubleRrL").seasons.get()
+        phases = list(season.phases.all())
+        self.assertEqual(len(phases), 1)
+        self.assertEqual(phases[0].phase_type, "round_robin")
+        self.assertEqual(phases[0].schedule_format, "double_round_robin")
+        self.assertIsNone(phases[0].tournament_id)
+
+    def test_double_rr_then_tournament_persists_both_rows(self) -> None:
+        payload = _valid_payload(league_name="DoubleRrTourneyL")
+        payload["phases"] = "round_robin:double_round_robin,tournament"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="DoubleRrTourneyL").seasons.get()
+        phases = list(season.phases.all())
+        self.assertEqual(len(phases), 2)
+        self.assertEqual(phases[0].phase_type, "round_robin")
+        self.assertEqual(phases[0].schedule_format, "double_round_robin")
+        self.assertEqual(phases[1].phase_type, "tournament")
+        self.assertIsNone(phases[1].schedule_format)
+
+    def test_bare_composer_still_persists_single_round_robin(self) -> None:
+        # The default / bare composer (no explicit format) persists the Part2b
+        # single_round_robin shape.
+        payload = _valid_payload(league_name="BareRrL")
+        payload["phases"] = "round_robin"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="BareRrL").seasons.get()
+        phases = list(season.phases.all())
+        self.assertEqual(len(phases), 1)
+        self.assertEqual(phases[0].schedule_format, "single_round_robin")
+
+    def test_default_create_still_persists_single_round_robin(self) -> None:
+        # Omitting the phases field entirely keeps the Part2a default.
+        self.client.post(reverse("league_create"), _valid_payload())
+        season = Season.objects.get(name="Season 1")
+        phases = list(season.phases.all())
+        self.assertEqual(len(phases), 1)
+        self.assertEqual(phases[0].schedule_format, "single_round_robin")
+
+
+class TestLg02Part2c3aComposerUnknownFormatRejected(TestCase):
+    """LG-02-Part2c-3a — an unknown per-phase format is rejected at the form
+    layer leaving ZERO rows (transaction atomicity)."""
+
+    def test_unknown_format_rerenders_form_200(self) -> None:
+        payload = _valid_payload(league_name="BadFmtL")
+        payload["phases"] = "round_robin:triple_round_robin"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 200)
+
+    def test_unknown_format_creates_zero_rows(self) -> None:
+        before_leagues = League.objects.count()
+        before_seasons = Season.objects.count()
+        before_phases = _Lg02SeasonPhase.objects.count()
+
+        payload = _valid_payload(league_name="BadFmtZero")
+        payload["phases"] = "round_robin:triple_round_robin"
+        self.client.post(reverse("league_create"), payload)
+
+        self.assertEqual(League.objects.count(), before_leagues)
+        self.assertEqual(Season.objects.count(), before_seasons)
+        self.assertEqual(_Lg02SeasonPhase.objects.count(), before_phases)
+        self.assertFalse(League.objects.filter(name="BadFmtZero").exists())

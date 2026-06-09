@@ -74,6 +74,10 @@ class Match(models.Model):
         on_delete=models.SET_NULL,
         related_name="matches",
     )
+    # LG-02-Part2c-3a: discriminates the two legs of a double_round_robin
+    # pairing. single_round_robin, legacy, and tournament/playoff Matches stay
+    # leg=1 (the default) ⇒ byte-identical.
+    leg = models.PositiveSmallIntegerField(default=1)
     is_completed = models.BooleanField(default=False)
 
     class Meta:
@@ -1074,7 +1078,10 @@ class Season(models.Model):
         rounds_qs = GameRound.objects.filter(match__season_phase=phase).select_related(
             "match"
         )
-        played_keys: set[tuple[frozenset[int], int]] = set()
+        # LG-02-Part2c-3a: the played-keys gain ``leg`` (from ``gr.match.leg``)
+        # so a double_round_robin phase requires BOTH legs of every pairing
+        # before it completes. For single_round_robin every leg == 1.
+        played_keys: set[tuple[frozenset[int], int, int]] = set()
         for game_round in rounds_qs:
             match = game_round.match
             if match is None or match.team_red_id is None or match.team_blue_id is None:
@@ -1083,12 +1090,14 @@ class Season(models.Model):
                 (
                     frozenset({match.team_red_id, match.team_blue_id}),
                     game_round.round_number,
+                    match.leg,
                 )
             )
         for fixture in phase_fixtures:
             key = (
                 frozenset({fixture.team_a_id, fixture.team_b_id}),
                 fixture.round_number,
+                fixture.leg,
             )
             if key not in played_keys:
                 return False
@@ -1240,7 +1249,9 @@ class Season(models.Model):
             return False
 
         rounds_qs = GameRound.objects.filter(match__season=self).select_related("match")
-        played_keys: set[tuple[frozenset[int], int]] = set()
+        # LG-02-Part2c-3a: the played-keys gain ``leg`` (from ``gr.match.leg``);
+        # for a phase-less / single-RR Season every leg == 1 ⇒ byte-identical.
+        played_keys: set[tuple[frozenset[int], int, int]] = set()
         for game_round in rounds_qs:
             match = game_round.match
             if match is None or match.team_red_id is None or match.team_blue_id is None:
@@ -1249,6 +1260,7 @@ class Season(models.Model):
                 (
                     frozenset({match.team_red_id, match.team_blue_id}),
                     game_round.round_number,
+                    match.leg,
                 )
             )
 
@@ -1256,6 +1268,7 @@ class Season(models.Model):
             key = (
                 frozenset({fixture.team_a_id, fixture.team_b_id}),
                 fixture.round_number,
+                fixture.leg,
             )
             if key not in played_keys:
                 return False
@@ -1339,6 +1352,9 @@ class Season(models.Model):
                     round_number=f.round_number,
                     team_a_id=f.team_a_id,
                     team_b_id=f.team_b_id,
+                    # LG-02-Part2c-3a: carry leg through the offset re-construction
+                    # so leg-2 fixtures don't collapse to leg-1.
+                    leg=f.leg,
                 )
                 for f in base
             ]

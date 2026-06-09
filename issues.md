@@ -1,3 +1,38 @@
+# Web testing — LG-02-Part2c-3a (double round-robin regular-season format)
+
+Date: 2026-06-08
+Branch: `lg-02-part2c-3a-double-rr`
+Scope: end-to-end smoke of the surfaces this slice touches — the create-League composer
+(per-phase `schedule_format` select now offers `double_round_robin`; hidden
+`#league-create-phases` serializes the per-token `type:format` wire format), the
+wire-format → `parse_phase_composition` → `phase.schedule_format` → `scheduled_fixtures_by_phase`
+round-trip, and the leg-aware play loop + the FLAT-overlay dashboard/schedule sites
+(`round_progress`, `_build_dashboard_context`, `season_schedule`, `team_schedule`).
+
+## Summary — LG-02-Part2c-3a
+| Area | Result |
+|---|---|
+| `/leagues/create/` composer — per-phase format `<select>` offers "Double round-robin"; hidden input serializes to exactly `round_robin:double_round_robin` on submit | ✅ |
+| Create League with a `double_round_robin` RR phase (Season 40, N=4) → redirect to draft standings; console/network clean | ✅ |
+| `/seasons/40/schedule/` — renders **matchdays 1–12** (24 fixtures = double-RR for N=4; single-RR would be 1–6), confirming the per-phase `schedule_format` round-trips end-to-end; console/network all 200 | ✅ |
+| Season dashboard `/seasons/40/` (draft → ACTIVE via Start Season) — "Rounds played: **0 / 24**", i.e. `round_progress` counts all 24 double-RR fixtures with **no leg-2 collapse** (would be /12 if the leg-widening were wrong); console clean | ✅ |
+| Play One Week (sync `play_week`, leg-aware loop) → "Rounds played: **2 / 24**", no error — leg threading through the play loop + FLAT overlay confirmed live | ✅ |
+| League dashboard `/leagues/35/` + `/leagues/35/team_schedule/225/` (the other changed FLAT-overlay sites) render the active double-RR season cleanly ("2 / 24") | ✅ |
+| Collateral: sandbox `/matches/create/` Phoenix vs Vipers → Match **764** simulates with a winner, no error (touched simulator package unaffected) | ✅ |
+
+## Findings — LG-02-Part2c-3a
+- **No bugs found.** The double_round_robin format works end-to-end: the composer serializes
+  the locked `type:format` wire format, the schedule renders the doubled matchday span, and
+  the leg-aware play loop + every leg-widened FLAT-overlay site (`round_progress` shows /24,
+  not /12) behave correctly with real double-RR data. No console errors or non-2xx requests on
+  any touched page (favicon 404 not observed; the pre-existing create-form a11y label "issue"
+  noted in the Part2c-2 run is unchanged and unrelated).
+- Test data to tear down: League "ChromeTest DoubleRR League" / Season 40 (active, 2 rounds
+  played) and sandbox Match 764. Season-Matches use globally-named seeded teams, so the league
+  is removed by deleting it directly (admin/teardown), not by team-name prefix.
+
+---
+
 # Web testing — LG-02-Part2c-2 (multi-RR play loop + Match.season_phase FK)
 
 Date: 2026-06-06

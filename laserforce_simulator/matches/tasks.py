@@ -196,11 +196,14 @@ def play_season_task(
             for phase, phase_fixtures in by_phase
             for fixture in phase_fixtures
         ]
+        # LG-02-Part2c-3a — played_keys gain ``leg`` so a double_round_robin
+        # phase's two legs are distinct.
         played_keys = {
             (
                 gr.match.season_phase_id,
                 frozenset({gr.match.team_red_id, gr.match.team_blue_id}),
                 gr.round_number,
+                gr.match.leg,
             )
             for gr in GameRound.objects.filter(match__season=season).select_related(
                 "match"
@@ -237,6 +240,7 @@ def play_season_task(
                 fixture.round_number,
                 arena_map=arena_map,
                 season_phase=phase_by_id.get(phase_id),
+                leg=fixture.leg,
             )
             self.update_state(
                 state="PROGRESS",

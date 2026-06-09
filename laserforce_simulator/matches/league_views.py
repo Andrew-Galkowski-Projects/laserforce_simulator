@@ -384,9 +384,10 @@ def season_schedule(request, season_id: int) -> HttpResponse:
         t.id: t for t in Team.objects.filter(id__in=team_ids)
     }
 
-    # Index played GameRounds by (frozenset of team ids, round_number).
+    # Index played GameRounds by (frozenset of team ids, round_number, leg).
+    # LG-02-Part2c-3a — leg distinguishes a double_round_robin phase's two legs.
     rounds_qs = GameRound.objects.filter(match__season=season).select_related("match")
-    played_by_key: dict[tuple[frozenset[int], int], GameRound] = {}
+    played_by_key: dict[tuple[frozenset[int], int, int], GameRound] = {}
     for game_round in rounds_qs:
         match = game_round.match
         if match is None or match.team_red_id is None or match.team_blue_id is None:
@@ -394,6 +395,7 @@ def season_schedule(request, season_id: int) -> HttpResponse:
         key = (
             frozenset({match.team_red_id, match.team_blue_id}),
             game_round.round_number,
+            match.leg,
         )
         played_by_key[key] = game_round
 
@@ -403,6 +405,7 @@ def season_schedule(request, season_id: int) -> HttpResponse:
         key = (
             frozenset({fixture.team_a_id, fixture.team_b_id}),
             fixture.round_number,
+            fixture.leg,
         )
         game_round = played_by_key.get(key)
         if game_round is not None:
@@ -671,6 +674,8 @@ def _build_dashboard_context(
         rounds_qs = GameRound.objects.filter(
             match__season=displayed_season
         ).select_related("match")
+        # LG-02-Part2c-3a — played_keys gain ``leg`` so a double_round_robin
+        # phase's two legs are distinct.
         played_keys: set = set()
         for game_round in rounds_qs:
             match = game_round.match
@@ -680,6 +685,7 @@ def _build_dashboard_context(
                 (
                     frozenset({match.team_red_id, match.team_blue_id}),
                     game_round.round_number,
+                    match.leg,
                 )
             )
 
@@ -1614,11 +1620,14 @@ def play_week(request, season_id: int) -> HttpResponse:
                 for phase, phase_fixtures in by_phase
                 for fixture in phase_fixtures
             ]
+            # LG-02-Part2c-3a — played_keys gain ``leg`` so a double_round_robin
+            # phase's two legs are distinct.
             played_keys = {
                 (
                     gr.match.season_phase_id,
                     frozenset({gr.match.team_red_id, gr.match.team_blue_id}),
                     gr.round_number,
+                    gr.match.leg,
                 )
                 for gr in GameRound.objects.filter(match__season=season).select_related(
                     "match"
@@ -1645,6 +1654,7 @@ def play_week(request, season_id: int) -> HttpResponse:
                     fixture.round_number,
                     arena_map=arena_map,
                     season_phase=phase_by_id.get(phase_id),
+                    leg=fixture.leg,
                 )
     except (ValidationError, ValueError) as exc:
         return _render_season_dashboard_error(request, season, str(exc))
@@ -1857,8 +1867,10 @@ def _build_team_schedule_rows(
         6. Sort Upcoming by ``(matchday, round_number)`` asc; Completed
            keeps queryset order (id asc = chronological).
     """
+    # LG-02-Part2c-3a — every key gains ``leg`` so a double_round_robin phase's
+    # two legs are distinct (``gr.match.leg`` / ``fixture.leg``).
     played_game_rounds = list(played_game_rounds)
-    played_keys: set[tuple[frozenset[int], int]] = set()
+    played_keys: set[tuple[frozenset[int], int, int]] = set()
     for gr in played_game_rounds:
         match = gr.match
         if match is None or match.team_red_id is None or match.team_blue_id is None:
@@ -1867,14 +1879,16 @@ def _build_team_schedule_rows(
             (
                 frozenset({match.team_red_id, match.team_blue_id}),
                 gr.round_number,
+                match.leg,
             )
         )
 
-    fixture_by_key: dict[tuple[frozenset[int], int], object] = {}
+    fixture_by_key: dict[tuple[frozenset[int], int, int], object] = {}
     for fixture in fixtures:
         key = (
             frozenset({fixture.team_a_id, fixture.team_b_id}),
             fixture.round_number,
+            fixture.leg,
         )
         fixture_by_key[key] = fixture
 
@@ -1885,6 +1899,7 @@ def _build_team_schedule_rows(
         key = (
             frozenset({fixture.team_a_id, fixture.team_b_id}),
             fixture.round_number,
+            fixture.leg,
         )
         if key in played_keys:
             continue
@@ -1916,6 +1931,7 @@ def _build_team_schedule_rows(
         key = (
             frozenset({match.team_red_id, match.team_blue_id}),
             gr.round_number,
+            match.leg,
         )
         fixture = fixture_by_key.get(key)
         matchday = fixture.matchday if fixture is not None else 0

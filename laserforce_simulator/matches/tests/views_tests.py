@@ -3496,12 +3496,8 @@ class TestLg02c2PlayWeekMultiRr(_Lg01dTestCase):
             response = self.client.post(reverse("play_week", args=[season.id]))
         self.assertEqual(response.status_code, 302)
         # Exactly one matchday's worth of Rounds ran, all attributed to RR1.
-        self.assertEqual(
-            GameRound.objects.filter(match__season_phase=rr1).count(), 1
-        )
-        self.assertEqual(
-            GameRound.objects.filter(match__season_phase=rr2).count(), 0
-        )
+        self.assertEqual(GameRound.objects.filter(match__season_phase=rr1).count(), 1)
+        self.assertEqual(GameRound.objects.filter(match__season_phase=rr2).count(), 0)
 
     def test_play_week_crosses_boundary_into_rr2_after_rr1_exhausted(
         self,
@@ -3519,17 +3515,13 @@ class TestLg02c2PlayWeekMultiRr(_Lg01dTestCase):
         season.refresh_from_db()
         # RR1 fully played; RR2 still untouched.
         self.assertTrue(season._phase_complete(rr1))
-        self.assertEqual(
-            GameRound.objects.filter(match__season_phase=rr2).count(), 0
-        )
+        self.assertEqual(GameRound.objects.filter(match__season_phase=rr2).count(), 0)
 
         # The boundary click now lands on RR2's first matchday.
         with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
             response = self.client.post(reverse("play_week", args=[season.id]))
         self.assertEqual(response.status_code, 302)
-        self.assertGreater(
-            GameRound.objects.filter(match__season_phase=rr2).count(), 0
-        )
+        self.assertGreater(GameRound.objects.filter(match__season_phase=rr2).count(), 0)
 
     def test_season_not_completed_mid_rr2(self) -> None:
         season, _teams, rr1, rr2 = _lg02c2_two_rr_active_season("PWMrrMid", n_teams=2)

@@ -183,8 +183,12 @@ class TestGenerateScheduleErrors(SimpleTestCase):
     """Unknown format / too-few teams raise ValueError."""
 
     def test_unknown_schedule_format_raises_value_error(self) -> None:
+        # NOTE (LG-02-Part2c-3a): ``double_round_robin`` is now an ACCEPTED
+        # format (it was the unknown-format probe in the LG-01 era). Point this
+        # at a genuinely-unknown format so the intent — unknown formats raise —
+        # is preserved.
         with self.assertRaises(ValueError):
-            generate_schedule([1, 2], "double_round_robin")
+            generate_schedule([1, 2], "triple_round_robin")
 
     def test_empty_team_list_raises_value_error(self) -> None:
         with self.assertRaises(ValueError):
@@ -265,3 +269,238 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
             0,
             msg=f"stdout={result.stdout!r} stderr={result.stderr!r}",
         )
+
+
+# ===========================================================================
+# LG-02-Part2c-3a — double round-robin regular-season format
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3a-seam-contract.md`` §2.3,
+# §2.4, §2.5, §4. ``generate_schedule(team_ids, "double_round_robin")`` returns
+# the single-RR list (every fixture ``leg=1``, matchdays ``1..2*(N-1)``)
+# CONCATENATED with the same fixtures re-emitted as ``leg=2`` offset by
+# ``2*(N-1)`` (matchdays ``2*(N-1)+1 .. 4*(N-1)``); the full list is sorted by
+# ``(matchday, team_a_id)`` and spans a monotonic ``1..4*(N-1)`` calendar.
+# ``SCHEDULE_FORMATS == ("single_round_robin", "double_round_robin")``; the
+# ``single_round_robin`` path stays byte-identical (every fixture ``leg == 1``);
+# ``ScheduleFixture(...)`` without ``leg`` defaults to 1.
+#
+# Appended as NEW classes; no existing class above is modified. These WILL fail
+# until the Code agent lands ``double_round_robin`` in ``generate_schedule``,
+# the ``ScheduleFixture.leg`` field, and the widened ``SCHEDULE_FORMATS`` — the
+# TDD red state, not a defect in this file. ``N`` below is the bye-padded even
+# slot count (the existing circle-method ``n``): for N=4 the span is
+# ``1..2*(4-1) == 1..6`` per leg ⇒ ``1..12`` total; for an odd N=5 the bye-pad
+# makes ``n == 6`` so the per-leg span is ``1..2*(6-1) == 1..10`` ⇒ ``1..20``
+# total.
+
+
+def _single_rr(team_ids: list[int]) -> list:
+    return generate_schedule(team_ids, "single_round_robin")
+
+
+def _double_rr(team_ids: list[int]) -> list:
+    return generate_schedule(team_ids, "double_round_robin")
+
+
+def _per_leg_matchday_span(team_ids: list[int]) -> int:
+    """The matchday span of ONE leg = max matchday of the single-RR list."""
+    return max(f.matchday for f in _single_rr(team_ids))
+
+
+class TestScheduleFixtureLegField(SimpleTestCase):
+    """``ScheduleFixture`` gains a ``leg`` field defaulting to 1."""
+
+    def test_constructing_without_leg_defaults_to_one(self) -> None:
+        f = ScheduleFixture(matchday=1, round_number=1, team_a_id=1, team_b_id=2)
+        self.assertEqual(f.leg, 1)
+
+    def test_constructing_with_leg_two_carries_through(self) -> None:
+        f = ScheduleFixture(matchday=7, round_number=1, team_a_id=1, team_b_id=2, leg=2)
+        self.assertEqual(f.leg, 2)
+
+    def test_leg_default_keeps_equality_with_existing_construction(self) -> None:
+        # An explicit leg=1 equals the no-leg construction (the byte-identical
+        # invariant — existing tests construct without leg).
+        a = ScheduleFixture(matchday=1, round_number=1, team_a_id=1, team_b_id=2)
+        b = ScheduleFixture(matchday=1, round_number=1, team_a_id=1, team_b_id=2, leg=1)
+        self.assertEqual(a, b)
+
+
+class TestScheduleFormatsConstantDoubleRr(SimpleTestCase):
+    """``SCHEDULE_FORMATS`` widens to the two-tuple in locked order."""
+
+    def test_schedule_formats_is_the_two_tuple(self) -> None:
+        self.assertEqual(SCHEDULE_FORMATS, ("single_round_robin", "double_round_robin"))
+
+    def test_double_round_robin_is_an_accepted_format(self) -> None:
+        self.assertIn("double_round_robin", SCHEDULE_FORMATS)
+
+
+class TestSingleRoundRobinByteIdentical(SimpleTestCase):
+    """``single_round_robin`` output is byte-identical (every fixture leg=1)."""
+
+    def test_every_single_rr_fixture_has_leg_one_n4(self) -> None:
+        for f in _single_rr([1, 2, 3, 4]):
+            self.assertEqual(f.leg, 1)
+
+    def test_every_single_rr_fixture_has_leg_one_odd_n5(self) -> None:
+        for f in _single_rr([1, 2, 3, 4, 5]):
+            self.assertEqual(f.leg, 1)
+
+    def test_single_rr_count_unchanged_n4(self) -> None:
+        # N=4 single-RR is still 12 fixtures (the LG-01 contract).
+        self.assertEqual(len(_single_rr([1, 2, 3, 4])), 12)
+
+
+class TestDoubleRoundRobinCount(SimpleTestCase):
+    """Double-RR fixture count = 2x the single-RR count for the same teams."""
+
+    def test_n4_double_is_twice_single(self) -> None:
+        team_ids = [1, 2, 3, 4]
+        self.assertEqual(len(_double_rr(team_ids)), 2 * len(_single_rr(team_ids)))
+
+    def test_n4_double_is_24_fixtures(self) -> None:
+        # Single-RR N=4 = 12 ⇒ double = 24.
+        self.assertEqual(len(_double_rr([1, 2, 3, 4])), 24)
+
+    def test_odd_n5_double_is_twice_single(self) -> None:
+        team_ids = [1, 2, 3, 4, 5]
+        self.assertEqual(len(_double_rr(team_ids)), 2 * len(_single_rr(team_ids)))
+
+    def test_odd_n5_double_is_40_fixtures(self) -> None:
+        # Single-RR N=5 = 20 (per LG-01) ⇒ double = 40.
+        self.assertEqual(len(_double_rr([1, 2, 3, 4, 5])), 40)
+
+
+class TestDoubleRoundRobinLegPartition(SimpleTestCase):
+    """Leg-1 fixtures carry leg=1; leg-2 carry leg=2; each leg has the
+    single-RR count."""
+
+    def test_leg1_count_equals_single_rr_count_n4(self) -> None:
+        team_ids = [1, 2, 3, 4]
+        fixtures = _double_rr(team_ids)
+        leg1 = [f for f in fixtures if f.leg == 1]
+        self.assertEqual(len(leg1), len(_single_rr(team_ids)))
+
+    def test_leg2_count_equals_single_rr_count_n4(self) -> None:
+        team_ids = [1, 2, 3, 4]
+        fixtures = _double_rr(team_ids)
+        leg2 = [f for f in fixtures if f.leg == 2]
+        self.assertEqual(len(leg2), len(_single_rr(team_ids)))
+
+    def test_only_legs_one_and_two_appear(self) -> None:
+        legs = {f.leg for f in _double_rr([1, 2, 3, 4])}
+        self.assertEqual(legs, {1, 2})
+
+    def test_leg1_count_equals_single_rr_count_odd_n5(self) -> None:
+        team_ids = [1, 2, 3, 4, 5]
+        fixtures = _double_rr(team_ids)
+        leg1 = [f for f in fixtures if f.leg == 1]
+        leg2 = [f for f in fixtures if f.leg == 2]
+        self.assertEqual(len(leg1), len(_single_rr(team_ids)))
+        self.assertEqual(len(leg2), len(_single_rr(team_ids)))
+
+
+class TestDoubleRoundRobinLegMatchdayRanges(SimpleTestCase):
+    """Leg 1 occupies matchdays ``1..2*(N-1)``; leg 2 occupies
+    ``2*(N-1)+1 .. 4*(N-1)`` (offset by ``2*(N-1)``)."""
+
+    def test_n4_leg1_matchdays_in_first_half(self) -> None:
+        team_ids = [1, 2, 3, 4]
+        span = _per_leg_matchday_span(team_ids)  # 6 for N=4
+        fixtures = _double_rr(team_ids)
+        leg1_mds = {f.matchday for f in fixtures if f.leg == 1}
+        self.assertEqual(min(leg1_mds), 1)
+        self.assertEqual(max(leg1_mds), span)
+
+    def test_n4_leg2_matchdays_in_second_half(self) -> None:
+        team_ids = [1, 2, 3, 4]
+        span = _per_leg_matchday_span(team_ids)  # 6 for N=4
+        fixtures = _double_rr(team_ids)
+        leg2_mds = {f.matchday for f in fixtures if f.leg == 2}
+        self.assertEqual(min(leg2_mds), span + 1)
+        self.assertEqual(max(leg2_mds), 2 * span)
+
+    def test_odd_n5_leg2_offset_by_per_leg_span(self) -> None:
+        team_ids = [1, 2, 3, 4, 5]
+        span = _per_leg_matchday_span(team_ids)  # 10 for bye-padded N=5
+        fixtures = _double_rr(team_ids)
+        leg2_mds = {f.matchday for f in fixtures if f.leg == 2}
+        self.assertEqual(min(leg2_mds), span + 1)
+        self.assertEqual(max(leg2_mds), 2 * span)
+
+    def test_leg2_matchday_is_leg1_matchday_plus_offset(self) -> None:
+        # Each leg-2 fixture's matchday == its leg-1 twin's matchday + span,
+        # same (round_number, team_a_id, team_b_id).
+        team_ids = [1, 2, 3, 4]
+        span = _per_leg_matchday_span(team_ids)
+        fixtures = _double_rr(team_ids)
+        leg1_by_key = {
+            (f.round_number, f.team_a_id, f.team_b_id): f.matchday
+            for f in fixtures
+            if f.leg == 1
+        }
+        for f in fixtures:
+            if f.leg == 2:
+                key = (f.round_number, f.team_a_id, f.team_b_id)
+                self.assertIn(key, leg1_by_key)
+                self.assertEqual(f.matchday, leg1_by_key[key] + span)
+
+
+class TestDoubleRoundRobinSamePairingSet(SimpleTestCase):
+    """Leg 2's ``(round_number, team_a_id, team_b_id)`` set equals leg 1's."""
+
+    def test_leg2_pairing_set_equals_leg1_n4(self) -> None:
+        fixtures = _double_rr([1, 2, 3, 4])
+        leg1_set = {
+            (f.round_number, f.team_a_id, f.team_b_id) for f in fixtures if f.leg == 1
+        }
+        leg2_set = {
+            (f.round_number, f.team_a_id, f.team_b_id) for f in fixtures if f.leg == 2
+        }
+        self.assertEqual(leg1_set, leg2_set)
+
+    def test_leg2_pairing_set_equals_leg1_odd_n5(self) -> None:
+        fixtures = _double_rr([1, 2, 3, 4, 5])
+        leg1_set = {
+            (f.round_number, f.team_a_id, f.team_b_id) for f in fixtures if f.leg == 1
+        }
+        leg2_set = {
+            (f.round_number, f.team_a_id, f.team_b_id) for f in fixtures if f.leg == 2
+        }
+        self.assertEqual(leg1_set, leg2_set)
+
+
+class TestDoubleRoundRobinGlobalCalendar(SimpleTestCase):
+    """The full double-RR list spans a monotonic ``1..4*(N-1)`` calendar sorted
+    by ``(matchday, team_a_id)``."""
+
+    def test_n4_matchday_span_is_one_to_four_n_minus_one(self) -> None:
+        team_ids = [1, 2, 3, 4]
+        span = _per_leg_matchday_span(team_ids)  # 2*(N-1) == 6 for N=4
+        fixtures = _double_rr(team_ids)
+        matchdays = sorted({f.matchday for f in fixtures})
+        # Contiguous 1..2*span (== 1..4*(N-1)), no gaps.
+        self.assertEqual(matchdays, list(range(1, 2 * span + 1)))
+
+    def test_odd_n5_matchday_span_contiguous(self) -> None:
+        team_ids = [1, 2, 3, 4, 5]
+        span = _per_leg_matchday_span(team_ids)
+        fixtures = _double_rr(team_ids)
+        matchdays = sorted({f.matchday for f in fixtures})
+        self.assertEqual(matchdays, list(range(1, 2 * span + 1)))
+
+    def test_output_sorted_by_matchday_then_team_a_id(self) -> None:
+        fixtures = _double_rr([1, 2, 3, 4])
+        keys = [(f.matchday, f.team_a_id) for f in fixtures]
+        self.assertEqual(keys, sorted(keys))
+
+    def test_team_a_id_less_than_team_b_id_per_fixture(self) -> None:
+        for f in _double_rr([1, 2, 3, 4, 5, 6]):
+            self.assertLess(f.team_a_id, f.team_b_id, msg=f"fixture {f} violates")
+
+    def test_double_rr_is_input_order_independent(self) -> None:
+        a = _double_rr([5, 1, 3, 7])
+        b = _double_rr([1, 3, 5, 7])
+        self.assertEqual(a, b)

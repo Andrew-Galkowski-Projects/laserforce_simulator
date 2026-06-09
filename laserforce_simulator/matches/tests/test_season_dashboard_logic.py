@@ -40,6 +40,12 @@ class _LocalScheduleFixture:
     round_number: int
     team_a_id: int
     team_b_id: int
+    # LG-02-Part2c-3a — the production ``ScheduleFixture`` gained a ``leg``
+    # field defaulting to 1; the leg-aware ``find_next_fixture`` /
+    # ``round_progress`` read it off the duck-typed fixture, so this stub must
+    # carry the same default for the pre-existing (legless) cases to keep
+    # passing.
+    leg: int = 1
 
 
 # ---------------------------------------------------------------------------
@@ -326,9 +332,11 @@ class TestFindNextFixture(unittest.TestCase):
     def test_all_played_returns_none(self) -> None:
         f1 = _LocalScheduleFixture(matchday=1, round_number=1, team_a_id=1, team_b_id=2)
         f2 = _LocalScheduleFixture(matchday=2, round_number=1, team_a_id=1, team_b_id=2)
+        # LG-02-Part2c-3a: the FLAT key gained a ``leg`` element (3-tuple); the
+        # legless fixtures default to leg=1.
         played = {
-            (frozenset({1, 2}), 1),
-            (frozenset({1, 2}), 1),  # dedup'd by set semantics — both f1/f2 same key
+            (frozenset({1, 2}), 1, 1),
+            (frozenset({1, 2}), 1, 1),  # dedup'd by set semantics — both f1/f2 same key
         }
         # Both fixtures have same key — both "played" once we have that key.
         result = find_next_fixture([f1, f2], played)
@@ -339,7 +347,7 @@ class TestFindNextFixture(unittest.TestCase):
         f2 = _LocalScheduleFixture(matchday=1, round_number=1, team_a_id=3, team_b_id=4)
         f3 = _LocalScheduleFixture(matchday=2, round_number=1, team_a_id=1, team_b_id=3)
         # f1 played → next unplayed is f2 (iteration order is the list order).
-        played = {(frozenset({1, 2}), 1)}
+        played = {(frozenset({1, 2}), 1, 1)}
         result = find_next_fixture([f1, f2, f3], played)
         self.assertEqual(result, f2)
 
@@ -347,7 +355,7 @@ class TestFindNextFixture(unittest.TestCase):
         f1 = _LocalScheduleFixture(matchday=1, round_number=1, team_a_id=1, team_b_id=2)
         f2 = _LocalScheduleFixture(matchday=2, round_number=1, team_a_id=1, team_b_id=2)
         # f1 played as the reversed pair — should still match via frozenset.
-        played = {(frozenset({2, 1}), 1)}
+        played = {(frozenset({2, 1}), 1, 1)}
         result = find_next_fixture([f1, f2], played)
         # f1 is "played" because the frozenset matches; f2 has the same
         # key so it is also "played". Result is None — both fixtures share
@@ -382,9 +390,9 @@ class TestRoundProgress(unittest.TestCase):
             _LocalScheduleFixture(matchday=3, round_number=1, team_a_id=2, team_b_id=3),
         ]
         played = {
-            (frozenset({1, 2}), 1),
-            (frozenset({1, 3}), 1),
-            (frozenset({2, 3}), 1),
+            (frozenset({1, 2}), 1, 1),
+            (frozenset({1, 3}), 1, 1),
+            (frozenset({2, 3}), 1, 1),
         }
         self.assertEqual(round_progress(fixtures, played), (3, 3))
 
@@ -394,7 +402,7 @@ class TestRoundProgress(unittest.TestCase):
             _LocalScheduleFixture(matchday=2, round_number=1, team_a_id=1, team_b_id=3),
             _LocalScheduleFixture(matchday=3, round_number=1, team_a_id=2, team_b_id=3),
         ]
-        played = {(frozenset({1, 2}), 1)}
+        played = {(frozenset({1, 2}), 1, 1)}
         self.assertEqual(round_progress(fixtures, played), (1, 3))
 
     def test_extra_played_keys_not_counted(self) -> None:
@@ -405,8 +413,8 @@ class TestRoundProgress(unittest.TestCase):
             _LocalScheduleFixture(matchday=1, round_number=1, team_a_id=1, team_b_id=2),
         ]
         played = {
-            (frozenset({1, 2}), 1),
-            (frozenset({99, 100}), 1),  # data drift — not in fixtures
+            (frozenset({1, 2}), 1, 1),
+            (frozenset({99, 100}), 1, 1),  # data drift — not in fixtures
         }
         completed, total = round_progress(fixtures, played)
         self.assertEqual(completed, 1)
@@ -469,3 +477,283 @@ class TestNoDjangoImportsLeaked(unittest.TestCase):
 # Reference for unused import-name warning silencer (LeaderRow is used via
 # return values; explicit import retained so any rename surfaces here).
 _ = LeaderRow
+
+
+# ===========================================================================
+# LG-02-Part2c-3a — leg-aware pure helpers
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3a-seam-contract.md`` §2.8 /
+# §2.9 / §3 / §4. The play-loop helpers ``select_play_fixtures`` /
+# ``find_next_matchday`` gain a ``leg`` dimension on their per-fixture key
+# (4-tuple ``(phase_id, frozenset, round_number, leg)``); the FLAT dashboard
+# helpers ``find_next_fixture`` / ``round_progress`` gain a ``leg`` dimension on
+# their key (3-tuple ``(frozenset, round_number, leg)``). ``leg`` is a plain int
+# read off the duck-typed fixture (default 1). The module stays Django-free — the
+# stub below carries a ``.leg`` field WITHOUT importing
+# ``matches.schedule_generator``, so ``TestNoDjangoImportsLeaked`` keeps passing.
+#
+# The load-bearing assertion: two same-pair / same-round fixtures differing ONLY
+# by ``leg`` are DISTINCT — one played, the other not.
+#
+# Appended as NEW classes; no existing class above is modified. These WILL fail
+# until the Code agent widens the four helpers' keys with ``leg`` — the TDD red
+# state, not a defect in this file.
+
+from matches.season_dashboard import (  # noqa: E402
+    find_next_matchday,
+    select_play_fixtures,
+)
+
+
+@dataclass(frozen=True)
+class _LegFixture:
+    """``ScheduleFixture`` duck-type carrying ``.leg`` — built WITHOUT importing
+    ``matches.schedule_generator`` so the Django-free allowlist is preserved."""
+
+    matchday: int
+    round_number: int
+    team_a_id: int
+    team_b_id: int
+    leg: int = 1
+
+
+# ---------------------------------------------------------------------------
+# TestSelectPlayFixturesLegAware
+# ---------------------------------------------------------------------------
+
+
+class TestSelectPlayFixturesLegAware(unittest.TestCase):
+    """``select_play_fixtures`` 4-tuple key ``(phase_id, frozenset, round, leg)``
+    treats two same-pair / same-round fixtures differing only by ``leg`` as
+    DISTINCT."""
+
+    def test_leg1_played_leaves_leg2_unplayed(self) -> None:
+        fixtures = [
+            (
+                10,
+                _LegFixture(
+                    matchday=1, round_number=1, team_a_id=1, team_b_id=2, leg=1
+                ),
+            ),
+            (
+                10,
+                _LegFixture(
+                    matchday=7, round_number=1, team_a_id=1, team_b_id=2, leg=2
+                ),
+            ),
+        ]
+        # Only leg 1 is played — the 4th key element is the leg.
+        played = {(10, frozenset({1, 2}), 1, 1)}
+        result = select_play_fixtures(fixtures, played, max_matchdays=None)
+        # The leg-2 fixture is still unplayed (distinct key).
+        self.assertEqual(len(result), 1)
+        phase_id, f = result[0]
+        self.assertEqual(phase_id, 10)
+        self.assertEqual(f.leg, 2)
+        self.assertEqual(f.matchday, 7)
+
+    def test_both_legs_played_returns_empty(self) -> None:
+        fixtures = [
+            (
+                10,
+                _LegFixture(
+                    matchday=1, round_number=1, team_a_id=1, team_b_id=2, leg=1
+                ),
+            ),
+            (
+                10,
+                _LegFixture(
+                    matchday=7, round_number=1, team_a_id=1, team_b_id=2, leg=2
+                ),
+            ),
+        ]
+        played = {
+            (10, frozenset({1, 2}), 1, 1),
+            (10, frozenset({1, 2}), 1, 2),
+        }
+        self.assertEqual(select_play_fixtures(fixtures, played, max_matchdays=None), [])
+
+    def test_neither_leg_played_returns_both(self) -> None:
+        fixtures = [
+            (
+                10,
+                _LegFixture(
+                    matchday=1, round_number=1, team_a_id=1, team_b_id=2, leg=1
+                ),
+            ),
+            (
+                10,
+                _LegFixture(
+                    matchday=7, round_number=1, team_a_id=1, team_b_id=2, leg=2
+                ),
+            ),
+        ]
+        result = select_play_fixtures(fixtures, set(), max_matchdays=None)
+        self.assertEqual(len(result), 2)
+        self.assertEqual({f.leg for _pid, f in result}, {1, 2})
+
+    def test_default_leg_one_key_matches_legless_played_key(self) -> None:
+        # A fixture built without an explicit leg defaults to leg=1; its play key
+        # is (phase, frozenset, round, 1).
+        fixtures = [
+            (10, _LegFixture(matchday=1, round_number=1, team_a_id=1, team_b_id=2)),
+        ]
+        played = {(10, frozenset({1, 2}), 1, 1)}
+        self.assertEqual(select_play_fixtures(fixtures, played, max_matchdays=None), [])
+
+    def test_max_matchdays_one_selects_next_global_matchday_only(self) -> None:
+        # leg-1 already played; the single next matchday is the leg-2 fixture.
+        fixtures = [
+            (
+                10,
+                _LegFixture(
+                    matchday=1, round_number=1, team_a_id=1, team_b_id=2, leg=1
+                ),
+            ),
+            (
+                10,
+                _LegFixture(
+                    matchday=7, round_number=1, team_a_id=1, team_b_id=2, leg=2
+                ),
+            ),
+        ]
+        played = {(10, frozenset({1, 2}), 1, 1)}
+        result = select_play_fixtures(fixtures, played, max_matchdays=1)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][1].leg, 2)
+
+
+# ---------------------------------------------------------------------------
+# TestFindNextMatchdayLegAware
+# ---------------------------------------------------------------------------
+
+
+class TestFindNextMatchdayLegAware(unittest.TestCase):
+    """``find_next_matchday`` 4-tuple key returns the leg-2 fixture's matchday
+    once the leg-1 twin is played."""
+
+    def test_leg1_played_returns_leg2_matchday(self) -> None:
+        fixtures = [
+            (
+                10,
+                _LegFixture(
+                    matchday=1, round_number=1, team_a_id=1, team_b_id=2, leg=1
+                ),
+            ),
+            (
+                10,
+                _LegFixture(
+                    matchday=7, round_number=1, team_a_id=1, team_b_id=2, leg=2
+                ),
+            ),
+        ]
+        played = {(10, frozenset({1, 2}), 1, 1)}
+        self.assertEqual(find_next_matchday(fixtures, played), 7)
+
+    def test_nothing_played_returns_first_matchday(self) -> None:
+        fixtures = [
+            (
+                10,
+                _LegFixture(
+                    matchday=1, round_number=1, team_a_id=1, team_b_id=2, leg=1
+                ),
+            ),
+            (
+                10,
+                _LegFixture(
+                    matchday=7, round_number=1, team_a_id=1, team_b_id=2, leg=2
+                ),
+            ),
+        ]
+        self.assertEqual(find_next_matchday(fixtures, set()), 1)
+
+    def test_both_legs_played_returns_none(self) -> None:
+        fixtures = [
+            (
+                10,
+                _LegFixture(
+                    matchday=1, round_number=1, team_a_id=1, team_b_id=2, leg=1
+                ),
+            ),
+            (
+                10,
+                _LegFixture(
+                    matchday=7, round_number=1, team_a_id=1, team_b_id=2, leg=2
+                ),
+            ),
+        ]
+        played = {
+            (10, frozenset({1, 2}), 1, 1),
+            (10, frozenset({1, 2}), 1, 2),
+        }
+        self.assertIsNone(find_next_matchday(fixtures, played))
+
+
+# ---------------------------------------------------------------------------
+# TestFindNextFixtureLegAware
+# ---------------------------------------------------------------------------
+
+
+class TestFindNextFixtureLegAware(unittest.TestCase):
+    """FLAT ``find_next_fixture`` 3-tuple key ``(frozenset, round, leg)`` treats
+    two same-pair / same-round fixtures differing only by ``leg`` as DISTINCT."""
+
+    def test_leg1_played_returns_leg2_fixture(self) -> None:
+        f1 = _LegFixture(matchday=1, round_number=1, team_a_id=1, team_b_id=2, leg=1)
+        f2 = _LegFixture(matchday=7, round_number=1, team_a_id=1, team_b_id=2, leg=2)
+        played = {(frozenset({1, 2}), 1, 1)}
+        result = find_next_fixture([f1, f2], played)
+        self.assertEqual(result, f2)
+
+    def test_both_legs_played_returns_none(self) -> None:
+        f1 = _LegFixture(matchday=1, round_number=1, team_a_id=1, team_b_id=2, leg=1)
+        f2 = _LegFixture(matchday=7, round_number=1, team_a_id=1, team_b_id=2, leg=2)
+        played = {
+            (frozenset({1, 2}), 1, 1),
+            (frozenset({1, 2}), 1, 2),
+        }
+        self.assertIsNone(find_next_fixture([f1, f2], played))
+
+    def test_default_leg_one_key_matches(self) -> None:
+        f1 = _LegFixture(matchday=1, round_number=1, team_a_id=1, team_b_id=2)
+        f2 = _LegFixture(matchday=7, round_number=1, team_a_id=1, team_b_id=2, leg=2)
+        # leg-1 (default) played → leg-2 is next.
+        played = {(frozenset({1, 2}), 1, 1)}
+        self.assertEqual(find_next_fixture([f1, f2], played), f2)
+
+
+# ---------------------------------------------------------------------------
+# TestRoundProgressLegAware
+# ---------------------------------------------------------------------------
+
+
+class TestRoundProgressLegAware(unittest.TestCase):
+    """FLAT ``round_progress`` 3-tuple key counts the two legs of a pairing as
+    two distinct fixtures."""
+
+    def test_total_counts_both_legs(self) -> None:
+        fixtures = [
+            _LegFixture(matchday=1, round_number=1, team_a_id=1, team_b_id=2, leg=1),
+            _LegFixture(matchday=7, round_number=1, team_a_id=1, team_b_id=2, leg=2),
+        ]
+        self.assertEqual(round_progress(fixtures, set()), (0, 2))
+
+    def test_only_leg1_played_counts_one_of_two(self) -> None:
+        fixtures = [
+            _LegFixture(matchday=1, round_number=1, team_a_id=1, team_b_id=2, leg=1),
+            _LegFixture(matchday=7, round_number=1, team_a_id=1, team_b_id=2, leg=2),
+        ]
+        played = {(frozenset({1, 2}), 1, 1)}
+        self.assertEqual(round_progress(fixtures, played), (1, 2))
+
+    def test_both_legs_played_counts_two_of_two(self) -> None:
+        fixtures = [
+            _LegFixture(matchday=1, round_number=1, team_a_id=1, team_b_id=2, leg=1),
+            _LegFixture(matchday=7, round_number=1, team_a_id=1, team_b_id=2, leg=2),
+        ]
+        played = {
+            (frozenset({1, 2}), 1, 1),
+            (frozenset({1, 2}), 1, 2),
+        }
+        self.assertEqual(round_progress(fixtures, played), (2, 2))
