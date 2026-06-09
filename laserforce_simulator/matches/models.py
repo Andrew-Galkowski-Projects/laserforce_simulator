@@ -994,6 +994,12 @@ class Season(models.Model):
         self.starting_map_pool_ids_json = sorted(m.id for m in self.map_pool.all())
         self.state = "active"
         self.save()
+        # LG-02-Part2c-3c — a FIRST-phase mid-season tournament
+        # (strength / unseeded, no preceding RR) builds the instant the Season
+        # activates. The method is idempotent and no-ops for a standings first
+        # phase (the gate requires a prior; a standings phase can never be
+        # first per the compose guard).
+        self.activate_pending_tournament_phase()
 
     @transaction.atomic
     def complete_if_finished(self) -> None:
@@ -1165,14 +1171,27 @@ class Season(models.Model):
 
     @transaction.atomic
     def activate_pending_tournament_phase(self) -> None:
-        """Auto-build the standings-seeded playoff bracket on RR completion.
+        """Auto-build the seeded tournament bracket for the pending phase.
 
-        Idempotent no-op unless the cursor is on an unbuilt, persisted
-        ``tournament`` phase whose preceding phase is complete. Builds a
-        single-elimination ``Tournament`` seeded by the preceding phase's
-        final standings (rank 1 → seed 1), wires it onto the phase, then
-        ``lock_and_build()``s the bracket so matchups are visible
-        immediately.
+        LG-02-Part2c-3c — GENERALIZED from the standings-only playoff build to
+        the per-phase ``tournament_mode`` branch. Idempotent no-op unless the
+        cursor is on an unbuilt, persisted ``tournament`` phase.
+
+        Gating:
+
+        * ``standings`` (season-ending) — REQUIRES a preceding phase that is
+          complete (seeds from its final standings). The compose guard
+          guarantees a ``standings`` phase always has a preceding RR phase.
+        * ``strength`` / ``unseeded`` (mid-season) — the preceding phase is
+          PERMITTED to be ``None`` (a non-standings first phase). When a prior
+          DOES exist it must still be complete (the RR-loop barrier guarantees
+          this, but the check is kept).
+
+        Builds the seeded order via ``_seed_order_for_phase``, creates the
+        ``Tournament`` + ``TournamentParticipant`` rows (``seed = position+1``,
+        byte-identical to today's standings ``seed = row.rank``), wires it onto
+        the phase, then ``lock_and_build()``s the bracket so matchups are
+        visible immediately.
         """
         phase = self.current_phase()
         if phase is None:
@@ -1184,26 +1203,97 @@ class Season(models.Model):
         if phase.pk is None:
             return
         prior = self._preceding_phase(phase)
-        if prior is None or not self._phase_complete(prior):
+        if phase.tournament_mode == "standings":
+            if prior is None or not self._phase_complete(prior):
+                return
+        else:
+            # strength / unseeded — prior is permitted to be None; when a prior
+            # exists it must still be complete.
+            if prior is not None and not self._phase_complete(prior):
+                return
+        order = self._seed_order_for_phase(phase)
+        if not order:
             return
-        rows = self._final_standings_for_phase(prior)
-        if not rows:
-            return
+        if phase.tournament_mode == "standings":
+            name = f"{self.name} Playoffs"
+        else:
+            name = f"{self.name} Tournament"
         tournament = Tournament.objects.create(
-            name=f"{self.name} Playoffs",
+            name=name,
             format="single_elimination",
             team_assembly="preset",
             state="setup",
         )
-        for row in rows:
+        for position, team_id in enumerate(order):
             TournamentParticipant.objects.create(
                 tournament=tournament,
-                team_id=row.team_id,
-                seed=row.rank,
+                team_id=team_id,
+                seed=position + 1,
             )
         phase.tournament = tournament
         phase.save(update_fields=["tournament"])
         tournament.lock_and_build()
+
+    def _seed_order_for_phase(self, phase) -> list[int]:
+        """LG-02-Part2c-3c — the seeded team-id order for a tournament phase.
+
+        Branches on ``phase.tournament_mode``:
+
+        * ``standings`` — rank order of the preceding phase's final standings
+          (``_final_standings_for_phase(prior)``; ``prior`` is non-None per the
+          gate in the caller). Byte-identical to today's ``rows`` ordering.
+        * ``strength`` — ``bracket.default_seed_order`` of ``(team_id,
+          mean_overall_rating)`` for every snapshot team (mean DESC, team_id
+          ASC tiebreak). Mean of an empty active-players list ⇒ ``0.0``.
+        * ``unseeded`` — a fresh ``random.Random()`` shuffle of the snapshot
+          team ids (NON-deterministic; NOT the SIM-07 seed chain).
+        """
+        if phase.tournament_mode == "standings":
+            prior = self._preceding_phase(phase)
+            rows = self._final_standings_for_phase(prior)
+            return [row.team_id for row in rows]
+
+        team_ids = self.starting_team_ids_json or []
+
+        if phase.tournament_mode == "strength":
+            from .bracket import default_seed_order
+
+            # Bulk-load the snapshot teams with their slot Players in one query
+            # (mirrors ``_final_standings_for_phase``'s tolerant ``id__in`` —
+            # an admin-deleted snapshot id simply drops out, no DoesNotExist).
+            teams_by_id = (
+                Team.objects.filter(id__in=team_ids)
+                .select_related(
+                    "slot_commander",
+                    "slot_heavy",
+                    "slot_scout_1",
+                    "slot_scout_2",
+                    "slot_medic",
+                    "slot_ammo",
+                )
+                .in_bulk()
+            )
+            team_ratings: list[tuple[int, float]] = []
+            for team_id in team_ids:
+                team = teams_by_id.get(team_id)
+                if team is None:
+                    continue
+                players = team.active_players
+                if players:
+                    mean_overall = sum(p.overall_rating for p in players) / len(players)
+                else:
+                    mean_overall = 0.0
+                team_ratings.append((team_id, mean_overall))
+            return default_seed_order(team_ratings)
+
+        if phase.tournament_mode == "unseeded":
+            import random
+
+            order = list(team_ids)
+            random.Random().shuffle(order)
+            return order
+
+        return []
 
     def _stamp_champion_for_final_phase(self, final_phase) -> None:
         """Stamp the Season champion from the FINAL phase's type.
@@ -1379,6 +1469,37 @@ class Season(models.Model):
         for _phase, fixtures in self.scheduled_fixtures_by_phase():
             flat.extend(fixtures)
         return flat
+
+    def _tournament_barrier_ordinal(self) -> "int | None":
+        """LG-02-Part2c-3c — the ordinal of the first INCOMPLETE tournament
+        phase, or ``None`` when no tournament phase is incomplete.
+
+        Walks ``ordered_phases()``; the barrier halts the RR loop so a
+        mid-season bracket drains through the existing playoff views before
+        later RR phases play.
+        """
+        for phase in self.ordered_phases():
+            if phase.phase_type == "tournament" and not self._phase_complete(phase):
+                return phase.ordinal
+        return None
+
+    def playable_fixtures_by_phase(
+        self,
+    ) -> "list[tuple[SeasonPhase, list[ScheduleFixture]]]":
+        """LG-02-Part2c-3c — by-phase RR fixtures up to the tournament barrier.
+
+        ``scheduled_fixtures_by_phase()`` filtered to RR phases whose ``ordinal``
+        is strictly LESS than the first incomplete ``tournament`` phase's
+        ordinal. When no tournament phase is incomplete, returns ALL RR phases
+        (the full ``scheduled_fixtures_by_phase()`` output).
+        """
+        barrier = self._tournament_barrier_ordinal()
+        by_phase = self.scheduled_fixtures_by_phase()
+        if barrier is None:
+            return by_phase
+        return [
+            (phase, fixtures) for phase, fixtures in by_phase if phase.ordinal < barrier
+        ]
 
 
 class SeasonPhase(models.Model):

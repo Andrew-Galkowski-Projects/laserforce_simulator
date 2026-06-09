@@ -762,6 +762,7 @@ def _build_dashboard_context(
         playoff_tournament_id,
         playoff_completed,
         has_following_tournament_phase,
+        following_tournament_is_final,
     ) = _playoff_cursor_keys(displayed_season)
 
     return {
@@ -783,16 +784,19 @@ def _build_dashboard_context(
         "playoff_tournament_id": playoff_tournament_id,
         "playoff_completed": playoff_completed,
         "has_following_tournament_phase": has_following_tournament_phase,
+        # LG-02-Part2c-3c — terminal-label split.
+        "following_tournament_is_final": following_tournament_is_final,
     }
 
 
 def _playoff_cursor_keys(
     displayed_season: Optional[Season],
-) -> tuple[bool, Optional[int], bool, bool]:
-    """LG-02-Part2c-1 — derive the 4 dashboard playoff-cursor keys.
+) -> tuple[bool, Optional[int], bool, bool, bool]:
+    """LG-02-Part2c-1 — derive the dashboard playoff-cursor keys.
 
     Returns ``(playoff_phase_active, playoff_tournament_id,
-    playoff_completed, has_following_tournament_phase)``:
+    playoff_completed, has_following_tournament_phase,
+    following_tournament_is_final)``:
 
     * ``playoff_phase_active`` — ``current_phase()`` is a built + active
       tournament phase (``tournament_id is not None`` AND
@@ -804,9 +808,13 @@ def _playoff_cursor_keys(
       ``tournament.state == "completed"``.
     * ``has_following_tournament_phase`` — the phase list contains a
       ``tournament`` phase at an ordinal AFTER the current phase.
+    * ``following_tournament_is_final`` — LG-02-Part2c-3c terminal-label
+      split: the next tournament phase (at an ordinal > the current phase's)
+      is the FINAL phase (its ordinal == the last phase's ordinal). Drives the
+      "Until Playoffs" (final) vs "Until Tournament" (mid-season) relabel.
     """
     if displayed_season is None:
-        return (False, None, False, False)
+        return (False, None, False, False, False)
 
     phases = displayed_season.ordered_phases()
     current = displayed_season.current_phase()
@@ -815,12 +823,20 @@ def _playoff_cursor_keys(
     playoff_tournament_id: Optional[int] = None
     playoff_completed = False
     has_following_tournament_phase = False
+    following_tournament_is_final = False
 
     if current is not None:
-        has_following_tournament_phase = any(
-            phase.phase_type == "tournament" and phase.ordinal > current.ordinal
+        following_tournament_ordinals = [
+            phase.ordinal
             for phase in phases
-        )
+            if phase.phase_type == "tournament" and phase.ordinal > current.ordinal
+        ]
+        has_following_tournament_phase = bool(following_tournament_ordinals)
+        if has_following_tournament_phase:
+            last_ordinal = phases[-1].ordinal
+            following_tournament_is_final = (
+                min(following_tournament_ordinals) == last_ordinal
+            )
         if current.phase_type == "tournament" and current.tournament_id is not None:
             playoff_tournament_id = current.tournament_id
             if current.tournament.state == "active":
@@ -844,6 +860,7 @@ def _playoff_cursor_keys(
         playoff_tournament_id,
         playoff_completed,
         has_following_tournament_phase,
+        following_tournament_is_final,
     )
 
 
@@ -1616,7 +1633,9 @@ def play_week(request, season_id: int) -> HttpResponse:
 
             # LG-02-Part2c-2 — by-phase fixtures (global-continuous matchday
             # offset already applied) + phase-aware played_keys.
-            by_phase = season.scheduled_fixtures_by_phase()
+            # LG-02-Part2c-3c — barrier-aware: the RR loop halts at an
+            # incomplete tournament phase so a mid-season bracket drains first.
+            by_phase = season.playable_fixtures_by_phase()
             phase_by_id = {phase.id: phase for phase, _ in by_phase}
             fixtures = [
                 (phase.id, fixture)

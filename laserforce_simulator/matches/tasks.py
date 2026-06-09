@@ -189,7 +189,9 @@ def play_season_task(
 
         # LG-02-Part2c-2 — by-phase fixtures (global-continuous matchday
         # offset already applied) + phase-aware played_keys.
-        by_phase = season.scheduled_fixtures_by_phase()
+        # LG-02-Part2c-3c — the barrier-aware variant halts the RR loop at an
+        # incomplete tournament phase so a mid-season bracket drains first.
+        by_phase = season.playable_fixtures_by_phase()
         phase_by_id = {phase.id: phase for phase, _ in by_phase}
         fixtures = [
             (phase.id, fixture)

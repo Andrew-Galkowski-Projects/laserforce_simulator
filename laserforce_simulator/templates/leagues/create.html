@@ -155,6 +155,27 @@
         optDRR.textContent = "Double round-robin";
         formatSelect.appendChild(optDRR);
 
+        // LG-02-Part2c-3c — tournament mode select (shown for tournament rows
+        // only): standings / strength / unseeded selectable, random_draw a
+        // disabled "coming soon" option (mirrors the member_night deferral).
+        var modeSelect = document.createElement("select");
+        modeSelect.id = "league-create-phase-mode-" + i;
+        modeSelect.className = "phase-mode-select form-select mb-2";
+        modeSelect.setAttribute("aria-label", "Tournament mode");
+        var modeOpts = [
+            ["standings", "Season-ending (from standings)", false],
+            ["strength", "Mid-season (by team strength)", false],
+            ["unseeded", "Mid-season (random seed)", false],
+            ["random_draw", "Mid-season (drawn pool) — coming soon", true],
+        ];
+        for (var m = 0; m < modeOpts.length; m++) {
+            var optM = document.createElement("option");
+            optM.value = modeOpts[m][0];
+            optM.textContent = modeOpts[m][1];
+            optM.disabled = modeOpts[m][2];
+            modeSelect.appendChild(optM);
+        }
+
         // Per-tournament-block "build coming in a later release" flag.
         var pending = document.createElement("div");
         pending.className = "phase-tournament-pending form-text";
@@ -173,13 +194,16 @@
         function applyType() {
             var isRR = typeSelect.value === "round_robin";
             formatSelect.style.display = isRR ? "" : "none";
+            modeSelect.style.display = isRR ? "none" : "";
             pending.style.display = isRR ? "none" : "";
             serialize();
         }
         typeSelect.addEventListener("change", applyType);
+        modeSelect.addEventListener("change", serialize);
 
         row.appendChild(typeSelect);
         row.appendChild(formatSelect);
+        row.appendChild(modeSelect);
         row.appendChild(pending);
         row.appendChild(removeBtn);
         composer.appendChild(row);
@@ -189,8 +213,9 @@
     }
 
     function serialize() {
-        // LG-02-Part2c-3a — emit per-token "type:format" for each round_robin
-        // row and the bare "tournament" token for each tournament row.
+        // LG-02-Part2c-3a — emit per-token "round_robin:<format>" for each
+        // round_robin row.
+        // LG-02-Part2c-3c — emit "tournament:<mode>" for each tournament row.
         var rows = composer.querySelectorAll(".phase-row");
         var tokens = [];
         for (var k = 0; k < rows.length; k++) {
@@ -203,7 +228,9 @@
                 var fmt = formatSelect ? formatSelect.value : "single_round_robin";
                 tokens.push("round_robin:" + fmt);
             } else {
-                tokens.push(typeSelect.value);
+                var modeSelect = rows[k].querySelector(".phase-mode-select");
+                var mode = modeSelect ? modeSelect.value : "standings";
+                tokens.push("tournament:" + mode);
             }
         }
         hidden.value = tokens.join(",");

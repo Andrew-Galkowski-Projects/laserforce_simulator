@@ -41,7 +41,7 @@
                             <li>
                                 <form id="league-dashboard-play-until-end" method="post" action="{% url 'play_until_end' season_id=displayed_season.id %}" class="px-2">
                                     {% csrf_token %}
-                                    <button type="submit" class="dropdown-item">{% if has_following_tournament_phase %}Play Until Playoffs{% else %}Play Until End of Season{% endif %}</button>
+                                    <button type="submit" class="dropdown-item">{% if has_following_tournament_phase %}{% if following_tournament_is_final %}Play Until Playoffs{% else %}Play Until Tournament{% endif %}{% else %}Play Until End of Season{% endif %}</button>
                                 </form>
                             </li>
                         </ul>
