@@ -24,6 +24,11 @@ from typing import Optional
 # LG-02-Part2c-3a — the valid per-phase regular-season schedule formats.
 _VALID_SCHEDULE_FORMATS = ("single_round_robin", "double_round_robin")
 
+# LG-02-Part2c-3c — the tournament modes shipped this slice. ``random_draw``
+# is DEFERRED (the picker offers it as a disabled "coming soon" option; the
+# parser rejects it with the unknown-mode ValueError).
+_VALID_TOURNAMENT_MODES = ("standings", "strength", "unseeded")
+
 
 @dataclass(frozen=True)
 class PhaseSpec:
@@ -102,15 +107,21 @@ def parse_phase_composition(
         format_part = format_part.strip()
         if not type_part:
             raise ValueError("malformed phase composition")
+        tournament_mode = "standings"
         if type_part == "round_robin":
             schedule_format: Optional[str] = format_part or season_schedule_format
             if schedule_format not in _VALID_SCHEDULE_FORMATS:
                 raise ValueError(f"unknown schedule_format: {schedule_format!r}")
         elif type_part == "tournament":
-            # A tournament token takes no format; a present one is malformed.
-            if _sep or format_part:
-                raise ValueError("malformed phase composition")
+            # LG-02-Part2c-3c — a ``tournament`` token's ``format_part`` is the
+            # MODE (versus a ``round_robin`` token where it is the schedule
+            # format). Bare ``tournament`` ⇒ ``standings``. ``random_draw`` and
+            # any unknown string ⇒ the new unknown-mode ValueError.
             schedule_format = None
+            mode = format_part or "standings"
+            if mode not in _VALID_TOURNAMENT_MODES:
+                raise ValueError(f"unknown tournament_mode: {mode!r}")
+            tournament_mode = mode
         else:
             raise ValueError(f"unknown phase type: {token!r}")
         specs.append(
@@ -118,6 +129,7 @@ def parse_phase_composition(
                 ordinal=index + 1,
                 phase_type=type_part,
                 schedule_format=schedule_format,
+                tournament_mode=tournament_mode,
             )
         )
 
@@ -125,11 +137,19 @@ def parse_phase_composition(
         raise ValueError("composition must contain at least one round-robin phase")
 
     # LG-02-Part2c-1 — a tournament phase must follow a round-robin phase.
+    # LG-02-Part2c-3c — RELAXED: the rule now fires ONLY for a season-ending
+    # ``standings`` tournament (which seeds from the preceding phase's
+    # standings). ``strength`` / ``unseeded`` mid-season tournaments may sit
+    # anywhere, including first.
     seen_round_robin = False
     for spec in specs:
         if spec.phase_type == "round_robin":
             seen_round_robin = True
-        elif spec.phase_type == "tournament" and not seen_round_robin:
+        elif (
+            spec.phase_type == "tournament"
+            and spec.tournament_mode == "standings"
+            and not seen_round_robin
+        ):
             raise ValueError(
                 "a tournament phase requires a preceding round-robin phase"
             )

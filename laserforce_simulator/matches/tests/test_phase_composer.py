@@ -441,16 +441,19 @@ class TestParsePhaseCompositionExistingErrorsStillFire(SimpleTestCase):
             )
         self.assertEqual(str(ctx.exception), "malformed phase composition")
 
-    def test_tournament_token_with_a_format_is_malformed(self) -> None:
-        # LG-02-Part2c-3a — a tournament token takes no schedule_format; a
-        # present ``:format`` part is malformed (covers the `_sep or
-        # format_part` guard on the tournament branch).
+    def test_tournament_token_with_an_unknown_mode_rejected(self) -> None:
+        # LG-02-Part2c-3c SUPERSEDES the old Part2c-3a "tournament takes no
+        # format -> malformed" rule: the ``:`` part of a tournament token is now
+        # the MODE, so a non-mode value like ``double_round_robin`` raises the
+        # NEW ``unknown tournament_mode`` ValueError (not "malformed").
         with self.assertRaises(ValueError) as ctx:
             parse_phase_composition(
                 "round_robin,tournament:double_round_robin",
                 season_schedule_format=_SSF,
             )
-        self.assertEqual(str(ctx.exception), "malformed phase composition")
+        self.assertEqual(
+            str(ctx.exception), "unknown tournament_mode: 'double_round_robin'"
+        )
 
     def test_tournament_before_round_robin_still_rejected(self) -> None:
         with self.assertRaises(ValueError) as ctx:
@@ -565,14 +568,220 @@ class TestParseStampsStandingsMode(SimpleTestCase):
         self.assertEqual([s.tournament_mode for s in specs], ["standings", "standings"])
 
 
-class TestTournamentModeTokenStillMalformed(SimpleTestCase):
-    """A ``tournament:<mode>`` wire token is still malformed — the mode syntax
-    is reserved for the Part2c-3c picker (the existing tournament-takes-no-format
-    rule fires)."""
+class TestTournamentModeTokenNowParses(SimpleTestCase):
+    """LG-02-Part2c-3c SUPERSEDES the Part2c-3b "tournament:<mode> is still
+    malformed" rule: the ``:`` mode syntax now LANDS, so a valid-mode token
+    parses + stamps ``PhaseSpec.tournament_mode`` (see ``TestParseTournamentMode``
+    for the full surface). This class pins the supersession at the old call
+    site so the Part2c-3b expectation does not linger."""
 
-    def test_tournament_strength_token_rejected(self) -> None:
+    def test_tournament_strength_token_now_parses(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament:strength", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[1].phase_type, "tournament")
+        self.assertEqual(specs[1].tournament_mode, "strength")
+
+
+# ===========================================================================
+# LG-02-Part2c-3c — ``tournament[:mode]`` wire token + mode-stamping + the
+# relaxed preceding-RR guard (standings-only)
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3c-seam-contract.md`` §2 / §3 /
+# §9: the ``tournament`` wire token becomes ``tournament[:mode]``. The token is
+# split on the FIRST ``:``; for a ``tournament`` token the ``format_part`` is the
+# MODE. Bare ``tournament`` ⇒ ``tournament_mode == "standings"``. Valid modes
+# THIS slice are ``standings`` / ``strength`` / ``unseeded`` (``random_draw`` is
+# DEFERRED and rejected); any unknown mode raises the NEW locked
+# ``ValueError(f"unknown tournament_mode: {mode!r}")``. The preceding-RR guard is
+# RELAXED to fire ONLY for a ``standings`` tournament; ``strength`` / ``unseeded``
+# may sit anywhere (including first). Every preserved ValueError still fires and
+# the parser stays Django-free (``TestNoDjangoImportsLeaked`` above still passes).
+#
+# Appended as NEW classes; no existing class above is modified. These WILL fail
+# until the Code agent lands the Part2c-3c ``tournament[:mode]`` parse + the
+# guard relaxation — the TDD red state, not a defect in this file.
+
+
+class TestParseTournamentMode(SimpleTestCase):
+    """``tournament[:mode]`` parses + stamps ``PhaseSpec.tournament_mode``."""
+
+    def test_bare_tournament_defaults_to_standings(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament", season_schedule_format=_SSF
+        )
+        self.assertEqual(len(specs), 2)
+        self.assertEqual(specs[1].phase_type, "tournament")
+        self.assertEqual(specs[1].tournament_mode, "standings")
+
+    def test_tournament_standings_token_stamps_standings(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament:standings", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[1].phase_type, "tournament")
+        self.assertEqual(specs[1].tournament_mode, "standings")
+        # Tournament phase still carries no schedule_format.
+        self.assertIsNone(specs[1].schedule_format)
+
+    def test_tournament_strength_token_stamps_strength(self) -> None:
+        # ``strength`` may sit first (no preceding-RR requirement) but here it
+        # follows an RR for a vanilla mode-stamp assertion.
+        specs = parse_phase_composition(
+            "round_robin,tournament:strength", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[1].phase_type, "tournament")
+        self.assertEqual(specs[1].tournament_mode, "strength")
+        self.assertIsNone(specs[1].schedule_format)
+
+    def test_tournament_unseeded_token_stamps_unseeded(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament:unseeded", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[1].phase_type, "tournament")
+        self.assertEqual(specs[1].tournament_mode, "unseeded")
+        self.assertIsNone(specs[1].schedule_format)
+
+    def test_strength_tournament_may_be_first(self) -> None:
+        # A ``strength`` tournament needs NO preceding round_robin; the spec
+        # parses with the strength mode stamped and the composition still
+        # satisfies the >=1-RR rule via the trailing round_robin.
+        specs = parse_phase_composition(
+            "tournament:strength,round_robin", season_schedule_format=_SSF
+        )
+        self.assertEqual([s.phase_type for s in specs], ["tournament", "round_robin"])
+        self.assertEqual(specs[0].tournament_mode, "strength")
+
+    def test_unseeded_tournament_may_be_first(self) -> None:
+        specs = parse_phase_composition(
+            "tournament:unseeded,round_robin", season_schedule_format=_SSF
+        )
+        self.assertEqual([s.phase_type for s in specs], ["tournament", "round_robin"])
+        self.assertEqual(specs[0].tournament_mode, "unseeded")
+
+    def test_round_robin_specs_keep_standings_default(self) -> None:
+        # Mode-stamping is a tournament-token concern; RR specs keep the default.
+        specs = parse_phase_composition(
+            "round_robin,tournament:strength", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[0].phase_type, "round_robin")
+        self.assertEqual(specs[0].tournament_mode, "standings")
+
+
+class TestParseTournamentModeRejected(SimpleTestCase):
+    """``tournament:random_draw`` (deferred) and any unknown mode raise the NEW
+    locked ``ValueError(f"unknown tournament_mode: {mode!r}")``."""
+
+    def test_random_draw_mode_rejected(self) -> None:
         with self.assertRaises(ValueError) as ctx:
             parse_phase_composition(
-                "round_robin,tournament:strength", season_schedule_format=_SSF
+                "round_robin,tournament:random_draw", season_schedule_format=_SSF
+            )
+        self.assertEqual(str(ctx.exception), "unknown tournament_mode: 'random_draw'")
+
+    def test_bogus_mode_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:bogus", season_schedule_format=_SSF
+            )
+        self.assertEqual(str(ctx.exception), "unknown tournament_mode: 'bogus'")
+
+    def test_member_night_still_unknown_phase_type(self) -> None:
+        # member_night is rejected at the TYPE level (not the mode level) — the
+        # exact preserved unknown-type string with the repr of the WHOLE token.
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,member_night", season_schedule_format=_SSF
+            )
+        self.assertEqual(str(ctx.exception), "unknown phase type: 'member_night'")
+
+
+class TestParseTournamentModePreservedErrors(SimpleTestCase):
+    """Every PRE-Part2c-3c ValueError still fires under the new mode parse."""
+
+    def test_malformed_empty_token_still_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,,tournament", season_schedule_format=_SSF
             )
         self.assertEqual(str(ctx.exception), "malformed phase composition")
+
+    def test_unknown_schedule_format_still_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin:triple_round_robin", season_schedule_format=_SSF
+            )
+        self.assertEqual(
+            str(ctx.exception), "unknown schedule_format: 'triple_round_robin'"
+        )
+
+    def test_zero_round_robin_still_rejected(self) -> None:
+        # A composition with only a (now-valid) strength tournament and no RR
+        # still fails the >=1-RR rule.
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition("tournament:strength", season_schedule_format=_SSF)
+        self.assertEqual(
+            str(ctx.exception),
+            "composition must contain at least one round-robin phase",
+        )
+
+
+class TestComposeGuardRelaxedToStandingsOnly(SimpleTestCase):
+    """The preceding-RR guard fires ONLY for a ``standings`` tournament.
+
+    The LOCKED string is unchanged (``"a tournament phase requires a preceding
+    round-robin phase"``); only the CONDITION narrows — it raises iff the spec
+    is ``phase_type == "tournament" AND tournament_mode == "standings" AND no
+    preceding round_robin``.
+    """
+
+    _MSG = "a tournament phase requires a preceding round-robin phase"
+
+    def test_standings_tournament_before_rr_raises(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "tournament:standings,round_robin", season_schedule_format=_SSF
+            )
+        self.assertEqual(str(ctx.exception), self._MSG)
+
+    def test_bare_tournament_before_rr_raises(self) -> None:
+        # Bare ``tournament`` defaults to standings ⇒ the guard still fires.
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "tournament,round_robin", season_schedule_format=_SSF
+            )
+        self.assertEqual(str(ctx.exception), self._MSG)
+
+    def test_strength_tournament_before_rr_does_not_raise(self) -> None:
+        # No raise — strength may be first.
+        specs = parse_phase_composition(
+            "tournament:strength,round_robin", season_schedule_format=_SSF
+        )
+        self.assertEqual([s.phase_type for s in specs], ["tournament", "round_robin"])
+
+    def test_unseeded_tournament_before_rr_does_not_raise(self) -> None:
+        specs = parse_phase_composition(
+            "tournament:unseeded,round_robin", season_schedule_format=_SSF
+        )
+        self.assertEqual([s.phase_type for s in specs], ["tournament", "round_robin"])
+
+    def test_standings_tournament_after_rr_does_not_raise(self) -> None:
+        # The season-ending standings playoff — RR then standings tournament.
+        specs = parse_phase_composition(
+            "round_robin,tournament:standings", season_schedule_format=_SSF
+        )
+        self.assertEqual([s.phase_type for s in specs], ["round_robin", "tournament"])
+        self.assertEqual(specs[1].tournament_mode, "standings")
+
+    def test_mid_season_standings_does_not_raise(self) -> None:
+        # A mid-season standings tournament: RR -> standings tournament -> RR.
+        # It has a PRECEDING round_robin, so the guard never fires.
+        specs = parse_phase_composition(
+            "round_robin,tournament:standings,round_robin",
+            season_schedule_format=_SSF,
+        )
+        self.assertEqual(
+            [s.phase_type for s in specs],
+            ["round_robin", "tournament", "round_robin"],
+        )
+        self.assertEqual(specs[1].tournament_mode, "standings")

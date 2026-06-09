@@ -70,7 +70,6 @@ LOCKED_SECTIONS = {"league", "team", "players", "stats", "help", "tools"}
 
 # Still-blocked placeholder entries (LG-01z flipped the rest live).
 LEAGUE_SCOPED_KEYS = {
-    "league_playoffs": ("Playoffs", "league", "playoffs"),
     "league_finances": ("Finances", "league", "finances"),
 }
 TEAM_SCOPED_KEYS = {
@@ -101,7 +100,6 @@ TOOLS_KEYS = {
 
 # The 7 league-scoped placeholder URL names still routed through coming_soon.
 LEAGUE_SCOPED_URL_NAMES = {
-    "coming_soon_playoffs": "league_playoffs",
     "coming_soon_finances": "league_finances",
     "coming_soon_team_finances": "team_finances",
     "coming_soon_trade": "players_trade",
@@ -178,7 +176,7 @@ class TestComingSoonRouting(TestCase):
     # -- 405 on POST ---------------------------------------------------------
 
     def test_post_returns_405_on_league_scoped_route(self) -> None:
-        url = reverse("coming_soon_playoffs", kwargs={"league_id": self.league.id})
+        url = reverse("coming_soon_finances", kwargs={"league_id": self.league.id})
         response = self.client.post(url)
         self.assertEqual(response.status_code, 405)
 
@@ -193,7 +191,7 @@ class TestComingSoonRouting(TestCase):
     # -- 404 on stale league_id ---------------------------------------------
 
     def test_stale_league_id_returns_404(self) -> None:
-        url = reverse("coming_soon_playoffs", kwargs={"league_id": 999999})
+        url = reverse("coming_soon_finances", kwargs={"league_id": 999999})
         response = self.client.get(url)
         self.assertEqual(response.status_code, 404)
 
@@ -212,7 +210,7 @@ class TestComingSoonRouting(TestCase):
     # -- Sidebar partial rendered in the league branch ----------------------
 
     def test_sidebar_partial_rendered_in_league_branch(self) -> None:
-        url = reverse("coming_soon_playoffs", kwargs={"league_id": self.league.id})
+        url = reverse("coming_soon_finances", kwargs={"league_id": self.league.id})
         response = self.client.get(url)
         self.assertContains(response, 'id="league-sidebar"')
 
@@ -227,9 +225,9 @@ class TestComingSoonRouting(TestCase):
     # -- feature_label injected into the <h1> -------------------------------
 
     def test_feature_label_in_h1_for_league_scoped(self) -> None:
-        url = reverse("coming_soon_playoffs", kwargs={"league_id": self.league.id})
+        url = reverse("coming_soon_finances", kwargs={"league_id": self.league.id})
         response = self.client.get(url)
-        self.assertIn("Playoffs", response.content.decode())
+        self.assertIn("Finances", response.content.decode())
         self.assertContains(response, 'id="coming-soon-header"')
 
     def test_feature_label_in_h1_for_help_overview(self) -> None:
@@ -239,7 +237,7 @@ class TestComingSoonRouting(TestCase):
     # -- "Coming soon" substring --------------------------------------------
 
     def test_coming_soon_message_substring_present_league(self) -> None:
-        url = reverse("coming_soon_playoffs", kwargs={"league_id": self.league.id})
+        url = reverse("coming_soon_finances", kwargs={"league_id": self.league.id})
         response = self.client.get(url)
         self.assertContains(response, 'id="coming-soon-message"')
         self.assertIn("Coming soon", response.content.decode())
@@ -264,7 +262,7 @@ class TestComingSoonRouting(TestCase):
     # -- Locked 7 context keys present (+ global app_mode) ------------------
 
     def test_locked_context_keys_present_league_scoped(self) -> None:
-        url = reverse("coming_soon_playoffs", kwargs={"league_id": self.league.id})
+        url = reverse("coming_soon_finances", kwargs={"league_id": self.league.id})
         response = self.client.get(url)
         ctx = response.context
         for key in (
@@ -300,7 +298,7 @@ class TestComingSoonRouting(TestCase):
     # -- app_mode matches the URL-prefix rule -------------------------------
 
     def test_app_mode_is_league_on_league_scoped_route(self) -> None:
-        url = reverse("coming_soon_playoffs", kwargs={"league_id": self.league.id})
+        url = reverse("coming_soon_finances", kwargs={"league_id": self.league.id})
         response = self.client.get(url)
         self.assertEqual(response.context["app_mode"], "league")
 
@@ -319,9 +317,9 @@ class TestComingSoonRouting(TestCase):
 
 
 class TestComingSoonFeatureRegistry(TestCase):
-    """Post-LG-01z the registry holds 17 entries (7 still-blocked
-    LEAGUE/TEAM/PLAYERS placeholders + 6 Help + 4 Tools). The 7 blocked
-    entries carry a ``blocker`` note; Help/Tools do not.
+    """Post-LG-02 Playoffs-go-live the registry holds 16 entries (6
+    still-blocked LEAGUE/TEAM/PLAYERS placeholders + 6 Help + 4 Tools). The
+    6 blocked entries carry a ``blocker`` note; Help/Tools do not.
     """
 
     def setUp(self) -> None:
@@ -329,8 +327,8 @@ class TestComingSoonFeatureRegistry(TestCase):
 
         self.registry = _FEATURE_REGISTRY
 
-    def test_registry_has_17_entries(self) -> None:
-        self.assertEqual(len(self.registry), 17)
+    def test_registry_has_16_entries(self) -> None:
+        self.assertEqual(len(self.registry), 16)
 
     def test_base_keys_present_in_every_value_dict(self) -> None:
         base = {"label", "section", "sidebar_active"}
@@ -344,7 +342,7 @@ class TestComingSoonFeatureRegistry(TestCase):
         blocked_keys = (
             set(LEAGUE_SCOPED_KEYS) | set(TEAM_SCOPED_KEYS) | set(PLAYERS_SCOPED_KEYS)
         )
-        self.assertEqual(len(blocked_keys), 7)
+        self.assertEqual(len(blocked_keys), 6)
         for key in blocked_keys:
             self.assertIn("blocker", self.registry[key], f"{key!r} missing blocker")
             self.assertIsInstance(self.registry[key]["blocker"], str)
@@ -420,7 +418,7 @@ class TestComingSoonFeatureRegistry(TestCase):
             | set(PLAYERS_SCOPED_KEYS)
             | set(STATS_SCOPED_KEYS)
         )
-        self.assertEqual(len(placeholder_keys), 7)
+        self.assertEqual(len(placeholder_keys), 6)
         for key in placeholder_keys:
             self.assertIsNotNone(
                 self.registry[key]["sidebar_active"],
@@ -453,7 +451,7 @@ class TestComingSoonFeatureRegistry(TestCase):
         by_section: dict[str, int] = {}
         for value in self.registry.values():
             by_section[value["section"]] = by_section.get(value["section"], 0) + 1
-        self.assertEqual(by_section.get("league", 0), 2)
+        self.assertEqual(by_section.get("league", 0), 1)
         self.assertEqual(by_section.get("team", 0), 1)
         self.assertEqual(by_section.get("players", 0), 4)
         self.assertEqual(by_section.get("stats", 0), 0)
@@ -473,7 +471,7 @@ class TestComingSoonSessionWrite(TestCase):
 
     def test_league_scoped_get_writes_last_league_id(self) -> None:
         league = _make_league("SessWriteL")
-        url = reverse("coming_soon_playoffs", kwargs={"league_id": league.id})
+        url = reverse("coming_soon_finances", kwargs={"league_id": league.id})
         self.client.get(url)
         self.assertEqual(self.client.session.get("last_league_id"), league.id)
 

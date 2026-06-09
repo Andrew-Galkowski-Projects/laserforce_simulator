@@ -37,7 +37,7 @@
                             <li>
                                 <form id="season-dashboard-play-until-end" method="post" action="{% url 'play_until_end' season_id=season.id %}" class="px-2">
                                     {% csrf_token %}
-                                    <button type="submit" class="dropdown-item">{% if has_following_tournament_phase %}Play Until Playoffs{% else %}Play Until End of Season{% endif %}</button>
+                                    <button type="submit" class="dropdown-item">{% if has_following_tournament_phase %}{% if following_tournament_is_final %}Play Until Playoffs{% else %}Play Until Tournament{% endif %}{% else %}Play Until End of Season{% endif %}</button>
                                 </form>
                             </li>
                         </ul>
@@ -79,7 +79,7 @@
             </form>
         {% endif %}
         {% if playoff_tournament_id is not None %}
-            <a id="season-dashboard-view-bracket-link" href="{% url 'tournament_detail' playoff_tournament_id %}" class="btn btn-outline-secondary btn-sm">View bracket</a>
+            <a id="season-dashboard-view-bracket-link" href="{% url 'league_playoffs' season.league_id %}?season={{ season.id }}" class="btn btn-outline-secondary btn-sm">View bracket</a>
         {% endif %}
         <div id="season-dashboard-play-playoffs-progress" hidden>
             <div class="alert alert-info mt-2 mb-0 d-flex align-items-center">

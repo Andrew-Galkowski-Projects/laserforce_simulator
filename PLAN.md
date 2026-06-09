@@ -9,7 +9,7 @@ Story IDs from `sm5_user_stories_v2.html` are referenced where applicable.
 
 ### LG-02 · Tournament formats
 
-**Status: PART 1 sandbox formats all DONE; LG-02x-2 (Duos / Trios) deferred; Part 2 foundation (Part2a) DONE; Part2b (create-League composer + dormant phase columns) DONE; Part2c-1 (RR → single-elimination playoff embed) DONE; Part2c-2 SPINE (multi-RR play loop + `Match.season_phase` FK + cross-phase matchday offsetting) DONE; Part2c-3a (first alternative regular-season format — `double_round_robin` + `Match.leg`, wiring the Part2b dormant per-phase `schedule_format` column end-to-end) DONE; Part2c-3b (dormant per-phase `SeasonPhase.tournament_mode` field) DONE; Part2c-3 remainder (c-3c mid-season tournaments; c-3d per-tournament-block config; c-3e non-single-elim finals embeds; c-3f season-linked playoff Match history + weekly playoff pacing) NOT STARTED.**
+**Status: PART 1 sandbox formats all DONE; LG-02x-2 (Duos / Trios) deferred; Part 2 foundation (Part2a) DONE; Part2b (create-League composer + dormant phase columns) DONE; Part2c-1 (RR → single-elimination playoff embed) DONE; Part2c-2 SPINE (multi-RR play loop + `Match.season_phase` FK + cross-phase matchday offsetting) DONE; Part2c-3a (first alternative regular-season format — `double_round_robin` + `Match.leg`, wiring the Part2b dormant per-phase `schedule_format` column end-to-end) DONE; Part2c-3b (dormant per-phase `SeasonPhase.tournament_mode` field) DONE; Part2c-3c (mid-season tournaments — `strength` + `unseeded` build, the `tournament:<mode>` wire token, the standings-only compose-guard relaxation, and the play-loop barrier) DONE; Part2c-3 remainder (c-3d per-tournament-block config; c-3e non-single-elim finals embeds; c-3f season-linked playoff Match history + weekly playoff pacing) NOT STARTED, and the mid-season `random_draw` build is DEFERRED.**
 Single-elimination (LG-02a), bulk intake + async play-all (LG-02a-2), best-of-N
 Series (LG-02b), per-round Series escalation (LG-02b-2), double-elimination /
 round-robin / RR→DE / Swiss (LG-02c+), and the Random Draw player pool
@@ -363,11 +363,71 @@ into Part2a (done) → Part2b → Part2c:
   Tests: extensions to `test_season_phase.py` / `test_phase_composer.py` /
   `test_league_create.py` / `test_league_next_season.py`.
 
-- **LG-02-Part2c-3c · [NOT STARTED] Mid-season tournaments.** A `tournament` phase
-  that sits **between two `round_robin` phases** (or first), not as the season
-  closer — the mid-season flavour the c-3b seeding-mode field unlocks (no preceding
-  Standings; strength-/un-seeded; may sit anywhere). Relaxes the Part2c-1
-  tournament-must-follow-RR compose guard for the mid-season seeding mode.
+- **LG-02-Part2c-3c · [DONE] Mid-season tournaments.** A `tournament` phase that
+  sits **between two `round_robin` phases** (or first), not as the season closer —
+  the mid-season flavour the c-3b seeding-mode field unlocks (no preceding
+  Standings; may sit anywhere). Ships the **`strength`** + **`unseeded`** mid-season
+  build (**`random_draw` still DEFERRED** — see the follow-up below); turns the c-3b
+  dormant `tournament_mode` field live for those two modes. **Wire token:** the
+  `tournament` composer token becomes **`tournament[:mode]`** (`parse_phase_composition`
+  splits each token on the first `:`; for a `tournament` token the format-part is the
+  **mode**, defaulting to `standings`) with a NEW locked
+  `ValueError(f"unknown tournament_mode: {mode!r}")` for `random_draw` or any unknown
+  string (every pre-existing `ValueError` string preserved verbatim). **Guard
+  relaxation:** the **≥1-round-robin** rule is kept verbatim; the
+  `"a tournament phase requires a preceding round-robin phase"` string is preserved
+  but now fires **ONLY** for a `standings`-mode tournament — a `strength` / `unseeded`
+  phase may sit **anywhere, including first**, and a mid-season `standings`
+  tournament is allowed (there is no "standings-must-be-final" rule). **Build
+  differential** (`Season.activate_pending_tournament_phase` generalises the gate; a
+  NEW private `Season._seed_order_for_phase(phase) -> list[int]` branches on
+  `tournament_mode`): `standings` → preceding-phase Standings rank order (byte-identical
+  to today); `strength` → `bracket.default_seed_order([(tid, mean_overall_rating)])`
+  over the season's starting teams (DESC mean, ASC id tiebreak); `unseeded` → a fresh
+  `random.Random()` shuffle of the starting team ids (non-deterministic, NOT the
+  SIM-07 seed chain). The **shared build tail is mode-independent** — `seed = position
+  + 1` (byte-identical to today's `seed=row.rank` for `standings`), name
+  `f"{self.name} Playoffs"` for `standings` else `f"{self.name} Tournament"`, then
+  `lock_and_build()`. **Build trigger:** `Season.start_season` gains an
+  `activate_pending_tournament_phase()` call **inside** its existing
+  `@transaction.atomic` block (after the snapshot writes + `state="active"`), so a
+  FIRST-phase mid-season tournament builds the instant the Season activates; the
+  existing post-round hook still covers the mid-season-after-RR case (the method is
+  idempotent). **Play-loop barrier:** a NEW
+  `Season.playable_fixtures_by_phase()` (filters `scheduled_fixtures_by_phase()` to RR
+  phases whose ordinal is strictly **less** than the first incomplete `tournament`
+  phase's ordinal, via a NEW private `_tournament_barrier_ordinal()`) halts the RR
+  loop at an incomplete mid-season tournament phase so the bracket — built by the hook
+  — drains through the EXISTING `play_single_round` / `play_playoffs` views before
+  later RR phases play; once the tournament completes the barrier advances and the
+  later RR phases become playable. Two one-line play-loop swaps
+  (`tasks.py::play_season_task`, `league_views.py::play_week`:
+  `scheduled_fixtures_by_phase()` → `playable_fixtures_by_phase()`); `play_two_months`
+  / `play_until_end` enqueue `play_season_task` UNCHANGED. **Dashboard label split:**
+  the terminal play button reads **"Until Playoffs"** when the following tournament is
+  the FINAL phase, **"Until Tournament"** when it is mid-season (a new
+  `following_tournament_is_final` context bool computed alongside `_playoff_cursor_keys`,
+  touching both `templates/seasons/dashboard.html` and `templates/leagues/dashboard.html`);
+  the playoff button-group DOM ids + `play_until_end` action are UNCHANGED (visible
+  label text only). **Composer:** a tournament composer row gains a mode `<select>`
+  with locked DOM id **`league-create-phase-mode-{i}`** (options `standings` /
+  `strength` / `unseeded`; `random_draw` a DISABLED "coming soon" — the `member_night`
+  precedent), shown for `tournament` rows only, with `serialize()` emitting
+  `tournament:<mode>`. **NO migration** (`tournament_mode` exists from c-3b);
+  read-path purity preserved (`matches/season_dashboard.py` untouched —
+  `TestNoDjangoImportsLeaked` stays green); simulator / RNG / tournament engine
+  consumed verbatim, **no Score Calibration re-baseline**. Extends
+  [ADR-0023](docs/adr/0023-season-phase-composable-structure.md) (Part2c-3c
+  consequences addendum, no new ADR); the CONTEXT.md **Season phase** + **Matchday**
+  entries carry the build-now / barrier-drain domain language. **Follow-up
+  (deferred):** the mid-season **`random_draw`** build (drawn pool → RR→DE, reusing
+  the LG-02x-1 `team_assembly="random_draw"` machinery) — the parser rejects it with a
+  ValueError and the composer offers it as a disabled "coming soon" option only. Seam
+  contract:
+  [`.claude/worktrees/lg-02-part2c-3c-seam-contract.md`](.claude/worktrees/lg-02-part2c-3c-seam-contract.md);
+  app guide: `matches/CLAUDE.md` "LG-02-Part2c-3c mid-season tournaments". Tests:
+  extensions to `test_phase_composer.py` / `test_season_phase.py` /
+  `test_season_playoff.py` / `test_league_create.py` / `test_season_dashboard_logic.py`.
 
 - **LG-02-Part2c-3d · [NOT STARTED] Per-tournament-block configuration.** Format /
   `team_assembly` / seeding / top-N cut surfaced per `tournament` block when the

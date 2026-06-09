@@ -986,3 +986,110 @@ class TestLg02Part2c3bComposerTournamentMode(TestCase):
         self.client.post(reverse("league_create"), _valid_payload())
         season = Season.objects.get(name="Season 1")
         self.assertEqual(season.phases.get().tournament_mode, "standings")
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2c-3c — composer persists per-phase tournament_mode (strength /
+# unseeded), and a tampered random_draw mode is rejected at the form layer
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3c-seam-contract.md`` §2 / §9:
+# the composer wire token gains a ``tournament:<mode>`` form; a
+# ``tournament:strength`` / ``tournament:unseeded`` phase persists a
+# ``SeasonPhase`` whose ``tournament_mode`` is stamped from the wire; a tampered
+# ``tournament:random_draw`` POST (deferred mode) is rejected at the form layer
+# (form invalid, 200 re-render) with ZERO League / Season / SeasonPhase rows
+# created (the @transaction.atomic boundary holds).
+#
+# Appended as NEW classes; no existing class above is modified. These WILL fail
+# until the Code agent lands the Part2c-3c ``tournament:<mode>`` parse + the
+# guard relaxation — the TDD red state, not a defect in this file.
+
+
+class TestLg02Part2c3cComposerTournamentMode(TestCase):
+    """LG-02-Part2c-3c — composer stamps the per-phase ``tournament_mode``."""
+
+    def test_strength_tournament_persists_strength_mode(self) -> None:
+        # A strength tournament may sit FIRST (no preceding RR required) — the
+        # trailing round_robin satisfies the >=1-RR rule.
+        payload = _valid_payload(league_name="StrengthL")
+        payload["phases"] = "tournament:strength,round_robin"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="StrengthL").seasons.get()
+        phases = list(season.phases.all())  # Meta.ordering=["ordinal"]
+        self.assertEqual([p.phase_type for p in phases], ["tournament", "round_robin"])
+        self.assertEqual(phases[0].tournament_mode, "strength")
+        # The RR phase keeps the standings default.
+        self.assertEqual(phases[1].tournament_mode, "standings")
+
+    def test_unseeded_tournament_persists_unseeded_mode(self) -> None:
+        payload = _valid_payload(league_name="UnseededL")
+        payload["phases"] = "tournament:unseeded,round_robin"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="UnseededL").seasons.get()
+        phases = list(season.phases.all())
+        self.assertEqual([p.phase_type for p in phases], ["tournament", "round_robin"])
+        self.assertEqual(phases[0].tournament_mode, "unseeded")
+
+    def test_mid_season_standings_persists_standings_mode(self) -> None:
+        # RR -> standings tournament -> RR: a mid-season standings tournament
+        # has a preceding RR, so the guard never fires.
+        payload = _valid_payload(league_name="MidStandingsL")
+        payload["phases"] = "round_robin,tournament:standings,round_robin"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="MidStandingsL").seasons.get()
+        phases = list(season.phases.all())
+        self.assertEqual(
+            [p.phase_type for p in phases],
+            ["round_robin", "tournament", "round_robin"],
+        )
+        self.assertEqual(phases[1].tournament_mode, "standings")
+
+    def test_explicit_standings_tournament_after_rr(self) -> None:
+        payload = _valid_payload(league_name="ExplicitStandingsL")
+        payload["phases"] = "round_robin,tournament:standings"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="ExplicitStandingsL").seasons.get()
+        phases = list(season.phases.all())
+        self.assertEqual(phases[1].phase_type, "tournament")
+        self.assertEqual(phases[1].tournament_mode, "standings")
+
+
+class TestLg02Part2c3cComposerRandomDrawRejected(TestCase):
+    """LG-02-Part2c-3c — a tampered ``tournament:random_draw`` mode is rejected
+    at the form layer leaving ZERO rows (transaction atomicity)."""
+
+    def test_random_draw_mode_rerenders_form_200(self) -> None:
+        payload = _valid_payload(league_name="RandomDrawL")
+        payload["phases"] = "round_robin,tournament:random_draw"
+        response = self.client.post(reverse("league_create"), payload)
+        # Form invalid ⇒ re-render, NOT redirect.
+        self.assertEqual(response.status_code, 200)
+
+    def test_random_draw_mode_creates_zero_rows(self) -> None:
+        before_leagues = League.objects.count()
+        before_seasons = Season.objects.count()
+        before_phases = _Lg02SeasonPhase.objects.count()
+
+        payload = _valid_payload(league_name="RandomDrawZero")
+        payload["phases"] = "round_robin,tournament:random_draw"
+        self.client.post(reverse("league_create"), payload)
+
+        self.assertEqual(League.objects.count(), before_leagues)
+        self.assertEqual(Season.objects.count(), before_seasons)
+        self.assertEqual(_Lg02SeasonPhase.objects.count(), before_phases)
+        self.assertFalse(League.objects.filter(name="RandomDrawZero").exists())
+
+    def test_standings_before_rr_still_rejected(self) -> None:
+        # The guard still fires for a standings tournament with no preceding RR.
+        before_phases = _Lg02SeasonPhase.objects.count()
+        payload = _valid_payload(league_name="StandingsFirstL")
+        payload["phases"] = "tournament:standings,round_robin"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(_Lg02SeasonPhase.objects.count(), before_phases)
+        self.assertFalse(League.objects.filter(name="StandingsFirstL").exists())

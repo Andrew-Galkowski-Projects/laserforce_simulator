@@ -99,15 +99,18 @@ urlpatterns = [
         league_screens.statistical_feats,
         name="stats_statistical_feats",
     ),
-    # ---- Remaining LG-01h placeholder routes (still blocked) ----
-    # league_playoffs is LG-02; the other 6 await a roster-economy /
-    # potential / awards model and render an explainer via coming_soon.
+    # ---- LG-02 live Playoffs screen ----
+    # Renders the Season's tournament-phase bracket(s) inside the league
+    # shell (mid-season + end-of-season), replacing the LG-01h coming_soon
+    # placeholder.
     path(
         "<int:league_id>/playoffs/",
-        views.coming_soon,
-        {"feature_key": "league_playoffs"},
-        name="coming_soon_playoffs",
+        league_screens.playoffs,
+        name="league_playoffs",
     ),
+    # ---- Remaining LG-01h placeholder routes (still blocked) ----
+    # The 6 below await a roster-economy / potential / awards model and
+    # render an explainer via coming_soon.
     path(
         "<int:league_id>/finances/",
         views.coming_soon,

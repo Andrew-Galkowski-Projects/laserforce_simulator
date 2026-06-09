@@ -4409,6 +4409,175 @@ all-four-persist), `test_phase_composer.py` (`PhaseSpec` default + parser stamps
 (**hand-set a source phase's `tournament_mode="strength"` via ORM, assert the
 carry-forward preserves it** — the load-bearing forward-compat guard for c-3c).
 
+## LG-02-Part2c-3c mid-season tournaments
+
+The slice that makes a `tournament` **Season phase** sitting **mid-season** (between
+two `round_robin` phases, or **first**) actually BUILD — turning the c-3b dormant
+`tournament_mode` field live for **`strength`** + **`unseeded`** (`random_draw` stays
+**DEFERRED**, rejected by the parser + offered as a disabled "coming soon" composer
+option). It relaxes the standings-only flavour of the Part2c-1 preceding-RR compose
+guard, branches the build by seeding mode, fires the build at `start_season` for a
+first-phase tournament, and adds a play-loop **barrier** so the RR loop halts at an
+incomplete mid-season tournament and the bracket drains through the EXISTING
+`play_single_round` / `play_playoffs` views before later RR phases play. **NO
+migration** (`tournament_mode` exists from c-3b). The simulator / RNG / tournament
+engine are consumed **VERBATIM**; the Django-free pure helpers + `scheduled_fixtures*`
++ `matches/season_dashboard.py` are **UNTOUCHED** (`TestNoDjangoImportsLeaked` stays
+green) → **no Score Calibration re-baseline**. Extends
+[ADR-0023](../../docs/adr/0023-season-phase-composable-structure.md) (Part2c-3c
+consequences addendum, no new ADR); the CONTEXT.md **Season phase** + **Matchday**
+glossary touch-ups carry the build-now / barrier-drain domain language. Seam contract:
+[`.claude/worktrees/lg-02-part2c-3c-seam-contract.md`](../../.claude/worktrees/lg-02-part2c-3c-seam-contract.md).
+
+**Locked names (NEW / CHANGED).**
+- `Season._seed_order_for_phase(self, phase) -> list[int]` (`matches/models.py`) —
+  **NEW private**; the mode-branching seed-vector builder (see below).
+- `Season.activate_pending_tournament_phase(self) -> None` `@transaction.atomic`
+  (`matches/models.py`) — **CHANGED**: generalised gate (prior-is-None now permitted
+  for a non-`standings` first phase) + mode branch via `_seed_order_for_phase`.
+- `Season.start_season(self) -> None` `@transaction.atomic` (`matches/models.py`) —
+  **CHANGED**: adds an `activate_pending_tournament_phase()` call INSIDE the atomic
+  block, after the snapshot writes + `state="active"` + `save()`.
+- `Season._tournament_barrier_ordinal(self) -> int | None` (`matches/models.py`) —
+  **NEW private** (may inline): the ordinal of the first incomplete `tournament` phase,
+  else `None`.
+- `Season.playable_fixtures_by_phase(self) -> list[tuple[SeasonPhase, list[ScheduleFixture]]]`
+  (`matches/models.py`) — **NEW**: `scheduled_fixtures_by_phase()` filtered to RR phases
+  whose `ordinal < barrier`.
+- `parse_phase_composition(raw, *, season_schedule_format) -> list[PhaseSpec]`
+  (`matches/phase_composer.py`) — **CHANGED**: parses the `tournament[:mode]` token.
+- `play_season_task` (`matches/tasks.py`) / `play_week` (`matches/league_views.py`) —
+  **CHANGED**: one-line swap `scheduled_fixtures_by_phase()` →
+  `playable_fixtures_by_phase()`.
+- `_build_dashboard_context` / `_playoff_cursor_keys` (`matches/league_views.py`) —
+  **CHANGED**: add the `following_tournament_is_final: bool` context for the terminal
+  label split.
+
+**Wire format + ValueError (`matches/phase_composer.py`).** The `tournament` token
+becomes **`tournament[:mode]`** — each token splits on the FIRST `:` into
+`(type_part, format_part)`; for a `tournament` token `format_part` is the **MODE**
+(versus an RR token where it is the schedule format). Bare `tournament` ⇒
+`tournament_mode="standings"`. Valid modes this slice: `standings`, `strength`,
+`unseeded`. `random_draw` **AND any unknown string** ⇒ NEW locked
+`ValueError(f"unknown tournament_mode: {mode!r}")`. A `tournament` token sets
+`schedule_format=None`, `tournament_mode=mode`. Every pre-existing `ValueError` string
+is preserved VERBATIM (`"malformed phase composition"`,
+`f"unknown phase type: {token!r}"` — `member_night` still rejected at the **type**
+level, `f"unknown schedule_format: {fmt!r}"`,
+`"composition must contain at least one round-robin phase"`,
+`"a tournament phase requires a preceding round-robin phase"`). The module stays
+**Django-free** (frozen `dataclasses` / `typing` allowlist); the form layer re-wraps
+the plain `ValueError` as a `forms.ValidationError` on `phases`. `PhaseSpec` shape
+UNCHANGED (`(ordinal, phase_type, schedule_format, tournament_mode)`).
+
+**Compose-guard relaxation (`matches/phase_composer.py`).** The **≥1-round-robin** rule
+is kept VERBATIM. The `"a tournament phase requires a preceding round-robin phase"`
+string is preserved but now fires **ONLY** when
+`spec.phase_type == "tournament" AND spec.tournament_mode == "standings" AND not
+seen_round_robin` — so `strength` / `unseeded` may sit **anywhere, including first**,
+and a mid-season `standings` tournament is ALLOWED (there is no
+"standings-must-be-final" guard, only "standings-must-have-a-preceding-RR").
+
+**Build differential (`Season.activate_pending_tournament_phase` +
+`_seed_order_for_phase`).** The existing idempotency guards (`phase is None` /
+`phase.phase_type != "tournament"` / `phase.tournament_id is not None` /
+`phase.pk is None`) are kept. The gate generalises: for `standings`, `prior is None or
+not _phase_complete(prior)` returns (unchanged); for `strength` / `unseeded`, a NULL
+prior is PERMITTED, and a present prior must still be `_phase_complete` (the barrier
+guarantees this). `_seed_order_for_phase` branches on `tournament_mode`:
+- **`standings`** → `[row.team_id for row in self._final_standings_for_phase(prior)]`
+  (rank order; `prior` non-None per the gate) — byte-identical to today's ordering.
+- **`strength`** → `bracket.default_seed_order([(tid, mean_overall_rating) for tid in
+  team_ids])` where `team_ids = self.starting_team_ids_json or []` and
+  `mean_overall_rating = mean(p.overall_rating for p in Team(tid).active_players)`
+  (`Team.active_players` property; `Player.overall_rating` property; mean of an empty
+  active-players list ⇒ `0.0`, guarding `ZeroDivisionError`). `default_seed_order` sorts
+  mean DESC then `team_id` ASC.
+- **`unseeded`** → a fresh `random.Random()` shuffle of `team_ids` (`random` imported
+  locally; **NOT** the SIM-07 seed chain — non-deterministic, no contract interaction).
+
+The **shared build tail is mode-independent**: create a `single_elimination` Tournament
+(`team_assembly="preset"`, `state="setup"`), one `TournamentParticipant` per ordered
+team with **`seed = position + 1`** (byte-identical to today's `seed=row.rank` for
+`standings`, since `_final_standings_for_phase` returns dense 1..N ranks), set
+`phase.tournament` + `save(update_fields=["tournament"])`, then `lock_and_build()`. The
+tournament **name** is `f"{self.name} Playoffs"` for `standings` else
+`f"{self.name} Tournament"`.
+
+**Build trigger (`Season.start_season`).** Gains an
+`activate_pending_tournament_phase()` call INSIDE the existing `@transaction.atomic`
+block, AFTER the snapshot writes (`starting_team_ids_json` /
+`starting_map_pool_ids_json`) and `state="active"` + `save()` — so a first-phase
+`strength` / `unseeded` tournament builds the instant the Season activates. The existing
+post-`simulate_scheduled_round` hook (which already calls
+`activate_pending_tournament_phase()` before `complete_if_finished()`) is UNCHANGED — it
+covers the mid-season-after-RR case; the method is idempotent so calling it at both sites
+is safe.
+
+**Barrier (`playable_fixtures_by_phase` + two swaps).**
+`playable_fixtures_by_phase()` = `scheduled_fixtures_by_phase()` filtered to RR phases
+whose `ordinal` is strictly LESS than `_tournament_barrier_ordinal()` (the first
+incomplete `tournament` phase's ordinal); when no tournament phase is incomplete it
+returns the full output. `_tournament_barrier_ordinal()` walks `ordered_phases()` and
+returns the ordinal of the first `tournament` phase that is NOT `_phase_complete`, else
+`None`. Two one-line play-loop swaps —
+`matches/tasks.py::play_season_task` and `matches/league_views.py::play_week` swap
+`scheduled_fixtures_by_phase()` → `playable_fixtures_by_phase()`; everything else in
+both loops (`phase_by_id`, the flat `[(phase.id, fixture)]` build, the leg-bearing
+`played_keys`, `select_play_fixtures`, offsets, `arena_map` resolution) is UNCHANGED.
+`play_two_months` / `play_until_end` enqueue `play_season_task` — UNCHANGED. **Why:**
+with a mid-season tournament the RR loop must halt before later RR phases so the bracket
+(built by the hook) drains through `play_single_round` / `play_playoffs` first; once the
+tournament phase completes, the barrier advances past it and the later RR phases become
+playable.
+
+**Dashboard label split (`_build_dashboard_context` / templates).** A new
+`following_tournament_is_final: bool` (computed in / alongside `_playoff_cursor_keys`)
+drives the terminal play button: when the next tournament phase after the current RR
+phase is the FINAL phase (last ordinal) → label **"Until Playoffs"**; when it is
+mid-season (not last ordinal) → **"Until Tournament"**. `has_following_tournament_phase`
+still gates whether the tournament-aware label shows at all. Touches both
+`templates/seasons/dashboard.html` and `templates/leagues/dashboard.html`. **LOCKED:**
+the playoff button-group DOM ids + the `play_until_end` action are UNCHANGED (visible
+label text only); the Part2c-1 playoff context keys + Play Single Round / Play Playoffs /
+View bracket controls are UNCHANGED — they key off `current_phase()` being a built
+tournament phase, so a mid-season bracket drains through them with no structural change.
+
+**Composer (`templates/leagues/create.html`).** A tournament composer row gains a mode
+`<select>` with locked DOM id **`league-create-phase-mode-{i}`** (`{i}` = the existing
+0-based JS `rowSeq` index). Options `standings` / `strength` / `unseeded` selectable;
+**`random_draw` a DISABLED "coming soon" option** (the `member_night` deferral pattern).
+Shown for `tournament` rows only (hidden for `round_robin`, mirroring how
+`phase-format-select` is RR-only via `applyType()`). `serialize()` emits
+`tournament:<mode>` for a tournament row (reading the row's `.phase-mode-select`,
+default `"standings"`); RR rows still emit `round_robin:<format>`. The
+`phase-tournament-pending` note is PRESERVED; all existing Part2b / c-3a DOM ids
+unchanged.
+
+**UNCHANGED (→ later slices).** `random_draw` build (DEFERRED); the pure
+`select_play_fixtures` / `find_next_matchday` / `find_next_fixture` / `round_progress` /
+`compute_leaders` helpers + `scheduled_fixtures` / `scheduled_fixtures_by_phase` (the
+DISPLAY path); `bracket.default_seed_order` body, `Tournament.lock_and_build`,
+`TournamentParticipant`, `simulate_match` / `simulate_scheduled_round`, the tournament
+engine; `complete_if_finished` / `_stamp_champion_for_final_phase` (champion still from
+the FINAL phase). **No migration, no re-baseline.**
+
+**Tests.** `test_phase_composer.py` (bare `tournament` ⇒ `standings`;
+`tournament:strength` / `:unseeded` / `:standings` parse + stamp; `tournament:random_draw`
+/ `:bogus` ⇒ `unknown tournament_mode`; `member_night` still `unknown phase type`; guard
+relaxation — `tournament:standings,round_robin` raises, `tournament:strength,round_robin`
+/ `:unseeded,...` / `round_robin,tournament:standings` /
+`round_robin,tournament:standings,round_robin` do NOT; purity); seed-vector unit
+(`unseeded` ⇒ valid permutation with dense seeds 1..N, NOT an exact order; `strength` ⇒
+`default_seed_order` of `(team_id, mean rating)`); DB `TestCase` (build at `start_season`
+for a first-phase `strength`/`unseeded`; build post-round mid-season-after-RR; barrier
+excludes post-barrier RR fixtures then re-admits after the tournament completes —
+assert on the **set** of excluded fixtures, NOT point totals; mid-season `standings`
+seeds from cumulative standings-so-far; champion still from final phase; dashboard label
+split). **Assertion discipline:** schema-level outcomes only (participant seeds, excluded
+fixtures, state flips, champion id, label string) — NEVER raw simulated point totals
+(tournament sims are non-deterministic).
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)

@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block title %}{{ league.name }} — Playoffs{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
+        <h1 class="mb-3">{{ league.name }} — Playoffs</h1>
+
+        {% if season_options %}
+        <form id="league-playoffs-season-filter-form" method="get" class="d-inline-block mb-3">
+            <label for="league-playoffs-season-filter-select" class="form-label me-2">Season:</label>
+            <select id="league-playoffs-season-filter-select" name="season" class="form-select form-select-sm d-inline-block w-auto" onchange="this.form.submit()">
+                {% for opt in season_options %}
+                    <option value="{{ opt.id }}"{% if opt.id == selected_season_id %} selected{% endif %}>{{ opt.name }}</option>
+                {% endfor %}
+            </select>
+            <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">View</button></noscript>
+        </form>
+        {% endif %}
+
+        {% if not brackets %}
+            <div id="league-playoffs-empty-notice" class="alert alert-info">
+                {% if not view_season %}
+                    No Season in this League yet — start a Season to set up playoffs.
+                {% else %}
+                    This Season has no tournament phase. Compose a Season with a
+                    tournament phase to see its bracket here.
+                {% endif %}
+            </div>
+        {% else %}
+            {% for bracket in brackets %}
+            <section id="league-playoffs-phase-{{ bracket.phase.ordinal }}" class="mb-4">
+                <h2 class="h4">{{ bracket.name }}</h2>
+
+                {% if bracket.champion %}
+                <div id="league-playoffs-champion-{{ bracket.phase.ordinal }}" class="alert alert-success">
+                    Champion: <strong><a href="{% url 'team_match_history' bracket.champion.id %}">{{ bracket.champion.name }}</a></strong>
+                </div>
+                {% endif %}
+
+                {% if bracket.pending %}
+                    <div class="alert alert-secondary">
+                        The bracket is not seeded yet — the regular season is still
+                        in progress.
+                    </div>
+                {% else %}
+                    <div class="d-flex" id="league-playoffs-bracket-{{ bracket.phase.ordinal }}">
+                        {% for round in bracket.rounds %}
+                        <div class="me-4" id="league-playoffs-round-{{ bracket.phase.ordinal }}-{{ round.bracket_round }}">
+                            <h5>Round {{ round.bracket_round }}</h5>
+                            {% for node in round.nodes %}
+                            <div class="card mb-2 {% if node.is_bye %}bye-node{% endif %}"
+                                 id="league-playoffs-node-{{ bracket.phase.ordinal }}-{{ node.bracket_round }}-{{ node.position }}">
+                                <div class="card-body p-2">
+                                    <div>
+                                        {% if node.seed_a %}<small class="text-muted">[{{ node.seed_a }}]</small>{% endif %}
+                                        {% if node.team_a %}<a href="{% url 'team_match_history' node.team_a.id %}">{{ node.team_a.name }}</a>{% else %}—{% endif %}
+                                    </div>
+                                    <div>
+                                        {% if node.seed_b %}<small class="text-muted">[{{ node.seed_b }}]</small>{% endif %}
+                                        {% if node.team_b %}<a href="{% url 'team_match_history' node.team_b.id %}">{{ node.team_b.name }}</a>{% else %}—{% endif %}
+                                    </div>
+                                    {% if node.is_bye %}
+                                    <div><small class="text-muted">Bye</small></div>
+                                    {% else %}
+                                    <div id="league-playoffs-node-score-{{ bracket.phase.ordinal }}-{{ node.bracket_round }}-{{ node.position }}">
+                                        <small class="text-muted">{{ node.wins_a }}–{{ node.wins_b }}</small>
+                                    </div>
+                                    {% if node.games %}
+                                    <div>
+                                        {% for game in node.games %}
+                                        <div>
+                                            <a href="{% url 'match_detail' game.match_id %}">Game {{ game.game_number }}</a>
+                                            <small class="match-score">{{ game.score_a }}–{{ game.score_b }}</small>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                    {% endif %}
+                                    {% endif %}
+                                    {% if node.winner %}
+                                    <div><strong>Winner: <a href="{% url 'team_match_history' node.winner.id %}">{{ node.winner.name }}</a></strong></div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            </section>
+            {% endfor %}
+        {% endif %}
+    </main>
+</div>
+{% endblock %}
