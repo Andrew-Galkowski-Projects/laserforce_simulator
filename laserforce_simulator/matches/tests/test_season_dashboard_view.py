@@ -751,14 +751,17 @@ class TestSeasonDashboardPlayoffDomIds(TestCase):
         ):
             self.assertNotIn(f'id="{dom_id}"', body)
 
-    def test_view_bracket_link_points_at_tournament_detail(self) -> None:
+    def test_view_bracket_link_points_at_league_playoffs(self) -> None:
         _l, season, teams = _lg02c1_rr_tournament_season("PdId3")
         _lg02c1_play_rr(season, teams)
         season.refresh_from_db()
         tournament_phase = season.phases.get(phase_type="tournament")
         tournament_phase.refresh_from_db()
         body = self._body(season)
-        self.assertIn(f"/tournaments/{tournament_phase.tournament_id}/", body)
+        # The bracket now lives inside the league shell, not the standalone
+        # /tournaments/<id>/ page.
+        self.assertIn(reverse("league_playoffs", args=[season.league_id]), body)
+        self.assertNotIn(f"/tournaments/{tournament_phase.tournament_id}/", body)
 
     def test_view_bracket_link_renders_when_completed(self) -> None:
         # View-bracket renders for built tournament phase (active OR completed).

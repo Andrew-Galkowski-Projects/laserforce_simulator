@@ -618,7 +618,7 @@ class TestLg01hDisabledFlipsLive(TestCase):
         entry = self._entry(links, "playoffs")
         self.assertEqual(
             entry["url"],
-            reverse("coming_soon_playoffs", kwargs={"league_id": league.id}),
+            reverse("league_playoffs", kwargs={"league_id": league.id}),
         )
         self.assertFalse(entry["disabled"])
 

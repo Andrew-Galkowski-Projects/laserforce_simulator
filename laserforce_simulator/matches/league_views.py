@@ -1251,7 +1251,7 @@ def _build_league_sidebar_links(
         # LEAGUE (6)
         ("league", "standings", "Standings", standings_url),
         ("league", "schedule", "Schedule", schedule_url),
-        ("league", "playoffs", "Playoffs", _cs("coming_soon_playoffs")),
+        ("league", "playoffs", "Playoffs", _cs("league_playoffs")),
         ("league", "finances", "Finances", _cs("coming_soon_finances")),
         ("league", "history", "History", reverse("league_history", args=[league.id])),
         (
