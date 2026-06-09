@@ -743,6 +743,7 @@ class BatchSimulator:
         *,
         arena_map=None,
         season_phase=None,
+        leg: int = 1,
     ) -> "GameRound":
         """Simulate one Round of a Season Match.
 
@@ -793,12 +794,15 @@ class BatchSimulator:
         # round may play blue in the other — the per-Match colour
         # swap is applied at round 2). Two ORM queries, first match
         # wins.
+        # LG-02-Part2c-3a: the find-or-create key gains ``leg`` so the two legs
+        # of a double_round_robin pairing become DISTINCT Matches. leg=1
+        # (default) collapses to the pre-Part2c-3a key plus a constant.
         match = (
-            Match.objects.filter(season=season, season_phase=season_phase)
+            Match.objects.filter(season=season, season_phase=season_phase, leg=leg)
             .filter(team_red=team_a, team_blue=team_b)
             .first()
         ) or (
-            Match.objects.filter(season=season, season_phase=season_phase)
+            Match.objects.filter(season=season, season_phase=season_phase, leg=leg)
             .filter(team_red=team_b, team_blue=team_a)
             .first()
         )
@@ -809,6 +813,7 @@ class BatchSimulator:
                 match = Match.objects.create(
                     season=season,
                     season_phase=season_phase,
+                    leg=leg,
                     team_red=team_a,
                     team_blue=team_b,
                     is_completed=False,

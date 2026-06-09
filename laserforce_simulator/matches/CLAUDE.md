@@ -4122,6 +4122,225 @@ See the seam contract
 [`.claude/worktrees/lg-02-part2c-2-seam-contract.md`](../../.claude/worktrees/lg-02-part2c-2-seam-contract.md)
 for the authoritative names + behaviours.
 
+## LG-02-Part2c-3a double round-robin regular-season format
+
+The first sub-slice of the re-sliced LG-02-Part2c-3 — a **thin orchestration
+layer** that lands the **first alternative regular-season `schedule_format`**,
+**`double_round_robin`**, as a single `SeasonPhase` format, wiring the Part2b
+**dormant per-phase `schedule_format` column end-to-end** for the first time. A
+`double_round_robin` phase has every enrolled pair meet **twice within one phase**
+as **two distinct Matches**, discriminated by a NEW `Match.leg` field;
+`generate_schedule` gains the format, `simulate_scheduled_round` gains a `leg`
+find-or-create dimension, and `leg` threads through per-phase RR completion / the
+play loops / the Django-free pure helpers / the FLAT dashboard overlays. The
+simulator, RNG, and tournament engine are consumed **VERBATIM**; legacy
+phase-less, single-RR, and tournament/playoff Matches stay **`leg=1` ⇒
+byte-identical**. **No simulator mechanics change, no RNG change, no
+tournament-engine change, no Score Calibration re-baseline.** The
+[ADR-0023](../../docs/adr/0023-season-phase-composable-structure.md) decision
+(extended with a "Part2c-3a consequences" addendum, no new ADR) and the
+**Matchday** / **Season phase** CONTEXT.md glossary touch-ups carry the domain
+language (`double_round_robin` is a `schedule_format` value, not a new domain
+term). Seam contract:
+[`.claude/worktrees/lg-02-part2c-3a-seam-contract.md`](../../.claude/worktrees/lg-02-part2c-3a-seam-contract.md).
+
+**`Match.leg` field + migration `0044` (`matches/models.py`).** A new
+`leg = models.PositiveSmallIntegerField(default=1)` on `Match`, declared
+immediately after `Match.season_phase` (no `db_index`, no choices, no
+`null`/`blank`). It **discriminates the two legs of a `double_round_robin`
+pairing**; `single_round_robin`, legacy phase-less, and tournament/playoff Matches
+stay `leg=1` (the default) ⇒ byte-identical. Migration
+`matches/migrations/0044_match_leg.py` (dep `0043_match_season_phase`) is a
+**single `AddField`** — **NO `RunPython`, NO backfill, NO data migration** (the
+[ADR-0004](../../docs/adr/0004-simulation-data-is-disposable.md) disposable-data
+posture, same as `0029` / `0041` / `0042` / `0043`; existing rows take
+`default=1`). `leg` is the load-bearing reason this slice exists: it makes the
+find-or-create key distinguish the same pairing's two legs as DISTINCT Matches.
+
+**Schedule generation (`matches/schedule_generator.py`).** The module stays
+**Django-free** (frozen `dataclasses` / `typing` allowlist; no new import).
+`ScheduleFixture` gains a trailing **`leg: int = 1`** (appended LAST, default `1`,
+constructed by keyword everywhere) ⇒ a no-`leg` construction is equality-identical
+to every existing test construction and to the Part2c-2 offset re-construction
+once it carries `leg=f.leg`. `SCHEDULE_FORMATS = ("single_round_robin",
+"double_round_robin")`. `generate_schedule(team_ids, "double_round_robin")`
+returns the `single_round_robin` fixture list for `team_ids` (every fixture
+`leg=1`, the existing circle-method output — round_number 1 on matchdays
+`1..n-1`, round_number 2 on `n..2*(n-1)`) **CONCATENATED** with the **same**
+fixtures re-emitted with **`leg=2`** and matchday **offset by `2*(n-1)`** (same
+`round_number` / `team_a_id` / `team_b_id`), then final-**sorted by
+`(matchday, team_a_id)`** (the same key the single-RR path uses; leg is implied by
+matchday since the two legs occupy disjoint contiguous matchday ranges). So leg 2
+plays **sequentially after** leg 1 on one monotonic `1..4*(n-1)` matchday calendar
+within the phase (`n` = the existing bye-padded even slot count `len(slots)`, so
+the offset is the existing `2 * (n - 1)`). The `single_round_robin` path is
+**byte-identical** (its fixtures already carry the `leg=1` default); the existing
+`ValueError` on `schedule_format not in SCHEDULE_FORMATS` and on
+`len(team_ids) < 2` is unchanged.
+
+**Phase-aware find-or-create key (`matches/simulation/entrypoints.py`).**
+`simulate_scheduled_round` gains a **keyword-only `leg: int = 1`** appended after
+`season_phase=None` (`def simulate_scheduled_round(self, season, team_a, team_b,
+round_number, *, arena_map=None, season_phase=None, leg: int = 1) -> GameRound`).
+**Default `1` = byte-identical to every existing caller** (sandbox, season play,
+tests passing no `leg`). The Side-agnostic find-or-create key becomes
+**`(season, season_phase, frozenset({team_a_id, team_b_id}), leg)`** — both
+`.filter(...)` lookups gain `leg=leg` and the Round-1 `Match.objects.create(...)`
+stamps `leg=leg`. So the two legs of a pairing become DISTINCT Matches; `leg=1`
+collapses the key to `(season, season_phase, frozenset, 1)` — byte-identical to
+the Part2c-2 `(season, season_phase, frozenset)` plus a constant. The
+`season_phase.pk is None ⇒ None` coercion, the round_number guards, the per-round
+colour swap, the post-round hooks (`activate_pending_tournament_phase()` **then**
+`complete_if_finished()`), and the RNG draw are **UNCHANGED**.
+
+**Leg threading on `Season` (`matches/models.py`).** **`_is_finished`**
+(whole-season RR check, legacy/implicit-phase path) — its played-keys set gains
+`leg` from `gr.match.leg` (`(frozenset({team ids}), round_number, leg)`) and the
+per-fixture compare key gains `fixture.leg` (for a phase-less / single-RR Season
+every `leg == 1` ⇒ byte-identical). **`_rr_phase_complete`** (per-phase RR
+completion, `match__season_phase=phase` scoped) — same change: played-keys become
+`(frozenset({team ids}), round_number, gr.match.leg)` and the fixture compare key
+`(frozenset({fixture.team_a_id, fixture.team_b_id}), fixture.round_number,
+fixture.leg)` — this is what makes a double-RR phase require **both** legs of every
+pairing before the phase completes. **`_final_standings_for_phase` is UNCHANGED** —
+standings stay cumulative whole-season; a double-RR pairing is two distinct Matches,
+each a row in `Match.objects.filter(season=self, is_completed=True)`, so both legs
+count automatically. `scheduled_fixtures_by_phase` / `_fixtures_for_phase` /
+`scheduled_fixtures` need no leg-specific edit **beyond carrying `leg=f.leg`
+through the offset re-construction** (else leg-2 fixtures would collapse to leg-1
+and break the key + completion).
+
+**Leg on the Django-free pure helpers (`matches/season_dashboard.py`).** The
+module stays **Django-free** (`leg` is a plain int read off the duck-typed fixture;
+no new import; `TestNoDjangoImportsLeaked` must keep passing). The play-loop
+helpers `select_play_fixtures` / `find_next_matchday` gain `leg` in their
+per-fixture key: **OLD** `(phase_id, frozenset({team ids}), round_number)` →
+**NEW** `(phase_id, frozenset({team ids}), round_number, leg)` (`leg = fixture.leg`);
+`played_keys` becomes `set[tuple[int | None, frozenset[int], int, int]]`, the
+`fixtures` arg shape `list[tuple[int | None, ScheduleFixture]]` is UNCHANGED (the
+`ScheduleFixture` now carries `.leg`). The FLAT dashboard helpers `find_next_fixture`
+/ `round_progress` gain `leg` in their 2-tuple key: **OLD**
+`(frozenset({team ids}), round_number)` → **NEW** `(frozenset({team ids}),
+round_number, leg)` — **REQUIRED** because a double-RR phase now holds the same
+`(pair, round_number)` **twice** in the flat list, so without `leg` the second leg
+would be treated as already-played. `compute_leaders` / `LeaderRow` UNCHANGED. (See
+the §3 key-tuple table in the seam contract for all OLD → NEW shapes.)
+
+**Play-loop wiring + FLAT overlay sites (`matches/tasks.py`,
+`matches/league_views.py`).** **`play_season_task`** (`tasks.py`) and **`play_week`**
+(`league_views.py`) build leg-bearing `played_keys` entries — `(gr.match.season_phase_id,
+frozenset({gr.match.team_red_id, gr.match.team_blue_id}), gr.round_number,
+gr.match.leg)` — and pass **`leg=fixture.leg`** into `simulate_scheduled_round`;
+`play_two_months` / `play_until_end` are **UNCHANGED** (they enqueue
+`play_season_task`; the `max_matchdays` window carries through). The three FLAT
+2-tuple overlay sites that feed `find_next_fixture` / `round_progress` each gain
+`leg` (reading `match.leg` off the `GameRound.match` already in scope /
+`select_related("match")`): **`_build_dashboard_context`** (`played_keys` entries
++ fixture compare key), **`season_schedule`** (`played_by_key` dict key + per-fixture
+lookup), **`team_schedule`** (`played_keys` set + `fixture_by_key` dict +
+per-fixture/per-round lookup). Each becomes `(..., round_number, leg)` so a
+double-RR phase's two legs are distinct.
+
+**Composer (`matches/phase_composer.py`) — per-token `type[:format]` wire format.**
+The wire format **extends** from comma-separated phase-**TYPE** tokens to
+comma-separated **`type[:format]`** tokens, e.g.
+`"round_robin:double_round_robin,tournament"`. A **bare `round_robin`** token (no
+colon) defaults to **`single_round_robin`** (Part2b backward-compat — existing
+serialized values parse identically); a **`tournament`** token carries **no format**
+⇒ `PhaseSpec.schedule_format=None` (a `tournament:anything` token is malformed).
+`parse_phase_composition` splits each non-empty token on the **first** `:` only
+into `(type_part, format_part)`, rejects an empty `type_part` (malformed),
+validates `type_part` against `{round_robin, tournament}` (unknown-type
+`ValueError`), and for `round_robin` resolves `schedule_format = format_part or
+"single_round_robin"` then validates it against the valid set
+`{"single_round_robin", "double_round_robin"}`, raising a **NEW pure
+`ValueError(f"unknown schedule_format: {fmt!r}")`** (LOCKED string; module stays
+Django-free; the form re-wraps as a `forms.ValidationError` on `phases`). All
+existing `ValueError` strings are **preserved verbatim** (`"malformed phase
+composition"`, `f"unknown phase type: {token!r}"`, `"composition must contain at
+least one round-robin phase"`, `"a tournament phase requires a preceding
+round-robin phase"`); the `PhaseSpec` shape (`ordinal, phase_type,
+schedule_format`) is **UNCHANGED**. The form's `clean()` call site is unchanged
+(per-token format wins; `season_schedule_format` stays the fallback for a bare
+`round_robin` token, semantics still "bare ⇒ single_round_robin"). **Template
+(`templates/leagues/create.html`):** the per-phase `<select>` gains a
+`double_round_robin` option and `serialize()` emits each RR row as
+`round_robin:<format>` (a `tournament` row emits the bare token); **all Part2b DOM
+ids are UNCHANGED** (`league-create-phases-composer`, `league-create-add-block`,
+`league-create-phases`, `league-create-phase-row-{i}`,
+`league-create-phase-type-{i}`, `league-create-phase-format-{i}`,
+`league-create-member-night-note`, class substring `phase-tournament-pending`).
+
+**`next_season` carry-forward — NO-OP.** `next_season`
+(`matches/league_views.py`) already copies each source phase's `schedule_format`
+**verbatim** into the new draft Season's phases (the Part2b carry-forward loop), so
+a `double_round_robin` phase reproduces automatically with **no edit**. Admin is
+also unchanged (`SeasonPhaseAdmin.list_display` already includes `schedule_format`;
+`Match.leg` auto-appears on the default change form, not load-bearing).
+
+**Backward-compat invariants ("stays byte-identical").** `single_round_robin` —
+every fixture `leg=1`, `generate_schedule(..., "single_round_robin")` output
+identical to today. Legacy / phase-less Season — find-or-create key
+`(season, None, frozenset, 1)` collapses to today's `(season, None, frozenset)`
+plus a constant; `_is_finished` played-keys all `leg=1`. Tournament / playoff
+Matches — `simulate_match` never sets `leg` ⇒ default `1`; `season=NULL,
+season_phase=NULL` unchanged. Bare `round_robin` wire token ⇒ `single_round_robin`.
+`ScheduleFixture(...)` without `leg` ⇒ `leg == 1`.
+
+**Determinism.** RR sims are byte-identical per Round (no mechanics change). Tests
+assert schema-level outcomes — Match counts, `leg` values, completion flags,
+standings ORDER, the generated fixture list (count / matchday spans / leg values /
+sort) — **NEVER** raw simulated point totals. **No re-baseline / extend ADR-0023**
+(no new ADR).
+
+**Locked names (quick index):**
+- **Model + migration (`matches/models.py`):** `Match.leg =
+  models.PositiveSmallIntegerField(default=1)` (after `Match.season_phase`);
+  migration `matches/migrations/0044_match_leg.py` (dep `0043_match_season_phase`,
+  single `AddField`, NO `RunPython`).
+- **Schedule generator (`matches/schedule_generator.py`):** `ScheduleFixture.leg:
+  int = 1` (trailing); `SCHEDULE_FORMATS = ("single_round_robin",
+  "double_round_robin")`; `generate_schedule(team_ids, "double_round_robin")` =
+  leg-1 list ⊕ leg-2 list offset by `2*(n-1)`, sorted `(matchday, team_a_id)`,
+  monotonic `1..4*(n-1)`.
+- **Find-or-create key (`matches/simulation/entrypoints.py`):**
+  `(season, season_phase, frozenset({team_a_id, team_b_id}), leg)`; signature gains
+  keyword-only `leg: int = 1` (`simulate_scheduled_round(self, season, team_a,
+  team_b, round_number, *, arena_map=None, season_phase=None, leg: int = 1) ->
+  GameRound`); post-round hooks UNCHANGED.
+- **`Season` methods (`matches/models.py`):** `_is_finished` /
+  `_rr_phase_complete` played-keys + fixture-compare keys gain `leg`
+  (`gr.match.leg` / `fixture.leg`); `_final_standings_for_phase` UNCHANGED
+  (cumulative); `scheduled_fixtures_by_phase` offset re-construction carries
+  `leg=f.leg`.
+- **Pure helpers (`matches/season_dashboard.py`) — Django-free:**
+  `select_play_fixtures` / `find_next_matchday` key → 4-tuple `(phase_id,
+  frozenset, round_number, leg)`, `played_keys: set[tuple[int | None,
+  frozenset[int], int, int]]`; `find_next_fixture` / `round_progress` key →
+  3-tuple `(frozenset, round_number, leg)`. UNCHANGED: `compute_leaders`,
+  `LeaderRow`. `TestNoDjangoImportsLeaked` must keep passing.
+- **Play-loop + FLAT overlay sites:** `tasks.play_season_task` /
+  `league_views.play_week` (leg-bearing `played_keys`, `leg=fixture.leg`);
+  `league_views._build_dashboard_context` / `season_schedule` / `team_schedule`
+  (FLAT `played` keys gain `leg` from `gr.match.leg` / `fixture.leg`).
+  `play_two_months` / `play_until_end` UNCHANGED.
+- **Composer (`matches/phase_composer.py`):** per-token `type[:format]` wire
+  format; bare `round_robin` ⇒ `single_round_robin`; `tournament` ⇒
+  `schedule_format=None`; NEW `ValueError(f"unknown schedule_format: {fmt!r}")`;
+  `PhaseSpec` shape unchanged. Template `templates/leagues/create.html` gains a
+  `double_round_robin` option + `round_robin:<format>` serialize; **all Part2b DOM
+  ids unchanged**.
+- **No-op / no-change:** `next_season` (carries `schedule_format` forward
+  verbatim), `SeasonPhaseAdmin`, `_final_standings_for_phase`, the simulator / RNG
+  / tournament engine.
+- **ADR:** extend [ADR-0023](../../docs/adr/0023-season-phase-composable-structure.md)
+  with a "Part2c-3a consequences" addendum (no new ADR). **No new CONTEXT.md domain
+  term** (`double_round_robin` is a `schedule_format` value), no re-baseline.
+
+See the seam contract
+[`.claude/worktrees/lg-02-part2c-3a-seam-contract.md`](../../.claude/worktrees/lg-02-part2c-3a-seam-contract.md)
+for the authoritative names + behaviours.
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)

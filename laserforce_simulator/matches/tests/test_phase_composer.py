@@ -314,6 +314,155 @@ class TestPhaseSpecShape(SimpleTestCase):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# LG-02-Part2c-3a — per-token ``type[:format]`` wire format
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3a-seam-contract.md`` §2.12 / §4:
+# the composer wire format extends from comma-separated phase-TYPE tokens to
+# comma-separated ``type[:format]`` tokens. A bare ``round_robin`` defaults to
+# ``single_round_robin`` (Part2b backward-compat); ``round_robin:double_round_robin``
+# ⇒ a spec with ``schedule_format == "double_round_robin"``; a ``tournament``
+# token carries no format (``schedule_format is None``); an unknown/unsupported
+# per-phase schedule_format raises the NEW pure ``ValueError("unknown
+# schedule_format: …")``. The 4 existing ValueError cases (zero-RR, unknown-type,
+# malformed, tournament-before-RR) still fire, and the purity check stays green.
+#
+# Appended as NEW classes; no existing class above is modified. These WILL fail
+# until the Code agent lands the per-token format parse + the new ValueError —
+# the TDD red state, not a defect in this file.
+
+
+class TestParsePhaseCompositionPerTokenFormat(SimpleTestCase):
+    """``round_robin:<format>`` sets the spec's ``schedule_format`` per token."""
+
+    def test_double_round_robin_token_sets_schedule_format(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin:double_round_robin", season_schedule_format=_SSF
+        )
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].phase_type, "round_robin")
+        self.assertEqual(specs[0].schedule_format, "double_round_robin")
+
+    def test_explicit_single_round_robin_token_sets_schedule_format(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin:single_round_robin", season_schedule_format=_SSF
+        )
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].schedule_format, "single_round_robin")
+
+    def test_bare_round_robin_defaults_to_single_round_robin(self) -> None:
+        # Backward-compat: a bare ``round_robin`` token (no colon) resolves to
+        # ``single_round_robin`` (the season_schedule_format fallback is the
+        # locked ``"single_round_robin"``).
+        specs = parse_phase_composition("round_robin", season_schedule_format=_SSF)
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].schedule_format, "single_round_robin")
+
+    def test_mixed_double_rr_then_tournament_two_specs(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin:double_round_robin,tournament", season_schedule_format=_SSF
+        )
+        self.assertEqual(len(specs), 2)
+        self.assertEqual(specs[0].phase_type, "round_robin")
+        self.assertEqual(specs[0].schedule_format, "double_round_robin")
+        self.assertEqual(specs[1].phase_type, "tournament")
+        self.assertIsNone(specs[1].schedule_format)
+
+    def test_single_rr_token_then_tournament_two_specs(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin:single_round_robin,tournament", season_schedule_format=_SSF
+        )
+        self.assertEqual(len(specs), 2)
+        self.assertEqual(specs[0].phase_type, "round_robin")
+        self.assertEqual(specs[0].schedule_format, "single_round_robin")
+        self.assertEqual(specs[1].phase_type, "tournament")
+        self.assertIsNone(specs[1].schedule_format)
+
+    def test_multiple_rr_tokens_each_carry_their_own_format(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin:single_round_robin,round_robin:double_round_robin",
+            season_schedule_format=_SSF,
+        )
+        self.assertEqual(len(specs), 2)
+        self.assertEqual([s.ordinal for s in specs], [1, 2])
+        self.assertEqual(specs[0].schedule_format, "single_round_robin")
+        self.assertEqual(specs[1].schedule_format, "double_round_robin")
+
+    def test_padded_per_token_format_is_stripped(self) -> None:
+        # Surrounding whitespace on the token still parses cleanly.
+        specs = parse_phase_composition(
+            " round_robin:double_round_robin ", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[0].schedule_format, "double_round_robin")
+
+
+class TestParsePhaseCompositionUnknownFormat(SimpleTestCase):
+    """An unknown per-phase ``schedule_format`` raises the new ValueError."""
+
+    def test_unknown_format_raises_with_repr_of_format(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin:triple_round_robin", season_schedule_format=_SSF
+            )
+        self.assertEqual(
+            str(ctx.exception), "unknown schedule_format: 'triple_round_robin'"
+        )
+
+    def test_unknown_format_after_valid_rr_still_raises(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin:single_round_robin,round_robin:bogus_format",
+                season_schedule_format=_SSF,
+            )
+        self.assertEqual(str(ctx.exception), "unknown schedule_format: 'bogus_format'")
+
+
+class TestParsePhaseCompositionExistingErrorsStillFire(SimpleTestCase):
+    """The 4 existing ValueError cases still fire under the per-token format."""
+
+    def test_zero_round_robin_still_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition("tournament", season_schedule_format=_SSF)
+        self.assertEqual(
+            str(ctx.exception),
+            "composition must contain at least one round-robin phase",
+        )
+
+    def test_unknown_phase_type_still_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition("round_robin,bogus", season_schedule_format=_SSF)
+        self.assertEqual(str(ctx.exception), "unknown phase type: 'bogus'")
+
+    def test_malformed_empty_token_still_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,,tournament", season_schedule_format=_SSF
+            )
+        self.assertEqual(str(ctx.exception), "malformed phase composition")
+
+    def test_tournament_token_with_a_format_is_malformed(self) -> None:
+        # LG-02-Part2c-3a — a tournament token takes no schedule_format; a
+        # present ``:format`` part is malformed (covers the `_sep or
+        # format_part` guard on the tournament branch).
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:double_round_robin",
+                season_schedule_format=_SSF,
+            )
+        self.assertEqual(str(ctx.exception), "malformed phase composition")
+
+    def test_tournament_before_round_robin_still_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "tournament,round_robin", season_schedule_format=_SSF
+            )
+        self.assertEqual(
+            str(ctx.exception),
+            "a tournament phase requires a preceding round-robin phase",
+        )
+
+
 class TestNoDjangoImportsLeaked(SimpleTestCase):
     """Importing ``matches.phase_composer`` in a fresh subprocess must not
     pull in ``django.*`` — the allowlist is ``dataclasses`` + ``typing``.

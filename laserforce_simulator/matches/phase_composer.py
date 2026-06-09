@@ -1,10 +1,14 @@
-"""LG-02-Part2b — pure phase-composition parser.
+"""LG-02-Part2b / Part2c-3a — pure phase-composition parser.
 
-Parses the create-League composer's serialized wire format (a
-comma-separated list of phase-type tokens, e.g. ``"round_robin,tournament"``)
-into an ordered list of :class:`PhaseSpec`. The form's ``clean()`` calls
+Parses the create-League composer's serialized wire format into an ordered
+list of :class:`PhaseSpec`. The form's ``clean()`` calls
 ``parse_phase_composition`` and stashes the result; both SeasonPhase-creation
 sites (``league_create`` / ``next_season``) loop over the specs.
+
+LG-02-Part2c-3a — the wire format is now per-token ``type[:format]`` tokens,
+e.g. ``"round_robin:double_round_robin,tournament"``. A bare ``round_robin``
+token (no colon) defaults to ``single_round_robin`` (Part2b backward-compat);
+a ``tournament`` token carries no format.
 
 Frozen import allowlist (the only modules this file may import):
 ``dataclasses``, ``typing``. NO Django, NO ORM, NO ``random``, NO
@@ -16,6 +20,9 @@ the ``TestNoDjangoImportsLeaked`` subprocess check.
 
 from dataclasses import dataclass
 from typing import Optional
+
+# LG-02-Part2c-3a — the valid per-phase regular-season schedule formats.
+_VALID_SCHEDULE_FORMATS = ("single_round_robin", "double_round_robin")
 
 
 @dataclass(frozen=True)
@@ -38,20 +45,27 @@ def parse_phase_composition(
 ) -> list[PhaseSpec]:
     """Parse the composer wire format into ordered :class:`PhaseSpec` rows.
 
-    Wire format: comma-separated phase-type tokens parsed with
-    ``str.split(",")`` and ``str.strip()`` per token.
+    Wire format (LG-02-Part2c-3a): comma-separated ``type[:format]`` tokens
+    parsed with ``str.split(",")``, ``str.strip()`` per token, then split on
+    the FIRST ``:`` only into ``(type_part, format_part)``.
 
     Behaviour:
         * EMPTY / blank ``raw`` ⇒ exactly one
           ``PhaseSpec(ordinal=1, phase_type="round_robin",
           schedule_format=season_schedule_format)`` (the Part2a default).
-        * Otherwise: split on ``,``, strip each token, assign contiguous
-          ordinals ``1..N`` in composer order; ``round_robin`` specs get
-          ``season_schedule_format``, ``tournament`` specs get ``None``.
+        * Otherwise: split on ``,``, strip each token, split on the first
+          ``:`` into ``(type_part, format_part)``, assign contiguous ordinals
+          ``1..N`` in composer order. For a ``round_robin`` token,
+          ``schedule_format = format_part or season_schedule_format`` (so a
+          bare ``round_robin`` ⇒ ``single_round_robin`` — the locked
+          ``season_schedule_format`` fallback); a ``tournament`` token carries
+          no format (``schedule_format=None``) and a present ``format_part`` is
+          malformed.
 
     Valid phase types are ``"round_robin"`` and ``"tournament"`` only
-    (``"member_night"`` is NOT selectable in Part2b — it raises
-    unknown-type).
+    (``"member_night"`` is NOT selectable — it raises unknown-type). Valid
+    per-phase schedule formats are ``single_round_robin`` and
+    ``double_round_robin``.
 
     LG-02-Part2c-1 — after the zero-RR check, a ``tournament`` phase that
     precedes the first ``round_robin`` phase raises
@@ -73,16 +87,27 @@ def parse_phase_composition(
     for index, token in enumerate(tokens):
         if not token:
             raise ValueError("malformed phase composition")
-        if token == "round_robin":
-            schedule_format: Optional[str] = season_schedule_format
-        elif token == "tournament":
+        # Split on the FIRST ":" only into (type_part, format_part).
+        type_part, _sep, format_part = token.partition(":")
+        type_part = type_part.strip()
+        format_part = format_part.strip()
+        if not type_part:
+            raise ValueError("malformed phase composition")
+        if type_part == "round_robin":
+            schedule_format: Optional[str] = format_part or season_schedule_format
+            if schedule_format not in _VALID_SCHEDULE_FORMATS:
+                raise ValueError(f"unknown schedule_format: {schedule_format!r}")
+        elif type_part == "tournament":
+            # A tournament token takes no format; a present one is malformed.
+            if _sep or format_part:
+                raise ValueError("malformed phase composition")
             schedule_format = None
         else:
             raise ValueError(f"unknown phase type: {token!r}")
         specs.append(
             PhaseSpec(
                 ordinal=index + 1,
-                phase_type=token,
+                phase_type=type_part,
                 schedule_format=schedule_format,
             )
         )

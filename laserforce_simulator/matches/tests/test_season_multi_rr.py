@@ -71,12 +71,8 @@ def _two_rr_season(prefix: str, n: int = 2):
         t, _ = make_team_with_slots(f"{prefix}{i}")
         teams.append(t)
         season.teams.add(t)
-    rr1 = SeasonPhase.objects.create(
-        season=season, ordinal=1, phase_type="round_robin"
-    )
-    rr2 = SeasonPhase.objects.create(
-        season=season, ordinal=2, phase_type="round_robin"
-    )
+    rr1 = SeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")
+    rr2 = SeasonPhase.objects.create(season=season, ordinal=2, phase_type="round_robin")
     season.start_season()
     season.refresh_from_db()
     return season, teams, rr1, rr2
@@ -97,12 +93,8 @@ def _two_rr_playoff_season(prefix: str, n: int = 4):
         t, _ = make_team_with_slots(f"{prefix}{i}")
         teams.append(t)
         season.teams.add(t)
-    rr1 = SeasonPhase.objects.create(
-        season=season, ordinal=1, phase_type="round_robin"
-    )
-    rr2 = SeasonPhase.objects.create(
-        season=season, ordinal=2, phase_type="round_robin"
-    )
+    rr1 = SeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")
+    rr2 = SeasonPhase.objects.create(season=season, ordinal=2, phase_type="round_robin")
     tournament_phase = SeasonPhase.objects.create(
         season=season, ordinal=3, phase_type="tournament"
     )
@@ -328,12 +320,8 @@ class TestFindOrCreateDistinctness(TestCase):
         team_a, team_b = teams
         sim = BatchSimulator()
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            sim.simulate_scheduled_round(
-                season, team_a, team_b, 1, season_phase=rr1
-            )
-            sim.simulate_scheduled_round(
-                season, team_a, team_b, 1, season_phase=rr2
-            )
+            sim.simulate_scheduled_round(season, team_a, team_b, 1, season_phase=rr1)
+            sim.simulate_scheduled_round(season, team_a, team_b, 1, season_phase=rr2)
         season_matches = Match.objects.filter(season=season)
         # Two distinct Match rows for the identical pairing across phases.
         self.assertEqual(season_matches.count(), 2)
@@ -348,14 +336,10 @@ class TestFindOrCreateDistinctness(TestCase):
         team_a, team_b = teams
         sim = BatchSimulator()
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            sim.simulate_scheduled_round(
-                season, team_a, team_b, 1, season_phase=rr1
-            )
+            sim.simulate_scheduled_round(season, team_a, team_b, 1, season_phase=rr1)
             # Re-run round 1 of the SAME (season, phase, pairing): finds the
             # existing Match, no second row.
-            sim.simulate_scheduled_round(
-                season, team_a, team_b, 1, season_phase=rr1
-            )
+            sim.simulate_scheduled_round(season, team_a, team_b, 1, season_phase=rr1)
         self.assertEqual(
             Match.objects.filter(season=season, season_phase=rr1).count(), 1
         )
@@ -365,12 +349,8 @@ class TestFindOrCreateDistinctness(TestCase):
         team_a, team_b = teams
         sim = BatchSimulator()
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            sim.simulate_scheduled_round(
-                season, team_a, team_b, 1, season_phase=rr1
-            )
-            sim.simulate_scheduled_round(
-                season, team_a, team_b, 1, season_phase=rr2
-            )
+            sim.simulate_scheduled_round(season, team_a, team_b, 1, season_phase=rr1)
+            sim.simulate_scheduled_round(season, team_a, team_b, 1, season_phase=rr2)
         rr1_rounds = GameRound.objects.filter(match__season_phase=rr1)
         rr2_rounds = GameRound.objects.filter(match__season_phase=rr2)
         self.assertEqual(rr1_rounds.count(), 1)
@@ -386,9 +366,7 @@ class TestFindOrCreateDistinctness(TestCase):
             sim.simulate_scheduled_round(season, team_a, team_b, 1)
             sim.simulate_scheduled_round(season, team_a, team_b, 1)
         self.assertEqual(
-            Match.objects.filter(
-                season=season, season_phase__isnull=True
-            ).count(),
+            Match.objects.filter(season=season, season_phase__isnull=True).count(),
             1,
         )
 
@@ -467,14 +445,10 @@ class TestMultiRrPlayoffEndToEnd(TestCase):
         from matches.models import TournamentParticipant
 
         participants = list(
-            TournamentParticipant.objects.filter(tournament=tournament).order_by(
-                "seed"
-            )
+            TournamentParticipant.objects.filter(tournament=tournament).order_by("seed")
         )
         self.assertEqual(len(participants), len(teams))
-        self.assertEqual(
-            [p.seed for p in participants], list(range(1, len(teams) + 1))
-        )
+        self.assertEqual([p.seed for p in participants], list(range(1, len(teams) + 1)))
         rows = season._final_standings_for_phase(rr2)
         rank_to_team = {row.rank: row.team_id for row in rows}
         for p in participants:
@@ -518,3 +492,286 @@ class TestMultiRrPlayoffEndToEnd(TestCase):
         self.assertGreater(decisive.count(), 0)
         for node in decisive:
             self.assertIsNotNone(node.winner_id)
+
+
+# ===========================================================================
+# LG-02-Part2c-3a — double round-robin single-phase format
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3a-seam-contract.md`` §2.1 /
+# §2.6 / §2.7 / §4. A ``double_round_robin`` phase has every enrolled pair meet
+# TWICE within ONE phase as two DISTINCT Matches discriminated by the new
+# ``Match.leg`` field. ``simulate_scheduled_round(..., leg=1)`` then
+# ``(..., leg=2)`` for the same pair creates two distinct Matches (same
+# ``season`` / ``season_phase``, different ``leg``); ``_rr_phase_complete`` is
+# False until BOTH legs of every pairing are played and True once both land; a
+# small-N seeded play loop drains both legs; cumulative
+# ``_final_standings_for_phase`` counts both legs.
+#
+# Appended as NEW classes; no existing class above is modified. These WILL fail
+# until the Code agent lands the ``Match.leg`` field + migration, the ``leg``
+# find-or-create dimension on ``simulate_scheduled_round``, the leg-aware
+# ``_rr_phase_complete``, and the double-RR play loop — the TDD red state, not a
+# defect in this file. Tests assert SCHEMA-LEVEL outcomes (Match counts, ``leg``
+# values, completion flags, standings ORDER) — NEVER exact simulated point
+# totals.
+
+
+def _double_rr_season(prefix: str, n: int = 2):
+    """An active Season composed of ONE ordinal-1 ``round_robin`` phase whose
+    ``schedule_format`` is ``"double_round_robin"``, ``n`` slotted teams
+    enrolled, started.
+
+    Returns ``(season, teams, phase)``.
+    """
+    league = League.objects.create(name=f"{prefix} League")
+    season = Season.objects.create(
+        league=league, name="S1", start_date=date(2026, 1, 1)
+    )
+    teams = []
+    for i in range(n):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        teams.append(t)
+        season.teams.add(t)
+    phase = SeasonPhase.objects.create(
+        season=season,
+        ordinal=1,
+        phase_type="round_robin",
+        schedule_format="double_round_robin",
+    )
+    season.start_season()
+    season.refresh_from_db()
+    return season, teams, phase
+
+
+def _play_double_rr_phase(season, teams, phase) -> None:
+    """Drive ``simulate_scheduled_round`` over every fixture of a single
+    ``double_round_robin`` phase, threading both the owning phase AND the
+    fixture's ``leg`` so each Round's Match is attributed and de-duplicated
+    by ``(season, season_phase, pairing, leg)``."""
+    by_id = {t.id: t for t in teams}
+    fixtures = None
+    for candidate, phase_fixtures in season.scheduled_fixtures_by_phase():
+        if candidate.pk == phase.pk:
+            fixtures = phase_fixtures
+            break
+    assert fixtures is not None, "phase has no fixtures in scheduled_fixtures_by_phase"
+    sim = BatchSimulator()
+    with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+        for fixture in fixtures:
+            team_a = by_id[fixture.team_a_id]
+            team_b = by_id[fixture.team_b_id]
+            sim.simulate_scheduled_round(
+                season,
+                team_a,
+                team_b,
+                fixture.round_number,
+                season_phase=phase,
+                leg=fixture.leg,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Match.leg field schema
+# ---------------------------------------------------------------------------
+
+
+class TestMatchLegField(TestCase):
+    """``Match.leg`` is a ``PositiveSmallIntegerField`` defaulting to 1."""
+
+    def test_default_match_has_leg_one(self) -> None:
+        red, _ = make_team_with_slots("LegDefRed")
+        blue, _ = make_team_with_slots("LegDefBlue")
+        match = Match.objects.create(team_red=red, team_blue=blue)
+        match.refresh_from_db()
+        self.assertEqual(match.leg, 1)
+
+    def test_field_default_is_one(self) -> None:
+        field = Match._meta.get_field("leg")
+        self.assertEqual(field.default, 1)
+
+
+# ---------------------------------------------------------------------------
+# Find-or-create leg dimension — same pairing, different leg → two Matches
+# ---------------------------------------------------------------------------
+
+
+class TestDoubleRrLegFindOrCreate(TestCase):
+    """``simulate_scheduled_round(..., leg=1)`` then ``(..., leg=2)`` for the
+    same pair creates TWO distinct Matches (same ``season`` / ``season_phase``,
+    different ``leg``); a re-run of one leg is idempotent."""
+
+    def test_two_legs_create_two_distinct_matches(self) -> None:
+        season, teams, phase = _double_rr_season("LegTwo", n=2)
+        team_a, team_b = teams
+        sim = BatchSimulator()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            sim.simulate_scheduled_round(
+                season, team_a, team_b, 1, season_phase=phase, leg=1
+            )
+            sim.simulate_scheduled_round(
+                season, team_a, team_b, 1, season_phase=phase, leg=2
+            )
+        matches = Match.objects.filter(season=season, season_phase=phase)
+        self.assertEqual(matches.count(), 2)
+        legs = sorted(m.leg for m in matches)
+        self.assertEqual(legs, [1, 2])
+        # Both carry the same season + season_phase.
+        for m in matches:
+            self.assertEqual(m.season_id, season.id)
+            self.assertEqual(m.season_phase_id, phase.pk)
+
+    def test_rerun_same_leg_pairing_is_idempotent(self) -> None:
+        season, teams, phase = _double_rr_season("LegIdem", n=2)
+        team_a, team_b = teams
+        sim = BatchSimulator()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            sim.simulate_scheduled_round(
+                season, team_a, team_b, 1, season_phase=phase, leg=1
+            )
+            sim.simulate_scheduled_round(
+                season, team_a, team_b, 1, season_phase=phase, leg=1
+            )
+        self.assertEqual(
+            Match.objects.filter(season=season, season_phase=phase, leg=1).count(),
+            1,
+        )
+
+    def test_default_leg_is_one_when_omitted(self) -> None:
+        season, teams, phase = _double_rr_season("LegOmit", n=2)
+        team_a, team_b = teams
+        sim = BatchSimulator()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            sim.simulate_scheduled_round(season, team_a, team_b, 1, season_phase=phase)
+        match = Match.objects.get(season=season, season_phase=phase)
+        self.assertEqual(match.leg, 1)
+
+
+# ---------------------------------------------------------------------------
+# Per-phase RR completion requires BOTH legs
+# ---------------------------------------------------------------------------
+
+
+class TestDoubleRrPhaseCompletion(TestCase):
+    """``_rr_phase_complete`` is False until BOTH legs of every pairing are
+    played, True once both land."""
+
+    def test_incomplete_with_only_leg1_played(self) -> None:
+        season, teams, phase = _double_rr_season("CompLeg1", n=2)
+        team_a, team_b = teams
+        sim = BatchSimulator()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            # Play both rounds of leg 1 only.
+            sim.simulate_scheduled_round(
+                season, team_a, team_b, 1, season_phase=phase, leg=1
+            )
+            sim.simulate_scheduled_round(
+                season, team_a, team_b, 2, season_phase=phase, leg=1
+            )
+        season.refresh_from_db()
+        self.assertFalse(season._phase_complete(phase))
+
+    def test_complete_once_both_legs_played(self) -> None:
+        season, teams, phase = _double_rr_season("CompBoth", n=2)
+        _play_double_rr_phase(season, teams, phase)
+        season.refresh_from_db()
+        self.assertTrue(season._phase_complete(phase))
+
+    def test_season_completes_only_after_both_legs(self) -> None:
+        season, teams, phase = _double_rr_season("CompSeason", n=2)
+        team_a, team_b = teams
+        sim = BatchSimulator()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            sim.simulate_scheduled_round(
+                season, team_a, team_b, 1, season_phase=phase, leg=1
+            )
+            sim.simulate_scheduled_round(
+                season, team_a, team_b, 2, season_phase=phase, leg=1
+            )
+        season.refresh_from_db()
+        # Leg 1 done, leg 2 not — the (only / final) phase is incomplete.
+        self.assertEqual(season.state, "active")
+        self.assertIsNone(season.champion_team_id)
+        # Finish leg 2.
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            sim.simulate_scheduled_round(
+                season, team_a, team_b, 1, season_phase=phase, leg=2
+            )
+            sim.simulate_scheduled_round(
+                season, team_a, team_b, 2, season_phase=phase, leg=2
+            )
+        season.refresh_from_db()
+        self.assertEqual(season.state, "completed")
+        self.assertIsNotNone(season.champion_team_id)
+
+
+# ---------------------------------------------------------------------------
+# Cumulative standings count both legs
+# ---------------------------------------------------------------------------
+
+
+class TestDoubleRrCumulativeStandings(TestCase):
+    """``_final_standings_for_phase`` counts BOTH legs' Matches."""
+
+    def test_standings_aggregate_both_legs(self) -> None:
+        season, teams, phase = _double_rr_season("CumLegs", n=3)
+        _play_double_rr_phase(season, teams, phase)
+        season.refresh_from_db()
+        rows = season._final_standings_for_phase(phase)
+        self.assertEqual(len(rows), len(teams))
+        total_matches = Match.objects.filter(season=season, is_completed=True).count()
+        summed_played = sum(r.matches_played for r in rows)
+        # Each completed Match contributes to two teams' matches_played.
+        self.assertEqual(summed_played, 2 * total_matches)
+
+    def test_match_count_is_double_single_rr(self) -> None:
+        # A double-RR N=3 phase plays twice as many Matches as a single-RR N=3.
+        season, teams, phase = _double_rr_season("CumDouble", n=3)
+        _play_double_rr_phase(season, teams, phase)
+        # N=3 single-RR has 3 distinct pairings; double-RR ⇒ 6 distinct Matches.
+        self.assertEqual(
+            Match.objects.filter(season=season, season_phase=phase).count(), 6
+        )
+        legs = {m.leg for m in Match.objects.filter(season=season, season_phase=phase)}
+        self.assertEqual(legs, {1, 2})
+
+    def test_champion_is_cumulative_leader_across_both_legs(self) -> None:
+        season, teams, phase = _double_rr_season("CumChamp", n=3)
+        _play_double_rr_phase(season, teams, phase)
+        season.refresh_from_db()
+        self.assertEqual(season.state, "completed")
+        rows = season._final_standings_for_phase(phase)
+        self.assertEqual(season.champion_team_id, rows[0].team_id)
+
+
+# ---------------------------------------------------------------------------
+# play_season_task drains both legs
+# ---------------------------------------------------------------------------
+
+
+class TestDoubleRrPlaySeasonTask(TestCase):
+    """A small-N seeded ``play_season_task`` Until-End drains BOTH legs and
+    completes the Season."""
+
+    def test_until_end_drains_both_legs_and_completes(self) -> None:
+        from matches.tasks import play_season_task
+
+        season, _teams, phase = _double_rr_season("TaskDrain", n=2)
+        # N=2 double-RR ⇒ 1 pairing × 2 rounds × 2 legs = 4 fixtures.
+        expected_total = len(season.scheduled_fixtures())
+        self.assertEqual(expected_total, 4)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(season.id, max_matchdays=None)
+        # Assert SCHEMA-LEVEL outcomes (the task ran eagerly under the conftest
+        # ``CELERY_TASK_ALWAYS_EAGER``; the brittle ``EagerResult.state`` is not
+        # load-bearing — what matters is the drained DB).
+        self.assertEqual(
+            GameRound.objects.filter(match__season=season).count(), expected_total
+        )
+        # Two distinct Matches (one per leg) for the single N=2 pairing.
+        matches = Match.objects.filter(season=season, season_phase=phase)
+        self.assertEqual(matches.count(), 2)
+        self.assertEqual(sorted(m.leg for m in matches), [1, 2])
+        season.refresh_from_db()
+        self.assertEqual(season.state, "completed")
+        self.assertIsNotNone(season.champion_team_id)

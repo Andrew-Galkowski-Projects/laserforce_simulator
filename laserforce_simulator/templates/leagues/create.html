@@ -150,6 +150,10 @@
         optSRR.value = "single_round_robin";
         optSRR.textContent = "Single round-robin";
         formatSelect.appendChild(optSRR);
+        var optDRR = document.createElement("option");
+        optDRR.value = "double_round_robin";
+        optDRR.textContent = "Double round-robin";
+        formatSelect.appendChild(optDRR);
 
         // Per-tournament-block "build coming in a later release" flag.
         var pending = document.createElement("div");
@@ -185,10 +189,22 @@
     }
 
     function serialize() {
-        var selects = composer.querySelectorAll(".phase-type-select");
+        // LG-02-Part2c-3a — emit per-token "type:format" for each round_robin
+        // row and the bare "tournament" token for each tournament row.
+        var rows = composer.querySelectorAll(".phase-row");
         var tokens = [];
-        for (var k = 0; k < selects.length; k++) {
-            tokens.push(selects[k].value);
+        for (var k = 0; k < rows.length; k++) {
+            var typeSelect = rows[k].querySelector(".phase-type-select");
+            if (!typeSelect) {
+                continue;
+            }
+            if (typeSelect.value === "round_robin") {
+                var formatSelect = rows[k].querySelector(".phase-format-select");
+                var fmt = formatSelect ? formatSelect.value : "single_round_robin";
+                tokens.push("round_robin:" + fmt);
+            } else {
+                tokens.push(typeSelect.value);
+            }
         }
         hidden.value = tokens.join(",");
     }

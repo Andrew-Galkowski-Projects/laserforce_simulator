@@ -246,6 +246,48 @@ new ADR; these are its consequences on the decisions above.
   contract is untouched (only the Match a Round attaches to changes), so there is
   **no Score Calibration re-baseline and no SIM-07 / SIM-08 interaction**.
 
+## Part2c-3a consequences (double round-robin regular-season format, 2026-06-08)
+
+The first sub-slice of the re-sliced LG-02-Part2c-3 lands the **first alternative
+regular-season `schedule_format`** — **`double_round_robin`** — as a single
+`SeasonPhase` format. It adds no new ADR; these are its consequences on the
+decisions above.
+
+- **The Part2b dormant per-phase `schedule_format` column is now live
+  end-to-end.** The "Forward decision" promise that wiring the read-path
+  chokepoint to `phase.schedule_format` "lands in a later slice alongside the first
+  alternative format" is fulfilled here. Part2c-2's `scheduled_fixtures_by_phase`
+  already read `generate_schedule(team_ids, phase.schedule_format or
+  self.schedule_format)`, but every value still resolved to `single_round_robin`;
+  now a phase persisted with `schedule_format="double_round_robin"` produces a
+  genuinely different fixture run. The Part2b composer column, the `next_season`
+  carry-forward, and the per-phase read are no longer dormant for one of their two
+  values.
+- **`Match.leg` discriminates intra-phase repeated pairings.** A
+  `double_round_robin` phase has every pair meet **twice within one phase** as
+  **two distinct Matches** — but the existing Side-agnostic find-or-create key
+  `(season, season_phase, frozenset({team ids}))` would collide the two legs onto
+  one Match. A new `Match.leg = PositiveSmallIntegerField(default=1)` (migration
+  `0044_match_leg`, single `AddField`, no `RunPython` — the same
+  [ADR-0004](0004-simulation-data-is-disposable.md) posture as `0043`) extends the
+  key to `(season, season_phase, frozenset({team ids}), leg)`. The same `leg`
+  threads the schedule (`ScheduleFixture.leg`, with `generate_schedule` emitting
+  leg-2 fixtures offset sequentially after leg 1 on one monotonic matchday
+  calendar), the per-phase RR completion check (`_rr_phase_complete` now requires
+  **both** legs of every pairing), and the FLAT dashboard overlays (without `leg`
+  the second leg reads as already-played). `single_round_robin`, legacy phase-less
+  Seasons, and all tournament/playoff Matches stay `leg=1` ⇒ byte-identical.
+- **Standings stay cumulative — `_final_standings_for_phase` is unchanged.** A
+  double-RR pairing is two distinct Matches, each a row in the whole-season
+  `Match.objects.filter(season=self, is_completed=True)` corpus, so both legs count
+  automatically with no scoping edit — consistent with the Part2c-2 decision that
+  standings aggregate the whole Season's completed-Match record.
+- **No simulator / tournament-engine change, no re-baseline.** `generate_schedule`
+  is extended (a new format branch) but the simulator, RNG contract, and bracket
+  engine are consumed verbatim; RR sims stay byte-identical per Round. So there is
+  **no Score Calibration re-baseline and no SIM-07 / SIM-08 interaction**, and no
+  new ADR — only this addendum.
+
 ## See also
 
 - [ADR-0014](0014-league-season-foundation.md) — the League/Season model and

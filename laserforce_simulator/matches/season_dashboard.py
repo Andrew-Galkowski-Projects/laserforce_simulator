@@ -154,6 +154,7 @@ def find_next_fixture(
         key = (
             frozenset({fixture.team_a_id, fixture.team_b_id}),
             fixture.round_number,
+            fixture.leg,
         )
         if key not in played_keys:
             return fixture
@@ -182,6 +183,7 @@ def find_next_matchday(
             phase_id,
             frozenset({fixture.team_a_id, fixture.team_b_id}),
             fixture.round_number,
+            fixture.leg,
         )
         if key not in played_keys:
             return fixture.matchday
@@ -228,6 +230,7 @@ def select_play_fixtures(
             phase_id,
             frozenset({fixture.team_a_id, fixture.team_b_id}),
             fixture.round_number,
+            fixture.leg,
         )
         if key in played_keys:
             continue
@@ -277,6 +280,7 @@ def round_progress(
         key = (
             frozenset({fixture.team_a_id, fixture.team_b_id}),
             fixture.round_number,
+            fixture.leg,
         )
         if key in played_keys:
             completed += 1

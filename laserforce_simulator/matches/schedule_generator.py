@@ -19,7 +19,7 @@ no I/O, no logging. The contract is enforced by the
 
 from dataclasses import dataclass
 
-SCHEDULE_FORMATS: tuple[str, ...] = ("single_round_robin",)
+SCHEDULE_FORMATS: tuple[str, ...] = ("single_round_robin", "double_round_robin")
 
 
 # Internal bye sentinel used by the circle method when N is odd. Pairs
@@ -36,6 +36,7 @@ class ScheduleFixture:
     round_number: int  # 1 or 2
     team_a_id: int  # min of the pair
     team_b_id: int  # max of the pair
+    leg: int = 1  # LG-02-Part2c-3a — 1 (single-RR / leg 1) or 2 (double-RR leg 2)
 
 
 def generate_schedule(
@@ -131,4 +132,24 @@ def generate_schedule(
 
     all_fixtures = round1_fixtures + round2_fixtures
     all_fixtures.sort(key=lambda f: (f.matchday, f.team_a_id))
+
+    if schedule_format == "double_round_robin":
+        # LG-02-Part2c-3a: leg 2 replays the single-RR list re-emitted with
+        # leg=2 on a matchday calendar offset by 2*(n-1) so it plays
+        # SEQUENTIALLY after leg 1 (one monotonic 1..4*(n-1) calendar).
+        leg_offset = 2 * (n - 1)
+        leg2_fixtures = [
+            ScheduleFixture(
+                matchday=fixture.matchday + leg_offset,
+                round_number=fixture.round_number,
+                team_a_id=fixture.team_a_id,
+                team_b_id=fixture.team_b_id,
+                leg=2,
+            )
+            for fixture in all_fixtures
+        ]
+        double_fixtures = all_fixtures + leg2_fixtures
+        double_fixtures.sort(key=lambda f: (f.matchday, f.team_a_id))
+        return double_fixtures
+
     return all_fixtures
