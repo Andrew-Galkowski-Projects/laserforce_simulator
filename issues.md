@@ -1,3 +1,37 @@
+# Web testing — LG-02-Part2c-3d (per-tournament-block configuration)
+
+Date: 2026-06-09
+Branch: `lg-02-part2c-3d`
+Scope: the create-League composer surface this slice touches — a `tournament` phase
+block now renders a **participant-cut** number input (`league-create-phase-cut-{i}`) and
+a **disabled** "Single elimination (more formats coming soon)" format select
+(`league-create-phase-tournament-format-{i}`); the hidden `#league-create-phases`
+serializes tournament rows as `tournament:<mode>:<cut>`; the wire-format →
+`parse_phase_composition` → `SeasonPhase.tournament_cut` round-trip.
+
+## Summary — LG-02-Part2c-3d
+| Area | Result |
+|---|---|
+| `/leagues/create/` — Tournament block shows the disabled format `<select>` (value "Single elimination (more formats coming soon)") + the cut `<input type=number min=0>` (no `max`, not locked) | ✅ |
+| Cut input set to 8 → hidden `#league-create-phases` serializes to exactly `round_robin:single_round_robin,tournament:standings:8` | ✅ |
+| Submit (N=8, `round_robin` then `tournament:standings:8`) → creates League + Season + phases, redirects to `/seasons/46/standings/`, console/network clean | ✅ |
+| DB round-trip: Season 46 PHASE 2 persists `phase_type=tournament, tournament_mode=standings, tournament_format=single_elimination, tournament_cut=8`; PHASE 1 RR persists `tournament_cut=0` (default) | ✅ |
+| Main-page smoke `/`, `/leagues/`, `/matches/` — no console errors | ✅ |
+
+## Findings — LG-02-Part2c-3d
+- **No bugs found.** The cut input + disabled format select render only on tournament rows,
+  the cut serializes as the third wire-token field, and the value round-trips to
+  `SeasonPhase.tournament_cut` end-to-end. The cut input has `min="0"` and **no** `max`
+  (the a11y snapshot's `valuemax="0"` was a false reading — verified via DOM inspection).
+- Low-severity (pre-existing, unrelated): the create form still emits one a11y `issue`
+  "No label associated with a form field" (count 1) — same nit noted in the Part2c-2/3a runs,
+  not introduced by c-3d (the cut input itself carries the accessible name "Tournament
+  participant cut"). Not blocking; left out of scope.
+- Test data torn down: League "ChromeTest C3D League" (id 40, cascaded Season 46 + phases)
+  and generated Teams 248–255 deleted via `manage.py shell`. Nothing left behind.
+
+---
+
 # Web testing — LG-02-Part2c-3a (double round-robin regular-season format)
 
 Date: 2026-06-08

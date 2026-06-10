@@ -394,6 +394,67 @@ ADR — these are its consequences on the decisions above.
   split ("Until Playoffs" final vs "Until Tournament" mid-season) is label text only —
   the playoff button-group DOM ids + `play_until_end` action are unchanged.
 
+## Part2c-3d consequences (per-tournament-block config — dormant format + live cut, 2026-06-09)
+
+Part2c-3c made the mid-season tournament flavours build; this slice surfaces the
+first **per-tournament-block configuration** on the phase, splitting it across one
+dormant and one live column in the same dormant→live rhythm that carried `schedule_format`
+(Part2b dormant → Part2c-3a live) and `tournament_mode` (Part2c-3b dormant → Part2c-3c
+live). It adds no new ADR — these are its consequences on the decisions above.
+
+- **The per-phase tournament config splits into a dormant `tournament_format` and a
+  live `tournament_cut`.** `SeasonPhase` gains `tournament_format`
+  (`CharField`, default `"single_elimination"`, choices mirroring
+  `Tournament.FORMAT_CHOICES`) and `tournament_cut`
+  (`PositiveSmallIntegerField`, default `0`), via migration
+  `0046_seasonphase_format_cut` — two `AddField` ops, **no `RunPython` / no backfill**
+  ([ADR-0004](0004-simulation-data-is-disposable.md) posture, as every `004x` phase
+  migration before it). `tournament_format` is **written-but-unread** by the build this
+  slice (the same declared-but-inert posture `member_night` and the four `tournament_mode`
+  values shipped under): `activate_pending_tournament_phase` keeps hardcoding
+  `format="single_elimination"`, so an admin-set `tournament_format="swiss"` still builds
+  single-elim — a known, acceptable foot-gun until the non-single-elim **format build**
+  lands in c-3e. The format choices are inlined on `SeasonPhase` rather than referencing
+  `Tournament.FORMAT_CHOICES`, because `Tournament` is declared later in the file (the
+  c-3b inlined-`TOURNAMENT_MODE_CHOICES` precedent).
+- **`tournament_cut` is the mode-ordered top-N cut.** It goes live as a single inserted
+  guard in `activate_pending_tournament_phase` —
+  `if phase.tournament_cut: order = order[:phase.tournament_cut]` — applied to the OUTPUT
+  of `_seed_order_for_phase` at the caller, so that method (and its standings / strength /
+  unseeded branches) stays byte-identical. The cut therefore composes with **any** seeding
+  mode: it keeps the top `cut` seeds of the already-ordered vector with dense seeds
+  `1..cut`. `cut == 0` (the default) is byte-identical to today (full participant set);
+  `cut > enrolled-team-count` is a Python no-op slice (all teams). The build tail —
+  `format="single_elimination"`, `team_assembly="preset"`, `seed = position + 1`,
+  `lock_and_build()` — is unchanged.
+- **The wire grammar grows a trailing cut field, with a parser floor `{0} ∪ {≥4}`.** The
+  `tournament` token becomes `tournament[:mode[:cut]]` (the tournament branch of
+  `parse_phase_composition` switches to `split(":")`; the RR branch keeps its 2-part
+  `partition(":")`); `PhaseSpec` gains a trailing defaulted `tournament_cut: int = 0`
+  (the c-3a `leg` / c-3b `tournament_mode` append-with-default precedent, so every
+  Part2b / c-3a / c-3c serialized value parses unchanged). A new locked
+  `ValueError(f"tournament cut must be 0 or at least 4: {cut}")` rejects a `cut` that is
+  neither `0` nor at least `4` at compose time; every pre-existing `ValueError` string is
+  preserved verbatim and the module stays Django-free. Validation is **parser-only** — no
+  `Season.clean()` / `SeasonPhase.clean()` is added; a cut leaving fewer than four
+  participants at runtime is caught defence-in-depth by the existing
+  `Tournament.lock_and_build` ≥4-participant `ValidationError`. The composer mirrors this
+  with a tournament-rows-only cut `<input>` and a **disabled** placeholder format
+  `<select>` ("Single elimination (more formats coming soon)") that serializes nothing —
+  the disabled-`random_draw`-option placeholder pattern, holding the format-picker UX for
+  c-3e. `next_season` carries forward both new columns verbatim.
+- **The non-single-elim format build is deferred to c-3e.** This slice deliberately
+  ships only the cut as live behaviour and parks the format as dormant — the same
+  dormant→live split c-3b→c-3c used for `tournament_mode` — so c-3e can read
+  `tournament_format` to build double-elim / RR / Swiss / RR→DE finals embeds without a
+  schema change. `team_assembly` is not surfaced here (it is subsumed by the deferred
+  `tournament_mode="random_draw"`).
+- **No simulator / tournament-engine change, no re-baseline.** The migration adds two
+  columns; the live behaviour is one slice on an already-ordered list. `play_next_node`,
+  `lock_and_build`, the simulator, and the RNG contract are consumed verbatim, so there is
+  **no Score Calibration re-baseline and no SIM-07 / SIM-08 interaction**, and no new ADR
+  — only this addendum.
+
 ## See also
 
 - [ADR-0014](0014-league-season-foundation.md) — the League/Season model and
