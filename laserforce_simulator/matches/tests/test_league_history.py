@@ -18,7 +18,18 @@ from datetime import date
 from django.test import TestCase
 from django.urls import reverse
 
-from matches.models import GameRound, League, Match, PlayerRoundState, Season
+from matches.models import (
+    BracketNode,
+    GameRound,
+    League,
+    Match,
+    PlayerRoundState,
+    Season,
+    SeasonPhase,
+    SeriesMatch,
+    Tournament,
+    TournamentParticipant,
+)
 from matches.tests.conftest import make_team_with_slots
 from teams.models import Team
 
@@ -379,6 +390,38 @@ class TestLeagueHistoryCompletedRows(TestCase):
             reverse("league_history", kwargs={"league_id": league.id})
         )
         self.assertContains(response, f'id="league-history-row-{season.id}"')
+
+    def test_completed_row_has_13_keys_including_mvp_slots(self) -> None:
+        # LG-03 grows the history row from 11 → 13 keys, appending the two
+        # award slots ``season_mvp`` and ``finals_mvp`` (each AwardWinner | None).
+        league = _make_league("Row13")
+        teams = _make_teams("R13", 2)
+        _make_completed_season(
+            league, team_ids=[t.id for t in teams], champion_team=teams[0]
+        )
+        response = self.client.get(
+            reverse("league_history", kwargs={"league_id": league.id})
+        )
+        row = response.context["completed_rows"][0]
+        self.assertEqual(
+            set(row),
+            {
+                "season_id",
+                "season_name",
+                "season_url",
+                "start_date",
+                "teams_enrolled",
+                "matches_played",
+                "champion",
+                "runner_up",
+                "tournament_champion",
+                "top_three",
+                "is_in_progress",
+                "season_mvp",  # NEW (LG-03)
+                "finals_mvp",  # NEW (LG-03)
+            },
+        )
+        self.assertEqual(len(row), 13)
 
 
 # ---------------------------------------------------------------------------
@@ -757,6 +800,160 @@ class TestLeagueHistorySessionWrite(TestCase):
         self.client.get(reverse("league_history", kwargs={"league_id": 99999}))
         # Session may not exist or may not have the key.
         self.assertNotIn("last_league_id", self.client.session)
+
+
+# ---------------------------------------------------------------------------
+# TestLeagueHistoryAwardCells — LG-03 +2 columns (Season MVP / Finals MVP)
+# ---------------------------------------------------------------------------
+
+
+def _reg_round(season, team_red, team_blue, states):
+    """A REGULAR-SEASON Match + GameRound + PRS rows under ``season``.
+
+    ``states`` is a list of ``(player, color, role, stat_kwargs)``.
+    """
+    match = Match.objects.create(
+        team_red=team_red, team_blue=team_blue, season=season, is_completed=True
+    )
+    game_round = GameRound.objects.create(
+        match=match,
+        round_number=1,
+        team_red=team_red,
+        team_blue=team_blue,
+        red_points=100,
+        blue_points=80,
+        is_completed=True,
+    )
+    for player, color, role, kwargs in states:
+        PlayerRoundState.objects.create(
+            game_round=game_round,
+            player=player,
+            team_color=color,
+            role=role,
+            **kwargs,
+        )
+    return game_round
+
+
+def _bracket_finals(season, teams, *, fmt="single_elimination", finalist=None):
+    """Build a completed single-elim playoff phase (finals_mvp source)."""
+    tournament = Tournament.objects.create(
+        name=f"{season.name} Playoffs", format=fmt, state="completed"
+    )
+    for i, t in enumerate(teams):
+        TournamentParticipant.objects.create(tournament=tournament, team=t, seed=i + 1)
+    tournament.champion = teams[0]
+    tournament.save(update_fields=["champion"])
+    final_node = BracketNode.objects.create(
+        tournament=tournament,
+        bracket_round=1,
+        position=0,
+        team_a=teams[0],
+        team_b=teams[1],
+        seed_a=1,
+        seed_b=2,
+        advances_to=None,
+        winner=teams[0],
+        bracket_type="winners",
+    )
+    champ_match = Match.objects.create(
+        team_red=teams[0], team_blue=teams[1], season=None, is_completed=True
+    )
+    SeriesMatch.objects.create(
+        node=final_node, match=champ_match, game_number=1, winner=teams[0]
+    )
+    final_round = GameRound.objects.create(
+        match=champ_match,
+        round_number=1,
+        team_red=teams[0],
+        team_blue=teams[1],
+        red_points=100,
+        blue_points=60,
+        is_completed=True,
+    )
+    if finalist is not None:
+        PlayerRoundState.objects.create(
+            game_round=final_round,
+            player=finalist,
+            team_color="red",
+            role="heavy",
+            tags_made=20,
+            shots_missed=1,
+        )
+    SeasonPhase.objects.create(
+        season=season, ordinal=2, phase_type="tournament", tournament=tournament
+    )
+    return tournament
+
+
+class TestLeagueHistoryAwardCells(TestCase):
+    """LG-03 — the two new per-row cells + the per-row awards link."""
+
+    def test_season_mvp_and_finals_mvp_cells_render_with_dom_ids(self) -> None:
+        league = _make_league("AwCells")
+        teams = _make_teams("AC", 2)
+        season = _make_completed_season(
+            league, team_ids=[t.id for t in teams], champion_team=teams[0]
+        )
+        SeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")
+        # A regular-season round so season_mvp resolves to a player.
+        star = teams[0].active_players[0]
+        _reg_round(
+            season,
+            teams[0],
+            teams[1],
+            [(star, "red", "scout", {"tags_made": 10, "shots_missed": 2})],
+        )
+        # A bracket playoff so finals_mvp resolves to a player.
+        finalist = teams[0].active_players[1]
+        _bracket_finals(season, teams, finalist=finalist)
+
+        response = self.client.get(
+            reverse("league_history", kwargs={"league_id": league.id})
+        )
+        content = response.content.decode()
+        self.assertIn(f"league-history-season-mvp-{season.id}", content)
+        self.assertIn(f"league-history-finals-mvp-{season.id}", content)
+
+    def test_none_award_cells_render_em_dash(self) -> None:
+        # A completed Season with no rounds and no playoff ⇒ both award cells
+        # render the em-dash placeholder.
+        league = _make_league("AwNone")
+        teams = _make_teams("AN", 2)
+        season = _make_completed_season(
+            league, team_ids=[t.id for t in teams], champion_team=teams[0]
+        )
+        SeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")
+        response = self.client.get(
+            reverse("league_history", kwargs={"league_id": league.id})
+        )
+        rows = response.context["completed_rows"]
+        self.assertIsNone(rows[0]["season_mvp"])
+        self.assertIsNone(rows[0]["finals_mvp"])
+        body = response.content.decode()
+        # Scope the em-dash check to the season-mvp cell.
+        idx = body.find(f"league-history-season-mvp-{season.id}")
+        self.assertGreaterEqual(idx, 0)
+        window = body[idx : idx + 200]
+        self.assertTrue(
+            ("—" in window) or ("&#8212;" in window) or ("&mdash;" in window),
+            msg=f"em-dash not found in season-mvp cell: {window!r}",
+        )
+
+    def test_per_row_awards_link_present(self) -> None:
+        league = _make_league("AwLink")
+        teams = _make_teams("AL", 2)
+        season = _make_completed_season(
+            league, team_ids=[t.id for t in teams], champion_team=teams[0]
+        )
+        SeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")
+        response = self.client.get(
+            reverse("league_history", kwargs={"league_id": league.id})
+        )
+        content = response.content.decode()
+        # Per-row awards link DOM id + the season_awards href.
+        self.assertIn(f"league-history-awards-link-{season.id}", content)
+        self.assertIn(reverse("season_awards", args=[season.id]), content)
 
 
 # Reference to silence unused-import warnings.
