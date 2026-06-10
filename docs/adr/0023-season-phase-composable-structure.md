@@ -536,6 +536,59 @@ decisions above.
   **weekly playoff pacing** remain out of scope; the mid-season `random_draw` build
   stays deferred (the parser still rejects it).
 
+## Part2c-3f consequences (season-linked playoff Match history + weekly playoff pacing, 2026-06-09)
+
+This slice closes the two surfaces Part2c-1 left deferred: the **season-linked
+playoff Match-history surface** and **weekly playoff pacing**. It adds no new ADR
+— these are its consequences on the decisions above.
+
+- **Playoff Matches stay `season=NULL, season_phase=NULL` — the history is
+  *derived*, not *attributed*.** Part2c-1 decision #3 (the tournament engine is
+  consumed verbatim, so playoff Matches carry no `season` / `season_phase`)
+  **survives intact**. Rather than stamp those FKs and then exclude
+  tournament-phase Matches from every season-scoped query (Standings,
+  `_rr_phase_complete`, `_is_finished`, `_final_standings_for_phase`, the LG-06g
+  Standings-form / side-split corpora — a large, error-prone blast radius), the
+  playoff Match history is **derived through the existing `SeasonPhase → Tournament`
+  FK chain**: `phase.tournament → BracketNode → SeriesMatch → Match → GameRound`.
+  League **Standings** and per-phase RR completion are therefore **untouched** —
+  the load-bearing reason this approach was chosen over the attribute-and-exclude
+  alternative.
+- **The history lands in Team History, not a new screen — the existing Playoffs
+  bracket screen is unchanged.** A grilling clarification established that a
+  Playoffs League screen already exists (it renders the embedded bracket tree
+  in-shell) and is left **as-is**, and that the per-game history belongs on the
+  existing **Team History** surface. But Team History's Overall-tab corpus filtered
+  `match__season__isnull=False`, so playoff rounds (`season=NULL`) were invisible
+  there too. So the slice **widens the Team History Overall-tab round corpus** to a
+  `.distinct()` UNION of regular-season rounds + playoff rounds (the latter
+  identified through the FK chain `Match.series_match → BracketNode → Tournament`
+  guarded by `Tournament.season_phases` being non-empty — which separates a
+  season-embedded playoff from a standalone sandbox tournament that also carries
+  `season=NULL`), and fills the long-reserved **`playoff_appearances`** counter
+  (`Tournament.objects.filter(season_phases__isnull=False, participants__team=team)
+  .distinct().count()`). The pure `team_history_logic` module needs no change (it
+  already carries the `playoff_appearances` kwarg + field); the Players tab already
+  counted playoff `PlayerRoundState` rows (its corpus is team-membership-only); the
+  Seasons tab stays regular-season-only (rank must not be perturbed by the
+  playoff).
+- **Weekly pacing is cadence-only — no playoff matchday, no `GameRound` change.**
+  The whole Play dropdown becomes **phase-aware**: when the cursor sits on a built
+  `tournament` phase, **Play One Week** drains exactly one **Bracket round** (every
+  playable **Bracket node** at the current depth to its series clinch), **Play Two
+  Months** up to 8 Bracket rounds, **Play Until End** drains to the **Season**
+  champion; the separate Play Single Round (one **Match**) / Play Playoffs (drain
+  all) controls remain. Playoff Rounds are **not** `ScheduleFixture`s, so they
+  receive **no** Season matchday number and **no** calendar date — "weekly" is
+  play-ordering granularity, not a date stamp, so there is **no `GameRound` /
+  `Match` model change** and no migration.
+- **No simulator / tournament-engine change, no re-baseline.** The new engine work
+  is a bounded `play_next_bracket_round` built on the verbatim `play_next_node`; the
+  Playoffs screen is a read-only derived query. Tournament sims stay
+  **non-deterministic by design**, so there is **no Score Calibration re-baseline
+  and no SIM-07 / SIM-08 interaction**. This is the final Part2c-3 slice; the
+  mid-season `random_draw` build remains the one parked Part2c follow-up.
+
 ## See also
 
 - [ADR-0014](0014-league-season-foundation.md) — the League/Season model and

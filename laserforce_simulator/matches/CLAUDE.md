@@ -5038,6 +5038,203 @@ discipline:** schema-level outcomes only (built `format`, sub-config field value
 DOM ids) — **NEVER raw simulated point totals** (tournament sims are
 non-deterministic).
 
+## LG-02-Part2c-3f season-linked playoff history + weekly playoff pacing
+
+The **final Part2c-3 slice**. Two view/engine-layer concerns, **NO model change,
+NO migration**: (A) widen the **Team History Overall tab** so its round corpus
+includes **season-embedded playoff rounds** + fill the `playoff_appearances`
+counter, and (B) **weekly playoff pacing** — a phase-aware Play dropdown that
+drains **one playoff STAGE per "One Week" click** (and per shared-budget tail
+unit) instead of one Match or the whole bracket. A **thin orchestration slice**:
+the simulator / tournament engine are consumed **VERBATIM** (`simulate_match`,
+`simulate_scheduled_round`, `play_next_node` untouched), the pure modules are
+Django-free + **assert-only**, and this slice consumes **no RNG of its own** ⇒
+**no Score Calibration re-baseline** (tournament sims are non-deterministic, the
+c-3c/c-3d/c-3e precedent). Extends
+[ADR-0023](../../docs/adr/0023-season-phase-composable-structure.md) (Part2c-3f
+consequences addendum, no new ADR); the CONTEXT.md **Season phase** / **Matchday**
+entries carry the season-embedded-playoff-history + per-week-stage-drain
+vocabulary. Seam contract:
+[`.claude/worktrees/lg-02-part2c-3f-seam-contract.md`](../../.claude/worktrees/lg-02-part2c-3f-seam-contract.md).
+
+**Locked names (NEW / CHANGED).**
+- `matches/league_screens/team_history.py::_build_overall_context(team)` —
+  **CHANGED** (the ONLY code edit for sub-feature A): widen the round corpus, fill
+  `playoff_appearances`, add the `Tournament` import (see below).
+- `matches/tournament_engine.py::play_next_bracket_round(tournament: Tournament) -> int`
+  — **NEW**: drain the lowest incomplete `(bracket_type, bracket_round)` STAGE to
+  clinch; return the NODES-clinched count; `0` when nothing playable.
+- `matches/league_views.py::play_week(request, season_id) -> HttpResponse` —
+  **CHANGED**: phase-aware (tournament cursor → `play_next_bracket_round` once +
+  `complete_if_finished()` + 302; else RR matchday path BYTE-IDENTICAL).
+- `matches/tasks.py::play_season_task(self, season_id, max_matchdays=None) -> dict`
+  — **CHANGED**: phase-aware tail draining bracket STAGES on the shared
+  `max_matchdays − rr_weeks_played` budget; PROGRESS switches to `stage_progress`
+  counts at the boundary.
+
+**Sub-feature A — include playoff rounds in Team History (Overall tab).**
+Season-embedded playoff Matches keep `season=NULL` (Part2c-1 decision #3), so the
+Overall tab cannot reach them by flipping `season__isnull` (a **standalone sandbox**
+Tournament also has `season=NULL`). The discriminator is the **FK chain** off
+`GameRound`:
+`match__series_match__node__tournament__season_phases__isnull=False` — a
+`SeasonPhase.tournament` FK pointing at the Tournament makes its reverse
+`season_phases` set non-empty (season-embedded), whereas a sandbox Tournament's
+`season_phases` is empty. Three edits inside the ONE function
+`_build_overall_context(team)`:
+- **Edit 1 — widen the round corpus.** The regular-season-only filter
+  (`GameRound.objects.filter(match__season__isnull=False)`) becomes a **single
+  query** UNION of regular-season rounds + season-embedded playoff rounds:
+  ```python
+  rounds = (
+      GameRound.objects.filter(
+          Q(match__season__isnull=False)
+          | Q(match__series_match__node__tournament__season_phases__isnull=False),
+          match__is_completed=True,
+      )
+      .filter(Q(team_red=team) | Q(team_blue=team))
+      .only("team_red_id", "team_blue_id", "red_points", "blue_points")
+      .distinct()
+  )
+  ```
+  **`.distinct()` is load-bearing** — the to-many `series_match` join can
+  duplicate a `GameRound` row when a node holds multiple `SeriesMatch` rows. The
+  per-Round W/L/T fold below (`round_outcome(...)` keyed on `gr.team_red_id ==
+  team.id` / `gr.team_blue_id == team.id`) is **UNCHANGED**.
+- **Edit 2 — fill `playoff_appearances`** = count of DISTINCT season-embedded
+  playoff Tournaments the team was seeded into (team-global, all leagues, mirroring
+  Overall's all-time scope):
+  ```python
+  playoff_appearances = (
+      Tournament.objects.filter(
+          season_phases__isnull=False, participants__team=team
+      )
+      .distinct()
+      .count()
+  )
+  ```
+  `season_phases__isnull=False` excludes sandbox Tournaments; `participants__team`
+  keeps it to brackets the team was seeded into; `.distinct()` collapses the
+  to-many `participants` join. Passed through verbatim:
+  `compute_overall_record(outcomes, championships=championships,
+  playoff_appearances=playoff_appearances)`.
+- **Edit 3 — add the import.** `Tournament` to
+  `from matches.models import GameRound, League, PlayerRoundState, Season, Tournament`
+  (only its presence is load-bearing).
+
+**Pure module + template UNCHANGED (assert-only).**
+`matches/team_history_logic.py` ALREADY supports the arg —
+`compute_overall_record(round_outcomes, *, championships, playoff_appearances:
+int = 0) -> OverallRecord` and `OverallRecord.playoff_appearances` — so the pure
+module is **NOT edited** (`TestNoDjangoImportsLeaked` stays green); the view does
+ALL ORM work and the seam carries only a `list[str]` of `"W"`/`"L"`/`"T"` plus two
+ints. `templates/leagues/team_history.html` already renders
+`{{ overall_record.playoff_appearances }}` inside `#team-history-overall`; it read
+`0` only because the view omitted the kwarg — **NO template change, no new DOM id**.
+
+**KEPT UNCHANGED (sub-feature A).** **Players tab**
+(`team_history.py::_build_players_context`) — its `PlayerRoundState` corpus filters
+ONLY by team membership (no season filter), so playoff `PlayerRoundState` rows
+**already** count toward player rollups; the **ONE accepted limitation**: a playoff
+Match's `season_id is None`, so its `season_year` resolves to `None` — playoff
+games count toward `games_played`/stats but do NOT set "last season played"
+(accepted, out of scope). **Seasons tab** (`_build_seasons_context`) — per-Season
+rank via `compute_standings` scoped to `season.matches.filter(is_completed=True)`
+stays **regular-season-only** (playoff Matches have `season_id=None`, so rank is
+**unaffected**).
+
+**Sub-feature B — weekly playoff pacing.** New engine helper
+`play_next_bracket_round(tournament) -> int` built on the **VERBATIM** per-Match
+atomic `play_next_node`. **"One week" = one STAGE** = the lowest incomplete
+`(bracket_type, bracket_round)` group (the unit `matches/bracket.py::stage_progress`
+counts — for single-elim, one bracket depth: all quarterfinals, then semifinals,
+then the final). It locates the lowest incomplete stage via the existing
+`find_next_node` ordering (`target_stage = (target["bracket_type"],
+target["bracket_round"])` of the first returned node), then loops `play_next_node`
+**while** the next playable node is still in `target_stage`, counting a node
+**once on clinch** (when its `winner_id` is now set — a Bo3/Bo5 node takes multiple
+`play_next_node` calls to clinch but counts once), and STOPS without starting the
+next stage. **Returns the NODES-clinched count** this call; `0` when nothing
+playable (the deterministic-structure quantity tests assert on). **No outer
+`@transaction.atomic`** — each `play_next_node` is its own per-Match atomic commit
+(ADR-0016), so a mid-stage failure leaves every clinched node committed and is
+resumable.
+
+**`play_week` (phase-aware).** Signature UNCHANGED; the POST-only 405 guard,
+`last_league_id` write, and the non-`active` `_render_season_dashboard_error`
+branch stay **BYTE-IDENTICAL**. The change: branch on the cursor BEFORE the RR
+matchday path — when `season.current_phase()` is a built tournament phase
+(`phase.phase_type == "tournament" and phase.tournament_id is not None`), call
+`play_next_bracket_round(phase.tournament)` once, `season.complete_if_finished()`,
+and `redirect("season_dashboard", …)`; **else the existing RR matchday path runs
+byte-for-byte** (the `transaction.atomic` block, by-phase fixtures, `played_keys`,
+`select_play_fixtures(..., 1)`, the per-fixture loop). The playoff branch needs no
+`transaction.atomic` wrapper (`play_next_bracket_round` is per-Match atomic).
+
+**`play_season_task` (phase-aware tail).** Signature UNCHANGED (drives Play Two
+Months `max_matchdays=8` and Play Until End `max_matchdays=None`); the RR fixture
+loop is UNCHANGED. **APPEND a tail** AFTER the RR loop: if the cursor is a built
+tournament phase, **drain bracket STAGES on the SHARED budget** —
+`rr_weeks_played = len({fixture.matchday for the fixtures simulated this run})`
+(matchday is global-continuous post-Part2c-2, so a bare count is the distinct-week
+count); `max_matchdays is None` ⇒ unbounded drain via `play_next_bracket_round`
+until it returns `0` (champion crowned), else
+`bracket_budget = max(0, max_matchdays − rr_weeks_played)` calls (stop early on a
+`0` return). Then `season.complete_if_finished()`. **PROGRESS `update_state`
+`{completed, total}` switches meaning at the boundary (LOCKED):** Round-counts
+during the RR loop (unchanged), then **STAGE-counts** via
+`matches/bracket.stage_progress` over the tournament's nodes (the
+`play_playoffs_task` precedent) once the bracket drain begins; the final return is
+stage-counts when a tail ran, else the RR shape. `_build_play_status_response`
+reads `{completed, total}` generically and is **UNCHANGED**. No outer
+`@transaction.atomic`; `finally: django.db.close_old_connections()` stays.
+
+**KEPT UNCHANGED (sub-feature B + invariants).** `play_single_round` (one playoff
+Match), `play_playoffs` (async drain-all), `play_playoffs_task`,
+`_build_play_status_response`, `play_two_months`, `play_until_end`,
+`simulate_match`, `simulate_scheduled_round`, `play_next_node`. The **Playoffs
+League screen STAYS AS-IS** — `matches/league_screens/playoffs.py` +
+`templates/leagues/playoffs.html` (embedded bracket) are byte-unchanged invariants
+(NO game-log rewrite, NO `_playoff_log_rows` / `matches/playoff_log.py` / new
+`playoffs-*` DOM ids). The registry / sidebar / url / re-export are already live
+(`"league_playoffs" not in _FEATURE_REGISTRY`, the `_build_league_sidebar_links`
+Playoffs entry resolves to `_cs("league_playoffs")`, the `league_playoffs` URL,
+the `__init__.py` re-export) — **assert-unchanged only**. The Play dropdown already
+carries the Part2c-3c terminal "Until Playoffs"/"Until Tournament" relabel — **no
+new dashboard/template change, NO new DOM ids**; this slice only changes what those
+views DO on a playoff cursor.
+
+**Scope-out (LOCKED).** NO migration; NO `Match` / `GameRound` / `SeasonPhase` /
+`Tournament` field change; NO `team_history_logic.py` / `team_history.html` change;
+NO Players-tab / Seasons-tab change; NO playoffs-screen reshape; NO
+`simulate_match` / `simulate_scheduled_round` / `play_next_node` mechanics change;
+NO Score Calibration re-baseline; NO registry/sidebar/url/re-export work; NO new
+dashboard DOM ids. Mid-season **`random_draw`** tournament build still **DEFERRED**
+(parser-rejected); **`member_night`** phase **inert**. **NO ADR / CONTEXT.md edit.**
+
+**Tests.** `test_team_history_logic.py` (assert-only — the existing purity test
+stays green + the `playoff_appearances` field flows through
+`compute_overall_record`); the existing **Team History view test file** (EXTENDED
+in place — hand-build a Season with a built single-elim playoff embedded via the
+FULL FK chain `SeasonPhase(tournament=…) → Tournament → BracketNode → SeriesMatch →
+Match(season=NULL) → GameRound`: the Overall W/L/T total rises by exactly the
+number of playoff `GameRound`s the team played; `playoff_appearances` equals the
+DISTINCT season-embedded playoff Tournament count; a **standalone sandbox**
+Tournament's rounds are NOT counted and do NOT bump `playoff_appearances`; the
+Seasons-tab rank is unaffected; the Players-tab corpus rule still holds);
+`test_tournament_engine.py` (EXTENDED — `play_next_bracket_round` drains one stage
+and returns its node-clinch count, leaves the next stage unresolved, returns `0`
+when nothing playable, a Bo3 stage counts each node once on clinch);
+`test_league_play.py` / the league-play view tests (EXTENDED, under
+`CELERY_TASK_ALWAYS_EAGER` — `play_week` drains exactly ONE bracket STAGE on a
+tournament cursor then 302s and runs the RR path unchanged on an RR cursor, 405 on
+GET, non-`active` → `play_error`; `play_season_task` with `max_matchdays=None`
+drains RR then bracket to a champion, with `max_matchdays=8` subtracts
+`rr_weeks_played` from the bracket budget and resumes on a second call, PROGRESS
+`meta` switches to stage-counts during the drain). **Assertion discipline:**
+STRUCTURE / COUNTS / champion id / state / record deltas / DOM ids — **NEVER raw
+simulated point totals** (tournament sims draw fresh per-round seeds).
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)
