@@ -139,13 +139,46 @@ remaining Part2c follow-up.
 
 ### LG-03 · Season-end awards
 
-Computed from `PlayerRoundState` aggregates: Most Points, Highest K/D by role, Best Medic, 
-Most Efficient Nuke, Best Accuracy. Awards page at `/seasons/<id>/awards/`. Award badge on player profile.
-
-Also surface the headline **season MVP** (and, once LG-02 playoffs land, a
-**Finals MVP**) on the **League History** table (LG-01f) — the reference product
-puts both in its history row next to Champion / Runner-up, and ours currently has
-no awards column. See
+**Status: DONE.** A per-Season **Season-end awards** page (`/seasons/<id>/awards/`,
+URL name `season_awards`) shipping **6 category awards + 2 headline awards**, two
+new LG-01f League-History columns, and the LG-06h player-page badge — all computed
+**read-only** over already-persisted `PlayerRoundState` + `GameEvent` rows
+(consumes **no RNG**, **no simulator / engine change, no Score Calibration
+re-baseline, no ADR**). **Award catalog (exact metrics):** **Most Points** (summed
+`points_scored`), **Highest Tag Ratio by Role** (`sum(tags_made)/max(sum(
+times_tagged),1)`, **5 per-role winners** — commander/heavy/scout/medic/ammo),
+**Most Resupplies** (summed `resupplies_given`, an Ammo can win), **Longest
+Survival** (mean `survival_seconds` per Round), **Most Efficient Nuke**
+(nuke-elimination count), **Best Accuracy** (mean `accuracy` per Round); + the two
+headlines **Season MVP** (summed `mvp` over the regular season) and **Finals MVP**
+(summed `mvp` over the deciding playoff node's Rounds, **champion-team players
+only**). **Eligibility floor `ceil(games/2)`** (`games = max(player_games)`) applies to
+the three rate/avg awards only; count awards + both headline MVPs are unflooded;
+**tiebreak** `value desc → player_id asc`. **Most Efficient Nuke is
+GameEvent-derived** — counted from `GameEvent(event_type="elimination",
+metadata["elimination_action"]=="nuke")` keyed by the eliminating-Commander actor,
+**deliberately NOT** read from the dead `PlayerRoundState` nuke counters
+(`medic_lives_removed_from_nuke` / `lives_lost_to_nukes`); wiring those is **SIM-13**
+(filed separately below), and LG-03 may swap to a cheaper PRS aggregate once SIM-13
+lands. **Finals MVP** resolves the champion-team / deciding-node corpus off the
+**embedded playoff Tournament** via the FK chain
+`...node__tournament__season_phases__isnull=False` + the `advances_to is None`
+deciding node, `champion_team_id = Season.champion_team_id` (absent ⇒ RR-only / no
+champion). The pure module is **Django-free** (`matches/season_awards.py` —
+`AWARD_CATEGORIES`, `AwardWinner`, `compute_season_awards`; reuses
+`_build_round_dicts` for the per-round input shape but **NOT** `aggregate_player_stats`,
+which averages mvp). Computation is a **hybrid derived + `Season.season_awards_json`
+cache** through the single chokepoint `Season.get_or_compute_awards()` (completed-
+only, lazy, no eager warm) reused by the awards view, the history row, and the
+player badge; the **one** migration is `0048_season_season_awards_json` (single
+`AddField`, no `RunPython`/backfill, ADR-0004 posture). **LG-01f** gains +2
+columns (`season_mvp` / `finals_mvp` award-dict-or-`None` per completed row);
+**LG-06h** fills the `league-player-awards-stub` badge. Entry points: the Season
+dashboard **"View Awards"** link + the League-History per-row link — **no sidebar /
+topbar entry, no global career-page badge**. **No re-baseline / no ADR / no sim
+change.** Seam contract:
+[`.claude/worktrees/lg-03-seam-contract.md`](.claude/worktrees/lg-03-seam-contract.md);
+impl notes in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md). See
 [`docs/zengm-comparison/season-lifecycle.md`](docs/zengm-comparison/season-lifecycle.md).
 
 ### LG-04 · Season-end stat updates
@@ -740,6 +773,45 @@ capture, Scout shots-critical) so the clamp is regression-guarded per branch.
 affected ticks) — fold it into the single pending post-MOVE-01 Score Calibration re-baseline; do **not**
 create a separate re-baseline obligation. No migration, no new domain term, no ADR (a one-line clamp is
 reversible and unsurprising).
+
+### SIM-13 · Wire the dead nuke-victim counters on `PlayerRoundState`
+
+**Status: NOT STARTED.** Surfaced during the LG-03 grill (June 2026). Two
+`PlayerRoundState` `IntegerField`s — **`lives_lost_to_nukes`** (migration `0015`) and
+**`medic_lives_removed_from_nuke`** (migration `0014`) — are **declared columns carried
+through the whole stack** (the `PlayerCounters` dataclass in
+`sim_helpers/player_counters.py`, the `_player_row` view dict, the `round_summary` key
+list, the round-detail fixtures) but **no simulator path ever increments them** — they
+are always `0` (the same "declared-but-never-emitted" trap as the dead `team_elimination`
+`GameEvent`). `BatchSimulator._complete_nuke` decrements `opp.final_lives` and calls
+`record_down` but writes neither counter; `PlayerRoundState.lives_lost` (`models.py:434`)
+already sums `lives_lost_to_nukes` into its deaths denominator, so it has silently been
+under-counting nuke deaths.
+
+- **Fix:** in `_complete_nuke`, after computing `lives_taken = min(opp.final_lives, 3)`,
+  increment the **victim's** `lives_lost_to_nukes += lives_taken` (and, for a Medic
+  victim, `medic_lives_removed_from_nuke += lives_taken` — **pin the exact semantics of
+  `medic_lives_removed_from_nuke` in this task's own grill**: the name is ambiguous
+  between "lives a Medic lost to a nuke" and "lives a Medic-restored player lost to a
+  nuke"; the field's only reader today is the round-summary surface). Increment the
+  in-memory `PlayerState.counters` so it flushes through the existing
+  `counters → PlayerRoundState` persistence — no new column, **no migration**.
+- **No re-baseline:** incrementing a counter consumes **no RNG** and changes no Action
+  weight or hit roll → the SIM-07/08 seed chain is untouched, **no Score Calibration
+  re-baseline obligation**. (The one behavioural ripple is that `lives_lost` /
+  `lives_lost_to_nukes`-derived displays stop reading `0` — a *display* correction, not a
+  mechanics change.)
+- **Once live, LG-03 may switch** its **Most Efficient Nuke** award (most enemy players
+  eliminated by nukes) and any "lives removed by nuke" surface from the GameEvent-log
+  scan it ships with to a cheaper `PlayerRoundState` aggregate. Until then LG-03
+  deliberately derives nuke impact from the `GameEvent` log (the `"nuke detonates"`
+  `special` event `targets` + `action="nuke"` `elimination` events) because the counters
+  are dead.
+- **Tests:** a regression test that a round containing a successful nuke detonation
+  persists non-zero `lives_lost_to_nukes` on each hit victim (and the Medic-victim
+  variant), plus a guard that `PlayerRoundState.lives_lost` now includes the nuke deaths.
+  No migration, no new domain term, no ADR (a counter wiring is reversible and
+  unsurprising).
 
 ### LG-06 · Phased Season lifecycle (off-season / regular / tournament)
 

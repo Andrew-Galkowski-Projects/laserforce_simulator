@@ -5235,6 +5235,265 @@ drains RR then bracket to a champion, with `max_matchdays=8` subtracts
 STRUCTURE / COUNTS / champion id / state / record deltas / DOM ids — **NEVER raw
 simulated point totals** (tournament sims draw fresh per-round seeds).
 
+## LG-03 season-end awards
+
+A per-Season **Season-end awards** page — **6 category awards + 2 headline
+awards** (**Season MVP** / **Finals MVP**), two new LG-01f League-History columns,
+and the LG-06h player-page badge. All awards are computed **read-only over already
+persisted data** (`PlayerRoundState` + `GameEvent` rows) — **no simulator / engine
+/ RNG change, no Score Calibration re-baseline, no ADR**, and **one** migration (a
+single `Season.season_awards_json` `AddField`). The CONTEXT.md `### Awards` glossary
+(**Season award** / **Season MVP** / **Finals MVP**) is already written and is NOT
+touched here. Seam contract:
+[`.claude/worktrees/lg-03-seam-contract.md`](../../.claude/worktrees/lg-03-seam-contract.md).
+
+**Pure module `matches/season_awards.py` (NEW).** Django-free, assert-only,
+**frozen import allowlist** — `dataclasses` / `typing` / `math` / `collections`
+ONLY (NO Django, NO ORM, NO `random`, NO I/O), defended by
+`TestNoDjangoImportsLeaked` (subprocess fresh-import + `sys.modules` walk, the
+`matches/standings.py` / `matches/stat_feats.py` precedent). It exports:
+- `AWARD_CATEGORIES: tuple[tuple[str, str], ...]` — the **6 locked `(key, label)`
+  pairs**: `("most_points", "Most Points")`, `("tag_ratio", "Highest Tag Ratio by
+  Role")`, `("most_resupplies", "Most Resupplies")`, `("longest_survival", "Longest
+  Survival")`, `("most_efficient_nuke", "Most Efficient Nuke")`, `("best_accuracy",
+  "Best Accuracy")`. The two headline keys are **NOT** in this tuple:
+  `HEADLINE_SEASON_MVP = "season_mvp"` / `HEADLINE_FINALS_MVP = "finals_mvp"`
+  (rendered in their own slots).
+- `AwardWinner` — a `@dataclass(frozen=True)` with 8 fields `category, label,
+  player_id, player_name, team_id, team_name, value, role=None`. `role` is set
+  **ONLY** for the ≤5 per-Role Tag-Ratio sub-winners
+  (`commander`/`heavy`/`scout`/`medic`/`ammo`), `None` otherwise.
+- `compute_season_awards(regular_rounds, nuke_elims_by_player, finals_rounds,
+  champion_team_id) -> dict` — keyed-by-category dict (the cache shape below);
+  each `AWARD_CATEGORIES` key maps to an `AwardWinner | None` except `"tag_ratio"`
+  ⇒ `list[AwardWinner]` (the ≤5 per-role winners in
+  `commander/heavy/scout/medic/ammo` order, absent roles skipped); plus
+  `"season_mvp"` / `"finals_mvp"` ⇒ `AwardWinner | None`. **Returns `AwardWinner`
+  instances** — the serialise-to-plain-dict step happens at the `Season` method
+  boundary, NOT in the pure module.
+
+**The 3 input seams** (all VIEW-side, the pure module is I/O-free):
+- `regular_rounds: list[dict]` and `finals_rounds: list[dict]` — **REUSE
+  `matches/league_screens/player_stats.py::_build_round_dicts` VERBATIM** (the same
+  per-`PlayerRoundState` dict shape LG-06h consumes). The module reads
+  `points_scored` / `tags_made` / `times_tagged` / `resupplies_given` /
+  `survival_seconds` (already `min(was_eliminated_at, 1800)/2` per round) /
+  `accuracy` / `mvp` / `role` + identity fields.
+- `nuke_elims_by_player: dict[int, int]` — `{player_id: nuke-elimination count}`,
+  the ONE field NOT in the round dict (see the GameEvent scan below).
+- `champion_team_id: Optional[int]` — the Season champion (`None` ⇒ Finals MVP
+  absent).
+
+**`value` per category** (the number the winner led on): `most_points` ⇒ **summed**
+`points_scored`; `tag_ratio` ⇒ `sum(tags_made)/max(sum(times_tagged), 1)` per role;
+`most_resupplies` ⇒ **summed** `resupplies_given` (an Ammo CAN win); `longest_survival`
+⇒ **mean** `survival_seconds` per Round; `most_efficient_nuke` ⇒ nuke-elimination
+count; `best_accuracy` ⇒ **mean** `accuracy` per Round; `season_mvp` ⇒ **summed**
+`mvp`; `finals_mvp` ⇒ **summed** `mvp` over the deciding playoff node's Rounds
+(champion-team players only). The module **owns its own summed-mvp accumulation** —
+it does NOT call `aggregate_player_stats` (which AVERAGES mvp and omits nuke elims);
+it reuses only the `_build_round_dicts` input shape.
+
+**Eligibility floor (`⌈games/2⌉`).** `games = max(player_games over all players)`
+in the regular-season corpus (`0` when empty — admits everyone vacuously). The three
+**rate/avg awards** (`tag_ratio` / `longest_survival` / `best_accuracy`) require
+`player_games >= ceil(games / 2)`. The three **count awards** (`most_points` /
+`most_resupplies` / `most_efficient_nuke`) take **NO floor**; both headline MVPs
+are **self-flooring** (summed) ⇒ **NO games floor**. **Tiebreak (every award,
+incl. within each per-role tag-ratio bucket):** `value` DESC → `player_id` ASC
+(mirrors `matches/stat_feats.py::_season_best_keys`). **Absent** winner (no
+`AwardWinner` emitted, ⇒ `None` / `[]` in the dict) on empty input, zero eligible
+players, an empty nuke map, or — for Finals MVP — `finals_rounds == []` or
+`champion_team_id is None`.
+
+**Most Efficient Nuke is GameEvent-derived (the dead-PRS-counter note / SIM-13).**
+The award is NOT read from the `PlayerRoundState` nuke counters
+(`medic_lives_removed_from_nuke` / `lives_lost_to_nukes`) — those columns are
+**declared-but-never-incremented dead counters** (always `0`; the wiring is
+**SIM-13**, deliberately NOT done here). Instead the count is derived from the
+`GameEvent` log: count `event_type="elimination"` rows whose
+`metadata["elimination_action"] == "nuke"`, keyed by the eliminating Commander
+(the event **actor**). Once SIM-13 lands, LG-03 MAY swap this scan for a cheaper
+`PlayerRoundState` aggregate — until then the GameEvent scan is the source.
+
+**Model + migration.** `Season.season_awards_json = models.JSONField(null=True,
+blank=True, default=None)` — declared alongside the existing `highlights_json` /
+`starting_team_ids_json` JSONField-cache precedent on `Season`. `None` = cache miss
+(not yet computed); a dict = warmed cache. Migration
+`matches/migrations/0048_season_season_awards_json.py` (dep
+`0047_seasonphase_tournament_subconfig`, the highest tracked `matches` migration —
+c-3f shipped none) is a **SINGLE `AddField`, NO `RunPython` / `RunSQL` / backfill**
+(ADR-0004 disposable-data posture — existing completed Seasons take `default=None`
+and warm lazily on first awards render). This is the **only** migration in the slice.
+
+**`Season.get_or_compute_awards() -> dict` — the lazy-cache chokepoint.** The SINGLE
+read/write site, reused by all three consumers (the awards view, the LG-01f history
+row, the LG-06h badge). Behaviour:
+- **Non-`completed` Season** (in-progress / draft) ⇒ returns the empty sentinel
+  `{}` **WITHOUT** computing or writing the cache (caller renders "not yet
+  awarded"). Only a `completed` Season ever computes/caches — `complete_if_finished`
+  is **NOT** modified (lazy-only, **no eager warm**).
+- **Completed, cache hit** (`season_awards_json is not None`) ⇒ returns the cached
+  dict verbatim (plain award dicts).
+- **Completed, cache miss** ⇒ build the 3 pure-module inputs from the ORM (regular
+  rounds via `_build_round_dicts({"game_round__match__season": self}`; the nuke-elim
+  map via the GameEvent scan; the finals rounds + `champion_team_id` via the FK
+  chain below), call `compute_season_awards(...)`, **serialise** the `AwardWinner`s
+  to plain dicts (the cache shape below — the private serialiser e.g.
+  `_award_to_json` lives on the `Season` side, Code-agent discretion on the name),
+  write `self.season_awards_json` + `self.save(update_fields=["season_awards_json"])`,
+  and return the dict. **Consumes no RNG.** Playoff Matches keep `season=NULL`
+  (Part2c-1 #3) so they are naturally excluded from the regular-season corpus.
+
+**Cached JSON shape** — a dict keyed by category; each `AwardWinner` round-trips as
+a plain 8-field dict (`role` is `null` except tag-ratio per-role winners):
+`{"most_points": <dict>|null, "tag_ratio": [<dict>, ...] (0..5), "most_resupplies":
+<dict>|null, "longest_survival": <dict>|null, "most_efficient_nuke": <dict>|null,
+"best_accuracy": <dict>|null, "season_mvp": <dict>|null, "finals_mvp": <dict>|null}`.
+
+**GameEvent nuke scan (view → seam).** Over the Season's completed regular-season
+`GameRound`s:
+```python
+GameEvent.objects.filter(
+    game_round__match__season=season, game_round__match__is_completed=True,
+    event_type="elimination", metadata__elimination_action="nuke",
+).values("actor_id").annotate(n=Count("id"))
+```
+⇒ `{row["actor_id"]: row["n"]}`. The eliminating Commander is the event **actor**
+(emit site `matches/sim_helpers/event_log.py::elimination`,
+`metadata=_build_meta(..., elimination_action="nuke")`, called from
+`_complete_nuke`). Commander-only by nature. (If the JSON-field lookup is awkward on
+the backend, the view MAY scan `event_type="elimination"` rows and filter
+`ev.metadata.get("elimination_action") == "nuke"` in Python — the COUNT-by-actor
+result is the seam, not the query plan.)
+
+**Finals FK-chain resolution (deciding playoff node → champion-only Rounds).** The
+Season's playoff is the **embedded tournament** reached via the FK chain
+`Match.series_match → BracketNode → Tournament` where `Tournament.season_phases` is
+non-empty (`...node__tournament__season_phases__isnull=False` + `.distinct()` —
+mirrors the c-3f `team_history.py::_build_overall_context` discriminator; a
+standalone sandbox Tournament's `season_phases` is empty). The **deciding node** is
+the championship-decider — the `BracketNode` whose `advances_to is None`
+(`tournament.nodes.filter(advances_to__isnull=True)`: the final for single-elim, GF2
+for DE). Its Rounds = `_build_round_dicts({"game_round__match__series_match__node":
+node})`; `champion_team_id = Season.champion_team_id`; the pure module filters
+`finals_rounds` to `team_id == champion_team_id`. No embedded playoff Tournament, no
+`advances_to is None` node, or no champion ⇒ `finals_rounds = []` and/or
+`champion_team_id = None` ⇒ **Finals MVP absent** (RR-only Seasons get no Finals MVP).
+
+**View / URL / template.** URL name **`season_awards`**, path
+`<int:season_id>/awards/` in `matches/season_urls.py` (adjacent to the
+`standings/` / `schedule/` GET-only family). View
+`matches/league_screens/season_awards.py::season_awards(request, season_id)` (the
+LG-01z `league_screens` package home, re-exported from `league_screens/__init__`,
+bound on `league_views` like the other read-only screens). Step order: **GET-guard
+first line** (`HttpResponseNotAllowed(["GET"])`) → `get_object_or_404(Season, …)` →
+`request.session["last_league_id"] = season.league_id` (the LG-01f session-write
+contract) → `sidebar_links = _build_league_sidebar_links(season.league,
+displayed_season, sidebar_active=None)` (**no sidebar entry matches** ⇒ every entry
+inactive — do NOT add a sidebar key) → `awards = season.get_or_compute_awards()` →
+`render(request, "seasons/awards.html", context)`. Frozen context keys: `season`,
+`league`, `sidebar_links`, `sidebar_active` (=`None`), `awards`, `award_categories`
+(=`AWARD_CATEGORIES`), `is_awarded` (bool). Template
+`templates/seasons/awards.html` (NEW, extends `base.html`, the `d-flex` +
+`league_sidebar.html` shell). **Locked DOM ids:** `season-awards` (root),
+`season-awards-table` (the 6-category table, the `tag_ratio` row expanding to its
+≤5 per-role winners), `season-awards-category-{key}` (one per the 6 keys),
+`season-awards-mvp`, `season-awards-finals-mvp` (renders `—` when `None`),
+`season-awards-not-yet` (the un-warmed/non-completed empty state, shown when
+`is_awarded` is False), `season-awards-empty` (the per-category `—` placeholder).
+Player-name cells link to `{% url 'league_player_detail' season.league_id
+<player_id> %}` (the LG-06h in-League page).
+
+**LG-01f extension — +2 League-History columns.**
+`matches/league_views.py::_build_history_row` gains exactly **two appended keys**
+(11 → 13): `season_mvp` / `finals_mvp`, each a **plain award dict (or `None`)** — NOT
+a `Player`, NOT a bare name — so `history.html` renders the linked name without an
+extra query. `league_history` sources them via `season.get_or_compute_awards()` for
+**completed** rows only (gate on `not is_in_progress`); the in-progress row passes
+`None` for both (no compute, no cache warm). `templates/leagues/history.html` adds
+two `<th>`s (ids `league-history-th-season-mvp` / `league-history-th-finals-mvp`,
+after the Champion / Runner-Up / Tournament-Champion cluster) + the per-row cells
+(linked to `league_player_detail`, `—` when `None`); the existing per-row id
+`league-history-row-{season_id}` is unchanged.
+
+**LG-06h extension — fill `league-player-awards-stub`.**
+`matches/league_screens/player_detail.py::player_detail` gains ONE context key
+(**the 10th**, the existing 9 unchanged): `player_awards` — a `list[dict]` of every
+award THIS Player won in THIS League's completed Seasons, each shaped
+`{"season_id", "season_name", "category", "label", "role", "value"}`, built by
+iterating `league.seasons.filter(state="completed")`, calling
+`season.get_or_compute_awards()` per Season, and collecting every award-dict whose
+`player_id == player.id` across all 8 slots (incl. each tag-ratio per-role winner +
+both headlines). Order: newest Season first, then `AWARD_CATEGORIES` order then
+headline order. `templates/leagues/player_detail.html` fills the existing
+`<div id="league-player-awards-stub">` (id **PRESERVED**; the other four stubs
+untouched) with new inner ids `league-player-awards-list` /
+`league-player-awards-empty` ("No awards yet"). The global HX-01 career page
+(`/players/<id>/stats/`) is **NOT** touched.
+
+**Entry-point links (no sidebar).** A **"View Awards"** link `{% url 'season_awards'
+season.id %}` (DOM id `season-dashboard-awards-link`, near the
+`season-dashboard-view-bracket-link` slot, recommended gate on a `completed`
+Season) in `templates/seasons/dashboard.html`; and a per-completed-row
+`league-history-awards-link-{season_id}` in `templates/leagues/history.html` (the
+in-progress row gets none). **NO** sidebar / topbar entry, **NO** League dashboard
+link, **NO** global career-page badge.
+
+**Scope-out (LOCKED).** No sidebar/topbar entry (`_build_league_sidebar_links` +
+LG-01f/h/k nav untouched); no global career-page badge; no re-baseline; no
+simulator / engine / RNG change; no ADR; no CONTEXT.md edit; no eager warm in
+`complete_if_finished`; no SIM-13 work (dead PRS counters stay dead); no new
+`Match` / `GameRound` / `GameEvent` field and **no migration beyond the one
+`Season.season_awards_json` `AddField`**; no reuse of `aggregate_player_stats` for
+the awards module (it averages mvp / omits nuke elims — but `_build_round_dicts` IS
+reused for the input shape).
+
+**Tests.** `matches/tests/test_season_awards.py` (NEW — pure-unit per-category
+correctness from hand-built dicts + floor + tiebreak + empty/absent cases + the
+returned-dict shape, plus `TestNoDjangoImportsLeaked`); the awards-view test (NEW
+`test_season_awards_view.py` or an existing season-view file — 200 / DOM ids / 405 /
+404 / session write / cache warm-then-read / the GameEvent nuke winner / the
+full-FK-chain Finals MVP); EXTEND `test_league_history.py` (the +2 columns + the
+awards link, in-progress row renders `—` and does not warm); EXTEND
+`test_league_player_detail.py` (the filled stub). **Assertion discipline:** winner
+IDENTITY / category / DOM ids / cache state / absence — **NEVER raw simulated point
+totals** (playoff sims draw fresh per-round seeds); hand-build deterministic
+`PlayerRoundState` + `GameEvent` rows.
+
+**Locked-names quick index.**
+- **Pure module** `matches/season_awards.py`: `AWARD_CATEGORIES` (6 `(key,label)`
+  pairs — `most_points` / `tag_ratio` / `most_resupplies` / `longest_survival` /
+  `most_efficient_nuke` / `best_accuracy`); `HEADLINE_SEASON_MVP = "season_mvp"`;
+  `HEADLINE_FINALS_MVP = "finals_mvp"`; `AwardWinner(category, label, player_id,
+  player_name, team_id, team_name, value, role=None)`; `compute_season_awards(
+  regular_rounds, nuke_elims_by_player, finals_rounds, champion_team_id) -> dict`;
+  `TestNoDjangoImportsLeaked`.
+- **Model + migration:** `Season.season_awards_json = models.JSONField(null=True,
+  blank=True, default=None)`; `Season.get_or_compute_awards() -> dict` (completed-
+  only lazy cache chokepoint, no RNG); migration
+  `0048_season_season_awards_json.py` (dep `0047_seasonphase_tournament_subconfig`,
+  single `AddField`).
+- **Floor:** `games = max(player_games)`; rate awards (`tag_ratio` /
+  `longest_survival` / `best_accuracy`) need `player_games >= ceil(games/2)`; count
+  awards + headline MVPs no floor. **Tiebreak** `value desc → player_id asc`.
+- **Nuke seam:** `nuke_elims_by_player = {actor_id: count}` from
+  `GameEvent(event_type="elimination", metadata["elimination_action"]=="nuke")`.
+- **Finals seam:** deciding node `tournament.nodes.filter(advances_to__isnull=True)`
+  off the embedded playoff Tournament (`...node__tournament__season_phases__isnull=
+  False`); `champion_team_id = Season.champion_team_id`; champion-filtered.
+- **View / URL / template:** URL `season_awards` (`<int:season_id>/awards/`); view
+  `league_screens/season_awards.py::season_awards`; template `seasons/awards.html`;
+  ids `season-awards` / `-table` / `-category-{key}` / `-mvp` / `-finals-mvp` /
+  `-not-yet` / `-empty`.
+- **LG-01f:** `_build_history_row` +2 keys `season_mvp` / `finals_mvp`; `th` ids
+  `league-history-th-season-mvp` / `-finals-mvp`;
+  `league-history-awards-link-{season_id}`.
+- **LG-06h:** context key `player_awards`; ids `league-player-awards-list` /
+  `league-player-awards-empty` (stub id `league-player-awards-stub` preserved).
+- **Entry points:** `season-dashboard-awards-link` +
+  `league-history-awards-link-{season_id}` (no sidebar).
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)
