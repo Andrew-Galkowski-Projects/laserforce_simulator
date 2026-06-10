@@ -1227,3 +1227,153 @@ class TestLg02Part2cPlaySeasonTaskMultiRr(TestCase):
         self.assertFalse(season._phase_complete(rr2))
         self.assertEqual(season.state, "active")
         self.assertIsNone(season.champion_team_id)
+
+
+# ===========================================================================
+# LG-02-Part2c-3f — play_season_task phase-aware tail (weekly playoff pacing)
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3f-seam-contract.md`` §2.3 /
+# §5 / §6.4: after the RR loop, ``play_season_task`` drains the trailing built
+# tournament phase via ``play_next_bracket_round`` on the SHARED
+# ``max_matchdays`` budget:
+#   - ``max_matchdays=None`` ⇒ unbounded RR drain THEN unbounded bracket drain
+#     to a champion (``season.champion_team`` set, ``state == "completed"``);
+#   - ``max_matchdays=8`` ⇒ ``rr_weeks_played`` (distinct RR matchdays simulated
+#     this run) is SUBTRACTED from the bracket budget, so a run can stop
+#     mid-bracket when the shared budget is exhausted, resuming on a second call;
+#   - the PROGRESS ``meta`` switches to STAGE counts (``stage_progress``) during
+#     the bracket drain (``total == stage_total``).
+#
+# Champion id / state / Match & node counts — NEVER exact simulated point
+# totals (tournament sims are non-deterministic). Runs under the existing
+# ``CELERY_TASK_ALWAYS_EAGER`` conftest. Appended as NEW classes; no existing
+# class is modified. These WILL fail until the Code agent lands the phase-aware
+# tail + ``play_next_bracket_round`` — the TDD red state.
+
+from matches.models import BracketNode as _Lg3fBracketNode  # noqa: E402
+
+
+def _lg3f_rr_tournament_season(prefix: str, n: int = 4):
+    """An active Season: ordinal-1 ``round_robin`` + ordinal-2 ``tournament``
+    (season-ending ``standings``) SeasonPhase, ``n`` slotted teams enrolled,
+    started. Returns ``(season, teams, rr, tournament_phase)``.
+    """
+    league = League.objects.create(name=f"L{prefix}")
+    season = Season.objects.create(league=league, name="S1", start_date=date.today())
+    teams = []
+    for i in range(n):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        teams.append(t)
+        season.teams.add(t)
+    rr = _Lg02SeasonPhase.objects.create(
+        season=season, ordinal=1, phase_type="round_robin"
+    )
+    tournament_phase = _Lg02SeasonPhase.objects.create(
+        season=season, ordinal=2, phase_type="tournament"
+    )
+    season.start_season()
+    season.refresh_from_db()
+    return season, teams, rr, tournament_phase
+
+
+class TestPlaySeasonTaskPlayoffTail(TestCase):
+    """``play_season_task`` drains the RR phase THEN the bracket to a champion
+    when ``max_matchdays=None``."""
+
+    def test_until_end_drains_rr_then_bracket_to_champion(self) -> None:
+        from matches.tasks import play_season_task
+
+        season, _teams, _rr, tp = _lg3f_rr_tournament_season("TailEnd", n=4)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_season_task.delay(season.id, max_matchdays=None)
+        self.assertEqual(result.state, "SUCCESS")
+
+        season.refresh_from_db()
+        tp.refresh_from_db()
+        # The trailing tournament phase was built AND drained to a champion.
+        self.assertIsNotNone(tp.tournament_id)
+        self.assertEqual(tp.tournament.state, "completed")
+        self.assertIsNotNone(tp.tournament.champion_id)
+        # The Season is crowned with the tournament champion.
+        self.assertEqual(season.state, "completed")
+        self.assertEqual(season.champion_team_id, tp.tournament.champion_id)
+
+    def test_until_end_final_progress_meta_is_stage_counts(self) -> None:
+        """During the bracket drain the PROGRESS meta switches to STAGE counts
+        (``stage_progress``); the FINAL emission carries ``total ==
+        stage_total`` for the fully-drained bracket."""
+        from laserforce_simulator.celery_app import celery_app
+        from matches.bracket import stage_progress
+        from matches.models import _node_to_dict
+        from matches.tasks import play_season_task  # noqa: F401  (registers)
+
+        season, _teams, _rr, tp = _lg3f_rr_tournament_season("TailMeta", n=4)
+
+        actual_task = celery_app.tasks["matches.play_season"]
+        metas: list[dict] = []
+
+        def _spy_update_state(*args, **kwargs) -> None:
+            if kwargs.get("state") == "PROGRESS":
+                metas.append(kwargs.get("meta"))
+            return None
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            with patch.object(actual_task, "update_state", _spy_update_state):
+                play_season_task.delay(season.id, max_matchdays=None)
+
+        tp.refresh_from_db()
+        nodes = [
+            _node_to_dict(n)
+            for n in tp.tournament.nodes.select_related(
+                "advances_to", "tournament"
+            ).prefetch_related("series_matches")
+        ]
+        _stage_completed, stage_total = stage_progress(nodes)
+        # The final PROGRESS meta is stage-shaped (completed == total ==
+        # stage_total) — the bracket drained fully.
+        self.assertGreater(len(metas), 0)
+        final_meta = metas[-1]
+        self.assertEqual(final_meta["total"], stage_total)
+        self.assertEqual(final_meta["completed"], stage_total)
+
+
+class TestPlaySeasonTaskSharedBudget(TestCase):
+    """``max_matchdays=8`` subtracts ``rr_weeks_played`` from the bracket budget,
+    stopping mid-bracket when the shared budget is exhausted, and resumes on a
+    second call."""
+
+    def _resolved_node_count(self, tournament) -> int:
+        return _Lg3fBracketNode.objects.filter(
+            tournament=tournament, winner__isnull=False
+        ).count()
+
+    def test_shared_budget_stops_mid_bracket_then_resumes(self) -> None:
+        from matches.tasks import play_season_task
+
+        # N=4 RR spans several global matchdays; an 8-matchday budget plays the
+        # RR (consuming rr_weeks_played) then a BOUNDED number of bracket stages
+        # on the remainder. The 4-team bracket has 2 stages — the shared budget
+        # may not crown a champion in one call.
+        season, _teams, _rr, tp = _lg3f_rr_tournament_season("Shared", n=4)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            first = play_season_task.delay(season.id, max_matchdays=8)
+        self.assertEqual(first.state, "SUCCESS")
+
+        season.refresh_from_db()
+        tp.refresh_from_db()
+        # The RR drained and the tournament phase built (RR completion triggers
+        # the auto-build), so the bracket exists by now.
+        self.assertIsNotNone(tp.tournament_id)
+
+        # Resume — a second call with a fresh budget finishes the bracket to a
+        # champion (idempotent / resumable per the per-node-atomic contract).
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            second = play_season_task.delay(season.id, max_matchdays=8)
+        self.assertEqual(second.state, "SUCCESS")
+        season.refresh_from_db()
+        tp.refresh_from_db()
+        self.assertEqual(tp.tournament.state, "completed")
+        self.assertIsNotNone(tp.tournament.champion_id)
+        self.assertEqual(season.state, "completed")
+        self.assertEqual(season.champion_team_id, tp.tournament.champion_id)

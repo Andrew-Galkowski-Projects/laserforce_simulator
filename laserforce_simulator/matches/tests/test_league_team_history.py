@@ -1027,3 +1027,367 @@ class TestTeamHistoryOverallNoSort(TestCase):
     def test_no_overall_sort_headers(self) -> None:
         content = team_history(_get(self.league.id), self.league.id).content.decode()
         self.assertNotIn("team-history-overall-th-", content)
+
+
+# ===========================================================================
+# LG-02-Part2c-3f — playoff rounds in the Team History Overall tab
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3f-seam-contract.md`` §1 / §6.2:
+# ``_build_overall_context(team)`` widens the Overall-tab round corpus from
+# regular-season-only to a UNION of regular-season rounds + season-embedded
+# playoff rounds (reached through the FK chain
+# ``GameRound.match -> series_match -> node -> tournament -> season_phases``,
+# the ``season_phases__isnull=False`` season-embedded-vs-sandbox discriminator),
+# and fills the ``playoff_appearances`` counter (distinct season-embedded
+# playoff Tournaments the team is a ``participants__team``). Assertions are on
+# RECORD / COUNT deltas + ``playoff_appearances`` + standings rank — NEVER on
+# exact simulated point totals (everything here is hand-built, no simulation).
+#
+# A season-embedded playoff Match keeps ``season=NULL`` (Part2c-1 decision #3)
+# and is reached ONLY through the FK chain from its season-embedded Tournament;
+# a STANDALONE sandbox Tournament also has ``season=NULL`` but no SeasonPhase
+# pointing at it (empty ``season_phases``) and must NOT be counted.
+#
+# Appended as NEW classes; no existing class above is modified. The pure-module
+# field-flow unit is assert-only (``team_history_logic`` is UNCHANGED this
+# slice — the kwarg already exists).
+
+
+from matches.models import (  # noqa: E402
+    BracketNode,
+    SeasonPhase,
+    SeriesMatch,
+    Tournament,
+    TournamentParticipant,
+)
+
+
+def _embedded_playoff_tournament(season, teams, *, name="Playoffs"):
+    """Hand-build a BUILT single-elim playoff embedded in ``season``.
+
+    Creates a ``Tournament`` linked from a ``SeasonPhase.tournament`` (so the
+    Tournament's reverse ``season_phases`` set is non-empty — the
+    season-embedded discriminator), one ``TournamentParticipant`` per team, and
+    one resolved ``BracketNode``. Returns ``(tournament, node)``. No sim.
+    """
+    tournament = Tournament.objects.create(
+        name=name, format="single_elimination", state="active"
+    )
+    SeasonPhase.objects.create(
+        season=season, ordinal=99, phase_type="tournament", tournament=tournament
+    )
+    for seed, team in enumerate(teams, start=1):
+        TournamentParticipant.objects.create(
+            tournament=tournament, team=team, seed=seed
+        )
+    node = BracketNode.objects.create(
+        tournament=tournament,
+        bracket_round=1,
+        position=0,
+        team_a=teams[0],
+        team_b=teams[1],
+        seed_a=1,
+        seed_b=2,
+    )
+    return tournament, node
+
+
+def _play_playoff_round(node, team_red, team_blue, *, red_points, blue_points):
+    """Hand-build one season-embedded playoff GameRound.
+
+    Creates a ``Match`` with ``season=NULL`` (Part2c-1 #3), wires it to the
+    node via a ``SeriesMatch`` row (the FK chain the widened corpus query
+    traverses), and one completed ``GameRound``. Returns the ``GameRound``.
+    """
+    match = Match.objects.create(
+        team_red=team_red,
+        team_blue=team_blue,
+        season=None,
+        match_type="tournament",
+        is_completed=True,
+    )
+    SeriesMatch.objects.create(node=node, match=match, game_number=1, winner=team_red)
+    return GameRound.objects.create(
+        match=match,
+        round_number=1,
+        team_red=team_red,
+        team_blue=team_blue,
+        red_points=red_points,
+        blue_points=blue_points,
+        is_completed=True,
+    )
+
+
+def _sandbox_playoff_round(team_red, team_blue, *, red_points, blue_points):
+    """Hand-build one STANDALONE-sandbox playoff GameRound.
+
+    A standalone ``Tournament`` with NO ``SeasonPhase`` pointing at it (empty
+    ``season_phases``) — its Matches are ``season=NULL`` but the
+    ``season_phases__isnull=False`` guard must EXCLUDE its rounds. Returns the
+    ``GameRound``.
+    """
+    tournament = Tournament.objects.create(
+        name="Sandbox Cup", format="single_elimination", state="active"
+    )
+    TournamentParticipant.objects.create(tournament=tournament, team=team_red, seed=1)
+    TournamentParticipant.objects.create(tournament=tournament, team=team_blue, seed=2)
+    node = BracketNode.objects.create(
+        tournament=tournament,
+        bracket_round=1,
+        position=0,
+        team_a=team_red,
+        team_b=team_blue,
+        seed_a=1,
+        seed_b=2,
+    )
+    match = Match.objects.create(
+        team_red=team_red,
+        team_blue=team_blue,
+        season=None,
+        match_type="tournament",
+        is_completed=True,
+    )
+    SeriesMatch.objects.create(node=node, match=match, game_number=1, winner=team_red)
+    return GameRound.objects.create(
+        match=match,
+        round_number=1,
+        team_red=team_red,
+        team_blue=team_blue,
+        red_points=red_points,
+        blue_points=blue_points,
+        is_completed=True,
+    )
+
+
+def _overall_wlt(content: str) -> tuple[int, int, int]:
+    """Parse the ``wins-losses-ties`` string from the rendered Overall tab.
+
+    The template renders ``{{ wins }}-{{ losses }}-{{ ties }}`` as the first
+    ``<dd>`` inside ``#team-history-overall``.
+    """
+    import re
+
+    section_start = content.index("team-history-overall")
+    window = content[section_start : section_start + 1500]
+    m = re.search(r"(\d+)-(\d+)-(\d+)", window)
+    assert m is not None, "no W-L-T string in the Overall section"
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+
+def _playoff_appearances(content: str) -> int:
+    """Parse the ``playoff_appearances`` value rendered after the
+    'Playoff appearances' ``<dt>`` in ``#team-history-overall``."""
+    import re
+
+    idx = content.index("Playoff appearances")
+    window = content[idx : idx + 200]
+    m = re.search(r"<dd[^>]*>\s*(\d+)\s*</dd>", window)
+    assert m is not None, "no playoff-appearances <dd> after the label"
+    return int(m.group(1))
+
+
+def _season_row_rank(content: str, season_id: int) -> str:
+    """The rendered Final-rank cell text for the given season row."""
+    import re
+
+    row_id = f"team-history-season-row-{season_id}"
+    start = content.index(row_id)
+    row = content[start : start + 600]
+    cells = re.findall(r"<td[^>]*>(.*?)</td>", row, flags=re.DOTALL)
+    # Final rank is the last <td> in the row (Year | Record | Final rank).
+    assert cells, "no <td> cells in the season row"
+    return cells[-1].strip()
+
+
+class TestTeamHistoryOverallPlayoffRounds(TestCase):
+    """The Overall tab W/L/T INCLUDES season-embedded playoff rounds and the
+    ``playoff_appearances`` counter is filled. team_a plays BOTH regular-season
+    and playoff rounds."""
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = self.teams
+        self.league.current_team = self.team_a
+        self.league.save(update_fields=["current_team"])
+
+    def _content(self) -> str:
+        return team_history(_get(self.league.id), self.league.id).content.decode()
+
+    def test_overall_record_includes_playoff_rounds_count_delta(self) -> None:
+        # Regular-season: team_a wins round 1 (1-0-0).
+        _play_round(
+            self.season,
+            self.team_a,
+            self.team_b,
+            round_number=1,
+            red_points=100,
+            blue_points=50,
+        )
+        rs_w, rs_l, rs_t = _overall_wlt(self._content())
+        rs_total = rs_w + rs_l + rs_t
+        self.assertEqual(rs_total, 1)
+
+        # Now add a season-embedded playoff round team_a played (a loss).
+        _tournament, node = _embedded_playoff_tournament(
+            self.season, [self.team_a, self.team_b]
+        )
+        _play_playoff_round(
+            node, self.team_b, self.team_a, red_points=90, blue_points=40
+        )
+
+        w, loss, t = _overall_wlt(self._content())
+        widened_total = w + loss + t
+        # The W+L+T total rose by exactly the one playoff round team_a played.
+        self.assertEqual(widened_total, rs_total + 1)
+        # And it folds in as a LOSS (team_a was the blue side, lost 40-90).
+        self.assertEqual(w, 1)
+        self.assertEqual(loss, 1)
+
+    def test_playoff_appearances_counts_distinct_embedded_tournaments(self) -> None:
+        # Team is seeded into ONE season-embedded playoff Tournament.
+        _embedded_playoff_tournament(self.season, [self.team_a, self.team_b])
+        self.assertEqual(_playoff_appearances(self._content()), 1)
+
+    def test_playoff_appearances_zero_without_embedded_tournament(self) -> None:
+        _play_round(
+            self.season,
+            self.team_a,
+            self.team_b,
+            round_number=1,
+            red_points=100,
+            blue_points=50,
+        )
+        self.assertEqual(_playoff_appearances(self._content()), 0)
+
+    def test_playoff_appearances_counts_two_distinct_embedded_tournaments(
+        self,
+    ) -> None:
+        # A second Season with its own embedded playoff the team is seeded into.
+        season2, _t2 = _make_active_season(self.league, name="S2", n_teams=2)
+        # Re-enroll team_a / team_b into season2 so the participant rows reuse
+        # the SAME teams (playoff_appearances is team-global / all-leagues).
+        season2.teams.add(self.team_a, self.team_b)
+        _embedded_playoff_tournament(self.season, [self.team_a, self.team_b], name="P1")
+        _embedded_playoff_tournament(season2, [self.team_a, self.team_b], name="P2")
+        self.assertEqual(_playoff_appearances(self._content()), 2)
+
+
+class TestTeamHistoryOverallSandboxExcluded(TestCase):
+    """A STANDALONE sandbox Tournament's rounds are NOT counted in the Overall
+    tab and do NOT bump ``playoff_appearances`` (the
+    ``season_phases__isnull=False`` FK-chain guard)."""
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = self.teams
+        self.league.current_team = self.team_a
+        self.league.save(update_fields=["current_team"])
+
+    def _content(self) -> str:
+        return team_history(_get(self.league.id), self.league.id).content.decode()
+
+    def test_sandbox_rounds_do_not_change_overall_wlt(self) -> None:
+        _play_round(
+            self.season,
+            self.team_a,
+            self.team_b,
+            round_number=1,
+            red_points=100,
+            blue_points=50,
+        )
+        before_total = sum(_overall_wlt(self._content()))
+
+        # A standalone sandbox playoff round team_a played — must be ignored.
+        _sandbox_playoff_round(self.team_a, self.team_b, red_points=80, blue_points=40)
+        after_total = sum(_overall_wlt(self._content()))
+        self.assertEqual(after_total, before_total)
+
+    def test_sandbox_tournament_does_not_bump_playoff_appearances(self) -> None:
+        _sandbox_playoff_round(self.team_a, self.team_b, red_points=80, blue_points=40)
+        self.assertEqual(_playoff_appearances(self._content()), 0)
+
+
+class TestTeamHistorySeasonsRankUnaffectedByPlayoff(TestCase):
+    """The Seasons-tab ``rank`` is UNAFFECTED by season-embedded playoff rounds
+    (playoff Matches have ``season_id=None``, so ``compute_standings`` over
+    ``season.matches.filter(is_completed=True)`` ignores them)."""
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = self.teams
+        self.league.current_team = self.team_a
+        self.league.save(update_fields=["current_team"])
+
+    def _content(self) -> str:
+        return team_history(_get(self.league.id), self.league.id).content.decode()
+
+    def test_playoff_rounds_do_not_change_seasons_rank(self) -> None:
+        # team_a beats team_b in the regular season ⇒ a stable rank.
+        _play_round(
+            self.season,
+            self.team_a,
+            self.team_b,
+            round_number=1,
+            red_points=100,
+            blue_points=50,
+        )
+        rank_before = _season_row_rank(self._content(), self.season.id)
+
+        # Add a season-embedded playoff round team_a LOST — must not touch rank.
+        _tournament, node = _embedded_playoff_tournament(
+            self.season, [self.team_a, self.team_b]
+        )
+        _play_playoff_round(
+            node, self.team_b, self.team_a, red_points=99, blue_points=10
+        )
+        rank_after = _season_row_rank(self._content(), self.season.id)
+        self.assertEqual(rank_after, rank_before)
+
+
+class TestTeamHistoryPlayersPlayoffUnchangedRule(TestCase):
+    """Players-tab corpus rule is UNCHANGED: a playoff ``PlayerRoundState`` row
+    still counts toward player rollups (membership-only filter, no season
+    scope). Accepted limitation: its ``season_year`` resolves to ``None`` (the
+    playoff Match has ``season_id=None``). Asserted structurally, not on
+    points."""
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = self.teams
+        self.league.current_team = self.team_a
+        self.league.save(update_fields=["current_team"])
+
+    def test_playoff_player_round_state_counts_toward_rollup(self) -> None:
+        player = self.team_a.slot_commander
+        _tournament, node = _embedded_playoff_tournament(
+            self.season, [self.team_a, self.team_b]
+        )
+        gr = _play_playoff_round(
+            node, self.team_a, self.team_b, red_points=88, blue_points=20
+        )
+        PlayerRoundState.objects.create(
+            game_round=gr, player=player, team_color="red", points_scored=42
+        )
+        content = team_history(_get(self.league.id), self.league.id).content.decode()
+        # The playoff appearance surfaces the player on the Players tab.
+        self.assertIn(f"team-history-player-row-{player.id}", content)
+
+
+class TestTeamHistoryOverallRecordPlayoffFieldFlow(TestCase):
+    """Optional pure-module unit confirming the ``playoff_appearances`` keyword
+    flows into ``OverallRecord``. The module is UNCHANGED this slice
+    (assert-only)."""
+
+    def test_compute_overall_record_carries_playoff_appearances(self) -> None:
+        rec = compute_overall_record(
+            ["W", "L", "T"], championships=1, playoff_appearances=3
+        )
+        self.assertEqual(rec.playoff_appearances, 3)
+        # The W/L/T fold is unchanged.
+        self.assertEqual((rec.wins, rec.losses, rec.ties), (1, 1, 1))
+        self.assertEqual(rec.championships, 1)
