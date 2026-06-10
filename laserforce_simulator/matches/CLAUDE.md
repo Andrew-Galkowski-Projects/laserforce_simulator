@@ -4578,6 +4578,182 @@ split). **Assertion discipline:** schema-level outcomes only (participant seeds,
 fixtures, state flips, champion id, label string) — NEVER raw simulated point totals
 (tournament sims are non-deterministic).
 
+## LG-02-Part2c-3d per-tournament-block configuration
+
+Surfaces **per-`tournament`-block config** on `SeasonPhase` — a **dormant**
+`tournament_format` column (written-but-unread by the build) and a **live**
+`tournament_cut` top-N participant cut applied to the seeded order before the
+bracket builds. A **pure orchestration/config slice** — NO simulator mechanics
+change, NO RNG change, NO tournament-engine change (`play_next_node` /
+`lock_and_build` consumed VERBATIM), **no Score Calibration re-baseline**;
+`tournament_cut=0` (the default) is **byte-identical to today** (full participant
+set). Extends
+[ADR-0023](../../docs/adr/0023-season-phase-composable-structure.md) (Part2c-3d
+consequences addendum, no new ADR); the CONTEXT.md **Season phase** entry carries
+the config-split vocabulary. Seam contract:
+[`.claude/worktrees/lg-02-part2c-3d-seam-contract.md`](../../.claude/worktrees/lg-02-part2c-3d-seam-contract.md).
+
+**Model (`matches/models.py`, `SeasonPhase`).** Two new columns, appended
+immediately after the existing `tournament_mode` field (before `class Meta`):
+- **`tournament_format = models.CharField(max_length=32,
+  choices=TOURNAMENT_FORMAT_CHOICES, default="single_elimination")`** — **DORMANT**
+  (written-but-unread by the build this slice). Class attr
+  **`TOURNAMENT_FORMAT_CHOICES`** is INLINED on `SeasonPhase` (it must NOT reference
+  `Tournament.FORMAT_CHOICES` — `Tournament` is declared LATER in the file, so a
+  class-body reference fails at eval; the c-3b `TOURNAMENT_MODE_CHOICES`-inlined
+  precedent). Its **5 tuples mirror `Tournament.FORMAT_CHOICES` byte-for-byte**:
+  `("single_elimination", "Single elimination")`, `("double_elimination", "Double
+  elimination")`, `("round_robin", "Round robin")`, `("round_robin_double_elim",
+  "Round robin → Double elimination")` (the `→` is U+2192), `("swiss", "Swiss")`.
+- **`tournament_cut = models.PositiveSmallIntegerField(default=0)`** — **LIVE**
+  (`0` = no cut = all enrolled teams). No `db_index`, no `null`/`blank`, no
+  constraint on either column.
+
+**Migration `0046_seasonphase_format_cut`** (dep `0045_seasonphase_tournament_mode`):
+exactly **2× `AddField`** in order — `tournament_format` THEN `tournament_cut` —
+**NO `RunPython` / NO backfill** ([ADR-0004](../../docs/adr/0004-simulation-data-is-disposable.md)
+posture — existing tournament phases inherit `tournament_format="single_elimination"`
++ `tournament_cut=0`).
+
+**Build cut slice (`Season.activate_pending_tournament_phase`,
+`@transaction.atomic`).** The method is UNCHANGED except for **ONE inserted guard**,
+placed AFTER `order = self._seed_order_for_phase(phase)` and BEFORE the existing
+`if not order: return`:
+
+```python
+        order = self._seed_order_for_phase(phase)
+        if phase.tournament_cut:
+            order = order[:phase.tournament_cut]
+        if not order:
+            return
+```
+
+It keeps the top `cut` seeds of the already-ordered (any-mode) seed vector — dense
+seeds `1..cut`. **Cut semantics:** `tournament_cut == 0` ⇒ slice not applied (full
+set, byte-identical to today); `cut > 0` ⇒ `order[:cut]`; `cut > len(order)` ⇒ a
+Python no-op slice past end (all teams). `Season._seed_order_for_phase` is
+**BYTE-IDENTICAL / NOT edited** — the cut applies to its OUTPUT at the caller, never
+inside it. The build tail STAYS hardcoded: `Tournament.objects.create(...,
+format="single_elimination", team_assembly="preset", state="setup")`, the
+participant loop `seed = position + 1`, `phase.tournament` /
+`save(update_fields=["tournament"])`, `lock_and_build()`. **`tournament_format` is
+written-but-unread** — an admin who sets `tournament_format="swiss"` STILL gets a
+single-elim bracket (a known, ACCEPTABLE admin foot-gun this slice; the live format
+build is c-3e).
+
+**Pure module (`matches/phase_composer.py`).** `PhaseSpec` gains a trailing
+**`tournament_cut: int = 0`** (appended LAST with a default ⇒ existing keyword
+constructions stay equality-identical, the c-3a `leg` / c-3b `tournament_mode`
+precedent). The frozen import allowlist (`dataclasses` / `typing` ONLY) is
+UNCHANGED — the new code adds **NO import**, so `TestNoDjangoImportsLeaked` stays
+green.
+
+**Wire grammar `tournament[:mode[:cut]]` (`matches/phase_composer.py`).** The
+**tournament branch only** switches from `token.partition(":")` to
+**`parts = token.split(":")`**: `parts[0]` = type, `parts[1]` = mode (default
+`"standings"`), `parts[2]` = cut string (default `"0"`). The **RR branch grammar is
+UNCHANGED** — still `round_robin[:schedule_format]` (max 2 parts via `partition`; a
+3rd part → malformed). Locked tournament-token rules:
+- bare `tournament` ⇒ mode `"standings"`, cut `0`.
+- `tournament:strength` ⇒ mode `"strength"`, cut `0`.
+- `tournament:standings:8` ⇒ mode `"standings"`, cut `8`.
+- `len(parts) > 3` ⇒ EXISTING `ValueError("malformed phase composition")`.
+- empty cut (e.g. `tournament:standings:`) / non-int cut ⇒ EXISTING
+  `"malformed phase composition"`.
+- mode not in `_VALID_TOURNAMENT_MODES` ⇒ EXISTING
+  `ValueError(f"unknown tournament_mode: {mode!r}")` (verbatim; the tuple
+  `("standings", "strength", "unseeded")` is UNCHANGED).
+- parsed `cut != 0 and cut < 4` ⇒ NEW LOCKED
+  **`ValueError(f"tournament cut must be 0 or at least 4: {cut}")`** (`cut` is the
+  parsed int, no `!r`) — the floor `{0} ∪ {≥4}`.
+
+Validation order on the tournament branch (LOCKED): split → reject `len(parts) > 3`
+(malformed) → mode-membership check → parse cut (empty / non-int → malformed) →
+cut-floor check. `member_night` is still rejected at the phase-**type** level by the
+existing `f"unknown phase type: {token!r}"`. Every pre-existing `ValueError` string
+is preserved VERBATIM (`"malformed phase composition"`,
+`f"unknown schedule_format: {schedule_format!r}"`,
+`f"unknown tournament_mode: {mode!r}"`, `f"unknown phase type: {token!r}"`,
+`"composition must contain at least one round-robin phase"`,
+`"a tournament phase requires a preceding round-robin phase"`). The module stays
+**Django-free**; the form layer re-wraps the plain `ValueError` as a
+`forms.ValidationError` on `phases`. **Validation is PARSER-ONLY** — NO
+`Season.clean()` / `SeasonPhase.clean()` guard is added; a `cut` leaving `< 4`
+participants at runtime is caught defence-in-depth by the EXISTING
+`Tournament.lock_and_build` ≥4-participant `ValidationError`.
+
+**Creation / carry-forward (`matches/league_views.py`).** Both
+`SeasonPhase.objects.create(...)` loops sit inside their existing
+`@transaction.atomic` blocks:
+- `league_create` (~L559) adds **`tournament_cut=spec.tournament_cut`** and does
+  **NOT** set `tournament_format` (there is no `PhaseSpec.tournament_format`; the
+  column default `"single_elimination"` applies).
+- `next_season` (~L2137) carries forward **BOTH**
+  `tournament_cut=src.tournament_cut` AND `tournament_format=src.tournament_format`
+  verbatim (the persisted source `SeasonPhase` row has both real columns).
+
+**Composer (`templates/leagues/create.html`).** A tournament composer row gains two
+new tournament-rows-only controls (same `applyType()` show/hide rule as the mode
+`<select>`):
+- **Cut input** — `<input type="number" min="0">` with DOM id
+  **`league-create-phase-cut-{i}`** (`{i}` = the existing `rowSeq` index), class hook
+  **`phase-cut-input`**, **default value `0`**, wired to `serialize()` on `change`.
+- **Disabled tournament-format `<select>`** — DOM id
+  **`league-create-phase-tournament-format-{i}`** (DISTINCT from the RR
+  `league-create-phase-format-{i}`), single visible option text **"Single
+  elimination (more formats coming soon)"**, `disabled` attribute present. It
+  serializes **NOTHING** (`serialize()` must NOT read it — the build hardcodes
+  `format="single_elimination"`, the column default covers persistence; a visual
+  placeholder, the `phase-tournament-pending` / disabled-`random_draw`-option
+  precedent).
+
+`serialize()` emits **`tournament:<mode>:<cut>`** for a tournament row (reading the
+row's `.phase-mode-select` then `.phase-cut-input`, cut defaulting to `"0"`); RR rows
+still emit `round_robin:<format>` UNCHANGED. The default `value="0"` on the cut input
+guarantees a parseable `"0"` for an untouched tournament row. All existing Part2b /
+c-3a / c-3c DOM ids unchanged (`league-create-phases-composer`,
+`league-create-add-block`, `league-create-phases`, `league-create-phase-row-{i}`,
+`league-create-phase-type-{i}`, `league-create-phase-format-{i}`,
+`league-create-phase-mode-{i}`, `league-create-member-night-note`, the
+`phase-tournament-pending` class).
+
+**Admin (`matches/admin.py`).** `SeasonPhaseAdmin.list_display` appends
+`"tournament_format"`, `"tournament_cut"` (now 8 entries).
+
+**Backward-compat invariants.** `tournament_cut == 0` ⇒ byte-identical to today
+(full participant set; `order[:cut]` slice not applied). Bare `tournament` /
+`tournament:strength` wire tokens parse identically to c-3c (mode resolved, cut `0`);
+every Part2b / c-3a / c-3c serialized value parses unchanged. `cut > enrolled-team
+count` ⇒ no-op slice (all teams). `tournament_format` is written-but-unread (the
+acceptable admin foot-gun above).
+
+**UNCHANGED (→ c-3e).** The LIVE format picker + per-format sub-config + the
+non-single-elim build that READS `tournament_format` (DEFERRED to c-3e — the c-3b→c-3c
+dormant→live rhythm); `team_assembly` (subsumed by the deferred
+`tournament_mode="random_draw"`); `Season._seed_order_for_phase` body; the tournament
+engine (`play_next_node` / `lock_and_build` / `TournamentParticipant`); the simulator,
+RNG, and `Match` model; the read-path / barrier / dashboard label split (c-3c).
+**No re-baseline.**
+
+**Tests.** `test_phase_composer.py` (cut grammar — `tournament:standings:8` ⇒ cut 8,
+`tournament:strength` ⇒ cut 0, bare `tournament` ⇒ cut 0; floor —
+`tournament:standings:3` ⇒ the new cut-floor `ValueError`, `:0` accepted; malformed —
+`len(parts) > 3` / empty cut / non-int cut ⇒ `"malformed phase composition"`;
+back-compat — every c-3c serialized value parses unchanged; `PhaseSpec` default
+`tournament_cut == 0`; purity `TestNoDjangoImportsLeaked`),
+`test_season_phase.py` (`tournament_format` default `"single_elimination"` +
+`TOURNAMENT_FORMAT_CHOICES` 5 tuples + `max_length==32`; `tournament_cut` default `0`
++ `PositiveSmallIntegerField`), `test_season_playoffs.py` (NOTE the trailing `s` —
+the build cut: participant COUNT == `cut` + dense seeds `1..N` + champion stamped +
+the built tournament's `format` stays `"single_elimination"`; `cut=0` ⇒ full set;
+`cut > enrolled` ⇒ all teams), `test_league_create.py` (a composed tournament phase
+persists its `tournament_cut`; `tournament_format` defaults to
+`"single_elimination"`), `test_league_next_season.py` (**hand-set a source phase's
+`tournament_cut=8` + `tournament_format` e.g. `"swiss"` via ORM, assert the
+carry-forward preserves BOTH**). **Assertion discipline:** schema-level outcomes only
+(participant seeds/count, built `format`, champion id, parsed cut) — NEVER raw
+simulated point totals (tournament sims are non-deterministic).
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)

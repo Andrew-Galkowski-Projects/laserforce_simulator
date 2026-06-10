@@ -1093,3 +1093,79 @@ class TestLg02Part2c3cComposerRandomDrawRejected(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(_Lg02SeasonPhase.objects.count(), before_phases)
         self.assertFalse(League.objects.filter(name="StandingsFirstL").exists())
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2c-3d — composer persists the per-phase tournament_cut from the wire
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3d-seam-contract.md`` §4 / §5 /
+# §9: the ``tournament[:mode[:cut]]`` wire token's cut threads through the
+# ``league_create`` spec loop as ``tournament_cut=spec.tournament_cut``;
+# ``tournament_format`` is NOT set from the form (no PhaseSpec.tournament_format)
+# so it takes the column default ``"single_elimination"``.
+#
+# Appended as a NEW class; no existing class above is modified. These WILL fail
+# until the Code agent lands the cut grammar + the spec-loop kwarg + the two new
+# SeasonPhase columns — the TDD red state.
+
+
+class TestLg02Part2c3dComposerTournamentCut(TestCase):
+    """LG-02-Part2c-3d — a composed tournament phase persists ``tournament_cut``
+    from the wire, and ``tournament_format`` defaults ``single_elimination``."""
+
+    def test_standings_8_persists_cut_8(self) -> None:
+        payload = _valid_payload(league_name="Cut8L")
+        payload["phases"] = "round_robin,tournament:standings:8"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="Cut8L").seasons.get()
+        phases = list(season.phases.all())
+        self.assertEqual(phases[1].phase_type, "tournament")
+        self.assertEqual(phases[1].tournament_mode, "standings")
+        self.assertEqual(phases[1].tournament_cut, 8)
+
+    def test_strength_4_persists_cut_4(self) -> None:
+        payload = _valid_payload(league_name="Cut4L")
+        payload["phases"] = "tournament:strength:4,round_robin"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="Cut4L").seasons.get()
+        phases = list(season.phases.all())
+        self.assertEqual(phases[0].phase_type, "tournament")
+        self.assertEqual(phases[0].tournament_mode, "strength")
+        self.assertEqual(phases[0].tournament_cut, 4)
+
+    def test_bare_tournament_persists_cut_zero(self) -> None:
+        # No cut on the wire ⇒ tournament_cut 0 (no cut).
+        payload = _valid_payload(league_name="Cut0L")
+        payload["phases"] = "round_robin,tournament"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="Cut0L").seasons.get()
+        phases = list(season.phases.all())
+        self.assertEqual(phases[1].tournament_cut, 0)
+
+    def test_tournament_format_defaults_single_elimination(self) -> None:
+        payload = _valid_payload(league_name="CutFmtL")
+        payload["phases"] = "round_robin,tournament:standings:8"
+        self.client.post(reverse("league_create"), payload)
+        season = League.objects.get(name="CutFmtL").seasons.get()
+        phases = list(season.phases.all())
+        # tournament_format is not set from the form ⇒ column default.
+        self.assertEqual(phases[1].tournament_format, "single_elimination")
+        # The RR row also carries the default (inert there).
+        self.assertEqual(phases[0].tournament_format, "single_elimination")
+
+    def test_sub_floor_cut_rejected_zero_rows(self) -> None:
+        # A cut < 4 (and != 0) is rejected at the form layer (the parser's floor
+        # ValueError re-wraps as a forms.ValidationError) — ZERO rows created.
+        before_leagues = League.objects.count()
+        before_phases = _Lg02SeasonPhase.objects.count()
+        payload = _valid_payload(league_name="CutFloorL")
+        payload["phases"] = "round_robin,tournament:standings:2"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(League.objects.count(), before_leagues)
+        self.assertEqual(_Lg02SeasonPhase.objects.count(), before_phases)
+        self.assertFalse(League.objects.filter(name="CutFloorL").exists())

@@ -354,3 +354,302 @@ class TestMultiRrPlayoffCumulativeSeedRegression(TestCase):
         self.assertEqual(tp.tournament.state, "completed")
         self.assertEqual(season.state, "completed")
         self.assertEqual(season.champion_team_id, tp.tournament.champion_id)
+
+
+# ===========================================================================
+# LG-02-Part2c-3d — per-tournament-block participant CUT
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3d-seam-contract.md`` §3 / §8 /
+# §9: ``activate_pending_tournament_phase`` slices the mode-ordered seed vector
+# to the TOP ``phase.tournament_cut`` BEFORE building the bracket. The LIVE rules:
+#   - ``tournament_cut=N`` (N>0)  ⇒ exactly N TournamentParticipants, dense seeds
+#     1..N taken from the TOP of the mode-ordered seed order;
+#   - ``tournament_cut=0``        ⇒ the FULL participant set (byte-identical to
+#     today — the slice is not applied);
+#   - ``tournament_cut > enrolled`` ⇒ all teams (``order[:cut]`` is a Python
+#     no-op past the end);
+#   - the built Tournament's ``format`` stays ``"single_elimination"`` regardless
+#     of ``tournament_format`` (dormant this slice — the build hardcodes it);
+#   - the champion is still stamped after draining (cut changes WHO seeds in, not
+#     the crown machinery).
+# Standings AND strength modes are covered with deterministic seed order; the
+# non-deterministic ``unseeded`` shuffle is asserted on COUNT only. NEVER assert
+# point totals (tournament sims are non-deterministic).
+#
+# Appended as NEW classes; no existing class above is modified. These WILL fail
+# until the Code agent lands the ``order = order[:phase.tournament_cut]`` slice +
+# the ``SeasonPhase.tournament_cut`` column — the TDD red state.
+
+
+from matches.models import TournamentParticipant as _Lg3dParticipant  # noqa: E402
+
+# The 19 stat fields summed by ``Player.overall_rating`` (the mean). Injecting a
+# single constant value per team's players makes that team's mean == the value,
+# so ``strength`` seeding (default_seed_order: mean DESC, team_id ASC) is
+# deterministic.
+_LG3D_STAT_FIELDS = (
+    "player_awareness",
+    "game_awareness",
+    "resource_awareness",
+    "decision_making",
+    "positioning",
+    "stamina",
+    "speed",
+    "flexibility",
+    "adaptability",
+    "communication",
+    "teamwork",
+    "Offensive_synergy",
+    "defensive_synergy",
+    "midfield_synergy",
+    "resupply_synergy",
+    "resupply_efficiency",
+    "accuracy",
+    "survival",
+    "special_usage",
+)
+
+
+def _lg3d_set_team_rating(team, value: int) -> None:
+    for player in team.active_players:
+        for field in _LG3D_STAT_FIELDS:
+            setattr(player, field, value)
+        player.save()
+
+
+def _lg3d_first_phase_tournament_season(
+    prefix: str,
+    mode: str,
+    *,
+    cut: int,
+    n: int = 8,
+    ratings: list[int] | None = None,
+    tournament_format: str = "single_elimination",
+):
+    """A draft Season whose FIRST phase is a ``mode`` tournament (ordinal 1) with
+    the given ``tournament_cut`` (+ optional ``tournament_format``), followed by
+    an ordinal-2 round_robin (so the >=1-RR rule holds). ``n`` slotted teams
+    enrolled, NOT yet started.
+
+    Returns ``(season, teams, tournament_phase)``.
+    """
+    league = League.objects.create(name=f"{prefix} League")
+    season = Season.objects.create(
+        league=league, name="S1", start_date=date(2026, 1, 1)
+    )
+    teams = []
+    for i in range(n):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        if ratings is not None:
+            _lg3d_set_team_rating(t, ratings[i])
+        teams.append(t)
+        season.teams.add(t)
+    tournament_phase = SeasonPhase.objects.create(
+        season=season,
+        ordinal=1,
+        phase_type="tournament",
+        tournament_mode=mode,
+        tournament_cut=cut,
+        tournament_format=tournament_format,
+    )
+    SeasonPhase.objects.create(season=season, ordinal=2, phase_type="round_robin")
+    return season, teams, tournament_phase
+
+
+class TestStrengthCutBuild(TestCase):
+    """A first-phase ``strength`` tournament with a cut builds exactly ``cut``
+    participants with dense seeds 1..cut taken from the TOP of the
+    strength-ordered seed vector (deterministic injected ratings)."""
+
+    # 8 distinct ratings — the top 4 by mean are 90, 80, 70, 60 (teams 1,3,5,7).
+    _RATINGS = [10, 90, 20, 80, 30, 70, 40, 60]
+
+    def test_cut_4_creates_four_top_seeded_participants(self) -> None:
+        season, teams, tp = _lg3d_first_phase_tournament_season(
+            "StrCut4", "strength", cut=4, n=8, ratings=self._RATINGS
+        )
+        season.start_season()
+        tp.refresh_from_db()
+        self.assertIsNotNone(tp.tournament_id)
+
+        participants = list(
+            _Lg3dParticipant.objects.filter(tournament=tp.tournament).order_by("seed")
+        )
+        # Exactly cut participants with dense 1..cut seeds.
+        self.assertEqual(len(participants), 4)
+        self.assertEqual([p.seed for p in participants], [1, 2, 3, 4])
+
+        # The cut keeps the TOP of the strength order — the 4 strongest teams
+        # (ratings 90, 80, 70, 60) in mean-DESC order.
+        from matches.bracket import default_seed_order as _seed
+        from teams.models import Team
+
+        team_ids = season.starting_team_ids_json or []
+        team_ratings = [
+            (
+                tid,
+                sum(p.overall_rating for p in Team.objects.get(pk=tid).active_players)
+                / max(len(Team.objects.get(pk=tid).active_players), 1),
+            )
+            for tid in team_ids
+        ]
+        full_order = _seed(team_ratings)
+        expected_top4 = full_order[:4]
+        self.assertEqual([p.team_id for p in participants], expected_top4)
+
+    def test_built_format_stays_single_elimination_despite_tournament_format(
+        self,
+    ) -> None:
+        # tournament_format is DORMANT — the build hardcodes single_elimination.
+        season, _teams, tp = _lg3d_first_phase_tournament_season(
+            "StrFmt",
+            "strength",
+            cut=4,
+            n=8,
+            ratings=self._RATINGS,
+            tournament_format="swiss",
+        )
+        season.start_season()
+        tp.refresh_from_db()
+        self.assertEqual(tp.tournament.format, "single_elimination")
+
+    def test_cut_zero_keeps_full_participant_set(self) -> None:
+        season, teams, tp = _lg3d_first_phase_tournament_season(
+            "StrCut0", "strength", cut=0, n=8, ratings=self._RATINGS
+        )
+        season.start_season()
+        tp.refresh_from_db()
+        participants = list(
+            _Lg3dParticipant.objects.filter(tournament=tp.tournament).order_by("seed")
+        )
+        # Full set, dense 1..N — byte-identical to a no-cut build.
+        self.assertEqual(len(participants), len(teams))
+        self.assertEqual([p.seed for p in participants], list(range(1, len(teams) + 1)))
+
+    def test_cut_greater_than_enrolled_keeps_all_teams(self) -> None:
+        # cut > enrolled ⇒ order[:cut] is a no-op slice ⇒ all teams.
+        season, teams, tp = _lg3d_first_phase_tournament_season(
+            "StrCutBig", "strength", cut=99, n=8, ratings=self._RATINGS
+        )
+        season.start_season()
+        tp.refresh_from_db()
+        participants = list(
+            _Lg3dParticipant.objects.filter(tournament=tp.tournament).order_by("seed")
+        )
+        self.assertEqual(len(participants), len(teams))
+        self.assertEqual([p.seed for p in participants], list(range(1, len(teams) + 1)))
+
+
+class TestUnseededCutBuild(TestCase):
+    """A first-phase ``unseeded`` tournament with a cut builds exactly ``cut``
+    participants with dense seeds 1..cut. The shuffle is non-deterministic, so
+    only the COUNT + dense seeds are asserted (NOT which teams)."""
+
+    def test_cut_4_creates_four_dense_seeded_participants(self) -> None:
+        season, teams, tp = _lg3d_first_phase_tournament_season(
+            "UnsCut4", "unseeded", cut=4, n=8
+        )
+        season.start_season()
+        tp.refresh_from_db()
+        self.assertIsNotNone(tp.tournament_id)
+        participants = list(
+            _Lg3dParticipant.objects.filter(tournament=tp.tournament).order_by("seed")
+        )
+        self.assertEqual(len(participants), 4)
+        self.assertEqual([p.seed for p in participants], [1, 2, 3, 4])
+        # The 4 cut team ids are a subset of the enrolled set (a valid sample).
+        cut_ids = {p.team_id for p in participants}
+        self.assertEqual(len(cut_ids), 4)
+        self.assertTrue(cut_ids.issubset({t.id for t in teams}))
+
+    def test_cut_zero_keeps_full_set(self) -> None:
+        season, teams, tp = _lg3d_first_phase_tournament_season(
+            "UnsCut0", "unseeded", cut=0, n=8
+        )
+        season.start_season()
+        tp.refresh_from_db()
+        participants = list(_Lg3dParticipant.objects.filter(tournament=tp.tournament))
+        self.assertEqual(len(participants), len(teams))
+
+
+class TestStandingsCutBuild(TestCase):
+    """A season-ending ``standings`` tournament with a cut: completing the RR
+    auto-builds a playoff seeded from the TOP ``cut`` standings ranks with dense
+    1..cut seeds; the champion is still stamped after draining."""
+
+    def _rr_then_cut_standings_season(self, prefix: str, *, cut: int, n: int = 8):
+        league = League.objects.create(name=f"{prefix} League")
+        season = Season.objects.create(
+            league=league, name="S1", start_date=date(2026, 1, 1)
+        )
+        teams = []
+        for i in range(n):
+            t, _ = make_team_with_slots(f"{prefix}{i}")
+            teams.append(t)
+            season.teams.add(t)
+        rr = SeasonPhase.objects.create(
+            season=season, ordinal=1, phase_type="round_robin"
+        )
+        tp = SeasonPhase.objects.create(
+            season=season,
+            ordinal=2,
+            phase_type="tournament",
+            tournament_mode="standings",
+            tournament_cut=cut,
+        )
+        season.start_season()
+        season.refresh_from_db()
+        return season, teams, rr, tp
+
+    def test_cut_4_seeds_top_four_standings_ranks(self) -> None:
+        season, teams, rr, tp = self._rr_then_cut_standings_season("StdCut4", cut=4)
+        _play_rr(season, teams)
+        tp.refresh_from_db()
+        self.assertIsNotNone(tp.tournament_id)
+
+        participants = list(
+            _Lg3dParticipant.objects.filter(tournament=tp.tournament).order_by("seed")
+        )
+        # Exactly cut participants, dense 1..cut.
+        self.assertEqual(len(participants), 4)
+        self.assertEqual([p.seed for p in participants], [1, 2, 3, 4])
+
+        # Seed i team == standings rank i team (the TOP cut of the rank order).
+        rows = season._final_standings_for_phase(rr)
+        rank_to_team = {row.rank: row.team_id for row in rows}
+        for p in participants:
+            self.assertEqual(p.team_id, rank_to_team[p.seed])
+
+        # Built format stays single_elimination.
+        self.assertEqual(tp.tournament.format, "single_elimination")
+
+    def test_cut_zero_seeds_full_standings_field(self) -> None:
+        season, teams, _rr, tp = self._rr_then_cut_standings_season("StdCut0", cut=0)
+        _play_rr(season, teams)
+        tp.refresh_from_db()
+        participants = list(_Lg3dParticipant.objects.filter(tournament=tp.tournament))
+        self.assertEqual(len(participants), len(teams))
+
+    def test_cut_champion_still_stamped_after_drain(self) -> None:
+        season, teams, _rr, tp = self._rr_then_cut_standings_season(
+            "StdCutCrown", cut=4
+        )
+        _play_rr(season, teams)
+        tp.refresh_from_db()
+        self.assertIsNotNone(tp.tournament_id)
+
+        from matches.tournament_engine import play_next_node
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(200):
+                if play_next_node(tp.tournament) is None:
+                    break
+        tp.refresh_from_db()
+        season.complete_if_finished()
+        season.refresh_from_db()
+
+        self.assertEqual(tp.tournament.state, "completed")
+        self.assertIsNotNone(tp.tournament.champion_id)
+        self.assertEqual(season.state, "completed")
+        self.assertEqual(season.champion_team_id, tp.tournament.champion_id)

@@ -565,6 +565,10 @@ def league_create(request) -> HttpResponse:
             # LG-02-Part2c-3b — always "standings" this slice (dormant; the
             # composer does not yet write a tournament_mode).
             tournament_mode=spec.tournament_mode,
+            # LG-02-Part2c-3d — top-N participant cut (0 = no cut). The dormant
+            # tournament_format is left to its column default this slice (there
+            # is no PhaseSpec.tournament_format).
+            tournament_cut=spec.tournament_cut,
         )
 
     return redirect("season_standings", season_id=season.id)
@@ -2141,6 +2145,10 @@ def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
             schedule_format=src.schedule_format,
             tournament=None,
             tournament_mode=src.tournament_mode,
+            # LG-02-Part2c-3d — carry both tournament columns forward verbatim
+            # (the source row has both real persisted values).
+            tournament_cut=src.tournament_cut,
+            tournament_format=src.tournament_format,
         )
 
     return redirect("season_dashboard", season_id=new_season.id)
