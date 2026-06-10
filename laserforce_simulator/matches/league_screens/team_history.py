@@ -46,7 +46,7 @@ from matches.league_views import (
     _LG01F_PER_PAGE_OPTIONS,
     _resolve_current_team_for_sidebar,
 )
-from matches.models import GameRound, League, PlayerRoundState, Season
+from matches.models import GameRound, League, PlayerRoundState, Season, Tournament
 from matches.standings import compute_standings
 from matches.team_history_logic import (
     compute_overall_record,
@@ -166,15 +166,25 @@ def _completed_season_ids_for_team(team: Team) -> dict[int, Season]:
 
 def _build_overall_context(team: Team) -> dict:
     """Aggregate the Overall tab — round-level W-L-T + championships."""
-    # Every persisted GameRound whose Match belongs to a Season and that
-    # the team physically played either Side of. red_points / blue_points
-    # store the actual per-Round scores; team_red / team_blue store the
-    # actual physical sides — so per-Round W/L/T mirrors LG-01g exactly.
+    # Every persisted GameRound whose Match belongs to a Season OR to a
+    # season-embedded playoff Tournament, and that the team physically played
+    # either Side of. red_points / blue_points store the actual per-Round
+    # scores; team_red / team_blue store the actual physical sides — so
+    # per-Round W/L/T mirrors LG-01g exactly. A season-embedded playoff Match
+    # keeps season=NULL (Part2c-1 #3) and is reached through the FK chain from
+    # the playoff Tournament; the season_phases__isnull=False guard
+    # distinguishes it from a standalone sandbox Tournament (also season=NULL,
+    # but with no SeasonPhase pointing at it). .distinct() collapses the
+    # to-many series_match join duplicating a GameRound row.
     rounds = (
-        GameRound.objects.filter(match__season__isnull=False)
-        .filter(match__is_completed=True)
+        GameRound.objects.filter(
+            Q(match__season__isnull=False)
+            | Q(match__series_match__node__tournament__season_phases__isnull=False),
+            match__is_completed=True,
+        )
         .filter(Q(team_red=team) | Q(team_blue=team))
         .only("team_red_id", "team_blue_id", "red_points", "blue_points")
+        .distinct()
     )
     outcomes: list[str] = []
     for gr in rounds:
@@ -185,7 +195,19 @@ def _build_overall_context(team: Team) -> dict:
 
     championships = Season.objects.filter(champion_team=team).count()
 
-    record = compute_overall_record(outcomes, championships=championships)
+    # Count of DISTINCT season-embedded playoff Tournaments the team was seeded
+    # into (made the bracket), team-global across all leagues.
+    playoff_appearances = (
+        Tournament.objects.filter(season_phases__isnull=False, participants__team=team)
+        .distinct()
+        .count()
+    )
+
+    record = compute_overall_record(
+        outcomes,
+        championships=championships,
+        playoff_appearances=playoff_appearances,
+    )
     return {"overall_record": record}
 
 
