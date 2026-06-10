@@ -137,7 +137,7 @@ remaining Part2c follow-up.
   carried forward verbatim. Selected beforehand as a League-level toggle; only
   meaningful once the seeding-mode field + per-tournament-block config above exist.
 
-### LG-03 · Season-end awards
+### LG-03 · [DONE] Season-end awards
 
 Computed from `PlayerRoundState` aggregates: Most Points, Highest K/D by role, Best Medic, 
 Most Efficient Nuke, Best Accuracy. Awards page at `/seasons/<id>/awards/`. Award badge on player profile.
@@ -147,6 +147,33 @@ Also surface the headline **season MVP** (and, once LG-02 playoffs land, a
 puts both in its history row next to Champion / Runner-up, and ours currently has
 no awards column. See
 [`docs/zengm-comparison/season-lifecycle.md`](docs/zengm-comparison/season-lifecycle.md).
+
+**Status: DONE.** A **read-only / derived** league screen — every award recomputed
+**on render (transient)** from frozen `PlayerRoundState` rows, with **NO model field,
+NO migration, NO simulator change, NO Score Calibration re-baseline, NO persisted award
+rows**. A new Django-free pure module `matches/season_awards.py` (allowlist
+`dataclasses` / `typing` / `collections`, guarded by `TestNoDjangoImportsLeaked`) exposes
+`compute_season_awards(player_rounds, *, min_games)` and `pick_finals_mvp(final_round_dicts)`
+over frozen `AwardWinner` / `AwardSet` dataclasses; the view does ALL ORM work and feeds the
+pure fn a flat `list[dict]`. **Corpus split:** the regular-season awards read
+`PlayerRoundState.objects.filter(game_round__match__season=season)` — season-embedded
+**playoff** Matches carry `season=NULL` (Part2c-1 #3) and are naturally excluded — while
+**Finals MVP** is computed separately over the championship bracket node's rounds and is set
+**only on a bracket-format playoff** (`single/double_elimination`, `round_robin_double_elim`;
+`None` for `round_robin`/`swiss`/no playoff). The award set is the **6 regular-season awards**
+— **Most Points**, **Best Accuracy**, **K/D by role** (5 winners, one per role), **Best
+Medic**, **Most Efficient Nuke**, **Season MVP** (mean of `get_mvp`) — **plus the separate
+Finals MVP**. **Qualifier:** the rate/mean awards (Season MVP, Best Accuracy, Most Efficient
+Nuke) require `games(player) >= ceil(max_games_any_player / 2)`; the total/count awards (Most
+Points, Best Medic, K/D) are ungated; ties break by metric → games desc → `player_id` asc.
+**Three surfaces:** the new **awards page** (`season_awards` view / `/seasons/<id>/awards/`,
+league-sidebar shell, GET-only); two new **League History** columns (Season MVP / Finals MVP —
+`_build_history_row` grows 11 → 13 keys, reusing the same shared regular-season-dicts +
+finals-corpus helper); and the **player profile** awards badge (the
+`league-player-awards-stub` placeholder becomes the live `league-player-awards` block fed by a
+new `player_awards` context list). Seam contract:
+[`.claude/worktrees/lg-03-season-awards-seam-contract.md`](.claude/worktrees/lg-03-season-awards-seam-contract.md);
+impl notes in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
 ### LG-04 · Season-end stat updates
 
