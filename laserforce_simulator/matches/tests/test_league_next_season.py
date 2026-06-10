@@ -1042,3 +1042,122 @@ class TestLg02Part2c3dNextSeasonCarriesCutAndFormat(TestCase):
         new_phases = list(new_season.phases.all())
         self.assertEqual(new_phases[1].tournament_cut, 0)
         self.assertEqual(new_phases[1].tournament_format, "single_elimination")
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2c-3e — next_season carries all 8 new sub-config fields forward
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3e-seam-contract.md`` §7:
+# ``next_season`` carries ALL 8 new fields forward verbatim —
+#   tournament_format, final_series_length, semifinal_series_length,
+#   quarterfinal_series_length, earlier_series_length, wb_advancers, lb_advancers,
+#   swiss_rounds. Hand-set a source completed Season's tournament phase via the
+#   ORM to a non-default full sub-config, run next_season, assert the new draft
+#   Season's copied phase reproduces ALL 8 verbatim.
+#
+# Appended as a NEW class; no existing class is modified. These WILL fail until
+# the Code agent lands the carry-forward kwargs + the 7 new SeasonPhase columns —
+# the TDD red state.
+
+
+class TestLg02Part2c3eNextSeasonCarriesSubConfig(TestCase):
+    """LG-02-Part2c-3e — next_season copies all 8 new sub-config fields forward
+    verbatim."""
+
+    def _setup_completed_with_sub_config(self, **sub) -> League:
+        league = _make_league("Lg02c3eL")
+        teams = _make_teams("Lg02c3e", 2)
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=1,
+            phase_type="round_robin",
+            schedule_format="single_round_robin",
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=2,
+            phase_type="tournament",
+            schedule_format=None,
+            tournament_mode="standings",
+            tournament_cut=8,
+            **sub,
+        )
+        return league
+
+    def test_swiss_sub_config_carried_forward_verbatim(self) -> None:
+        league = self._setup_completed_with_sub_config(
+            tournament_format="swiss",
+            final_series_length=1,
+            semifinal_series_length=1,
+            quarterfinal_series_length=1,
+            earlier_series_length=1,
+            wb_advancers=0,
+            lb_advancers=0,
+            swiss_rounds=6,
+        )
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        new_phases = list(new_season.phases.all())  # Meta.ordering=["ordinal"]
+
+        t = new_phases[1]
+        self.assertEqual(t.phase_type, "tournament")
+        self.assertEqual(t.tournament_format, "swiss")
+        self.assertEqual(t.swiss_rounds, 6)
+        self.assertEqual(t.final_series_length, 1)
+        self.assertEqual(t.wb_advancers, 0)
+        self.assertEqual(t.lb_advancers, 0)
+
+    def test_rr_de_sub_config_carried_forward_verbatim(self) -> None:
+        league = self._setup_completed_with_sub_config(
+            tournament_format="round_robin_double_elim",
+            final_series_length=5,
+            semifinal_series_length=3,
+            quarterfinal_series_length=3,
+            earlier_series_length=1,
+            wb_advancers=8,
+            lb_advancers=4,
+            swiss_rounds=0,
+        )
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        t = list(new_season.phases.all())[1]
+
+        self.assertEqual(t.tournament_format, "round_robin_double_elim")
+        self.assertEqual(t.final_series_length, 5)
+        self.assertEqual(t.semifinal_series_length, 3)
+        self.assertEqual(t.quarterfinal_series_length, 3)
+        self.assertEqual(t.earlier_series_length, 1)
+        self.assertEqual(t.wb_advancers, 8)
+        self.assertEqual(t.lb_advancers, 4)
+        self.assertEqual(t.swiss_rounds, 0)
+
+    def test_rr_row_keeps_sub_config_defaults(self) -> None:
+        league = self._setup_completed_with_sub_config(
+            tournament_format="double_elimination",
+            final_series_length=3,
+            semifinal_series_length=3,
+            quarterfinal_series_length=1,
+            earlier_series_length=1,
+            wb_advancers=0,
+            lb_advancers=0,
+            swiss_rounds=0,
+        )
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        rr = list(new_season.phases.all())[0]
+        # The RR row carries the column defaults (inert there).
+        self.assertEqual(rr.tournament_format, "single_elimination")
+        self.assertEqual(rr.final_series_length, 1)
+        self.assertEqual(rr.semifinal_series_length, 1)
+        self.assertEqual(rr.quarterfinal_series_length, 1)
+        self.assertEqual(rr.earlier_series_length, 1)
+        self.assertEqual(rr.wb_advancers, 0)
+        self.assertEqual(rr.lb_advancers, 0)
+        self.assertEqual(rr.swiss_rounds, 0)

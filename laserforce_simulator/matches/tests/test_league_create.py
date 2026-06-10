@@ -1169,3 +1169,106 @@ class TestLg02Part2c3dComposerTournamentCut(TestCase):
         self.assertEqual(League.objects.count(), before_leagues)
         self.assertEqual(_Lg02SeasonPhase.objects.count(), before_phases)
         self.assertFalse(League.objects.filter(name="CutFloorL").exists())
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2c-3e — composer persists the full per-phase tournament sub-config
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3e-seam-contract.md`` §7:
+# ``league_create`` sets ALL 8 new fields from the parsed spec —
+#   tournament_format, final_series_length, semifinal_series_length,
+#   quarterfinal_series_length, earlier_series_length, wb_advancers, lb_advancers,
+#   swiss_rounds — from the 11-field ``tournament:mode:cut:format:fsl:ssl:qsl:esl:
+#   wb:lb:swiss`` wire token. Appended as a NEW class; no existing class above is
+#   modified. These WILL fail until the Code agent lands the full grammar + the
+#   spec-loop kwargs + the 7 new SeasonPhase columns — the TDD red state.
+
+
+class TestLg02Part2c3eComposerFullSubConfig(TestCase):
+    """LG-02-Part2c-3e — a composed tournament phase persists all 8 new fields."""
+
+    def test_double_elimination_full_token_persists_all_fields(self) -> None:
+        payload = _valid_payload(league_name="SubCfgDE")
+        payload["phases"] = (
+            "round_robin,tournament:standings:0:double_elimination:3:3:1:1:0:0:0"
+        )
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="SubCfgDE").seasons.get()
+        phases = list(season.phases.all())
+        t = phases[1]
+        self.assertEqual(t.phase_type, "tournament")
+        self.assertEqual(t.tournament_format, "double_elimination")
+        self.assertEqual(t.final_series_length, 3)
+        self.assertEqual(t.semifinal_series_length, 3)
+        self.assertEqual(t.quarterfinal_series_length, 1)
+        self.assertEqual(t.earlier_series_length, 1)
+        self.assertEqual(t.wb_advancers, 0)
+        self.assertEqual(t.lb_advancers, 0)
+        self.assertEqual(t.swiss_rounds, 0)
+
+    def test_round_robin_double_elim_combo_persists(self) -> None:
+        payload = _valid_payload(league_name="SubCfgRRDE")
+        payload["phases"] = (
+            "round_robin,tournament:standings:0:round_robin_double_elim:1:1:1:1:8:4:0"
+        )
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="SubCfgRRDE").seasons.get()
+        t = list(season.phases.all())[1]
+        self.assertEqual(t.tournament_format, "round_robin_double_elim")
+        self.assertEqual(t.wb_advancers, 8)
+        self.assertEqual(t.lb_advancers, 4)
+
+    def test_swiss_rounds_persists(self) -> None:
+        payload = _valid_payload(league_name="SubCfgSwiss")
+        payload["phases"] = "round_robin,tournament:standings:0:swiss:1:1:1:1:0:0:6"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="SubCfgSwiss").seasons.get()
+        t = list(season.phases.all())[1]
+        self.assertEqual(t.tournament_format, "swiss")
+        self.assertEqual(t.swiss_rounds, 6)
+
+    def test_bare_tournament_defaults_all_sub_config(self) -> None:
+        payload = _valid_payload(league_name="SubCfgBare")
+        payload["phases"] = "round_robin,tournament"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="SubCfgBare").seasons.get()
+        t = list(season.phases.all())[1]
+        self.assertEqual(t.tournament_format, "single_elimination")
+        self.assertEqual(t.final_series_length, 1)
+        self.assertEqual(t.semifinal_series_length, 1)
+        self.assertEqual(t.quarterfinal_series_length, 1)
+        self.assertEqual(t.earlier_series_length, 1)
+        self.assertEqual(t.wb_advancers, 0)
+        self.assertEqual(t.lb_advancers, 0)
+        self.assertEqual(t.swiss_rounds, 0)
+
+    def test_invalid_combo_rejected_zero_rows(self) -> None:
+        # An invalid RR→DE wb/lb combo is rejected at the form layer (parser's
+        # combo ValueError re-wraps) — ZERO rows created.
+        before_leagues = League.objects.count()
+        before_phases = _Lg02SeasonPhase.objects.count()
+        payload = _valid_payload(league_name="SubCfgBadCombo")
+        payload["phases"] = (
+            "round_robin,tournament:standings:0:round_robin_double_elim:1:1:1:1:8:2:0"
+        )
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(League.objects.count(), before_leagues)
+        self.assertEqual(_Lg02SeasonPhase.objects.count(), before_phases)
+        self.assertFalse(League.objects.filter(name="SubCfgBadCombo").exists())
+
+    def test_bad_series_tier_rejected_zero_rows(self) -> None:
+        before_leagues = League.objects.count()
+        payload = _valid_payload(league_name="SubCfgBadTier")
+        payload["phases"] = (
+            "round_robin,tournament:standings:0:single_elimination:2:1:1:1:0:0:0"
+        )
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(League.objects.count(), before_leagues)
+        self.assertFalse(League.objects.filter(name="SubCfgBadTier").exists())

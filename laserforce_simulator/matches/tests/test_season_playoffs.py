@@ -498,10 +498,12 @@ class TestStrengthCutBuild(TestCase):
         expected_top4 = full_order[:4]
         self.assertEqual([p.team_id for p in participants], expected_top4)
 
-    def test_built_format_stays_single_elimination_despite_tournament_format(
+    def test_built_format_honors_tournament_format(
         self,
     ) -> None:
-        # tournament_format is DORMANT — the build hardcodes single_elimination.
+        # LG-02-Part2c-3e flipped tournament_format dormant→live: the build now
+        # reads phase.tournament_format instead of hardcoding single_elimination
+        # (cut=4 keeps an even participant count so the swiss build is valid).
         season, _teams, tp = _lg3d_first_phase_tournament_season(
             "StrFmt",
             "strength",
@@ -512,7 +514,7 @@ class TestStrengthCutBuild(TestCase):
         )
         season.start_season()
         tp.refresh_from_db()
-        self.assertEqual(tp.tournament.format, "single_elimination")
+        self.assertEqual(tp.tournament.format, "swiss")
 
     def test_cut_zero_keeps_full_participant_set(self) -> None:
         season, teams, tp = _lg3d_first_phase_tournament_season(
@@ -653,3 +655,321 @@ class TestStandingsCutBuild(TestCase):
         self.assertIsNotNone(tp.tournament.champion_id)
         self.assertEqual(season.state, "completed")
         self.assertEqual(season.champion_team_id, tp.tournament.champion_id)
+
+
+# ===========================================================================
+# LG-02-Part2c-3e — non-single-elim Season tournament-phase build (5 formats)
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3e-seam-contract.md`` §4:
+# ``Season.activate_pending_tournament_phase`` now passes
+# ``format=phase.tournament_format`` + the 7 sub-config kwargs into
+# ``Tournament.objects.create``, so a Season ``tournament`` phase builds via ANY
+# of the 5 formats with full per-format sub-config parity. The cut slice + seed +
+# name + ``lock_and_build()`` are unchanged. For each format we build a Season
+# (round_robin phase then a tournament phase whose ``tournament_format=<fmt>`` +
+# sub-config), play the RR to completion so ``activate_pending_tournament_phase``
+# fires, then assert:
+#   (a) phase.tournament.format == <fmt>
+#   (b) the built Tournament's sub-config fields match the phase
+#   (c) the bracket actually built for that format —
+#         double_elim  ⇒ BracketNodes with bracket_type ∈ {winners,losers,grand_final}
+#         round_robin  ⇒ bracket_type=="round_robin" nodes
+#         swiss        ⇒ bracket_type=="swiss" nodes
+#         single_elim  ⇒ winners-only tree
+#         round_robin_double_elim ⇒ (seeding) round_robin nodes built at lock
+# then drain via the play loop and assert champion stamped + season completed.
+#
+# N=8 with wb=4/lb=2 (a valid RR→DE combo) keeps every format valid. Tests assert
+# SCHEMA-LEVEL outcomes (built format, sub-config fields, bracket_type sets,
+# champion id, state) — NEVER raw simulated point totals (non-deterministic).
+#
+# Appended as NEW classes; no existing class above is modified. These WILL fail
+# until the Code agent lands the per-format build kwargs + the 7 SeasonPhase
+# columns — the TDD red state, not a defect in this file.
+
+
+from matches.models import BracketNode as _Lg3eBracketNode  # noqa: E402
+from matches.models import (  # noqa: E402
+    TournamentParticipant as _Lg3eParticipant,
+)
+
+
+def _drain_and_complete(season, tournament_phase) -> None:
+    """Drain a built tournament-phase bracket to a champion via the real engine,
+    then complete the Season. Refreshes both ``tournament_phase.tournament`` and
+    ``season`` in place.
+
+    Bounded loop (RR / double-elim / swiss drain over more nodes than single-elim,
+    so the bound is generous). NEVER asserts point totals.
+    """
+    from matches.tournament_engine import play_next_node
+
+    tournament_phase.refresh_from_db()
+    with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+        for _ in range(2000):
+            if play_next_node(tournament_phase.tournament) is None:
+                break
+    tournament_phase.refresh_from_db()
+    season.complete_if_finished()
+    season.refresh_from_db()
+
+
+def _lg3e_rr_then_tournament_season(
+    prefix: str,
+    *,
+    tournament_format: str,
+    n: int = 8,
+    final_series_length: int = 1,
+    semifinal_series_length: int = 1,
+    quarterfinal_series_length: int = 1,
+    earlier_series_length: int = 1,
+    wb_advancers: int = 0,
+    lb_advancers: int = 0,
+    swiss_rounds: int = 0,
+    tournament_cut: int = 0,
+):
+    """An active Season: ordinal-1 ``round_robin`` then an ordinal-2 season-ending
+    ``standings`` tournament whose ``tournament_format`` + 7 sub-config columns are
+    set. ``n`` slotted teams, started. Returns ``(season, teams, rr, tp)``."""
+    league = League.objects.create(name=f"{prefix} League")
+    season = Season.objects.create(
+        league=league, name="S1", start_date=date(2026, 1, 1)
+    )
+    teams = []
+    for i in range(n):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        teams.append(t)
+        season.teams.add(t)
+    rr = SeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")
+    tp = SeasonPhase.objects.create(
+        season=season,
+        ordinal=2,
+        phase_type="tournament",
+        tournament_mode="standings",
+        tournament_cut=tournament_cut,
+        tournament_format=tournament_format,
+        final_series_length=final_series_length,
+        semifinal_series_length=semifinal_series_length,
+        quarterfinal_series_length=quarterfinal_series_length,
+        earlier_series_length=earlier_series_length,
+        wb_advancers=wb_advancers,
+        lb_advancers=lb_advancers,
+        swiss_rounds=swiss_rounds,
+    )
+    season.start_season()
+    season.refresh_from_db()
+    return season, teams, rr, tp
+
+
+def _lg3e_bracket_types(tournament) -> set[str]:
+    return set(
+        _Lg3eBracketNode.objects.filter(tournament=tournament).values_list(
+            "bracket_type", flat=True
+        )
+    )
+
+
+class TestBuildSingleEliminationFormat(TestCase):
+    """A ``single_elimination`` tournament phase builds a winners-only tree
+    (byte-identical to today's auto-build)."""
+
+    def test_built_format_and_winners_only_tree(self) -> None:
+        season, teams, _rr, tp = _lg3e_rr_then_tournament_season(
+            "FmtSE", tournament_format="single_elimination", n=8
+        )
+        _play_rr(season, teams)
+        tp.refresh_from_db()
+        self.assertIsNotNone(tp.tournament_id)
+        self.assertEqual(tp.tournament.format, "single_elimination")
+        # Winners-only: every node is bracket_type "winners".
+        self.assertEqual(_lg3e_bracket_types(tp.tournament), {"winners"})
+
+    def test_drains_to_champion_and_completes_season(self) -> None:
+        season, teams, _rr, tp = _lg3e_rr_then_tournament_season(
+            "FmtSEDrain", tournament_format="single_elimination", n=8
+        )
+        _play_rr(season, teams)
+        tp.refresh_from_db()
+        _drain_and_complete(season, tp)
+        self.assertEqual(tp.tournament.state, "completed")
+        self.assertIsNotNone(tp.tournament.champion_id)
+        self.assertEqual(season.state, "completed")
+        self.assertEqual(season.champion_team_id, tp.tournament.champion_id)
+
+
+class TestBuildDoubleEliminationFormat(TestCase):
+    """A ``double_elimination`` tournament phase builds a Winners + Losers +
+    Grand-final tree, carrying the sub-config series lengths."""
+
+    def test_built_format_and_sub_config_and_bracket_types(self) -> None:
+        season, teams, _rr, tp = _lg3e_rr_then_tournament_season(
+            "FmtDE",
+            tournament_format="double_elimination",
+            n=8,
+            final_series_length=3,
+            semifinal_series_length=3,
+        )
+        _play_rr(season, teams)
+        tp.refresh_from_db()
+        self.assertIsNotNone(tp.tournament_id)
+        self.assertEqual(tp.tournament.format, "double_elimination")
+        # Sub-config carried onto the built Tournament.
+        self.assertEqual(tp.tournament.final_series_length, 3)
+        self.assertEqual(tp.tournament.semifinal_series_length, 3)
+        # The DE tree carries winners / losers / grand_final nodes.
+        types = _lg3e_bracket_types(tp.tournament)
+        self.assertTrue(types.issubset({"winners", "losers", "grand_final"}))
+        self.assertIn("winners", types)
+        self.assertIn("losers", types)
+        self.assertIn("grand_final", types)
+
+    def test_drains_to_champion_and_completes_season(self) -> None:
+        season, teams, _rr, tp = _lg3e_rr_then_tournament_season(
+            "FmtDEDrain", tournament_format="double_elimination", n=8
+        )
+        _play_rr(season, teams)
+        tp.refresh_from_db()
+        _drain_and_complete(season, tp)
+        self.assertEqual(tp.tournament.state, "completed")
+        self.assertIsNotNone(tp.tournament.champion_id)
+        self.assertEqual(season.state, "completed")
+        self.assertEqual(season.champion_team_id, tp.tournament.champion_id)
+
+
+class TestBuildRoundRobinFormat(TestCase):
+    """A ``round_robin`` tournament phase builds round_robin bracket nodes."""
+
+    def test_built_format_and_round_robin_nodes(self) -> None:
+        season, teams, _rr, tp = _lg3e_rr_then_tournament_season(
+            "FmtRR", tournament_format="round_robin", n=8
+        )
+        _play_rr(season, teams)
+        tp.refresh_from_db()
+        self.assertIsNotNone(tp.tournament_id)
+        self.assertEqual(tp.tournament.format, "round_robin")
+        self.assertEqual(_lg3e_bracket_types(tp.tournament), {"round_robin"})
+
+    def test_drains_to_champion_and_completes_season(self) -> None:
+        season, teams, _rr, tp = _lg3e_rr_then_tournament_season(
+            "FmtRRDrain", tournament_format="round_robin", n=8
+        )
+        _play_rr(season, teams)
+        tp.refresh_from_db()
+        _drain_and_complete(season, tp)
+        self.assertEqual(tp.tournament.state, "completed")
+        self.assertIsNotNone(tp.tournament.champion_id)
+        self.assertEqual(season.state, "completed")
+        self.assertEqual(season.champion_team_id, tp.tournament.champion_id)
+
+
+class TestBuildSwissFormat(TestCase):
+    """A ``swiss`` tournament phase builds swiss bracket nodes, carrying
+    ``swiss_rounds``. Swiss needs an EVEN participant count (N=8)."""
+
+    def test_built_format_swiss_rounds_and_swiss_nodes(self) -> None:
+        season, teams, _rr, tp = _lg3e_rr_then_tournament_season(
+            "FmtSW", tournament_format="swiss", n=8, swiss_rounds=3
+        )
+        _play_rr(season, teams)
+        tp.refresh_from_db()
+        self.assertIsNotNone(tp.tournament_id)
+        self.assertEqual(tp.tournament.format, "swiss")
+        self.assertEqual(tp.tournament.swiss_rounds, 3)
+        self.assertEqual(_lg3e_bracket_types(tp.tournament), {"swiss"})
+
+    def test_drains_to_champion_and_completes_season(self) -> None:
+        season, teams, _rr, tp = _lg3e_rr_then_tournament_season(
+            "FmtSWDrain", tournament_format="swiss", n=8, swiss_rounds=3
+        )
+        _play_rr(season, teams)
+        tp.refresh_from_db()
+        _drain_and_complete(season, tp)
+        self.assertEqual(tp.tournament.state, "completed")
+        self.assertIsNotNone(tp.tournament.champion_id)
+        self.assertEqual(season.state, "completed")
+        self.assertEqual(season.champion_team_id, tp.tournament.champion_id)
+
+
+class TestBuildRoundRobinDoubleElimFormat(TestCase):
+    """A ``round_robin_double_elim`` tournament phase builds with a valid wb/lb
+    combo (8 teams, wb=4/lb=2). The seeding stage builds round_robin nodes; the
+    sub-config wb/lb advancers are carried onto the Tournament."""
+
+    def test_built_format_and_wb_lb_advancers(self) -> None:
+        season, teams, _rr, tp = _lg3e_rr_then_tournament_season(
+            "FmtRRDE",
+            tournament_format="round_robin_double_elim",
+            n=8,
+            wb_advancers=4,
+            lb_advancers=2,
+        )
+        _play_rr(season, teams)
+        tp.refresh_from_db()
+        self.assertIsNotNone(tp.tournament_id)
+        self.assertEqual(tp.tournament.format, "round_robin_double_elim")
+        # wb/lb advancers carried onto the built Tournament.
+        self.assertEqual(tp.tournament.wb_advancers, 4)
+        self.assertEqual(tp.tournament.lb_advancers, 2)
+        # The seeding stage builds round_robin nodes at lock (DE finals build
+        # lazily once the RR seeding completes).
+        self.assertIn("round_robin", _lg3e_bracket_types(tp.tournament))
+
+    def test_drains_to_champion_and_completes_season(self) -> None:
+        season, teams, _rr, tp = _lg3e_rr_then_tournament_season(
+            "FmtRRDEDrain",
+            tournament_format="round_robin_double_elim",
+            n=8,
+            wb_advancers=4,
+            lb_advancers=2,
+        )
+        _play_rr(season, teams)
+        tp.refresh_from_db()
+        _drain_and_complete(season, tp)
+        self.assertEqual(tp.tournament.state, "completed")
+        self.assertIsNotNone(tp.tournament.champion_id)
+        self.assertEqual(season.state, "completed")
+        self.assertEqual(season.champion_team_id, tp.tournament.champion_id)
+
+
+class TestBuildFormatWithCutInterplay(TestCase):
+    """A ``tournament_cut`` combined with a non-single-elim format: the cut slices
+    the seeded order to the top N before the (chosen-format) bracket builds."""
+
+    def test_double_elim_with_cut_seeds_top_four(self) -> None:
+        season, teams, _rr, tp = _lg3e_rr_then_tournament_season(
+            "FmtCutDE",
+            tournament_format="double_elimination",
+            n=8,
+            tournament_cut=4,
+        )
+        _play_rr(season, teams)
+        tp.refresh_from_db()
+        self.assertIsNotNone(tp.tournament_id)
+        self.assertEqual(tp.tournament.format, "double_elimination")
+
+        participants = list(
+            _Lg3eParticipant.objects.filter(tournament=tp.tournament).order_by("seed")
+        )
+        # The cut keeps exactly 4 participants, dense seeds 1..4.
+        self.assertEqual(len(participants), 4)
+        self.assertEqual([p.seed for p in participants], [1, 2, 3, 4])
+
+    def test_swiss_with_cut_seeds_top_four(self) -> None:
+        # Swiss needs an even participant count — cut=4 keeps that.
+        season, teams, _rr, tp = _lg3e_rr_then_tournament_season(
+            "FmtCutSW",
+            tournament_format="swiss",
+            n=8,
+            tournament_cut=4,
+            swiss_rounds=2,
+        )
+        _play_rr(season, teams)
+        tp.refresh_from_db()
+        self.assertIsNotNone(tp.tournament_id)
+        self.assertEqual(tp.tournament.format, "swiss")
+        participants = list(
+            _Lg3eParticipant.objects.filter(tournament=tp.tournament).order_by("seed")
+        )
+        self.assertEqual(len(participants), 4)
+        self.assertEqual([p.seed for p in participants], [1, 2, 3, 4])
