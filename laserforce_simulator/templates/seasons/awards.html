@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block title %}{{ season.league.name }} — {{ season.name }} — Awards{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item">{{ season.league.name }}</li>
+            <li class="breadcrumb-item active" aria-current="page">{{ season.name }}</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1 class="mb-0">Awards</h1>
+        <a class="btn btn-outline-primary btn-sm" href="{% url 'season_standings' season.id %}">Standings</a>
+    </div>
+
+    {% if not has_rounds %}
+        <div id="season-awards-empty-notice" class="alert alert-info">
+            No completed regular-season rounds yet — awards appear once the
+            Season has been played.
+        </div>
+    {% else %}
+        <div class="table-responsive">
+            <table id="season-awards-table" class="table table-striped table-hover">
+                <thead>
+                    <tr>
+                        <th>Award</th>
+                        <th>Winner</th>
+                        <th>Team</th>
+                        <th>Role</th>
+                        <th class="text-end">Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr id="season-awards-most-points">
+                        <td>Most Points</td>
+                        {% with w=awards.most_points %}
+                            {% if w %}
+                                <td>{{ w.player_name }}</td>
+                                <td>{{ w.team_name }}</td>
+                                <td>{{ w.role }}</td>
+                                <td class="text-end">{{ w.value|floatformat:0 }}</td>
+                            {% else %}
+                                <td>—</td><td>—</td><td>—</td><td class="text-end">—</td>
+                            {% endif %}
+                        {% endwith %}
+                    </tr>
+                    <tr id="season-awards-best-accuracy">
+                        <td>Best Accuracy</td>
+                        {% with w=awards.best_accuracy %}
+                            {% if w %}
+                                <td>{{ w.player_name }}</td>
+                                <td>{{ w.team_name }}</td>
+                                <td>{{ w.role }}</td>
+                                <td class="text-end">{{ w.value|floatformat:1 }}</td>
+                            {% else %}
+                                <td>—</td><td>—</td><td>—</td><td class="text-end">—</td>
+                            {% endif %}
+                        {% endwith %}
+                    </tr>
+                    {% for role, label, w in kd_rows %}
+                        <tr id="season-awards-kd-{{ role }}">
+                            <td>{{ label }}</td>
+                            {% if w %}
+                                <td>{{ w.player_name }}</td>
+                                <td>{{ w.team_name }}</td>
+                                <td>{{ w.role }}</td>
+                                <td class="text-end">{{ w.value|floatformat:2 }}</td>
+                            {% else %}
+                                <td>—</td><td>—</td><td>—</td><td class="text-end">—</td>
+                            {% endif %}
+                        </tr>
+                    {% endfor %}
+                    <tr id="season-awards-best-medic">
+                        <td>Best Medic</td>
+                        {% with w=awards.best_medic %}
+                            {% if w %}
+                                <td>{{ w.player_name }}</td>
+                                <td>{{ w.team_name }}</td>
+                                <td>{{ w.role }}</td>
+                                <td class="text-end">{{ w.value|floatformat:0 }}</td>
+                            {% else %}
+                                <td>—</td><td>—</td><td>—</td><td class="text-end">—</td>
+                            {% endif %}
+                        {% endwith %}
+                    </tr>
+                    <tr id="season-awards-most-efficient-nuke">
+                        <td>Most Efficient Nuke</td>
+                        {% with w=awards.most_efficient_nuke %}
+                            {% if w %}
+                                <td>{{ w.player_name }}</td>
+                                <td>{{ w.team_name }}</td>
+                                <td>{{ w.role }}</td>
+                                <td class="text-end">{{ w.value|floatformat:2 }}</td>
+                            {% else %}
+                                <td>—</td><td>—</td><td>—</td><td class="text-end">—</td>
+                            {% endif %}
+                        {% endwith %}
+                    </tr>
+                    <tr id="season-awards-season-mvp">
+                        <td>Season MVP</td>
+                        {% with w=awards.season_mvp %}
+                            {% if w %}
+                                <td>{{ w.player_name }}</td>
+                                <td>{{ w.team_name }}</td>
+                                <td>{{ w.role }}</td>
+                                <td class="text-end">{{ w.value|floatformat:1 }}</td>
+                            {% else %}
+                                <td>—</td><td>—</td><td>—</td><td class="text-end">—</td>
+                            {% endif %}
+                        {% endwith %}
+                    </tr>
+                    <tr id="season-awards-finals-mvp">
+                        <td>Finals MVP</td>
+                        {% with w=awards.finals_mvp %}
+                            {% if w %}
+                                <td>{{ w.player_name }}</td>
+                                <td>{{ w.team_name }}</td>
+                                <td>{{ w.role }}</td>
+                                <td class="text-end">{{ w.value|floatformat:1 }}</td>
+                            {% else %}
+                                <td>—</td><td>—</td><td>—</td><td class="text-end">—</td>
+                            {% endif %}
+                        {% endwith %}
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+    </main>
+</div>
+{% endblock %}

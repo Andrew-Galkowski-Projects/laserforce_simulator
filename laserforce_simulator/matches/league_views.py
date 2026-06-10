@@ -9,7 +9,9 @@ callables here; URL names are unchanged.
 
 import random
 from collections import defaultdict
+from dataclasses import replace
 from datetime import date, timedelta
+from math import ceil
 from typing import Iterable, Optional
 
 from celery.result import AsyncResult
@@ -40,6 +42,13 @@ from .models import (
     PlayerRoundState,
     Season,
     SeasonPhase,
+)
+from .season_awards import (
+    AwardSet,
+    AwardWinner,
+    ROLE_KEYS,
+    compute_season_awards,
+    pick_finals_mvp,
 )
 from .season_dashboard import (
     LeaderRow,
@@ -187,6 +196,51 @@ def _standings_sort_value(row: "StandingsRow | dict", team_name: str, key: str):
         wins, losses, _ties = _standings_row_attr(row, key)
         return (wins, -losses)
     return _standings_row_attr(row, key)
+
+
+def season_awards(request, season_id: int) -> HttpResponse:
+    """LG-03 — Season-end awards page.
+
+    Read-only, GET-only. Recomputes the Season's award set on render (no
+    persisted award rows) from the frozen regular-season ``PlayerRoundState``
+    corpus plus, for a bracket-format playoff phase, the Finals MVP. Renders
+    an empty notice when the Season has no completed regular-season rounds.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
+
+    league = season.league
+    displayed_season = season
+    sidebar_links = _build_league_sidebar_links(
+        league, displayed_season, sidebar_active=None
+    )
+
+    awards = _compute_season_award_set(season)
+    has_rounds = PlayerRoundState.objects.filter(
+        game_round__match__season=season
+    ).exists()
+
+    # ``kd_by_role`` rendered as ordered (role, label, winner) tuples so the
+    # template can emit the 5 ``season-awards-kd-{role}`` rows without
+    # dict-indexing by a loop variable.
+    kd_rows = [
+        (role, _KD_ROLE_LABELS[role], awards.kd_by_role.get(role)) for role in ROLE_KEYS
+    ]
+
+    context = {
+        "season": season,
+        "league": league,
+        "displayed_season": displayed_season,
+        "sidebar_links": sidebar_links,
+        "sidebar_active": None,
+        "awards": awards,
+        "kd_rows": kd_rows,
+        "has_rounds": has_rounds,
+    }
+    return render(request, "seasons/awards.html", context)
 
 
 def season_standings(request, season_id: int) -> HttpResponse:
@@ -1333,19 +1387,230 @@ def _build_league_sidebar_links(
     return out
 
 
+# ---------------------------------------------------------------------------
+# LG-03 — Season-end awards (shared aggregation helpers)
+# ---------------------------------------------------------------------------
+
+# The tournament formats whose champion is crowned through a terminal Bracket
+# node — only these source a Finals MVP. ``round_robin`` / ``swiss`` have no
+# single deciding Match, so they (and no-playoff Seasons) yield ``None``.
+_BRACKET_FINALS_FORMATS: frozenset[str] = frozenset(
+    {"single_elimination", "double_elimination", "round_robin_double_elim"}
+)
+
+
+def _award_round_dict(prs: PlayerRoundState) -> dict:
+    """Build one LG-03 seam dict from a ``PlayerRoundState`` row.
+
+    Mirrors ``league_screens.player_stats._build_round_dicts`` team-resolution:
+    the team resolves from the Round's ``team_red`` / ``team_blue`` keyed on
+    the player's ``team_color``. ``accuracy`` / ``mvp`` are pre-computed here
+    from the ``get_accuracy`` / ``get_mvp`` PROPERTIES (no parens) so the pure
+    module never touches the MVP formula or the ORM.
+    """
+    game_round = prs.game_round
+    if prs.team_color == "red":
+        team = game_round.team_red
+    elif prs.team_color == "blue":
+        team = game_round.team_blue
+    else:
+        team = None
+    return {
+        "player_id": prs.player_id,
+        "player_name": prs.player.name,
+        "role": prs.role,
+        "team_id": team.id if team is not None else 0,
+        "team_name": team.name if team is not None else "",
+        "points_scored": prs.points_scored,
+        "tags_made": prs.tags_made,
+        "times_tagged": prs.times_tagged,
+        "accuracy": float(prs.get_accuracy),
+        "mvp": float(prs.get_mvp),
+        "resupplies_given": prs.resupplies_given,
+        "specials_used": prs.specials_used,
+        "own_specials_cancelled": prs.own_specials_cancelled,
+    }
+
+
+def _season_regular_round_dicts(season: Season) -> list[dict]:
+    """Build the flat regular-season seam dicts for a Season, id-ascending.
+
+    Regular-season corpus (LOCKED ORM): every ``PlayerRoundState`` reachable
+    via ``game_round__match__season=season`` — playoff Matches carry
+    ``season=NULL`` (Part2c-1 #3) so they are naturally excluded. Rows are
+    ordered ``id`` ascending so the pure module's "last row wins" identity
+    resolution is deterministic.
+    """
+    prs_qs = (
+        PlayerRoundState.objects.filter(game_round__match__season=season)
+        .select_related(
+            "player",
+            "game_round",
+            "game_round__team_red",
+            "game_round__team_blue",
+        )
+        .order_by("id")
+    )
+    return [_award_round_dict(prs) for prs in prs_qs]
+
+
+def _finals_deciding_node(tournament) -> Optional["object"]:
+    """Resolve the terminal Bracket node won by the Tournament champion.
+
+    - ``single_elimination`` / ``round_robin_double_elim`` ⇒ the node with
+      ``advances_to_id is None`` whose ``winner_id == tournament.champion_id``.
+    - ``double_elimination`` ⇒ the grand-final node GF2
+      (``bracket_type == "grand_final"``, ``advances_to_id is None``), or GF1
+      when GF2 is a bye (the Bracket reset was skipped).
+
+    Returns ``None`` when no node matches (defensive).
+    """
+    fmt = tournament.format
+    if fmt == "double_elimination":
+        gf_nodes = [
+            n
+            for n in tournament.nodes.all()
+            if n.bracket_type == "grand_final" and n.advances_to_id is None
+        ]
+        # GF2 is the terminal grand-final node; fall back to GF1 when GF2 is a
+        # bye / inert (the reset was skipped).
+        for node in gf_nodes:
+            if not node.is_bye and node.winner_id == tournament.champion_id:
+                return node
+        # GF2 inert — pick the grand-final node won by the champion (GF1).
+        for node in tournament.nodes.all():
+            if (
+                node.bracket_type == "grand_final"
+                and node.winner_id == tournament.champion_id
+            ):
+                return node
+        return None
+
+    # single_elimination / round_robin_double_elim.
+    for node in tournament.nodes.all():
+        if node.advances_to_id is None and node.winner_id == tournament.champion_id:
+            return node
+    return None
+
+
+def _season_finals_mvp(season: Season) -> Optional[AwardWinner]:
+    """Compute a Season's Finals MVP, or ``None``.
+
+    Set only when the Season has a tournament/playoff phase whose Tournament
+    has a BRACKET format (:data:`_BRACKET_FINALS_FORMATS`). Navigates
+    ``ordered_phases()`` → the ``tournament`` phase with a built Tournament →
+    the deciding ``BracketNode`` → ALL ``GameRound``s of ALL its
+    ``SeriesMatch`` rows → ``pick_finals_mvp`` over the per-round dicts.
+    """
+    phase = None
+    for p in season.ordered_phases():
+        if p.phase_type == "tournament" and p.tournament_id is not None:
+            phase = p
+            break
+    if phase is None:
+        return None
+
+    tournament = phase.tournament
+    if tournament is None or tournament.format not in _BRACKET_FINALS_FORMATS:
+        return None
+    if tournament.champion_id is None:
+        return None
+
+    node = _finals_deciding_node(tournament)
+    if node is None:
+        return None
+
+    final_round_dicts: list[dict] = []
+    for series_match in node.series_matches.all():
+        match = series_match.match
+        if match is None:
+            continue
+        prs_qs = (
+            PlayerRoundState.objects.filter(game_round__match=match)
+            .select_related(
+                "player",
+                "game_round",
+                "game_round__team_red",
+                "game_round__team_blue",
+            )
+            .order_by("id")
+        )
+        final_round_dicts.extend(_award_round_dict(prs) for prs in prs_qs)
+
+    return pick_finals_mvp(final_round_dicts)
+
+
+def _compute_season_award_set(season: Season) -> AwardSet:
+    """Build a Season's full :class:`AwardSet` (regular-season + finals MVP).
+
+    The single shared path used by ``season_awards`` (the view),
+    ``_build_history_row`` (League History), and the player-page awards badge.
+    Builds the regular-season seam dicts, derives ``min_games``, calls
+    ``compute_season_awards``, then stamps the separately-computed Finals MVP.
+    """
+    round_dicts = _season_regular_round_dicts(season)
+
+    games_by_player: dict[int, int] = defaultdict(int)
+    for row in round_dicts:
+        games_by_player[row["player_id"]] += 1
+    max_games = max(games_by_player.values(), default=0)
+    min_games = ceil(max_games / 2)
+
+    awards = compute_season_awards(round_dicts, min_games=min_games)
+    finals_mvp = _season_finals_mvp(season)
+    return replace(awards, finals_mvp=finals_mvp)
+
+
+# Human labels for the player-page awards badge.
+_KD_ROLE_LABELS: dict[str, str] = {
+    "commander": "K/D — Commander",
+    "heavy": "K/D — Heavy",
+    "scout": "K/D — Scout",
+    "medic": "K/D — Medic",
+    "ammo": "K/D — Ammo",
+}
+
+
+def _player_award_labels(awards: AwardSet, player_id: int) -> list[str]:
+    """Human labels of the awards ``player_id`` won in this ``AwardSet``."""
+    labels: list[str] = []
+
+    def won(winner: Optional[AwardWinner]) -> bool:
+        return winner is not None and winner.player_id == player_id
+
+    if won(awards.most_points):
+        labels.append("Most Points")
+    if won(awards.best_accuracy):
+        labels.append("Best Accuracy")
+    for role in ROLE_KEYS:
+        if won(awards.kd_by_role.get(role)):
+            labels.append(_KD_ROLE_LABELS[role])
+    if won(awards.best_medic):
+        labels.append("Best Medic")
+    if won(awards.most_efficient_nuke):
+        labels.append("Most Efficient Nuke")
+    if won(awards.season_mvp):
+        labels.append("Season MVP")
+    if won(awards.finals_mvp):
+        labels.append("Finals MVP")
+    return labels
+
+
 def _build_history_row(
     season: Season,
     teams_by_id: dict[int, Team],
     *,
     is_in_progress: bool,
 ) -> dict:
-    """LG-01f — build one row of the League History table.
+    """LG-01f / LG-03 — build one row of the League History table.
 
-    Returns a dict with the 11 frozen keys described by the seam
-    contract. ``None`` values render as ``"—"`` in the template.
-    Consumes the pre-fetched ``season.matches.all()`` prefetch cache
-    and the pre-built ``teams_by_id`` lookup so this helper issues
-    zero queries.
+    Returns a dict with 13 keys (the LG-01f 11 plus LG-03's
+    ``season_mvp`` / ``finals_mvp``). ``None`` values render as ``"—"``
+    in the template. The standings columns consume the pre-fetched
+    ``season.matches.all()`` cache and the ``teams_by_id`` lookup with
+    zero queries; the LG-03 award cells issue **one** per-Season
+    ``PlayerRoundState`` query via ``_compute_season_award_set`` —
+    acceptable on the paginated (10-row) History page.
     """
     matches_list_in: list[dict] = []
     for match in season.matches.all():
@@ -1396,6 +1661,10 @@ def _build_history_row(
     else:
         runner_up = None
 
+    # LG-03 — Season MVP + Finals MVP via the shared award path (one per-season
+    # PlayerRoundState query — acceptable on the paginated 10-row History page).
+    award_set = _compute_season_award_set(season)
+
     return {
         "season_id": season.id,
         "season_name": season.name,
@@ -1408,6 +1677,8 @@ def _build_history_row(
         "tournament_champion": None,
         "top_three": top_three,
         "is_in_progress": is_in_progress,
+        "season_mvp": award_set.season_mvp,
+        "finals_mvp": award_set.finals_mvp,
     }
 
 
