@@ -700,6 +700,94 @@ class TestSeasonPhaseTournamentModeField(TestCase):
             self.assertEqual(phase.tournament_mode, value)
 
 
+# ---------------------------------------------------------------------------
+# LG-02-Part2c-3d — SeasonPhase.tournament_format (dormant) + tournament_cut
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3d-seam-contract.md`` §2 / §9:
+#   tournament_format = CharField(max_length=32,
+#                                 choices=TOURNAMENT_FORMAT_CHOICES,
+#                                 default="single_elimination")  -- DORMANT
+#   tournament_cut    = PositiveSmallIntegerField(default=0)     -- LIVE
+# ``tournament_format`` is written-but-unread by the build this slice (the build
+# hardcodes format="single_elimination"); ``tournament_cut`` defaults 0 (no cut).
+# ``TOURNAMENT_FORMAT_CHOICES`` mirrors ``Tournament.FORMAT_CHOICES`` (the 5
+# tuples). Appended as NEW classes; no existing class above is modified. These
+# WILL fail until the Code agent lands the two columns + migration 0046 — the TDD
+# red state, not a defect in this file.
+
+
+class TestSeasonPhaseTournamentFormatField(TestCase):
+    """LG-02-Part2c-3d — ``SeasonPhase.tournament_format`` (dormant CharField)."""
+
+    def test_tournament_format_default_is_single_elimination(self) -> None:
+        season = _draft_season("FormatDefault")
+        phase = SeasonPhase.objects.create(season=season, ordinal=1)
+        self.assertEqual(phase.tournament_format, "single_elimination")
+
+    def test_tournament_format_choices_declare_all_five_values(self) -> None:
+        values = {value for value, _label in SeasonPhase.TOURNAMENT_FORMAT_CHOICES}
+        self.assertEqual(
+            values,
+            {
+                "single_elimination",
+                "double_elimination",
+                "round_robin",
+                "round_robin_double_elim",
+                "swiss",
+            },
+        )
+
+    def test_tournament_format_max_length_is_32(self) -> None:
+        field = SeasonPhase._meta.get_field("tournament_format")
+        self.assertEqual(field.max_length, 32)
+
+    def test_all_five_tournament_format_values_persist(self) -> None:
+        season = _draft_season("FormatAllFive")
+        for ordinal, value in enumerate(
+            (
+                "single_elimination",
+                "double_elimination",
+                "round_robin",
+                "round_robin_double_elim",
+                "swiss",
+            ),
+            start=1,
+        ):
+            phase = SeasonPhase.objects.create(
+                season=season,
+                ordinal=ordinal,
+                phase_type="tournament",
+                tournament_format=value,
+            )
+            phase.refresh_from_db()
+            self.assertEqual(phase.tournament_format, value)
+
+
+class TestSeasonPhaseTournamentCutField(TestCase):
+    """LG-02-Part2c-3d — ``SeasonPhase.tournament_cut``
+    (``PositiveSmallIntegerField``, default 0)."""
+
+    def test_tournament_cut_default_is_zero(self) -> None:
+        season = _draft_season("CutDefault")
+        phase = SeasonPhase.objects.create(season=season, ordinal=1)
+        self.assertEqual(phase.tournament_cut, 0)
+
+    def test_tournament_cut_field_is_positive_small_integer(self) -> None:
+        from django.db.models import PositiveSmallIntegerField
+
+        field = SeasonPhase._meta.get_field("tournament_cut")
+        self.assertIsInstance(field, PositiveSmallIntegerField)
+
+    def test_tournament_cut_persists_as_given(self) -> None:
+        season = _draft_season("CutPersist")
+        phase = SeasonPhase.objects.create(
+            season=season, ordinal=1, phase_type="tournament", tournament_cut=8
+        )
+        phase.refresh_from_db()
+        self.assertEqual(phase.tournament_cut, 8)
+
+
 # ===========================================================================
 # LG-02-Part2c-1 — Season cursor + completion derivation + auto-build
 # ===========================================================================

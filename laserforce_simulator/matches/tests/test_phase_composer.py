@@ -785,3 +785,257 @@ class TestComposeGuardRelaxedToStandingsOnly(SimpleTestCase):
             ["round_robin", "tournament", "round_robin"],
         )
         self.assertEqual(specs[1].tournament_mode, "standings")
+
+
+# ===========================================================================
+# LG-02-Part2c-3d — ``tournament[:mode[:cut]]`` wire grammar + ``tournament_cut``
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3d-seam-contract.md`` §4 / §9:
+# the tournament wire token grows a THIRD optional field, the participant cut —
+# ``tournament[:mode[:cut]]`` parsed via ``split(":")`` on the tournament branch
+# only (the round_robin branch keeps its 2-way ``partition(":")`` grammar). The
+# locked rules on a tournament token:
+#   - bare ``tournament``           ⇒ mode "standings", cut 0
+#   - ``tournament:strength``       ⇒ mode "strength",  cut 0  (c-3c back-compat)
+#   - ``tournament:standings:8``    ⇒ mode "standings", cut 8
+#   - ``tournament:strength:4``     ⇒ mode "strength",  cut 4
+#   - cut floor: a parsed ``cut != 0 and cut < 4`` ⇒ the NEW LOCKED
+#     ``ValueError("tournament cut must be 0 or at least 4: <n>")`` (no ``!r``)
+#   - ``len(parts) > 3`` / non-int cut / empty cut field ⇒ EXISTING
+#     ``ValueError("malformed phase composition")``
+#   - a 3rd field on a ``round_robin`` token stays ``"malformed phase composition"``
+#   - ``PhaseSpec.tournament_cut`` defaults 0; existing keyword constructions
+#     stay equality-identical; the purity check stays green (no new import).
+#
+# Appended as NEW classes; no existing class above is modified. These WILL fail
+# until the Code agent lands the Part2c-3d cut grammar + ``PhaseSpec`` field +
+# the new floor ValueError — the TDD red state, not a defect in this file.
+
+
+class TestPhaseSpecTournamentCutDefault(SimpleTestCase):
+    """``PhaseSpec.tournament_cut`` defaults to ``0`` and is the LAST positional
+    field (existing 4-field constructions stay equality-identical)."""
+
+    def test_default_is_zero(self) -> None:
+        spec = PhaseSpec(ordinal=1, phase_type="round_robin", schedule_format=_SSF)
+        self.assertEqual(spec.tournament_cut, 0)
+
+    def test_explicit_value_is_carried(self) -> None:
+        spec = PhaseSpec(
+            ordinal=1,
+            phase_type="tournament",
+            schedule_format=None,
+            tournament_mode="standings",
+            tournament_cut=8,
+        )
+        self.assertEqual(spec.tournament_cut, 8)
+
+    def test_existing_keyword_construction_stays_equality_identical(self) -> None:
+        # A pre-c-3d 4-field keyword construction (no tournament_cut) must equal
+        # an explicit ``tournament_cut=0`` construction — the trailing-default
+        # precedent that keeps every prior PhaseSpec build valid.
+        a = PhaseSpec(
+            ordinal=2,
+            phase_type="tournament",
+            schedule_format=None,
+            tournament_mode="strength",
+        )
+        b = PhaseSpec(
+            ordinal=2,
+            phase_type="tournament",
+            schedule_format=None,
+            tournament_mode="strength",
+            tournament_cut=0,
+        )
+        self.assertEqual(a, b)
+
+
+class TestParseTournamentCut(SimpleTestCase):
+    """``tournament[:mode[:cut]]`` parses + stamps ``PhaseSpec.tournament_cut``."""
+
+    def test_bare_tournament_cut_is_zero(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[1].phase_type, "tournament")
+        self.assertEqual(specs[1].tournament_mode, "standings")
+        self.assertEqual(specs[1].tournament_cut, 0)
+
+    def test_tournament_strength_cut_is_zero_back_compat(self) -> None:
+        # c-3c back-compat: a two-field ``tournament:strength`` token (no cut)
+        # ⇒ strength mode, cut 0.
+        specs = parse_phase_composition(
+            "round_robin,tournament:strength", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[1].tournament_mode, "strength")
+        self.assertEqual(specs[1].tournament_cut, 0)
+
+    def test_tournament_standings_8_sets_cut_8(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament:standings:8", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[1].phase_type, "tournament")
+        self.assertEqual(specs[1].tournament_mode, "standings")
+        self.assertEqual(specs[1].tournament_cut, 8)
+        # A tournament phase still carries no schedule_format.
+        self.assertIsNone(specs[1].schedule_format)
+
+    def test_tournament_strength_4_sets_cut_4(self) -> None:
+        # ``strength`` may sit first; the trailing RR satisfies the >=1-RR rule.
+        specs = parse_phase_composition(
+            "tournament:strength:4,round_robin", season_schedule_format=_SSF
+        )
+        self.assertEqual([s.phase_type for s in specs], ["tournament", "round_robin"])
+        self.assertEqual(specs[0].tournament_mode, "strength")
+        self.assertEqual(specs[0].tournament_cut, 4)
+
+    def test_explicit_cut_zero_accepted(self) -> None:
+        # ``:0`` is the explicit no-cut value — accepted, parses to cut 0.
+        specs = parse_phase_composition(
+            "round_robin,tournament:standings:0", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[1].tournament_cut, 0)
+
+    def test_round_robin_specs_keep_cut_zero_default(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament:standings:8", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[0].phase_type, "round_robin")
+        self.assertEqual(specs[0].tournament_cut, 0)
+
+
+class TestParseTournamentCutFloor(SimpleTestCase):
+    """A parsed ``cut != 0 and cut < 4`` raises the NEW locked floor ValueError
+    ``f"tournament cut must be 0 or at least 4: {cut}"`` (cut is the parsed int,
+    no ``!r``)."""
+
+    def test_cut_1_raises_floor(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:1", season_schedule_format=_SSF
+            )
+        self.assertEqual(
+            str(ctx.exception), "tournament cut must be 0 or at least 4: 1"
+        )
+
+    def test_cut_2_raises_floor(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:2", season_schedule_format=_SSF
+            )
+        self.assertEqual(
+            str(ctx.exception), "tournament cut must be 0 or at least 4: 2"
+        )
+
+    def test_cut_3_raises_floor(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:3", season_schedule_format=_SSF
+            )
+        self.assertEqual(
+            str(ctx.exception), "tournament cut must be 0 or at least 4: 3"
+        )
+
+    def test_negative_cut_raises_floor(self) -> None:
+        # A parseable negative int is != 0 and < 4 ⇒ the floor string (negative
+        # is an int, so it does NOT take the non-int malformed path).
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:-1", season_schedule_format=_SSF
+            )
+        self.assertEqual(
+            str(ctx.exception), "tournament cut must be 0 or at least 4: -1"
+        )
+
+    def test_cut_4_accepted_at_floor(self) -> None:
+        # 4 is the minimum non-zero cut — accepted, no raise.
+        specs = parse_phase_composition(
+            "round_robin,tournament:standings:4", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[1].tournament_cut, 4)
+
+
+class TestParseTournamentCutMalformed(SimpleTestCase):
+    """A non-int cut, an empty cut field, or ``len(parts) > 3`` raises the
+    EXISTING ``"malformed phase composition"`` (NOT the new floor string)."""
+
+    def test_non_int_cut_raises_malformed(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:abc", season_schedule_format=_SSF
+            )
+        self.assertEqual(str(ctx.exception), "malformed phase composition")
+
+    def test_empty_cut_field_raises_malformed(self) -> None:
+        # A trailing colon with no cut (e.g. ``tournament:standings:``) ⇒ the
+        # empty cut field is malformed (NOT cut 0).
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:", season_schedule_format=_SSF
+            )
+        self.assertEqual(str(ctx.exception), "malformed phase composition")
+
+    def test_four_field_tournament_token_raises_malformed(self) -> None:
+        # len(parts) > 3 ⇒ malformed.
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:8:extra",
+                season_schedule_format=_SSF,
+            )
+        self.assertEqual(str(ctx.exception), "malformed phase composition")
+
+    def test_float_cut_raises_malformed(self) -> None:
+        # ``"4.0"`` does not parse as ``int`` ⇒ malformed (not the floor).
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:4.0", season_schedule_format=_SSF
+            )
+        self.assertEqual(str(ctx.exception), "malformed phase composition")
+
+
+class TestParseRoundRobinThirdFieldRejected(SimpleTestCase):
+    """The ``round_robin`` branch grammar is UNCHANGED — it keeps its 2-way
+    ``partition(":")`` split, so a 3rd field is folded into ``format_part`` and
+    rejected as an unknown schedule_format (the cut grammar is tournament-only).
+    A round_robin token never silently accepts a cut field."""
+
+    def test_round_robin_three_fields_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin:single_round_robin:8", season_schedule_format=_SSF
+            )
+        # The RR branch's 2-way partition leaves ``single_round_robin:8`` as the
+        # format_part ⇒ the existing unknown-schedule-format ValueError. The
+        # load-bearing point: a cut field on a round_robin token is rejected, NOT
+        # silently parsed (only the tournament branch grew the cut dimension).
+        self.assertEqual(
+            str(ctx.exception), "unknown schedule_format: 'single_round_robin:8'"
+        )
+
+
+class TestParseTournamentCutBackCompat(SimpleTestCase):
+    """Every c-3c serialized value parses unchanged under the cut grammar — bare
+    ``tournament`` ⇒ cut 0, ``tournament:strength`` ⇒ cut 0."""
+
+    def test_bare_tournament_parses_to_standings_cut_zero(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[1].tournament_mode, "standings")
+        self.assertEqual(specs[1].tournament_cut, 0)
+
+    def test_tournament_strength_parses_to_strength_cut_zero(self) -> None:
+        specs = parse_phase_composition(
+            "tournament:strength,round_robin", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[0].tournament_mode, "strength")
+        self.assertEqual(specs[0].tournament_cut, 0)
+
+    def test_unknown_mode_still_raises_unknown_tournament_mode(self) -> None:
+        # The mode-membership check still fires (verbatim) even with a cut field.
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:bogus:8", season_schedule_format=_SSF
+            )
+        self.assertEqual(str(ctx.exception), "unknown tournament_mode: 'bogus'")

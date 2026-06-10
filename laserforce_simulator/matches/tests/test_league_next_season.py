@@ -966,3 +966,79 @@ class TestLg02Part2c3bNextSeasonCarriesTournamentMode(TestCase):
         self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
         new_season = league.seasons.order_by("-id").first()
         self.assertEqual(new_season.phases.all()[1].tournament_mode, "standings")
+
+
+# ---------------------------------------------------------------------------
+# LG-02-Part2c-3d — next_season carries tournament_cut + tournament_format fwd
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3d-seam-contract.md`` §5 / §9:
+# the carry-forward copy loop adds BOTH ``tournament_cut=src.tournament_cut`` AND
+# ``tournament_format=src.tournament_format`` (next_season copies from the
+# persisted source SeasonPhase row, which has both real columns). Hand-set a
+# source completed Season's tournament phase to ``tournament_cut=8`` +
+# ``tournament_format`` via the ORM, run next_season, assert the new draft
+# Season's copied phase reproduces BOTH verbatim.
+#
+# Appended as a NEW class; no existing class is modified. These WILL fail until
+# the Code agent lands the carry-forward kwargs + the two new SeasonPhase
+# columns — the TDD red state.
+
+
+class TestLg02Part2c3dNextSeasonCarriesCutAndFormat(TestCase):
+    """LG-02-Part2c-3d — next_season copies tournament_cut + tournament_format
+    forward verbatim."""
+
+    def _setup_completed_with_cut_and_format(self, *, cut: int, fmt: str) -> League:
+        league = _make_league("Lg02c3dL")
+        teams = _make_teams("Lg02c3d", 2)
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=1,
+            phase_type="round_robin",
+            schedule_format="single_round_robin",
+        )
+        # A tournament phase carrying a non-default cut + format set directly via
+        # the ORM (the composer cannot write a format yet — it is dormant).
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=2,
+            phase_type="tournament",
+            schedule_format=None,
+            tournament_mode="standings",
+            tournament_cut=cut,
+            tournament_format=fmt,
+        )
+        return league
+
+    def test_cut_and_format_carried_forward_verbatim(self) -> None:
+        league = self._setup_completed_with_cut_and_format(cut=8, fmt="swiss")
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        new_phases = list(new_season.phases.all())  # Meta.ordering=["ordinal"]
+
+        # The RR row keeps the cut/format defaults (inert there).
+        self.assertEqual(new_phases[0].tournament_cut, 0)
+        self.assertEqual(new_phases[0].tournament_format, "single_elimination")
+
+        # The tournament row reproduces BOTH columns verbatim.
+        self.assertEqual(new_phases[1].phase_type, "tournament")
+        self.assertEqual(new_phases[1].tournament_cut, 8)
+        self.assertEqual(new_phases[1].tournament_format, "swiss")
+
+    def test_default_cut_and_format_carried_forward(self) -> None:
+        # A source phase with the column defaults reproduces them too.
+        league = self._setup_completed_with_cut_and_format(
+            cut=0, fmt="single_elimination"
+        )
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        new_phases = list(new_season.phases.all())
+        self.assertEqual(new_phases[1].tournament_cut, 0)
+        self.assertEqual(new_phases[1].tournament_format, "single_elimination")
