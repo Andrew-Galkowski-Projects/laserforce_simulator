@@ -562,13 +562,21 @@ def league_create(request) -> HttpResponse:
             phase_type=spec.phase_type,
             schedule_format=spec.schedule_format,
             tournament=None,
-            # LG-02-Part2c-3b — always "standings" this slice (dormant; the
-            # composer does not yet write a tournament_mode).
+            # LG-02-Part2c-3c — the composer writes the tournament_mode
+            # (standings / strength / unseeded) into the spec.
             tournament_mode=spec.tournament_mode,
-            # LG-02-Part2c-3d — top-N participant cut (0 = no cut). The dormant
-            # tournament_format is left to its column default this slice (there
-            # is no PhaseSpec.tournament_format).
+            # LG-02-Part2c-3d — top-N participant cut (0 = no cut).
             tournament_cut=spec.tournament_cut,
+            # LG-02-Part2c-3e — per-format sub-config (now-live tournament_format
+            # plus the 7 sub-config fields).
+            tournament_format=spec.tournament_format,
+            final_series_length=spec.final_series_length,
+            semifinal_series_length=spec.semifinal_series_length,
+            quarterfinal_series_length=spec.quarterfinal_series_length,
+            earlier_series_length=spec.earlier_series_length,
+            wb_advancers=spec.wb_advancers,
+            lb_advancers=spec.lb_advancers,
+            swiss_rounds=spec.swiss_rounds,
         )
 
     return redirect("season_standings", season_id=season.id)
@@ -2145,10 +2153,17 @@ def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
             schedule_format=src.schedule_format,
             tournament=None,
             tournament_mode=src.tournament_mode,
-            # LG-02-Part2c-3d — carry both tournament columns forward verbatim
-            # (the source row has both real persisted values).
+            # LG-02-Part2c-3d / 3e — carry all tournament columns forward verbatim
+            # (the source row has real persisted values for each).
             tournament_cut=src.tournament_cut,
             tournament_format=src.tournament_format,
+            final_series_length=src.final_series_length,
+            semifinal_series_length=src.semifinal_series_length,
+            quarterfinal_series_length=src.quarterfinal_series_length,
+            earlier_series_length=src.earlier_series_length,
+            wb_advancers=src.wb_advancers,
+            lb_advancers=src.lb_advancers,
+            swiss_rounds=src.swiss_rounds,
         )
 
     return redirect("season_dashboard", season_id=new_season.id)

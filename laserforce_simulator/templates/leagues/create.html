@@ -176,22 +176,28 @@
             modeSelect.appendChild(optM);
         }
 
-        // LG-02-Part2c-3d — disabled tournament-format placeholder (shown for
-        // tournament rows only). DORMANT: serializes NOTHING — the build
-        // hardcodes single-elimination and the column default covers persistence.
+        // LG-02-Part2c-3e — LIVE tournament-format select (shown for tournament
+        // rows only). Five formats; drives the per-format sub-config toggle.
         var tFormatSelect = document.createElement("select");
         tFormatSelect.id = "league-create-phase-tournament-format-" + i;
         tFormatSelect.className = "phase-tournament-format-select form-select mb-2";
         tFormatSelect.setAttribute("aria-label", "Tournament format");
-        tFormatSelect.disabled = true;
-        var optTF = document.createElement("option");
-        optTF.value = "single_elimination";
-        optTF.textContent = "Single elimination (more formats coming soon)";
-        tFormatSelect.appendChild(optTF);
+        var tFormatOpts = [
+            ["single_elimination", "Single elimination"],
+            ["double_elimination", "Double elimination"],
+            ["round_robin", "Round robin"],
+            ["round_robin_double_elim", "Round robin → Double elimination"],
+            ["swiss", "Swiss"],
+        ];
+        for (var f = 0; f < tFormatOpts.length; f++) {
+            var optTF = document.createElement("option");
+            optTF.value = tFormatOpts[f][0];
+            optTF.textContent = tFormatOpts[f][1];
+            tFormatSelect.appendChild(optTF);
+        }
 
         // LG-02-Part2c-3d — top-N participant cut (shown for tournament rows
-        // only). Default 0 = no cut = all enrolled teams; serializes as the
-        // third token field "tournament:<mode>:<cut>".
+        // only). Default 0 = no cut = all enrolled teams.
         var cutInput = document.createElement("input");
         cutInput.id = "league-create-phase-cut-" + i;
         cutInput.className = "phase-cut-input form-control mb-2";
@@ -200,10 +206,55 @@
         cutInput.value = "0";
         cutInput.setAttribute("aria-label", "Tournament participant cut");
 
-        // Per-tournament-block "build coming in a later release" flag.
+        // LG-02-Part2c-3e — four best-of-N series-length selects (shown for
+        // SE / DE / RR->DE formats). Options 1 / 3 / 5.
+        function buildSeriesSelect(idSuffix, label) {
+            var sel = document.createElement("select");
+            sel.id = "league-create-phase-" + idSuffix + "-" + i;
+            sel.className = "phase-" + idSuffix + " form-select mb-2";
+            sel.setAttribute("aria-label", label);
+            var slOpts = ["1", "3", "5"];
+            for (var s = 0; s < slOpts.length; s++) {
+                var optSL = document.createElement("option");
+                optSL.value = slOpts[s];
+                optSL.textContent = "Best of " + slOpts[s];
+                sel.appendChild(optSL);
+            }
+            return sel;
+        }
+        var finalSlSelect = buildSeriesSelect("final-sl", "Final series length");
+        var semiSlSelect = buildSeriesSelect("semifinal-sl", "Semifinal series length");
+        var quarterSlSelect = buildSeriesSelect(
+            "quarterfinal-sl", "Quarterfinal series length");
+        var earlierSlSelect = buildSeriesSelect("earlier-sl", "Earlier series length");
+
+        // LG-02-Part2c-3e — wb/lb combo select (shown for round_robin_double_elim
+        // only). Six combos; serialize() splits the "wb/lb" value into wb + lb.
+        var comboSelect = document.createElement("select");
+        comboSelect.id = "league-create-phase-rrde-combo-" + i;
+        comboSelect.className = "phase-rrde-combo form-select mb-2";
+        comboSelect.setAttribute("aria-label", "Winners/Losers bracket advancers");
+        var comboOpts = ["4/0", "4/2", "8/0", "8/4", "16/0", "16/8"];
+        for (var c = 0; c < comboOpts.length; c++) {
+            var optC = document.createElement("option");
+            optC.value = comboOpts[c];
+            optC.textContent = comboOpts[c];
+            comboSelect.appendChild(optC);
+        }
+
+        // LG-02-Part2c-3e — swiss-rounds number input (shown for swiss only).
+        var swissInput = document.createElement("input");
+        swissInput.id = "league-create-phase-swiss-rounds-" + i;
+        swissInput.className = "phase-swiss-rounds form-control mb-2";
+        swissInput.type = "number";
+        swissInput.min = "0";
+        swissInput.value = "0";
+        swissInput.setAttribute("aria-label", "Swiss rounds");
+
+        // Per-tournament-block flag (retained as an inert marker).
         var pending = document.createElement("div");
         pending.className = "phase-tournament-pending form-text";
-        pending.textContent = "Tournament phase build coming in a later release.";
+        pending.textContent = "Tournament phase configuration.";
         pending.style.display = "none";
 
         var removeBtn = document.createElement("button");
@@ -215,6 +266,26 @@
             serialize();
         });
 
+        // LG-02-Part2c-3e — show the right per-format sub-config: series-length
+        // selects for SE / DE / RR->DE; the wb/lb combo for RR->DE; the
+        // swiss-rounds input for Swiss.
+        function applyFormat() {
+            var fmt = tFormatSelect.value;
+            var showSeries =
+                fmt === "single_elimination" ||
+                fmt === "double_elimination" ||
+                fmt === "round_robin_double_elim";
+            var showCombo = fmt === "round_robin_double_elim";
+            var showSwiss = fmt === "swiss";
+            var seriesDisplay = showSeries ? "" : "none";
+            finalSlSelect.style.display = seriesDisplay;
+            semiSlSelect.style.display = seriesDisplay;
+            quarterSlSelect.style.display = seriesDisplay;
+            earlierSlSelect.style.display = seriesDisplay;
+            comboSelect.style.display = showCombo ? "" : "none";
+            swissInput.style.display = showSwiss ? "" : "none";
+        }
+
         function applyType() {
             var isRR = typeSelect.value === "round_robin";
             formatSelect.style.display = isRR ? "" : "none";
@@ -222,17 +293,43 @@
             tFormatSelect.style.display = isRR ? "none" : "";
             cutInput.style.display = isRR ? "none" : "";
             pending.style.display = isRR ? "none" : "";
+            if (isRR) {
+                finalSlSelect.style.display = "none";
+                semiSlSelect.style.display = "none";
+                quarterSlSelect.style.display = "none";
+                earlierSlSelect.style.display = "none";
+                comboSelect.style.display = "none";
+                swissInput.style.display = "none";
+            } else {
+                applyFormat();
+            }
             serialize();
         }
         typeSelect.addEventListener("change", applyType);
         modeSelect.addEventListener("change", serialize);
         cutInput.addEventListener("change", serialize);
+        tFormatSelect.addEventListener("change", function () {
+            applyFormat();
+            serialize();
+        });
+        finalSlSelect.addEventListener("change", serialize);
+        semiSlSelect.addEventListener("change", serialize);
+        quarterSlSelect.addEventListener("change", serialize);
+        earlierSlSelect.addEventListener("change", serialize);
+        comboSelect.addEventListener("change", serialize);
+        swissInput.addEventListener("change", serialize);
 
         row.appendChild(typeSelect);
         row.appendChild(formatSelect);
         row.appendChild(modeSelect);
         row.appendChild(tFormatSelect);
         row.appendChild(cutInput);
+        row.appendChild(finalSlSelect);
+        row.appendChild(semiSlSelect);
+        row.appendChild(quarterSlSelect);
+        row.appendChild(earlierSlSelect);
+        row.appendChild(comboSelect);
+        row.appendChild(swissInput);
         row.appendChild(pending);
         row.appendChild(removeBtn);
         composer.appendChild(row);
@@ -257,13 +354,38 @@
                 var fmt = formatSelect ? formatSelect.value : "single_round_robin";
                 tokens.push("round_robin:" + fmt);
             } else {
+                // LG-02-Part2c-3e — emit the positional 11-field tournament
+                // token "tournament:mode:cut:format:fsl:ssl:qsl:esl:wb:lb:swiss".
                 var modeSelect = rows[k].querySelector(".phase-mode-select");
                 var mode = modeSelect ? modeSelect.value : "standings";
-                // LG-02-Part2c-3d — append the top-N cut as the third token
-                // field. The disabled tournament-format select serializes nothing.
                 var cutInput = rows[k].querySelector(".phase-cut-input");
                 var cut = cutInput && cutInput.value !== "" ? cutInput.value : "0";
-                tokens.push("tournament:" + mode + ":" + cut);
+                var fmtSel = rows[k].querySelector(".phase-tournament-format-select");
+                var fmt = fmtSel ? fmtSel.value : "single_elimination";
+                var fslSel = rows[k].querySelector(".phase-final-sl");
+                var fsl = fslSel ? fslSel.value : "1";
+                var sslSel = rows[k].querySelector(".phase-semifinal-sl");
+                var ssl = sslSel ? sslSel.value : "1";
+                var qslSel = rows[k].querySelector(".phase-quarterfinal-sl");
+                var qsl = qslSel ? qslSel.value : "1";
+                var eslSel = rows[k].querySelector(".phase-earlier-sl");
+                var esl = eslSel ? eslSel.value : "1";
+                var wb = "0";
+                var lb = "0";
+                if (fmt === "round_robin_double_elim") {
+                    var comboSel = rows[k].querySelector(".phase-rrde-combo");
+                    var combo = comboSel ? comboSel.value : "4/0";
+                    var parts = combo.split("/");
+                    wb = parts[0];
+                    lb = parts.length > 1 ? parts[1] : "0";
+                }
+                var swissSel = rows[k].querySelector(".phase-swiss-rounds");
+                var swiss = swissSel && swissSel.value !== "" ? swissSel.value : "0";
+                tokens.push(
+                    "tournament:" + mode + ":" + cut + ":" + fmt + ":" +
+                    fsl + ":" + ssl + ":" + qsl + ":" + esl + ":" +
+                    wb + ":" + lb + ":" + swiss
+                );
             }
         }
         hidden.value = tokens.join(",");

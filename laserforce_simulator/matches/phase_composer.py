@@ -29,6 +29,22 @@ _VALID_SCHEDULE_FORMATS = ("single_round_robin", "double_round_robin")
 # parser rejects it with the unknown-mode ValueError).
 _VALID_TOURNAMENT_MODES = ("standings", "strength", "unseeded")
 
+# LG-02-Part2c-3e — the tournament formats the per-phase build now accepts (the
+# ``Tournament.FORMAT_CHOICES`` keys; kept inline so the parser stays Django-free).
+_VALID_TOURNAMENT_FORMATS = (
+    "single_elimination",
+    "double_elimination",
+    "round_robin",
+    "round_robin_double_elim",
+    "swiss",
+)
+
+# LG-02-Part2c-3e — valid (wb, lb) advancer combos for round_robin_double_elim.
+_VALID_RRDE_COMBOS = {(4, 0), (4, 2), (8, 0), (8, 4), (16, 0), (16, 8)}
+
+# LG-02-Part2c-3e — valid best-of-N series lengths for the four tier slots.
+_VALID_SERIES_LENGTHS = (1, 3, 5)
+
 
 @dataclass(frozen=True)
 class PhaseSpec:
@@ -39,13 +55,14 @@ class PhaseSpec:
     ``schedule_format`` is the season format for a round_robin phase and
     ``None`` for a tournament phase.
 
-    LG-02-Part2c-3b — ``tournament_mode`` carries the per-phase tournament
+    LG-02-Part2c-3b/3c — ``tournament_mode`` carries the per-phase tournament
     flavour (season-ending ``standings`` vs mid-season ``strength`` /
-    ``unseeded`` / ``random_draw``). DORMANT this slice: it is **not** parsed
-    from the wire format (the ``:`` syntax stays reserved for the Part2c-3c
-    picker), so every spec defaults to ``"standings"``. Appended LAST with a
-    default so existing keyword constructions stay equality-identical (the
-    Part2c-3a ``ScheduleFixture.leg`` precedent).
+    ``unseeded``; ``random_draw`` deferred). Parsed from the tournament token's
+    second field since Part2c-3c. LG-02-Part2c-3e — ``tournament_format`` plus
+    the 7 sub-config fields (series tiers / wb-lb advancers / swiss rounds)
+    carry the now-live per-format build. All appended LAST with defaults so
+    existing keyword constructions stay equality-identical (the Part2c-3a
+    ``ScheduleFixture.leg`` precedent).
     """
 
     ordinal: int
@@ -53,6 +70,17 @@ class PhaseSpec:
     schedule_format: Optional[str]
     tournament_mode: str = "standings"
     tournament_cut: int = 0
+    # LG-02-Part2c-3e — per-format sub-config carried through to the now-live
+    # ``tournament_format`` build. Appended LAST with defaults so existing
+    # keyword constructions stay equality-identical.
+    tournament_format: str = "single_elimination"
+    final_series_length: int = 1
+    semifinal_series_length: int = 1
+    quarterfinal_series_length: int = 1
+    earlier_series_length: int = 1
+    wb_advancers: int = 0
+    lb_advancers: int = 0
+    swiss_rounds: int = 0
 
 
 def parse_phase_composition(
@@ -110,33 +138,86 @@ def parse_phase_composition(
             raise ValueError("malformed phase composition")
         tournament_mode = "standings"
         tournament_cut = 0
+        tournament_format = "single_elimination"
+        final_series_length = 1
+        semifinal_series_length = 1
+        quarterfinal_series_length = 1
+        earlier_series_length = 1
+        wb_advancers = 0
+        lb_advancers = 0
+        swiss_rounds = 0
         if type_part == "round_robin":
             schedule_format: Optional[str] = format_part or season_schedule_format
             if schedule_format not in _VALID_SCHEDULE_FORMATS:
                 raise ValueError(f"unknown schedule_format: {schedule_format!r}")
         elif type_part == "tournament":
-            # LG-02-Part2c-3d — a ``tournament`` token's grammar is
-            # ``tournament[:mode[:cut]]`` (3-way ``split(":")``, versus the RR
-            # branch's 2-way ``partition``). ``parts[1]`` is the MODE (default
-            # ``standings``), ``parts[2]`` the top-N participant cut (default
-            # ``"0"``). Bare ``tournament`` ⇒ ``standings`` + cut ``0``.
+            # LG-02-Part2c-3e — a ``tournament`` token's grammar is the positional
+            # 11-field ``tournament:mode:cut:format:fsl:ssl:qsl:esl:wb:lb:swiss``
+            # (versus the RR branch's 2-way ``partition``). Trailing-optional with
+            # defaults; an empty field ⇒ malformed. ``parts[1]`` mode
+            # (``"standings"``), ``[2]`` cut (``"0"``), ``[3]`` format
+            # (``"single_elimination"``), ``[4..7]`` the four tier series lengths
+            # (``"1"``), ``[8]`` wb (``"0"``), ``[9]`` lb (``"0"``), ``[10]``
+            # swiss (``"0"``).
             schedule_format = None
             parts = token.split(":")
-            if len(parts) > 3:
+            # (1) length.
+            if len(parts) > 11:
                 raise ValueError("malformed phase composition")
-            mode = parts[1].strip() if len(parts) >= 2 else "standings"
-            mode = mode or "standings"
+
+            def _field(idx: int, default: str) -> str:
+                if len(parts) <= idx:
+                    return default
+                value = parts[idx].strip()
+                if not value:
+                    raise ValueError("malformed phase composition")
+                return value
+
+            def _int_field(idx: int, default: str) -> int:
+                try:
+                    return int(_field(idx, default))
+                except ValueError:
+                    raise ValueError("malformed phase composition") from None
+
+            # (2) mode.
+            mode = _field(1, "standings")
             if mode not in _VALID_TOURNAMENT_MODES:
                 raise ValueError(f"unknown tournament_mode: {mode!r}")
             tournament_mode = mode
-            cut_part = parts[2].strip() if len(parts) >= 3 else "0"
-            try:
-                cut = int(cut_part)
-            except ValueError:
-                raise ValueError("malformed phase composition") from None
+            # (3) cut.
+            cut = _int_field(2, "0")
             if cut != 0 and cut < 4:
                 raise ValueError(f"tournament cut must be 0 or at least 4: {cut}")
             tournament_cut = cut
+            # (4) format.
+            fmt = _field(3, "single_elimination")
+            if fmt not in _VALID_TOURNAMENT_FORMATS:
+                raise ValueError(f"unknown tournament_format: {fmt!r}")
+            tournament_format = fmt
+            # (5) series-length tiers.
+            final_series_length = _int_field(4, "1")
+            semifinal_series_length = _int_field(5, "1")
+            quarterfinal_series_length = _int_field(6, "1")
+            earlier_series_length = _int_field(7, "1")
+            for n in (
+                final_series_length,
+                semifinal_series_length,
+                quarterfinal_series_length,
+                earlier_series_length,
+            ):
+                if n not in _VALID_SERIES_LENGTHS:
+                    raise ValueError(f"series length must be 1, 3, or 5: {n}")
+            # (6) wb / lb (combo validated only for round_robin_double_elim).
+            wb_advancers = _int_field(8, "0")
+            lb_advancers = _int_field(9, "0")
+            if fmt == "round_robin_double_elim":
+                if (wb_advancers, lb_advancers) not in _VALID_RRDE_COMBOS:
+                    raise ValueError(
+                        "invalid wb/lb combo for round_robin_double_elim: "
+                        f"{wb_advancers}/{lb_advancers}"
+                    )
+            # (7) swiss rounds.
+            swiss_rounds = _int_field(10, "0")
         else:
             raise ValueError(f"unknown phase type: {token!r}")
         specs.append(
@@ -146,6 +227,14 @@ def parse_phase_composition(
                 schedule_format=schedule_format,
                 tournament_mode=tournament_mode,
                 tournament_cut=tournament_cut,
+                tournament_format=tournament_format,
+                final_series_length=final_series_length,
+                semifinal_series_length=semifinal_series_length,
+                quarterfinal_series_length=quarterfinal_series_length,
+                earlier_series_length=earlier_series_length,
+                wb_advancers=wb_advancers,
+                lb_advancers=lb_advancers,
+                swiss_rounds=swiss_rounds,
             )
         )
 
