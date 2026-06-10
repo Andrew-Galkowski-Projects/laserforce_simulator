@@ -1222,9 +1222,16 @@ class Season(models.Model):
             name = f"{self.name} Tournament"
         tournament = Tournament.objects.create(
             name=name,
-            format="single_elimination",
+            format=phase.tournament_format,
             team_assembly="preset",
             state="setup",
+            final_series_length=phase.final_series_length,
+            semifinal_series_length=phase.semifinal_series_length,
+            quarterfinal_series_length=phase.quarterfinal_series_length,
+            earlier_series_length=phase.earlier_series_length,
+            wb_advancers=phase.wb_advancers,
+            lb_advancers=phase.lb_advancers,
+            swiss_rounds=phase.swiss_rounds,
         )
         for position, team_id in enumerate(order):
             TournamentParticipant.objects.create(
@@ -1590,10 +1597,10 @@ class SeasonPhase(models.Model):
         choices=TOURNAMENT_MODE_CHOICES,
         default="standings",
     )
-    # LG-02-Part2c-3d — DORMANT this slice: written-but-unread by the build
-    # (``activate_pending_tournament_phase`` hardcodes
-    # ``format="single_elimination"``). Threaded through the carry-forward so a
-    # future per-format build path is forward-compatible.
+    # LG-02-Part2c-3d landed this column DORMANT; LG-02-Part2c-3e flipped it
+    # LIVE — ``activate_pending_tournament_phase`` now builds the embedded
+    # Tournament with ``format=phase.tournament_format`` (any of the five
+    # FORMAT_CHOICES), alongside the 7 per-format sub-config columns below.
     tournament_format = models.CharField(
         max_length=32,
         choices=TOURNAMENT_FORMAT_CHOICES,
@@ -1602,6 +1609,25 @@ class SeasonPhase(models.Model):
     # LG-02-Part2c-3d — LIVE: a top-N participant cut applied to the seeded
     # order before the bracket builds. ``0`` = no cut = all enrolled teams.
     tournament_cut = models.PositiveSmallIntegerField(default=0)
+    # LG-02-Part2c-3e — per-format sub-config parity with ``Tournament``. These
+    # 7 columns mirror ``Tournament``'s sub-config fields and feed the now-live
+    # ``tournament_format`` build. Choices tuples are INLINED (NOT referencing
+    # ``Tournament.*`` — declared later in this module).
+    final_series_length = models.PositiveSmallIntegerField(
+        choices=((1, "Best of 1"), (3, "Best of 3"), (5, "Best of 5")), default=1
+    )
+    semifinal_series_length = models.PositiveSmallIntegerField(
+        choices=((1, "Best of 1"), (3, "Best of 3"), (5, "Best of 5")), default=1
+    )
+    quarterfinal_series_length = models.PositiveSmallIntegerField(
+        choices=((1, "Best of 1"), (3, "Best of 3"), (5, "Best of 5")), default=1
+    )
+    earlier_series_length = models.PositiveSmallIntegerField(
+        choices=((1, "Best of 1"), (3, "Best of 3"), (5, "Best of 5")), default=1
+    )
+    wb_advancers = models.PositiveSmallIntegerField(default=0)
+    lb_advancers = models.PositiveSmallIntegerField(default=0)
+    swiss_rounds = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
         ordering = ["ordinal"]

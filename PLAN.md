@@ -9,7 +9,7 @@ Story IDs from `sm5_user_stories_v2.html` are referenced where applicable.
 
 ### LG-02 · Tournament formats
 
-**Status: PART 1 sandbox formats all DONE; LG-02x-2 (Duos / Trios) deferred; Part 2 foundation (Part2a) DONE; Part2b (create-League composer + dormant phase columns) DONE; Part2c-1 (RR → single-elimination playoff embed) DONE; Part2c-2 SPINE (multi-RR play loop + `Match.season_phase` FK + cross-phase matchday offsetting) DONE; Part2c-3a (first alternative regular-season format — `double_round_robin` + `Match.leg`, wiring the Part2b dormant per-phase `schedule_format` column end-to-end) DONE; Part2c-3b (dormant per-phase `SeasonPhase.tournament_mode` field) DONE; Part2c-3c (mid-season tournaments — `strength` + `unseeded` build, the `tournament:<mode>` wire token, the standings-only compose-guard relaxation, and the play-loop barrier) DONE; Part2c-3d (per-tournament-block config — the dormant `SeasonPhase.tournament_format` column + the live `tournament_cut` top-N cut, the `tournament[:mode[:cut]]` wire grammar + cut-floor `ValueError`, the one-line build cut slice, and the composer cut input + disabled format select) DONE; Part2c-3 remainder (c-3e non-single-elim finals embeds; c-3f season-linked playoff Match history + weekly playoff pacing) NOT STARTED, and the mid-season `random_draw` build is DEFERRED.**
+**Status: PART 1 sandbox formats all DONE; LG-02x-2 (Duos / Trios) deferred; Part 2 foundation (Part2a) DONE; Part2b (create-League composer + dormant phase columns) DONE; Part2c-1 (RR → single-elimination playoff embed) DONE; Part2c-2 SPINE (multi-RR play loop + `Match.season_phase` FK + cross-phase matchday offsetting) DONE; Part2c-3a (first alternative regular-season format — `double_round_robin` + `Match.leg`, wiring the Part2b dormant per-phase `schedule_format` column end-to-end) DONE; Part2c-3b (dormant per-phase `SeasonPhase.tournament_mode` field) DONE; Part2c-3c (mid-season tournaments — `strength` + `unseeded` build, the `tournament:<mode>` wire token, the standings-only compose-guard relaxation, and the play-loop barrier) DONE; Part2c-3d (per-tournament-block config — the dormant `SeasonPhase.tournament_format` column + the live `tournament_cut` top-N cut, the `tournament[:mode[:cut]]` wire grammar + cut-floor `ValueError`, the one-line build cut slice, and the composer cut input + disabled format select) DONE; Part2c-3e (non-single-elim finals embeds — the dormant `SeasonPhase.tournament_format` column flipped dormant→live so a `tournament` phase builds via ANY of the five formats, the 7 new per-format sub-config columns mirroring `Tournament` (4 series tiers + RR→DE wb/lb advancers + Swiss rounds), the 11-field `tournament:mode:cut:format:fsl:ssl:qsl:esl:wb:lb:swiss` wire grammar + three new shape `ValueError`s, the one-changed `Tournament.objects.create(format=phase.tournament_format, …)` build, and the live composer format picker + sub-config controls) DONE; Part2c-3 remainder (c-3f season-linked playoff Match history + weekly playoff pacing) NOT STARTED, and the mid-season `random_draw` build is DEFERRED.**
 Single-elimination (LG-02a), bulk intake + async play-all (LG-02a-2), best-of-N
 Series (LG-02b), per-round Series escalation (LG-02b-2), double-elimination /
 round-robin / RR→DE / Swiss (LG-02c+), and the Random Draw player pool
@@ -500,10 +500,115 @@ into Part2a (done) → Part2b → Part2c:
   Tests: extensions to `test_phase_composer.py` / `test_season_phase.py` /
   `test_season_playoffs.py` / `test_league_create.py` / `test_league_next_season.py`.
 
-- **LG-02-Part2c-3e · [NOT STARTED] Non-single-elim finals embeds.** Double-elim /
-  RR / Swiss / RR→DE as a Season finals stage — beyond the hardcoded
-  single-elimination playoff Part2c-1 builds; needs the c-3d per-tournament-block
-  config to select the embedded format.
+- **LG-02-Part2c-3e · [DONE] Non-single-elim finals embeds.** Flips the dormant
+  c-3d `SeasonPhase.tournament_format` column **dormant→live** so a Season
+  `tournament` phase builds via ANY of the **five** formats
+  (`single_elimination` / `double_elimination` / `round_robin` /
+  `round_robin_double_elim` / `swiss`) with **full per-format sub-config parity**
+  with the standalone `tournament_create` form. A **thin orchestration/config
+  slice** — the standalone Tournament engine already builds + drains all five
+  formats, consumed VERBATIM — no simulator mechanics change, no RNG change, no
+  tournament-engine change (`lock_and_build` / `play_next_node` untouched); the
+  tournament sims are **non-deterministic** so there is **no Score Calibration
+  re-baseline** (the `unseeded`-shuffle precedent). The SE-default (series `1`,
+  advancers `0`) build stays **byte-identical to Part2c-1**. **7 new `SeasonPhase`
+  columns + migration `0047`:** appended after `tournament_cut` —
+  `final_series_length` / `semifinal_series_length` / `quarterfinal_series_length`
+  / `earlier_series_length` (`PositiveSmallIntegerField`, choices
+  `((1,"Best of 1"),(3,"Best of 3"),(5,"Best of 5"))`, default `1`) +
+  `wb_advancers` / `lb_advancers` / `swiss_rounds`
+  (`PositiveSmallIntegerField`, no choices, default `0`) — each **mirroring
+  `Tournament`'s same-named field byte-for-byte**, the series choices **INLINED on
+  `SeasonPhase`** (NOT referencing `Tournament.*`; `Tournament` is declared later
+  in the file — the c-3b/c-3d inlined-choices precedent). `tournament_format` (the
+  c-3d column) flips **dormant→live** with **no schema change to it** (only its
+  *consumption* in the build changes). Migration `0047_seasonphase_tournament_subconfig`
+  (dep `0046_seasonphase_format_cut`) is **7× `AddField`**, **NO `RunPython` / NO
+  backfill** ([ADR-0004](docs/adr/0004-simulation-data-is-disposable.md) posture —
+  existing tournament phases inherit `single_elimination` + series `1` + advancers
+  `0`); `tournament_format` was already migrated by c-3d's `0046` (no `AlterField`).
+  **Build (`Season.activate_pending_tournament_phase`):** **ONE changed**
+  `Tournament.objects.create(...)` — `format=phase.tournament_format` plus the 7
+  sub-config kwargs from the phase (`final_series_length`,
+  `semifinal_series_length`, `quarterfinal_series_length`, `earlier_series_length`,
+  `wb_advancers`, `lb_advancers`, `swiss_rounds`); everything else — the
+  idempotency/gate guards, the c-3d cut slice (`order = order[:phase.tournament_cut]`),
+  `_seed_order_for_phase` (**BYTE-IDENTICAL**, NOT edited), `seed = position + 1`,
+  the `"{name} Playoffs"` (standings) / `"{name} Tournament"` (mid-season) name,
+  `team_assembly="preset"`, `state="setup"`, `lock_and_build()` — is **UNCHANGED**.
+  `lock_and_build` already dispatches on `self.format` for all five formats and
+  consumes the 7 sub-config fields (series tiers via
+  `series_length_for_round`/`series_length_for_depth` → `_persist_elim_specs`; wb/lb
+  for RR→DE via `build_de_finals_if_rr_finished`; `swiss_rounds` for Swiss) — no
+  engine edit. **PhaseSpec gains 8 trailing defaulted fields**
+  (`tournament_format="single_elimination"`, the 4 series tiers `=1`,
+  `wb_advancers=0`, `lb_advancers=0`, `swiss_rounds=0`) appended LAST so every
+  existing keyword construction stays equality-identical (the c-3a `leg` / c-3b
+  `tournament_mode` / c-3d `tournament_cut` append-with-default precedent); the
+  frozen import allowlist (`dataclasses` / `typing` ONLY) is UNCHANGED — no new
+  import, `TestNoDjangoImportsLeaked` stays green. **Wire grammar extends from
+  c-3d's `tournament[:mode[:cut]]` to a positional trailing-optional 11-field
+  layout** `tournament:mode:cut:format:fsl:ssl:qsl:esl:wb:lb:swiss` (the tournament
+  branch's `split(":")` widens the c-3d `> 3` malformed check to `> 11`; the RR
+  branch is UNCHANGED); each new field is trailing-optional with its default
+  (empty after strip ⇒ existing `"malformed phase composition"`). Three **NEW
+  LOCKED** `ValueError`s: `f"unknown tournament_format: {fmt!r}"` (format ∉ the
+  5-format embeddable set), `f"series length must be 1, 3, or 5: {n}"` (any tier ∉
+  `{1,3,5}`), and `f"invalid wb/lb combo for round_robin_double_elim: {wb}/{lb}"`
+  (the (wb,lb) combo validated **ONLY** when `format == "round_robin_double_elim"`,
+  against the six locked combos `{(4,0),(4,2),(8,0),(8,4),(16,0),(16,8)}`; for any
+  non-RR→DE format wb/lb are parsed-and-stored inert, mirroring how `Tournament`
+  carries `0/0` there). Validation ORDER (locked): split → `> 11` malformed → mode
+  membership → cut parse + floor → format membership → series tiers parse +
+  `{1,3,5}` → wb/lb parse + RR→DE-only combo → swiss parse. Every pre-existing
+  `ValueError` string is preserved VERBATIM; bare `tournament` and every c-3d/c-3c
+  serialized token parse identically (the missing trailing fields take their
+  defaults); the module stays **Django-free** (allowlist UNCHANGED, no `json`).
+  **Validation posture mirrors c-3d — SHAPE at the parser** (format in set, series
+  in `{1,3,5}`, wb/lb in the six combos), **COUNT/parity at `lock_and_build`**
+  (defence-in-depth): the existing `ValidationError`s — `< 4` participants,
+  `wb_advancers > n`, `wb_advancers + lb_advancers > n`, Swiss odd-N — catch a
+  degenerate config at runtime, so **no new `Season.clean()` / `SeasonPhase.clean()`
+  / form cross-field guard** is added. **Composer
+  (`templates/leagues/create.html`):** the c-3d **disabled** tournament-format
+  placeholder goes **LIVE** (5 options matching `SeasonPhase.TOURNAMENT_FORMAT_CHOICES`,
+  DOM id `league-create-phase-tournament-format-{i}` now ENABLED), plus new
+  per-format sub-config controls — 4 series-length selects (DOM ids
+  `league-create-phase-{final,semifinal,quarterfinal,earlier}-sl-{i}`, Bo1/Bo3/Bo5,
+  shown for SE/DE/RR→DE), a wb/lb combo select (`league-create-phase-rrde-combo-{i}`,
+  six combo value-strings `4/0`…`16/8`, shown for RR→DE only, `serialize()` splits
+  on `/` into wb+lb), and a swiss-rounds input (`league-create-phase-swiss-rounds-{i}`,
+  `type="number" min="0" value="0"`, shown for Swiss only) — show/hidden by a
+  type+format toggle mirroring the standalone `tournamentCreateToggle`.
+  `serialize()` emits the full 11-field token for a tournament row (RR rows still
+  emit `round_robin:<format>` unchanged); all prior Part2b / c-3a / c-3c / c-3d DOM
+  ids preserved (the mode select, the cut input, `phase-tournament-pending`).
+  **Creation / carry-forward (`matches/league_views.py`):** `league_create` sets
+  all 8 new fields from `spec` (`tournament_format` now comes from `spec` — there
+  IS a `PhaseSpec.tournament_format` this slice, so the c-3d "left to column
+  default" note no longer applies); `next_season` carries all 8 forward from `src`
+  verbatim; both inside their existing `@transaction.atomic` blocks. **Admin
+  (`matches/admin.py`):** `SeasonPhaseAdmin.list_display` appends the 7 sub-config
+  columns after `tournament_cut` (`tournament_format` already present from c-3d).
+  **Backward-compat:** bare `tournament` / every c-3d/c-3c serialized token parse
+  identically (trailing fields default); existing tournament phases inherit
+  `single_elimination` + series `1` + advancers `0`; the SE-default build is
+  byte-identical to Part2c-1. **UNCHANGED:** completion `_phase_complete`, champion
+  `_stamp_champion_for_final_phase`, the drain views `play_single_round` /
+  `play_playoffs` / `play_playoffs_task`, the full tournament engine
+  (`lock_and_build` / `build_*_bracket` / `find_next_node` / `advance_winner` /
+  `series_length_for_round` / `build_de_finals_if_rr_finished` / `advance_swiss_if_round_finished`),
+  the simulator / RNG / `Match` model, the standalone `tournament_create.html`. **No
+  re-baseline.** Extends
+  [ADR-0023](docs/adr/0023-season-phase-composable-structure.md) (Part2c-3e
+  consequences addendum, no new ADR); the CONTEXT.md **Season phase** entry carries
+  the five-format + sub-config vocabulary. **Scope-out (→ c-3f):** the
+  season-linked playoff Match-history surface + weekly playoff pacing; the
+  mid-season `random_draw` build stays DEFERRED. Seam contract:
+  [`.claude/worktrees/lg-02-part2c-3e-seam-contract.md`](.claude/worktrees/lg-02-part2c-3e-seam-contract.md);
+  app guide: `matches/CLAUDE.md` "LG-02-Part2c-3e non-single-elim finals embeds".
+  Tests: extensions to `test_phase_composer.py` / `test_season_phase.py` /
+  `test_season_playoffs.py` / `test_league_create.py` / `test_league_next_season.py`.
 
 - **LG-02-Part2c-3f · [NOT STARTED] Season-linked playoff Match history + weekly
   playoff pacing.** A **season-linked playoff Match-history surface** (a Season

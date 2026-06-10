@@ -1845,3 +1845,147 @@ class TestChampionStillFromFinalPhase(TestCase):
         self.assertEqual(final_t.tournament.state, "completed")
         self.assertEqual(season.state, "completed")
         self.assertEqual(season.champion_team_id, final_t.tournament.champion_id)
+
+
+# ===========================================================================
+# LG-02-Part2c-3e — 7 NEW SeasonPhase sub-config columns
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3e-seam-contract.md`` §1:
+# 7 new SeasonPhase columns appended after ``tournament_cut`` —
+#   final_series_length / semifinal_series_length / quarterfinal_series_length /
+#   earlier_series_length = PositiveSmallIntegerField(
+#       choices=((1,"Best of 1"),(3,"Best of 3"),(5,"Best of 5")), default=1)
+#   wb_advancers / lb_advancers / swiss_rounds =
+#       PositiveSmallIntegerField(default=0)
+# ``tournament_format`` (c-3d, default "single_elimination") flips dormant→live.
+# Migration 0047_seasonphase_tournament_subconfig (dep 0046, 7 AddField, no
+# RunPython). Appended as NEW classes; no existing class above is modified.
+# These WILL fail until the Code agent lands the 7 columns + migration 0047 —
+# the TDD red state, not a defect in this file.
+
+
+class TestSeasonPhaseSeriesLengthFields(TestCase):
+    """LG-02-Part2c-3e — the 4 per-tier series-length columns: default 1, the
+    ``{1,3,5}`` choices, persistence of non-default values."""
+
+    _SERIES_FIELDS = (
+        "final_series_length",
+        "semifinal_series_length",
+        "quarterfinal_series_length",
+        "earlier_series_length",
+    )
+
+    def test_series_length_fields_default_one(self) -> None:
+        season = _draft_season("SeriesDefault")
+        phase = SeasonPhase.objects.create(season=season, ordinal=1)
+        for field in self._SERIES_FIELDS:
+            self.assertEqual(getattr(phase, field), 1, field)
+
+    def test_series_length_fields_are_positive_small_integer(self) -> None:
+        from django.db.models import PositiveSmallIntegerField
+
+        for field in self._SERIES_FIELDS:
+            f = SeasonPhase._meta.get_field(field)
+            self.assertIsInstance(f, PositiveSmallIntegerField, field)
+
+    def test_series_length_choices_are_best_of_1_3_5(self) -> None:
+        for field in self._SERIES_FIELDS:
+            f = SeasonPhase._meta.get_field(field)
+            self.assertEqual(
+                tuple(f.choices),
+                ((1, "Best of 1"), (3, "Best of 3"), (5, "Best of 5")),
+                field,
+            )
+
+    def test_non_default_series_lengths_persist(self) -> None:
+        season = _draft_season("SeriesPersist")
+        phase = SeasonPhase.objects.create(
+            season=season,
+            ordinal=1,
+            phase_type="tournament",
+            final_series_length=5,
+            semifinal_series_length=3,
+            quarterfinal_series_length=3,
+            earlier_series_length=1,
+        )
+        phase.refresh_from_db()
+        self.assertEqual(phase.final_series_length, 5)
+        self.assertEqual(phase.semifinal_series_length, 3)
+        self.assertEqual(phase.quarterfinal_series_length, 3)
+        self.assertEqual(phase.earlier_series_length, 1)
+
+
+class TestSeasonPhaseAdvancerAndSwissFields(TestCase):
+    """LG-02-Part2c-3e — ``wb_advancers`` / ``lb_advancers`` / ``swiss_rounds``:
+    PositiveSmallIntegerField default 0."""
+
+    _COUNT_FIELDS = ("wb_advancers", "lb_advancers", "swiss_rounds")
+
+    def test_count_fields_default_zero(self) -> None:
+        season = _draft_season("CountDefault")
+        phase = SeasonPhase.objects.create(season=season, ordinal=1)
+        for field in self._COUNT_FIELDS:
+            self.assertEqual(getattr(phase, field), 0, field)
+
+    def test_count_fields_are_positive_small_integer(self) -> None:
+        from django.db.models import PositiveSmallIntegerField
+
+        for field in self._COUNT_FIELDS:
+            f = SeasonPhase._meta.get_field(field)
+            self.assertIsInstance(f, PositiveSmallIntegerField, field)
+
+    def test_count_fields_persist(self) -> None:
+        season = _draft_season("CountPersist")
+        phase = SeasonPhase.objects.create(
+            season=season,
+            ordinal=1,
+            phase_type="tournament",
+            wb_advancers=8,
+            lb_advancers=4,
+            swiss_rounds=6,
+        )
+        phase.refresh_from_db()
+        self.assertEqual(phase.wb_advancers, 8)
+        self.assertEqual(phase.lb_advancers, 4)
+        self.assertEqual(phase.swiss_rounds, 6)
+
+
+class TestSeasonPhaseSubConfigPersistAndReload(TestCase):
+    """LG-02-Part2c-3e — persist + reload a tournament phase with a FULL
+    non-default sub-config (the c-3d ``tournament_format`` + the 7 new columns)."""
+
+    def test_full_non_default_sub_config_round_trips(self) -> None:
+        season = _draft_season("FullSubConfig")
+        phase = SeasonPhase.objects.create(
+            season=season,
+            ordinal=1,
+            phase_type="tournament",
+            tournament_mode="standings",
+            tournament_cut=8,
+            tournament_format="double_elimination",
+            final_series_length=5,
+            semifinal_series_length=3,
+            quarterfinal_series_length=3,
+            earlier_series_length=1,
+            wb_advancers=8,
+            lb_advancers=4,
+            swiss_rounds=0,
+        )
+        phase.refresh_from_db()
+        self.assertEqual(phase.tournament_mode, "standings")
+        self.assertEqual(phase.tournament_cut, 8)
+        self.assertEqual(phase.tournament_format, "double_elimination")
+        self.assertEqual(phase.final_series_length, 5)
+        self.assertEqual(phase.semifinal_series_length, 3)
+        self.assertEqual(phase.quarterfinal_series_length, 3)
+        self.assertEqual(phase.earlier_series_length, 1)
+        self.assertEqual(phase.wb_advancers, 8)
+        self.assertEqual(phase.lb_advancers, 4)
+        self.assertEqual(phase.swiss_rounds, 0)
+
+    def test_tournament_format_default_still_single_elimination(self) -> None:
+        # c-3d field, re-asserted under the c-3e flip-to-live context.
+        season = _draft_season("FmtDefaultC3e")
+        phase = SeasonPhase.objects.create(season=season, ordinal=1)
+        self.assertEqual(phase.tournament_format, "single_elimination")

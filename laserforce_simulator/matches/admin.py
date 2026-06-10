@@ -46,6 +46,13 @@ class SeasonPhaseAdmin(admin.ModelAdmin):
         "tournament_mode",
         "tournament_format",
         "tournament_cut",
+        "final_series_length",
+        "semifinal_series_length",
+        "quarterfinal_series_length",
+        "earlier_series_length",
+        "wb_advancers",
+        "lb_advancers",
+        "swiss_rounds",
     )
 
 

@@ -455,6 +455,87 @@ live). It adds no new ADR — these are its consequences on the decisions above.
   **no Score Calibration re-baseline and no SIM-07 / SIM-08 interaction**, and no new ADR
   — only this addendum.
 
+## Part2c-3e consequences (non-single-elim finals embeds — live format + sub-config, 2026-06-09)
+
+Part2c-3d landed `tournament_format` as a **dormant** column and parked the
+non-single-elim build; this slice flips it **dormant→live** — the same
+dormant→live rhythm that carried `schedule_format` (Part2b dormant → Part2c-3a
+live), `tournament_mode` (Part2c-3b dormant → Part2c-3c live), and now
+`tournament_format`. A Season `tournament` phase now builds via **any of the five
+formats** with full per-format sub-config parity with the standalone
+`tournament_create` form. It adds no new ADR — these are its consequences on the
+decisions above.
+
+- **`tournament_format` flips dormant→live; seven sub-config columns join it.**
+  The c-3d "written-but-unread" `tournament_format` is now **read by the build** —
+  `Season.activate_pending_tournament_phase` changes its single
+  `Tournament.objects.create(...)` from the hardcoded `format="single_elimination"`
+  to `format=phase.tournament_format`, so a phase set to `swiss` / `double_elimination`
+  / `round_robin` / `round_robin_double_elim` builds that bracket (the c-3d admin
+  foot-gun is closed). Alongside it `SeasonPhase` gains **seven** sub-config columns
+  mirroring `Tournament`'s same-named fields byte-for-byte — four Series-length
+  tiers `final_series_length` / `semifinal_series_length` /
+  `quarterfinal_series_length` / `earlier_series_length`
+  (`PositiveSmallIntegerField`, choices `{1,3,5}`, default `1`) plus the RR→DE
+  advancer counts `wb_advancers` / `lb_advancers` and `swiss_rounds`
+  (`PositiveSmallIntegerField`, no choices, default `0`) — via migration
+  `0047_seasonphase_tournament_subconfig` (7× `AddField`, **no `RunPython` / no
+  backfill**, [ADR-0004](0004-simulation-data-is-disposable.md) posture as every
+  `004x` phase migration before it). `tournament_format` was already migrated by
+  c-3d's `0046`, so this migration touches only the seven new columns. The series
+  choices are **inlined on `SeasonPhase`** (not referencing `Tournament.*` —
+  `Tournament` is declared later in the file; the c-3b/c-3d inlined-choices
+  precedent).
+- **The slice is thin because the engine already does the work.** The standalone
+  `Tournament.lock_and_build` already dispatches on `self.format` across all five
+  formats and already consumes the seven sub-config fields (series tiers via
+  `series_length_for_round` / `series_length_for_depth` → `_persist_elim_specs`;
+  wb/lb for RR→DE via `build_de_finals_if_rr_finished`; `swiss_rounds` for Swiss).
+  So this slice is pure **orchestration/config** — it passes the phase's fields
+  into the create call and the engine is consumed **verbatim**. The build tail —
+  the c-3d cut slice, `_seed_order_for_phase` (byte-identical), `seed = position +
+  1`, `team_assembly="preset"`, the `"{name} Playoffs"` / `"{name} Tournament"`
+  name, `lock_and_build()` — is otherwise unchanged, and the SE-default (series
+  `1`, advancers `0`) build is **byte-identical to Part2c-1**.
+- **The wire grammar grows to eleven positional fields; validation is SHAPE at the
+  parser, COUNT/parity at the engine.** The `tournament` token extends from c-3d's
+  `tournament[:mode[:cut]]` to a positional trailing-optional
+  `tournament:mode:cut:format:fsl:ssl:qsl:esl:wb:lb:swiss` (the tournament branch's
+  `split(":")` widens the c-3d `> 3` malformed check to `> 11`; the RR branch is
+  unchanged); `PhaseSpec` gains eight trailing defaulted fields (the c-3a `leg` /
+  c-3b `tournament_mode` / c-3d `tournament_cut` append-with-default precedent, so
+  every prior serialized value parses unchanged). Three new locked `ValueError`s
+  reject a bad **shape** at compose time — `unknown tournament_format` (format ∉
+  the five-format set), `series length must be 1, 3, or 5` (any tier ∉ `{1,3,5}`),
+  and `invalid wb/lb combo for round_robin_double_elim` (the (wb,lb) pair ∉ the six
+  locked combos `{(4,0),(4,2),(8,0),(8,4),(16,0),(16,8)}`, checked **only** for
+  RR→DE; for other formats wb/lb are inert, mirroring `Tournament`). Every
+  pre-existing `ValueError` is preserved verbatim and the module stays Django-free.
+  Validation is **parser-only for shape**; the **count/parity** rules that depend on
+  participant count — `< 4` participants, `wb > n`, `wb + lb > n`, Swiss odd-N —
+  are left to the **existing** `Tournament.lock_and_build` `ValidationError`s
+  (defence-in-depth, as the c-3d cut-floor was), so **no new `Season.clean()` /
+  `SeasonPhase.clean()` / form cross-field guard** is added. The composer mirrors
+  this: the c-3d disabled placeholder format select goes live (five options) and
+  per-format sub-config controls (four Series selects, an RR→DE wb/lb combo select,
+  a Swiss-rounds input) show/hide by a type+format toggle, with `serialize()`
+  emitting the full eleven-field token; `next_season` carries all eight new fields
+  forward verbatim.
+- **No simulator / tournament-engine change, no re-baseline — and the
+  non-determinism is the reason.** The migration adds seven columns; the live
+  behaviour is one changed create call feeding an engine consumed verbatim. The
+  simulator, RNG contract, and the entire bracket engine are untouched, so there is
+  **no Score Calibration re-baseline and no SIM-07 / SIM-08 interaction**, and no
+  new ADR — only this addendum. Tournament sims are **non-deterministic by design**
+  (the c-3c `unseeded`-shuffle / mid-season-draw precedent), so embedding a
+  double-elim / RR / Swiss / RR→DE finals stage changes which bracket is built, not
+  any per-Round scoring distribution that a calibration baseline would track.
+- **Still deferred to c-3f.** A **season-linked playoff Match-history surface**
+  (the Part2c-1 "load-bearing surprise" that tournament Matches stay
+  `season=NULL, season_phase=NULL` and are invisible to season-scoped history) and
+  **weekly playoff pacing** remain out of scope; the mid-season `random_draw` build
+  stays deferred (the parser still rejects it).
+
 ## See also
 
 - [ADR-0014](0014-league-season-foundation.md) — the League/Season model and

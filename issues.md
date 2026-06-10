@@ -1,3 +1,42 @@
+# Web testing — LG-02-Part2c-3e (non-single-elim finals embeds)
+
+Date: 2026-06-10
+Branch: `lg-02-part2c-3e-nonse-finals-embeds`
+Scope: the create-League composer this slice touches — a `tournament` phase block's
+format `<select>` (`league-create-phase-tournament-format-{i}`) is now **live** with all
+five formats, and per-format sub-config controls appear: 4 series-length selects
+(`league-create-phase-{final,semifinal,quarterfinal,earlier}-sl-{i}`), a wb/lb combo
+select (`league-create-phase-rrde-combo-{i}`), and a swiss-rounds input
+(`league-create-phase-swiss-rounds-{i}`), shown/hidden by a type+format toggle; the
+hidden `#league-create-phases` serializes the 11-field positional token; the wire →
+`parse_phase_composition` → `SeasonPhase` (`tournament_format` + 7 sub-config columns)
+round-trip.
+
+## Summary — LG-02-Part2c-3e
+| Area | Result |
+|---|---|
+| `/leagues/create/` — Tournament block renders the **live** format `<select>` with all 5 options (single/double elim, round robin, round robin → double elimination, swiss) | ✅ |
+| Format toggle: `single_elimination`/`double_elimination` → 4 series selects shown, no combo/swiss | ✅ |
+| Format toggle: `round_robin_double_elim` → series selects **and** wb/lb combo (six options `4/0`…`16/8`) shown | ✅ |
+| Format toggle: `swiss` → series selects + combo hidden, swiss-rounds input shown | ✅ |
+| Serialized hidden `#league-create-phases` for RR→tournament(Swiss): exactly `round_robin:single_round_robin,tournament:standings:0:swiss:1:1:1:1:0:0:0` (11-field positional) | ✅ |
+| Submit (N=4, RR then `tournament:standings:0:swiss:…`) → creates League + Season + phases, redirects to `/seasons/49/standings/` [200], console + network clean | ✅ |
+| DB round-trip: Season 49 PHASE 2 persists `phase_type=tournament, tournament_mode=standings, tournament_format=swiss, cut=0, fsl/ssl/qsl/esl=1, wb/lb=0, swiss=0`; PHASE 1 RR persists the tournament fields at defaults | ✅ |
+
+## Findings — LG-02-Part2c-3e
+- **No bugs found.** The live format select + per-format sub-config controls render only on
+  tournament rows, toggle correctly by format, serialize into the 11-field positional token,
+  and round-trip to the 7 new `SeasonPhase` columns end-to-end.
+- Low-severity (pre-existing, unrelated): the create form still emits one a11y `issue`
+  "No label associated with a form field" (count 1) — the same nit logged in the
+  Part2c-2/3a/3d runs, not introduced by c-3e (every new control carries an accessible
+  name, e.g. "Tournament format", "Final series length", "Winners/Losers bracket advancers",
+  "Swiss rounds"). Not blocking; out of scope.
+- Test data torn down: League "ChromeTest 3e League" (cascaded Season 49 + phases) + its
+  auto-generated teams.
+
+---
+
 # Web testing — LG-02-Part2c-3d (per-tournament-block configuration)
 
 Date: 2026-06-09

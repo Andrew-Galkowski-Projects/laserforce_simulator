@@ -976,11 +976,16 @@ class TestParseTournamentCutMalformed(SimpleTestCase):
             )
         self.assertEqual(str(ctx.exception), "malformed phase composition")
 
-    def test_four_field_tournament_token_raises_malformed(self) -> None:
-        # len(parts) > 3 ⇒ malformed.
+    def test_overlong_tournament_token_raises_malformed(self) -> None:
+        # LG-02-Part2c-3e moved the malformed boundary: the tournament token is
+        # now positional 11-field (``tournament:mode:cut:format:fsl:ssl:qsl:esl
+        # :wb:lb:swiss``), so ``len(parts) > 11`` ⇒ malformed. The 4th field is
+        # now the format, no longer the malformed trigger (see
+        # TestParseFullSubConfig / TestParseFullSubConfigMalformed).
         with self.assertRaises(ValueError) as ctx:
             parse_phase_composition(
-                "round_robin,tournament:standings:8:extra",
+                "round_robin,tournament:standings:8:single_elimination"
+                ":1:1:1:1:0:0:0:extra",
                 season_schedule_format=_SSF,
             )
         self.assertEqual(str(ctx.exception), "malformed phase composition")
@@ -1037,5 +1042,422 @@ class TestParseTournamentCutBackCompat(SimpleTestCase):
         with self.assertRaises(ValueError) as ctx:
             parse_phase_composition(
                 "round_robin,tournament:bogus:8", season_schedule_format=_SSF
+            )
+        self.assertEqual(str(ctx.exception), "unknown tournament_mode: 'bogus'")
+
+
+# ===========================================================================
+# LG-02-Part2c-3e — full per-format tournament sub-config wire grammar
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3e-seam-contract.md`` §2 / §3:
+# the tournament wire token grows from ``tournament:mode:cut`` to the full
+# positional, trailing-optional grammar
+#
+#     tournament:mode:cut:format:fsl:ssl:qsl:esl:wb:lb:swiss
+#
+# (parsed via ``split(":")`` on the tournament branch — the round_robin branch
+# keeps its 2-way ``partition(":")`` grammar). ``PhaseSpec`` gains 8 new trailing
+# defaulted fields: ``tournament_format="single_elimination"``,
+# ``final_series_length=1``, ``semifinal_series_length=1``,
+# ``quarterfinal_series_length=1``, ``earlier_series_length=1``,
+# ``wb_advancers=0``, ``lb_advancers=0``, ``swiss_rounds=0``. Validation order on a
+# tournament token (locked):
+#   len(parts) > 11 ⇒ "malformed phase composition"
+#   → mode (unknown tournament_mode)
+#   → cut (tournament cut must be 0 or at least 4: {cut})
+#   → format ⇒ f"unknown tournament_format: {fmt!r}"
+#   → series tiers ∈ {1,3,5} ⇒ f"series length must be 1, 3, or 5: {n}"
+#   → wb/lb combo (RR→DE ONLY) vs {(4,0),(4,2),(8,0),(8,4),(16,0),(16,8)}
+#       ⇒ f"invalid wb/lb combo for round_robin_double_elim: {wb}/{lb}"
+#   → swiss.
+# Non-int / empty field ⇒ "malformed phase composition". Every c-3d/c-3c
+# serialized token still parses identically (format→single_elimination, tiers→1,
+# wb/lb/swiss→0).
+#
+# Appended as NEW classes; no existing class above is modified. These WILL fail
+# until the Code agent lands the 11-field tournament grammar + the 8 new
+# PhaseSpec fields + the new ValueErrors — the TDD red state, not a defect here.
+
+# The 5 valid tournament_format values (TOURNAMENT_FORMAT_CHOICES).
+_LG3E_FORMATS = (
+    "single_elimination",
+    "double_elimination",
+    "round_robin",
+    "round_robin_double_elim",
+    "swiss",
+)
+
+
+class TestPhaseSpecSubConfigDefaults(SimpleTestCase):
+    """``PhaseSpec`` gains 8 trailing defaulted fields; existing keyword
+    constructions stay equality-identical (the trailing-default precedent)."""
+
+    def test_tournament_format_defaults_single_elimination(self) -> None:
+        spec = PhaseSpec(ordinal=1, phase_type="round_robin", schedule_format=_SSF)
+        self.assertEqual(spec.tournament_format, "single_elimination")
+
+    def test_series_length_fields_default_one(self) -> None:
+        spec = PhaseSpec(ordinal=1, phase_type="round_robin", schedule_format=_SSF)
+        self.assertEqual(spec.final_series_length, 1)
+        self.assertEqual(spec.semifinal_series_length, 1)
+        self.assertEqual(spec.quarterfinal_series_length, 1)
+        self.assertEqual(spec.earlier_series_length, 1)
+
+    def test_advancer_and_swiss_fields_default_zero(self) -> None:
+        spec = PhaseSpec(ordinal=1, phase_type="round_robin", schedule_format=_SSF)
+        self.assertEqual(spec.wb_advancers, 0)
+        self.assertEqual(spec.lb_advancers, 0)
+        self.assertEqual(spec.swiss_rounds, 0)
+
+    def test_explicit_sub_config_is_carried(self) -> None:
+        spec = PhaseSpec(
+            ordinal=2,
+            phase_type="tournament",
+            schedule_format=None,
+            tournament_mode="standings",
+            tournament_cut=0,
+            tournament_format="double_elimination",
+            final_series_length=5,
+            semifinal_series_length=3,
+            quarterfinal_series_length=3,
+            earlier_series_length=1,
+            wb_advancers=8,
+            lb_advancers=4,
+            swiss_rounds=6,
+        )
+        self.assertEqual(spec.tournament_format, "double_elimination")
+        self.assertEqual(spec.final_series_length, 5)
+        self.assertEqual(spec.semifinal_series_length, 3)
+        self.assertEqual(spec.quarterfinal_series_length, 3)
+        self.assertEqual(spec.earlier_series_length, 1)
+        self.assertEqual(spec.wb_advancers, 8)
+        self.assertEqual(spec.lb_advancers, 4)
+        self.assertEqual(spec.swiss_rounds, 6)
+
+    def test_pre_c3e_keyword_construction_stays_equality_identical(self) -> None:
+        # A pre-c-3e 5-field keyword construction (no sub-config) must equal one
+        # with the 8 new fields set to their defaults — the trailing-default
+        # precedent that keeps every prior PhaseSpec build valid.
+        a = PhaseSpec(
+            ordinal=2,
+            phase_type="tournament",
+            schedule_format=None,
+            tournament_mode="standings",
+            tournament_cut=0,
+        )
+        b = PhaseSpec(
+            ordinal=2,
+            phase_type="tournament",
+            schedule_format=None,
+            tournament_mode="standings",
+            tournament_cut=0,
+            tournament_format="single_elimination",
+            final_series_length=1,
+            semifinal_series_length=1,
+            quarterfinal_series_length=1,
+            earlier_series_length=1,
+            wb_advancers=0,
+            lb_advancers=0,
+            swiss_rounds=0,
+        )
+        self.assertEqual(a, b)
+
+
+class TestParseFullSubConfig(SimpleTestCase):
+    """The full 11-field tournament token parses each sub-config field."""
+
+    def test_double_elimination_full_token(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament:standings:0:double_elimination:3:3:1:1:0:0:0",
+            season_schedule_format=_SSF,
+        )
+        self.assertEqual(len(specs), 2)
+        t = specs[1]
+        self.assertEqual(t.phase_type, "tournament")
+        self.assertEqual(t.tournament_mode, "standings")
+        self.assertEqual(t.tournament_cut, 0)
+        self.assertEqual(t.tournament_format, "double_elimination")
+        self.assertEqual(t.final_series_length, 3)
+        self.assertEqual(t.semifinal_series_length, 3)
+        self.assertEqual(t.quarterfinal_series_length, 1)
+        self.assertEqual(t.earlier_series_length, 1)
+        self.assertEqual(t.wb_advancers, 0)
+        self.assertEqual(t.lb_advancers, 0)
+        self.assertEqual(t.swiss_rounds, 0)
+
+    def test_round_robin_double_elim_valid_combo(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament:standings:0:round_robin_double_elim:1:1:1:1:8:4:0",
+            season_schedule_format=_SSF,
+        )
+        t = specs[1]
+        self.assertEqual(t.tournament_format, "round_robin_double_elim")
+        self.assertEqual(t.wb_advancers, 8)
+        self.assertEqual(t.lb_advancers, 4)
+
+    def test_swiss_rounds_field(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament:standings:0:swiss:1:1:1:1:0:0:6",
+            season_schedule_format=_SSF,
+        )
+        t = specs[1]
+        self.assertEqual(t.tournament_format, "swiss")
+        self.assertEqual(t.swiss_rounds, 6)
+
+    def test_single_elimination_explicit_full_token(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament:standings:0:single_elimination:1:1:1:1:0:0:0",
+            season_schedule_format=_SSF,
+        )
+        t = specs[1]
+        self.assertEqual(t.tournament_format, "single_elimination")
+        self.assertEqual(t.final_series_length, 1)
+        self.assertEqual(t.wb_advancers, 0)
+        self.assertEqual(t.lb_advancers, 0)
+        self.assertEqual(t.swiss_rounds, 0)
+
+    def test_round_robin_format_token(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament:standings:0:round_robin:1:1:1:1:0:0:0",
+            season_schedule_format=_SSF,
+        )
+        self.assertEqual(specs[1].tournament_format, "round_robin")
+
+    def test_mixed_series_tiers(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament:standings:0:single_elimination:5:3:1:1:0:0:0",
+            season_schedule_format=_SSF,
+        )
+        t = specs[1]
+        self.assertEqual(t.final_series_length, 5)
+        self.assertEqual(t.semifinal_series_length, 3)
+        self.assertEqual(t.quarterfinal_series_length, 1)
+        self.assertEqual(t.earlier_series_length, 1)
+
+
+class TestParseUnknownTournamentFormat(SimpleTestCase):
+    """An unknown ``tournament_format`` raises the NEW locked ValueError."""
+
+    def test_bogus_format_raises_with_repr(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:0:bogus:1:1:1:1:0:0:0",
+                season_schedule_format=_SSF,
+            )
+        self.assertEqual(str(ctx.exception), "unknown tournament_format: 'bogus'")
+
+    def test_member_night_format_token_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:0:member_night:1:1:1:1:0:0:0",
+                season_schedule_format=_SSF,
+            )
+        self.assertEqual(
+            str(ctx.exception), "unknown tournament_format: 'member_night'"
+        )
+
+    def test_all_five_formats_accepted(self) -> None:
+        for fmt in _LG3E_FORMATS:
+            # round_robin_double_elim needs a valid combo; supply 4/2.
+            wb, lb = (4, 2) if fmt == "round_robin_double_elim" else (0, 0)
+            token = f"round_robin,tournament:standings:0:{fmt}:1:1:1:1:{wb}:{lb}:0"
+            specs = parse_phase_composition(token, season_schedule_format=_SSF)
+            self.assertEqual(specs[1].tournament_format, fmt)
+
+
+class TestParseSeriesTierFloor(SimpleTestCase):
+    """A series tier not in ``{1, 3, 5}`` raises the locked series ValueError
+    ``f"series length must be 1, 3, or 5: {n}"`` (the parsed int, no ``!r``)."""
+
+    def test_final_series_2_raises(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:0:single_elimination:2:1:1:1:0:0:0",
+                season_schedule_format=_SSF,
+            )
+        self.assertEqual(str(ctx.exception), "series length must be 1, 3, or 5: 2")
+
+    def test_semifinal_series_4_raises(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:0:single_elimination:1:4:1:1:0:0:0",
+                season_schedule_format=_SSF,
+            )
+        self.assertEqual(str(ctx.exception), "series length must be 1, 3, or 5: 4")
+
+    def test_quarterfinal_series_0_raises(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:0:single_elimination:1:1:0:1:0:0:0",
+                season_schedule_format=_SSF,
+            )
+        self.assertEqual(str(ctx.exception), "series length must be 1, 3, or 5: 0")
+
+    def test_earlier_series_6_raises(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:0:single_elimination:1:1:1:6:0:0:0",
+                season_schedule_format=_SSF,
+            )
+        self.assertEqual(str(ctx.exception), "series length must be 1, 3, or 5: 6")
+
+    def test_tiers_1_3_5_all_accepted(self) -> None:
+        for n in (1, 3, 5):
+            token = (
+                f"round_robin,tournament:standings:0:single_elimination:"
+                f"{n}:{n}:{n}:{n}:0:0:0"
+            )
+            specs = parse_phase_composition(token, season_schedule_format=_SSF)
+            self.assertEqual(specs[1].final_series_length, n)
+            self.assertEqual(specs[1].earlier_series_length, n)
+
+
+class TestParseWbLbCombo(SimpleTestCase):
+    """The wb/lb combo is validated ONLY for ``round_robin_double_elim`` against
+    ``{(4,0),(4,2),(8,0),(8,4),(16,0),(16,8)}``."""
+
+    def test_invalid_combo_for_rr_de_raises(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:0:round_robin_double_elim:1:1:1:1:8:2:0",
+                season_schedule_format=_SSF,
+            )
+        self.assertEqual(
+            str(ctx.exception),
+            "invalid wb/lb combo for round_robin_double_elim: 8/2",
+        )
+
+    def test_each_valid_combo_accepted(self) -> None:
+        for wb, lb in ((4, 0), (4, 2), (8, 0), (8, 4), (16, 0), (16, 8)):
+            token = (
+                f"round_robin,tournament:standings:0:round_robin_double_elim:"
+                f"1:1:1:1:{wb}:{lb}:0"
+            )
+            specs = parse_phase_composition(token, season_schedule_format=_SSF)
+            self.assertEqual(specs[1].wb_advancers, wb)
+            self.assertEqual(specs[1].lb_advancers, lb)
+
+    def test_combo_not_checked_for_non_rr_de_format(self) -> None:
+        # A NON-RR→DE format with wb=8/lb=2 does NOT raise the combo error — the
+        # combo is only validated for round_robin_double_elim. (The wb/lb fields
+        # are still parsed and carried, just not combo-validated.)
+        specs = parse_phase_composition(
+            "round_robin,tournament:standings:0:double_elimination:1:1:1:1:8:2:0",
+            season_schedule_format=_SSF,
+        )
+        self.assertEqual(specs[1].tournament_format, "double_elimination")
+        self.assertEqual(specs[1].wb_advancers, 8)
+        self.assertEqual(specs[1].lb_advancers, 2)
+
+    def test_single_elim_with_nonzero_advancers_not_combo_checked(self) -> None:
+        # single_elimination with a stray wb/lb pair is not combo-validated.
+        specs = parse_phase_composition(
+            "round_robin,tournament:standings:0:single_elimination:1:1:1:1:8:2:0",
+            season_schedule_format=_SSF,
+        )
+        self.assertEqual(specs[1].wb_advancers, 8)
+        self.assertEqual(specs[1].lb_advancers, 2)
+
+
+class TestParseFullSubConfigMalformed(SimpleTestCase):
+    """``len(parts) > 11`` and a non-int / empty sub-config field raise the
+    EXISTING ``"malformed phase composition"`` (NOT a sub-config ValueError)."""
+
+    def test_twelve_field_token_raises_malformed(self) -> None:
+        # len(parts) > 11 ⇒ malformed.
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:0:single_elimination:1:1:1:1:0:0:0:x",
+                season_schedule_format=_SSF,
+            )
+        self.assertEqual(str(ctx.exception), "malformed phase composition")
+
+    def test_non_int_series_field_raises_malformed(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:0:single_elimination:abc:1:1:1:0:0:0",
+                season_schedule_format=_SSF,
+            )
+        self.assertEqual(str(ctx.exception), "malformed phase composition")
+
+    def test_empty_swiss_field_raises_malformed(self) -> None:
+        # A trailing colon with no swiss value ⇒ empty field is malformed.
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:0:swiss:1:1:1:1:0:0:",
+                season_schedule_format=_SSF,
+            )
+        self.assertEqual(str(ctx.exception), "malformed phase composition")
+
+    def test_non_int_wb_field_raises_malformed(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:0:double_elimination:1:1:1:1:x:0:0",
+                season_schedule_format=_SSF,
+            )
+        self.assertEqual(str(ctx.exception), "malformed phase composition")
+
+
+class TestParseFullSubConfigBackCompat(SimpleTestCase):
+    """Every c-3d/c-3c serialized token still parses identically — sub-config
+    fields take their defaults (format→single_elimination, tiers→1,
+    wb/lb/swiss→0)."""
+
+    def test_bare_tournament_defaults(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament", season_schedule_format=_SSF
+        )
+        t = specs[1]
+        self.assertEqual(t.tournament_mode, "standings")
+        self.assertEqual(t.tournament_cut, 0)
+        self.assertEqual(t.tournament_format, "single_elimination")
+        self.assertEqual(t.final_series_length, 1)
+        self.assertEqual(t.semifinal_series_length, 1)
+        self.assertEqual(t.quarterfinal_series_length, 1)
+        self.assertEqual(t.earlier_series_length, 1)
+        self.assertEqual(t.wb_advancers, 0)
+        self.assertEqual(t.lb_advancers, 0)
+        self.assertEqual(t.swiss_rounds, 0)
+
+    def test_c3c_strength_token_defaults(self) -> None:
+        specs = parse_phase_composition(
+            "tournament:strength,round_robin", season_schedule_format=_SSF
+        )
+        t = specs[0]
+        self.assertEqual(t.tournament_mode, "strength")
+        self.assertEqual(t.tournament_cut, 0)
+        self.assertEqual(t.tournament_format, "single_elimination")
+        self.assertEqual(t.final_series_length, 1)
+        self.assertEqual(t.swiss_rounds, 0)
+
+    def test_c3d_standings_cut_token_defaults(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,tournament:standings:8", season_schedule_format=_SSF
+        )
+        t = specs[1]
+        self.assertEqual(t.tournament_mode, "standings")
+        self.assertEqual(t.tournament_cut, 8)
+        self.assertEqual(t.tournament_format, "single_elimination")
+        self.assertEqual(t.final_series_length, 1)
+        self.assertEqual(t.wb_advancers, 0)
+        self.assertEqual(t.lb_advancers, 0)
+        self.assertEqual(t.swiss_rounds, 0)
+
+    def test_c3d_cut_floor_still_fires_under_full_grammar(self) -> None:
+        # The c-3d cut floor still applies before the new format/tier checks.
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:standings:2", season_schedule_format=_SSF
+            )
+        self.assertEqual(
+            str(ctx.exception), "tournament cut must be 0 or at least 4: 2"
+        )
+
+    def test_unknown_mode_still_fires_before_format(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,tournament:bogus:0:swiss:1:1:1:1:0:0:6",
+                season_schedule_format=_SSF,
             )
         self.assertEqual(str(ctx.exception), "unknown tournament_mode: 'bogus'")
