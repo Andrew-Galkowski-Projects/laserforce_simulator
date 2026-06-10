@@ -1580,3 +1580,160 @@ class TestPlayNextNodeRandomDrawRoutesHook(TestCase):
                 play_next_node(t)
 
         self.assertEqual(build_calls, [], "preset must not build a role hook")
+
+
+# ===========================================================================
+# LG-02-Part2c-3f — play_next_bracket_round (weekly playoff pacing)
+# ===========================================================================
+#
+# NEW classes appended below (existing classes above are NOT modified). Seam
+# contract: ``.claude/worktrees/lg-02-part2c-3f-seam-contract.md`` §2.1 / §6.4.
+#
+# ``play_next_bracket_round(tournament) -> int`` drains EXACTLY the LOWEST
+# incomplete STAGE — the ``(bracket_type, bracket_round)`` group of
+# ``find_next_node``'s first playable node — to clinch, then STOPS (does not
+# start the next stage). It returns the NODE-clinch count for that stage (a Bo3
+# node counts ONCE, on clinch), and ``0`` when nothing is playable. Built on the
+# VERBATIM ``play_next_node`` (per-Match atomic, no outer transaction).
+#
+# Sims are RANDOM — we assert STRUCTURE: which nodes gained ``winner_id``, that
+# the NEXT stage stays unresolved, and the node-clinch return count. NEVER exact
+# simulated point totals.
+
+
+def _stage_key(node) -> tuple[str, int]:
+    return (node.bracket_type, node.bracket_round)
+
+
+class TestPlayNextBracketRoundDrainsOneStage(TestCase):
+    """One call drains exactly the lowest incomplete stage; the next stage's
+    nodes stay unresolved; returns that stage's node-clinch count."""
+
+    def test_first_call_clinches_every_round_one_node_only(self) -> None:
+        from matches.tournament_engine import play_next_bracket_round
+
+        # 4-team single-elim: round 1 has 2 nodes, round 2 (the final) has 1.
+        t = _active_tournament(4, name="BR_OneStage")
+        # find_next_node's first node is a round-1 node ⇒ the lowest stage is
+        # (winners, 1).
+        target_stage = _stage_key(t.find_next_playable_node())
+        self.assertEqual(target_stage, ("winners", 1))
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            clinched = play_next_bracket_round(t)
+
+        t.refresh_from_db()
+        # Both round-1 nodes now have a winner.
+        r1 = t.nodes.filter(bracket_type="winners", bracket_round=1)
+        self.assertEqual(r1.count(), 2)
+        for node in r1:
+            self.assertIsNotNone(node.winner_id)
+        # The round-2 final is still unresolved.
+        final = t.nodes.get(advances_to__isnull=True)
+        self.assertIsNone(final.winner_id)
+        # Returned the node-clinch count for the stage (2 round-1 nodes).
+        self.assertEqual(clinched, 2)
+
+    def test_second_call_drains_the_final_stage(self) -> None:
+        from matches.tournament_engine import play_next_bracket_round
+
+        t = _active_tournament(4, name="BR_TwoStages")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_next_bracket_round(t)  # round 1
+            clinched = play_next_bracket_round(t)  # final
+        t.refresh_from_db()
+        final = t.nodes.get(advances_to__isnull=True)
+        self.assertIsNotNone(final.winner_id)
+        # The final stage had exactly 1 node.
+        self.assertEqual(clinched, 1)
+        # Draining the final stage crowns the champion + completes.
+        self.assertEqual(t.state, "completed")
+        self.assertIsNotNone(t.champion_id)
+
+    def test_eight_team_first_stage_clinches_four_nodes(self) -> None:
+        from matches.tournament_engine import play_next_bracket_round
+
+        # 8-team single-elim: round 1 = 4 nodes.
+        t = _active_tournament(8, name="BR_Eight")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            clinched = play_next_bracket_round(t)
+        t.refresh_from_db()
+        r1 = t.nodes.filter(bracket_type="winners", bracket_round=1)
+        for node in r1:
+            self.assertIsNotNone(node.winner_id)
+        # 4 round-1 nodes clinched; round 2 untouched.
+        self.assertEqual(clinched, 4)
+        r2_unresolved = t.nodes.filter(
+            bracket_type="winners", bracket_round=2, winner__isnull=True
+        )
+        self.assertEqual(r2_unresolved.count(), 2)
+
+
+class TestPlayNextBracketRoundReturnsZero(TestCase):
+    """``play_next_bracket_round`` returns ``0`` when nothing is playable."""
+
+    def test_returns_zero_when_bracket_complete(self) -> None:
+        from matches.tournament_engine import play_next_bracket_round
+
+        t = _active_tournament(4, name="BR_Complete")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            # Drain every stage.
+            for _ in range(10):
+                t.refresh_from_db()
+                if t.state == "completed":
+                    break
+                if play_next_bracket_round(t) == 0:
+                    break
+            t.refresh_from_db()
+            # A further call on a fully-drained bracket returns 0.
+            again = play_next_bracket_round(t)
+        self.assertEqual(again, 0)
+
+    def test_returns_zero_writes_no_new_match(self) -> None:
+        from matches.tournament_engine import play_next_bracket_round
+
+        t = _active_tournament(4, name="BR_NoWrite")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(10):
+                t.refresh_from_db()
+                if t.state == "completed":
+                    break
+                if play_next_bracket_round(t) == 0:
+                    break
+            match_count = Match.objects.count()
+            again = play_next_bracket_round(t)
+        self.assertEqual(again, 0)
+        self.assertEqual(Match.objects.count(), match_count)
+
+
+class TestPlayNextBracketRoundSeriesStage(TestCase):
+    """A Bo3 stage counts each node ONCE (on clinch), even though each node
+    takes multiple ``play_next_node`` calls to clinch."""
+
+    def test_bo3_first_stage_counts_each_node_once(self) -> None:
+        from matches.bracket import clinch_threshold
+        from matches.models import SeriesMatch
+        from matches.tournament_engine import play_next_bracket_round
+
+        # All round-1 nodes are Bo3 (every slot Bo3); round 1 has 2 nodes.
+        t = _series_tournament(4, 3, name="BR_Bo3Stage")
+        threshold = clinch_threshold(3)  # 2
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            clinched = play_next_bracket_round(t)
+
+        t.refresh_from_db()
+        r1 = t.nodes.filter(bracket_round=1)
+        # Both round-1 Bo3 nodes clinched.
+        for node in r1:
+            self.assertIsNotNone(node.winner_id)
+            wins = list(SeriesMatch.objects.filter(node=node))
+            # Each clinched at exactly the threshold (no dead rubber).
+            wins_a = sum(1 for s in wins if s.winner_id == node.team_a_id)
+            wins_b = sum(1 for s in wins if s.winner_id == node.team_b_id)
+            self.assertEqual(max(wins_a, wins_b), threshold)
+        # Counted ONCE per node (2), NOT once per Match played.
+        self.assertEqual(clinched, 2)
+        # The next stage (the final) is still unresolved.
+        final = t.nodes.get(advances_to__isnull=True)
+        self.assertIsNone(final.winner_id)

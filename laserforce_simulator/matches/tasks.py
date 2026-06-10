@@ -214,40 +214,94 @@ def play_season_task(
         to_play = select_play_fixtures(fixtures, played_keys, max_matchdays)
         n = len(to_play)
 
-        if n == 0:
-            return {"completed": 0, "total": 0}
+        if n:
+            team_ids = {f.team_a_id for _pid, f in to_play} | {
+                f.team_b_id for _pid, f in to_play
+            }
+            team_by_id = Team.objects.in_bulk(team_ids)
+            # LG-01j — bulk-load the frozen-snapshot map pool ONCE outside
+            # the per-fixture loop (single ORM query regardless of
+            # ``len(to_play)``). ``in_bulk`` on an empty list is a no-op
+            # returning an empty dict.
+            pool_ids = season.starting_map_pool_ids_json or []
+            pool_by_id: dict[int, ArenaMap] = ArenaMap.objects.in_bulk(pool_ids)
 
-        team_ids = {f.team_a_id for _pid, f in to_play} | {
-            f.team_b_id for _pid, f in to_play
-        }
-        team_by_id = Team.objects.in_bulk(team_ids)
-        # LG-01j — bulk-load the frozen-snapshot map pool ONCE outside
-        # the per-fixture loop (single ORM query regardless of
-        # ``len(to_play)``). ``in_bulk`` on an empty list is a no-op
-        # returning an empty dict.
-        pool_ids = season.starting_map_pool_ids_json or []
-        pool_by_id: dict[int, ArenaMap] = ArenaMap.objects.in_bulk(pool_ids)
+            for k, (phase_id, fixture) in enumerate(to_play):
+                team_a = team_by_id[fixture.team_a_id]
+                team_b = team_by_id[fixture.team_b_id]
+                # LG-01j — resolve the per-Round arena_map via the locked
+                # algorithm (3-zone for ``none``, fixed map for ``single``,
+                # deterministic per-fixture draw for ``random_per_round``).
+                arena_map = _resolve_fixture_map(season, fixture, pool_by_id)
+                BatchSimulator().simulate_scheduled_round(
+                    season,
+                    team_a,
+                    team_b,
+                    fixture.round_number,
+                    arena_map=arena_map,
+                    season_phase=phase_by_id.get(phase_id),
+                    leg=fixture.leg,
+                )
+                self.update_state(
+                    state="PROGRESS",
+                    meta={"completed": k + 1, "total": n},
+                )
 
-        for k, (phase_id, fixture) in enumerate(to_play):
-            team_a = team_by_id[fixture.team_a_id]
-            team_b = team_by_id[fixture.team_b_id]
-            # LG-01j — resolve the per-Round arena_map via the locked
-            # algorithm (3-zone for ``none``, fixed map for ``single``,
-            # deterministic per-fixture draw for ``random_per_round``).
-            arena_map = _resolve_fixture_map(season, fixture, pool_by_id)
-            BatchSimulator().simulate_scheduled_round(
-                season,
-                team_a,
-                team_b,
-                fixture.round_number,
-                arena_map=arena_map,
-                season_phase=phase_by_id.get(phase_id),
-                leg=fixture.leg,
-            )
-            self.update_state(
-                state="PROGRESS",
-                meta={"completed": k + 1, "total": n},
-            )
+        # LG-02-Part2c-3f — phase-aware tail. After the RR fixture loop, if
+        # the cursor sits on a built+active tournament phase, drain bracket
+        # STAGES with the SHARED budget. ``rr_weeks_played`` is the count of
+        # distinct matchdays simulated this run (matchday is global-continuous
+        # post-Part2c-2, so a bare matchday count IS the distinct-week count).
+        # Budget: unbounded when ``max_matchdays is None`` (drain until
+        # ``play_next_bracket_round`` returns 0); else
+        # ``max(0, max_matchdays - rr_weeks_played)`` stages. PROGRESS + the
+        # final return switch to STAGE counts the moment the bracket drain
+        # begins (the ``play_playoffs_task`` precedent); the RR-shape return
+        # is kept only when no tournament tail runs.
+        from matches.bracket import stage_progress
+        from matches.models import _node_to_dict
+        from matches.tournament_engine import play_next_bracket_round
+
+        phase = season.current_phase()
+        if (
+            phase is not None
+            and phase.phase_type == "tournament"
+            and phase.tournament_id is not None
+        ):
+            tournament = phase.tournament
+
+            def _stage_counts() -> tuple[int, int]:
+                flat = [
+                    _node_to_dict(node)
+                    for node in tournament.nodes.select_related(
+                        "advances_to", "tournament"
+                    ).prefetch_related("series_matches")
+                ]
+                return stage_progress(flat)
+
+            rr_weeks_played = len({fixture.matchday for _pid, fixture in to_play})
+
+            if max_matchdays is None:
+                while play_next_bracket_round(tournament) > 0:
+                    completed, total = _stage_counts()
+                    self.update_state(
+                        state="PROGRESS",
+                        meta={"completed": completed, "total": total},
+                    )
+            else:
+                bracket_budget = max(0, max_matchdays - rr_weeks_played)
+                for _ in range(bracket_budget):
+                    if play_next_bracket_round(tournament) == 0:
+                        break
+                    completed, total = _stage_counts()
+                    self.update_state(
+                        state="PROGRESS",
+                        meta={"completed": completed, "total": total},
+                    )
+
+            season.complete_if_finished()
+            completed, total = _stage_counts()
+            return {"completed": completed, "total": total}
 
         return {"completed": n, "total": n}
     finally:

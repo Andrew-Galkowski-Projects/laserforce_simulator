@@ -3534,6 +3534,150 @@ class TestLg02c2PlayWeekMultiRr(_Lg01dTestCase):
         self.assertIsNone(season.champion_team_id)
 
 
+# ===========================================================================
+# LG-02-Part2c-3f — phase-aware play_week (weekly playoff pacing)
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-02-part2c-3f-seam-contract.md`` §2.2 /
+# §6.4: when the Season cursor is a built + active tournament phase, a POST to
+# play_week drains EXACTLY ONE bracket STAGE (the lowest incomplete stage's
+# nodes gain winner_id, the NEXT stage stays unresolved) then 302s; when the
+# cursor is an RR phase the existing RR matchday path runs unchanged (RR Rounds
+# created); 405 on GET; non-active → ``play_error`` re-render.
+#
+# Assertions are on the count of nodes whose winner_id is set + which stage
+# advanced + status codes — NEVER on exact simulated point totals. Appended as
+# a NEW class; no existing class is modified. These WILL fail until the Code
+# agent lands the phase-aware play_week branch — the TDD red state.
+
+
+def _lg3f_rr_then_tournament_season(prefix: str, n_teams: int = 4):
+    """An active Season: ordinal-1 ``round_robin`` + ordinal-2 ``tournament``
+    SeasonPhase, ``n_teams`` enrolled, started. Returns
+    ``(season, teams, rr, tournament_phase)``.
+    """
+    league = _Lg01dLeague.objects.create(name=f"L{prefix}")
+    season = _Lg01dSeason.objects.create(
+        league=league, name="S1", start_date=_lg01d_date.today()
+    )
+    teams = []
+    for i in range(n_teams):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        teams.append(t)
+        season.teams.add(t)
+    rr = _Lg02c2SeasonPhase.objects.create(
+        season=season, ordinal=1, phase_type="round_robin"
+    )
+    tournament_phase = _Lg02c2SeasonPhase.objects.create(
+        season=season, ordinal=2, phase_type="tournament"
+    )
+    season.start_season()
+    season.refresh_from_db()
+    return season, teams, rr, tournament_phase
+
+
+def _lg3f_play_rr(season, teams) -> None:
+    """Play every RR fixture (auto-builds the tournament phase on completion)."""
+    by_id = {t.id: t for t in teams}
+    sim = BatchSimulator()
+    with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+        for phase, fixtures in season.scheduled_fixtures_by_phase():
+            for fixture in fixtures:
+                sim.simulate_scheduled_round(
+                    season,
+                    by_id[fixture.team_a_id],
+                    by_id[fixture.team_b_id],
+                    fixture.round_number,
+                    season_phase=phase if phase.pk is not None else None,
+                )
+
+
+class TestLg3fPlayWeekPhaseAware(_Lg01dTestCase):
+    """``play_week`` drains exactly ONE bracket stage when the cursor is a
+    built tournament phase; the existing RR path is unchanged on an RR cursor."""
+
+    def _resolved_node_count(self, tournament) -> int:
+        from matches.models import BracketNode
+
+        return BracketNode.objects.filter(
+            tournament=tournament, winner__isnull=False
+        ).count()
+
+    def test_post_on_tournament_cursor_drains_one_stage_then_302(self) -> None:
+        from matches.models import BracketNode
+
+        season, teams, _rr, tp = _lg3f_rr_then_tournament_season("PWPlayoff", n_teams=4)
+        _lg3f_play_rr(season, teams)
+        tp.refresh_from_db()
+        self.assertIsNotNone(tp.tournament_id)
+        tournament = tp.tournament
+
+        # The lowest incomplete stage is winners round 1 (2 nodes for N=4).
+        before = self._resolved_node_count(tournament)
+        stage_size = BracketNode.objects.filter(
+            tournament=tournament, bracket_type="winners", bracket_round=1
+        ).count()
+        self.assertEqual(stage_size, 2)
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            response = self.client.post(reverse("play_week", args=[season.id]))
+        self.assertEqual(response.status_code, 302)
+
+        tournament.refresh_from_db()
+        after = self._resolved_node_count(tournament)
+        # Exactly the lowest stage's nodes advanced (one whole stage).
+        self.assertEqual(after - before, stage_size)
+        # The NEXT stage (the final) is still unresolved.
+        final = tournament.nodes.get(advances_to__isnull=True)
+        self.assertIsNone(final.winner_id)
+
+    def test_post_on_rr_cursor_runs_rr_matchday_path_unchanged(self) -> None:
+        season, _teams, rr, _tp = _lg3f_rr_then_tournament_season("PWRr", n_teams=4)
+        # RR not yet played ⇒ the cursor is the RR phase; play_week runs the
+        # existing RR matchday path (creates RR Rounds attributed to rr).
+        before = GameRound.objects.filter(match__season_phase=rr).count()
+        self.assertEqual(before, 0)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            response = self.client.post(reverse("play_week", args=[season.id]))
+        self.assertEqual(response.status_code, 302)
+        after = GameRound.objects.filter(match__season_phase=rr).count()
+        self.assertGreater(after, 0)
+
+    def test_get_returns_405(self) -> None:
+        season, _teams, _rr, _tp = _lg3f_rr_then_tournament_season(
+            "PWGet405", n_teams=4
+        )
+        response = self.client.get(reverse("play_week", args=[season.id]))
+        self.assertEqual(response.status_code, 405)
+
+    def test_post_on_non_active_season_returns_400_with_play_error(self) -> None:
+        league = _Lg01dLeague.objects.create(name="LPWNonActive")
+        season = _Lg01dSeason.objects.create(
+            league=league, name="Draft", start_date=_lg01d_date.today()
+        )
+        # Draft (non-active) → play_error re-render.
+        response = self.client.post(reverse("play_week", args=[season.id]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIsNotNone(response.context.get("play_error"))
+
+    def test_repeated_play_week_drains_bracket_stage_by_stage_to_champion(
+        self,
+    ) -> None:
+        season, teams, _rr, tp = _lg3f_rr_then_tournament_season("PWDrain", n_teams=4)
+        _lg3f_play_rr(season, teams)
+        tp.refresh_from_db()
+        # Two stages for an N=4 bracket: two play_week clicks crown a champion.
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01D_FAST_TICKS):
+            for _ in range(6):
+                tp.refresh_from_db()
+                if tp.tournament.state == "completed":
+                    break
+                self.client.post(reverse("play_week", args=[season.id]))
+        tp.refresh_from_db()
+        self.assertEqual(tp.tournament.state, "completed")
+        self.assertIsNotNone(tp.tournament.champion_id)
+
+
 @pytest.mark.django_db
 class TestPlayerRowEliminationSemantic:
     """Regression coverage for the ``_player_row`` ``is_eliminated`` /

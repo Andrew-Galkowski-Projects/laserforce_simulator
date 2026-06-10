@@ -1634,6 +1634,25 @@ def play_week(request, season_id: int) -> HttpResponse:
             f"Season must be active to play; got state={season.state!r}",
         )
 
+    # LG-02-Part2c-3f — weekly playoff pacing. When the cursor sits on a
+    # built+active tournament phase, "One Week" drains exactly ONE bracket
+    # STAGE (the lowest incomplete (bracket_type, bracket_round) group) and
+    # then crowns the Season champion if the final node resolved. Otherwise
+    # the RR matchday path below runs unchanged. play_next_bracket_round
+    # carries its own per-Match atomicity, so the playoff branch needs no
+    # transaction.atomic wrapper.
+    phase = season.current_phase()
+    if (
+        phase is not None
+        and phase.phase_type == "tournament"
+        and phase.tournament_id is not None
+    ):
+        from matches.tournament_engine import play_next_bracket_round
+
+        play_next_bracket_round(phase.tournament)
+        season.complete_if_finished()
+        return redirect("season_dashboard", season_id=season.id)
+
     try:
         with transaction.atomic():
             # LG-01j — deferred import of ArenaMap + the per-fixture

@@ -10,7 +10,13 @@ import random
 
 from django.db import transaction
 
-from .bracket import advance_loser, advance_winner, break_tie, series_winner_slot
+from .bracket import (
+    advance_loser,
+    advance_winner,
+    break_tie,
+    find_next_node,
+    series_winner_slot,
+)
 from .draw import (
     ROLE_SLOTS,
     build_per_tier_role_assignment,
@@ -347,3 +353,48 @@ def _collapse_drop_byes(tournament: Tournament) -> None:
             if n.advances_to_id is not None and n.advances_to_slot:
                 _fill_slot(n.advances_to, n.advances_to_slot, surv_team, surv_seed)
             changed = True
+
+
+def play_next_bracket_round(tournament: Tournament) -> int:
+    """LG-02-Part2c-3f — weekly playoff pacing: drain ONE bracket STAGE.
+
+    A "stage" is the LOWEST incomplete ``(bracket_type, bracket_round)`` group
+    — the unit ``matches.bracket.stage_progress`` counts. This helper drains
+    every playable node in that stage to its Series clinch, then STOPS (it does
+    not start the next stage). It is built on the VERBATIM per-Match-atomic
+    ``play_next_node`` (looped) — it does NOT re-implement resolve/advance.
+
+    Returns the count of NODES clinched (advanced) this call — a node is
+    counted ONCE, on the call where its Series clinches (its ``winner_id`` is
+    now set), regardless of how many Matches a Bo3/Bo5 took. ``0`` when nothing
+    is playable.
+
+    No outer ``@transaction.atomic`` — each ``play_next_node`` call is its own
+    atomic Match commit (ADR-0016 per-Match), so a mid-stage failure leaves
+    every clinched node committed and is resumable.
+    """
+
+    def _flatten() -> list[dict]:
+        return [
+            _node_to_dict(n)
+            for n in tournament.nodes.select_related(
+                "advances_to", "tournament"
+            ).prefetch_related("series_matches")
+        ]
+
+    target = find_next_node(_flatten())
+    if target is None:
+        return 0
+    target_stage = (target["bracket_type"], target["bracket_round"])
+
+    clinched = 0
+    while True:
+        nxt = find_next_node(_flatten())
+        if nxt is None:
+            break
+        if (nxt["bracket_type"], nxt["bracket_round"]) != target_stage:
+            break
+        node = play_next_node(tournament)
+        if node is not None and node.winner_id is not None:
+            clinched += 1
+    return clinched
