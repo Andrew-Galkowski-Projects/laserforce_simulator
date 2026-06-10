@@ -416,8 +416,10 @@ class TestPlayerDetailStubs(TestCase):
 
     def test_each_stub_contains_coming_soon(self) -> None:
         content = self.client.get(self.url).content.decode().lower()
-        # 5 stubs each carry the case-insensitive "coming soon" substring.
-        self.assertGreaterEqual(content.count("coming soon"), 5)
+        # LG-03 filled the awards stub (it now renders the awards list or the
+        # "No awards yet" empty state, NOT a "coming soon" placeholder), so the
+        # 4 REMAINING placeholder stubs each carry the "coming soon" substring.
+        self.assertGreaterEqual(content.count("coming soon"), 4)
 
 
 # ===========================================================================
@@ -447,6 +449,143 @@ class TestPlayerDetailSidebar(TestCase):
         sidebar_links = response.context["sidebar_links"]
         self.assertTrue(sidebar_links)  # the 23-entry sidebar is non-empty
         self.assertEqual([e for e in sidebar_links if e["active"]], [])
+
+
+# ===========================================================================
+# Player awards (LG-03) — the filled league-player-awards-stub
+# ===========================================================================
+
+
+def _make_completed_season_with_winner(league: League):
+    """A completed Season whose single player tops every category.
+
+    Returns ``(season, team, player)``. The lone player wins outright because
+    no rival has any Rounds in the Season's corpus.
+    """
+    team, _slots = make_team_with_slots(f"{league.name[:3]}Win")
+    other, _o = make_team_with_slots(f"{league.name[:3]}Opp")
+    season = Season.objects.create(
+        league=league,
+        name="Won",
+        start_date=date(2026, 1, 1),
+        state="completed",
+        starting_team_ids_json=sorted([team.id, other.id]),
+    )
+    season.teams.add(team, other)
+    player = team.active_players[0]
+    match = Match.objects.create(
+        team_red=team, team_blue=other, season=season, is_completed=True
+    )
+    game_round = GameRound.objects.create(
+        match=match,
+        round_number=1,
+        team_red=team,
+        team_blue=other,
+        red_points=100,
+        blue_points=0,
+        is_completed=True,
+    )
+    PlayerRoundState.objects.create(
+        game_round=game_round,
+        player=player,
+        team_color="red",
+        role="scout",
+        points_scored=900,
+        tags_made=20,
+        times_tagged=2,
+    )
+    return season, team, player
+
+
+class TestPlayerDetailAwards(TestCase):
+    """LG-03 — ``player_awards`` context key + the filled awards stub.
+
+    The view gains ONE new context key (``player_awards``); the
+    ``league-player-awards-stub`` body is filled with the player's wins
+    (``league-player-awards-list``) or a "No awards yet" empty state
+    (``league-player-awards-empty``). The other 4 stubs + the global career
+    page are unaffected. FAILS until the Code agent lands the LG-06h
+    extension + the ``get_or_compute_awards`` chokepoint.
+    """
+
+    def test_player_awards_context_key_present(self) -> None:
+        league = _make_league()
+        season, team, player = _make_completed_season_with_winner(league)
+        url = reverse("league_player_detail", args=[league.id, player.id])
+        response = self.client.get(url)
+        self.assertIn("player_awards", response.context)
+
+    def test_player_awards_is_a_list(self) -> None:
+        league = _make_league()
+        season, team, player = _make_completed_season_with_winner(league)
+        url = reverse("league_player_detail", args=[league.id, player.id])
+        response = self.client.get(url)
+        self.assertIsInstance(response.context["player_awards"], list)
+
+    def test_winning_player_awards_list_is_non_empty(self) -> None:
+        league = _make_league()
+        season, team, player = _make_completed_season_with_winner(league)
+        url = reverse("league_player_detail", args=[league.id, player.id])
+        response = self.client.get(url)
+        self.assertTrue(response.context["player_awards"])
+
+    def test_winning_player_renders_awards_list_container(self) -> None:
+        league = _make_league()
+        season, team, player = _make_completed_season_with_winner(league)
+        url = reverse("league_player_detail", args=[league.id, player.id])
+        content = self.client.get(url).content.decode()
+        self.assertIn("league-player-awards-list", content)
+
+    def test_award_entry_carries_locked_keys(self) -> None:
+        league = _make_league()
+        season, team, player = _make_completed_season_with_winner(league)
+        url = reverse("league_player_detail", args=[league.id, player.id])
+        response = self.client.get(url)
+        entry = response.context["player_awards"][0]
+        for key in ("season_id", "season_name", "category", "label", "value"):
+            self.assertIn(key, entry)
+        # ``role`` is present (None except for tag-ratio per-role winners).
+        self.assertIn("role", entry)
+
+    def test_player_with_no_awards_renders_empty_state(self) -> None:
+        league = _make_league()
+        # A free agent with zero Rounds in any of this League's Seasons.
+        pool = Team.objects.create(name=f"{league.name} Free Agents")
+        player = Player.objects.create(team=pool, name="No Awards Joe")
+        url = reverse("league_player_detail", args=[league.id, player.id])
+        response = self.client.get(url)
+        self.assertEqual(response.context["player_awards"], [])
+        content = response.content.decode()
+        self.assertIn("league-player-awards-empty", content)
+        self.assertIn("No awards yet", content)
+
+    def test_stub_dom_id_preserved(self) -> None:
+        league = _make_league()
+        season, team, player = _make_completed_season_with_winner(league)
+        url = reverse("league_player_detail", args=[league.id, player.id])
+        content = self.client.get(url).content.decode()
+        self.assertIn("league-player-awards-stub", content)
+
+    def test_other_four_stubs_unaffected(self) -> None:
+        league = _make_league()
+        season, team, player = _make_completed_season_with_winner(league)
+        url = reverse("league_player_detail", args=[league.id, player.id])
+        content = self.client.get(url).content.decode()
+        for stub in (
+            "league-player-playoffs-stub",
+            "league-player-ratings-history-stub",
+            "league-player-salaries-stub",
+            "league-player-transactions-stub",
+        ):
+            self.assertIn(stub, content)
+
+    def test_global_career_page_unaffected(self) -> None:
+        league = _make_league()
+        season, team, player = _make_completed_season_with_winner(league)
+        url = reverse("league_player_detail", args=[league.id, player.id])
+        content = self.client.get(url).content.decode()
+        # The external career link is still the global HX-01 page.
+        self.assertIn(f"/players/{player.id}/stats/", content)
 
 
 # ---------------------------------------------------------------------------

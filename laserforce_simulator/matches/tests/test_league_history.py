@@ -759,5 +759,95 @@ class TestLeagueHistorySessionWrite(TestCase):
         self.assertNotIn("last_league_id", self.client.session)
 
 
+# ---------------------------------------------------------------------------
+# TestLeagueHistoryAwardsColumns (LG-03)
+# ---------------------------------------------------------------------------
+
+
+class TestLeagueHistoryAwardsColumns(TestCase):
+    """LG-03 — the two new League-History columns (Season MVP / Finals MVP).
+
+    ``_build_history_row`` gains exactly two keys (``season_mvp`` /
+    ``finals_mvp``), each a plain award dict OR ``None``. The two ``<th>``
+    ids render, the in-progress row renders ``—`` for both, and a completed
+    row carries the per-row awards link. These FAIL until the Code agent
+    lands the +2-column extension + the ``get_or_compute_awards`` chokepoint.
+    """
+
+    def _completed_with_rounds(self, league: League, teams: list[Team]) -> Season:
+        season = _make_completed_season(
+            league, team_ids=[t.id for t in teams], champion_team=teams[0]
+        )
+        # One completed Match so awards have a corpus to warm against.
+        _make_completed_match(season, teams[0], teams[1])
+        return season
+
+    def test_two_new_th_ids_render(self) -> None:
+        league = _make_league("AwardsTh")
+        teams = _make_teams("ATh", 2)
+        self._completed_with_rounds(league, teams)
+        response = self.client.get(
+            reverse("league_history", kwargs={"league_id": league.id})
+        )
+        self.assertContains(response, 'id="league-history-th-season-mvp"')
+        self.assertContains(response, 'id="league-history-th-finals-mvp"')
+
+    def test_completed_row_has_season_mvp_and_finals_mvp_keys(self) -> None:
+        league = _make_league("AwardsKeys")
+        teams = _make_teams("AKy", 2)
+        self._completed_with_rounds(league, teams)
+        response = self.client.get(
+            reverse("league_history", kwargs={"league_id": league.id})
+        )
+        rows = response.context["completed_rows"]
+        self.assertIn("season_mvp", rows[0])
+        self.assertIn("finals_mvp", rows[0])
+
+    def test_season_mvp_value_is_award_dict_or_none(self) -> None:
+        league = _make_league("AwardsShape")
+        teams = _make_teams("ASh", 2)
+        self._completed_with_rounds(league, teams)
+        response = self.client.get(
+            reverse("league_history", kwargs={"league_id": league.id})
+        )
+        rows = response.context["completed_rows"]
+        season_mvp = rows[0]["season_mvp"]
+        # A plain dict (award-dict shape) or None — NOT a Player, NOT a bare
+        # name string.
+        self.assertTrue(season_mvp is None or isinstance(season_mvp, dict))
+        finals_mvp = rows[0]["finals_mvp"]
+        self.assertTrue(finals_mvp is None or isinstance(finals_mvp, dict))
+
+    def test_in_progress_row_renders_both_as_none(self) -> None:
+        league = _make_league("AwardsInProg")
+        teams = _make_teams("AIP", 2)
+        _make_active_season(league, teams=teams)
+        response = self.client.get(
+            reverse("league_history", kwargs={"league_id": league.id})
+        )
+        in_progress = response.context["in_progress_row"]
+        self.assertIsNotNone(in_progress)
+        self.assertIsNone(in_progress["season_mvp"])
+        self.assertIsNone(in_progress["finals_mvp"])
+
+    def test_completed_row_carries_awards_link(self) -> None:
+        league = _make_league("AwardsLink")
+        teams = _make_teams("ALk", 2)
+        season = self._completed_with_rounds(league, teams)
+        response = self.client.get(
+            reverse("league_history", kwargs={"league_id": league.id})
+        )
+        self.assertContains(response, f'id="league-history-awards-link-{season.id}"')
+
+    def test_in_progress_row_has_no_awards_link(self) -> None:
+        league = _make_league("AwardsNoLink")
+        teams = _make_teams("ANL", 2)
+        active = _make_active_season(league, teams=teams)
+        response = self.client.get(
+            reverse("league_history", kwargs={"league_id": league.id})
+        )
+        self.assertNotContains(response, f'id="league-history-awards-link-{active.id}"')
+
+
 # Reference to silence unused-import warnings.
 _ = PlayerRoundState
