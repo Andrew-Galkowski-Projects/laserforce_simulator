@@ -1212,6 +1212,8 @@ class Season(models.Model):
             if prior is not None and not self._phase_complete(prior):
                 return
         order = self._seed_order_for_phase(phase)
+        if phase.tournament_cut:
+            order = order[: phase.tournament_cut]
         if not order:
             return
         if phase.tournament_mode == "standings":
@@ -1539,6 +1541,22 @@ class SeasonPhase(models.Model):
         ("random_draw", "Mid-season: drawn pool -> RR->DE"),
     )
 
+    # LG-02-Part2c-3d — the per-phase tournament FORMAT field. DORMANT this
+    # slice (written-but-unread): the build still hardcodes
+    # ``format="single_elimination"`` in ``activate_pending_tournament_phase``.
+    # All five formats declared now (the ``member_night`` declared-but-inert
+    # precedent); the differential build path is a later slice. The
+    # ``round_robin_double_elim`` label uses the em-dash arrow (U+2192). These
+    # mirror ``Tournament.FORMAT_CHOICES`` byte-for-byte but are INLINED here
+    # because ``Tournament`` is defined later in this module.
+    TOURNAMENT_FORMAT_CHOICES = (
+        ("single_elimination", "Single elimination"),
+        ("double_elimination", "Double elimination"),
+        ("round_robin", "Round robin"),
+        ("round_robin_double_elim", "Round robin → Double elimination"),
+        ("swiss", "Swiss"),
+    )
+
     season = models.ForeignKey(
         "matches.Season",
         on_delete=models.CASCADE,
@@ -1572,6 +1590,18 @@ class SeasonPhase(models.Model):
         choices=TOURNAMENT_MODE_CHOICES,
         default="standings",
     )
+    # LG-02-Part2c-3d — DORMANT this slice: written-but-unread by the build
+    # (``activate_pending_tournament_phase`` hardcodes
+    # ``format="single_elimination"``). Threaded through the carry-forward so a
+    # future per-format build path is forward-compatible.
+    tournament_format = models.CharField(
+        max_length=32,
+        choices=TOURNAMENT_FORMAT_CHOICES,
+        default="single_elimination",
+    )
+    # LG-02-Part2c-3d — LIVE: a top-N participant cut applied to the seeded
+    # order before the bracket builds. ``0`` = no cut = all enrolled teams.
+    tournament_cut = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
         ordering = ["ordinal"]

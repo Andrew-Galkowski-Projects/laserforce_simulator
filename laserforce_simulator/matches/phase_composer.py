@@ -52,6 +52,7 @@ class PhaseSpec:
     phase_type: str
     schedule_format: Optional[str]
     tournament_mode: str = "standings"
+    tournament_cut: int = 0
 
 
 def parse_phase_composition(
@@ -108,20 +109,34 @@ def parse_phase_composition(
         if not type_part:
             raise ValueError("malformed phase composition")
         tournament_mode = "standings"
+        tournament_cut = 0
         if type_part == "round_robin":
             schedule_format: Optional[str] = format_part or season_schedule_format
             if schedule_format not in _VALID_SCHEDULE_FORMATS:
                 raise ValueError(f"unknown schedule_format: {schedule_format!r}")
         elif type_part == "tournament":
-            # LG-02-Part2c-3c — a ``tournament`` token's ``format_part`` is the
-            # MODE (versus a ``round_robin`` token where it is the schedule
-            # format). Bare ``tournament`` ⇒ ``standings``. ``random_draw`` and
-            # any unknown string ⇒ the new unknown-mode ValueError.
+            # LG-02-Part2c-3d — a ``tournament`` token's grammar is
+            # ``tournament[:mode[:cut]]`` (3-way ``split(":")``, versus the RR
+            # branch's 2-way ``partition``). ``parts[1]`` is the MODE (default
+            # ``standings``), ``parts[2]`` the top-N participant cut (default
+            # ``"0"``). Bare ``tournament`` ⇒ ``standings`` + cut ``0``.
             schedule_format = None
-            mode = format_part or "standings"
+            parts = token.split(":")
+            if len(parts) > 3:
+                raise ValueError("malformed phase composition")
+            mode = parts[1].strip() if len(parts) >= 2 else "standings"
+            mode = mode or "standings"
             if mode not in _VALID_TOURNAMENT_MODES:
                 raise ValueError(f"unknown tournament_mode: {mode!r}")
             tournament_mode = mode
+            cut_part = parts[2].strip() if len(parts) >= 3 else "0"
+            try:
+                cut = int(cut_part)
+            except ValueError:
+                raise ValueError("malformed phase composition") from None
+            if cut != 0 and cut < 4:
+                raise ValueError(f"tournament cut must be 0 or at least 4: {cut}")
+            tournament_cut = cut
         else:
             raise ValueError(f"unknown phase type: {token!r}")
         specs.append(
@@ -130,6 +145,7 @@ def parse_phase_composition(
                 phase_type=type_part,
                 schedule_format=schedule_format,
                 tournament_mode=tournament_mode,
+                tournament_cut=tournament_cut,
             )
         )
 

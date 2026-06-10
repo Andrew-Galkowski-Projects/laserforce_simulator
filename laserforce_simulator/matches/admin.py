@@ -44,6 +44,8 @@ class SeasonPhaseAdmin(admin.ModelAdmin):
         "schedule_format",
         "tournament",
         "tournament_mode",
+        "tournament_format",
+        "tournament_cut",
     )
 
 
