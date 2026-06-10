@@ -199,16 +199,20 @@ class TestPlayerDetailEmptyState(TestCase):
         content = self.client.get(self.url).content.decode()
         self.assertIn("league-player-potential", content)
 
-    def test_all_five_stubs_still_render(self) -> None:
+    def test_remaining_stubs_still_render(self) -> None:
+        # LG-03 fills the former ``league-player-awards-stub`` with the live
+        # ``league-player-awards`` block; the other 4 stubs still render.
         content = self.client.get(self.url).content.decode()
         for stub in (
             "league-player-playoffs-stub",
             "league-player-ratings-history-stub",
-            "league-player-awards-stub",
             "league-player-salaries-stub",
             "league-player-transactions-stub",
         ):
             self.assertIn(stub, content)
+        # The awards stub is GONE; the live block replaces it.
+        self.assertNotIn("league-player-awards-stub", content)
+        self.assertIn("league-player-awards", content)
 
     def test_player_with_rounds_only_in_other_league_is_empty_here(self) -> None:
         # The player physically played Rounds, but in a DIFFERENT League.
@@ -403,21 +407,23 @@ class TestPlayerDetailStubs(TestCase):
             "league_player_detail", args=[self.league.id, self.player.id]
         )
 
-    def test_all_five_stub_dom_ids_present(self) -> None:
+    def test_four_remaining_stub_dom_ids_present(self) -> None:
+        # LG-03 replaced the awards stub with a live block, leaving 4 stubs.
         content = self.client.get(self.url).content.decode()
         for stub in (
             "league-player-playoffs-stub",
             "league-player-ratings-history-stub",
-            "league-player-awards-stub",
             "league-player-salaries-stub",
             "league-player-transactions-stub",
         ):
             self.assertIn(stub, content)
+        self.assertNotIn("league-player-awards-stub", content)
 
     def test_each_stub_contains_coming_soon(self) -> None:
         content = self.client.get(self.url).content.decode().lower()
-        # 5 stubs each carry the case-insensitive "coming soon" substring.
-        self.assertGreaterEqual(content.count("coming soon"), 5)
+        # 4 remaining stubs each carry the case-insensitive "coming soon"
+        # substring (the awards stub became a live block).
+        self.assertGreaterEqual(content.count("coming soon"), 4)
 
 
 # ===========================================================================
@@ -447,6 +453,97 @@ class TestPlayerDetailSidebar(TestCase):
         sidebar_links = response.context["sidebar_links"]
         self.assertTrue(sidebar_links)  # the 23-entry sidebar is non-empty
         self.assertEqual([e for e in sidebar_links if e["active"]], [])
+
+
+# ===========================================================================
+# LG-03 — Awards block (live ``league-player-awards`` replacing the stub)
+# ===========================================================================
+
+
+class TestPlayerDetailAwardsBlock(TestCase):
+    """The per-player award list for THIS league.
+
+    The live ``league-player-awards`` element replaces the former
+    ``league-player-awards-stub``; ``player_awards`` is
+    ``list[{"season_id", "season_name", "award_labels"}]`` — one entry per
+    Season in which the player won >= 1 award.
+    """
+
+    def test_live_awards_id_present_and_stub_absent(self) -> None:
+        league = _make_league()
+        _season, teams = _make_active_season(league)
+        player = teams[0].active_players[0]
+        url = reverse("league_player_detail", args=[league.id, player.id])
+        content = self.client.get(url).content.decode()
+        self.assertIn("league-player-awards", content)
+        self.assertNotIn("league-player-awards-stub", content)
+
+    def test_player_awards_context_is_list(self) -> None:
+        league = _make_league()
+        _season, teams = _make_active_season(league)
+        player = teams[0].active_players[0]
+        url = reverse("league_player_detail", args=[league.id, player.id])
+        response = self.client.get(url)
+        self.assertIn("player_awards", response.context)
+        self.assertIsInstance(response.context["player_awards"], list)
+
+    def test_award_winner_entry_shape_and_labels_render(self) -> None:
+        league = _make_league()
+        season, teams = _make_active_season(league, name="S1")
+        team_a, team_b = teams
+        star = team_a.active_players[0]
+        weak = team_b.active_players[0]
+        # ``star`` dominates Most Points (an ungated total award) → wins >= 1.
+        _make_round_with_states(
+            season,
+            team_a,
+            team_b,
+            [
+                (star, "red", {"points_scored": 9000, "tags_made": 30}),
+                (weak, "blue", {"points_scored": 50, "tags_made": 1}),
+            ],
+        )
+        url = reverse("league_player_detail", args=[league.id, star.id])
+        response = self.client.get(url)
+        player_awards = response.context["player_awards"]
+        self.assertTrue(player_awards, "expected >= 1 award entry for the star")
+        entry = next(e for e in player_awards if e["season_id"] == season.id)
+        # Locked entry shape.
+        self.assertEqual(set(entry), {"season_id", "season_name", "award_labels"})
+        self.assertEqual(entry["season_name"], season.name)
+        self.assertIsInstance(entry["award_labels"], list)
+        self.assertTrue(entry["award_labels"])
+        # The human labels render inside the live block.
+        content = response.content.decode()
+        idx = content.find("league-player-awards")
+        self.assertGreaterEqual(idx, 0)
+        block = content[idx : idx + 2000]
+        for label in entry["award_labels"]:
+            self.assertIn(label, block)
+
+    def test_player_with_no_awards_renders_empty_notice(self) -> None:
+        # A player who never wins an award ⇒ empty notice inside the block.
+        league = _make_league()
+        season, teams = _make_active_season(league, name="S1")
+        team_a, team_b = teams
+        star = team_a.active_players[0]
+        loser = team_b.active_players[0]
+        # ``star`` sweeps every award; ``loser`` wins none.
+        _make_round_with_states(
+            season,
+            team_a,
+            team_b,
+            [
+                (star, "red", {"points_scored": 9000, "tags_made": 30}),
+                (loser, "blue", {"points_scored": 1, "tags_made": 0}),
+            ],
+        )
+        url = reverse("league_player_detail", args=[league.id, loser.id])
+        response = self.client.get(url)
+        self.assertEqual(response.context["player_awards"], [])
+        content = response.content.decode()
+        # The live block still renders, now showing an empty notice.
+        self.assertIn("league-player-awards", content)
 
 
 # ---------------------------------------------------------------------------

@@ -33,8 +33,12 @@ from matches.league_screens.player_stats import (
     _build_round_dicts,
     _PLAYER_STATS_COLUMNS,
 )
-from matches.league_views import _build_league_sidebar_links
-from matches.models import League
+from matches.league_views import (
+    _build_league_sidebar_links,
+    _compute_season_award_set,
+    _player_award_labels,
+)
+from matches.models import League, PlayerRoundState
 from matches.season_player_stats import PlayerStatRow, aggregate_player_stats
 from teams.models import Player
 
@@ -107,6 +111,28 @@ def player_detail(request: HttpRequest, league_id: int, player_id: int) -> HttpR
         if career_agg:
             career_row = _row_from_stat_row(career_agg[0], "Career", None)
 
+    # LG-03 — per-Season awards this Player won in THIS League (newest-first;
+    # one entry per Season with >= 1 award). Reuses the shared award path,
+    # but prunes Seasons the Player never appeared in via a cheap existence
+    # check first — the full award computation is O(PlayerRoundState), so a
+    # Player who only played a handful of the League's Seasons skips the rest.
+    player_awards: list[dict] = []
+    for season in league.seasons.order_by("-id"):
+        if not PlayerRoundState.objects.filter(
+            game_round__match__season=season, player_id=player.id
+        ).exists():
+            continue
+        award_set = _compute_season_award_set(season)
+        labels = _player_award_labels(award_set, player.id)
+        if labels:
+            player_awards.append(
+                {
+                    "season_id": season.id,
+                    "season_name": season.name,
+                    "award_labels": labels,
+                }
+            )
+
     context = {
         "league": league,
         "player": player,
@@ -116,5 +142,6 @@ def player_detail(request: HttpRequest, league_id: int, player_id: int) -> HttpR
         "rs_rows": rs_rows,
         "career_row": career_row,
         "stat_columns": _RS_STAT_COLUMNS,
+        "player_awards": player_awards,
     }
     return render(request, "leagues/player_detail.html", context)
