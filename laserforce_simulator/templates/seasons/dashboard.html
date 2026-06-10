@@ -95,6 +95,12 @@
         {{ map_config_label }}
     </div>
 
+    {% if season_mode == "completed" %}
+    <div class="mb-3">
+        <a id="season-dashboard-awards-link" href="{% url 'season_awards' season.id %}" class="btn btn-outline-secondary btn-sm">View Awards</a>
+    </div>
+    {% endif %}
+
     <div>
         <div id="season-dashboard-standings-snippet" class="card mb-3">
                 <div class="card-header"><strong>Top standings</strong></div>

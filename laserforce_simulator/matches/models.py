@@ -941,6 +941,12 @@ class Season(models.Model):
         related_name="seasons_using_pool",
     )
     starting_map_pool_ids_json = models.JSONField(null=True, blank=True, default=None)
+    # LG-03 — lazy season-awards cache. ``None`` = not yet computed (cache
+    # miss); a dict keyed by category (the §3 shape) = warmed cache. Only a
+    # ``completed`` Season ever writes it; warmed on first awards render via
+    # ``get_or_compute_awards`` (the ``highlights_json`` JSONField-cache
+    # precedent). An in-progress / draft Season is NEVER written.
+    season_awards_json = models.JSONField(null=True, blank=True, default=None)
 
     def __str__(self) -> str:
         return f"{self.league.name} — {self.name}"
@@ -1327,6 +1333,136 @@ class Season(models.Model):
         self.state = "completed"
         self.champion_team = Team.objects.get(pk=rows[0].team_id)
         self.save()
+
+    # --- LG-03 season-end awards -------------------------------------------
+
+    @staticmethod
+    def _award_to_json(winner) -> "dict | None":
+        """Serialise an ``AwardWinner`` (or ``None``) to a plain 8-field dict
+        (the §3.1 cached shape). ``None`` round-trips to ``None``."""
+        if winner is None:
+            return None
+        return {
+            "category": winner.category,
+            "label": winner.label,
+            "player_id": winner.player_id,
+            "player_name": winner.player_name,
+            "team_id": winner.team_id,
+            "team_name": winner.team_name,
+            "value": winner.value,
+            "role": winner.role,
+        }
+
+    @classmethod
+    def _awards_to_json(cls, awards: dict) -> dict:
+        """Serialise the pure-module return dict to the §3.1 JSON cache shape.
+
+        Each ``AWARD_CATEGORIES`` key ⇒ an award dict or ``None``, except
+        ``"tag_ratio"`` ⇒ a list of award dicts (the <=5 per-role winners);
+        plus the two headline keys ⇒ an award dict or ``None``.
+        """
+        serialised: dict = {}
+        for key, value in awards.items():
+            if isinstance(value, list):
+                serialised[key] = [cls._award_to_json(w) for w in value]
+            else:
+                serialised[key] = cls._award_to_json(value)
+        return serialised
+
+    def _nuke_elims_by_player(self) -> dict[int, int]:
+        """``{actor_id: nuke-elimination count}`` over this Season's completed
+        regular-season Rounds — the §4.3 GameEvent scan (Commander-only by
+        nature; the eliminating Commander is the event actor)."""
+        rows = (
+            GameEvent.objects.filter(
+                game_round__match__season=self,
+                game_round__match__is_completed=True,
+                event_type="elimination",
+                metadata__elimination_action="nuke",
+            )
+            .values("actor_id")
+            .annotate(n=models.Count("id"))
+        )
+        return {row["actor_id"]: row["n"] for row in rows}
+
+    def _resolve_finals_corpus(self):
+        """Resolve the Finals MVP corpus via the §4.4 playoff FK-chain.
+
+        Returns ``(finals_rounds, champion_team_id)`` where ``finals_rounds`` is
+        the deciding playoff node's per-round dicts (``[]`` when there is no
+        embedded playoff Tournament / no deciding node) and
+        ``champion_team_id`` is ``Season.champion_team_id`` (``None`` when no
+        champion). When either is absent the pure module emits no Finals MVP.
+        """
+        from matches.league_screens.player_stats import _build_round_dicts
+
+        champion_team_id = self.champion_team_id
+        if champion_team_id is None:
+            return [], None
+        # Finals MVP reads the SEASON-ENDING playoff only — the final phase's
+        # Tournament (the same one that crowned the champion via
+        # ``_stamp_champion_for_final_phase``). A Season may ALSO hold a
+        # *mid-season* tournament phase (Part2c-3c); resolving by any
+        # ``season_phases`` Tournament would mis-pick the mid-season bracket's
+        # final, so we scope strictly to the closer.
+        phases = self.ordered_phases()
+        final_phase = phases[-1] if phases else None
+        if (
+            final_phase is None
+            or final_phase.phase_type != "tournament"
+            or final_phase.tournament_id is None
+        ):
+            return [], champion_team_id
+        # Deciding node = ``advances_to is None`` (the single-elim final / DE
+        # GF2 — the elimination-final formats Finals MVP is defined over).
+        node = (
+            final_phase.tournament.nodes.filter(advances_to__isnull=True)
+            .order_by("bracket_round", "position")
+            .first()
+        )
+        if node is None:
+            return [], champion_team_id
+        finals_rounds = _build_round_dicts(
+            {"game_round__match__series_match__node": node}
+        )
+        return finals_rounds, champion_team_id
+
+    def get_or_compute_awards(self) -> dict:
+        """LG-03 — the lazy season-awards cache chokepoint (consumes no RNG).
+
+        * Non-``completed`` Season ⇒ returns the empty sentinel ``{}`` WITHOUT
+          computing or writing (the caller renders "not yet awarded").
+        * Completed Season, cache hit ⇒ returns the cached dict verbatim.
+        * Completed Season, cache miss ⇒ builds the three pure-module inputs
+          from the ORM, calls ``compute_season_awards``, serialises the
+          ``AwardWinner``s to plain dicts (the §3.1 shape), writes the cache,
+          and returns it.
+
+        The SINGLE read/write site reused by the awards view, the LG-01f
+        history row, and the LG-06h player-page badge.
+        """
+        from matches.league_screens.player_stats import _build_round_dicts
+        from matches.season_awards import compute_season_awards
+
+        if self.state != "completed":
+            return {}
+        if self.season_awards_json is not None:
+            return self.season_awards_json
+
+        regular_rounds = _build_round_dicts({"game_round__match__season": self})
+        nuke_elims_by_player = self._nuke_elims_by_player()
+        finals_rounds, champion_team_id = self._resolve_finals_corpus()
+
+        awards = compute_season_awards(
+            regular_rounds,
+            nuke_elims_by_player,
+            finals_rounds,
+            champion_team_id,
+        )
+        serialised = self._awards_to_json(awards)
+        self.season_awards_json = serialised
+        self.save(update_fields=["season_awards_json"])
+        return serialised
 
     def _is_finished(self) -> bool:
         """True iff every fixture in this Season has a persisted GameRound.

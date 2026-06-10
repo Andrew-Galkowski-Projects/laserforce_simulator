@@ -5,7 +5,7 @@ URLconf. No ``app_name`` so reverse uses the bare names
 
 from django.urls import path
 
-from . import league_views
+from . import league_screens, league_views
 
 urlpatterns = [
     path(
@@ -47,6 +47,11 @@ urlpatterns = [
         "<int:season_id>/play-status/<str:job_id>/",
         league_views.play_status,
         name="play_status",
+    ),
+    path(
+        "<int:season_id>/awards/",
+        league_screens.season_awards,
+        name="season_awards",
     ),
     path(
         "<int:season_id>/standings/",

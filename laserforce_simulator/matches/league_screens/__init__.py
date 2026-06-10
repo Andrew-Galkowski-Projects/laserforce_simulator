@@ -17,6 +17,7 @@ from .player_ratings import player_ratings
 from .player_stats import player_stats
 from .playoffs import playoffs
 from .power_rankings import power_rankings
+from .season_awards import season_awards
 from .statistical_feats import statistical_feats
 from .team_history import team_history
 from .team_roster import team_roster
@@ -32,6 +33,7 @@ __all__ = [
     "player_stats",
     "playoffs",
     "power_rankings",
+    "season_awards",
     "statistical_feats",
     "team_history",
     "team_roster",

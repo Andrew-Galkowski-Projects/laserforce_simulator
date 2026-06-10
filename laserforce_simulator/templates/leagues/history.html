@@ -24,6 +24,8 @@
                             <th>Champion</th>
                             <th>Runner-Up</th>
                             <th>Tournament Champion</th>
+                            <th id="league-history-th-season-mvp">Season MVP</th>
+                            <th id="league-history-th-finals-mvp">Finals MVP</th>
                             <th>1st place</th>
                             <th>2nd place</th>
                             <th>3rd place</th>
@@ -39,6 +41,8 @@
                                 <td><span class="in-progress badge bg-warning text-dark">In progress</span></td>
                                 <td>{% if in_progress_row.runner_up %}{{ in_progress_row.runner_up.name }}{% else %}—{% endif %}</td>
                                 <td>—</td>
+                                <td>—</td>
+                                <td>—</td>
                                 <td>{% with t1=in_progress_row.top_three.0 %}{% if t1 %}{{ t1.name }}{% else %}—{% endif %}{% endwith %}</td>
                                 <td>{% with t2=in_progress_row.top_three.1 %}{% if t2 %}{{ t2.name }}{% else %}—{% endif %}{% endwith %}</td>
                                 <td>{% with t3=in_progress_row.top_three.2 %}{% if t3 %}{{ t3.name }}{% else %}—{% endif %}{% endwith %}</td>
@@ -46,13 +50,18 @@
                         {% endif %}
                         {% for row in completed_rows %}
                             <tr id="league-history-row-{{ row.season_id }}">
-                                <td><a href="{{ row.season_url }}">{{ row.season_name }}</a></td>
+                                <td>
+                                    <a href="{{ row.season_url }}">{{ row.season_name }}</a>
+                                    <a id="league-history-awards-link-{{ row.season_id }}" href="{% url 'season_awards' row.season_id %}" class="ms-2 small">Awards</a>
+                                </td>
                                 <td>{{ row.start_date|date:"Y-m-d" }}</td>
                                 <td class="text-end">{{ row.teams_enrolled }}</td>
                                 <td class="text-end">{{ row.matches_played }}</td>
                                 <td>{% if row.champion %}{{ row.champion.name }}{% else %}—{% endif %}</td>
                                 <td>{% if row.runner_up %}{{ row.runner_up.name }}{% else %}—{% endif %}</td>
                                 <td>—</td>
+                                <td>{% if row.season_mvp %}<a href="{% url 'league_player_detail' league.id row.season_mvp.player_id %}">{{ row.season_mvp.player_name }}</a>{% else %}—{% endif %}</td>
+                                <td>{% if row.finals_mvp %}<a href="{% url 'league_player_detail' league.id row.finals_mvp.player_id %}">{{ row.finals_mvp.player_name }}</a>{% else %}—{% endif %}</td>
                                 <td>{% with t1=row.top_three.0 %}{% if t1 %}{{ t1.name }}{% else %}—{% endif %}{% endwith %}</td>
                                 <td>{% with t2=row.top_three.1 %}{% if t2 %}{{ t2.name }}{% else %}—{% endif %}{% endwith %}</td>
                                 <td>{% with t3=row.top_three.2 %}{% if t3 %}{{ t3.name }}{% else %}—{% endif %}{% endwith %}</td>

@@ -213,7 +213,18 @@ league templates that does so on purpose.
         <div id="league-player-awards-stub" class="card mt-3">
             <div class="card-body">
                 <h3 class="h5">Awards</h3>
-                <p class="text-muted mb-0">Coming soon — awaiting an awards model.</p>
+                {% if player_awards %}
+                    <ul id="league-player-awards-list" class="list-unstyled mb-0">
+                        {% for entry in player_awards %}
+                            <li>
+                                {{ entry.season_name }} — {{ entry.label }}{% if entry.role %} ({{ entry.role|capfirst }}){% endif %}
+                                <span class="text-muted ms-1">{{ entry.value|floatformat }}</span>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p id="league-player-awards-empty" class="text-muted mb-0">No awards yet.</p>
+                {% endif %}
             </div>
         </div>
         <div id="league-player-salaries-stub" class="card mt-3">

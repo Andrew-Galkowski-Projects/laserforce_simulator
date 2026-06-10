@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+
+{% comment %}
+LG-03 — per-Season awards page.
+
+Frozen context keys (the seam): season, league, sidebar_links, sidebar_active,
+awards (the §3.1 dict keyed by category, or {} for a non-completed Season),
+award_categories (AWARD_CATEGORIES), is_awarded.
+
+Player-name cells link to the LG-06h in-League player page
+(``league_player_detail``). ``awards`` values are plain award dicts (the cached
+JSON), so ``award.player_id`` / ``.player_name`` / ``.value`` / ``.role`` read
+directly. ``awards.tag_ratio`` is a list of <=5 per-role award dicts.
+{% endcomment %}
+
+{% block title %}{{ season.league.name }} — {{ season.name }} Awards{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1" id="season-awards">
+        <h1 class="mb-3">{{ season.league.name }} — {{ season.name }} Awards</h1>
+
+        {% if not is_awarded %}
+            <div id="season-awards-not-yet" class="alert alert-info">
+                Awards have not been determined yet — they are computed once this
+                Season completes.
+            </div>
+        {% else %}
+            {% comment %} Headline awards. {% endcomment %}
+            <div class="row g-3 mb-4">
+                <div class="col-md-6">
+                    <div id="season-awards-mvp" class="card h-100">
+                        <div class="card-header fw-semibold py-2">Season MVP</div>
+                        <div class="card-body py-2">
+                            {% with mvp=awards.season_mvp %}
+                                {% if mvp %}
+                                    <a href="{% url 'league_player_detail' season.league_id mvp.player_id %}">{{ mvp.player_name }}</a>
+                                    <span class="text-muted ms-2">{{ mvp.team_name }}</span>
+                                    <div class="fw-bold" style="font-size:1.4rem;">{{ mvp.value|floatformat:1 }}</div>
+                                {% else %}
+                                    <span class="text-muted">&#8212;</span>
+                                {% endif %}
+                            {% endwith %}
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div id="season-awards-finals-mvp" class="card h-100">
+                        <div class="card-header fw-semibold py-2">Finals MVP</div>
+                        <div class="card-body py-2">
+                            {% with fmvp=awards.finals_mvp %}
+                                {% if fmvp %}
+                                    <a href="{% url 'league_player_detail' season.league_id fmvp.player_id %}">{{ fmvp.player_name }}</a>
+                                    <span class="text-muted ms-2">{{ fmvp.team_name }}</span>
+                                    <div class="fw-bold" style="font-size:1.4rem;">{{ fmvp.value|floatformat:1 }}</div>
+                                {% else %}
+                                    <span class="text-muted">&#8212;</span>
+                                {% endif %}
+                            {% endwith %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% comment %} The 6-category award table. {% endcomment %}
+            <div class="table-responsive">
+                <table id="season-awards-table" class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Award</th>
+                            <th>Winner</th>
+                            <th>Team</th>
+                            <th class="text-end">Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% comment %}
+                        Django can't dict-lookup by a loop variable, so each
+                        of the 6 categories renders explicitly. The tag_ratio
+                        row expands to its <=5 per-role winners.
+                        {% endcomment %}
+                        <tr id="season-awards-category-most_points">
+                            <td>Most Points</td>
+                            {% with w=awards.most_points %}
+                                {% if w %}
+                                    <td><a href="{% url 'league_player_detail' season.league_id w.player_id %}">{{ w.player_name }}</a></td>
+                                    <td>{{ w.team_name }}</td>
+                                    <td class="text-end">{{ w.value|floatformat:0 }}</td>
+                                {% else %}
+                                    <td colspan="3" class="season-awards-empty text-muted">&#8212;</td>
+                                {% endif %}
+                            {% endwith %}
+                        </tr>
+                        <tr id="season-awards-category-tag_ratio">
+                            <td>Highest Tag Ratio by Role</td>
+                            {% if awards.tag_ratio %}
+                                <td colspan="3" class="p-0">
+                                    <table class="table table-sm mb-0">
+                                        <tbody>
+                                            {% for w in awards.tag_ratio %}
+                                                <tr>
+                                                    <td class="text-capitalize">{{ w.role }}</td>
+                                                    <td><a href="{% url 'league_player_detail' season.league_id w.player_id %}">{{ w.player_name }}</a></td>
+                                                    <td>{{ w.team_name }}</td>
+                                                    <td class="text-end">{{ w.value|floatformat:2 }}</td>
+                                                </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </td>
+                            {% else %}
+                                <td colspan="3" class="season-awards-empty text-muted">&#8212;</td>
+                            {% endif %}
+                        </tr>
+                        <tr id="season-awards-category-most_resupplies">
+                            <td>Most Resupplies</td>
+                            {% with w=awards.most_resupplies %}
+                                {% if w %}
+                                    <td><a href="{% url 'league_player_detail' season.league_id w.player_id %}">{{ w.player_name }}</a></td>
+                                    <td>{{ w.team_name }}</td>
+                                    <td class="text-end">{{ w.value|floatformat:0 }}</td>
+                                {% else %}
+                                    <td colspan="3" class="season-awards-empty text-muted">&#8212;</td>
+                                {% endif %}
+                            {% endwith %}
+                        </tr>
+                        <tr id="season-awards-category-longest_survival">
+                            <td>Longest Survival</td>
+                            {% with w=awards.longest_survival %}
+                                {% if w %}
+                                    <td><a href="{% url 'league_player_detail' season.league_id w.player_id %}">{{ w.player_name }}</a></td>
+                                    <td>{{ w.team_name }}</td>
+                                    <td class="text-end">{{ w.value|floatformat:1 }}s</td>
+                                {% else %}
+                                    <td colspan="3" class="season-awards-empty text-muted">&#8212;</td>
+                                {% endif %}
+                            {% endwith %}
+                        </tr>
+                        <tr id="season-awards-category-most_efficient_nuke">
+                            <td>Most Efficient Nuke</td>
+                            {% with w=awards.most_efficient_nuke %}
+                                {% if w %}
+                                    <td><a href="{% url 'league_player_detail' season.league_id w.player_id %}">{{ w.player_name }}</a></td>
+                                    <td>{{ w.team_name }}</td>
+                                    <td class="text-end">{{ w.value|floatformat:0 }}</td>
+                                {% else %}
+                                    <td colspan="3" class="season-awards-empty text-muted">&#8212;</td>
+                                {% endif %}
+                            {% endwith %}
+                        </tr>
+                        <tr id="season-awards-category-best_accuracy">
+                            <td>Best Accuracy</td>
+                            {% with w=awards.best_accuracy %}
+                                {% if w %}
+                                    <td><a href="{% url 'league_player_detail' season.league_id w.player_id %}">{{ w.player_name }}</a></td>
+                                    <td>{{ w.team_name }}</td>
+                                    <td class="text-end">{{ w.value|floatformat:1 }}</td>
+                                {% else %}
+                                    <td colspan="3" class="season-awards-empty text-muted">&#8212;</td>
+                                {% endif %}
+                            {% endwith %}
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+    </main>
+</div>
+{% endblock %}

@@ -107,6 +107,12 @@ def player_detail(request: HttpRequest, league_id: int, player_id: int) -> HttpR
         if career_agg:
             career_row = _row_from_stat_row(career_agg[0], "Career", None)
 
+    # LG-03 / LG-06h — this player's award wins across THIS League's completed
+    # Seasons, newest first. Each entry collects every AwardWinner-dict (across
+    # all 8 category/headline slots, including each tag-ratio per-role winner
+    # and the two headlines) whose ``player_id`` matches this player.
+    player_awards = _build_player_awards(league, player)
+
     context = {
         "league": league,
         "player": player,
@@ -116,5 +122,52 @@ def player_detail(request: HttpRequest, league_id: int, player_id: int) -> HttpR
         "rs_rows": rs_rows,
         "career_row": career_row,
         "stat_columns": _RS_STAT_COLUMNS,
+        "player_awards": player_awards,
     }
     return render(request, "leagues/player_detail.html", context)
+
+
+def _build_player_awards(league: League, player: Player) -> list[dict]:
+    """LG-06h — collect this player's award wins across the League's completed
+    Seasons (newest first; AWARD_CATEGORIES order then headline order within a
+    Season). Each entry: ``{season_id, season_name, category, label, role,
+    value}``. Empty list when the player won nothing.
+    """
+    from matches.season_awards import (
+        AWARD_CATEGORIES,
+        HEADLINE_FINALS_MVP,
+        HEADLINE_SEASON_MVP,
+    )
+
+    # Category order: the 6 AWARD_CATEGORIES keys, then the two headline keys.
+    slot_keys = [key for key, _ in AWARD_CATEGORIES] + [
+        HEADLINE_SEASON_MVP,
+        HEADLINE_FINALS_MVP,
+    ]
+
+    player_awards: list[dict] = []
+    for season in league.seasons.filter(state="completed").order_by("-id"):
+        awards = season.get_or_compute_awards()
+        if not awards:
+            continue
+        for key in slot_keys:
+            value = awards.get(key)
+            if value is None:
+                continue
+            # ``tag_ratio`` ⇒ a list of <=5 per-role award dicts; every other
+            # slot ⇒ a single award dict (or None, filtered above).
+            entries = value if isinstance(value, list) else [value]
+            for award in entries:
+                if award is None or award.get("player_id") != player.id:
+                    continue
+                player_awards.append(
+                    {
+                        "season_id": season.id,
+                        "season_name": season.name,
+                        "category": award.get("category"),
+                        "label": award.get("label"),
+                        "role": award.get("role"),
+                        "value": award.get("value"),
+                    }
+                )
+    return player_awards

@@ -1396,6 +1396,17 @@ def _build_history_row(
     else:
         runner_up = None
 
+    # LG-03 — the two headline awards (plain award dict or None). Awards are
+    # only computed for completed Seasons; an in-progress row passes None for
+    # both (never warms the cache).
+    if is_in_progress:
+        season_mvp = None
+        finals_mvp = None
+    else:
+        awards = season.get_or_compute_awards()
+        season_mvp = awards.get("season_mvp")
+        finals_mvp = awards.get("finals_mvp")
+
     return {
         "season_id": season.id,
         "season_name": season.name,
@@ -1408,6 +1419,8 @@ def _build_history_row(
         "tournament_champion": None,
         "top_three": top_three,
         "is_in_progress": is_in_progress,
+        "season_mvp": season_mvp,
+        "finals_mvp": finals_mvp,
     }
 
 
