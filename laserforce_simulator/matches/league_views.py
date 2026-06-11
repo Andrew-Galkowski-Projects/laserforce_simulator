@@ -18,7 +18,7 @@ from celery.result import AsyncResult
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.http import (
     HttpRequest,
     HttpResponse,
@@ -31,15 +31,18 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 
 from teams.constants import PLAYER_NAMES, TEAM_NAMES
-from teams.models import Team
+from teams.models import Player, Team
 from teams.views import _coerce_dir, _generate_free_agents, _generate_teams
 
+from . import development
+from .development import STAT_FIELDS
 from .forms import CreateLeagueForm
 from .models import (
     GameRound,
     League,
     Match,
     PlayerRoundState,
+    PlayerSeasonRating,
     Season,
     SeasonPhase,
 )
@@ -529,6 +532,143 @@ def league_list(request) -> HttpResponse:
     )
 
 
+# ---------------------------------------------------------------------------
+# LG-04 — ZenGM player development + per-Season ratings history
+# ---------------------------------------------------------------------------
+
+
+def _developing_players(league: League) -> "list[Player]":
+    """LG-04 — the rolling League's snapshot Teams' players (active slots +
+    bench) plus the ``league.free_agent_pool`` players. De-duplicated by pk.
+
+    Snapshot Teams come from the just-completed Season's frozen
+    ``starting_team_ids_json`` (the same source ``next_season`` uses for the
+    team-id carry-forward). ``team.players.all()`` covers both active-slot and
+    bench players (``Player.team`` membership includes both). Free agents come
+    from ``league.free_agent_pool.players.all()`` when the pool is not None.
+    """
+    latest_completed = league.seasons.filter(state="completed").order_by("-id").first()
+    team_ids: list[int] = []
+    if latest_completed is not None:
+        team_ids = list(latest_completed.starting_team_ids_json or [])
+
+    seen: set[int] = set()
+    players: list[Player] = []
+
+    for team in Team.objects.filter(id__in=team_ids):
+        for player in team.players.all():
+            if player.pk not in seen:
+                seen.add(player.pk)
+                players.append(player)
+
+    if league.free_agent_pool is not None:
+        for player in league.free_agent_pool.players.all():
+            if player.pk not in seen:
+                seen.add(player.pk)
+                players.append(player)
+
+    return players
+
+
+def _write_baseline_ratings(season: Season, players: "Iterable[Player]") -> None:
+    """LG-04 — write an as-generated PlayerSeasonRating baseline row for each
+    founding Player (current stats, current age, current overall_rating,
+    potential=None). No development. Bulk-created in one query.
+    """
+    rows = [
+        PlayerSeasonRating(
+            player=p,
+            season=season,
+            age=p.age,
+            overall_rating=p.overall_rating,
+            potential=None,
+            **{name: getattr(p, name) for name in STAT_FIELDS},
+        )
+        for p in players
+    ]
+    PlayerSeasonRating.objects.bulk_create(rows)
+
+
+def _develop_league_for_new_season(
+    league: League, new_season: Season, latest_completed: Season
+) -> None:
+    """LG-04 — age + develop every Player in the rolling League's developing
+    set, tick total_games, and write one PlayerSeasonRating row tagged to
+    new_season. Called inside next_season's atomic block, after carry-forward.
+
+    Builds a fresh ``random.Random()`` (no stored seed). League-isolated; NO
+    cross-League guard.
+    """
+    rng = random.Random()
+    players = _developing_players(league)
+    if not players:
+        return
+
+    # Active-Team player-id set, derived from the already-loaded developing set:
+    # a developing player is on an active Team iff its team_id is one of the
+    # just-completed Season's snapshot Teams (free-agent-pool players carry the
+    # pool team_id, which is never in the snapshot). Avoids a redundant second
+    # pass over Team.players.
+    active_team_id_set = set(latest_completed.starting_team_ids_json or [])
+    active_pks: set[int] = {p.pk for p in players if p.team_id in active_team_id_set}
+
+    # Regular-season appearance counts in the just-completed Season, scoped to
+    # latest_completed. Playoff rounds carry match.season = NULL (Part2c-1 #3),
+    # so they are naturally excluded — only regular-season appearances count.
+    appearances = dict(
+        PlayerRoundState.objects.filter(game_round__match__season=latest_completed)
+        .values("player_id")
+        .annotate(n=Count("id"))
+        .values_list("player_id", "n")
+    )
+
+    # median_active: the median over the active-Team players of their season
+    # appearance count. Degenerate no-active case => 0.
+    active_counts = sorted(appearances.get(pk, 0) for pk in active_pks)
+    median_active = 0
+    if active_counts:
+        mid = len(active_counts) // 2
+        if len(active_counts) % 2 == 1:
+            median_active = active_counts[mid]
+        else:
+            median_active = (active_counts[mid - 1] + active_counts[mid]) // 2
+
+    rating_rows: list[PlayerSeasonRating] = []
+    for player in players:
+        # Age coalesce: None -> 25 for the develop math; live age written as +1.
+        raw_age = player.age if player.age is not None else 25
+        player.age = raw_age + 1
+
+        new_stats = development.develop_player_stats(
+            {name: getattr(player, name) for name in STAT_FIELDS},
+            player.age,
+            rng,
+        )
+        for name, val in new_stats.items():
+            setattr(player, name, val)
+
+        # total_games tick (cosmetic — never a develop input).
+        if player.pk in active_pks:
+            player.total_games += appearances.get(player.pk, 0)
+        else:
+            player.total_games += development.free_agent_games_tick(median_active, rng)
+
+        overall = sum(new_stats.values()) / len(STAT_FIELDS)
+        rating_rows.append(
+            PlayerSeasonRating(
+                player=player,
+                season=new_season,
+                age=player.age,
+                overall_rating=overall,
+                potential=None,
+                **new_stats,
+            )
+        )
+
+    Player.objects.bulk_update(players, [*STAT_FIELDS, "age", "total_games"])
+    PlayerSeasonRating.objects.bulk_create(rating_rows)
+
+
 @transaction.atomic
 def league_create(request) -> HttpResponse:
     """LG-01b — Create-League flow.
@@ -632,6 +772,25 @@ def league_create(request) -> HttpResponse:
             lb_advancers=spec.lb_advancers,
             swiss_rounds=spec.swiss_rounds,
         )
+
+    # LG-04 — write an as-generated PlayerSeasonRating baseline row for every
+    # founding Player (competitive-Team active + bench players plus the
+    # free-agent pool). No development at baseline. At create time there is no
+    # completed Season yet, so source the founding set directly from the just-
+    # created Teams + the pool (the snapshot _developing_players relies on does
+    # not exist until a Season completes).
+    founding_players: list[Player] = []
+    seen_founding: set[int] = set()
+    for team in created_teams:
+        for p in team.players.all():
+            if p.pk not in seen_founding:
+                seen_founding.add(p.pk)
+                founding_players.append(p)
+    for p in pool_team.players.all():
+        if p.pk not in seen_founding:
+            seen_founding.add(p.pk)
+            founding_players.append(p)
+    _write_baseline_ratings(season, founding_players)
 
     return redirect("season_standings", season_id=season.id)
 
@@ -2455,5 +2614,11 @@ def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
             lb_advancers=src.lb_advancers,
             swiss_rounds=src.swiss_rounds,
         )
+
+    # LG-04 — age + develop every Player in the rolling League's developing set,
+    # tick total_games, and write one PlayerSeasonRating row tagged to the NEW
+    # Season. Inside the same atomic block (after carry-forward, before redirect)
+    # so a failure rolls back the whole rollover.
+    _develop_league_for_new_season(league, new_season, latest_completed)
 
     return redirect("season_dashboard", season_id=new_season.id)

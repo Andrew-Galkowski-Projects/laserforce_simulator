@@ -1272,3 +1272,137 @@ class TestLg02Part2c3eComposerFullSubConfig(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(League.objects.count(), before_leagues)
         self.assertFalse(League.objects.filter(name="SubCfgBadTier").exists())
+
+
+# ---------------------------------------------------------------------------
+# LG-04 — baseline PlayerSeasonRating rows written at league_create
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-04-player-development-seam-contract.md``
+# §4 / §7.3: a ``league_create`` POST writes exactly one baseline
+# ``PlayerSeasonRating`` per FOUNDING Player — every competitive-Team Player
+# (active slots + bench) AND every free-agent-pool Player — tagged to the
+# founding draft Season, with ``potential is None``, ``age == player.age``, and
+# the 19 stat fields equal to the AS-GENERATED live values (NO development is
+# applied at baseline: row stats == live stats).
+#
+# Appended as a NEW class; no existing class above is modified. These WILL fail
+# until the Code agent lands the ``PlayerSeasonRating`` model + the baseline
+# writer in ``league_create`` — the TDD red state, not a defect in this file.
+
+
+from matches.development import STAT_FIELDS as _Lg04StatFields  # noqa: E402
+from matches.models import PlayerSeasonRating as _Lg04PlayerSeasonRating  # noqa: E402
+
+
+class TestLg04BaselineRatings(TestCase):
+    """LG-04 — ``league_create`` writes one baseline rating per founding Player."""
+
+    def _create_and_get_league(self, league_name: str = "BaselineL") -> League:
+        payload = _valid_payload(league_name=league_name)
+        # Generate bench players too so the active-slots + bench set is exercised.
+        payload["players_per_team"] = "8"
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        return League.objects.get(name=league_name)
+
+    def _founding_players(self, league: League) -> set[int]:
+        """Every founding Player id: competitive-Team players (active + bench)
+        PLUS every free-agent-pool Player."""
+        season = league.seasons.get()
+        ids: set[int] = set()
+        for team in season.teams.all():
+            ids |= set(team.players.values_list("id", flat=True))
+        if league.free_agent_pool is not None:
+            ids |= set(league.free_agent_pool.players.values_list("id", flat=True))
+        return ids
+
+    def test_one_baseline_row_per_founding_player(self) -> None:
+        league = self._create_and_get_league("BaselineCount")
+        season = league.seasons.get()
+        founding = self._founding_players(league)
+        rows = _Lg04PlayerSeasonRating.objects.filter(season=season)
+        # Exactly one row per founding Player.
+        self.assertEqual(rows.count(), len(founding))
+        rated_player_ids = set(rows.values_list("player_id", flat=True))
+        self.assertEqual(rated_player_ids, founding)
+
+    def test_competitive_team_players_get_a_baseline_row(self) -> None:
+        league = self._create_and_get_league("BaselineComp")
+        season = league.seasons.get()
+        team = season.teams.first()
+        # Active-slot AND bench players (players_per_team=8 ⇒ 2 bench).
+        for player in team.players.all():
+            self.assertTrue(
+                _Lg04PlayerSeasonRating.objects.filter(
+                    season=season, player=player
+                ).exists(),
+                f"no baseline row for competitive player {player.name!r}",
+            )
+
+    def test_free_agent_pool_players_get_a_baseline_row(self) -> None:
+        league = self._create_and_get_league("BaselineFA")
+        season = league.seasons.get()
+        pool = league.free_agent_pool
+        self.assertIsNotNone(pool)
+        # Spot-check a handful of pool players (the pool is 100-200 large).
+        for player in pool.players.all()[:5]:
+            self.assertTrue(
+                _Lg04PlayerSeasonRating.objects.filter(
+                    season=season, player=player
+                ).exists(),
+                f"no baseline row for free-agent player {player.name!r}",
+            )
+
+    def test_baseline_rows_tagged_to_founding_draft_season(self) -> None:
+        league = self._create_and_get_league("BaselineSeason")
+        season = league.seasons.get()
+        # Every baseline row tags to the founding draft Season's id.
+        season_ids = set(
+            _Lg04PlayerSeasonRating.objects.values_list("season_id", flat=True)
+        )
+        self.assertEqual(season_ids, {season.id})
+
+    def test_baseline_potential_is_none(self) -> None:
+        league = self._create_and_get_league("BaselinePot")
+        season = league.seasons.get()
+        for row in _Lg04PlayerSeasonRating.objects.filter(season=season):
+            self.assertIsNone(row.potential, "baseline potential must be None")
+
+    def test_baseline_age_equals_player_age(self) -> None:
+        league = self._create_and_get_league("BaselineAge")
+        season = league.seasons.get()
+        for row in _Lg04PlayerSeasonRating.objects.filter(season=season).select_related(
+            "player"
+        ):
+            self.assertEqual(
+                row.age,
+                row.player.age,
+                f"baseline age {row.age} != live age {row.player.age} "
+                f"for {row.player.name!r}",
+            )
+
+    def test_baseline_stats_equal_live_values_no_development(self) -> None:
+        league = self._create_and_get_league("BaselineStats")
+        season = league.seasons.get()
+        for row in _Lg04PlayerSeasonRating.objects.filter(season=season).select_related(
+            "player"
+        ):
+            for name in _Lg04StatFields:
+                self.assertEqual(
+                    getattr(row, name),
+                    getattr(row.player, name),
+                    f"baseline {name} drifted from live value for "
+                    f"{row.player.name!r} — NO development at baseline",
+                )
+
+    def test_baseline_overall_rating_matches_player(self) -> None:
+        league = self._create_and_get_league("BaselineOvr")
+        season = league.seasons.get()
+        row = (
+            _Lg04PlayerSeasonRating.objects.filter(season=season)
+            .select_related("player")
+            .first()
+        )
+        self.assertIsNotNone(row)
+        self.assertAlmostEqual(row.overall_rating, row.player.overall_rating, places=4)

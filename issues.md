@@ -781,3 +781,84 @@ button correctly read **"Play Until Playoffs"** (the tournament is the final pha
 `following_tournament_is_final` = True). Zero console messages on every page.
 
 No bugs found. Test data (league + season + 4 auto-teams + 24 players) cleaned up.
+
+---
+
+## LG-03 · Season-end awards — web smoke (browser, 127.0.0.1:8011)
+
+✅ **Awards page** `/seasons/44/awards/` (completed Season, completed single-elim playoff) —
+renders the full award table: Most Points, Best Accuracy, the five K/D-by-role rows,
+Best Medic, Most Efficient Nuke, Season MVP, and **Finals MVP** (Wildcard, 19.9 — the
+bracket-final path resolved). Zero console messages; all requests 2xx.
+
+✅ **Awards empty state** `/seasons/18/awards/` (draft Season, no rounds) — renders
+`season-awards-empty-notice` ("No completed regular-season rounds yet…"), table absent.
+
+✅ **Season dashboard** `/seasons/44/` — `season-dashboard-awards-link` present → `/seasons/44/awards/`.
+
+✅ **League History** `/leagues/38/history/` — the two new rightmost columns **Season MVP**
++ **Finals MVP** render (Yama / Wildcard for Season 1) and each row carries
+`league-history-awards-link-{id}` → that Season's awards page. Zero console messages.
+
+✅ **League player page** `/leagues/38/players/3815/` — the `league-player-awards-stub`
+is replaced by the live `league-player-awards` block listing "Season 1 — Most Points,
+K/D — Heavy, Season MVP" (matches the awards page). Zero console messages.
+
+No bugs found. Read-only browse of existing seed data — no test data created, nothing to tear down.
+
+---
+
+### LG-03 re-verification (2026-06-10, post-grill rebuild)
+
+The LG-03 block above is **stale** — it predates the grill (note the old "K/D — Heavy" label)
+and its code was reverted; the slice was rebuilt fresh on branch `lg-03-season-end-awards`.
+Re-verified in-browser against real seed data (league 42 `comp_test`, completed Season 48 with
+a played playoff):
+
+✅ **Awards page** `/seasons/48/awards/` — all 6 categories with real winners:
+**Highest Tag Ratio by Role** (the grilled label, NOT "K/D") with 5 per-Role winners
+(Commander/Heavy/Scout/Medic/Ammo), **Most Points** (164056), **Most Resupplies** (1548),
+**Longest Survival** (867.9s), **Most Efficient Nuke** (`10` — non-zero, confirming the
+GameEvent-log derivation works where the dead PRS counters would read 0), **Best Accuracy**
+(78.7). **Season MVP** = summed (348.9). **Finals MVP** = champion-team-restricted (32.8).
+Zero console messages; awards doc + Bootstrap CDN only (all 200).
+✅ **Awards "not yet awarded"** `/seasons/47/awards/` (active Season) — empty state renders,
+table absent, message present. Zero console.
+✅ **League History** `/leagues/42/history/` — **Season MVP** / **Finals MVP** columns +
+per-row **Awards** link. Zero console.
+✅ **Season dashboard** `/seasons/48/` — **View Awards** link present (completed only).
+✅ **LG-06h player page** `/leagues/42/players/4465/` — `league-player-awards-stub` filled
+with 3 awards; the other 4 stubs stay inert "Coming soon".
+
+No bugs found in the rebuilt slice. Read-only browse of existing seed data — no test data created.
+
+---
+
+### LG-04 player development + ratings history (2026-06-10, branch `lg-04-player-development`)
+
+Focused smoke of the new **Ratings history** block on the League player page + the Create
+League flow (writes baseline `PlayerSeasonRating` rows). Created **ChromeTest LG04 League**
+(League 44 / draft Season 50, 4 teams) via `/leagues/create/`.
+
+✅ **Create League** `/leagues/create/` → 302 to `/seasons/50/standings/` (draft preview, 4
+teams). Baseline ratings rows written for every founding player. Zero console messages.
+✅ **League player page (populated)** `/leagues/44/players/4839/` — the LG-06h
+`league-player-ratings-history-stub` is replaced by the live `league-player-ratings-history`
+block: **Chart.js overall-rating trend renders** (canvas non-zero w/h), `…-data` json_script
+= `[["Season 1", 43.47]]` (one baseline row), `…-table` present with 1 `<tbody>` row, the
+**Pot cell renders the em-dash "—"** (potential always None this slice). Network: doc 200,
+`cdn.jsdelivr.net/npm/chart.js` 304, Bootstrap 200. **Zero console messages.**
+✅ **League player page (empty)** `/leagues/41/players/4839/` (player viewed through a League
+they have no history in — lenient render) — `league-player-ratings-history-empty` renders
+"No ratings history yet."; chart + table absent; stub absent. Zero console messages.
+✅ **Responsive** — at 720×1115 the ratings-history table sits inside `.table-responsive`
+(scrolls internally) and the chart still renders; at 1280×900 normal.
+
+🟢 **Pre-existing / out-of-LG-04-scope** — at narrow viewports the page has document-level
+horizontal overflow, traced to the **LG-06h "Current ratings" grid** (`#league-player-ratings`,
+a `row g-3` of `col-md-6` columns measuring ~1890px), **not** the LG-04 ratings-history block
+(which is correctly contained in a `.table-responsive` scroll wrapper and absent from the
+overflow set). Logged for a future LG-06h responsive pass; not fixed here (out of scope).
+
+No LG-04 bugs found. Test data: **ChromeTest LG04 League** (League 44, Season 50, Teams
+272–275 "#30" suffix) — torn down post-run.

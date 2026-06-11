@@ -1161,3 +1161,358 @@ class TestLg02Part2c3eNextSeasonCarriesSubConfig(TestCase):
         self.assertEqual(rr.wb_advancers, 0)
         self.assertEqual(rr.lb_advancers, 0)
         self.assertEqual(rr.swiss_rounds, 0)
+
+
+# ---------------------------------------------------------------------------
+# LG-04 — next_season develops the rolling League's developing set
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-04-player-development-seam-contract.md``
+# §5 / §7.4: inside ``next_season``'s ``@transaction.atomic``, AFTER the
+# carry-forward, the view ages + develops every Player in the developing set
+# (the rolling League's snapshot Teams' players — active slots + bench — plus
+# its ``free_agent_pool`` players), ticks ``total_games``, and writes one
+# ``PlayerSeasonRating`` row tagged to the NEW Season. Production builds a FRESH
+# ``random.Random()`` per rollover, so these integration tests assert SCHEMA-LEVEL
+# outcomes (age +1, range/clamp invariants, tick bounds, one row per developed
+# Player, League isolation, playoff exclusion) — NEVER exact developed stat
+# values.
+#
+# Appended as NEW classes; no existing class above is modified. These WILL fail
+# until the Code agent lands the model + the develop loop + ``next_season``
+# wiring — the TDD red state.
+
+
+from matches.development import STAT_FIELDS as _Lg04StatFields  # noqa: E402
+from matches.models import (  # noqa: E402
+    GameRound as _Lg04GameRound,
+    Match as _Lg04Match,
+    PlayerRoundState as _Lg04PlayerRoundState,
+    PlayerSeasonRating as _Lg04PlayerSeasonRating,
+)
+from teams.models import Player as _Lg04Player  # noqa: E402
+
+
+def _lg04_developing_setup(
+    league_name: str = "DevL",
+    *,
+    n_teams: int = 2,
+    n_free_agents: int = 3,
+) -> tuple[League, Season, list[Team], list]:
+    """Build a League with a completed Season + snapshot Teams + a free-agent
+    pool. Returns ``(league, prev_completed_season, snapshot_teams, fa_players)``.
+
+    The snapshot Teams are pinned on ``starting_team_ids_json`` so ``next_season``
+    carries them forward and the LG-04 developing-set gatherer resolves them.
+    """
+    league = _make_league(league_name)
+    teams = _make_teams(f"{league_name}T", n_teams)
+    team_ids = [t.id for t in teams]
+    prev = _make_completed_season(
+        league,
+        name="Season 1",
+        start_date=date(2025, 1, 1),
+        team_ids=team_ids,
+    )
+
+    # Attach a dedicated free-agent pool Team with some players.
+    pool = Team.objects.create(name=f"{league_name} Free Agents")
+    league.free_agent_pool = pool
+    league.save(update_fields=["free_agent_pool"])
+    fa_players = [
+        _Lg04Player.objects.create(team=pool, name=f"{league_name}-FA{i}", age=25)
+        for i in range(n_free_agents)
+    ]
+    return league, prev, teams, fa_players
+
+
+def _lg04_add_regular_round(
+    season: Season, team_red: Team, team_blue: Team, players_with_color
+) -> _Lg04GameRound:
+    """Persist a regular-season Match (``match.season=season``) + one GameRound
+    with a PlayerRoundState per (player, color) — one real appearance each."""
+    match = _Lg04Match.objects.create(
+        team_red=team_red, team_blue=team_blue, season=season, is_completed=True
+    )
+    game_round = _Lg04GameRound.objects.create(
+        match=match,
+        round_number=1,
+        team_red=team_red,
+        team_blue=team_blue,
+        is_completed=True,
+    )
+    for player, color in players_with_color:
+        _Lg04PlayerRoundState.objects.create(
+            game_round=game_round,
+            player=player,
+            team_color=color,
+            role="scout",
+        )
+    return game_round
+
+
+def _lg04_add_playoff_round(
+    team_red: Team, team_blue: Team, players_with_color
+) -> _Lg04GameRound:
+    """Persist a PLAYOFF Match (``match.season=NULL``) + one GameRound + PRS rows.
+
+    Playoff rounds carry ``match.season = None`` (Part2c-1 #3) so they are
+    naturally EXCLUDED from the regular-season appearance count."""
+    match = _Lg04Match.objects.create(
+        team_red=team_red, team_blue=team_blue, season=None, is_completed=True
+    )
+    game_round = _Lg04GameRound.objects.create(
+        match=match,
+        round_number=1,
+        team_red=team_red,
+        team_blue=team_blue,
+        is_completed=True,
+    )
+    for player, color in players_with_color:
+        _Lg04PlayerRoundState.objects.create(
+            game_round=game_round,
+            player=player,
+            team_color=color,
+            role="scout",
+        )
+    return game_round
+
+
+class TestLg04NextSeasonAgeTick(TestCase):
+    """Every developing-set Player's ``age`` is incremented by exactly 1."""
+
+    def test_snapshot_team_players_age_plus_one(self) -> None:
+        league, prev, teams, _fa = _lg04_developing_setup("AgeTeamL")
+        # Pin known ages on the snapshot Teams' players.
+        before = {}
+        for team in teams:
+            for player in team.players.all():
+                player.age = 22
+                player.save(update_fields=["age"])
+                before[player.id] = 22
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        for pid, old_age in before.items():
+            player = _Lg04Player.objects.get(id=pid)
+            self.assertEqual(player.age, old_age + 1, f"player {pid} age tick")
+
+    def test_free_agent_players_age_plus_one(self) -> None:
+        league, prev, _teams, fa = _lg04_developing_setup("AgeFAL")
+        for p in fa:
+            p.age = 30
+            p.save(update_fields=["age"])
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        for p in fa:
+            p.refresh_from_db()
+            self.assertEqual(p.age, 31)
+
+
+class TestLg04NextSeasonStatRangeInvariants(TestCase):
+    """Every developing-set Player's 19 live stat fields stay within [0,100]
+    after development (range / clamp invariant — NOT exact values)."""
+
+    def test_all_developed_stats_remain_in_range(self) -> None:
+        league, prev, teams, fa = _lg04_developing_setup("RangeL")
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        developing_ids = set()
+        for team in teams:
+            developing_ids |= set(team.players.values_list("id", flat=True))
+        developing_ids |= {p.id for p in fa}
+        for pid in developing_ids:
+            player = _Lg04Player.objects.get(id=pid)
+            for name in _Lg04StatFields:
+                value = getattr(player, name)
+                self.assertGreaterEqual(value, 0, f"{name} on {pid}")
+                self.assertLessEqual(value, 100, f"{name} on {pid}")
+
+    def test_stats_clamp_from_extreme_floor(self) -> None:
+        # All-zero stats can only stay in [0,100] after a develop pass.
+        league, prev, teams, fa = _lg04_developing_setup("FloorL")
+        for team in teams:
+            for player in team.players.all():
+                for name in _Lg04StatFields:
+                    setattr(player, name, 0)
+                player.save()
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        for team in teams:
+            for player in team.players.all():
+                player.refresh_from_db()
+                for name in _Lg04StatFields:
+                    self.assertGreaterEqual(getattr(player, name), 0, name)
+                    self.assertLessEqual(getattr(player, name), 100, name)
+
+
+class TestLg04NextSeasonTotalGamesTick(TestCase):
+    """``total_games`` ticks: an active-Team player by their EXACT regular-season
+    appearance count; a free-agent-pool player by a value in
+    ``[0, median_active // 2]``."""
+
+    def test_active_player_total_games_rises_by_appearance_count(self) -> None:
+        league, prev, teams, _fa = _lg04_developing_setup("GamesActiveL")
+        team_a, team_b = teams
+        pa = team_a.players.first()
+        # Pin a known starting total_games and 3 regular-season appearances.
+        pa.total_games = 10
+        pa.save(update_fields=["total_games"])
+        for _ in range(3):
+            _lg04_add_regular_round(prev, team_a, team_b, [(pa, "red")])
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        pa.refresh_from_db()
+        self.assertEqual(pa.total_games, 10 + 3)
+
+    def test_active_player_with_no_appearances_total_games_unchanged(self) -> None:
+        league, prev, teams, _fa = _lg04_developing_setup("GamesZeroL")
+        team_a, _team_b = teams
+        pa = team_a.players.first()
+        pa.total_games = 7
+        pa.save(update_fields=["total_games"])
+        # No PlayerRoundState rows ⇒ zero appearances ⇒ no tick.
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        pa.refresh_from_db()
+        self.assertEqual(pa.total_games, 7)
+
+    def test_playoff_appearances_do_not_count(self) -> None:
+        # A player with ONLY playoff (season=NULL) PRS rows must NOT have those
+        # counted toward the total_games tick — only regular-season rounds count.
+        league, prev, teams, _fa = _lg04_developing_setup("PlayoffL")
+        team_a, team_b = teams
+        pa = team_a.players.first()
+        pa.total_games = 5
+        pa.save(update_fields=["total_games"])
+        # 1 regular-season appearance + 2 playoff appearances.
+        _lg04_add_regular_round(prev, team_a, team_b, [(pa, "red")])
+        _lg04_add_playoff_round(team_a, team_b, [(pa, "red")])
+        _lg04_add_playoff_round(team_a, team_b, [(pa, "red")])
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        pa.refresh_from_db()
+        # Only the single regular-season round counts.
+        self.assertEqual(pa.total_games, 5 + 1)
+
+    def test_free_agent_total_games_rises_within_bound(self) -> None:
+        league, prev, teams, fa = _lg04_developing_setup("GamesFAL", n_free_agents=3)
+        team_a, team_b = teams
+        # Give the active players a known appearance distribution so the median
+        # is well-defined: one active player appears twice.
+        pa = team_a.players.first()
+        for _ in range(2):
+            _lg04_add_regular_round(prev, team_a, team_b, [(pa, "red")])
+        for p in fa:
+            p.total_games = 0
+            p.save(update_fields=["total_games"])
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        # median_active over the active set; the free-agent tick lands in
+        # [0, median_active // 2]. We can't pin the exact median view-side, but
+        # the tick is never negative and never exceeds the active appearance
+        # max // 2 (an upper bound on median // 2).
+        active_appearances = _Lg04PlayerRoundState.objects.filter(
+            game_round__match__season=prev
+        ).count()
+        upper = max(0, active_appearances) // 2
+        for p in fa:
+            p.refresh_from_db()
+            self.assertGreaterEqual(p.total_games, 0)
+            self.assertLessEqual(p.total_games, upper)
+
+
+class TestLg04NextSeasonRatingRows(TestCase):
+    """Exactly one ``PlayerSeasonRating`` per developed Player tagged to the NEW
+    Season, with ``age == post-tick age``, ``overall_rating == mean of developed
+    stats``, ``potential is None``."""
+
+    def test_one_developed_row_per_player_tagged_to_new_season(self) -> None:
+        league, prev, teams, fa = _lg04_developing_setup("RowL")
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        developing_ids = set()
+        for team in teams:
+            developing_ids |= set(team.players.values_list("id", flat=True))
+        developing_ids |= {p.id for p in fa}
+        rows = _Lg04PlayerSeasonRating.objects.filter(season=new_season)
+        self.assertEqual(rows.count(), len(developing_ids))
+        self.assertEqual(set(rows.values_list("player_id", flat=True)), developing_ids)
+
+    def test_developed_row_age_equals_post_tick_age(self) -> None:
+        league, prev, teams, _fa = _lg04_developing_setup("RowAgeL")
+        team_a = teams[0]
+        pa = team_a.players.first()
+        pa.age = 24
+        pa.save(update_fields=["age"])
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        pa.refresh_from_db()
+        row = _Lg04PlayerSeasonRating.objects.get(season=new_season, player=pa)
+        # The row's age equals the post-tick (incremented) live age.
+        self.assertEqual(row.age, 25)
+        self.assertEqual(row.age, pa.age)
+
+    def test_developed_row_overall_is_mean_of_developed_stats(self) -> None:
+        league, prev, teams, _fa = _lg04_developing_setup("RowOvrL")
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        row = (
+            _Lg04PlayerSeasonRating.objects.filter(season=new_season)
+            .select_related("player")
+            .first()
+        )
+        self.assertIsNotNone(row)
+        # overall_rating == unweighted mean of the row's developed 19 stats.
+        mean_of_row = sum(getattr(row, n) for n in _Lg04StatFields) / len(
+            _Lg04StatFields
+        )
+        self.assertAlmostEqual(row.overall_rating, mean_of_row, places=4)
+        # And the row stats equal the developed live Player stats.
+        for name in _Lg04StatFields:
+            self.assertEqual(getattr(row, name), getattr(row.player, name), name)
+
+    def test_developed_row_potential_is_none(self) -> None:
+        league, prev, teams, _fa = _lg04_developing_setup("RowPotL")
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        for row in _Lg04PlayerSeasonRating.objects.filter(season=new_season):
+            self.assertIsNone(row.potential)
+
+
+class TestLg04NextSeasonLeagueIsolation(TestCase):
+    """A Player in a DIFFERENT League is NOT developed and gets NO new-Season
+    row — the developing set is league-scoped by construction (two-League
+    fixture)."""
+
+    def test_other_league_player_untouched(self) -> None:
+        rolling, prev, r_teams, _r_fa = _lg04_developing_setup("RollL")
+        other, _o_prev, o_teams, _o_fa = _lg04_developing_setup("OtherL")
+        # Pin a known age + a known stat on an other-League Player.
+        other_player = o_teams[0].players.first()
+        other_player.age = 22
+        other_player.accuracy = 50
+        other_player.save(update_fields=["age", "accuracy"])
+        before_age = other_player.age
+        before_acc = other_player.accuracy
+
+        # Roll only the rolling League forward.
+        self.client.post(reverse("next_season", kwargs={"league_id": rolling.id}))
+
+        other_player.refresh_from_db()
+        # The other-League Player is untouched: no age tick, no stat change.
+        self.assertEqual(other_player.age, before_age)
+        self.assertEqual(other_player.accuracy, before_acc)
+        # And no PlayerSeasonRating row was written for the rolling League's
+        # NEW Season tagged to the other-League Player.
+        new_season = rolling.seasons.order_by("-id").first()
+        self.assertFalse(
+            _Lg04PlayerSeasonRating.objects.filter(
+                season=new_season, player=other_player
+            ).exists()
+        )
+
+    def test_other_league_gets_no_new_season_row(self) -> None:
+        rolling, _r_prev, _r_teams, _r_fa = _lg04_developing_setup("IsoRollL")
+        other, _o_prev, _o_teams, _o_fa = _lg04_developing_setup("IsoOtherL")
+        before_other_rows = _Lg04PlayerSeasonRating.objects.filter(
+            season__league=other
+        ).count()
+        self.client.post(reverse("next_season", kwargs={"league_id": rolling.id}))
+        after_other_rows = _Lg04PlayerSeasonRating.objects.filter(
+            season__league=other
+        ).count()
+        # The other League's rating-row count is unchanged by the rolling
+        # League's rollover.
+        self.assertEqual(after_other_rows, before_other_rows)

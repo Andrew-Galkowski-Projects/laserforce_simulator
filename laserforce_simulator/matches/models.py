@@ -1511,6 +1511,73 @@ class Season(models.Model):
         ]
 
 
+class PlayerSeasonRating(models.Model):
+    """LG-04 — an immutable per-Season snapshot of a Player's 19 stat ratings,
+    age, and overall rating at the start of a Season (a baseline row at
+    league_create, a developed row at each next_season rollover).
+
+    Read-only audit trail: the live ``teams.Player`` stat fields remain the
+    Simulator's source of truth; these rows are never read back by the engine.
+    ``potential`` is reserved (always NULL until LG-05).
+    """
+
+    player = models.ForeignKey(
+        Player,
+        on_delete=models.CASCADE,
+        related_name="season_ratings",
+    )
+    season = models.ForeignKey(
+        "matches.Season",
+        on_delete=models.CASCADE,
+        related_name="player_ratings",
+    )
+
+    # Snapshot of the player's age at the time this row was written.
+    age = models.IntegerField(null=True, blank=True)
+
+    # Snapshot of all 19 stat ints — same names + the capital-O quirk as Player.
+    player_awareness = models.IntegerField()
+    game_awareness = models.IntegerField()
+    resource_awareness = models.IntegerField()
+    decision_making = models.IntegerField()
+    positioning = models.IntegerField()
+    stamina = models.IntegerField()
+    speed = models.IntegerField()
+    flexibility = models.IntegerField()
+    adaptability = models.IntegerField()
+    communication = models.IntegerField()
+    teamwork = models.IntegerField()
+    Offensive_synergy = models.IntegerField()
+    defensive_synergy = models.IntegerField()
+    midfield_synergy = models.IntegerField()
+    resupply_synergy = models.IntegerField()
+    resupply_efficiency = models.IntegerField()
+    accuracy = models.IntegerField()
+    survival = models.IntegerField()
+    special_usage = models.IntegerField()
+
+    # Snapshot of the unweighted-mean overall at write time (float — mirrors
+    # Player.overall_rating's float return).
+    overall_rating = models.FloatField()
+
+    # Reserved for LG-05; always NULL in LG-04.
+    potential = models.FloatField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["player_id", "season_id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["player", "season"],
+                name="uniq_player_season_rating",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.player.name} — {self.season.name} (ovr {self.overall_rating:.1f})"
+        )
+
+
 class SeasonPhase(models.Model):
     """LG-02-Part2a — one ordered phase within a Season's schedule.
 

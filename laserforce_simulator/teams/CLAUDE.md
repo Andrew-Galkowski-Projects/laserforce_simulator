@@ -18,6 +18,14 @@ Manages teams, players, and rosters. Serves as the homepage (`/`).
 
 `overall_rating` is a `@property` returning the unweighted mean of all 19 stats.
 
+As of **LG-04 player development**, the 19 stat fields are **mutated in place** at each League
+`next_season` rollover (a ZenGM-style age curve) and `total_games` is **ticked** there too —
+cosmetically: an active-roster player by their real regular-season appearances, a free-agent by
+a small random amount (`total_games` is never a develop input). A per-Season immutable snapshot
+of the 19 stats + age + overall is persisted as `matches.PlayerSeasonRating`. See the
+[`matches/CLAUDE.md`](../matches/CLAUDE.md) **LG-04 player development + ratings history** section
+for the full mechanism.
+
 `stat_for_simulation(stat_name, role)` returns `min(int(raw_value * 1.2), 100)` when `role in self.preferred_roles`, otherwise the raw stat value. Invalid `stat_name` values raise `AttributeError` naturally (no explicit guard). Used by `PlayerRoundState` forwarding properties and `BatchSimulator._make_players` to apply the preferred-role boost at simulation time without affecting stored values or `overall_rating`.
 
 `PlayerForm` exposes all 19 stat fields (default 50) with "Set All to Average (50)" and "Set All to Elite (90)" preset buttons. Profile fields (age, started_playing_age, total_games, home_site, height) are also on the form; when adding a new player, the view pre-fills them via `_random_player_profile()`.

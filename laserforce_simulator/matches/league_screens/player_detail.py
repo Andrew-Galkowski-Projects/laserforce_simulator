@@ -38,7 +38,8 @@ from matches.league_views import (
     _compute_season_award_set,
     _player_award_labels,
 )
-from matches.models import League, PlayerRoundState
+from matches import development
+from matches.models import League, PlayerRoundState, PlayerSeasonRating
 from matches.season_player_stats import PlayerStatRow, aggregate_player_stats
 from teams.models import Player
 
@@ -64,7 +65,14 @@ def _row_from_stat_row(
 
 
 def player_detail(request: HttpRequest, league_id: int, player_id: int) -> HttpResponse:
-    """LG-06h — read-only League player page pinned to one League."""
+    """LG-06h — read-only League player page pinned to one League.
+
+    Frozen context keys (the seam): ``league``, ``player``,
+    ``displayed_season``, ``sidebar_links``, ``sidebar_active``, ``rs_rows``,
+    ``career_row``, ``stat_columns``, ``player_awards``, and (LG-04)
+    ``ratings_history`` — a league-scoped, oldest-first list of per-row dicts
+    ``{season_id, season_name, age, overall_rating, potential, stats}``.
+    """
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
@@ -133,6 +141,26 @@ def player_detail(request: HttpRequest, league_id: int, player_id: int) -> HttpR
                 }
             )
 
+    # LG-04 — per-Season ratings history for this Player, scoped to THIS League,
+    # oldest-first (ascending by season_id) so the trend reads chronologically
+    # left-to-right. ``potential`` is always None in LG-04 (renders "—").
+    psr_qs = (
+        PlayerSeasonRating.objects.filter(player=player, season__league=league)
+        .select_related("season")
+        .order_by("season_id")
+    )
+    ratings_history = [
+        {
+            "season_id": r.season_id,
+            "season_name": r.season.name,
+            "age": r.age,
+            "overall_rating": r.overall_rating,
+            "potential": r.potential,
+            "stats": {name: getattr(r, name) for name in development.STAT_FIELDS},
+        }
+        for r in psr_qs
+    ]
+
     context = {
         "league": league,
         "player": player,
@@ -143,5 +171,6 @@ def player_detail(request: HttpRequest, league_id: int, player_id: int) -> HttpR
         "career_row": career_row,
         "stat_columns": _RS_STAT_COLUMNS,
         "player_awards": player_awards,
+        "ratings_history": ratings_history,
     }
     return render(request, "leagues/player_detail.html", context)
