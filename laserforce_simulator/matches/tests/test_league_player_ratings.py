@@ -500,3 +500,84 @@ class TestPlayerRatingsTeamFilter(TestCase):
         form_end = content.index("</form>", form_start)
         picker_block = content[form_start:form_end]
         self.assertNotIn('name="page"', picker_block)
+
+
+# ---------------------------------------------------------------------------
+# LG-05 — Potential is SORTABLE on Player Ratings (nulls-last both directions)
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-05-player-potential-seam-contract.md``
+# §5 / §6: ``?sort=potential&dir=desc|asc`` orders rows by ``Player.potential``
+# with NULLS LAST in BOTH directions; the ``player-ratings-th-potential`` header
+# renders as a sortable ``<a ... sort=potential ...>`` link (NOT the fixed
+# ``<td>-</td>`` placeholder it was before LG-05); a player's potential value
+# renders in its row.
+#
+# Uses the Django test ``Client`` against the wired ``stats_player_ratings`` URL
+# (like ``TestPlayerRatingsTeamFilter``). Players' ``Player.potential`` is set
+# EXPLICITLY in the fixture (the screen fixtures bypass ``league_create``, so
+# the field defaults to ``None`` unless set). Appended as NEW classes; no
+# existing class is modified. These WILL fail until the Code agent lands
+# ``Player.potential`` + the ``"potential"`` sort key + the sortable header — the
+# TDD red state.
+
+
+class TestPlayerRatingsPotentialSortable(TestCase):
+    """LG-05 — Potential is a sortable column (nulls-last both directions)."""
+
+    URL_NAME = "stats_player_ratings"
+
+    def setUp(self) -> None:
+        self.league = _make_league("PotSortL")
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        team = self.teams[0]
+        # Three enrolled-team players with distinct potentials + one with None.
+        self.high = Player.objects.create(team=team, name="PotHigh", potential=90.0)
+        self.mid = Player.objects.create(team=team, name="PotMid", potential=50.0)
+        self.low = Player.objects.create(team=team, name="PotLow", potential=10.0)
+        self.nul = Player.objects.create(team=team, name="PotNull", potential=None)
+
+    def _get(self, *, query: str = ""):
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        if query:
+            url = f"{url}?{query}"
+        return self.client.get(url)
+
+    def test_sortable_header_renders_as_link(self) -> None:
+        content = self._get().content.decode()
+        # The header is a sortable <a> carrying sort=potential — NOT a fixed
+        # placeholder <th id="player-ratings-th-potential">-</th>.
+        self.assertIn("player-ratings-th-potential", content)
+        idx = content.index('id="player-ratings-th-potential"')
+        # Scope to the header element and assert it wraps an <a sort=potential>.
+        window = content[idx : idx + 400]
+        self.assertIn("<a", window)
+        self.assertIn("sort=potential", window)
+
+    def test_potential_value_renders_in_row(self) -> None:
+        content = self._get(query="per_page=100").content.decode()
+        # floatformat:1 renders 90.0 → "90.0".
+        self.assertIn("90.0", content)
+
+    def test_sort_desc_orders_high_to_low_nulls_last(self) -> None:
+        content = self._get(
+            query="sort=potential&dir=desc&per_page=100"
+        ).content.decode()
+        # High > Mid > Low, and the None-potential player sorts LAST.
+        self.assertLess(content.index("PotHigh"), content.index("PotMid"))
+        self.assertLess(content.index("PotMid"), content.index("PotLow"))
+        self.assertLess(content.index("PotLow"), content.index("PotNull"))
+
+    def test_sort_asc_orders_low_to_high_nulls_still_last(self) -> None:
+        content = self._get(
+            query="sort=potential&dir=asc&per_page=100"
+        ).content.decode()
+        # Low < Mid < High ascending; the None-potential player STILL sorts last.
+        self.assertLess(content.index("PotLow"), content.index("PotMid"))
+        self.assertLess(content.index("PotMid"), content.index("PotHigh"))
+        self.assertLess(content.index("PotHigh"), content.index("PotNull"))
+
+    def test_sort_potential_returns_200(self) -> None:
+        self.assertEqual(self._get(query="sort=potential&dir=desc").status_code, 200)

@@ -1463,12 +1463,18 @@ class TestLg04NextSeasonRatingRows(TestCase):
         for name in _Lg04StatFields:
             self.assertEqual(getattr(row, name), getattr(row.player, name), name)
 
-    def test_developed_row_potential_is_none(self) -> None:
+    def test_developed_row_potential_is_filled(self) -> None:
+        # LG-05 supersedes the LG-04 "potential is None" contract: the developed
+        # row now carries a computed potential, floored at the row's overall.
         league, prev, teams, _fa = _lg04_developing_setup("RowPotL")
         self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
         new_season = league.seasons.order_by("-id").first()
-        for row in _Lg04PlayerSeasonRating.objects.filter(season=new_season):
-            self.assertIsNone(row.potential)
+        rows = list(_Lg04PlayerSeasonRating.objects.filter(season=new_season))
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertIsNotNone(row.potential)
+            self.assertGreaterEqual(row.potential, row.overall_rating)
+            self.assertLessEqual(row.potential, 100.0)
 
 
 class TestLg04NextSeasonLeagueIsolation(TestCase):
@@ -1516,3 +1522,182 @@ class TestLg04NextSeasonLeagueIsolation(TestCase):
         # The other League's rating-row count is unchanged by the rolling
         # League's rollover.
         self.assertEqual(after_other_rows, before_other_rows)
+
+
+# ---------------------------------------------------------------------------
+# LG-05 — next_season recomputes Player.potential + fills the developed
+# PlayerSeasonRating.potential row
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-05-player-potential-seam-contract.md``
+# §4 / §6: at a per-League ``next_season`` rollover, every developing-set Player
+# has ``Player.potential`` recomputed on its POST-development stats + the
+# already-incremented age (non-None, within ``[overall, 100]``), and the
+# developed ``PlayerSeasonRating`` row's ``potential`` column is filled non-None.
+# The potential noise consumes a FRESH ``random.Random()`` SEPARATE from the
+# develop RNG, so LG-04's seeded develop output is unperturbed.
+#
+# Tests assert SCHEMA-LEVEL invariants (non-None, range, independence) — NEVER
+# exact unseeded potential floats. Reuses the LG-04 ``_lg04_developing_setup``
+# fixture verbatim. Appended as NEW classes; no existing class is modified.
+# These WILL fail until the Code agent lands ``Player.potential`` +
+# ``compute_potential`` wiring in ``_develop_league_for_new_season`` — the TDD
+# red state, not a defect in this file.
+
+
+class TestLg05NextSeasonPotentialRecomputed(TestCase):
+    """Every developed Player's ``Player.potential`` is recomputed (non-None,
+    within ``[overall, 100]``) after a rollover."""
+
+    def _developing_ids(self, teams, fa) -> set[int]:
+        ids: set[int] = set()
+        for team in teams:
+            ids |= set(team.players.values_list("id", flat=True))
+        ids |= {p.id for p in fa}
+        return ids
+
+    def test_developed_players_potential_is_non_none(self) -> None:
+        league, _prev, teams, fa = _lg04_developing_setup("PotNonNoneL")
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        for pid in self._developing_ids(teams, fa):
+            player = _Lg04Player.objects.get(id=pid)
+            self.assertIsNotNone(
+                player.potential, f"player {pid} potential is None after rollover"
+            )
+
+    def test_developed_players_potential_within_overall_and_100(self) -> None:
+        league, _prev, teams, fa = _lg04_developing_setup("PotRangeL")
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        for pid in self._developing_ids(teams, fa):
+            player = _Lg04Player.objects.get(id=pid)
+            self.assertIsNotNone(player.potential)
+            # Floor = the player's current (post-development) overall.
+            self.assertGreaterEqual(
+                player.potential,
+                player.overall_rating - 1e-6,
+                f"player {pid} potential below current overall",
+            )
+            self.assertLessEqual(
+                player.potential, 100.0, f"player {pid} potential above 100"
+            )
+
+
+class TestLg05NextSeasonRatingRowPotentialFilled(TestCase):
+    """The developed ``PlayerSeasonRating`` row's ``potential`` column is filled
+    non-None and equals the live ``Player.potential`` (recomputed on the same
+    post-development stats)."""
+
+    def test_developed_rating_rows_potential_non_none(self) -> None:
+        league, _prev, teams, fa = _lg04_developing_setup("RowPotFilledL")
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        rows = _Lg04PlayerSeasonRating.objects.filter(season=new_season)
+        self.assertTrue(rows.exists())
+        for row in rows:
+            self.assertIsNotNone(
+                row.potential, "developed rating-row potential must be filled"
+            )
+
+    def test_rating_row_potential_within_overall_and_100(self) -> None:
+        league, _prev, teams, fa = _lg04_developing_setup("RowPotRangeL")
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        for row in _Lg04PlayerSeasonRating.objects.filter(season=new_season):
+            self.assertIsNotNone(row.potential)
+            self.assertGreaterEqual(row.potential, row.overall_rating - 1e-6)
+            self.assertLessEqual(row.potential, 100.0)
+
+    def test_rating_row_potential_matches_live_player_potential(self) -> None:
+        league, _prev, teams, fa = _lg04_developing_setup("RowPotMatchL")
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        for row in _Lg04PlayerSeasonRating.objects.filter(
+            season=new_season
+        ).select_related("player"):
+            self.assertAlmostEqual(
+                row.potential,
+                row.player.potential,
+                places=4,
+                msg=f"rating-row potential drifted from live for {row.player.name!r}",
+            )
+
+
+class TestLg05PlayerOutsideLeagueFlowHasNonePotential(TestCase):
+    """A Player never run through a league flow keeps ``potential is None``
+    (the field default)."""
+
+    def test_freshly_created_player_potential_is_none(self) -> None:
+        team = Team.objects.create(name="LonePotTeam")
+        player = _Lg04Player.objects.create(team=team, name="Loner", age=25)
+        self.assertIsNone(player.potential)
+
+    def test_other_league_player_keeps_none_potential(self) -> None:
+        # Rolling one League forward must NOT touch a player in a DIFFERENT
+        # League — their potential stays None.
+        rolling, _r_prev, _r_teams, _r_fa = _lg04_developing_setup("RollPotL")
+        other, _o_prev, o_teams, _o_fa = _lg04_developing_setup("OtherPotL")
+        other_player = o_teams[0].players.first()
+        self.assertIsNone(other_player.potential)
+        self.client.post(reverse("next_season", kwargs={"league_id": rolling.id}))
+        other_player.refresh_from_db()
+        self.assertIsNone(
+            other_player.potential, "other-League player potential must stay None"
+        )
+
+
+class TestLg05DevelopRngIndependentOfPotentialRng(TestCase):
+    """LG-04 regression guard — the develop RNG and the potential RNG are two
+    DISTINCT ``random.Random()`` instances, so adding LG-05's potential draw does
+    NOT perturb LG-04's seeded 1-gauss + 19-uniform develop sequence.
+
+    The develop loop builds a fresh (unseeded) ``random.Random()`` per rollover,
+    so the develop OUTPUT is not reproducible across two rollovers; instead we
+    pin that ``_develop_league_for_new_season`` constructs TWO separate
+    ``random.Random`` instances (one for develop, one for potential).
+    """
+
+    def test_two_distinct_random_instances_constructed(self) -> None:
+        import random as _random
+
+        instances: list = []
+        real_random_cls = _random.Random
+
+        def _tracking_random(*args, **kwargs):
+            inst = real_random_cls(*args, **kwargs)
+            instances.append(inst)
+            return inst
+
+        with patch("matches.league_views.random.Random", side_effect=_tracking_random):
+            league, _prev, _teams, _fa = _lg04_developing_setup("TwoRngL")
+            self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+
+        # At least two Random() instances were constructed during the develop
+        # path, and they are DISTINCT objects (develop rng != potential rng).
+        self.assertGreaterEqual(
+            len(instances),
+            2,
+            "expected a separate develop rng and potential rng to be constructed",
+        )
+        # All constructed instances are distinct objects (no shared rng).
+        self.assertEqual(
+            len({id(i) for i in instances}),
+            len(instances),
+            "the develop rng and potential rng must be distinct objects",
+        )
+
+    def test_develop_output_stats_remain_in_range_with_potential_landed(self) -> None:
+        # Behavioural sanity: with LG-05 landed, the developed 19 stats still
+        # clamp to [0,100] (the LG-04 invariant is unperturbed by the separate
+        # potential draw).
+        league, _prev, teams, fa = _lg04_developing_setup("DevStillRangeL")
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        developing_ids: set[int] = set()
+        for team in teams:
+            developing_ids |= set(team.players.values_list("id", flat=True))
+        developing_ids |= {p.id for p in fa}
+        for pid in developing_ids:
+            player = _Lg04Player.objects.get(id=pid)
+            for name in _Lg04StatFields:
+                value = getattr(player, name)
+                self.assertGreaterEqual(value, 0, f"{name} below 0 for {pid}")
+                self.assertLessEqual(value, 100, f"{name} above 100 for {pid}")

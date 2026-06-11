@@ -751,3 +751,86 @@ class TestPlayerDetailRatingsHistoryEmpty(TestCase):
         content = self.client.get(self.url).content.decode()
         self.assertIn("league-player-ratings-history", content)
         self.assertNotIn("league-player-ratings-history-stub", content)
+
+
+# ===========================================================================
+# LG-05 — Potential card live value + ratings-history Pot column value
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-05-player-potential-seam-contract.md``
+# §5 / §6: the ``#league-player-potential`` card renders the LIVE
+# ``player.potential|floatformat:1|default:"—"`` (a value when filled, ``—`` when
+# None); a ratings-history row with a FILLED ``PlayerSeasonRating.potential``
+# renders that value in its Pot column.
+#
+# NOTE: the pre-LG-05 ``TestPlayerDetailPotential`` class above asserts the card
+# renders the em-dash placeholder — once the Code agent lands LG-05 that becomes
+# stale for a player WITH a filled potential (the card now renders the value).
+# The agent / docs pass updates it; THIS file only ADDS the new live-value
+# classes below. These WILL fail until ``Player.potential`` + the live card +
+# the filled history Pot cell land — the TDD red state.
+
+
+class TestLg05PlayerDetailPotentialCardLiveValue(TestCase):
+    """The Potential card renders the LIVE ``Player.potential`` value when
+    filled, and the em-dash ``—`` when None."""
+
+    def test_card_renders_filled_potential_value(self) -> None:
+        league = _make_league("Lg05CardValL")
+        _season, teams = _make_active_season(league)
+        player = teams[0].active_players[0]
+        player.potential = 88.0
+        player.save(update_fields=["potential"])
+        url = reverse("league_player_detail", args=[league.id, player.id])
+        content = self.client.get(url).content.decode()
+        block = _extract_dom_block(content, "league-player-potential")
+        # floatformat:1 renders 88.0 → "88.0".
+        self.assertIn("88.0", block)
+
+    def test_card_renders_em_dash_when_none(self) -> None:
+        league = _make_league("Lg05CardNoneL")
+        pool = Team.objects.create(name=f"{league.name} Pool")
+        player = Player.objects.create(team=pool, name="NoPot Joe", potential=None)
+        url = reverse("league_player_detail", args=[league.id, player.id])
+        content = self.client.get(url).content.decode()
+        block = _extract_dom_block(content, "league-player-potential")
+        self.assertTrue(
+            ("—" in block) or ("&#8212;" in block) or ("&mdash;" in block),
+            msg=f"em-dash not found in Potential card for a None potential: {block!r}",
+        )
+
+
+class TestLg05PlayerDetailRatingsHistoryPotentialColumn(TestCase):
+    """A ratings-history row with a FILLED ``PlayerSeasonRating.potential``
+    renders that value in its Pot column."""
+
+    def setUp(self) -> None:
+        self.league = _make_league("Lg05HistPotL")
+        self.season = Season.objects.create(
+            league=self.league, name="S1", start_date=date(2025, 1, 1)
+        )
+        pool = Team.objects.create(name=f"{self.league.name} Pool")
+        self.player = Player.objects.create(team=pool, name="HistPot Joe")
+        # A FILLED potential on the rating row (LG-05 fills these at write time).
+        _Lg04PlayerSeasonRating.objects.create(
+            player=self.player,
+            season=self.season,
+            **_lg04_rating_kwargs(potential=66.0),
+        )
+        self.url = reverse(
+            "league_player_detail", args=[self.league.id, self.player.id]
+        )
+
+    def test_history_row_potential_value_in_context(self) -> None:
+        response = self.client.get(self.url)
+        history = response.context["ratings_history"]
+        self.assertEqual(len(history), 1)
+        self.assertAlmostEqual(history[0]["potential"], 66.0, places=4)
+
+    def test_history_table_pot_cell_renders_filled_value(self) -> None:
+        content = self.client.get(self.url).content.decode()
+        start = content.index('id="league-player-ratings-history-table"')
+        end = content.index("</table>", start)
+        block = content[start:end]
+        # floatformat:1 renders 66.0 → "66.0" in the Pot column.
+        self.assertIn("66.0", block)

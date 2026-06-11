@@ -1363,11 +1363,19 @@ class TestLg04BaselineRatings(TestCase):
         )
         self.assertEqual(season_ids, {season.id})
 
-    def test_baseline_potential_is_none(self) -> None:
+    def test_baseline_potential_is_filled(self) -> None:
+        # LG-05 supersedes the LG-04 "potential is None" contract: the baseline
+        # row now carries a computed potential, floored at the row's overall.
         league = self._create_and_get_league("BaselinePot")
         season = league.seasons.get()
-        for row in _Lg04PlayerSeasonRating.objects.filter(season=season):
-            self.assertIsNone(row.potential, "baseline potential must be None")
+        rows = list(_Lg04PlayerSeasonRating.objects.filter(season=season))
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertIsNotNone(
+                row.potential, "baseline potential must be filled (LG-05)"
+            )
+            self.assertGreaterEqual(row.potential, row.overall_rating)
+            self.assertLessEqual(row.potential, 100.0)
 
     def test_baseline_age_equals_player_age(self) -> None:
         league = self._create_and_get_league("BaselineAge")
@@ -1406,3 +1414,95 @@ class TestLg04BaselineRatings(TestCase):
         )
         self.assertIsNotNone(row)
         self.assertAlmostEqual(row.overall_rating, row.player.overall_rating, places=4)
+
+
+# ---------------------------------------------------------------------------
+# LG-05 — baseline PlayerSeasonRating.potential + Player.potential filled at
+# league_create
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-05-player-potential-seam-contract.md``
+# §4 / §6: LG-05 changes ``_write_baseline_ratings`` to compute a potential per
+# founding developing-set Player — ``Player.potential`` is filled non-None
+# within ``[overall, 100]`` and the baseline ``PlayerSeasonRating.potential``
+# column is filled non-None (matching ``player.potential``). The baseline
+# applies the scouting-noise band exactly as a rollover.
+#
+# NOTE: the pre-LG-05 ``TestLg04BaselineRatings`` class above asserts
+# ``potential is None`` at baseline — once the Code agent lands LG-05 that
+# becomes stale (baseline now fills potential, per the contract). The agent /
+# docs pass updates it; THIS file only ADDS the new live-potential class below.
+# These WILL fail until ``Player.potential`` + the baseline potential write
+# land — the TDD red state, not a defect in this file.
+
+
+class TestLg05BaselineRatingsPotential(TestCase):
+    """LG-05 — ``league_create`` fills ``Player.potential`` + the baseline
+    ``PlayerSeasonRating.potential`` for every founding Player."""
+
+    def _create_and_get_league(self, league_name: str = "Lg05BaselineL") -> League:
+        payload = _valid_payload(league_name=league_name)
+        payload["players_per_team"] = "8"  # exercise active-slots + bench
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        return League.objects.get(name=league_name)
+
+    def _founding_players(self, league: League):
+        season = league.seasons.get()
+        ids: set[int] = set()
+        for team in season.teams.all():
+            ids |= set(team.players.values_list("id", flat=True))
+        if league.free_agent_pool is not None:
+            ids |= set(league.free_agent_pool.players.values_list("id", flat=True))
+        return Player.objects.filter(id__in=ids)
+
+    def test_founding_player_potential_is_non_none(self) -> None:
+        league = self._create_and_get_league("Lg05BaseNonNone")
+        for player in self._founding_players(league):
+            self.assertIsNotNone(
+                player.potential, f"founding player {player.name!r} potential is None"
+            )
+
+    def test_founding_player_potential_within_overall_and_100(self) -> None:
+        league = self._create_and_get_league("Lg05BaseRange")
+        for player in self._founding_players(league):
+            self.assertIsNotNone(player.potential)
+            self.assertGreaterEqual(
+                player.potential,
+                player.overall_rating - 1e-6,
+                f"potential below current overall for {player.name!r}",
+            )
+            self.assertLessEqual(
+                player.potential, 100.0, f"potential above 100 for {player.name!r}"
+            )
+
+    def test_baseline_rating_row_potential_non_none(self) -> None:
+        league = self._create_and_get_league("Lg05BaseRowNonNone")
+        season = league.seasons.get()
+        rows = _Lg04PlayerSeasonRating.objects.filter(season=season)
+        self.assertTrue(rows.exists())
+        for row in rows:
+            self.assertIsNotNone(
+                row.potential, "baseline rating-row potential must be filled"
+            )
+
+    def test_baseline_rating_row_potential_matches_live_player(self) -> None:
+        league = self._create_and_get_league("Lg05BaseRowMatch")
+        season = league.seasons.get()
+        for row in _Lg04PlayerSeasonRating.objects.filter(season=season).select_related(
+            "player"
+        ):
+            self.assertAlmostEqual(
+                row.potential,
+                row.player.potential,
+                places=4,
+                msg=f"baseline row potential drifted from live for {row.player.name!r}",
+            )
+
+    def test_baseline_rating_row_potential_within_overall_and_100(self) -> None:
+        league = self._create_and_get_league("Lg05BaseRowRange")
+        season = league.seasons.get()
+        for row in _Lg04PlayerSeasonRating.objects.filter(season=season):
+            self.assertIsNotNone(row.potential)
+            self.assertGreaterEqual(row.potential, row.overall_rating - 1e-6)
+            self.assertLessEqual(row.potential, 100.0)
