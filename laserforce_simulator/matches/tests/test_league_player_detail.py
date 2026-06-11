@@ -200,18 +200,20 @@ class TestPlayerDetailEmptyState(TestCase):
         self.assertIn("league-player-potential", content)
 
     def test_remaining_stubs_still_render(self) -> None:
-        # LG-03 fills the former ``league-player-awards-stub`` with the live
-        # ``league-player-awards`` block; the other 4 stubs still render.
+        # LG-03 fills the former ``league-player-awards-stub`` and LG-04 fills
+        # ``league-player-ratings-history-stub`` (now the live
+        # ``league-player-ratings-history`` block); the other 3 stubs still render.
         content = self.client.get(self.url).content.decode()
         for stub in (
             "league-player-playoffs-stub",
-            "league-player-ratings-history-stub",
             "league-player-salaries-stub",
             "league-player-transactions-stub",
         ):
             self.assertIn(stub, content)
-        # The awards stub is GONE; the live block replaces it.
+        # The awards (LG-03) + ratings-history (LG-04) stubs are GONE; live
+        # blocks replace them.
         self.assertNotIn("league-player-awards-stub", content)
+        self.assertNotIn("league-player-ratings-history-stub", content)
         self.assertIn("league-player-awards", content)
 
     def test_player_with_rounds_only_in_other_league_is_empty_here(self) -> None:
@@ -407,23 +409,25 @@ class TestPlayerDetailStubs(TestCase):
             "league_player_detail", args=[self.league.id, self.player.id]
         )
 
-    def test_four_remaining_stub_dom_ids_present(self) -> None:
-        # LG-03 replaced the awards stub with a live block, leaving 4 stubs.
+    def test_remaining_stub_dom_ids_present(self) -> None:
+        # LG-03 replaced the awards stub and LG-04 replaced the ratings-history
+        # stub with live blocks, leaving 3 stubs.
         content = self.client.get(self.url).content.decode()
         for stub in (
             "league-player-playoffs-stub",
-            "league-player-ratings-history-stub",
             "league-player-salaries-stub",
             "league-player-transactions-stub",
         ):
             self.assertIn(stub, content)
         self.assertNotIn("league-player-awards-stub", content)
+        self.assertNotIn("league-player-ratings-history-stub", content)
 
     def test_each_stub_contains_coming_soon(self) -> None:
         content = self.client.get(self.url).content.decode().lower()
-        # 4 remaining stubs each carry the case-insensitive "coming soon"
-        # substring (the awards stub became a live block).
-        self.assertGreaterEqual(content.count("coming soon"), 4)
+        # 3 remaining stubs (playoffs / salaries / transactions) each carry the
+        # case-insensitive "coming soon" substring; the awards (LG-03) and
+        # ratings-history (LG-04) stubs became live blocks.
+        self.assertGreaterEqual(content.count("coming soon"), 3)
 
 
 # ===========================================================================
@@ -564,3 +568,186 @@ def _extract_dom_block(content: str, dom_id: str) -> str:
         return ""
     start = match.start()
     return content[start : start + 800]
+
+
+# ===========================================================================
+# LG-04 — Ratings-history block (live ``league-player-ratings-history``)
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-04-player-development-seam-contract.md``
+# §6 / §7.5: the LG-06h ``league-player-ratings-history-stub`` is REPLACED with
+# a live ratings-history block driven by the player's ``PlayerSeasonRating`` rows
+# scoped to THIS League, oldest-first (ascending by ``season_id``). The context
+# gains ``ratings_history``; the page exposes the live DOM ids
+# ``league-player-ratings-history`` + ``-chart`` + ``-data`` + ``-table`` and the
+# old ``-stub`` id is ABSENT; an empty-history Player renders
+# ``league-player-ratings-history-empty`` (substring ``"No ratings history"``);
+# the per-Season table's Potential cell renders the em-dash ``—``.
+#
+# Appended as NEW classes; no existing class above is modified. NOTE: the
+# pre-LG-04 ``TestPlayerDetailStubs`` / ``TestPlayerDetailEmptyState`` classes
+# above assert the ``-stub`` id is PRESENT — once the Code agent lands LG-04
+# those legacy stub assertions for the ratings-history block become stale (the
+# stub becomes the live block per the contract). The agent / docs pass updates
+# them; THIS file only adds the new live-block expectations.
+
+
+from matches.development import STAT_FIELDS as _Lg04StatFields  # noqa: E402
+from matches.models import PlayerSeasonRating as _Lg04PlayerSeasonRating  # noqa: E402
+
+
+def _lg04_rating_kwargs(**overrides) -> dict:
+    """A complete set of the 19 stat fields + age + overall_rating for a
+    hand-built ``PlayerSeasonRating`` row."""
+    kwargs = {name: 50 for name in _Lg04StatFields}
+    kwargs["age"] = 25
+    kwargs["overall_rating"] = 50.0
+    kwargs["potential"] = None
+    kwargs.update(overrides)
+    return kwargs
+
+
+class TestPlayerDetailRatingsHistoryContext(TestCase):
+    """``player_detail`` context carries ``ratings_history`` — oldest-first,
+    league-scoped, with another League's rows excluded."""
+
+    def setUp(self) -> None:
+        self.league = _make_league("RatHistL")
+        # Two Seasons in this League so oldest-first ordering is observable.
+        self.s1 = Season.objects.create(
+            league=self.league, name="S1", start_date=date(2025, 1, 1)
+        )
+        self.s2 = Season.objects.create(
+            league=self.league, name="S2", start_date=date(2026, 1, 1)
+        )
+        pool = Team.objects.create(name=f"{self.league.name} Pool")
+        self.player = Player.objects.create(team=pool, name="Ratings Joe")
+        # Insert s2's row first to prove the view re-sorts oldest-first.
+        _Lg04PlayerSeasonRating.objects.create(
+            player=self.player,
+            season=self.s2,
+            **_lg04_rating_kwargs(overall_rating=70.0),
+        )
+        _Lg04PlayerSeasonRating.objects.create(
+            player=self.player,
+            season=self.s1,
+            **_lg04_rating_kwargs(overall_rating=60.0),
+        )
+        self.url = reverse(
+            "league_player_detail", args=[self.league.id, self.player.id]
+        )
+
+    def test_context_has_ratings_history(self) -> None:
+        response = self.client.get(self.url)
+        self.assertIn("ratings_history", response.context)
+        self.assertIsInstance(response.context["ratings_history"], list)
+
+    def test_ratings_history_is_oldest_first(self) -> None:
+        response = self.client.get(self.url)
+        history = response.context["ratings_history"]
+        self.assertEqual(len(history), 2)
+        season_ids = [entry["season_id"] for entry in history]
+        # Ascending by season_id ⇒ s1 (older) before s2 (newer).
+        self.assertEqual(season_ids, [self.s1.id, self.s2.id])
+
+    def test_ratings_history_is_league_scoped(self) -> None:
+        # A rating row in ANOTHER League for the same Player must not appear.
+        other = _make_league("OtherRatL")
+        other_season = Season.objects.create(
+            league=other, name="O1", start_date=date(2025, 1, 1)
+        )
+        _Lg04PlayerSeasonRating.objects.create(
+            player=self.player, season=other_season, **_lg04_rating_kwargs()
+        )
+        response = self.client.get(self.url)
+        history = response.context["ratings_history"]
+        # Only the two THIS-League seasons appear.
+        season_ids = {entry["season_id"] for entry in history}
+        self.assertEqual(season_ids, {self.s1.id, self.s2.id})
+        self.assertNotIn(other_season.id, season_ids)
+
+    def test_ratings_history_entry_carries_potential_none(self) -> None:
+        response = self.client.get(self.url)
+        for entry in response.context["ratings_history"]:
+            self.assertIsNone(entry["potential"])
+
+
+class TestPlayerDetailRatingsHistoryDom(TestCase):
+    """The rendered page exposes the live DOM ids and drops the old ``-stub``."""
+
+    def setUp(self) -> None:
+        self.league = _make_league("RatDomL")
+        self.season = Season.objects.create(
+            league=self.league, name="S1", start_date=date(2025, 1, 1)
+        )
+        pool = Team.objects.create(name=f"{self.league.name} Pool")
+        self.player = Player.objects.create(team=pool, name="Dom Joe")
+        _Lg04PlayerSeasonRating.objects.create(
+            player=self.player, season=self.season, **_lg04_rating_kwargs()
+        )
+        self.url = reverse(
+            "league_player_detail", args=[self.league.id, self.player.id]
+        )
+
+    def test_live_block_id_present(self) -> None:
+        content = self.client.get(self.url).content.decode()
+        self.assertIn("league-player-ratings-history", content)
+
+    def test_chart_canvas_id_present(self) -> None:
+        content = self.client.get(self.url).content.decode()
+        self.assertIn("league-player-ratings-history-chart", content)
+
+    def test_json_script_data_id_present(self) -> None:
+        content = self.client.get(self.url).content.decode()
+        self.assertIn("league-player-ratings-history-data", content)
+
+    def test_per_season_table_id_present(self) -> None:
+        content = self.client.get(self.url).content.decode()
+        self.assertIn("league-player-ratings-history-table", content)
+
+    def test_old_stub_id_absent(self) -> None:
+        content = self.client.get(self.url).content.decode()
+        self.assertNotIn("league-player-ratings-history-stub", content)
+
+    def test_potential_cell_renders_em_dash(self) -> None:
+        # The per-Season table's Pot cell renders the em-dash (always None this
+        # slice) — as the literal char or an HTML entity. Scope to the whole
+        # ``<table>...</table>`` (its 23-column header pushes the <tbody> Pot
+        # cell well past any small fixed window).
+        content = self.client.get(self.url).content.decode()
+        start = content.index('id="league-player-ratings-history-table"')
+        end = content.index("</table>", start)
+        block = content[start:end]
+        self.assertTrue(
+            ("—" in block) or ("&#8212;" in block) or ("&mdash;" in block),
+            msg="em-dash Potential cell not found in ratings-history table",
+        )
+
+
+class TestPlayerDetailRatingsHistoryEmpty(TestCase):
+    """A Player with no ratings history in this League renders the empty notice
+    ``league-player-ratings-history-empty`` (substring ``"No ratings history"``)
+    in place of the chart + table."""
+
+    def setUp(self) -> None:
+        self.league = _make_league("RatEmptyL")
+        pool = Team.objects.create(name=f"{self.league.name} Pool")
+        self.player = Player.objects.create(team=pool, name="Empty Joe")
+        self.url = reverse(
+            "league_player_detail", args=[self.league.id, self.player.id]
+        )
+
+    def test_empty_context_is_empty_list(self) -> None:
+        response = self.client.get(self.url)
+        self.assertEqual(response.context["ratings_history"], [])
+
+    def test_empty_notice_rendered(self) -> None:
+        content = self.client.get(self.url).content.decode()
+        self.assertIn("league-player-ratings-history-empty", content)
+        self.assertIn("No ratings history", content)
+
+    def test_live_block_id_still_present_when_empty(self) -> None:
+        # The live block wrapper still renders (the empty notice lives inside it).
+        content = self.client.get(self.url).content.decode()
+        self.assertIn("league-player-ratings-history", content)
+        self.assertNotIn("league-player-ratings-history-stub", content)
