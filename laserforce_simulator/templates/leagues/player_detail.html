@@ -4,7 +4,8 @@
 LG-06h — League player page (per-Player, league-pinned detail).
 
 Frozen context keys (the seam): league, player, displayed_season,
-sidebar_links, sidebar_active, rs_rows, career_row, stat_columns.
+sidebar_links, sidebar_active, rs_rows, career_row, stat_columns,
+player_awards, ratings_history.
 
 The header's EXTERNAL career link intentionally still reverses
 ``player_career_stats`` (the global HX-01 page) — the one place in the
@@ -204,10 +205,105 @@ league templates that does so on purpose.
                 <p class="text-muted mb-0">Coming soon — arrives with LG-02.</p>
             </div>
         </div>
-        <div id="league-player-ratings-history-stub" class="card mt-3">
+        {# LG-04 — live ratings history: overall-rating trend chart + per-Season table. #}
+        <div id="league-player-ratings-history" class="card mt-3">
             <div class="card-body">
                 <h3 class="h5">Ratings history</h3>
-                <p class="text-muted mb-0">Coming soon — arrives with LG-05.</p>
+                {% if ratings_history %}
+                    {# Trend chart (Chart.js — HX-01 inline-CDN pattern). #}
+                    <canvas id="league-player-ratings-history-chart"></canvas>
+                    <script type="application/json" id="league-player-ratings-history-data">[{% for r in ratings_history %}["{{ r.season_name|escapejs }}", {{ r.overall_rating }}]{% if not forloop.last %}, {% endif %}{% endfor %}]</script>
+                    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+                    <script>
+                        (function () {
+                            const trend = JSON.parse(document.getElementById("league-player-ratings-history-data").textContent);
+                            const ctx = document.getElementById("league-player-ratings-history-chart").getContext("2d");
+                            new Chart(ctx, {
+                                type: "line",
+                                data: {
+                                    labels:   trend.map(p => p[0]),
+                                    datasets: [{
+                                        label:       "Overall rating",
+                                        data:        trend.map(p => p[1]),
+                                        pointRadius: 2,
+                                    }],
+                                },
+                                options: {
+                                    scales: {
+                                        x: { title: { display: true, text: "Season" } },
+                                        y: { title: { display: true, text: "Overall rating" } },
+                                    },
+                                },
+                            });
+                        })();
+                    </script>
+
+                    {# Per-Season table — Season | Age | Ovr | Pot | <19 stats>. #}
+                    <div class="table-responsive mt-3">
+                        <table class="table table-striped table-sm" id="league-player-ratings-history-table">
+                            <thead>
+                                <tr>
+                                    <th>Season</th>
+                                    <th>Age</th>
+                                    <th>Ovr</th>
+                                    <th>Pot</th>
+                                    <th>Player Aware</th>
+                                    <th>Game Aware</th>
+                                    <th>Resource Aware</th>
+                                    <th>Decision</th>
+                                    <th>Positioning</th>
+                                    <th>Stamina</th>
+                                    <th>Speed</th>
+                                    <th>Flexibility</th>
+                                    <th>Adaptability</th>
+                                    <th>Communication</th>
+                                    <th>Teamwork</th>
+                                    <th>Offensive Syn</th>
+                                    <th>Defensive Syn</th>
+                                    <th>Midfield Syn</th>
+                                    <th>Resupply Syn</th>
+                                    <th>Resupply Eff</th>
+                                    <th>Accuracy</th>
+                                    <th>Survival</th>
+                                    <th>Special Usage</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for r in ratings_history %}
+                                    <tr>
+                                        <td>{{ r.season_name }}</td>
+                                        <td>{{ r.age }}</td>
+                                        <td>{{ r.overall_rating|floatformat:1 }}</td>
+                                        <td>{% if r.potential is None %}—{% else %}{{ r.potential|floatformat:1 }}{% endif %}</td>
+                                        <td>{{ r.stats.player_awareness }}</td>
+                                        <td>{{ r.stats.game_awareness }}</td>
+                                        <td>{{ r.stats.resource_awareness }}</td>
+                                        <td>{{ r.stats.decision_making }}</td>
+                                        <td>{{ r.stats.positioning }}</td>
+                                        <td>{{ r.stats.stamina }}</td>
+                                        <td>{{ r.stats.speed }}</td>
+                                        <td>{{ r.stats.flexibility }}</td>
+                                        <td>{{ r.stats.adaptability }}</td>
+                                        <td>{{ r.stats.communication }}</td>
+                                        <td>{{ r.stats.teamwork }}</td>
+                                        <td>{{ r.stats.Offensive_synergy }}</td>
+                                        <td>{{ r.stats.defensive_synergy }}</td>
+                                        <td>{{ r.stats.midfield_synergy }}</td>
+                                        <td>{{ r.stats.resupply_synergy }}</td>
+                                        <td>{{ r.stats.resupply_efficiency }}</td>
+                                        <td>{{ r.stats.accuracy }}</td>
+                                        <td>{{ r.stats.survival }}</td>
+                                        <td>{{ r.stats.special_usage }}</td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-muted mb-0" id="league-player-ratings-history-empty">
+                        No ratings history yet.
+                    </p>
+                {% endif %}
             </div>
         </div>
         <div id="league-player-awards" class="card mt-3">
