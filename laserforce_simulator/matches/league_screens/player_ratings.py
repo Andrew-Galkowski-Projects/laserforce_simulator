@@ -153,6 +153,16 @@ def player_ratings(request: HttpRequest, league_id: int) -> HttpResponse:
             reverse=(direction == "desc"),
         )
         paginator = Paginator(rows, per_page)
+    elif sort == "potential":
+        # potential is nullable — sort nulls last in BOTH directions so a
+        # player with no potential never floats to the top.
+        ordering = (
+            F("potential").desc(nulls_last=True)
+            if direction == "desc"
+            else F("potential").asc(nulls_last=True)
+        )
+        qs = qs.order_by(ordering, "name")
+        paginator = Paginator(qs, per_page)
     else:
         prefix = "" if direction == "asc" else "-"
         qs = qs.order_by(prefix + _SORT_KEYS[sort], "name")

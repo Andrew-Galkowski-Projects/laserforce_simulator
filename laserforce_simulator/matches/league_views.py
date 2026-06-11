@@ -96,6 +96,7 @@ RATING_SORT_KEYS_DISPLAY: tuple[tuple[str, str, str], ...] = (
     ("accuracy", "Acc", "Accuracy"),
     ("survival", "Surv", "Survival"),
     ("special_usage", "SpcUse", "Special Usage"),
+    ("potential", "Pot", "Potential"),
 )
 
 # ====================================================================
@@ -572,21 +573,36 @@ def _developing_players(league: League) -> "list[Player]":
 
 def _write_baseline_ratings(season: Season, players: "Iterable[Player]") -> None:
     """LG-04 — write an as-generated PlayerSeasonRating baseline row for each
-    founding Player (current stats, current age, current overall_rating,
-    potential=None). No development. Bulk-created in one query.
+    founding Player (current stats, current age, current overall_rating).
+    No development. Bulk-created in one query.
+
+    LG-05 — also computes each Player's ``potential`` (a scouting estimate at
+    founding) via a fresh ``pot_rng`` (one gauss draw per player), sets it on
+    the Player, writes it into the baseline rating row, and persists the
+    Player.potential mutations in one ``bulk_update``.
     """
-    rows = [
-        PlayerSeasonRating(
-            player=p,
-            season=season,
-            age=p.age,
-            overall_rating=p.overall_rating,
-            potential=None,
-            **{name: getattr(p, name) for name in STAT_FIELDS},
+    players = list(players)
+    pot_rng = random.Random()
+    rows = []
+    for p in players:
+        pot = development.compute_potential(
+            {name: getattr(p, name) for name in STAT_FIELDS},
+            p.age if p.age is not None else 25,
+            pot_rng,
         )
-        for p in players
-    ]
+        p.potential = pot
+        rows.append(
+            PlayerSeasonRating(
+                player=p,
+                season=season,
+                age=p.age,
+                overall_rating=p.overall_rating,
+                potential=pot,
+                **{name: getattr(p, name) for name in STAT_FIELDS},
+            )
+        )
     PlayerSeasonRating.objects.bulk_create(rows)
+    Player.objects.bulk_update(players, ["potential"])
 
 
 def _develop_league_for_new_season(
@@ -600,6 +616,10 @@ def _develop_league_for_new_season(
     cross-League guard.
     """
     rng = random.Random()
+    # LG-05 — a SECOND, independent Random instance for the potential gauss
+    # draw, so LG-04's pinned develop RNG sequence (1 gauss + 19 uniform per
+    # player) stays byte-unchanged.
+    pot_rng = random.Random()
     players = _developing_players(league)
     if not players:
         return
@@ -653,6 +673,15 @@ def _develop_league_for_new_season(
         else:
             player.total_games += development.free_agent_games_tick(median_active, rng)
 
+        # LG-05 — recompute potential on the POST-development stats + the
+        # already-incremented age, with the independent pot_rng.
+        pot = development.compute_potential(
+            {name: getattr(player, name) for name in STAT_FIELDS},
+            player.age,
+            pot_rng,
+        )
+        player.potential = pot
+
         overall = sum(new_stats.values()) / len(STAT_FIELDS)
         rating_rows.append(
             PlayerSeasonRating(
@@ -660,12 +689,14 @@ def _develop_league_for_new_season(
                 season=new_season,
                 age=player.age,
                 overall_rating=overall,
-                potential=None,
+                potential=pot,
                 **new_stats,
             )
         )
 
-    Player.objects.bulk_update(players, [*STAT_FIELDS, "age", "total_games"])
+    Player.objects.bulk_update(
+        players, [*STAT_FIELDS, "age", "total_games", "potential"]
+    )
     PlayerSeasonRating.objects.bulk_create(rating_rows)
 
 

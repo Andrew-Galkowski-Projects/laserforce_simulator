@@ -52,9 +52,7 @@
                                     </th>
                                 {% endif %}
                             {% endfor %}
-                            {# Fixed (non-sortable) bio + rating-proxy columns. MMR / Rank /
-                               Potential are placeholders until STAT-PROXY-01 (see stats.md).
-                               Abbreviated headers; full names in the title tooltip. #}
+                            {# Fixed (non-sortable) bio columns. MMR / Rank are placeholders until STAT-PROXY-01 (see stats.md). Abbreviated headers; full names in the title tooltip. #}
                             <th id="free-agents-th-age" title="Age">Age</th>
                             <th id="free-agents-th-home_site" title="Home Site">Site</th>
                             <th id="free-agents-th-height" title="Height">Ht</th>
@@ -62,7 +60,6 @@
                             <th id="free-agents-th-started" title="Started Playing Age">Start</th>
                             <th id="free-agents-th-mmr" title="MMR">MMR</th>
                             <th id="free-agents-th-rank" title="Rank">Rank</th>
-                            <th id="free-agents-th-potential" title="Potential">Pot</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -91,12 +88,12 @@
                             <td>{{ player.accuracy }}</td>
                             <td>{{ player.survival }}</td>
                             <td>{{ player.special_usage }}</td>
+                            <td>{{ player.potential|floatformat:1|default:"—" }}</td>
                             <td>{{ player.age|default:"-" }}</td>
                             <td>{{ player.home_site|default:"-" }}</td>
                             <td>{{ player.height|default:"-" }}</td>
                             <td>{{ player.total_games }}</td>
                             <td>{{ player.started_playing_age|default:"-" }}</td>
-                            <td>-</td>
                             <td>-</td>
                             <td>-</td>
                         </tr>
