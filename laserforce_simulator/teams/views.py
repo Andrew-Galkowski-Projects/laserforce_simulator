@@ -368,6 +368,7 @@ _SORT_KEYS: dict[str, str] = {
     "accuracy": "accuracy",
     "survival": "survival",
     "special_usage": "special_usage",
+    "potential": "potential",
 }
 
 # LG-00c — 23-entry column display spec (single source of truth for

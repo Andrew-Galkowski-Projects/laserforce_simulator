@@ -310,3 +310,85 @@ class TestFreeAgentsPerPageSelector(TestCase):
         content = response.content.decode()
         self.assertIn('name="sort"', content)
         self.assertIn('name="dir"', content)
+
+
+# ---------------------------------------------------------------------------
+# LG-05 — Potential is SORTABLE on Free Agents (nulls-last both directions)
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-05-player-potential-seam-contract.md``
+# §5 / §6: ``?sort=potential&dir=desc|asc`` orders rows by ``Player.potential``
+# with NULLS LAST in BOTH directions; the ``free-agents-th-potential`` header
+# renders as a sortable ``<a ... sort=potential ...>`` link (NOT the fixed
+# placeholder it was before LG-05); a player's potential value renders in its
+# row.
+#
+# Uses the Django test ``Client`` against the wired ``players_free_agents`` URL
+# so the view's nulls-last ORM sort runs end-to-end. Free agents are pool-team
+# players; ``Player.potential`` is set EXPLICITLY (the fixture bypasses
+# ``league_create`` so the field defaults to ``None``). Appended as NEW classes;
+# no existing class is modified. These WILL fail until the Code agent lands
+# ``Player.potential`` + the ``"potential"`` sort key + the sortable header.
+
+
+class TestFreeAgentsPotentialSortable(TestCase):
+    """LG-05 — Potential is a sortable column on Free Agents (nulls-last both
+    directions)."""
+
+    URL_NAME = "players_free_agents"
+
+    def setUp(self) -> None:
+        self.league = _make_league("FAPotSortL")
+        self.season, _ = _make_active_season(self.league, n_teams=2)
+        self.pool = self.league.free_agent_pool
+        self.high = Player.objects.create(
+            team=self.pool, name="FAPotHigh", potential=90.0
+        )
+        self.mid = Player.objects.create(
+            team=self.pool, name="FAPotMid", potential=50.0
+        )
+        self.low = Player.objects.create(
+            team=self.pool, name="FAPotLow", potential=10.0
+        )
+        self.nul = Player.objects.create(
+            team=self.pool, name="FAPotNull", potential=None
+        )
+
+    def _get(self, *, query: str = ""):
+        from django.urls import reverse
+
+        url = reverse(self.URL_NAME, args=[self.league.id])
+        if query:
+            url = f"{url}?{query}"
+        return self.client.get(url)
+
+    def test_sortable_header_renders_as_link(self) -> None:
+        content = self._get().content.decode()
+        self.assertIn("free-agents-th-potential", content)
+        idx = content.index('id="free-agents-th-potential"')
+        window = content[idx : idx + 400]
+        self.assertIn("<a", window)
+        self.assertIn("sort=potential", window)
+
+    def test_potential_value_renders_in_row(self) -> None:
+        content = self._get(query="per_page=100").content.decode()
+        self.assertIn("90.0", content)
+
+    def test_sort_desc_orders_high_to_low_nulls_last(self) -> None:
+        content = self._get(
+            query="sort=potential&dir=desc&per_page=100"
+        ).content.decode()
+        self.assertLess(content.index("FAPotHigh"), content.index("FAPotMid"))
+        self.assertLess(content.index("FAPotMid"), content.index("FAPotLow"))
+        self.assertLess(content.index("FAPotLow"), content.index("FAPotNull"))
+
+    def test_sort_asc_orders_low_to_high_nulls_still_last(self) -> None:
+        content = self._get(
+            query="sort=potential&dir=asc&per_page=100"
+        ).content.decode()
+        self.assertLess(content.index("FAPotLow"), content.index("FAPotMid"))
+        self.assertLess(content.index("FAPotMid"), content.index("FAPotHigh"))
+        self.assertLess(content.index("FAPotHigh"), content.index("FAPotNull"))
+
+    def test_sort_potential_returns_200(self) -> None:
+        self.assertEqual(self._get(query="sort=potential&dir=desc").status_code, 200)

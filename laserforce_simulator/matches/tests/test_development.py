@@ -41,6 +41,27 @@ from matches.development import (
     free_agent_games_tick,
 )
 
+# LG-05 — pure potential math (seam names locked at
+# ``.claude/worktrees/lg-05-player-potential-seam-contract.md`` §2/§3). These
+# imports + every ``TestComputePotential*`` / ``TestProjectPeakOverall`` class
+# below WILL ImportError / fail until the Code agent lands the two new pure
+# functions + the three constants in ``matches/development.py`` — that is the
+# expected TDD red state, NOT a defect in this file.
+from matches.development import (  # noqa: E402
+    DEFAULT_SCOUTING_BUDGET,
+    POTENTIAL_MAX_SD,
+    _POTENTIAL_HORIZON_AGE,
+    _bound,
+    _project_peak_overall,
+    compute_potential,
+)
+
+
+def _current_overall(stats: dict[str, int]) -> float:
+    """The current overall = mean of the 19 stats (the contract's floor)."""
+    return sum(stats[name] for name in STAT_FIELDS) / len(STAT_FIELDS)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -515,6 +536,63 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
             msg=f"stdout={result.stdout!r} stderr={result.stderr!r}",
         )
 
+    def test_potential_functions_pull_in_no_django(self) -> None:
+        """LG-05 — exercising ``_project_peak_overall`` + ``compute_potential``
+        in a fresh subprocess must not pull in ``django.*`` (the two new
+        functions add NO new import; the frozen allowlist is unchanged)."""
+        import os
+        import pathlib
+        import subprocess
+        import sys
+        import textwrap
+
+        here = pathlib.Path(__file__).resolve()
+        project_root = None
+        for parent in here.parents:
+            if (parent / "manage.py").exists():
+                project_root = parent
+                break
+        self.assertIsNotNone(project_root, "could not locate manage.py from test file")
+
+        script = textwrap.dedent(f"""
+            import random
+            import sys
+            sys.path.insert(0, {str(project_root)!r})
+            from matches.development import (
+                STAT_FIELDS,
+                _project_peak_overall,
+                compute_potential,
+            )
+
+            stats = {{name: 50 for name in STAT_FIELDS}}
+            _project_peak_overall(stats, 20)
+            compute_potential(stats, 20, random.Random(0))
+
+            offenders = sorted(
+                name
+                for name in sys.modules
+                if name == "django"
+                or name.startswith("django.")
+                or name == "matches.models"
+            )
+            if offenders:
+                print("LEAK:" + ",".join(offenders))
+                sys.exit(1)
+            sys.exit(0)
+            """)
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=f"stdout={result.stdout!r} stderr={result.stderr!r}",
+        )
+
     def test_develop_functions_pull_in_no_django(self) -> None:
         """Importing + exercising the develop functions in a fresh subprocess
         must not pull in ``django.*`` — they import nothing new (``random``
@@ -577,3 +655,236 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
             0,
             msg=f"stdout={result.stdout!r} stderr={result.stderr!r}",
         )
+
+
+# ===========================================================================
+# LG-05 — TestConstants (the three locked module constants)
+# ===========================================================================
+
+
+class TestPotentialConstants(SimpleTestCase):
+    """LG-05 — the three locked module-level constants
+    (``.claude/worktrees/lg-05-player-potential-seam-contract.md`` §2)."""
+
+    def test_default_scouting_budget_is_50(self) -> None:
+        self.assertEqual(DEFAULT_SCOUTING_BUDGET, 50)
+
+    def test_potential_max_sd_is_8(self) -> None:
+        self.assertEqual(POTENTIAL_MAX_SD, 8.0)
+
+    def test_horizon_age_is_40(self) -> None:
+        self.assertEqual(_POTENTIAL_HORIZON_AGE, 40)
+
+
+# ===========================================================================
+# LG-05 — TestProjectPeakOverall (deterministic, NO rng, climbs young, flat 40+)
+# ===========================================================================
+
+
+class TestProjectPeakOverall(SimpleTestCase):
+    """``_project_peak_overall(stats, age)`` rolls the LG-04 age curve forward
+    noise-free to ``_POTENTIAL_HORIZON_AGE``, tracking the running-max overall.
+    Consumes NO RNG; deterministic; ``>= current overall`` by construction; a
+    40+ player returns the current overall EXACTLY (the loop body never runs)."""
+
+    def test_young_player_peak_strictly_above_current_overall(self) -> None:
+        # A young player's stats climb on the age curve so the projected peak is
+        # strictly greater than the current overall (DIRECTION, not magnitude).
+        stats = _flat_stats(50)
+        current = _current_overall(stats)
+        peak = _project_peak_overall(stats, 18)
+        self.assertGreater(peak, current, "young player peak should climb")
+
+    def test_floor_invariant_peak_never_below_current_overall(self) -> None:
+        # For any age the peak is >= current overall (the loop seeds best with
+        # the current overall before any projection).
+        stats = _flat_stats(50)
+        current = _current_overall(stats)
+        for age in (18, 25, 30, 35, 40, 45):
+            self.assertGreaterEqual(
+                _project_peak_overall(stats, age),
+                current,
+                f"peak below current overall at age {age}",
+            )
+
+    def test_age_40_returns_current_overall_exactly(self) -> None:
+        # At age == _POTENTIAL_HORIZON_AGE the while-loop body never runs so the
+        # function returns the current overall EXACTLY.
+        stats = _flat_stats(50)
+        current = _current_overall(stats)
+        self.assertEqual(_project_peak_overall(stats, 40), current)
+
+    def test_age_above_40_returns_current_overall_exactly(self) -> None:
+        # A 40+ declining player: loop never runs so peak == current overall.
+        stats = _flat_stats(70)
+        current = _current_overall(stats)
+        for age in (41, 45, 60):
+            self.assertEqual(
+                _project_peak_overall(stats, age),
+                current,
+                f"40+ player peak != current overall at age {age}",
+            )
+
+    def test_returns_float(self) -> None:
+        self.assertIsInstance(_project_peak_overall(_flat_stats(50), 20), float)
+
+    def test_deterministic_called_twice_identical(self) -> None:
+        stats = _flat_stats(55)
+        a = _project_peak_overall(stats, 19)
+        b = _project_peak_overall(stats, 19)
+        self.assertEqual(a, b)
+
+    def test_consumes_no_global_rng(self) -> None:
+        # The function takes NO rng arg and must not touch the global RNG.
+        random.seed(123)
+        before = random.getstate()
+        _project_peak_overall(_flat_stats(50), 20)
+        self.assertEqual(random.getstate(), before)
+
+    def test_does_not_mutate_input_stats(self) -> None:
+        stats = _flat_stats(50)
+        snapshot = dict(stats)
+        _project_peak_overall(stats, 20)
+        self.assertEqual(stats, snapshot, "input mapping must not be mutated")
+
+
+# ===========================================================================
+# LG-05 — TestComputePotential (floor/cap clamp, budget->sd band, one gauss draw)
+# ===========================================================================
+
+
+class _CountingRandom(random.Random):
+    """A ``random.Random`` subclass that counts ``gauss`` calls so we can pin
+    that ``compute_potential`` draws EXACTLY ONE gaussian per call."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.gauss_calls = 0
+
+    def gauss(self, mu, sigma):  # type: ignore[override]
+        self.gauss_calls += 1
+        return super().gauss(mu, sigma)
+
+
+class TestComputePotential(SimpleTestCase):
+    """``compute_potential(stats, age, rng, *, scouting_budget=...)`` returns a
+    float in ``[current_overall, 100.0]`` centred on the noise-free ceiling
+    (``_project_peak_overall``) plus exactly one ``rng.gauss(0, sd)`` draw,
+    where ``sd = POTENTIAL_MAX_SD * (1 - scouting_budget/100)``."""
+
+    def test_result_at_least_current_overall_floor(self) -> None:
+        # Over many seeds the result never drops below the current overall floor.
+        stats = _flat_stats(50)
+        floor = _current_overall(stats)
+        for seed in range(50):
+            value = compute_potential(stats, 25, random.Random(seed))
+            self.assertGreaterEqual(value, floor, f"below floor at seed {seed}")
+
+    def test_result_at_most_100_cap(self) -> None:
+        # A maxed-out young player with a big positive draw still caps at 100.0.
+        stats = _flat_stats(99)
+        for seed in range(50):
+            value = compute_potential(stats, 18, random.Random(seed))
+            self.assertLessEqual(value, 100.0, f"above cap at seed {seed}")
+
+    def test_negative_gauss_clamped_to_floor(self) -> None:
+        # Force a large NEGATIVE gauss draw with a tiny scouting_budget (wide
+        # band) and assert the result is clamped UP to the current-overall
+        # floor, never below it, even when ceiling + gauss < floor.
+        stats = _flat_stats(50)
+        floor = _current_overall(stats)
+        # Seed-search for a seed whose first gauss(0, sd) draw at budget=0 is
+        # strongly negative, so ceiling + draw would fall below the floor.
+        sd = POTENTIAL_MAX_SD  # budget 0 means sd == POTENTIAL_MAX_SD
+        chosen_seed = None
+        for seed in range(200):
+            probe = random.Random(seed)
+            if probe.gauss(0, sd) <= -sd:  # a clearly-negative draw
+                chosen_seed = seed
+                break
+        self.assertIsNotNone(chosen_seed, "no strongly-negative gauss seed found")
+        value = compute_potential(
+            stats, 35, random.Random(chosen_seed), scouting_budget=0
+        )
+        # An age-35 player projects a peak at-or-near the current overall, so a
+        # strongly-negative draw would push below the floor without the clamp.
+        self.assertGreaterEqual(value, floor)
+
+    def test_budget_100_gives_zero_sd_equals_bounded_ceiling(self) -> None:
+        # scouting_budget == 100 means sd == 0 means gauss contributes 0, so the
+        # value is exactly _bound(ceiling, floor, 100.0).
+        stats = _flat_stats(50)
+        age = 20
+        ceiling = _project_peak_overall(stats, age)
+        floor = _current_overall(stats)
+        expected = _bound(ceiling, floor, 100.0)
+        value = compute_potential(stats, age, random.Random(7), scouting_budget=100)
+        self.assertAlmostEqual(value, expected, places=6)
+
+    def test_higher_budget_tightens_band_around_ceiling(self) -> None:
+        # With a FIXED seed, the deviation from the noise-free ceiling shrinks as
+        # the scouting_budget rises (sd shrinks linearly to 0 at budget 100).
+        stats = _flat_stats(50)
+        age = 25
+        ceiling = _project_peak_overall(stats, age)
+        floor = _current_overall(stats)
+
+        def deviation(budget: int) -> float:
+            # A SEPARATE same-seed rng per call so the single gauss draw is
+            # identical in standard-normal terms; only sd (the multiplier)
+            # changes between budgets.
+            value = compute_potential(
+                stats, age, random.Random(99), scouting_budget=budget
+            )
+            return abs(value - _bound(ceiling, floor, 100.0))
+
+        dev_low = deviation(20)
+        dev_high = deviation(80)
+        # Higher budget means tighter band means smaller deviation from ceiling.
+        self.assertLessEqual(dev_high, dev_low)
+        # Budget 100 means zero deviation.
+        self.assertAlmostEqual(deviation(100), 0.0, places=6)
+
+    def test_ceiling_at_least_current_overall(self) -> None:
+        # The noise-free ceiling (compute_potential's centre) is >= current
+        # overall: re-asserts the _project_peak_overall floor through the
+        # compute_potential surface at budget 100 (sd 0).
+        stats = _flat_stats(50)
+        floor = _current_overall(stats)
+        value = compute_potential(stats, 22, random.Random(1), scouting_budget=100)
+        self.assertGreaterEqual(value, floor)
+
+    def test_exactly_one_gauss_draw(self) -> None:
+        # compute_potential draws EXACTLY ONE rng.gauss; _project_peak_overall
+        # draws nothing. Verified by a call-counting Random.
+        rng = _CountingRandom(42)
+        compute_potential(_flat_stats(50), 20, rng)
+        self.assertEqual(rng.gauss_calls, 1)
+
+    def test_one_gauss_draw_even_when_sd_zero(self) -> None:
+        # At budget 100 (sd == 0) the gauss is STILL drawn once (contributes 0).
+        rng = _CountingRandom(42)
+        compute_potential(_flat_stats(50), 20, rng, scouting_budget=100)
+        self.assertEqual(rng.gauss_calls, 1)
+
+    def test_returns_float(self) -> None:
+        self.assertIsInstance(
+            compute_potential(_flat_stats(50), 20, random.Random(0)), float
+        )
+
+    def test_default_scouting_budget_used_when_omitted(self) -> None:
+        # Omitting scouting_budget uses DEFAULT_SCOUTING_BUDGET (== 50): the
+        # explicit-default call and the omitted call produce the same value for
+        # a fixed seed.
+        stats = _flat_stats(50)
+        omitted = compute_potential(stats, 25, random.Random(5))
+        explicit = compute_potential(
+            stats, 25, random.Random(5), scouting_budget=DEFAULT_SCOUTING_BUDGET
+        )
+        self.assertEqual(omitted, explicit)
+
+    def test_does_not_mutate_input_stats(self) -> None:
+        stats = _flat_stats(50)
+        snapshot = dict(stats)
+        compute_potential(stats, 25, random.Random(0))
+        self.assertEqual(stats, snapshot, "input mapping must not be mutated")

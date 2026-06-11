@@ -215,17 +215,55 @@ contract
 [`.claude/worktrees/lg-04-player-development-seam-contract.md`](.claude/worktrees/lg-04-player-development-seam-contract.md),
 and impl notes in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
-### LG-05 · Player potential
+### LG-05 · [DONE] Player potential
 
 Each player carries a `potential` attribute: a dynamically computed estimate of their likely stat ceiling.
 
-- Computed at each season-end stat update, not on demand.
-- Derived from current player stats + the team's seasonal scouting budget allocation.
-- **Scouting budget** is a per-season allocation on the team. Higher budget = more accurate `potential`
-  estimate. Lower budget = noisier estimate with added randomness.
-- `potential` has a floor of `overall_rating` — it can never predict a player will regress below
-  their current average.
-- `potential` is not exposed in the UI until this phase is complete.
+The original framing tied the scouting-noise band to a **per-season scouting budget allocation on
+the team**. That framing is **superseded** the same way LG-04's "experience" framing was: LG-05
+ships the noise band off a **FIXED `DEFAULT_SCOUTING_BUDGET = 50` constant** (no per-(team, season)
+state exists yet), and **CAR-01** later promotes the budget to a per-team field — exactly the
+deferral ADR-0024 recorded for the coaching/scouting knob.
+
+**Status: DONE.** `potential` is a per-`Player` **projected peak overall** (a `FloatField`),
+computed at each **season-end** — the `league_create` baseline AND every per-League `next_season`
+rollover — alongside LG-04 development, never on demand. The compute is a **noise-free
+forward-projection** of the LG-04 age curve (`matches/development.py::_project_peak_overall`):
+the LG-04 per-stat curve is rolled forward from the player's current age to age 40 with **zero
+noise** (a `0.9` midpoint multiplier in place of LG-04's `rng.uniform(0.4, 1.4)`), tracking the
+**running-max overall** across the path — that running max is the ceiling, **floored at the
+player's current overall** (it can never predict regression below the present average) and
+**capped at 100**. `compute_potential(stats, age, rng, *, scouting_budget=DEFAULT_SCOUTING_BUDGET)`
+then lays a **scouting-noise band** over that ceiling: `sd = POTENTIAL_MAX_SD * (1 - budget/100)`
+(budget 0 → max sd, 100 → 0), exactly **one `rng.gauss(0, sd)` draw**, re-clamped to
+`[current_overall, 100]`. Both functions are **pure** (Django-free, no new import —
+`TestNoDjangoImportsLeaked` stays green), and LG-04's `develop_stat` / `develop_player_stats` are
+left **byte-unchanged**.
+
+The value lands in a **new live `Player.potential` FloatField** (nullable, default `None`;
+migration `teams/migrations/0012_player_potential.py`, single `AddField`, dep
+`0011_team_is_draw_team`, no backfill) AND fills the **`PlayerSeasonRating.potential`** column LG-04
+reserved-but-always-`None`. Two write sites in `matches/league_views.py` set it:
+`_write_baseline_ratings` (founding baseline) and `_develop_league_for_new_season` (rollover, on
+the POST-development stats + already-incremented age). Each rollover builds a **SEPARATE fresh
+`random.Random()`** for the gauss draw, INDEPENDENT of LG-04's develop RNG — so LG-04's pinned
+1-gauss-then-19-uniform sequence and its seeded develop output stay **byte-identical**. Players
+outside any league flow keep `potential = None`.
+
+**UI:** `potential` becomes a **sortable `Pot` column** on `player_ratings` + `free_agents`
+(nulls-last in both directions via `F("potential").desc/asc(nulls_last=True)`), a **render-only**
+cell on `team_roster`, a **live card** on the LG-06h player page (`#league-player-potential`,
+replacing the "Arrives with LG-05" stub), and the LG-04 ratings-history `Pot` column now lights up
+for rows written after LG-05. **NO Score Calibration re-baseline** — `potential` is **read-only to
+the simulator** (never a sim input), so no simulation mechanic changes and **no new ADR** (the
+column is a reversible nullable add, recomputed every rollover). MMR / Rank stay non-sortable `—`
+placeholders (STAT-PROXY-01); the global HX-01 career page and the LG-00c `/players/` list are
+untouched. The **Potential** CONTEXT.md term is already written. See
+[ADR-0024](docs/adr/0024-zengm-player-development-ratings-history.md) (the LG-05 consequences
+addendum), seam contract
+[`.claude/worktrees/lg-05-player-potential-seam-contract.md`](.claude/worktrees/lg-05-player-potential-seam-contract.md),
+and impl notes in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## LG-05 player
+potential`.
 
 ### INFRA-01 · Migrate from SQLite to PostgreSQL
 

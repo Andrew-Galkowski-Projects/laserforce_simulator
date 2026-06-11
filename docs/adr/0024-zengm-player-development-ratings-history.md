@@ -89,3 +89,20 @@ against this codebase.
 - **UI:** LG-04 fills the existing LG-06h `league-player-ratings-history-stub`
   with a minimal overall-rating-over-time trend + per-Season Stat table;
   Potential stays a `"—"` stub until LG-05.
+
+## Consequences — LG-05 (Player potential)
+
+LG-05 (2026-06-10) fills the **reserved `potential` column** this ADR added,
+via a **noise-free forward projection** of this ADR's age curve (Decision 2):
+the per-stat curve is rolled forward from the player's current age to age 40
+with zero noise (a `0.9` midpoint multiplier in place of the develop noise),
+tracking the running-max overall as the ceiling, **floored at the current
+overall** and capped at 100, plus a **scouting-noise band** off a fixed
+`DEFAULT_SCOUTING_BUDGET = 50`. The gauss draw runs on a **separate
+`random.Random()`** so LG-04's seeded develop output is byte-unchanged. The
+**per-team scouting/coaching budget** this ADR deferred (Consequences) **remains
+deferred to CAR-01**, which promotes the fixed constant to a per-team field.
+Because `potential` is **read-only to the simulator** (never a sim input — no
+Score Calibration re-baseline) and **reversible** (recomputed each rollover; a
+nullable `FloatField` add — `teams/0012_player_potential.py`), LG-05 needed
+**no new ADR**; this ADR stays Accepted/LG-04.

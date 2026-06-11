@@ -228,6 +228,75 @@ def develop_player_stats(
     }
 
 
+# ====================================================================
+# LG-05 — Player potential (projected peak overall_rating)
+# ====================================================================
+
+DEFAULT_SCOUTING_BUDGET: int = 50
+POTENTIAL_MAX_SD: float = 8.0
+_POTENTIAL_HORIZON_AGE: int = 40
+_POTENTIAL_MIDPOINT_MULT: float = 0.9
+
+
+def _project_stat_noise_free(current: int, stat_name: str, age: int) -> int:
+    """One stat's NOISE-FREE projected value for one season.
+
+    Mirrors ``develop_stat`` but deterministic: the ``rng.uniform(0.4, 1.4)``
+    midpoint multiplier is replaced by the fixed ``_POTENTIAL_MIDPOINT_MULT``
+    (0.9) and ``base_change_noise`` is dropped entirely. Consumes NO RNG.
+    """
+    group = _STAT_ARCHETYPE[stat_name]
+    raw = (base_change(age) + age_modifier(group, age)) * _POTENTIAL_MIDPOINT_MULT
+    lo, hi = change_limits(group, age)
+    delta = _bound(raw, lo, hi)
+    return _clamp_int(current + delta)
+
+
+def _project_peak_overall(stats: Mapping[str, int], age: int) -> float:
+    """Project the peak ``overall_rating`` reachable from ``stats`` at ``age``.
+
+    Rolls the noise-free age curve forward from ``age + 1`` to
+    ``_POTENTIAL_HORIZON_AGE`` (40) inclusive, developing every stat each
+    year via ``_project_stat_noise_free`` and tracking the running-max
+    overall (mean of the 19 stats). Seeds the running-max with the CURRENT
+    overall, so the result is always ``>= mean(stats)``. Consumes NO RNG;
+    when ``age >= 40`` the loop never runs and the current overall is
+    returned exactly.
+    """
+    current = {name: stats[name] for name in STAT_FIELDS}
+    best = sum(current[name] for name in STAT_FIELDS) / len(STAT_FIELDS)
+    a = age
+    while a < _POTENTIAL_HORIZON_AGE:
+        a += 1
+        current = {
+            name: _project_stat_noise_free(current[name], name, a)
+            for name in STAT_FIELDS
+        }
+        best = max(best, sum(current[name] for name in STAT_FIELDS) / len(STAT_FIELDS))
+    return best
+
+
+def compute_potential(
+    stats: Mapping[str, int],
+    age: int,
+    rng: random.Random,
+    *,
+    scouting_budget: int = DEFAULT_SCOUTING_BUDGET,
+) -> float:
+    """Compute a Player's ``potential`` — a projected peak ``overall_rating``.
+
+    The noise-free ``_project_peak_overall`` ceiling plus a scouting-noise
+    band (``sd = POTENTIAL_MAX_SD * (1 - scouting_budget / 100)``: budget 0
+    => max sd, 100 => 0), clamped to ``[current_overall, 100]``. Consumes
+    EXACTLY ONE ``rng.gauss`` draw (always drawn, even when ``sd == 0``).
+    """
+    ceiling = _project_peak_overall(stats, age)
+    sd = POTENTIAL_MAX_SD * (1 - scouting_budget / 100)
+    floor = sum(stats[name] for name in STAT_FIELDS) / len(STAT_FIELDS)
+    value = ceiling + rng.gauss(0, sd)
+    return _bound(value, floor, 100.0)
+
+
 def free_agent_games_tick(median_active: int, rng: random.Random) -> int:
     """Cosmetic ``total_games`` bump for a free-agent-pool player at rollover.
 

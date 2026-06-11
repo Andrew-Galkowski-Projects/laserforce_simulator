@@ -234,6 +234,10 @@ class Player(models.Model):
     home_site = models.CharField(max_length=100, blank=True, default="")
     height = models.CharField(max_length=20, blank=True, default="")
 
+    # LG-05 — projected peak overall_rating; set at league_create baseline and
+    # each next_season rollover. None for players outside any league flow.
+    potential = models.FloatField(null=True, blank=True, default=None)
+
     _STAT_VALIDATORS = [MinValueValidator(0), MaxValueValidator(100)]
 
     # Base stats that affect gameplay (0–100)

@@ -239,3 +239,65 @@ class TestTeamRosterTeamSelection(TestCase):
         content = response.content.decode()
         for team in (self.team_a, self.team_b, self.team_c):
             self.assertIn(team.name, content)
+
+
+# ---------------------------------------------------------------------------
+# LG-05 — Potential cell renders on the roster + bench tables
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/lg-05-player-potential-seam-contract.md``
+# §5 / §6: the trailing Potential placeholder cell in BOTH the starting-roster
+# and bench tables is replaced with ``{{ player.potential|floatformat:1|
+# default:"—" }}`` — a filled potential renders its value, a ``None`` potential
+# renders the em-dash ``—``.
+#
+# Uses the direct ``RequestFactory`` view call (the existing roster-test
+# pattern). ``Player.potential`` is set EXPLICITLY (the fixture bypasses
+# ``league_create`` so the field defaults to ``None``). Appended as a NEW class;
+# no existing class is modified. These WILL fail until the Code agent lands
+# ``Player.potential`` + the live Potential cell — the TDD red state.
+
+
+class TestTeamRosterPotentialCell(TestCase):
+    """LG-05 — the Potential cell renders ``player.potential`` (floatformat) on
+    both the starting-roster and bench tables; ``None`` renders ``—``."""
+
+    def setUp(self) -> None:
+        self.league = _make_league("RosterPotL")
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, _ = self.teams
+        self.league.current_team = self.team_a
+        self.league.save(update_fields=["current_team"])
+        # Give one starting player a filled potential, leave another None.
+        starters = list(self.team_a.active_players)
+        self.starter_with_pot = starters[0]
+        self.starter_with_pot.potential = 77.0
+        self.starter_with_pot.save(update_fields=["potential"])
+        self.starter_none = starters[1]  # potential stays None
+        # Bench players: one with a filled potential, one with None.
+        self.bench_with_pot = Player.objects.create(
+            team=self.team_a, name="BenchPotStar", potential=42.0
+        )
+        self.bench_none = Player.objects.create(
+            team=self.team_a, name="BenchPotNone", potential=None
+        )
+
+    def test_starting_table_renders_filled_potential_value(self) -> None:
+        content = team_roster(_get(self.league.id), self.league.id).content.decode()
+        # floatformat:1 renders 77.0 → "77.0".
+        self.assertIn("77.0", content)
+
+    def test_bench_table_renders_filled_potential_value(self) -> None:
+        content = team_roster(_get(self.league.id), self.league.id).content.decode()
+        self.assertIn("BenchPotStar", content)
+        self.assertIn("42.0", content)
+
+    def test_none_potential_renders_em_dash(self) -> None:
+        content = team_roster(_get(self.league.id), self.league.id).content.decode()
+        # The None-potential players render the em-dash placeholder (literal or
+        # HTML entity).
+        self.assertIn("BenchPotNone", content)
+        self.assertTrue(
+            ("—" in content) or ("&#8212;" in content) or ("&mdash;" in content),
+            msg="em-dash placeholder for a None potential not found",
+        )

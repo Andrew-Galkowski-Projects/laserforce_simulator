@@ -26,6 +26,12 @@ of the 19 stats + age + overall is persisted as `matches.PlayerSeasonRating`. Se
 [`matches/CLAUDE.md`](../matches/CLAUDE.md) **LG-04 player development + ratings history** section
 for the full mechanism.
 
+As of **LG-05 player potential**, `Player.potential` (a nullable `FloatField`, `default=None`;
+migration `0012_player_potential.py`) holds a per-Player **projected peak overall** — set at each
+League `next_season` rollover (and the founding `league_create` baseline) by LG-05 alongside
+development, **mutated in place** like the 19 stats. It is `None`/`default=None` for players outside
+any league flow. Details in [`matches/CLAUDE.md`](../matches/CLAUDE.md) **LG-05 player potential**.
+
 `stat_for_simulation(stat_name, role)` returns `min(int(raw_value * 1.2), 100)` when `role in self.preferred_roles`, otherwise the raw stat value. Invalid `stat_name` values raise `AttributeError` naturally (no explicit guard). Used by `PlayerRoundState` forwarding properties and `BatchSimulator._make_players` to apply the preferred-role boost at simulation time without affecting stored values or `overall_rating`.
 
 `PlayerForm` exposes all 19 stat fields (default 50) with "Set All to Average (50)" and "Set All to Elite (90)" preset buttons. Profile fields (age, started_playing_age, total_games, home_site, height) are also on the form; when adding a new player, the view pre-fills them via `_random_player_profile()`.
