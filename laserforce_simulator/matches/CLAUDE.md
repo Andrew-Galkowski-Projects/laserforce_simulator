@@ -5376,6 +5376,194 @@ NO awards caching, NO API/DRF endpoint.
   context); `templates/leagues/player_detail.html` — **CHANGED** (`league-player-awards-stub`
   → live `league-player-awards`).
 
+## LG-04 player development + ratings history
+
+The **first persisted mutation of `Player` stats in the league flow** — every prior LG slice
+was read-only/derived. At each per-League `next_season` rollover, every Player in the rolling
+League's **developing set** is aged one year and run through a **ZenGM-faithful age curve**
+that mutates their 19 live `Player` stat fields in place, and one immutable
+`PlayerSeasonRating` snapshot row is written for the new Season. Development is driven
+**purely by age** — `Player.total_games` is kept but **cosmetic** (ticked at rollover, never
+an input to the develop math). Implements [ADR-0024](../../docs/adr/0024-zengm-player-development-ratings-history.md)
+(the **Player development** / **Ratings history** CONTEXT.md terms are finalised there — this
+slice adds **no new CONTEXT.md term**). **NO Score Calibration re-baseline** (LG-04 mutates
+Stat *inputs* but changes no simulation *mechanic*, so the calibration targets are untouched).
+Seam contract:
+[`.claude/worktrees/lg-04-player-development-seam-contract.md`](../../.claude/worktrees/lg-04-player-development-seam-contract.md).
+
+**Model `PlayerSeasonRating` (`matches/models.py`).** Declared **immediately after the
+`Season` class and before `SeasonPhase`** (it FKs both `teams.Player` and `matches.Season`;
+`Season` is defined above it, `Player` already imported at the top of the file). An immutable
+per-Season snapshot of a Player's 19 stat ratings, age, and overall at the start of a Season —
+a **baseline** row at `league_create` (as-generated stats, no development) and a **developed**
+row at each `next_season`. A **read-only audit trail**: the live `teams.Player` stat fields
+remain the Simulator's source of truth; these rows are **never read back by the engine**.
+Fields: the **19 stat ints**, names **byte-for-byte identical to `Player`** — including the
+intentional **capital-O `Offensive_synergy`** (every other stat lowercase; source of truth
+`teams.player_generator._STAT_FIELDS`), **no validators** on the snapshot ints (the writer
+always supplies clamped `[0,100]` values); `age` = `IntegerField(null=True, blank=True)`
+(mirrors `Player.age`, which is nullable); `overall_rating` = `FloatField` (matches
+`Player.overall_rating`'s `sum/len` float); `potential` = `FloatField(null=True, blank=True)`,
+**reserved for LG-05 — always written as `None` in LG-04**. FKs `player` / `season` are both
+`on_delete=CASCADE` (deleted Player or Season drops its snapshots — disposable derived data,
+the ADR-0004 posture), related_names `Player.season_ratings` / `Season.player_ratings`.
+Constraint `unique(player, season)` named **`uniq_player_season_rating`** (one row per player
+per season — re-running a rollover must not duplicate). `Meta.ordering = ["player_id",
+"season_id"]`.
+
+**Migration `matches/migrations/0048_playerseasonrating.py`.** Exactly **one
+`CreateModel(PlayerSeasonRating)`** carrying all 21 fields + the `UniqueConstraint` +
+`Meta.ordering`. **NO `RunPython`, NO `RunSQL`, NO backfill** — existing Leagues/Seasons get no
+historical rows (the ADR-0004 disposable-data posture, the `0029`/`0041`/`0042`/`0047`
+precedent). Dependency `("matches", "0047_seasonphase_tournament_subconfig")` (the current
+latest matches migration); the `teams.Player` FK dependency is resolved automatically by
+`makemigrations`.
+
+**Pure module `matches/development.py` (Django-free).** Frozen import allowlist — `dataclasses`,
+`typing`, `random`, `collections` ONLY; **NO** Django / ORM / `datetime` / `math` / I/O /
+logging. The 19 stat field NAMES are **hand-rolled locally** (NOT imported from `teams`/Django,
+mirroring `matches/draw.py` / `matches/bracket.py` / `teams/roster_importer.py`), pinned equal
+to `teams.player_generator._STAT_FIELDS` by a single allowed test-only import. Defended by
+`matches/tests/test_development.py::TestNoDjangoImportsLeaked` (subprocess fresh-import +
+`sys.modules` walk — no module name starts with `django`). `random` is allowlisted because the
+develop math consumes an **injected** `random.Random`; production builds a **fresh
+`random.Random()` per rollover** and **stores NO seed** — the `PlayerSeasonRating` row IS the
+audit trail. The develop math, per ZenGM's `developSeason` with coaching fixed at **0**:
+- **`base_change(age) -> int`** — the ZenGM age base-change table (LOCKED, tunable): `≤21 → +2`,
+  `22–25 → +1`, `26–27 → 0`, `28–29 → −1`, `30–31 → −2`, `32–34 → −3`, `35–40 → −4`,
+  `41–43 → −5`, `≥44 → −6`. A `None` age never reaches it — the view coalesces `None` → `25`
+  before calling.
+- **`base_change_noise(age, rng) -> float`** — age-banded gaussian (young players volatile,
+  veterans predictable): `≤23 → bound(gauss(0,5), −4, 20)`, `24–25 → bound(gauss(0,5), −4, 10)`,
+  `≥26 → bound(gauss(0,3), −2, 4)`. **One draw per player per rollover**, shared across all 19
+  stats. The **effective base change** is `base_change(age) + base_change_noise(age, rng)`.
+- **19-stat archetype map** `_STAT_ARCHETYPE` — each stat assigned a ZenGM archetype group:
+  **`awareness`** (6: `player_awareness`, `game_awareness`, `resource_awareness`,
+  `decision_making`, `positioning`, `adaptability` — cognitive/court-sense, climb young, fade
+  last), **`athletic`** (3: `stamina`, `speed`, `flexibility` — physical tools peak early,
+  decline fast), **`team`** (6: `communication`, `teamwork`, `Offensive_synergy`,
+  `defensive_synergy`, `midfield_synergy`, `resupply_synergy` — coordination, slow steady
+  curve), **`skill`** (3: `resupply_efficiency`, `accuracy`, `special_usage` — trained mechanics
+  hold late), **`durable`** (1: `survival` — neutral, follows base change only). 6+3+6+3+1 = 19.
+  The mapping is **invented-by-analogy, locked-but-tunable** (no laser-tag regression data).
+  Per group, `age_modifier(group, age) -> float` and `change_limits(group, age) -> (lo, hi)`
+  fix that group's age behaviour (awareness has a widening early upper cap `7 + 5*(24-age)` for
+  `age ≤ 24`; athletic crashes `(-12, 2)`; durable is effectively unbounded `(-100, 100)`).
+- **`develop_stat(current, stat_name, age, effective_base_change, rng) -> int`** — one stat's
+  developed value: `delta = (effective_base_change + age_modifier(group, age)) *
+  rng.uniform(0.4, 1.4)`, bound to `change_limits(group, age)`, then `_clamp_int(current +
+  delta)` (round-then-floor to `[STAT_MIN=0, STAT_MAX=100]`, banker's rounding per the
+  `teams/career_stats.py` precedent).
+- **`develop_player_stats(stats, age, rng) -> dict[str, int]`** — develops all 19 stats for one
+  (already-aged) age; returns a fresh 19-key dict. **Pinned RNG order:** the noise draw (1
+  `gauss`) happens **first**, then the 19 `develop_stat` calls draw their `uniform(0.4, 1.4)` in
+  `STAT_FIELDS` order — exactly 1 gauss + 19 uniform draws per player per rollover, so a seeded
+  RNG is reproducible.
+- **`free_agent_games_tick(median_active, rng) -> int`** — the ONLY pure piece of the cosmetic
+  `total_games` tick: `rng.randint(0, max(0, median_active) // 2)` (degenerate no-active case
+  `median_active == 0` returns `0` deterministically).
+
+Everything in `development.py` is pure (RNG injected); the view owns all ORM work
+(developing-set query, appearance-count + median, `Player` mutation/save, `PlayerSeasonRating`
+writes).
+
+**`league_create` baseline write — `_write_baseline_ratings(season, players)`
+(`matches/league_views.py`).** A new private module-level helper, inside `league_create`'s
+existing `@transaction.atomic`, AFTER the founding Teams + Players + `free_agent_pool` pool and
+the founding draft `Season` exist. Writes an **as-generated** `PlayerSeasonRating` row for
+**every founding Player** — every competitive-Team player (active slots **and** bench) PLUS
+every `league.free_agent_pool` Player — tagged to the founding draft Season, carrying
+`age=p.age` (verbatim, may be `None`), the 19 stat fields copied straight off `p` via
+`getattr(p, name)`, `overall_rating=p.overall_rating`, `potential=None`. **No development, no
+age tick, no `total_games` tick.** One `bulk_create` for the whole founding set.
+
+**`next_season` develop loop — `_develop_league_for_new_season(league, new_season,
+latest_completed)` (`matches/league_views.py`).** At the **END** of `next_season`'s body,
+INSIDE its `@transaction.atomic`, AFTER the team carry-forward / map-pool rehydrate / phase
+copy, and BEFORE the final redirect; rows tag to **`new_season`** (the NEW Season). A failure
+rolls back the whole rollover (new Season + carry-forward + development) atomically. It:
+1. builds a **fresh `random.Random()`** (no stored seed);
+2. gathers the **developing set** via `_developing_players(league)` — the snapshot Teams'
+   players (active slots **+ bench**, i.e. full `team.players.all()` — do NOT use
+   `team.active_players`; bench players develop too) PLUS `league.free_agent_pool` players,
+   de-duplicated by pk. Snapshot Team ids come from `latest_completed.starting_team_ids_json`
+   (the frozen snapshot `next_season` already uses for carry-forward). **League-isolated by
+   construction; NO cross-League guard** — a Player in a different League is not developed and
+   gets no new-Season row;
+3. computes the completed-Season **appearance counts** once (ORM,
+   `PlayerRoundState.objects.filter(game_round__match__season=latest_completed).values(
+   "player_id").annotate(n=Count("id"))` — playoff rounds carry `match.season=NULL` per
+   Part2c-1 #3 and are **naturally excluded**, so only regular-season appearances count) and the
+   **`median_active`** (median over active-Team players' appearance counts; degenerate no-active
+   ⇒ `0`);
+4. partitions the set into active-roster vs free-agent-pool players (cheap membership test);
+5. **per player, in this LOCKED order:** coalesce `raw_age = player.age if not None else 25` →
+   **age tick** `player.age = raw_age + 1` (written even if it was `None` → `26`; the develop
+   math uses the incremented age) → `develop_player_stats({name: getattr(player, name)}, …)` →
+   mutate the 19 live fields in place → **`total_games` tick** (active player `+=` their exact
+   regular-season appearance count; free-agent `+= free_agent_games_tick(median_active, rng)`) →
+   stage a `PlayerSeasonRating(player, season=new_season, age=player.age, **new_stats,
+   overall_rating=sum(new_stats.values())/19, potential=None)` row;
+6. persists in **two bulk queries**: `Player.objects.bulk_update(players, fields=[*STAT_FIELDS,
+   "age", "total_games"])` and `PlayerSeasonRating.objects.bulk_create(rows)`.
+
+**LG-06h player-page stub fill (`league-player-ratings-history`).**
+`matches.league_screens.player_detail.player_detail` gains a context key **`ratings_history:
+list[dict]`** — one entry per `PlayerSeasonRating` row for this Player whose Season belongs to
+**this League**, **oldest-first** (ascending by `season_id`, so the trend reads left-to-right):
+`{season_id, season_name, age, overall_rating, potential (always None → renders "—"), stats:
+{name: value for STAT_FIELDS}}`. A Player with rows in another League does **not** see them.
+The key is added to `player_detail`'s frozen-keys docstring; imports `PlayerSeasonRating` and
+`from matches import development` (for `STAT_FIELDS`). `templates/leagues/player_detail.html`
+**replaces** the `league-player-ratings-history-stub` block with a live block whose DOM id
+drops the `-stub` suffix to **`league-player-ratings-history`** (the LG-03
+`league-player-awards` precedent — tests assert the live id present, the `-stub` id absent).
+Inside: a Chart.js overall-rating-over-time **trend** (`<canvas
+id="league-player-ratings-history-chart">` + a `json_script` id
+`league-player-ratings-history-data` of `[season_name, overall_rating]` pairs built in-template,
+the HX-01 pattern — solid per-Season line, dataset label `"Overall rating"`, x-axis `"Season"`,
+y-axis `"Overall rating"`, `pointRadius: 2`; the Chart.js CDN `<script>` is included on this
+page, NOT assumed from `base.html`), a per-Season stat table
+`<table id="league-player-ratings-history-table">` (`Season | Age | Ovr | Pot | <19 stat
+labels>`, oldest-first, `Pot` always `—` this slice, the 19 cells rendered explicitly in
+`STAT_FIELDS` order since Django can't dict-lookup by loop variable), and an empty-state
+`league-player-ratings-history-empty` (substring `"No ratings history"`). The global HX-01
+career page (`player_career_stats` / `/players/<id>/stats/`), the `league-player-awards` block,
+the other `-stub` cards, and the `league-player-potential` card (still `—` until LG-05) are
+**untouched**.
+
+**Determinism / scope (LOCKED).** Fresh `random.Random()` per rollover, **no stored seed** (the
+`PlayerSeasonRating` row is the audit trail) — development sits **outside the SIM-07/08 seed
+chain**; tests assert schema-level outcomes (age `+1`, one row per player, tick bounds, league
+isolation) and pin the develop math via seeded unit tests on the pure module, **never** exact
+unseeded stat values. **NO Score Calibration re-baseline.** `total_games` is cosmetic (never a
+develop input). **Deferred:** the per-team **coaching/scouting budget** knob (ZenGM scales
+development by a per-team budget; this app has no per-(team, season) state — coaching effect is
+fixed at **0**, the budget model deferred to a slice designed *with* LG-05's scouting budget),
+**retirement / replacement intake** (players age and decline indefinitely — its own later
+grill), and **`potential`** (reserved nullable column, computed in **LG-05**). Free agents
+outside any rolling League never age (an accepted gap).
+
+**Locked names (NEW).**
+- `matches.models.PlayerSeasonRating` — **NEW** model (19 stat ints incl. `Offensive_synergy`,
+  `age` nullable int, `overall_rating` float, `potential` nullable float always `None`, FKs
+  `player`/`season` both CASCADE, related_names `season_ratings`/`player_ratings`, constraint
+  `uniq_player_season_rating`, `Meta.ordering ["player_id", "season_id"]`; declared after
+  `Season`, before `SeasonPhase`).
+- `matches/migrations/0048_playerseasonrating.py` — **NEW** (one `CreateModel`, dep `0047`, no
+  `RunPython`).
+- `matches/development.py` — **NEW** pure module (allowlist `dataclasses`/`typing`/`random`/
+  `collections`): `STAT_FIELDS` (19), `STAT_MIN`/`STAT_MAX`, `_STAT_ARCHETYPE` (19),
+  `base_change`, `base_change_noise`, `age_modifier`, `change_limits`, `develop_stat`,
+  `develop_player_stats`, `free_agent_games_tick`, `_bound`, `_clamp_int`.
+- `matches.league_views._write_baseline_ratings(season, players)` — **NEW** (baseline
+  bulk_create); `_developing_players(league)` — **NEW** (developing-set gatherer);
+  `_develop_league_for_new_season(league, new_season, latest_completed)` — **NEW** (develop +
+  persist orchestrator).
+- `matches.league_screens.player_detail.player_detail` — **CHANGED** (`+ ratings_history`
+  context); `templates/leagues/player_detail.html` — **CHANGED** (`league-player-ratings-history-stub`
+  → live `league-player-ratings-history` + chart/table/empty DOM ids).
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)

@@ -43,7 +43,7 @@ standalone-sandbox model decision and
 [`.claude/worktrees/lg-02a-seam-contract.md`](.claude/worktrees/lg-02a-seam-contract.md)
 for the locked LG-02a names.
 
-Bracket rendered as a visual tree; results auto-advance winners (look at the
+Bracket rendered as a visual tree; results auto-advance winners (look at theC:\Users\Andrew Galkowski\PycharmProjects\zengm
 screenshots in `/Screenshots_and_video_examples/`). Once tournaments are wired
 into the League play loop (Part 2), relabel "Until end of season" → "Until
 playoffs" (LG-01d ships the former label) and extend the play loop through
@@ -175,15 +175,45 @@ new `player_awards` context list). Seam contract:
 [`.claude/worktrees/lg-03-season-awards-seam-contract.md`](.claude/worktrees/lg-03-season-awards-seam-contract.md);
 impl notes in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
-### LG-04 · Season-end stat updates
+### LG-04 · [DONE] Season-end stat updates
 
 At the end of each season, all players (on active teams or otherwise) receive a stat update.
-The update factors in:
-- **New experience** — games played this season
-- **Player age** — older players improve more slowly
-- **Prior experience** — players with more historical games have a smaller update magnitude
+The original framing factored in **new experience** (games played this season), **player age**,
+and **prior experience** (historical games), with default weights fixed in code but overridable
+per season — but the LG-04 grill (2026-06-10) confirmed the system is modeled on **ZenGM**,
+whose `developSeason` is driven **purely by an age curve** (in-game production never moves
+ratings). That framing is therefore **superseded**: LG-04 follows ZenGM — **age-driven**;
+**games-played is cosmetic** (it ticks a counter but is never a develop input), per
+[ADR-0024](docs/adr/0024-zengm-player-development-ratings-history.md).
 
-Default weights for these three factors are fixed in code but overridable per season by the league admin.
+**Status: DONE.** Development is a **ZenGM-faithful age curve** (young trend up, peak
+mid-to-late 20s, older decline increasingly fast; per-stat age modifiers + change limits +
+random noise, coaching fixed at 0), run **league-scoped at each `next_season` rollover** (the
+preseason analogue) over the rolling League's **developing set** — its snapshot Teams' players
+(active slots + bench) plus the `free_agent_pool` players: each Player is aged `+1`, its 19 live
+`Player` stat fields are **mutated in place** (the first persisted `Player`-stat mutation in the
+league flow), its `total_games` is **cosmetically ticked** (active player by their exact
+regular-season appearance count in the just-completed Season — playoff rounds carry
+`season=NULL` and are excluded; free-agent by a smaller random amount), and one immutable
+**`PlayerSeasonRating`** snapshot row (19 stats + age + `overall_rating` + a reserved nullable
+`potential`) is written for the new Season. A **baseline** `PlayerSeasonRating` row (as-generated
+stats, no development) is written for every founding Player at `league_create`; the live `Player`
+fields stay the Simulator's source of truth and the rating rows are a read-only audit trail. The
+develop math lives in a **Django-free pure module `matches/development.py`** (allowlist
+`dataclasses`/`typing`/`random`/`collections`, RNG **injected**, guarded by
+`TestNoDjangoImportsLeaked`); production builds a **fresh `random.Random()` per rollover and
+stores no seed** (the row is the audit trail). A migration ships
+(`0048_playerseasonrating.py`, one `CreateModel`, no backfill). The LG-06h
+`league-player-ratings-history-stub` becomes the live `league-player-ratings-history` block — a
+Chart.js overall-rating-over-time trend + per-Season stat table (Potential renders `—`).
+**NO Score Calibration re-baseline** (Stat *inputs* change, no simulation *mechanic*).
+**Deferred:** the per-team **coaching/scouting budget** knob (no per-(team, season) state yet —
+coaching effect fixed at 0, deferred to a slice designed with LG-05's scouting budget),
+**retirement / replacement intake**, and **`potential`** (reserved nullable column, computed in
+**LG-05**). See [ADR-0024](docs/adr/0024-zengm-player-development-ratings-history.md), seam
+contract
+[`.claude/worktrees/lg-04-player-development-seam-contract.md`](.claude/worktrees/lg-04-player-development-seam-contract.md),
+and impl notes in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
 ### LG-05 · Player potential
 
