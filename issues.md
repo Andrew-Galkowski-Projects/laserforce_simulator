@@ -862,3 +862,43 @@ overflow set). Logged for a future LG-06h responsive pass; not fixed here (out o
 
 No LG-04 bugs found. Test data: **ChromeTest LG04 League** (League 44, Season 50, Teams
 272–275 "#30" suffix) — torn down post-run.
+
+---
+
+## LG-05 player potential — web smoke (2026-06-11)
+
+Walked the four LG-05 surfaces against **ChromeTest LG05 Potential** (League 45, Season 51,
+draft) — potentials populate at the `league_create` baseline, so no rollover was needed. All 24
+players carried a non-null `Player.potential`, and **every potential ≥ its overall** (floor
+invariant) confirmed end-to-end via a live `manage.py shell` probe.
+
+✅ **Player Ratings** (`/leagues/45/stats/player-ratings/`) — new sortable **Pot** column
+(`#player-ratings-th-potential` → `?sort=potential&dir=…`); `dir=desc` ordered 73.6 / 69.1 /
+62.1 / 60.2 / 59.3 / 59.1 with the ` ↓` glyph; every Pot ≥ its Ovr; MMR/Rank still `-`. No
+console errors.
+✅ **Free Agents** (`/leagues/45/players/free-agents/`) — sortable Pot header present; rows
+render (pool players outside the developing set show `—`, the graceful None path). No console
+errors.
+✅ **Team Roster** (`/leagues/45/team/roster/?team_id=279`) — render-only Pot cells on the
+Starting Six (56.1 / 59.1 / 54.3, each ≥ overall); bench empty (6-player teams). No console
+errors.
+✅ **League player page** (`/leagues/45/players/5051/`) — `#league-player-potential` card shows
+the live **73.6** ("Projected peak overall rating."); the ratings-history Pot column renders
+73.6 (baseline `PlayerSeasonRating.potential`). No console errors.
+✅ Responsive — Player Ratings at 720×1115 (navbar collapses to hamburger, table-responsive
+scrolls) and 1280×900 (full dropdowns, horizontal scroll) both clean.
+
+### ~~LG05-1 [LOW] Multi-line `{# #}` comment rendered as literal text on Player Ratings /
+Free Agents (stale "Potential are placeholders")~~ — **FIXED in-PR**
+`templates/leagues/player_ratings.html:70` and `free_agents.html:55` carried a **multi-line**
+Django `{# … #}` comment — Django comments are single-line only, so the whole block rendered as
+visible page text (the LG00c-9 bug class). Pre-existing, but LG-05 made its content stale
+("MMR / Rank / **Potential** are placeholders") since Potential is no longer a placeholder.
+Fixed: collapsed both to single-line comments and dropped "Potential" (MMR / Rank only);
+`team_roster.html:34` (already single-line, so no leak) had the same stale text corrected.
+Verified gone after a server restart (the dev server had the old compiled template cached).
+
+Test data: **ChromeTest LG05 Potential** (League 45, Season 51, Teams 276–279 "#30" suffix) —
+left in the dev DB (league_create generates non-`ChromeTest`-prefixed teams the teardown script
+can't name-filter; dev data is disposable per ADR-0004). No ChromeTest-prefixed teams, matches,
+or saved rounds were created.

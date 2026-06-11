@@ -5564,6 +5564,141 @@ outside any rolling League never age (an accepted gap).
   context); `templates/leagues/player_detail.html` — **CHANGED** (`league-player-ratings-history-stub`
   → live `league-player-ratings-history` + chart/table/empty DOM ids).
 
+## LG-05 player potential
+
+Fills the `potential` column LG-04 reserved. At the `league_create` baseline AND each per-League
+`next_season` rollover, every Player in the developing set gets a **projected peak overall** — a
+ZenGM-faithful **forward projection** of their stats (the LG-04 age curve rolled forward
+**noise-free**) plus a **scouting-noise band**, clamped to `[current_overall, 100]`. The value is
+written to a NEW `teams.Player.potential` `FloatField` and into the already-existing
+`matches.PlayerSeasonRating.potential` column. Potential is **read-only to the simulator** (never a
+sim input) ⇒ **NO Score Calibration re-baseline** and **NO new ADR** (reversible — recomputed each
+rollover; only a nullable `FloatField` add). The CONTEXT.md **Potential** term is already written.
+Seam contract:
+[`.claude/worktrees/lg-05-player-potential-seam-contract.md`](../../.claude/worktrees/lg-05-player-potential-seam-contract.md).
+
+**Pure module additions — `matches/development.py` (still Django-free).** No new import: the two
+new functions + a private helper reuse the existing module surface (`base_change`, `age_modifier`,
+`change_limits`, `_STAT_ARCHETYPE`, `_bound`, `_clamp_int`, `STAT_FIELDS`), so the frozen
+`dataclasses`/`typing`/`random`/`collections` allowlist holds and
+`matches/tests/test_development.py::TestNoDjangoImportsLeaked` stays green. LG-04's `develop_stat`
+/ `develop_player_stats` are left **byte-unchanged** (a NEW noise-free per-stat helper is added
+instead of branching the existing one). New constants: **`DEFAULT_SCOUTING_BUDGET: int = 50`** (the
+FIXED LG-05 scouting budget — CAR-01 later promotes it to a per-team field),
+**`POTENTIAL_MAX_SD: float = 8.0`** (invented-by-analogy, locked-but-calibration-deferred — the
+same precedent as LG-04's age-curve magic numbers), **`_POTENTIAL_HORIZON_AGE: int = 40`**,
+**`_POTENTIAL_MIDPOINT_MULT: float = 0.9`**.
+- **`_project_stat_noise_free(current, stat_name, age) -> int`** (private) — one stat's
+  deterministic developed value: mirrors `develop_stat` but with **zero noise** — `raw =
+  (base_change(age) + age_modifier(group, age)) * _POTENTIAL_MIDPOINT_MULT` (the `0.9` midpoint in
+  place of `rng.uniform(0.4, 1.4)`), bound to `change_limits(group, age)`, then `_clamp_int(current
+  + delta)`. **Consumes NO RNG.**
+- **`_project_peak_overall(stats, age) -> float`** — rolls the LG-04 age curve forward noise-free
+  from the current `age` (caller coalesces a `None` age to `25`, the LG-04 convention) to
+  `_POTENTIAL_HORIZON_AGE = 40`, developing at the **incremented** age each step (LG-04
+  convention), and tracks the **running-max** overall (mean of the 19 stats, `/ 19`) across the
+  path. Seeds the running max with the **current overall** before any projection, so the result is
+  `>= mean(stats)` by construction (the floor). When `age >= 40` the loop body never runs and it
+  returns the current overall exactly. **Deterministic, consumes NO RNG** (no rng argument).
+- **`compute_potential(stats, age, rng, *, scouting_budget=DEFAULT_SCOUTING_BUDGET) -> float`** —
+  `ceiling = _project_peak_overall(stats, age)`; `sd = POTENTIAL_MAX_SD * (1 - scouting_budget /
+  100)` (budget 0 → max sd, 100 → 0); `floor = mean(stats)` (current overall); `value = ceiling +
+  rng.gauss(0, sd)`; returns `_bound(value, floor, 100.0)`. **Exactly ONE `rng.gauss` draw**, and
+  ONLY in `compute_potential` (`_project_peak_overall` draws nothing). The draw still fires when
+  `sd == 0` (`budget == 100`) but contributes `0`. Floor is the current overall so `potential` can
+  never read below a player's present overall; cap is `100.0`.
+
+**Separate-RNG invariant.** The potential gauss is drawn from a **fresh `random.Random()` built per
+rollover, SEPARATE from LG-04's develop RNG** — so LG-04's pinned 1-gauss-then-19-uniform sequence
+is unperturbed and its seeded develop output is **byte-identical**. No stored seed (the
+`PlayerSeasonRating.potential` row is the audit trail). In `_develop_league_for_new_season` the two
+`random.Random()` instances are distinct objects (pinned by a regression test).
+
+**Live field + migration.** `teams.models.Player.potential =
+models.FloatField(null=True, blank=True, default=None)` — a per-Player projected peak overall, set
+at each rollover (and the founding baseline), mutated in place like the stats; `None` for players
+outside a league flow. Migration **`teams/migrations/0012_player_potential.py`** — a single
+`AddField`, dep `0011_team_is_draw_team`, **NO `RunPython`, NO backfill** (ADR-0004 posture). **NO
+new `matches` migration** — `PlayerSeasonRating.potential` already exists (LG-04); LG-05 just stops
+writing it as `None`.
+
+**Two write sites (`matches/league_views.py`), both inside the existing `@transaction.atomic`
+blocks.**
+- **`_write_baseline_ratings(season, players)` (CHANGED).** Builds a fresh `pot_rng =
+  random.Random()`; for each founding Player computes `pot = compute_potential({name:
+  getattr(p, name) for name in STAT_FIELDS}, p.age if p.age is not None else 25, pot_rng)`, sets
+  `p.potential = pot`, writes `pot` into the baseline `PlayerSeasonRating(..., potential=pot)` row
+  (was `None`), and persists the live field via a new
+  `Player.objects.bulk_update(players, ["potential"])` over the founding set. Baseline **does apply
+  noise** — the founding potential is a scouting estimate, so the gauss band applies exactly as at a
+  rollover. `players` must be a concrete list (computed-over AND bulk_updated).
+- **`_develop_league_for_new_season(league, new_season, latest_completed)` (CHANGED).** Builds a
+  fresh `pot_rng = random.Random()` — a SECOND instance, INDEPENDENT of the develop `rng`. AFTER
+  each player's stats are developed and `player.age` is already incremented, computes `pot =
+  compute_potential({name: getattr(player, name) for name in STAT_FIELDS}, player.age, pot_rng)` on
+  the POST-development stats + incremented age, sets `player.potential = pot`, fills the developed
+  `PlayerSeasonRating(..., potential=pot)` row (was `None`), and APPENDS `"potential"` to the
+  EXISTING `Player.objects.bulk_update(players, fields=[*STAT_FIELDS, "age", "total_games",
+  "potential"])`.
+
+**Sort wiring.** `teams.views._SORT_KEYS += {"potential": "potential"}` (URL key → ORM target;
+`Player.potential` is a real field — `_coerce_sort` then accepts `?sort=potential` with no edit).
+`matches.league_views.RATING_SORT_KEYS_DISPLAY += ("potential", "Pot", "Potential")` as the 24th
+and LAST entry (after `("special_usage", "SpcUse", "Special Usage")`), driving the sortable `<th>`
+loop on the two ratings screens. Because `Player.potential` is nullable, the `player_ratings` and
+`free_agents` ORM-sort branches special-case the key with **`F("potential").desc(nulls_last=True)`
+/ `.asc(nulls_last=True)`** (`F` already imported in both) so a player with no potential never
+floats to the top, preserving the `"name"` secondary tiebreak. `teams.views._SORT_KEYS_DISPLAY` (the
+SEPARATE 23-entry global `/players/` display constant) is **UNTOUCHED** — adding `"potential"` to
+`_SORT_KEYS` surfaces no header there (confirmed blast-radius; the global view harmlessly accepts
+`?sort=potential` with no clickable header).
+
+**Four template surfaces.**
+- **Sortable** (`templates/leagues/player_ratings.html`, `templates/leagues/free_agents.html`): the
+  fixed placeholder `<th id="...-th-potential" title="Potential">Pot</th>` + its trailing
+  `<td>-</td>` placeholder cell are removed; the `Pot` column now renders via the `sort_keys` loop
+  (emitting the `<screen>-th-potential` id as a sortable `<a sort=potential>` link) plus a live data
+  cell `<td>{{ player.potential|floatformat:1|default:"—" }}</td>` immediately after the
+  `special_usage` cell, matching the loop order. The live cell renders the **em-dash `—`** (matching
+  `player_detail`), where the removed placeholders rendered the ASCII hyphen.
+- **Render-only** (`templates/leagues/team_roster.html`): in BOTH the starting-roster and bench
+  tables the trailing `Pot` placeholder `<td>-</td>` (the cell under the existing `<th>Potential</th>`
+  header) becomes `<td>{{ player.potential|floatformat:1|default:"—" }}</td>` — matching how
+  `overall_rating` is rendered (`|floatformat:1`) plus the em-dash default. No sort infra added.
+- **LG-06h card + history** (`templates/leagues/player_detail.html`): the `#league-player-potential`
+  card's static `&#8212;` "Arrives with LG-05" stub becomes the live
+  `{{ player.potential|floatformat:1|default:"—" }}` (the card id stays); the LG-04 ratings-history
+  `Pot` column (the row dicts already carry a `potential` key built in `player_detail.py` — **no
+  Python change needed**) now renders real values for rows written after LG-05 and `—` for pre-LG-05
+  `potential=None` rows.
+
+**Scope-out (LOCKED).** NO Score Calibration re-baseline (potential is never a sim input — no
+simulation mechanic changes). NO new ADR (reversible; recomputed each rollover). NO new `matches`
+migration (the `PlayerSeasonRating.potential` column already exists). NO new import in
+`matches/development.py` (`TestNoDjangoImportsLeaked` stays green). The global **HX-01 career page**
+(`templates/teams/player_career_stats.html` / `teams/views.py::player_career_stats`) is UNTOUCHED.
+**MMR / Rank** stay non-sortable `—` placeholders (STAT-PROXY-01) everywhere. `team_roster` is
+render-only (no sort infra). `teams.views._SORT_KEYS_DISPLAY` (the global `/players/` 23-entry
+constant) UNTOUCHED. `scouting_budget` is a FIXED CONSTANT (`DEFAULT_SCOUTING_BUDGET = 50`) — CAR-01
+promotes it to a per-team field.
+
+**Locked names (NEW).**
+- `matches/development.py` — **NEW** pure fns `_project_peak_overall(stats, age)`,
+  `compute_potential(stats, age, rng, *, scouting_budget=DEFAULT_SCOUTING_BUDGET)`, private
+  `_project_stat_noise_free(current, stat_name, age)`; constants `DEFAULT_SCOUTING_BUDGET = 50`,
+  `POTENTIAL_MAX_SD = 8.0`, `_POTENTIAL_HORIZON_AGE = 40`, `_POTENTIAL_MIDPOINT_MULT = 0.9`.
+- `teams.models.Player.potential` — **NEW** `FloatField(null=True, blank=True, default=None)`;
+  migration `teams/migrations/0012_player_potential.py` (one `AddField`, dep `0011_team_is_draw_team`,
+  no `RunPython`).
+- `matches.league_views._write_baseline_ratings` / `_develop_league_for_new_season` — **CHANGED**
+  (compute + persist `potential`); `matches.league_views.RATING_SORT_KEYS_DISPLAY` — **CHANGED**
+  (`+ ("potential", "Pot", "Potential")`).
+- `teams.views._SORT_KEYS` — **CHANGED** (`+ {"potential": "potential"}`).
+- `templates/leagues/player_ratings.html` / `free_agents.html` — **CHANGED** (placeholder `Pot` →
+  sortable column); `templates/leagues/team_roster.html` — **CHANGED** (render-only cell);
+  `templates/leagues/player_detail.html` — **CHANGED** (live `#league-player-potential` card + lit
+  history `Pot` column).
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)
