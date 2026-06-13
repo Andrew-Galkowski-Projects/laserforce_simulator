@@ -73,6 +73,12 @@ python manage.py game_analysis --round <id>
 
 CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci.yml`). Python version is 3.11.
 
+## Database
+
+- **PostgreSQL is canonical** (production, CI, Fly.io deploy); **SQLite is a guarded dev-only convenience**, used automatically when `DATABASE_URL` is unset. See [ADR-0025](docs/adr/0025-postgresql-canonical-sqlite-dev-only.md).
+- **Local Postgres:** `docker compose up` (the `postgres:16` service in `docker-compose.yml` sets `DATABASE_URL` to it). **Zero-setup dev:** leave `DATABASE_URL` unset to fall back to `db.sqlite3`.
+- `dbshell` and the management commands above run against whichever backend `DATABASE_URL` selects.
+
 ## Git Workflow
 
 - **ALWAYS create a feature branch BEFORE making commits for new work.** Never
