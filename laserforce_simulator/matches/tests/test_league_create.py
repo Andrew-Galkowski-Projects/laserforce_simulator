@@ -1506,3 +1506,118 @@ class TestLg05BaselineRatingsPotential(TestCase):
             self.assertIsNotNone(row.potential)
             self.assertGreaterEqual(row.potential, row.overall_rating - 1e-6)
             self.assertLessEqual(row.potential, 100.0)
+
+
+# ---------------------------------------------------------------------------
+# CAR-01 — manager names their own team on the create-League form
+# ---------------------------------------------------------------------------
+#
+# Seam contract: ``CreateLeagueForm`` gains an optional
+# ``manager_team_name = forms.CharField(max_length=100, required=False,
+# label="Your team name")`` (widget DOM id ``league-create-manager-team-name``),
+# inserted after ``league_name`` / before ``season_name``.
+#
+# View (inside its ``@transaction.atomic``): when ``manager_team_name`` is
+# non-blank after ``.strip()``, the alphabetical-first generated team is RENAMED
+# to that value and becomes ``league.current_team``; the named team stays ONE OF
+# THE N generated teams (league size == ``num_teams``). When blank/omitted, the
+# LG-01g behaviour is unchanged — ``current_team`` is the alphabetically-first
+# enrolled team (byte-identical to today).
+#
+# These exercise the REAL ``_generate_teams`` end-to-end (no ``mock.patch``) so
+# signature drift surfaces as a failure, mirroring ``TestSeamWithGenerateTeams``.
+
+
+class TestCar01ManagerTeamName(TestCase):
+    """CAR-01 — the manager's named team becomes one of the N + current_team."""
+
+    # ---- Named-team path (``manager_team_name`` non-blank) ----
+
+    def test_post_named_team_returns_302(self) -> None:
+        response = self.client.post(
+            reverse("league_create"),
+            _valid_payload(manager_team_name="Galkowski FC", num_teams="4"),
+        )
+        self.assertEqual(response.status_code, 302)
+
+    def test_current_team_is_the_named_team(self) -> None:
+        self.client.post(
+            reverse("league_create"),
+            _valid_payload(manager_team_name="Galkowski FC", num_teams="4"),
+        )
+        league = League.objects.get(name="Spring 2026")
+        self.assertIsNotNone(league.current_team)
+        self.assertEqual(league.current_team.name, "Galkowski FC")
+
+    def test_named_team_is_enrolled_in_season(self) -> None:
+        self.client.post(
+            reverse("league_create"),
+            _valid_payload(manager_team_name="Galkowski FC", num_teams="4"),
+        )
+        league = League.objects.get(name="Spring 2026")
+        season = league.seasons.first()
+        enrolled_ids = set(season.teams.values_list("id", flat=True))
+        self.assertIn(league.current_team_id, enrolled_ids)
+
+    def test_named_team_is_one_of_the_n_not_an_extra(self) -> None:
+        # league size == num_teams: the manager team is one of the N generated
+        # teams, NOT an extra (N+1).
+        self.client.post(
+            reverse("league_create"),
+            _valid_payload(manager_team_name="Galkowski FC", num_teams="4"),
+        )
+        season = Season.objects.get(name="Season 1")
+        self.assertEqual(season.teams.count(), 4)
+
+    def test_named_team_name_is_stored(self) -> None:
+        self.client.post(
+            reverse("league_create"),
+            _valid_payload(manager_team_name="Galkowski FC", num_teams="4"),
+        )
+        league = League.objects.get(name="Spring 2026")
+        self.assertEqual(league.current_team.name, "Galkowski FC")
+
+    def test_whitespace_name_is_stripped(self) -> None:
+        self.client.post(
+            reverse("league_create"),
+            _valid_payload(manager_team_name="  X  ", num_teams="4"),
+        )
+        league = League.objects.get(name="Spring 2026")
+        self.assertEqual(league.current_team.name, "X")
+
+    # ---- Blank-name fallback path (LG-01g behaviour unchanged) ----
+
+    def test_blank_name_falls_back_to_alphabetical_first(self) -> None:
+        # ``manager_team_name`` omitted entirely ⇒ current_team is the
+        # alphabetically-first enrolled team (LG-01g, byte-identical).
+        self.client.post(reverse("league_create"), _valid_payload(num_teams="4"))
+        league = League.objects.get(name="Spring 2026")
+        season = league.seasons.first()
+        first_alphabetical = sorted(t.name for t in season.teams.all())[0]
+        self.assertEqual(league.current_team.name, first_alphabetical)
+
+    def test_empty_string_name_falls_back_to_alphabetical_first(self) -> None:
+        self.client.post(
+            reverse("league_create"),
+            _valid_payload(manager_team_name="", num_teams="4"),
+        )
+        league = League.objects.get(name="Spring 2026")
+        season = league.seasons.first()
+        first_alphabetical = sorted(t.name for t in season.teams.all())[0]
+        self.assertEqual(league.current_team.name, first_alphabetical)
+
+    def test_blank_name_creates_num_teams_teams(self) -> None:
+        self.client.post(reverse("league_create"), _valid_payload(num_teams="4"))
+        season = Season.objects.get(name="Season 1")
+        self.assertEqual(season.teams.count(), 4)
+
+    # ---- Form-level (light) ----
+
+    def test_form_valid_with_blank_manager_team_name(self) -> None:
+        form = _Lg01jCreateLeagueForm(_valid_payload())
+        self.assertTrue(form.is_valid(), msg=form.errors.as_json())
+
+    def test_form_round_trips_populated_manager_team_name(self) -> None:
+        form = _Lg01jCreateLeagueForm(_valid_payload(manager_team_name="Galkowski FC"))
+        self.assertTrue(form.is_valid(), msg=form.errors.as_json())
+        self.assertEqual(form.cleaned_data["manager_team_name"], "Galkowski FC")
