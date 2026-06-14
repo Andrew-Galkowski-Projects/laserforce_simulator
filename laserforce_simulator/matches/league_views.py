@@ -745,10 +745,16 @@ def league_create(request) -> HttpResponse:
     # never appears in competitive team lists.
     pool_team = Team.objects.create(name=f"{cleaned['league_name']} Free Agents")
     league.free_agent_pool = pool_team
-    # LG-01g: auto-set the manager's current_team to the alphabetically-first
-    # generated Team so the TEAM > Schedule sidebar entry has a default
-    # target on the next render.
-    league.current_team = sorted(created_teams, key=lambda t: t.name)[0]
+    # LG-01g / CAR-01: auto-set the manager's current_team to the
+    # alphabetically-first generated Team. When the manager named their own
+    # team at create-time, rename that Team to the chosen name first; otherwise
+    # it keeps its generated name (the byte-identical LG-01g auto-pick).
+    manager_team = sorted(created_teams, key=lambda t: t.name)[0]
+    manager_name = (cleaned.get("manager_team_name") or "").strip()
+    if manager_name:
+        manager_team.name = manager_name
+        manager_team.save(update_fields=["name"])
+    league.current_team = manager_team
     league.save(update_fields=["current_team", "free_agent_pool"])
 
     # Seed a pool of 100–200 free agents (Players on no competitive
