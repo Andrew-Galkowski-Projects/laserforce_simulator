@@ -102,6 +102,18 @@ class CreateLeagueForm(forms.Form):
         ),
         label="League name",
     )
+    manager_team_name = forms.CharField(
+        max_length=100,
+        required=False,
+        label="Your team name",
+        widget=forms.TextInput(
+            attrs={
+                "id": "league-create-manager-team-name",
+                "class": "form-control",
+                "autocomplete": "off",
+            }
+        ),
+    )
     season_name = forms.CharField(
         max_length=100,
         initial="Season 1",
