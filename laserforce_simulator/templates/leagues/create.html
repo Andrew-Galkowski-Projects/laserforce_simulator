@@ -21,6 +21,13 @@
         </div>
 
         <div class="mb-3">
+            <label for="league-create-manager-team-name" class="form-label">Your team name</label>
+            {{ form.manager_team_name }}
+            {{ form.manager_team_name.errors }}
+            <div class="form-text">Optional. Name your own team — it becomes one of the generated teams and your career team. Leave blank to auto-pick.</div>
+        </div>
+
+        <div class="mb-3">
             <label for="league-create-season-name" class="form-label">Season name</label>
             {{ form.season_name }}
             {{ form.season_name.errors }}
