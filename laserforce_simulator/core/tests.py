@@ -344,3 +344,82 @@ class TestLandingView(TestCase):
             match = re.search(r'href="([^"]+)"[^>]*class="navbar-brand"', body)
         self.assertIsNotNone(match, "navbar-brand anchor with href not found in body")
         self.assertEqual(match.group(1), "/")
+
+
+# ---------------------------------------------------------------------------
+# INFRA-01 / ADR-0025 — SQLite/Postgres parity hardening
+# ---------------------------------------------------------------------------
+
+from .db_pragmas import set_sqlite_pragmas
+
+
+class Infra01SqlitePragmaGuardTests(TestCase):
+    """INFRA-01 / ADR-0025 — vendor guard on the SQLite PRAGMA receiver.
+
+    Postgres is the canonical backend; the ``connection_created`` receiver
+    that issues WAL/synchronous PRAGMAs must early-return on any non-SQLite
+    connection without ever opening a cursor (a PRAGMA against Postgres would
+    error). This is a pure unit test — it never touches the database and runs
+    identically on whichever backend the suite is configured for.
+    """
+
+    def test_sqlite_pragmas_skipped_on_non_sqlite_connection(self) -> None:
+        fake_connection = MagicMock()
+        fake_connection.vendor = "postgresql"
+
+        set_sqlite_pragmas(sender=None, connection=fake_connection)
+
+        # The vendor guard must short-circuit before any cursor is opened.
+        fake_connection.cursor.assert_not_called()
+
+
+class Infra01JsonFieldParityTests(TestCase):
+    """INFRA-01 / ADR-0025 — JSONField round-trip parity across backends.
+
+    SQLite stores ``JSONField`` as text while Postgres uses native ``jsonb``;
+    this DB test proves a nested ``MapZoneConfig.zone_data`` payload survives a
+    save + ``refresh_from_db()`` deep-equal on whichever backend is active, so
+    the SQLite-canonical fixtures and the Postgres-canonical production schema
+    cannot silently diverge.
+    """
+
+    def _make_map(self, name: str = "ParityMap"):
+        from .models import ArenaMap
+
+        png = io.BytesIO()
+        PILImage.new("RGB", (20, 15), color=(0, 128, 255)).save(png, format="PNG")
+        return ArenaMap.objects.create(
+            name=name,
+            image=SimpleUploadedFile(
+                "parity.png", png.getvalue(), content_type="image/png"
+            ),
+            img_width=20,
+            img_height=15,
+        )
+
+    def test_jsonfield_roundtrips_through_active_backend(self) -> None:
+        from .models import MapZoneConfig
+
+        zone_data = {
+            "zones": [[1, 0, 1], [4, 1, 5]],
+            "wall_meta": {"0,1": {"facing": "N", "height": 2.0}},
+            "elevation": [[0.0, 1.5, 0.0], [2.25, 0.0, 1.0]],
+        }
+
+        arena_map = self._make_map()
+        config = MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=20,
+            zone_data=zone_data,
+        )
+
+        config.refresh_from_db()
+
+        self.assertEqual(
+            config.zone_data,
+            {
+                "zones": [[1, 0, 1], [4, 1, 5]],
+                "wall_meta": {"0,1": {"facing": "N", "height": 2.0}},
+                "elevation": [[0.0, 1.5, 0.0], [2.25, 0.0, 1.0]],
+            },
+        )
