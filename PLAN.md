@@ -320,11 +320,40 @@ tests + docs only).
 A single-user play mode where the user acts as a team manager navigating a league season. This phase
 sits between the League system (Phase 5) and full multiplayer (Phase 6).
 
-### CAR-01 · Manager role and team assignment
+### CAR-01 · [DONE] Manager role and team assignment
 
 In single-player career mode, the user is a team manager (not a player in the simulation).
 The user is assigned to a team at the start of a career league. Each season the user manages their
 team through the league schedule.
+
+**Status: DONE.** The manager **names their own team at create-League time**, and that named team
+becomes one of the N generated teams **and** the League's `current_team`. **Locked grill decisions:**
+single-player `league` mode **IS** career mode — **NO new mode value**, **NO `Manager` / `User`
+model** (both deferred to **UX-01**; the manager is the implicit local user); `current_team` **is**
+the manager's career team, reusing the **existing `League.current_team` FK** (no new model field).
+
+**Surface = the create-League form field ONLY.** A new optional field
+`matches/forms.py::CreateLeagueForm.manager_team_name` (`forms.CharField(max_length=100,
+required=False, label="Your team name")`, DOM id `league-create-manager-team-name`) is inserted
+**after `league_name` / before `season_name`**, with a matching field row in
+`templates/leagues/create.html` between the league-name and season-name rows. `league_create`
+(inside its existing `@transaction.atomic`) renames the **alphabetical-first generated team** to the
+stripped `manager_team_name` and sets it as `league.current_team`; **blank name → today's LG-01g
+verbatim `sorted(created_teams, key=name)[0]` alphabetical auto-pick** (byte-identical, backward
+-compatible). The named team **stays one of the N** (league size unchanged = `num_teams`); the wiring
+runs at the current `current_team` position, **before** `Season.objects.create` / `season.teams.add`
+/ the phase loop / `_write_baseline_ratings`. No `clean()` change, no uniqueness validation (team
+names are not globally unique). The existing LG-01g 'your team' framing already surfaces
+`current_team`.
+
+**Scope-out (locked).** The **per-team scouting budget is DEFERRED** (out of CAR-01 scope — LG-05's
+FIXED `DEFAULT_SCOUTING_BUDGET = 50` stands until a later slice promotes it). **No migration, no new
+model field** (reuses `League.current_team`), **no new mode value**, **no `Manager` / `User` model**,
+**no simulator change**, **no Score Calibration re-baseline**, **no ADR**. Tests:
+`matches/tests/test_league_create.py::TestCar01ManagerTeamName`. Seam contract:
+[`.claude/worktrees/car-01-manager-team-assignment-seam-contract.md`](.claude/worktrees/car-01-manager-team-assignment-seam-contract.md);
+impl note in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## CAR-01 manager team
+assignment`.
 
 ### LG-01i · Season "One Week (Live)" replay UI
 
