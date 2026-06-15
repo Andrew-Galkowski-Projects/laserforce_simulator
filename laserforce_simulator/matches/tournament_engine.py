@@ -94,13 +94,10 @@ def play_next_node(tournament: Tournament) -> "BracketNode | None":
     Series has now clinched), or None when no node is playable (nothing ready
     / tournament complete).
 
-    LG-01i: refactored to ``find_next_playable_node()`` then delegate to
-    :func:`play_specific_node` (which carries the ``@transaction.atomic``). This
-    path stays byte-identical — ``play_specific_node(node, rng_seeds=None)``
-    draws fresh per-round seeds exactly as before. The LG-01i commit path calls
-    ``play_specific_node(watched_node, rng_seeds=captured_pair)`` to commit the
-    watched Match byte-identical to the preview, then loops ``play_next_node``
-    for the rest of the stage.
+    Refactored to ``find_next_playable_node()`` then delegate to
+    :func:`play_specific_node` (which carries the ``@transaction.atomic``), so
+    the LG-01i live-watch commit can play a SPECIFIC node (the manager's) while
+    this entry point keeps playing the next playable one.
     """
     node = tournament.find_next_playable_node()
     if node is None:
@@ -109,19 +106,15 @@ def play_next_node(tournament: Tournament) -> "BracketNode | None":
 
 
 @transaction.atomic
-def play_specific_node(
-    node: "BracketNode", *, rng_seeds: tuple[int, int] | None = None
-) -> "BracketNode | None":
-    """LG-01i: the per-Match resolve/advance body, taking the node DIRECTLY
-    (skips ``find_next_playable_node``) so the LG-01i commit can inject the
-    captured seed pair into the watched Match.
+def play_specific_node(node: "BracketNode") -> "BracketNode | None":
+    """The per-Match resolve/advance body, taking the node DIRECTLY (skips
+    ``find_next_playable_node``).
 
-    ``rng_seeds`` is keyword-only and defaults to ``None``: ``None`` ⇒ both
-    rounds draw fresh (byte-identical to ``play_next_node`` today); an injected
-    pair is threaded into ``simulate_match`` so the committed Match is
-    byte-identical to the previewed one (the SIM-07 replay guarantee).
-    @transaction.atomic — one Match = one transactional unit (ADR-0016
-    per-node-atomic precedent, now per-Match).
+    Used by :func:`play_next_node` (the next playable node) and by the LG-01i
+    live-watch playoff commit (the manager's specific node, before the rest of
+    the bracket stage is drained in the background). @transaction.atomic — one
+    Match = one transactional unit (ADR-0016 per-node-atomic precedent, now
+    per-Match).
     """
     # Defer the heavy import inside the function (not at module scope).
     from .simulation.entrypoints import BatchSimulator
@@ -139,14 +132,12 @@ def play_specific_node(
             node.team_b,
             match_type="tournament",
             before_round_hook=hook,
-            rng_seeds=rng_seeds,
         )
     else:
         match = BatchSimulator().simulate_match(
             node.team_a,
             node.team_b,
             match_type="tournament",
-            rng_seeds=rng_seeds,
         )
     match_winner = match.winner
     if match_winner is None:

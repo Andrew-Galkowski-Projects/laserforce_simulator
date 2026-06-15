@@ -2,21 +2,25 @@
 {% load static %}
 
 {% comment %}
-LG-01i — Season "One Week (Live)" preview-then-commit replay UI.
+LG-01i — Season "One Week (Live)": read-only replay of the manager's
+just-played game.
+
+The week is ALREADY committed when this page renders — the manager's game was
+played synchronously and the rest of the matchday / bracket stage drains in the
+background. This page just replays the manager's game tick-by-tick; there is NO
+commit / discard, results are final.
 
 Duplicates the MINIMAL SIM-05 playback block from
 templates/matches/game_round_events.html (the pb-* scrubber DOM + the
 pbPlayers/pbEvts/pbApply/pbSetTime/pbRefresh engine + the MAX_MISSILES role
 constant + the events-data/players-data json_script reads) — DROPS the charts,
 kill-feed and timeline-window pager. Scoreboard resources are read from each
-event's authoritative actor_/target_ metadata snapshots (not re-derived), and a
-synced event timeline is added. Team identity is fed from the preview
-bundle's per-round red_team_id/red_team_name/blue_team_id/blue_team_name (NOT
-{{ round.* }}, since no persisted GameRound exists at preview time).
+event's authoritative actor_/target_ metadata snapshots; a synced event
+timeline is added. Team identity is fed from the per-round
+red_team_id/red_team_name/blue_team_id/blue_team_name.
 
-Context (the seam): season, cursor_kind ("rr"|"playoff"), preview (the §2c
-bundle), preview_round (rounds[0]), preview_round_2 (rounds[1] or None),
-sidebar_links, sidebar_active.
+Context: season, cursor_kind ("rr"|"playoff"), preview_round (round 1),
+preview_round_2 (round 2 or None), sidebar_links, sidebar_active.
 {% endcomment %}
 
 {% block title %}{{ season.league.name }} — One Week (Live){% endblock %}
@@ -27,12 +31,6 @@ sidebar_links, sidebar_active.
     <main class="flex-grow-1" id="play-week-live-container">
         <div class="container-fluid py-3">
             <h3 class="mb-3">One Week (Live) — {{ season.league.name }}</h3>
-
-            {% if cursor_kind == "rr_bye" %}
-            <div id="play-week-live-bye-notice" class="alert alert-info">
-                Your team has a bye this matchday — there is no live game to preview.
-            </div>
-            {% endif %}
 
             {% if cursor_kind == "rr" %}
                 {{ preview_round.events_data|json_script:"events-data" }}
@@ -98,19 +96,12 @@ sidebar_links, sidebar_active.
                 </div>
             </div>
 
-            <div class="d-flex gap-2 mt-3">
-                <form id="play-week-live-commit-form" method="post"
-                      action="{% url 'play_week_live_commit' season.id %}">
-                    {% csrf_token %}
-                    <button type="submit" id="play-week-live-commit-submit"
-                            class="btn btn-success">Commit</button>
-                </form>
-                <form id="play-week-live-discard-form" method="post"
-                      action="{% url 'play_week_live_discard' season.id %}">
-                    {% csrf_token %}
-                    <button type="submit" id="play-week-live-discard-submit"
-                            class="btn btn-outline-secondary">Discard</button>
-                </form>
+            <div class="d-flex align-items-center gap-3 mt-3">
+                <a href="{% url 'season_dashboard' season.id %}"
+                   id="play-week-live-done" class="btn btn-primary">Back to dashboard</a>
+                <span class="text-muted small">
+                    The rest of the week plays in the background &mdash; results are final.
+                </span>
             </div>
         </div>
     </main>

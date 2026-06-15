@@ -55,18 +55,13 @@ urlpatterns = [
     ),
     path(
         "<int:season_id>/play-week-live/",
-        league_views.play_week_live_preview,
+        league_views.play_week_live,
         name="play_week_live",
     ),
     path(
-        "<int:season_id>/play-week-live/commit/",
-        league_views.play_week_live_commit,
-        name="play_week_live_commit",
-    ),
-    path(
-        "<int:season_id>/play-week-live/discard/",
-        league_views.play_week_live_discard,
-        name="play_week_live_discard",
+        "<int:season_id>/play-week-live/watch/",
+        league_views.play_week_live_watch,
+        name="play_week_live_watch",
     ),
     path(
         "<int:season_id>/standings/",

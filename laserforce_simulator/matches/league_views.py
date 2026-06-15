@@ -833,7 +833,7 @@ def league_create(request) -> HttpResponse:
 
 
 # ---------------------------------------------------------------------------
-# LG-01i — "One Week (Live)" preview-then-commit cursor resolution
+# LG-01i — "One Week (Live)" cursor resolution
 # ---------------------------------------------------------------------------
 
 
@@ -2524,57 +2524,115 @@ def play_status(request, season_id: int, job_id: str) -> JsonResponse:
 
 
 # ---------------------------------------------------------------------------
-# LG-01i — "One Week (Live)" preview-then-commit replay UI
+# LG-01i — "One Week (Live)" play-now-and-watch
 # ---------------------------------------------------------------------------
 
 
-def _live_pin_read(request: HttpRequest, season_id: int) -> Optional[dict]:
-    """LG-01i §4 — read the session pin for ``season_id`` (or ``None``)."""
-    pins = request.session.get("live_preview_pin")
-    if not isinstance(pins, dict):
-        return None
-    return pins.get(str(season_id))
+def play_week_live(request, season_id: int) -> HttpResponse:
+    """POST: play (commit) the manager's game for this week NOW, kick off the
+    rest of the matchday / bracket stage in the BACKGROUND, then redirect to the
+    live-watch page. Results are final the moment it runs — there is no preview
+    and no discard.
 
+    405 on non-POST; 400 dashboard re-render on a non-active Season / no live
+    game; a manager bye just runs the week in the background and returns to the
+    dashboard.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
 
-def _live_pin_write(request: HttpRequest, season_id: int, pin: dict) -> None:
-    """LG-01i §4 — write the session pin for ``season_id`` + mark modified."""
-    pins = request.session.get("live_preview_pin")
-    if not isinstance(pins, dict):
-        pins = {}
-    pins[str(season_id)] = pin
-    request.session["live_preview_pin"] = pins
+    season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
+
+    if season.state != "active":
+        return _render_season_dashboard_error(
+            request,
+            season,
+            f"Season must be active to play; got state={season.state!r}",
+        )
+
+    cursor = _resolve_live_cursor(season)
+
+    # Manager has a bye this matchday: nothing to watch — just run the week in
+    # the background and return to the dashboard.
+    if cursor is not None and cursor.get("kind") == "rr_bye":
+        play_season_task.delay(season.id, max_matchdays=1)
+        return redirect("season_dashboard", season_id=season.id)
+
+    if cursor is None or cursor.get("kind") not in ("rr", "playoff"):
+        return _render_season_dashboard_error(
+            request, season, "No live game to play for your team."
+        )
+
+    try:
+        if cursor["kind"] == "rr":
+            # Resolve the fixture's arena map (deterministic by fixture identity
+            # over the frozen pool snapshot) and play the manager's Round now.
+            from core.models import ArenaMap
+            from matches.tasks import _resolve_fixture_map
+
+            pool_by_id = ArenaMap.objects.in_bulk(
+                season.starting_map_pool_ids_json or []
+            )
+            arena_map = _resolve_fixture_map(season, cursor["fixture"], pool_by_id)
+            game_round = BatchSimulator().simulate_scheduled_round(
+                season,
+                cursor["red_team"],
+                cursor["blue_team"],
+                cursor["fixture"].round_number,
+                arena_map=arena_map,
+                season_phase=cursor["season_phase"],
+                leg=cursor["fixture"].leg,
+            )
+            round_ids = [game_round.id]
+        else:  # playoff — play the manager's bracket node (its 2-round Match)
+            from matches.tournament_engine import play_specific_node
+
+            node = cursor["node"]
+            play_specific_node(node)
+            node.refresh_from_db()
+            latest = (
+                node.series_matches.select_related("match")
+                .order_by("-game_number")
+                .first()
+            )
+            round_ids = (
+                list(
+                    latest.match.game_rounds.order_by("round_number").values_list(
+                        "id", flat=True
+                    )
+                )
+                if latest is not None and latest.match_id is not None
+                else []
+            )
+    except (ValidationError, ValueError) as exc:
+        return _render_season_dashboard_error(request, season, str(exc))
+
+    # Play the REST of the matchday / drain the rest of the bracket stage in the
+    # background (it skips the manager's just-played game via the played-keys /
+    # find-next-playable-node checks).
+    play_season_task.delay(season.id, max_matchdays=1)
+
+    # Hand the watched round id(s) to the watch page — just "what to show" (the
+    # game is already committed, so this is NOT a retry pin).
+    request.session["live_watch"] = {
+        "season_id": season.id,
+        "kind": cursor["kind"],
+        "round_ids": round_ids,
+    }
     request.session.modified = True
+    return redirect("play_week_live_watch", season_id=season.id)
 
 
-def _live_pin_clear(request: HttpRequest, season_id: int) -> None:
-    """LG-01i §4 — clear the session pin for ``season_id`` + mark modified."""
-    pins = request.session.get("live_preview_pin")
-    if isinstance(pins, dict):
-        pins.pop(str(season_id), None)
-        request.session["live_preview_pin"] = pins
-        request.session.modified = True
+def play_week_live_watch(request, season_id: int) -> HttpResponse:
+    """GET: replay the manager's just-played game (read-only — no commit, no
+    discard). Reads the watched round id(s) from the session handoff set by
+    :func:`play_week_live`, builds the SIM-05 playback payload from the
+    PERSISTED events (reusing ``matches.views.round_playback_payload``), and
+    renders ``seasons/play_week_live.html``.
 
-
-def _live_pin_valid(pin: Optional[dict], season, cursor: dict) -> bool:
-    """LG-01i §4 — a pin is VALID iff its ``cursor`` dict EQUALS the freshly
-    recomputed cursor identity AND its ``current_team_id`` equals the League's
-    current team. The equality check IS the auto-invalidation (once the watched
-    matchday/node is played, the recomputed cursor moves on)."""
-    if not pin:
-        return False
-    if pin.get("current_team_id") != season.league.current_team_id:
-        return False
-    return pin.get("cursor") == cursor.get("cursor")
-
-
-def play_week_live_preview(request, season_id: int) -> HttpResponse:
-    """LG-01i §3a — GET the live-preview page for the manager's watched game.
-
-    Resolves the live cursor; on a valid pin replays the SAME pinned seed(s),
-    else runs a FRESH preview and pins the captured seed(s). Renders
-    ``seasons/play_week_live.html`` with the §2c preview bundle. Returns 200 on
-    success, the 400 dashboard re-render on a non-active Season / no live entry,
-    405 on non-GET.
+    405 on non-GET; 400 dashboard re-render when there is no game to watch
+    (e.g. the page is visited directly without playing a week first).
     """
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
@@ -2582,230 +2640,58 @@ def play_week_live_preview(request, season_id: int) -> HttpResponse:
     season = get_object_or_404(Season, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    if season.state != "active":
+    watch = request.session.get("live_watch")
+    if (
+        not isinstance(watch, dict)
+        or watch.get("season_id") != season.id
+        or not watch.get("round_ids")
+    ):
         return _render_season_dashboard_error(
-            request,
-            season,
-            f"Season must be active to preview; got state={season.state!r}",
+            request, season, "No live game to watch — start one from the Play menu."
         )
 
-    cursor = _resolve_live_cursor(season)
-    if cursor is None or cursor.get("kind") not in ("rr", "playoff"):
+    from matches.views import round_playback_payload
+
+    by_id = {
+        gr.id: gr
+        for gr in GameRound.objects.filter(id__in=watch["round_ids"]).select_related(
+            "team_red", "team_blue"
+        )
+    }
+    rounds = []
+    for rid in watch["round_ids"]:
+        gr = by_id.get(rid)
+        if gr is None:
+            continue
+        events_data, players_data = round_playback_payload(gr, include_movement=False)
+        rounds.append(
+            {
+                "round_number": gr.round_number,
+                "red_team_id": gr.team_red_id,
+                "red_team_name": gr.team_red.name,
+                "blue_team_id": gr.team_blue_id,
+                "blue_team_name": gr.team_blue.name,
+                "events_data": events_data,
+                "players_data": players_data,
+            }
+        )
+
+    if not rounds:
         return _render_season_dashboard_error(
-            request, season, "No live game to preview for your team."
+            request, season, "No live game to watch — start one from the Play menu."
         )
-
-    sim = BatchSimulator()
-    pin = _live_pin_read(request, season_id)
-    valid_pin = _live_pin_valid(pin, season, cursor)
-
-    if cursor["kind"] == "rr":
-        # Resolve the SAME arena map the commit will use (deterministic by
-        # fixture identity over the frozen pool snapshot) and feed it to the
-        # preview — otherwise a mapped Season previews on the 3-zone fallback but
-        # commits on the map, so the watched game would NOT match the saved one
-        # (SIM-07 needs the same map alongside the same seed).
-        from core.models import ArenaMap
-        from matches.tasks import _resolve_fixture_map
-
-        pool_by_id = ArenaMap.objects.in_bulk(season.starting_map_pool_ids_json or [])
-        arena_map = _resolve_fixture_map(season, cursor["fixture"], pool_by_id)
-        bundle = sim.preview_scheduled_round(
-            season,
-            cursor["red_team"],
-            cursor["blue_team"],
-            cursor["fixture"].round_number,
-            arena_map=arena_map,
-            season_phase=cursor["season_phase"],
-            leg=cursor["fixture"].leg,
-            rng_seed=pin["seed"] if valid_pin else None,
-        )
-        if not valid_pin:
-            _live_pin_write(
-                request,
-                season_id,
-                {
-                    "kind": "rr",
-                    "current_team_id": season.league.current_team_id,
-                    "cursor": cursor["cursor"],
-                    "seed": bundle["seed"],
-                },
-            )
-    else:  # playoff (tournament Matches run map-less — arena_map=None — exactly
-        # as play_specific_node → simulate_match does, so commit matches preview)
-        bundle = sim.preview_tournament_match(
-            cursor["red_team"],
-            cursor["blue_team"],
-            rng_seeds=tuple(pin["seeds"]) if valid_pin else None,
-        )
-        if not valid_pin:
-            _live_pin_write(
-                request,
-                season_id,
-                {
-                    "kind": "playoff",
-                    "current_team_id": season.league.current_team_id,
-                    "cursor": cursor["cursor"],
-                    "seeds": bundle["seeds"],
-                },
-            )
 
     context = {
         "season": season,
-        "cursor_kind": bundle["kind"],
-        "preview": bundle,
-        "preview_round": bundle["rounds"][0],
-        "preview_round_2": bundle["rounds"][1] if len(bundle["rounds"]) > 1 else None,
+        "cursor_kind": watch.get("kind", "rr"),
+        "preview_round": rounds[0],
+        "preview_round_2": rounds[1] if len(rounds) > 1 else None,
         "sidebar_active": None,
         "sidebar_links": _build_league_sidebar_links(
             season.league, _pick_displayed_season(season.league), None
         ),
     }
     return render(request, "seasons/play_week_live.html", context)
-
-
-def play_week_live_commit(request, season_id: int) -> HttpResponse:
-    """LG-01i §3b — POST: commit the watched game with the pinned seed(s) +
-    fresh-sim the rest of the matchday (RR) / drain the bracket stage (playoff),
-    then 302 to the dashboard.
-
-    Missing / stale pin ⇒ 400 dashboard re-render ("Preview expired"). Pin is
-    cleared on a successful commit.
-    """
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
-
-    season = get_object_or_404(Season, pk=season_id)
-    request.session["last_league_id"] = season.league_id
-
-    if season.state != "active":
-        return _render_season_dashboard_error(
-            request,
-            season,
-            f"Season must be active to commit; got state={season.state!r}",
-        )
-
-    cursor = _resolve_live_cursor(season)
-
-    # A bye reached via a direct POST degrades to a plain matchday commit.
-    if cursor is not None and cursor.get("kind") == "rr_bye":
-        return _commit_rr_matchday(request, season, watched_fixture=None, pin_seed=None)
-
-    if cursor is None or cursor.get("kind") not in ("rr", "playoff"):
-        return _render_season_dashboard_error(
-            request, season, "No live game to commit for your team."
-        )
-
-    pin = _live_pin_read(request, season_id)
-    if not _live_pin_valid(pin, season, cursor):
-        return _render_season_dashboard_error(
-            request, season, "Preview expired — re-open the live preview."
-        )
-
-    if cursor["kind"] == "rr":
-        response = _commit_rr_matchday(
-            request, season, watched_fixture=cursor["fixture"], pin_seed=pin["seed"]
-        )
-    else:  # playoff
-        response = _commit_playoff(
-            request, season, watched_node=cursor["node"], pin_seeds=tuple(pin["seeds"])
-        )
-
-    _live_pin_clear(request, season_id)
-    return response
-
-
-def _commit_rr_matchday(
-    request, season: "Season", *, watched_fixture, pin_seed
-) -> HttpResponse:
-    """LG-01i §3b — RR commit. Inside ONE ``transaction.atomic`` (mirroring
-    ``play_week``): play the watched fixture with the injected ``pin_seed`` and
-    every OTHER fixture of the matchday fresh. ``watched_fixture is None`` (a bye
-    degrade) plays the whole matchday fresh."""
-    try:
-        with transaction.atomic():
-            from core.models import ArenaMap
-            from matches.tasks import _resolve_fixture_map
-
-            to_play, phase_by_id = _next_matchday_to_play(season)
-            if not to_play:
-                return redirect("season_dashboard", season_id=season.id)
-
-            team_ids = {f.team_a_id for _pid, f in to_play} | {
-                f.team_b_id for _pid, f in to_play
-            }
-            team_by_id = Team.objects.in_bulk(team_ids)
-            pool_ids = season.starting_map_pool_ids_json or []
-            pool_by_id = ArenaMap.objects.in_bulk(pool_ids)
-
-            watched_pair = (
-                frozenset({watched_fixture.team_a_id, watched_fixture.team_b_id})
-                if watched_fixture is not None
-                else None
-            )
-
-            for phase_id, fixture in to_play:
-                team_a = team_by_id[fixture.team_a_id]
-                team_b = team_by_id[fixture.team_b_id]
-                arena_map = _resolve_fixture_map(season, fixture, pool_by_id)
-                this_pair = frozenset({fixture.team_a_id, fixture.team_b_id})
-                inject_seed = (
-                    pin_seed
-                    if watched_pair is not None
-                    and this_pair == watched_pair
-                    and fixture.round_number == watched_fixture.round_number
-                    and fixture.leg == watched_fixture.leg
-                    else None
-                )
-                BatchSimulator().simulate_scheduled_round(
-                    season,
-                    team_a,
-                    team_b,
-                    fixture.round_number,
-                    arena_map=arena_map,
-                    season_phase=phase_by_id.get(phase_id),
-                    leg=fixture.leg,
-                    rng_seed=inject_seed,
-                )
-    except (ValidationError, ValueError) as exc:
-        return _render_season_dashboard_error(request, season, str(exc))
-
-    return redirect("season_dashboard", season_id=season.id)
-
-
-def _commit_playoff(
-    request, season: "Season", *, watched_node, pin_seeds
-) -> HttpResponse:
-    """LG-01i §3b — playoff commit. Commit the watched node byte-identical to the
-    preview (inject ``pin_seeds``) then drain the rest of the stage fresh (the
-    already-resolved watched node is skipped by ``find_next_playable_node``).
-    Then ``complete_if_finished()``."""
-    from matches.tournament_engine import play_next_bracket_round, play_specific_node
-
-    try:
-        play_specific_node(watched_node, rng_seeds=pin_seeds)
-        # Drain the rest of this bracket stage fresh. play_next_bracket_round
-        # walks find_next_playable_node, which skips the now-resolved watched
-        # node, so there is no double-commit.
-        tournament = watched_node.tournament
-        play_next_bracket_round(tournament)
-        season.complete_if_finished()
-    except (ValidationError, ValueError) as exc:
-        return _render_season_dashboard_error(request, season, str(exc))
-
-    return redirect("season_dashboard", season_id=season.id)
-
-
-def play_week_live_discard(request, season_id: int) -> HttpResponse:
-    """LG-01i §3c — POST: clear the pin (no sim, no DB write), then 302 to the
-    dashboard. 405 on non-POST."""
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
-
-    season = get_object_or_404(Season, pk=season_id)
-    request.session["last_league_id"] = season.league_id
-    _live_pin_clear(request, season_id)
-    return redirect("season_dashboard", season_id=season.id)
 
 
 # ---------------------------------------------------------------------------

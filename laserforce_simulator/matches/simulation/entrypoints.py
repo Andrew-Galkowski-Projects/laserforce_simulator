@@ -153,101 +153,6 @@ def _chunk_size_for(n: int) -> int:
     return max(1, min(25, n // 50))
 
 
-# LG-01i: the GameEvent.get_event_icon icon map — REPLICATED here (not imported,
-# not constructed via an unsaved GameEvent) so the preview path stays ORM-free.
-# Keep in sync with matches.models.GameEvent.get_event_icon (pinned by a test
-# that asserts every event type's preview icon equals the model's).
-_PREVIEW_EVENT_ICONS = {
-    "tag": "🎯",
-    "missiled": "🚀",
-    "locking": "🔒",
-    "special": "⚡",
-    "miss": "❌",
-    "movement": "🏃",
-    "resupply_ammo": "📦",
-    "resupply_lives": "💚",
-    "elimination": "💀",
-    "team_elimination": "☠️",
-    "base_capture": "🚩",
-}
-
-
-def _preview_format_timestamp(ts: int) -> str:
-    """LG-01i: replicate ``GameEvent.formatted_timestamp`` — the ``÷2`` mm:ss
-    display conversion (1 tick = 0.5 s). Byte-identical to the persisted
-    ``e.formatted_timestamp`` shape read by the SIM-05 JS.
-    """
-    total = int(ts * 0.5)
-    return f"{total // 60:02d}:{total % 60:02d}"
-
-
-def _serialize_events_for_preview(
-    event_log, red_players, blue_players, red_team, blue_team
-) -> tuple[list[dict], list[dict]]:
-    """LG-01i: serialize an in-memory ``event_log`` + ``PlayerState`` rosters into
-    the SIM-05 ``events_data`` (13-key) / ``players_data`` (6-key) JSON shape —
-    byte-for-byte matching ``matches/views.py::game_round_events`` (~lines
-    882/901) so the reused SIM-05 playback JS works unchanged.
-
-    Replicates the ``GameEvent.get_event_icon`` icon map and the ``÷2`` mm:ss
-    formatter (the two behaviours that must stay in sync with ``GameEvent``);
-    does NOT construct unsaved ``GameEvent`` instances (avoids accidental saves +
-    FK construction). ``idx`` / ``sec`` are derived client-side by the JS — not
-    baked here.
-    """
-    players_by_id = {}
-    for ps in list(red_players) + list(blue_players):
-        players_by_id[ps.player_id] = ps
-
-    team_id_by_color = {"red": red_team.id, "blue": blue_team.id}
-
-    events_data: list[dict] = []
-    for entry in event_log:
-        ts = entry["timestamp"]
-        actor_id = entry["actor_id"]
-        actor = players_by_id.get(actor_id)
-        target_id = entry["target_id"]
-        target = players_by_id.get(target_id) if target_id is not None else None
-        events_data.append(
-            {
-                "type": entry["event_type"],
-                "ts": ts,
-                "tf": _preview_format_timestamp(ts),
-                "icon": _PREVIEW_EVENT_ICONS.get(entry["event_type"], "•"),
-                "desc": entry["description"],
-                "pts": entry["points_awarded"],
-                "aid": actor_id,
-                "an": actor.name if actor is not None else "",
-                "at": (
-                    team_id_by_color.get(actor.team_color) if actor is not None else ""
-                ),
-                "tid": target_id if target_id is not None else -1,
-                "tn": target.name if target is not None else "",
-                "tt": (
-                    team_id_by_color.get(target.team_color)
-                    if target is not None
-                    else ""
-                ),
-                "meta": entry["metadata"] or {},
-            }
-        )
-
-    players_data: list[dict] = []
-    for ps in list(red_players) + list(blue_players):
-        players_data.append(
-            {
-                "id": ps.player_id,
-                "name": ps.name,
-                "team": ps.team_color,
-                "role": ps.role,
-                "sl": ps.starting_lives,
-                "ss": ps.starting_shots,
-            }
-        )
-
-    return events_data, players_data
-
-
 class BatchSimulator:
     """Pure in-memory simulator for running N rounds without DB writes.
 
@@ -658,11 +563,10 @@ class BatchSimulator:
         movement_ctx,
         arena_map,
         zone_size: int | None,
-        rng_seed: int | None = None,
     ) -> "GameRound":
-        """Draw a fresh 63-bit seed (or use an injected one), ``random.seed()``
-        it, simulate one round in-memory via ``_simulate_round``, and persist it
-        through ``_flush_to_db``.
+        """Draw a fresh 63-bit seed, ``random.seed()`` it, simulate one round
+        in-memory via ``_simulate_round``, and persist it through
+        ``_flush_to_db``.
 
         SIM-09 helper shared by :meth:`simulate_match` (called twice —
         round 1 with canonical args, round 2 with reversed args for the
@@ -672,19 +576,11 @@ class BatchSimulator:
         ``simulate_match`` *calls* this helper (which team it passes as
         ``team_red``), not of the helper itself — the helper always sees
         canonical "team_red plays red" inputs.
-
-        LG-01i: ``rng_seed`` is keyword-only and defaults to ``None``. When
-        ``None`` a fresh 63-bit seed is drawn (byte-identical to every
-        pre-LG-01i caller — no Score Calibration re-baseline). When an int is
-        injected, that SAME int is ``random.seed()``'d AND persisted onto
-        ``GameRound.rng_seed`` via ``_flush_to_db`` — so a committed round's
-        ``rng_seed`` equals the captured preview seed (the SIM-07 byte-identical
-        replay guarantee).
         """
         red_roster = list(team_red.active_roster)
         blue_roster = list(team_blue.active_roster)
 
-        seed = random.Random().getrandbits(63) if rng_seed is None else rng_seed
+        seed = random.Random().getrandbits(63)
         random.seed(seed)
 
         events: list = []
@@ -718,7 +614,6 @@ class BatchSimulator:
         *,
         arena_map=None,
         before_round_hook=None,
-        rng_seeds: tuple[int, int] | None = None,
     ) -> Match:
         """Create a ``Match``, simulate its two rounds in-memory, and
         persist everything to the DB.
@@ -762,7 +657,6 @@ class BatchSimulator:
             movement_ctx=movement_ctx,
             arena_map=arena_map,
             zone_size=zone_size,
-            rng_seed=(None if rng_seeds is None else rng_seeds[0]),
         )
         match.red_round1_points = round1.red_points
         match.blue_round1_points = round1.blue_points
@@ -787,7 +681,6 @@ class BatchSimulator:
             movement_ctx=movement_ctx,
             arena_map=arena_map,
             zone_size=zone_size,
-            rng_seed=(None if rng_seeds is None else rng_seeds[1]),
         )
         # round2.red_points is the score of the team that played red this
         # round (= the canonical team_blue argument), so swap when copying
@@ -851,7 +744,6 @@ class BatchSimulator:
         arena_map=None,
         season_phase=None,
         leg: int = 1,
-        rng_seed: int | None = None,
     ) -> "GameRound":
         """Simulate one Round of a Season Match.
 
@@ -935,7 +827,6 @@ class BatchSimulator:
                 movement_ctx=movement_ctx,
                 arena_map=arena_map,
                 zone_size=zone_size,
-                rng_seed=rng_seed,
             )
 
             self._persist_round_results(
@@ -965,7 +856,6 @@ class BatchSimulator:
             movement_ctx=movement_ctx,
             arena_map=arena_map,
             zone_size=zone_size,
-            rng_seed=rng_seed,
         )
 
         self._persist_round_results(match, game_round, round_number=2, swapped=True)
@@ -1023,121 +913,6 @@ class BatchSimulator:
             match.blue_bonus_points += self.elimination_bonus
         if blue_eliminated:
             match.red_bonus_points += self.elimination_bonus
-
-    # ------------------------------------------------------------------ #
-    # LG-01i — preview-then-commit live replay (sim WITHOUT flush)
-    # ------------------------------------------------------------------ #
-
-    def _preview_one_round(
-        self, team_red, team_blue, *, movement_ctx, round_number: int, seed: int
-    ) -> dict:
-        """LG-01i: ``random.seed(seed)`` + run one in-memory round (NO DB flush),
-        then serialize it into the §2c per-round bundle entry. ``team_red`` plays
-        red, ``team_blue`` plays blue.
-        """
-        random.seed(seed)
-        events: list = []
-        result, red_players, blue_players = self._simulate_round(
-            list(team_red.active_roster),
-            list(team_blue.active_roster),
-            event_log=events,
-            movement_ctx=movement_ctx,
-        )
-        events_data, players_data = _serialize_events_for_preview(
-            events, red_players, blue_players, team_red, team_blue
-        )
-        return {
-            "round_number": round_number,
-            "red_team_id": team_red.id,
-            "red_team_name": team_red.name,
-            "blue_team_id": team_blue.id,
-            "blue_team_name": team_blue.name,
-            "events_data": events_data,
-            "players_data": players_data,
-            "result": {
-                "red_points": result["red_points"],
-                "blue_points": result["blue_points"],
-                "red_eliminated": result["red_eliminated"],
-                "blue_eliminated": result["blue_eliminated"],
-            },
-        }
-
-    def preview_scheduled_round(
-        self,
-        season,
-        team_a,
-        team_b,
-        round_number: int,
-        *,
-        arena_map=None,
-        season_phase=None,
-        leg: int = 1,
-        rng_seed: int | None = None,
-    ) -> dict:
-        """LG-01i: RR live-preview — simulate the SINGLE watched Round in memory
-        (NO ``_flush_to_db``) and return the §2c preview bundle (``kind="rr"``,
-        1 round).
-
-        Mirrors :meth:`simulate_scheduled_round`'s per-Match colour swap so the
-        previewed sides + game match the round that commit will persist: round 1
-        plays ``(team_a, team_b)`` (team_a red); round 2 reverses to
-        ``(team_b, team_a)`` (team_b red). Without this, a round-2 watched
-        fixture would preview the wrong sides and a different game than commit.
-
-        ``rng_seed`` is keyword-only: ``None`` draws a fresh 63-bit seed (a fresh
-        preview); an injected int replays the SAME pinned game (a re-opened
-        preview). The captured seed rides in the bundle's ``seed`` key so the
-        commit can inject it back into :meth:`simulate_scheduled_round`.
-        """
-        movement_ctx, _zone_size = load_map_context(arena_map)
-        seed = random.Random().getrandbits(63) if rng_seed is None else rng_seed
-        red, blue = (team_b, team_a) if round_number == 2 else (team_a, team_b)
-        round_bundle = self._preview_one_round(
-            red, blue, movement_ctx=movement_ctx, round_number=round_number, seed=seed
-        )
-        return {
-            "kind": "rr",
-            "seed": seed,
-            "rounds": [round_bundle],
-        }
-
-    def preview_tournament_match(
-        self,
-        team_red,
-        team_blue,
-        *,
-        arena_map=None,
-        rng_seeds: tuple[int, int] | None = None,
-    ) -> dict:
-        """LG-01i: playoff live-preview — simulate BOTH Rounds of the watched
-        2-round Match in memory (NO ``_flush_to_db``) and return the §2c preview
-        bundle (``kind="playoff"``, 2 rounds). Round 1 plays
-        ``(team_red, team_blue)``; round 2 reverses the args
-        ``(team_blue, team_red)`` — the per-Match colour swap, exactly as
-        :meth:`simulate_match`.
-
-        ``rng_seeds`` is keyword-only: ``None`` draws a fresh pair (a fresh
-        preview); an injected pair replays the SAME pinned games (a re-opened
-        preview). The captured pair rides in the bundle's ``seeds`` key.
-        """
-        movement_ctx, _zone_size = load_map_context(arena_map)
-        if rng_seeds is None:
-            seed1 = random.Random().getrandbits(63)
-            seed2 = random.Random().getrandbits(63)
-        else:
-            seed1, seed2 = rng_seeds[0], rng_seeds[1]
-
-        round1 = self._preview_one_round(
-            team_red, team_blue, movement_ctx=movement_ctx, round_number=1, seed=seed1
-        )
-        round2 = self._preview_one_round(
-            team_blue, team_red, movement_ctx=movement_ctx, round_number=2, seed=seed2
-        )
-        return {
-            "kind": "playoff",
-            "seeds": [seed1, seed2],
-            "rounds": [round1, round2],
-        }
 
     # ------------------------------------------------------------------ #
     # Internal round simulation

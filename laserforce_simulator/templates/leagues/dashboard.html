@@ -46,7 +46,10 @@
                             </li>
                             {% if live_preview_available %}
                             <li>
-                                <a id="league-dashboard-play-one-week-live" class="dropdown-item" href="{% url 'play_week_live' displayed_season.id %}">One Week (Live)</a>
+                                <form id="league-dashboard-play-one-week-live" method="post" action="{% url 'play_week_live' displayed_season.id %}" class="px-2">
+                                    {% csrf_token %}
+                                    <button type="submit" class="dropdown-item">One Week (Live)</button>
+                                </form>
                             </li>
                             {% endif %}
                         </ul>
