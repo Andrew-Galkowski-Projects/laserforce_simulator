@@ -813,3 +813,409 @@ class TestSimulateMatchHookRewritesRoster:
             .role
         )
         assert "commander" in role.lower()
+
+
+# ===========================================================================
+# LG-01i — Season "One Week (Live)" preview-then-commit replay UI.
+#
+# Seam contract: ``.claude/worktrees/lg-01i-one-week-live-seam-contract.md``
+# §1 (injected-seed seam), §2 (preview engine + bundle), §9 (test boundary).
+#
+# Three NEW classes appended below (existing classes above are NOT modified):
+#
+#   - TestLg01iInjectedSeedDefault — the verbatim-default regression: a no-kwarg
+#     ``simulate_scheduled_round`` / ``simulate_match`` and the
+#     ``rng_seed=None`` / ``rng_seeds=None`` variant are BYTE-IDENTICAL under
+#     the same ``random.seed`` setup (protects Score Calibration — None ⇒ draws
+#     fresh exactly as today). ``_simulate_and_flush_round(rng_seed=None)`` too.
+#   - TestLg01iSeedInjection — the SIM-07 byte-identical guarantee: a committed
+#     round's persisted ``GameRound.rng_seed`` equals the captured preview seed,
+#     and the committed event-log ``(event_type, timestamp, actor_id, target_id,
+#     points_awarded)`` tuples equal the preview bundle's ``events_data``
+#     ``(type, ts, aid, tid, pts)`` tuples — for BOTH the RR path
+#     (``simulate_scheduled_round`` ↔ ``preview_scheduled_round``) and the
+#     playoff path (``simulate_match`` ↔ ``preview_tournament_match``).
+#   - TestLg01iPreviewBundle — the §2c bundle shape: 13 ``events_data`` keys,
+#     ``{id,name,team,role,sl,ss}`` ``players_data``, the preview icon for every
+#     event type == ``GameEvent(event_type=t, timestamp=0).get_event_icon()``,
+#     the ``÷2`` mm:ss ``tf``, and ZERO ``GameRound`` / ``GameEvent`` rows
+#     created by a preview.
+#
+# These assertions WILL fail until the Code agent lands the injected-seed kwargs
+# + the two ``BatchSimulator.preview_*`` methods + the preview-bundle shape;
+# that is the expected TDD red state for the parallel build.
+# ===========================================================================
+
+
+from datetime import date as _lg01i_date
+
+from matches.models import GameEvent as _Lg01iGameEvent
+from matches.models import League as _Lg01iLeague
+from matches.models import Season as _Lg01iSeason
+
+# The 13 LOCKED SIM-05 ``events_data`` keys (§2d) — every key the playback JS
+# reads, byte-for-byte the persisted ``game_round_events`` view shape.
+_LG01I_EVENT_KEYS = {
+    "type",
+    "ts",
+    "tf",
+    "icon",
+    "desc",
+    "pts",
+    "aid",
+    "an",
+    "at",
+    "tid",
+    "tn",
+    "tt",
+    "meta",
+}
+
+# The 6 LOCKED ``players_data`` keys (§2e).
+_LG01I_PLAYER_KEYS = {"id", "name", "team", "role", "sl", "ss"}
+
+
+def _lg01i_active_season(prefix: str):
+    """An ``active`` 2-team Season + the two enrolled Teams (team_a, team_b)."""
+    league = _Lg01iLeague.objects.create(name=f"{prefix} League")
+    season = _Lg01iSeason.objects.create(
+        league=league, name="S1", start_date=_lg01i_date(2026, 1, 1)
+    )
+    team_a, _ = make_team_with_slots(f"{prefix}A")
+    team_b, _ = make_team_with_slots(f"{prefix}B")
+    season.teams.add(team_a)
+    season.teams.add(team_b)
+    season.start_season()
+    season.refresh_from_db()
+    return season, team_a, team_b
+
+
+def _lg01i_mmss(ts: int) -> str:
+    """Replicate §2f: ``total = int(ts * 0.5); f"{total//60:02d}:{total%60:02d}"``."""
+    total = int(ts * 0.5)
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
+@pytest.mark.django_db
+class TestLg01iInjectedSeedDefault:
+    """§1 verbatim-default regression — ``rng_seed=None`` / ``rng_seeds=None``
+    is byte-identical to a no-kwarg call given the same ``random.seed`` setup.
+
+    Byte-identical is asserted on the committed event-log tuples (the
+    deterministic observable), NOT on point totals.
+    """
+
+    # The §1 default-path draw is ``random.Random().getrandbits(63)`` — a
+    # FRESH ``Random()`` independent of the global ``random.seed``. So two raw
+    # calls are not naturally reproducible. To pin the verbatim-default
+    # invariant ("rng_seed/rng_seeds=None draws fresh EXACTLY as the no-kwarg
+    # path, no Score-Calibration re-baseline") deterministically, we pin ONLY
+    # the seed DRAW: ``_fixed_random_factory`` patches the ``random.Random``
+    # *constructor* so ``random.Random().getrandbits(63)`` returns a fixed seed,
+    # making the no-kwarg and the None-kwarg call draw the SAME seed (⇒ the SAME
+    # committed game).
+    #
+    # IMPORTANT: do NOT patch ``random.Random.getrandbits`` itself. A fixed
+    # ``getrandbits`` breaks CPython's ``_randbelow`` rejection sampling — used
+    # by ``random.shuffle`` (every tick) and ``random.randint`` (hit rolls),
+    # which loop on ``getrandbits(k)`` until the draw is ``< n`` — so a fixed
+    # large value loops forever and HANGS the simulator. Patching only the
+    # constructor leaves the global ``random`` instance (seeded from the fixed
+    # draw) intact, so the tick loop runs normally.
+    _FIXED_GETRANDBITS = 0x4D2A1B3C5E6F7081
+
+    @classmethod
+    def _fixed_random_factory(cls):
+        """A ``random.Random`` replacement whose instances' ``getrandbits``
+        returns the fixed seed — pins the seed draw without touching the
+        simulator's own RNG."""
+
+        class _FixedSeedRandom:
+            def getrandbits(self, _bits):
+                return cls._FIXED_GETRANDBITS
+
+        return lambda *_a, **_k: _FixedSeedRandom()
+
+    def _tuples_for_round(self, gr):
+        # Structural observable only — NOT actor_id/target_id, which are Player
+        # PKs that differ between the two stat-identical fixtures we compare.
+        # event_type + timestamp + points is the deterministic, seed-driven
+        # signature.
+        return [
+            (e.event_type, e.timestamp, e.points_awarded)
+            for e in GameEvent.objects.filter(game_round=gr).order_by("id")
+        ]
+
+    def _scheduled_event_tuples(self, season, team_a, team_b, *, pass_kwarg):
+        """Run one RR round (round 1) under a fixed ``getrandbits`` and return
+        its persisted event tuples + the committed seed."""
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            with patch("random.Random", self._fixed_random_factory()):
+                if pass_kwarg:
+                    gr = BatchSimulator().simulate_scheduled_round(
+                        season, team_a, team_b, 1, rng_seed=None
+                    )
+                else:
+                    gr = BatchSimulator().simulate_scheduled_round(
+                        season, team_a, team_b, 1
+                    )
+        return self._tuples_for_round(gr), gr.rng_seed
+
+    def test_scheduled_none_kwarg_matches_no_kwarg(self):
+        season1, a1, b1 = _lg01i_active_season("SchedDefNo")
+        season2, a2, b2 = _lg01i_active_season("SchedDefKw")
+        no_kwarg, no_seed = self._scheduled_event_tuples(
+            season1, a1, b1, pass_kwarg=False
+        )
+        with_kwarg, kw_seed = self._scheduled_event_tuples(
+            season2, a2, b2, pass_kwarg=True
+        )
+        # rng_seed=None draws fresh EXACTLY as the no-kwarg path: same fixed
+        # getrandbits ⇒ same committed seed ⇒ byte-identical event log.
+        assert no_kwarg == with_kwarg
+        assert no_seed == kw_seed == self._FIXED_GETRANDBITS
+
+    def test_simulate_match_none_kwarg_matches_no_kwarg(self):
+        def _match_tuples(prefix, *, pass_kwarg):
+            red, _ = make_team_with_slots(f"{prefix}R")
+            blue, _ = make_team_with_slots(f"{prefix}B")
+            with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+                with patch("random.Random", self._fixed_random_factory()):
+                    if pass_kwarg:
+                        match = BatchSimulator().simulate_match(
+                            red, blue, rng_seeds=None
+                        )
+                    else:
+                        match = BatchSimulator().simulate_match(red, blue)
+            tuples = []
+            for gr in match.game_rounds.order_by("round_number"):
+                for e in GameEvent.objects.filter(game_round=gr).order_by("id"):
+                    # Structural observable only (no actor_id/target_id — Player
+                    # PKs differ between the two stat-identical fixtures).
+                    tuples.append(
+                        (
+                            gr.round_number,
+                            e.event_type,
+                            e.timestamp,
+                            e.points_awarded,
+                        )
+                    )
+            return tuples
+
+        no_kwarg = _match_tuples("MatchDefNo", pass_kwarg=False)
+        with_kwarg = _match_tuples("MatchDefKw", pass_kwarg=True)
+        assert no_kwarg == with_kwarg
+
+    def test_simulate_and_flush_round_none_seed_draws_fresh(self):
+        """``_simulate_and_flush_round(rng_seed=None)`` persists a real seed
+        (a fresh 63-bit draw, exactly as today)."""
+        red, _ = make_team_with_slots("FlushDefR")
+        blue, _ = make_team_with_slots("FlushDefB")
+        match = Match.objects.create(team_red=red, team_blue=blue)
+        movement_ctx, zone_size = (None, None)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            gr = BatchSimulator()._simulate_and_flush_round(
+                red,
+                blue,
+                match=match,
+                round_number=1,
+                movement_ctx=movement_ctx,
+                arena_map=None,
+                zone_size=zone_size,
+                rng_seed=None,
+            )
+        assert gr.rng_seed is not None
+
+
+@pytest.mark.django_db
+class TestLg01iSeedInjection:
+    """§1/§9 SIM-07 byte-identical guarantee — a committed round driven by an
+    INJECTED captured seed persists that exact seed AND replays the previewed
+    event log byte-for-byte.
+
+    RR path: capture via ``preview_scheduled_round``, inject the captured seed
+    into ``simulate_scheduled_round(rng_seed=...)``, assert the persisted
+    ``GameEvent`` ``(event_type, timestamp, actor_id, target_id,
+    points_awarded)`` tuples equal the preview bundle's ``events_data``
+    ``(type, ts, aid, tid, pts)`` tuples.
+
+    Playoff path: same, via ``preview_tournament_match`` ↔
+    ``simulate_match(rng_seeds=...)`` over the two rounds.
+    """
+
+    def _preview_tuples(self, round_dict):
+        return [
+            (e["type"], e["ts"], e["aid"], e["tid"], e["pts"])
+            for e in round_dict["events_data"]
+        ]
+
+    def _persisted_tuples(self, gr):
+        return [
+            (
+                e.event_type,
+                e.timestamp,
+                e.actor_id,
+                e.target_id or -1,
+                e.points_awarded,
+            )
+            for e in GameEvent.objects.filter(game_round=gr).order_by("id")
+        ]
+
+    def test_scheduled_round_seed_persisted_and_events_match_preview(self):
+        season, team_a, team_b = _lg01i_active_season("InjectSched")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            bundle = BatchSimulator().preview_scheduled_round(season, team_a, team_b, 1)
+        captured_seed = bundle["seed"]
+        assert isinstance(captured_seed, int)
+        preview_round = bundle["rounds"][0]
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            gr = BatchSimulator().simulate_scheduled_round(
+                season, team_a, team_b, 1, rng_seed=captured_seed
+            )
+
+        # The committed round persists the captured seed verbatim.
+        assert gr.rng_seed == captured_seed
+        # And replays the previewed event log byte-for-byte (SIM-07).
+        assert self._persisted_tuples(gr) == self._preview_tuples(preview_round)
+
+    def test_simulate_match_seeds_persisted_and_events_match_preview(self):
+        red, _ = make_team_with_slots("InjectMatchR")
+        blue, _ = make_team_with_slots("InjectMatchB")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            bundle = BatchSimulator().preview_tournament_match(red, blue)
+        seeds = bundle["seeds"]
+        assert isinstance(seeds, (list, tuple)) and len(seeds) == 2
+        s1, s2 = seeds[0], seeds[1]
+        preview_rounds = bundle["rounds"]
+        assert len(preview_rounds) == 2
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            match = BatchSimulator().simulate_match(red, blue, rng_seeds=(s1, s2))
+
+        r1 = match.game_rounds.get(round_number=1)
+        r2 = match.game_rounds.get(round_number=2)
+        # Each committed round persists its captured seed.
+        assert r1.rng_seed == s1
+        assert r2.rng_seed == s2
+        # And replays the matching previewed round byte-for-byte.
+        assert self._persisted_tuples(r1) == self._preview_tuples(preview_rounds[0])
+        assert self._persisted_tuples(r2) == self._preview_tuples(preview_rounds[1])
+
+
+@pytest.mark.django_db
+class TestLg01iPreviewBundle:
+    """§2c — the preview bundle shape, and that a preview touches ZERO DB rows."""
+
+    def test_rr_bundle_has_locked_top_level_shape(self):
+        season, team_a, team_b = _lg01i_active_season("BundleRR")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            bundle = BatchSimulator().preview_scheduled_round(season, team_a, team_b, 1)
+        assert bundle["kind"] == "rr"
+        assert isinstance(bundle["seed"], int)
+        assert len(bundle["rounds"]) == 1
+        rd = bundle["rounds"][0]
+        for key in (
+            "round_number",
+            "red_team_id",
+            "red_team_name",
+            "blue_team_id",
+            "blue_team_name",
+            "events_data",
+            "players_data",
+            "result",
+        ):
+            assert key in rd, f"preview round missing {key!r}"
+        # team_a plays red in round 1 (matches the round-1 arg order).
+        assert rd["red_team_id"] == team_a.id
+        assert rd["blue_team_id"] == team_b.id
+
+    def test_playoff_bundle_has_two_rounds_and_seed_pair(self):
+        red, _ = make_team_with_slots("BundlePoR")
+        blue, _ = make_team_with_slots("BundlePoB")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            bundle = BatchSimulator().preview_tournament_match(red, blue)
+        assert bundle["kind"] == "playoff"
+        assert len(bundle["seeds"]) == 2
+        assert len(bundle["rounds"]) == 2
+        assert bundle["rounds"][0]["round_number"] == 1
+        assert bundle["rounds"][1]["round_number"] == 2
+
+    def test_events_data_carries_the_13_locked_keys(self):
+        season, team_a, team_b = _lg01i_active_season("Bundle13")
+        # Longer round so at least one event surfaces.
+        with patch.object(BatchSimulator, "ROUND_TICKS", 400):
+            bundle = BatchSimulator().preview_scheduled_round(season, team_a, team_b, 1)
+        events_data = bundle["rounds"][0]["events_data"]
+        assert len(events_data) > 0, "a 400-tick round should produce events"
+        for ev in events_data:
+            assert set(ev.keys()) == _LG01I_EVENT_KEYS, (
+                "events_data dict must carry exactly the 13 SIM-05 keys; got "
+                f"{sorted(ev.keys())!r}"
+            )
+
+    def test_players_data_carries_the_six_locked_keys(self):
+        season, team_a, team_b = _lg01i_active_season("BundlePlayers")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            bundle = BatchSimulator().preview_scheduled_round(season, team_a, team_b, 1)
+        players_data = bundle["rounds"][0]["players_data"]
+        assert len(players_data) == 12, "2 teams x 6 players = 12 player dicts"
+        for pd in players_data:
+            assert set(pd.keys()) == _LG01I_PLAYER_KEYS, (
+                "players_data dict must carry exactly {id,name,team,role,sl,ss}; "
+                f"got {sorted(pd.keys())!r}"
+            )
+            # team is the colour STRING (not a Team id).
+            assert pd["team"] in ("red", "blue")
+
+    def test_preview_icon_matches_game_event_get_event_icon(self):
+        """§2f: the preview icon for every event type must equal
+        ``GameEvent(event_type=t, timestamp=0).get_event_icon()`` — the icon
+        map is replicated, not persisted."""
+        season, team_a, team_b = _lg01i_active_season("BundleIcon")
+        with patch.object(BatchSimulator, "ROUND_TICKS", 400):
+            bundle = BatchSimulator().preview_scheduled_round(season, team_a, team_b, 1)
+        events_data = bundle["rounds"][0]["events_data"]
+        assert len(events_data) > 0
+        for ev in events_data:
+            expected = _Lg01iGameEvent(
+                event_type=ev["type"], timestamp=0
+            ).get_event_icon()
+            assert ev["icon"] == expected, (
+                f"preview icon for event_type {ev['type']!r} was {ev['icon']!r}, "
+                f"expected {expected!r} (GameEvent.get_event_icon parity)"
+            )
+
+    def test_tf_is_the_div2_mmss_of_ts(self):
+        season, team_a, team_b = _lg01i_active_season("BundleTf")
+        with patch.object(BatchSimulator, "ROUND_TICKS", 400):
+            bundle = BatchSimulator().preview_scheduled_round(season, team_a, team_b, 1)
+        events_data = bundle["rounds"][0]["events_data"]
+        assert len(events_data) > 0
+        for ev in events_data:
+            assert ev["tf"] == _lg01i_mmss(
+                ev["ts"]
+            ), f"tf {ev['tf']!r} != div-2 mm:ss of ts {ev['ts']!r}"
+
+    def test_preview_creates_zero_game_round_and_game_event_rows(self):
+        season, team_a, team_b = _lg01i_active_season("BundleNoDb")
+        gr_before = GameRound.objects.count()
+        ev_before = _Lg01iGameEvent.objects.count()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            BatchSimulator().preview_scheduled_round(season, team_a, team_b, 1)
+        assert (
+            GameRound.objects.count() == gr_before
+        ), "a preview must NOT flush a GameRound"
+        assert (
+            _Lg01iGameEvent.objects.count() == ev_before
+        ), "a preview must NOT flush GameEvent rows"
+
+    def test_playoff_preview_creates_zero_rows(self):
+        red, _ = make_team_with_slots("BundlePoNoDbR")
+        blue, _ = make_team_with_slots("BundlePoNoDbB")
+        gr_before = GameRound.objects.count()
+        ev_before = _Lg01iGameEvent.objects.count()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            BatchSimulator().preview_tournament_match(red, blue)
+        assert GameRound.objects.count() == gr_before
+        assert _Lg01iGameEvent.objects.count() == ev_before

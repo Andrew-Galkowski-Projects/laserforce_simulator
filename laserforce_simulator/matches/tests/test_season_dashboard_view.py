@@ -912,3 +912,123 @@ class TestLeagueDashboardTerminalLabelSplit(TestCase):
         self.assertIn('id="league-dashboard-play-until-end"', body)
         self.assertIn("Until Tournament", body)
         self.assertNotIn("Until Playoffs", body)
+
+
+# ===========================================================================
+# LG-01i — the "One Week (Live)" Play-dropdown entry on the SEASON dashboard.
+#
+# Seam contract: ``.claude/worktrees/lg-01i-one-week-live-seam-contract.md``
+# §8 (dashboard wiring) + §9 (test boundary).
+#
+# The ``season-dashboard-play-one-week-live`` entry renders inside the existing
+# play dropdown linking to ``play_week_live`` ONLY when ``live_preview_available``
+# (``_resolve_live_cursor`` returns an ``"rr"`` / ``"playoff"`` descriptor). It
+# is ABSENT on a bye / eliminated / no-``current_team`` Season.
+#
+# These assertions WILL fail until the Code agent lands the
+# ``live_preview_available`` context key + the dropdown-entry template markup +
+# the ``play_week_live`` URL; that is the expected TDD red state.
+# ===========================================================================
+
+
+def _lg01i_dash_active_rr_season(name: str, n: int = 2, *, manager_idx: int = 0):
+    """An active n-team RR Season; League ``current_team`` = the
+    ``manager_idx``-th team (None ⇒ no current_team set)."""
+    league = League.objects.create(name=name)
+    season = Season.objects.create(
+        league=league, name="S1", start_date=date(2026, 1, 1)
+    )
+    teams = []
+    for i in range(n):
+        t, _ = make_team_with_slots(f"{name[:3]}D{i}")
+        teams.append(t)
+        season.teams.add(t)
+    season.start_season()
+    season.refresh_from_db()
+    if manager_idx is not None:
+        league.current_team = teams[manager_idx]
+        league.save(update_fields=["current_team"])
+    return league, season, teams
+
+
+class TestLg01iDashboardEntry(TestCase):
+    """LG-01i — the season-dashboard ``play-one-week-live`` dropdown entry."""
+
+    def _body(self, season):
+        return self.client.get(
+            reverse("season_dashboard", args=[season.id])
+        ).content.decode()
+
+    def test_entry_present_and_links_to_play_week_live_when_available(self) -> None:
+        _l, season, _teams = _lg01i_dash_active_rr_season(
+            "DashEntryYes", n=2, manager_idx=0
+        )
+        ctx = self.client.get(reverse("season_dashboard", args=[season.id])).context
+        self.assertTrue(ctx["live_preview_available"])
+        body = self._body(season)
+        self.assertIn('id="season-dashboard-play-one-week-live"', body)
+        self.assertIn(reverse("play_week_live", args=[season.id]), body)
+
+    def test_entry_absent_when_no_current_team(self) -> None:
+        _l, season, _teams = _lg01i_dash_active_rr_season(
+            "DashEntryNoTeam", n=2, manager_idx=None
+        )
+        ctx = self.client.get(reverse("season_dashboard", args=[season.id])).context
+        self.assertFalse(ctx["live_preview_available"])
+        body = self._body(season)
+        self.assertNotIn('id="season-dashboard-play-one-week-live"', body)
+
+    def test_entry_absent_when_current_team_has_bye(self) -> None:
+        # Odd-N matchday: one team byes. Set that team as current_team ⇒
+        # _resolve_live_cursor returns rr_bye ⇒ entry NOT rendered.
+        _l, season, teams = _lg01i_dash_active_rr_season(
+            "DashEntryBye", n=3, manager_idx=0
+        )
+        in_next = set()
+        for phase, fixtures in season.scheduled_fixtures_by_phase():
+            if not fixtures:
+                continue
+            first_md = min(f.matchday for f in fixtures)
+            for f in fixtures:
+                if f.matchday == first_md:
+                    in_next.add(f.team_a_id)
+                    in_next.add(f.team_b_id)
+            break
+        bye_team = next((t for t in teams if t.id not in in_next), None)
+        self.assertIsNotNone(bye_team)
+        season.league.current_team = bye_team
+        season.league.save(update_fields=["current_team"])
+        ctx = self.client.get(reverse("season_dashboard", args=[season.id])).context
+        self.assertFalse(ctx["live_preview_available"])
+        body = self._body(season)
+        self.assertNotIn('id="season-dashboard-play-one-week-live"', body)
+
+    def test_entry_absent_when_eliminated_in_playoff(self) -> None:
+        # RR done + tournament built; current_team eliminated ⇒ no live entry.
+        league, season, teams = _lg02c1_rr_tournament_season("DashEntryElim")
+        _lg02c1_play_rr(season, teams)
+        season.refresh_from_db()
+        tp = season.phases.get(phase_type="tournament")
+        tp.refresh_from_db()
+        # Find an eliminated team (not in any undecided node).
+        from matches.models import BracketNode as _BN
+
+        alive_ids = set()
+        for node in _BN.objects.filter(
+            tournament=tp.tournament,
+            winner__isnull=True,
+            is_bye=False,
+            team_a__isnull=False,
+            team_b__isnull=False,
+        ):
+            alive_ids.add(node.team_a_id)
+            alive_ids.add(node.team_b_id)
+        elim = next((t for t in teams if t.id not in alive_ids), None)
+        if elim is None:
+            self.skipTest("no eliminated team in this non-deterministic bracket")
+        league.current_team = elim
+        league.save(update_fields=["current_team"])
+        ctx = self.client.get(reverse("season_dashboard", args=[season.id])).context
+        self.assertFalse(ctx["live_preview_available"])
+        body = self._body(season)
+        self.assertNotIn('id="season-dashboard-play-one-week-live"', body)

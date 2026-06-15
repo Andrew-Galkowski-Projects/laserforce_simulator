@@ -698,3 +698,53 @@ class TestLg01jLeagueDashboardMapConfig(TestCase):
         season.save()
         body = self._get_body(league)
         self.assertIn("Map: Random per Round (no maps)", body)
+
+
+# ===========================================================================
+# LG-01i — the "One Week (Live)" Play-dropdown entry on the LEAGUE dashboard.
+#
+# Seam contract: ``.claude/worktrees/lg-01i-one-week-live-seam-contract.md``
+# §8 (dashboard wiring) + §9 (test boundary).
+#
+# The ``league-dashboard-play-one-week-live`` entry renders inside the existing
+# play dropdown linking to ``play_week_live`` ONLY when ``live_preview_available``
+# (the league dashboard's displayed Season has an ``"rr"`` / ``"playoff"`` live
+# cursor for the League's ``current_team``). ABSENT on bye / eliminated /
+# no-``current_team``.
+#
+# These assertions WILL fail until the Code agent lands the
+# ``live_preview_available`` context key + the dropdown-entry template markup +
+# the ``play_week_live`` URL; that is the expected TDD red state.
+# ===========================================================================
+
+
+class TestLg01iDashboardEntry(TestCase):
+    """LG-01i — the league-dashboard ``play-one-week-live`` dropdown entry."""
+
+    def _body(self, league):
+        return self.client.get(
+            reverse("league_dashboard", args=[league.id])
+        ).content.decode()
+
+    def _ctx(self, league):
+        return self.client.get(reverse("league_dashboard", args=[league.id])).context
+
+    def test_entry_present_and_links_to_play_week_live_when_available(self) -> None:
+        league = _make_league("LgEntryYes")
+        season, teams = _make_active_season(league, n_teams=2)
+        league.current_team = teams[0]
+        league.save(update_fields=["current_team"])
+        ctx = self._ctx(league)
+        self.assertTrue(ctx["live_preview_available"])
+        body = self._body(league)
+        self.assertIn('id="league-dashboard-play-one-week-live"', body)
+        self.assertIn(reverse("play_week_live", args=[season.id]), body)
+
+    def test_entry_absent_when_no_current_team(self) -> None:
+        league = _make_league("LgEntryNoTeam")
+        _season, _teams = _make_active_season(league, n_teams=2)
+        # current_team left unset.
+        ctx = self._ctx(league)
+        self.assertFalse(ctx["live_preview_available"])
+        body = self._body(league)
+        self.assertNotIn('id="league-dashboard-play-one-week-live"', body)
