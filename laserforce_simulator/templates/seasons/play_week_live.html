@@ -1,0 +1,495 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% comment %}
+LG-01i — Season "One Week (Live)" preview-then-commit replay UI.
+
+Duplicates the MINIMAL SIM-05 playback block from
+templates/matches/game_round_events.html (the pb-* scrubber DOM + the
+pbPlayers/pbEvts/pbApply/pbSetTime/pbRefresh engine + the MAX_MISSILES role
+constant + the events-data/players-data json_script reads) — DROPS the charts,
+kill-feed and timeline-window pager. Scoreboard resources are read from each
+event's authoritative actor_/target_ metadata snapshots (not re-derived), and a
+synced event timeline is added. Team identity is fed from the preview
+bundle's per-round red_team_id/red_team_name/blue_team_id/blue_team_name (NOT
+{{ round.* }}, since no persisted GameRound exists at preview time).
+
+Context (the seam): season, cursor_kind ("rr"|"playoff"), preview (the §2c
+bundle), preview_round (rounds[0]), preview_round_2 (rounds[1] or None),
+sidebar_links, sidebar_active.
+{% endcomment %}
+
+{% block title %}{{ season.league.name }} — One Week (Live){% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1" id="play-week-live-container">
+        <div class="container-fluid py-3">
+            <h3 class="mb-3">One Week (Live) — {{ season.league.name }}</h3>
+
+            {% if cursor_kind == "rr_bye" %}
+            <div id="play-week-live-bye-notice" class="alert alert-info">
+                Your team has a bye this matchday — there is no live game to preview.
+            </div>
+            {% endif %}
+
+            {% if cursor_kind == "rr" %}
+                {{ preview_round.events_data|json_script:"events-data" }}
+                {{ preview_round.players_data|json_script:"players-data" }}
+            {% elif cursor_kind == "playoff" %}
+                {{ preview_round.events_data|json_script:"events-data-1" }}
+                {{ preview_round.players_data|json_script:"players-data-1" }}
+                {{ preview_round_2.events_data|json_script:"events-data-2" }}
+                {{ preview_round_2.players_data|json_script:"players-data-2" }}
+            {% endif %}
+
+            {% if cursor_kind == "playoff" %}
+            <div class="btn-group mb-3" id="play-week-live-round-toggle" role="group"
+                 aria-label="Round toggle">
+                <button type="button" id="play-week-live-round-1"
+                        class="btn btn-outline-primary active">Round 1</button>
+                <button type="button" id="play-week-live-round-2"
+                        class="btn btn-outline-primary">Round 2</button>
+            </div>
+            {% endif %}
+
+            <!-- SIM-05 Playback (duplicated, minimal) -->
+            <div class="card mt-2 mb-3">
+                <div class="card-header py-2">
+                    <div class="d-flex align-items-center gap-3 flex-wrap">
+                        <h6 class="mb-0 fw-bold">&#9654; Playback</h6>
+                        <code id="pb-time-display" class="fs-6 fw-bold">00:00</code>
+                        <input type="range" id="pb-scrubber" min="0" max="900" value="0"
+                               step="1" class="form-range flex-grow-1 mb-0"
+                               style="min-width:160px">
+                        <div class="btn-group btn-group-sm">
+                            <button id="pb-step-back" class="btn btn-outline-secondary"
+                                    title="Previous event">&laquo;</button>
+                            <button id="pb-play" class="btn btn-primary"
+                                    title="Play/Pause">&#9654;</button>
+                            <button id="pb-step-fwd" class="btn btn-outline-secondary"
+                                    title="Next event">&raquo;</button>
+                        </div>
+                        <select id="pb-speed" class="form-select form-select-sm"
+                                style="width:auto">
+                            <option value="0.5">0.5&times;</option>
+                            <option value="1" selected>1&times;</option>
+                            <option value="5">5&times;</option>
+                            <option value="15">15&times;</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="card-body py-2">
+                    <div class="row g-3">
+                        <div class="col-lg-7">
+                            <div id="pb-scoreboard"></div>
+                        </div>
+                        <div class="col-lg-5">
+                            <div class="border rounded h-100 d-flex flex-column">
+                                <div class="px-2 py-1 border-bottom fw-bold small text-muted">
+                                    Event timeline
+                                </div>
+                                <div id="pb-timeline" class="flex-grow-1 overflow-auto small"
+                                     style="max-height:420px"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="d-flex gap-2 mt-3">
+                <form id="play-week-live-commit-form" method="post"
+                      action="{% url 'play_week_live_commit' season.id %}">
+                    {% csrf_token %}
+                    <button type="submit" id="play-week-live-commit-submit"
+                            class="btn btn-success">Commit</button>
+                </form>
+                <form id="play-week-live-discard-form" method="post"
+                      action="{% url 'play_week_live_discard' season.id %}">
+                    {% csrf_token %}
+                    <button type="submit" id="play-week-live-discard-submit"
+                            class="btn btn-outline-secondary">Discard</button>
+                </form>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const CURSOR_KIND = '{{ cursor_kind|escapejs }}';
+
+        // Per-round data + team identity, read from the json_script blocks.
+        const ROUNDS = [];
+        if (CURSOR_KIND === 'rr') {
+            ROUNDS.push({
+                all: JSON.parse(document.getElementById('events-data').textContent),
+                players: JSON.parse(document.getElementById('players-data').textContent),
+                redId: String('{{ preview_round.red_team_id }}'),
+                blueId: String('{{ preview_round.blue_team_id }}'),
+                redName: '{{ preview_round.red_team_name|escapejs }}',
+                blueName: '{{ preview_round.blue_team_name|escapejs }}',
+            });
+        } else {
+            ROUNDS.push({
+                all: JSON.parse(document.getElementById('events-data-1').textContent),
+                players: JSON.parse(document.getElementById('players-data-1').textContent),
+                redId: String('{{ preview_round.red_team_id }}'),
+                blueId: String('{{ preview_round.blue_team_id }}'),
+                redName: '{{ preview_round.red_team_name|escapejs }}',
+                blueName: '{{ preview_round.blue_team_name|escapejs }}',
+            });
+            ROUNDS.push({
+                all: JSON.parse(document.getElementById('events-data-2').textContent),
+                players: JSON.parse(document.getElementById('players-data-2').textContent),
+                redId: String('{{ preview_round_2.red_team_id }}'),
+                blueId: String('{{ preview_round_2.blue_team_id }}'),
+                redName: '{{ preview_round_2.red_team_name|escapejs }}',
+                blueName: '{{ preview_round_2.blue_team_name|escapejs }}',
+            });
+        }
+
+        // Mutable active-round bindings (the playoff toggle swaps these).
+        let ALL, PLAYERS, PB_RED, PB_BLUE;
+
+        // Per-role starting missiles (Commander/Heavy carry 5; others none).
+        // Every other resource (shots/lives/score/SP) is read straight from each
+        // event's AUTHORITATIVE metadata snapshot (actor_/target_shots/lives/
+        // points + sp), so the boards track the simulator exactly — no drift,
+        // and resupplies actually raise lives/shots.
+        const MAX_MISSILES = { commander: 5, heavy: 5, scout: 0, medic: 0, ammo: 0 };
+        const ROLE_ICONS = {
+            commander: '{% static "commander.png" %}',
+            heavy: '{% static "heavy.png" %}',
+            scout: '{% static "scout.png" %}',
+            medic: '{% static "medic.png" %}',
+            ammo: '{% static "ammo.png" %}',
+        };
+
+        // Event-type → row accent class (mirrors the round events page colours).
+        const EVT_CLASS = {
+            tag: 'border-warning', missiled: 'border-danger',
+            elimination: 'border-dark', miss: 'border-secondary',
+            resupply_lives: 'border-info', resupply_ammo: 'border-info',
+            combo_resupply: 'border-info', base_capture: 'border-success',
+            special: 'border-primary', nuke_cancelled: 'border-danger',
+            medic_reset: 'border-info', locking: 'border-secondary',
+        };
+
+        function esc(s) {
+            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+        // mm:ss for a tick-valued timestamp (1 tick = 0.5 s) — fallback if tf absent.
+        function pbFmt(sec) {
+            const m = String(Math.floor(sec / 60)).padStart(2, '0');
+            const s = String(Math.floor(sec % 60)).padStart(2, '0');
+            return m + ':' + s;
+        }
+        // Right-hand score-delta string for an event: actor gain + target loss,
+        // so the timeline reads "X tags Y  +100 / -20" in sync with the boards.
+        function pbDeltas(ev) {
+            const parts = [];
+            if (ev.pts) parts.push('<span class="text-success">+' + ev.pts + '</span>');
+            if (ev.type === 'tag') parts.push('<span class="text-danger">-20</span>');
+            return parts.join(' ');
+        }
+        let pbPlayers = {};
+        let pbEvts = [];
+        // The page opens on a synthetic "Game start" cursor a hair BEFORE tick 0,
+        // so the tick-0 events aren't already applied on load — the scoreboard
+        // shows the fresh pre-game state until the user presses play / steps.
+        const PB_PREGAME = -0.5;
+        let pbCur = PB_PREGAME, pbRunning = false, pbSpeed = 1, pbTimer = null;
+
+        function loadRound(idx) {
+            const r = ROUNDS[idx];
+            ALL = r.all;
+            PLAYERS = r.players;
+            PB_RED = r.redName;
+            PB_BLUE = r.blueName;
+            // SIM-05: idx/sec derived client-side (ts in canonical ticks, 1=0.5s).
+            ALL.forEach((e, i) => { e.idx = i; e.sec = e.ts / 2; });
+
+            pbPlayers = {};
+            PLAYERS.forEach(p => {
+                const id = String(p.id);
+                const role = (p.role || 'scout').toLowerCase();
+                const sl = parseInt(p.sl) || 0;
+                const ss = parseInt(p.ss) || 0;
+                const mm = MAX_MISSILES[role] || 0;
+                pbPlayers[id] = {
+                    id, name: p.name || id, team: p.team || 'red',
+                    role, startLives: sl, startShots: ss, startMissiles: mm,
+                    lives: sl, shots: ss, missiles: mm, score: 0, sp: 0,
+                    lastDownedAt: null, isElim: false,
+                };
+            });
+
+            // Carry the authoritative per-event resource snapshots (5-key actor /
+            // 4-key target blocks emitted server-side) so playback reads exact
+            // shots/lives/score/SP rather than re-deriving them.
+            pbEvts = ALL.map(ev => {
+                const m = ev.meta || {};
+                return {
+                    idx: ev.idx, type: ev.type,
+                    actorId: String(ev.aid), targetId: String(ev.tid),
+                    sec: ev.sec,
+                    aPts: m.actor_points, aShots: m.actor_shots, aLives: m.actor_lives,
+                    aSp: (m.sp != null ? m.sp : null),
+                    tPts: m.target_points, tShots: m.target_shots, tLives: m.target_lives,
+                };
+            });
+        }
+
+        function pbReset() {
+            Object.values(pbPlayers).forEach(p => {
+                p.lives = p.startLives; p.shots = p.startShots; p.missiles = p.startMissiles;
+                p.score = 0; p.sp = 0; p.lastDownedAt = null; p.isElim = false;
+            });
+        }
+
+        // Apply one event by adopting its authoritative metadata snapshots.
+        // A down is inferred when a player's life count drops vs the prior value
+        // (drives the respawn-window colouring); a missile fire (locking) is the
+        // only resource with no snapshot, so it is decremented by hand.
+        function pbApply(ev) {
+            const a = pbPlayers[ev.actorId], t = pbPlayers[ev.targetId];
+            if (a) {
+                if (ev.aPts != null) a.score = ev.aPts;
+                if (ev.aShots != null) a.shots = ev.aShots;
+                if (ev.aLives != null) {
+                    if (ev.aLives < a.lives) a.lastDownedAt = ev.sec;
+                    a.lives = ev.aLives; a.isElim = a.lives <= 0;
+                }
+                if (ev.aSp != null) a.sp = ev.aSp;
+                if (ev.type === 'locking') a.missiles = Math.max(0, a.missiles - 1);
+            }
+            if (t) {
+                if (ev.tPts != null) t.score = ev.tPts;
+                if (ev.tShots != null) t.shots = ev.tShots;
+                if (ev.tLives != null) {
+                    if (ev.tLives < t.lives) t.lastDownedAt = ev.sec;
+                    t.lives = ev.tLives; t.isElim = t.lives <= 0;
+                }
+                // Being resupplied briefly deactivates the receiver — flash the
+                // same down/reset colouring as a tag-down.
+                if (ev.type === 'resupply_lives' || ev.type === 'resupply_ammo' ||
+                    ev.type === 'combo_resupply') {
+                    t.lastDownedAt = ev.sec;
+                }
+            }
+            if (ev.type === 'elimination' && t) { t.isElim = true; t.lastDownedAt = ev.sec; }
+        }
+
+        function pbSetTime(t, scroll) {
+            pbCur = Math.max(PB_PREGAME, Math.min(900, t));
+            pbReset();
+            for (const ev of pbEvts) { if (ev.sec > pbCur) break; pbApply(ev); }
+            pbRefresh(scroll !== false, true);
+        }
+
+        function pbRefresh() {
+            const disp = Math.max(0, pbCur);   // never show a negative pre-game clock
+            const mm = String(Math.floor(disp / 60)).padStart(2, '0');
+            const ss = String(Math.floor(disp % 60)).padStart(2, '0');
+            document.getElementById('pb-time-display').textContent = mm + ':' + ss;
+            document.getElementById('pb-scrubber').value = disp;
+            pbDrawBoards();
+            pbHighlightEvent();
+        }
+
+        // Canonical role order so both teams sort identically — row i is then the
+        // SAME role on both sides (the two Scouts sit adjacent, name-tiebroken).
+        const ROLE_ORDER = { commander: 0, heavy: 1, scout: 2, medic: 3, ammo: 4 };
+        function sortByRole(list) {
+            return list.slice().sort((a, b) =>
+                ((ROLE_ORDER[a.role] != null ? ROLE_ORDER[a.role] : 9) -
+                    (ROLE_ORDER[b.role] != null ? ROLE_ORDER[b.role] : 9)) ||
+                String(a.name).localeCompare(String(b.name)));
+        }
+
+        // #4 — three live states + eliminated. Returns {op, grey, elim}:
+        //   active   → full colour (op 1)
+        //   reset    → resettable (4-8 s after a down): half grey  (op 0.6)
+        //   invuln   → NOT resettable (0-4 s not-targetable window): full grey (op 0.3)
+        //   elim     → out for the round: full grey + skull
+        function pbState(p) {
+            if (p.isElim) return { op: 0.3, grey: true, elim: true };
+            if (p.lastDownedAt !== null) {
+                const e = pbCur - p.lastDownedAt;
+                if (e < 4) return { op: 0.3, grey: true };   // invuln window — not resettable
+                if (e < 8) return { op: 0.6, grey: true };   // reset window — resettable
+            }
+            return { op: 1, grey: false };
+        }
+
+        function pbCells(p, color) {
+            if (!p) return '<td></td><td></td><td></td><td></td><td></td><td></td>';
+            const st = pbState(p);
+            const cls = st.grey ? 'text-muted' : ('text-' + color);
+            const sty = ' style="opacity:' + st.op + '"';
+            const lives = st.elim ? '&#9760;' : p.lives;
+            const mi = p.startMissiles ? p.missiles : '&mdash;';
+            return '<td class="' + cls + ' text-start"' + sty + '>' + esc(p.name) + '</td>' +
+                '<td class="' + cls + ' fw-bold"' + sty + '>' + p.score.toLocaleString() + '</td>' +
+                '<td class="' + cls + '"' + sty + '>' + lives + '</td>' +
+                '<td class="' + cls + '"' + sty + '>' + p.shots + '</td>' +
+                '<td class="' + cls + '"' + sty + '>' + mi + '</td>' +
+                '<td class="' + cls + '"' + sty + '>' + p.sp + '</td>';
+        }
+
+        // #2 — role icon in its own column (shared by the paired row).
+        function pbRoleCell(p) {
+            if (!p) return '<td></td>';
+            return '<td class="text-center"><img src="' + (ROLE_ICONS[p.role] || '') +
+                '" alt="' + esc(p.role) + '" title="' + esc(p.role) + '" height="18"></td>';
+        }
+
+        // #3 — one combined table; each row pairs the two teams' same-role players.
+        function pbDrawBoards() {
+            const reds = sortByRole(Object.values(pbPlayers).filter(p => p.team === 'red'));
+            const blues = sortByRole(Object.values(pbPlayers).filter(p => p.team === 'blue'));
+            const rTot = reds.reduce((s, p) => s + p.score, 0);
+            const bTot = blues.reduce((s, p) => s + p.score, 0);
+            const n = Math.max(reds.length, blues.length);
+            let rows = '';
+            for (let i = 0; i < n; i++) {
+                const rp = reds[i], bp = blues[i];
+                rows += '<tr>' + pbRoleCell(rp || bp) +
+                    pbCells(rp, 'danger') + pbCells(bp, 'primary') + '</tr>';
+            }
+            document.getElementById('pb-scoreboard').innerHTML =
+                '<table class="table table-sm table-bordered text-center align-middle mb-0">' +
+                '<thead>' +
+                '<tr><th class="table-light"></th>' +
+                '<th colspan="6" class="table-danger">' + esc(PB_RED) + ' &mdash; ' + rTot.toLocaleString() + '</th>' +
+                '<th colspan="6" class="table-primary">' + esc(PB_BLUE) + ' &mdash; ' + bTot.toLocaleString() + '</th></tr>' +
+                '<tr class="small text-muted">' +
+                '<th>Role</th>' +
+                '<th class="text-start">Player</th><th>Sc</th><th>L</th><th>Sh</th><th>Mi</th><th>SP</th>' +
+                '<th class="text-start">Player</th><th>Sc</th><th>L</th><th>Sh</th><th>Mi</th><th>SP</th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table>';
+        }
+
+        // Build the full event timeline for the active round (called per round).
+        function pbBuildTimeline() {
+            const tl = document.getElementById('pb-timeline');
+            // A synthetic "Game start" anchor the page opens on (no events applied).
+            const startRow = '<div class="pb-evt-row d-flex justify-content-between ' +
+                'align-items-start px-2 py-1 border-start border-3 border-success" ' +
+                'data-idx="start" data-sec="' + PB_PREGAME + '" role="button">' +
+                '<span><code class="text-muted me-1">00:00</code>&#128681; Game start</span></div>';
+            tl.innerHTML = startRow + ALL.map(ev => {
+                const cls = EVT_CLASS[ev.type] || 'border-secondary';
+                const icon = ev.icon || '&#8226;';
+                const when = ev.tf || pbFmt(ev.sec);
+                const deltas = pbDeltas(ev);
+                return '<div class="pb-evt-row d-flex justify-content-between align-items-start ' +
+                    'px-2 py-1 border-start border-3 ' + cls + '" data-idx="' + ev.idx +
+                    '" data-sec="' + ev.sec + '" role="button">' +
+                    '<span><code class="text-muted me-1">' + when + '</code>' + icon + ' ' +
+                    esc(ev.desc || ev.type) + '</span>' +
+                    (deltas ? '<span class="text-nowrap ms-2 fw-bold">' + deltas + '</span>' : '') +
+                    '</div>';
+            }).join('');
+            // Click a row → jump playback to that event's tick.
+            tl.querySelectorAll('.pb-evt-row').forEach(row => {
+                row.addEventListener('click', () => {
+                    pbPause();
+                    pbSetTime(parseFloat(row.getAttribute('data-sec')));
+                });
+            });
+        }
+
+        // Highlight the timeline row for the event at the current cursor and
+        // auto-scroll it into view (only when the active event changes, so
+        // continuous playback doesn't thrash the scroll). The list tracks the
+        // scoreboard live.
+        let pbCurEvtIdx = null;
+        function pbHighlightEvent() {
+            const tl = document.getElementById('pb-timeline');
+            let cur = null;
+            for (const ev of pbEvts) { if (ev.sec <= pbCur) cur = ev; else break; }
+            // Before the first event fires, the "Game start" anchor is current.
+            const idx = cur ? cur.idx : 'start';
+            if (idx === pbCurEvtIdx) return;
+            pbCurEvtIdx = idx;
+            const prev = tl.querySelector('.pb-evt-cur');
+            if (prev) prev.classList.remove('pb-evt-cur', 'bg-warning-subtle', 'fw-bold');
+            const row = tl.querySelector('.pb-evt-row[data-idx="' + idx + '"]');
+            if (row) {
+                row.classList.add('pb-evt-cur', 'bg-warning-subtle', 'fw-bold');
+                // Pin the current event to the BOTTOM of the timeline panel so the
+                // feed scrolls up as play advances (newest at the bottom). Scroll
+                // ONLY the panel — not the page — so the screen doesn't jump.
+                const r = row.getBoundingClientRect();
+                const c = tl.getBoundingClientRect();
+                tl.scrollTo({ top: tl.scrollTop + (r.bottom - c.bottom), behavior: 'smooth' });
+            }
+        }
+
+        function pbPlay() {
+            if (pbRunning) return;
+            pbRunning = true;
+            document.getElementById('pb-play').textContent = '⏸';
+            pbTimer = setInterval(() => {
+                pbCur += pbSpeed * 0.1;
+                if (pbCur >= 900) { pbCur = 900; pbPause(); }
+                pbReset();
+                for (const ev of pbEvts) { if (ev.sec > pbCur) break; pbApply(ev); }
+                pbRefresh();
+            }, 100);
+        }
+
+        function pbPause() {
+            if (!pbRunning) return;
+            pbRunning = false;
+            document.getElementById('pb-play').innerHTML = '&#9654;';
+            clearInterval(pbTimer);
+        }
+
+        document.getElementById('pb-play').addEventListener('click', () => pbRunning ? pbPause() : pbPlay());
+        document.getElementById('pb-step-fwd').addEventListener('click', () => {
+            pbPause();
+            const nxt = pbEvts.find(ev => ev.sec > pbCur);
+            pbSetTime(nxt ? nxt.sec : 900);
+        });
+        document.getElementById('pb-step-back').addEventListener('click', () => {
+            pbPause();
+            let prev = null;
+            for (const ev of pbEvts) { if (ev.sec < pbCur) prev = ev; else break; }
+            pbSetTime(prev ? prev.sec : PB_PREGAME);
+        });
+        document.getElementById('pb-speed').addEventListener('change', e => { pbSpeed = parseFloat(e.target.value); });
+        document.getElementById('pb-scrubber').addEventListener('input', e => { pbPause(); pbSetTime(parseFloat(e.target.value), false); });
+
+        function selectRound(idx) {
+            pbPause();
+            loadRound(idx);
+            pbBuildTimeline();
+            pbCurEvtIdx = null;
+            pbSetTime(PB_PREGAME);
+        }
+
+        // Playoff round-1 / round-2 toggle: swap the active round's ALL/PLAYERS
+        // and re-init the engine off the toggled round.
+        const r1 = document.getElementById('play-week-live-round-1');
+        const r2 = document.getElementById('play-week-live-round-2');
+        if (r1 && r2) {
+            r1.addEventListener('click', () => {
+                r1.classList.add('active'); r2.classList.remove('active');
+                selectRound(0);
+            });
+            r2.addEventListener('click', () => {
+                r2.classList.add('active'); r1.classList.remove('active');
+                selectRound(1);
+            });
+        }
+
+        // ===== Initial render =====
+        selectRound(0);
+    });
+</script>
+{% endblock %}

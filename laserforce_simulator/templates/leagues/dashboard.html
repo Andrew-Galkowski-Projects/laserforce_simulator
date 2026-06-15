@@ -44,6 +44,11 @@
                                     <button type="submit" class="dropdown-item">{% if has_following_tournament_phase %}{% if following_tournament_is_final %}Play Until Playoffs{% else %}Play Until Tournament{% endif %}{% else %}Play Until End of Season{% endif %}</button>
                                 </form>
                             </li>
+                            {% if live_preview_available %}
+                            <li>
+                                <a id="league-dashboard-play-one-week-live" class="dropdown-item" href="{% url 'play_week_live' displayed_season.id %}">One Week (Live)</a>
+                            </li>
+                            {% endif %}
                         </ul>
                     </div>
                 {% elif action_button_state == "start_next_season" %}

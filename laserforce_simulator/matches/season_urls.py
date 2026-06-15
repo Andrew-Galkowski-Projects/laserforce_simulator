@@ -54,6 +54,21 @@ urlpatterns = [
         name="season_awards",
     ),
     path(
+        "<int:season_id>/play-week-live/",
+        league_views.play_week_live_preview,
+        name="play_week_live",
+    ),
+    path(
+        "<int:season_id>/play-week-live/commit/",
+        league_views.play_week_live_commit,
+        name="play_week_live_commit",
+    ),
+    path(
+        "<int:season_id>/play-week-live/discard/",
+        league_views.play_week_live_discard,
+        name="play_week_live_discard",
+    ),
+    path(
         "<int:season_id>/standings/",
         league_views.season_standings,
         name="season_standings",

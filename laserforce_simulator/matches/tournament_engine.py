@@ -85,7 +85,6 @@ def _build_role_hook(tournament: Tournament):
     return hook
 
 
-@transaction.atomic
 def play_next_node(tournament: Tournament) -> "BracketNode | None":
     """Simulate the NEXT Match of the next playable Bracket node's best-of-N
     Series, recording it as a SeriesMatch. Advances the node only once its
@@ -93,15 +92,41 @@ def play_next_node(tournament: Tournament) -> "BracketNode | None":
 
     Returns the node whose Series was advanced one Match (whether or not the
     Series has now clinched), or None when no node is playable (nothing ready
-    / tournament complete). @transaction.atomic — one Match = one
-    transactional unit (ADR-0016 per-node-atomic precedent, now per-Match).
+    / tournament complete).
+
+    LG-01i: refactored to ``find_next_playable_node()`` then delegate to
+    :func:`play_specific_node` (which carries the ``@transaction.atomic``). This
+    path stays byte-identical — ``play_specific_node(node, rng_seeds=None)``
+    draws fresh per-round seeds exactly as before. The LG-01i commit path calls
+    ``play_specific_node(watched_node, rng_seeds=captured_pair)`` to commit the
+    watched Match byte-identical to the preview, then loops ``play_next_node``
+    for the rest of the stage.
+    """
+    node = tournament.find_next_playable_node()
+    if node is None:
+        return None
+    return play_specific_node(node)
+
+
+@transaction.atomic
+def play_specific_node(
+    node: "BracketNode", *, rng_seeds: tuple[int, int] | None = None
+) -> "BracketNode | None":
+    """LG-01i: the per-Match resolve/advance body, taking the node DIRECTLY
+    (skips ``find_next_playable_node``) so the LG-01i commit can inject the
+    captured seed pair into the watched Match.
+
+    ``rng_seeds`` is keyword-only and defaults to ``None``: ``None`` ⇒ both
+    rounds draw fresh (byte-identical to ``play_next_node`` today); an injected
+    pair is threaded into ``simulate_match`` so the committed Match is
+    byte-identical to the previewed one (the SIM-07 replay guarantee).
+    @transaction.atomic — one Match = one transactional unit (ADR-0016
+    per-node-atomic precedent, now per-Match).
     """
     # Defer the heavy import inside the function (not at module scope).
     from .simulation.entrypoints import BatchSimulator
 
-    node = tournament.find_next_playable_node()
-    if node is None:
-        return None
+    tournament = node.tournament
 
     # 1-3. Simulate ONE Match (team_a plays red, team_b plays blue) and resolve
     # this Match's decisive winner (tie-break on a true tie). LG-02x-1 —
@@ -114,10 +139,14 @@ def play_next_node(tournament: Tournament) -> "BracketNode | None":
             node.team_b,
             match_type="tournament",
             before_round_hook=hook,
+            rng_seeds=rng_seeds,
         )
     else:
         match = BatchSimulator().simulate_match(
-            node.team_a, node.team_b, match_type="tournament"
+            node.team_a,
+            node.team_b,
+            match_type="tournament",
+            rng_seeds=rng_seeds,
         )
     match_winner = match.winner
     if match_winner is None:
