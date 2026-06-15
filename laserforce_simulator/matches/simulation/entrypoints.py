@@ -564,8 +564,8 @@ class BatchSimulator:
         arena_map,
         zone_size: int | None,
     ) -> "GameRound":
-        """Draw a fresh 63-bit seed, ``random.seed()`` it, simulate one
-        round in-memory via ``_simulate_round``, and persist it through
+        """Draw a fresh 63-bit seed, ``random.seed()`` it, simulate one round
+        in-memory via ``_simulate_round``, and persist it through
         ``_flush_to_db``.
 
         SIM-09 helper shared by :meth:`simulate_match` (called twice —

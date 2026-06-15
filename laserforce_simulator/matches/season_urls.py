@@ -54,6 +54,16 @@ urlpatterns = [
         name="season_awards",
     ),
     path(
+        "<int:season_id>/play-week-live/",
+        league_views.play_week_live,
+        name="play_week_live",
+    ),
+    path(
+        "<int:season_id>/play-week-live/watch/",
+        league_views.play_week_live_watch,
+        name="play_week_live_watch",
+    ),
+    path(
         "<int:season_id>/standings/",
         league_views.season_standings,
         name="season_standings",

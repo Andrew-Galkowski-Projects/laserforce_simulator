@@ -85,7 +85,6 @@ def _build_role_hook(tournament: Tournament):
     return hook
 
 
-@transaction.atomic
 def play_next_node(tournament: Tournament) -> "BracketNode | None":
     """Simulate the NEXT Match of the next playable Bracket node's best-of-N
     Series, recording it as a SeriesMatch. Advances the node only once its
@@ -93,15 +92,34 @@ def play_next_node(tournament: Tournament) -> "BracketNode | None":
 
     Returns the node whose Series was advanced one Match (whether or not the
     Series has now clinched), or None when no node is playable (nothing ready
-    / tournament complete). @transaction.atomic — one Match = one
-    transactional unit (ADR-0016 per-node-atomic precedent, now per-Match).
+    / tournament complete).
+
+    Refactored to ``find_next_playable_node()`` then delegate to
+    :func:`play_specific_node` (which carries the ``@transaction.atomic``), so
+    the LG-01i live-watch commit can play a SPECIFIC node (the manager's) while
+    this entry point keeps playing the next playable one.
+    """
+    node = tournament.find_next_playable_node()
+    if node is None:
+        return None
+    return play_specific_node(node)
+
+
+@transaction.atomic
+def play_specific_node(node: "BracketNode") -> "BracketNode | None":
+    """The per-Match resolve/advance body, taking the node DIRECTLY (skips
+    ``find_next_playable_node``).
+
+    Used by :func:`play_next_node` (the next playable node) and by the LG-01i
+    live-watch playoff commit (the manager's specific node, before the rest of
+    the bracket stage is drained in the background). @transaction.atomic — one
+    Match = one transactional unit (ADR-0016 per-node-atomic precedent, now
+    per-Match).
     """
     # Defer the heavy import inside the function (not at module scope).
     from .simulation.entrypoints import BatchSimulator
 
-    node = tournament.find_next_playable_node()
-    if node is None:
-        return None
+    tournament = node.tournament
 
     # 1-3. Simulate ONE Match (team_a plays red, team_b plays blue) and resolve
     # this Match's decisive winner (tie-break on a true tie). LG-02x-1 —
@@ -117,7 +135,9 @@ def play_next_node(tournament: Tournament) -> "BracketNode | None":
         )
     else:
         match = BatchSimulator().simulate_match(
-            node.team_a, node.team_b, match_type="tournament"
+            node.team_a,
+            node.team_b,
+            match_type="tournament",
         )
     match_winner = match.winner
     if match_winner is None:

@@ -3769,3 +3769,377 @@ class TestPlayerRowEliminationSemantic:
         row = _player_row(ps)
         assert row["is_eliminated"] is False
         assert row["eliminated_timestamp"] == ""
+
+
+# ===========================================================================
+# LG-01i — Season "One Week (Live)" preview-then-commit replay UI (view layer).
+#
+# Seam contract: ``.claude/worktrees/lg-01i-one-week-live-seam-contract.md``
+# §3 (views), §4 (session pin), §5 (cursor dispatch), §9 (test boundary).
+#
+# Four NEW classes appended below (existing classes above are NOT modified):
+#
+#   - TestLg01iCursorDispatch — ``_resolve_live_cursor`` RR / rr_bye / None
+#     (no current_team) / playoff / eliminated, and ``_alive_playoff_node``.
+#   - TestLg01iLivePreviewView — ``play_week_live_preview`` GET 200 (valid RR /
+#     playoff cursor), 400 dashboard re-render (non-active / no live entry),
+#     405 (POST); the session pin written with the drawn seed(s) + cursor
+#     identity; re-opening REPLAYS the same pinned seed (not a redraw).
+#   - TestLg01iLiveCommit — ``play_week_live_commit`` POST 302 + rows; the
+#     watched fixture's persisted ``rng_seed`` == the pinned seed; the rest of
+#     the matchday simmed; playoff commit advances the watched node + drains
+#     the rest of the stage; missing/stale pin ⇒ 400; pin cleared after commit.
+#   - TestLg01iLiveDiscard — ``play_week_live_discard`` POST 302 + ZERO new
+#     rows; pin cleared; 405 on GET.
+#
+# Assertion discipline (LOCKED): seed equality / row counts / DOM ids / status
+# codes / pin identity — NEVER exact simulated point totals (RR is seeded so
+# the watched round is deterministic; the rest-of-matchday + playoff sims draw
+# fresh). To build a built+alive playoff bracket we play the RR via the real
+# ``simulate_scheduled_round`` (which auto-builds the tournament phase), the
+# ``test_season_playoff*`` fixture pattern.
+#
+# These assertions WILL fail until the Code agent lands ``_resolve_live_cursor``
+# / ``_alive_playoff_node`` / the three ``play_week_live_*`` views / the
+# ``play_week_live`` URL routes / the session-pin lifecycle; that is the
+# expected TDD red state for the parallel build.
+# ===========================================================================
+
+
+from datetime import date as _lg01i_v_date
+
+from django.test import TestCase as _Lg01iTestCase
+
+from matches.models import BracketNode as _Lg01iBracketNode
+from matches.models import GameRound as _Lg01iGameRound
+from matches.models import League as _Lg01iVLeague
+from matches.models import Season as _Lg01iVSeason
+from matches.models import SeasonPhase as _Lg01iSeasonPhase
+
+_LG01I_V_FAST_TICKS = 20
+
+
+def _lg01i_rr_season(prefix: str, n: int = 2, *, manager_idx: int = 0):
+    """An ``active`` n-team Season whose League ``current_team`` is the
+    ``manager_idx``-th team. Returns ``(season, teams)``.
+    """
+    league = _Lg01iVLeague.objects.create(name=f"{prefix} League")
+    season = _Lg01iVSeason.objects.create(
+        league=league, name="S1", start_date=_lg01i_v_date(2026, 1, 1)
+    )
+    teams = []
+    for i in range(n):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        teams.append(t)
+        season.teams.add(t)
+    season.start_season()
+    season.refresh_from_db()
+    if manager_idx is not None:
+        league.current_team = teams[manager_idx]
+        league.save(update_fields=["current_team"])
+    return season, teams
+
+
+def _lg01i_rr_tournament_season(prefix: str, n: int = 4, *, manager_idx: int = 0):
+    """An ``active`` Season: ordinal-1 ``round_robin`` + ordinal-2
+    ``tournament`` phase, ``n`` teams enrolled+started, League
+    ``current_team`` = the ``manager_idx``-th team.
+
+    Returns ``(season, teams, tournament_phase)``.
+    """
+    league = _Lg01iVLeague.objects.create(name=f"{prefix} League")
+    season = _Lg01iVSeason.objects.create(
+        league=league, name="S1", start_date=_lg01i_v_date(2026, 1, 1)
+    )
+    teams = []
+    for i in range(n):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        teams.append(t)
+        season.teams.add(t)
+    _Lg01iSeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")
+    tournament_phase = _Lg01iSeasonPhase.objects.create(
+        season=season, ordinal=2, phase_type="tournament"
+    )
+    season.start_season()
+    season.refresh_from_db()
+    league.current_team = teams[manager_idx]
+    league.save(update_fields=["current_team"])
+    return season, teams, tournament_phase
+
+
+def _lg01i_play_rr(season, teams):
+    """Play every RR fixture via the real simulator (auto-builds the
+    tournament phase on RR completion)."""
+    by_id = {t.id: t for t in teams}
+    sim = BatchSimulator()
+    with patch.object(BatchSimulator, "ROUND_TICKS", _LG01I_V_FAST_TICKS):
+        for phase, fixtures in season.scheduled_fixtures_by_phase():
+            for fixture in fixtures:
+                sim.simulate_scheduled_round(
+                    season,
+                    by_id[fixture.team_a_id],
+                    by_id[fixture.team_b_id],
+                    fixture.round_number,
+                    season_phase=phase if phase.pk is not None else None,
+                )
+
+
+def _lg01i_built_playoff_season(prefix: str, n: int = 4, *, manager_idx: int = 0):
+    """An ``active`` Season whose RR is complete and tournament phase is
+    built+active, with the League ``current_team`` set to an alive team.
+
+    To guarantee the manager is ALIVE (in an undecided round-1 node) we pick
+    a top-seeded team — but since seeds depend on the (non-deterministic)
+    RR result, the caller should resolve the live node off the bracket. We
+    return ``(season, teams, tournament_phase)`` and let the test pick the
+    manager from a participant of an undecided node.
+    """
+    season, teams, tournament_phase = _lg01i_rr_tournament_season(
+        prefix, n, manager_idx=manager_idx
+    )
+    _lg01i_play_rr(season, teams)
+    season.refresh_from_db()
+    tournament_phase.refresh_from_db()
+    return season, teams, tournament_phase
+
+
+def _lg01i_alive_team(tournament, teams):
+    """Return a Team that participates in an undecided, non-bye, both-slots-
+    filled bracket node (i.e. an ALIVE playoff team) — the manager pick for
+    a playoff-cursor test."""
+    node = (
+        _Lg01iBracketNode.objects.filter(
+            tournament=tournament,
+            winner__isnull=True,
+            is_bye=False,
+            team_a__isnull=False,
+            team_b__isnull=False,
+        )
+        .order_by("bracket_round", "position")
+        .first()
+    )
+    assert node is not None, "expected at least one undecided playoff node"
+    by_id = {t.id: t for t in teams}
+    return by_id[node.team_a_id], node
+
+
+def _lg01i_eliminated_team(tournament, teams):
+    """Return a Team NOT participating in any undecided node (eliminated /
+    not a current participant) — or None when every team is still alive."""
+    alive_ids = set()
+    for node in _Lg01iBracketNode.objects.filter(
+        tournament=tournament,
+        winner__isnull=True,
+        is_bye=False,
+        team_a__isnull=False,
+        team_b__isnull=False,
+    ):
+        alive_ids.add(node.team_a_id)
+        alive_ids.add(node.team_b_id)
+    for t in teams:
+        if t.id not in alive_ids:
+            return t
+    return None
+
+
+class TestLg01iCursorDispatch(_Lg01iTestCase):
+    """``_resolve_live_cursor(season)`` + ``_alive_playoff_node(tournament,
+    team)`` — the cursor-resolution helpers (§5 / §5a)."""
+
+    def _resolve(self, season):
+        from matches.league_views import _resolve_live_cursor
+
+        return _resolve_live_cursor(season)
+
+    def test_rr_cursor_when_current_team_in_next_matchday(self):
+        season, _teams = _lg01i_rr_season("CurRR", n=2, manager_idx=0)
+        cursor = self._resolve(season)
+        self.assertIsNotNone(cursor)
+        self.assertEqual(cursor["kind"], "rr")
+
+    def test_none_when_no_current_team(self):
+        season, _teams = _lg01i_rr_season("CurNone", n=2, manager_idx=None)
+        # No current_team set.
+        season.league.current_team = None
+        season.league.save(update_fields=["current_team"])
+        self.assertIsNone(self._resolve(season))
+
+    def test_rr_bye_when_current_team_has_a_bye(self):
+        # Odd N ⇒ one team byes each matchday. The next matchday's fixtures
+        # exclude exactly one team; set that team as current_team.
+        season, teams = _lg01i_rr_season("CurBye", n=3, manager_idx=0)
+        # Determine which team is NOT in the next matchday's fixtures.
+        in_next = set()
+        for phase, fixtures in season.scheduled_fixtures_by_phase():
+            # first unplayed matchday
+            if not fixtures:
+                continue
+            first_md = min(f.matchday for f in fixtures)
+            for f in fixtures:
+                if f.matchday == first_md:
+                    in_next.add(f.team_a_id)
+                    in_next.add(f.team_b_id)
+            break
+        bye_team = next((t for t in teams if t.id not in in_next), None)
+        self.assertIsNotNone(bye_team, "odd-N matchday should leave one team idle")
+        season.league.current_team = bye_team
+        season.league.save(update_fields=["current_team"])
+        cursor = self._resolve(season)
+        self.assertIsNotNone(cursor)
+        self.assertEqual(cursor["kind"], "rr_bye")
+
+    def test_playoff_cursor_when_current_team_alive(self):
+        season, teams, tp = _lg01i_built_playoff_season("CurPlayAlive", n=4)
+        tp.refresh_from_db()
+        alive_team, _node = _lg01i_alive_team(tp.tournament, teams)
+        season.league.current_team = alive_team
+        season.league.save(update_fields=["current_team"])
+        cursor = self._resolve(season)
+        self.assertIsNotNone(cursor)
+        self.assertEqual(cursor["kind"], "playoff")
+
+    def test_none_when_current_team_eliminated_in_playoff(self):
+        season, teams, tp = _lg01i_built_playoff_season("CurPlayElim", n=4)
+        tp.refresh_from_db()
+        elim = _lg01i_eliminated_team(tp.tournament, teams)
+        if elim is None:
+            self.skipTest("no eliminated team in this (non-deterministic) bracket")
+        season.league.current_team = elim
+        season.league.save(update_fields=["current_team"])
+        self.assertIsNone(self._resolve(season))
+
+    def test_alive_playoff_node_returns_node_for_participant(self):
+        from matches.league_views import _alive_playoff_node
+
+        season, teams, tp = _lg01i_built_playoff_season("AlivePlayNode", n=4)
+        tp.refresh_from_db()
+        alive_team, node = _lg01i_alive_team(tp.tournament, teams)
+        resolved = _alive_playoff_node(tp.tournament, alive_team)
+        self.assertIsNotNone(resolved)
+        self.assertIn(alive_team.id, (resolved.team_a_id, resolved.team_b_id))
+        # Pinned to a Series that has not started (game-1 cursor).
+        self.assertEqual(resolved.series_matches.count(), 0)
+
+    def test_alive_playoff_node_returns_none_for_eliminated(self):
+        from matches.league_views import _alive_playoff_node
+
+        season, teams, tp = _lg01i_built_playoff_season("AliveElimNode", n=4)
+        tp.refresh_from_db()
+        elim = _lg01i_eliminated_team(tp.tournament, teams)
+        if elim is None:
+            self.skipTest("no eliminated team in this (non-deterministic) bracket")
+        self.assertIsNone(_alive_playoff_node(tp.tournament, elim))
+
+
+class TestLg01iPlayWeekLive(_Lg01iTestCase):
+    """``play_week_live`` (POST) — plays the manager's game NOW, kicks off the
+    rest of the week in the background, redirects to the watch page. No preview,
+    no discard, results final."""
+
+    def _watch(self, season_id):
+        return self.client.session.get("live_watch")
+
+    def test_rr_post_plays_and_redirects_to_watch(self):
+        season, _teams = _lg01i_rr_season("PlayRR", n=2, manager_idx=0)
+        before = _Lg01iGameRound.objects.filter(match__season=season).count()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01I_V_FAST_TICKS):
+            response = self.client.post(reverse("play_week_live", args=[season.id]))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"], reverse("play_week_live_watch", args=[season.id])
+        )
+        # The manager's game was committed.
+        after = _Lg01iGameRound.objects.filter(match__season=season).count()
+        self.assertGreater(after, before)
+        # The watch handoff records the committed round id(s) + kind.
+        watch = self._watch(season.id)
+        self.assertIsNotNone(watch)
+        self.assertEqual(watch["season_id"], season.id)
+        self.assertEqual(watch["kind"], "rr")
+        self.assertEqual(len(watch["round_ids"]), 1)
+
+    def test_rr_post_plays_rest_of_matchday_in_background(self):
+        # N=4 ⇒ matchday 1 has 2 fixtures; the background task plays the other.
+        # Under CELERY_TASK_ALWAYS_EAGER the rest plays inline ⇒ >1 round.
+        season, _teams = _lg01i_rr_season("PlayRest", n=4, manager_idx=0)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01I_V_FAST_TICKS):
+            self.client.post(reverse("play_week_live", args=[season.id]))
+        rounds = _Lg01iGameRound.objects.filter(match__season=season).count()
+        self.assertGreater(rounds, 1)
+
+    def test_playoff_post_plays_node_and_redirects(self):
+        season, teams, tp = _lg01i_built_playoff_season("PlayPlay", n=4)
+        tp.refresh_from_db()
+        alive_team, watched_node = _lg01i_alive_team(tp.tournament, teams)
+        season.league.current_team = alive_team
+        season.league.save(update_fields=["current_team"])
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01I_V_FAST_TICKS):
+            response = self.client.post(reverse("play_week_live", args=[season.id]))
+        self.assertEqual(response.status_code, 302)
+        watched_node.refresh_from_db()
+        self.assertIsNotNone(watched_node.winner_id)
+        watch = self._watch(season.id)
+        self.assertEqual(watch["kind"], "playoff")
+        # The manager's 2-round Match is recorded for watching.
+        self.assertEqual(len(watch["round_ids"]), 2)
+
+    def test_non_active_season_returns_400(self):
+        league = _Lg01iVLeague.objects.create(name="PlayDraftLeague")
+        season = _Lg01iVSeason.objects.create(
+            league=league, name="S1", start_date=_lg01i_v_date(2026, 1, 1)
+        )  # draft (never started)
+        response = self.client.post(reverse("play_week_live", args=[season.id]))
+        self.assertEqual(response.status_code, 400)
+
+    def test_no_live_entry_returns_400(self):
+        season, _teams = _lg01i_rr_season("PlayNoEntry", n=2, manager_idx=None)
+        season.league.current_team = None
+        season.league.save(update_fields=["current_team"])
+        response = self.client.post(reverse("play_week_live", args=[season.id]))
+        self.assertEqual(response.status_code, 400)
+
+    def test_get_returns_405(self):
+        season, _teams = _lg01i_rr_season("PlayGet405", n=2, manager_idx=0)
+        response = self.client.get(reverse("play_week_live", args=[season.id]))
+        self.assertEqual(response.status_code, 405)
+
+    def test_missing_season_returns_404(self):
+        response = self.client.post(reverse("play_week_live", args=[9_999_999]))
+        self.assertEqual(response.status_code, 404)
+
+
+class TestLg01iLiveWatch(_Lg01iTestCase):
+    """``play_week_live_watch`` (GET) — read-only replay of the just-played
+    game; NO commit/discard controls."""
+
+    def _play_then_watch(self, season):
+        with patch.object(BatchSimulator, "ROUND_TICKS", _LG01I_V_FAST_TICKS):
+            self.client.post(reverse("play_week_live", args=[season.id]))
+            return self.client.get(reverse("play_week_live_watch", args=[season.id]))
+
+    def test_watch_after_play_renders_replay(self):
+        season, _teams = _lg01i_rr_season("WatchRR", n=2, manager_idx=0)
+        response = self._play_then_watch(season)
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "seasons/play_week_live.html")
+        html = response.content.decode()
+        # Replay payload present...
+        self.assertIn('id="events-data"', html)
+        # ...and NO commit/discard controls (play-now, results final).
+        self.assertNotIn("play-week-live-commit", html)
+        self.assertNotIn("play-week-live-discard", html)
+        self.assertIn("play-week-live-done", html)
+
+    def test_watch_without_playing_returns_400(self):
+        season, _teams = _lg01i_rr_season("WatchNoState", n=2, manager_idx=0)
+        response = self.client.get(reverse("play_week_live_watch", args=[season.id]))
+        self.assertEqual(response.status_code, 400)
+
+    def test_post_returns_405(self):
+        season, _teams = _lg01i_rr_season("WatchPost405", n=2, manager_idx=0)
+        response = self.client.post(reverse("play_week_live_watch", args=[season.id]))
+        self.assertEqual(response.status_code, 405)
+
+    def test_missing_season_returns_404(self):
+        response = self.client.get(reverse("play_week_live_watch", args=[9_999_999]))
+        self.assertEqual(response.status_code, 404)

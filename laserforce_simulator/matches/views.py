@@ -862,23 +862,22 @@ def save_batch_status(request, job_id):
     return JsonResponse(_build_save_status_response(async_result))
 
 
-def game_round_events(request, round_id):
-    """Display the detailed event log for a game round.
+def round_playback_payload(game_round, *, include_movement: bool = True):
+    """Build the SIM-05 ``(events_data, players_data)`` JSON payload from a
+    persisted ``GameRound`` — the 13-key event shape + 6-key player shape the
+    client playback engine in ``game_round_events.html`` / ``play_week_live.html``
+    consumes. Extracted from ``game_round_events`` so the LG-01i live-watch view
+    (which replays a just-committed round) reuses the exact same serialization.
 
-    M-1: every event is emitted **once** as a compact JSON list
-    (``events_data``) instead of one server-rendered DOM row each. The
-    template renders only a window of the timeline client-side and feeds
-    the same JSON to the charts and the SIM-05 playback engine, so the
-    page stays bounded regardless of round length (the old design emitted
-    ~20k DOM nodes for a single round). Keep the per-event keys short —
-    they are read directly by ``game_round_events.html``; the shape is
-    pinned by ``TestM1EventLogWindowing``.
+    ``include_movement=False`` drops ``event_type="movement"`` rows (the live
+    watch surfaces only gameplay events on its timeline; the scoreboard
+    reconstruction ignores movement either way).
     """
-    game_round = get_object_or_404(GameRound, id=round_id)
-
     events_qs = game_round.events.all().select_related(
         "actor", "target", "actor__team", "target__team"
     )
+    if not include_movement:
+        events_qs = events_qs.exclude(event_type="movement")
     events_data = [
         {
             "type": e.event_type,
@@ -897,7 +896,6 @@ def game_round_events(request, round_id):
         }
         for e in events_qs
     ]
-
     players_data = [
         {
             "id": ps.player_id,
@@ -909,6 +907,23 @@ def game_round_events(request, round_id):
         }
         for ps in game_round.player_states.select_related("player").all()
     ]
+    return events_data, players_data
+
+
+def game_round_events(request, round_id):
+    """Display the detailed event log for a game round.
+
+    M-1: every event is emitted **once** as a compact JSON list
+    (``events_data``) instead of one server-rendered DOM row each. The
+    template renders only a window of the timeline client-side and feeds
+    the same JSON to the charts and the SIM-05 playback engine, so the
+    page stays bounded regardless of round length (the old design emitted
+    ~20k DOM nodes for a single round). Keep the per-event keys short —
+    they are read directly by ``game_round_events.html``; the shape is
+    pinned by ``TestM1EventLogWindowing``.
+    """
+    game_round = get_object_or_404(GameRound, id=round_id)
+    events_data, players_data = round_playback_payload(game_round)
 
     context = {
         "round": game_round,

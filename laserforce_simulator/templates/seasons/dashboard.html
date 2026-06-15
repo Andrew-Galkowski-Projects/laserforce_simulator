@@ -40,6 +40,14 @@
                                     <button type="submit" class="dropdown-item">{% if has_following_tournament_phase %}{% if following_tournament_is_final %}Play Until Playoffs{% else %}Play Until Tournament{% endif %}{% else %}Play Until End of Season{% endif %}</button>
                                 </form>
                             </li>
+                            {% if live_preview_available %}
+                            <li>
+                                <form id="season-dashboard-play-one-week-live" method="post" action="{% url 'play_week_live' season.id %}" class="px-2">
+                                    {% csrf_token %}
+                                    <button type="submit" class="dropdown-item">One Week (Live)</button>
+                                </form>
+                            </li>
+                            {% endif %}
                         </ul>
                     </div>
                 {% elif action_button_state == "start_next_season" %}
