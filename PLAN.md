@@ -355,18 +355,111 @@ model field** (reuses `League.current_team`), **no new mode value**, **no `Manag
 impl note in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## CAR-01 manager team
 assignment`.
 
-### LG-01i · Season "One Week (Live)" replay UI
+### LG-01i · [DONE] Season "One Week (Live)" replay UI
 
-Per-Round live replay surface invoked from the Play dropdown — a
-"One Week (Live)" entry that plays the next matchday tick-by-tick in
-the browser rather than committing the Rounds straight to the DB.
-User watches each tag/down/elimination as it happens with a
-play/pause/scrub control, then commits or discards the run at the
-end. Depends on **CAR-01** + the new Season-replay engine (the
-tick-stream surface the manager-mode career UI also consumes).
-Deferred from LG-01d. Re-sequenced from Phase 5 to Phase 5.5
-(post-CAR-01) on 2026-05-28 because CAR-01 owns the Season-replay
-tick-stream engine LG-01i consumes.
+Live replay surface invoked from the Play dropdown — a
+"One Week (Live)" entry that lets the manager watch their team's next
+game replay in the browser (play/pause/scrub) and then commit or
+discard the run. Deferred from LG-01d; re-sequenced from Phase 5 to
+Phase 5.5 (post-CAR-01) on 2026-05-28.
+
+**Status: DONE.** Shipped as **preview-then-commit live replay, NOT server-side
+tick streaming** (the PLAN's original "plays the next matchday tick-by-tick" /
+"tick-stream engine" framing was superseded at grilling — there is no WebSocket /
+SSE / Channels surface; the client SIM-05 playback engine plays pre-baked JSON).
+**Mode B is locked: only `League.current_team`'s game is previewed; the rest of
+the matchday / bracket stage is simmed FRESH at commit, never previewed.** A
+preview draws a seed (or a pair), `random.seed()`s it, runs the in-memory tick
+loop with **NO DB flush**, serializes the events to the SIM-05 `events_data` /
+`players_data` JSON shape, and **pins the captured seed(s) in
+`request.session["live_preview_pin"][str(season_id)]`** keyed to the cursor
+identity ("locked once previewed" — the cursor-identity equality check is the
+auto-invalidation; Discard or a successful commit clears the pin). Commit re-runs
+**only the watched game with the injected captured seed(s)** (SIM-07 ⇒
+byte-identical to what was watched) then sims the rest of the matchday (RR) /
+bracket stage (playoff) fresh, sync, atomically. Two watchable cursors: the **RR
+cursor** = `current_team`'s single next-matchday Round (1 seed; bye ⇒ degrade to
+plain commit), and the **playoff cursor** = its next undecided 2-round Match
+(2 seeds), offered only when `current_team` is **alive** (eliminated ⇒ no live
+entry). The injected-seed seam is additive + keyword-only with `None` ⇒
+verbatim-today (`_simulate_and_flush_round` / `simulate_scheduled_round`
+`rng_seed=`, `simulate_match` `rng_seeds=`, and the new
+`tournament_engine.play_specific_node` extracted from `play_next_node`) ⇒
+byte-identical to every existing caller ⇒ **NO Score Calibration re-baseline**.
+
+**Dependency correction.** The PLAN's original "depends on **CAR-01** + the new
+Season-replay tick-stream engine CAR-01 owns" was **inaccurate** — **CAR-01
+shipped only the manager-team-name create-League form field** (no tick-stream
+engine ever existed). LG-01i builds the preview / replay surface **itself** from
+the **SIM-05 client playback engine** + the **in-memory `_simulate_round` / flush
+split** (the new `preview_scheduled_round` / `preview_tournament_match` no-flush
+bundle reusing the SIM-05 `events_data` / `players_data` shapes). CAR-01 is only
+the `League.current_team` **consumer** — LG-01i watches whatever team CAR-01
+assigned.
+
+**Scope-out (locked).** No migration, no model change (the seed lives in
+`request.session`; the committed round persists it via the existing
+`GameRound.rng_seed`), no re-baseline, no server-side tick streaming /
+WebSocket / SSE, no watching non-manager games, no re-roll within a pin
+(Discard then re-open to draw fresh), no playoff-live when eliminated, no
+SIM-05 partial extraction (the playback JS is duplicated into the new
+`templates/seasons/play_week_live.html`, not factored out), no ADR, no
+CONTEXT.md term (the **One Week (Live)** glossary term was finalised at
+grilling). Seam contract:
+[`.claude/worktrees/lg-01i-one-week-live-seam-contract.md`](.claude/worktrees/lg-01i-one-week-live-seam-contract.md);
+impl notes in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md)
+`## LG-01i Season "One Week (Live)" preview-then-commit replay`.
+
+### MECH-15 · Gate base capture on active state (no capturing while down)
+
+**Bug.** A player who has been **Downed** and is still inside the **Respawn
+cooldown** (the not-targetable + reset windows, `RESPAWN_TICKS = 16`) can still
+**Capture a base**. Surfaced while watching the LG-01i live replay — a greyed-out
+(downed) player emitted a `base_capture` event and scored the 1001-point capture
+mid-cooldown. A downed player is not active and must not be able to interact with
+a base.
+
+**Root cause.** The per-tick action loop in
+`matches/simulation/entrypoints.py::_simulate_round` builds `plans` by calling
+`_plan_action` for **every** player in `all_alive` — including players currently
+in the respawn cooldown (alive, `final_lives > 0`, but `not is_active_at(second)`).
+The `capture_base` dispatch (`entrypoints.py` ~L1480 → `_capture_base` →
+`matches/sim_helpers/combat.py::capture_base`) range-checks the base, checks
+`final_shots >= 3` (or Ammo), and awards the capture — but has **no
+`is_active_at(second)` guard**. By contrast the shot path gates on active/taggable
+state (`resolve_shot` validity gate; the `_resolve_tag_attempts` `is_active_at` /
+`is_taggable_at` checks at ~L1926) and missiles gate inside `start_missile_lock`,
+so capture is the one deliberate action that leaks through while down.
+
+**Fix.** Add an active-state guard so a player who is not `is_active_at(second)`
+cannot capture a base (nor be awarded one at round end via `award_bases` if that
+path can fire for a downed player — confirm during the grill). **Open question —
+which layer:** (a) inside `combat.capture_base` (single chokepoint, covers the
+live-capture and any award path, returns `False` early when the actor is inactive
+— but the function currently takes no tick-active signal beyond `second`, which it
+already has via `player.is_active_at(second)`); (b) at the dispatch site in
+`_simulate_round`; or (c) in `plan_action` so a downed player never *plans* a
+capture in the first place (most consistent with how the weighted action vector
+already zeroes deliberate actions for inactive players — audit whether
+`capture_base` is even supposed to be a reachable plan for a downed player). Prefer
+the layer that also makes the fix regression-obvious.
+
+**Blast-radius audit (do in the grill):** confirm whether any **other** deliberate
+action (tag/missile/resupply/special) can also leak while in the respawn cooldown,
+or whether base capture is genuinely the only gap. If others leak, widen the fix to
+a single shared "is this player allowed a deliberate action this tick?" gate rather
+than patching capture alone.
+
+**Scope.** Simulator-mechanics change → **this re-baselines seeded outcomes** (a
+downed player no longer captures, so the event log / scores / standings shift on
+affected ticks). Fold it into the single pending post-MOVE-01 Score Calibration
+re-baseline — do **not** open a separate re-baseline obligation. **No model change,
+no migration.** **Regression test (TDD):** a player Downed at tick *T* emits **no**
+`base_capture` event while `T <= tick < T + RESPAWN_TICKS` even when standing in
+base range with ≥ 3 shots; once active again, capture works as before. Pin it in
+`matches/tests/simulation_tests.py` (or `test_map.py::TestMap04BaseInteraction`)
+with a deterministic hand-built `PlayerState` in the cooldown window — assert on the
+absence/presence of the `base_capture` event, not on point totals.
 
 ### CAR-02 · Performance-based firing
 
