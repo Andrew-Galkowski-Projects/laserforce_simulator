@@ -336,7 +336,7 @@ Shared combat resolution used by `BatchSimulator` (the sole simulator post-SIM-0
 
 ### Combat actions
 
-**`plan_action(player, all_alive, second, movement_ctx=None, *, save_player=None) -> list`** — Returns a list of planned action dicts for the player at this tick. Updates `player.last_chosen_action`; clears `is_hiding` (calling `save_player(player)` when provided). Used by `BatchSimulator`'s per-tick loop.
+**`plan_action(player, all_alive, second, movement_ctx=None, *, save_player=None) -> list`** — Returns a list of planned action dicts for the player at this tick. Updates `player.last_chosen_action`; clears `is_hiding` (calling `save_player(player)` when provided). Used by `BatchSimulator`'s per-tick loop. **MECH-15:** the `capture_base` branch is gated on `player.is_active_at(second)` — a player in the **Respawn cooldown** (Downed, not yet active) **plans no base capture** (map path and 3-zone fallback alike), mirroring the `use_special` active-gate one branch down. Base capture was the one deliberate Action that previously leaked while down; the chokepoint `capture_base` and the round-end `award_bases` are unchanged.
 
 EventLog candidate: all four combat helpers below dropped their `emit_event=None` callable kwarg and now take a required `ctx: RoundContext`. They call `ctx.events.*` verbs directly. The local `_actor_meta` / `_target_meta` / `_build_meta` copies that used to live here are gone — EventLog owns the metadata shape.
 

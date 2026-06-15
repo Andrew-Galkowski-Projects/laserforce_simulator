@@ -428,7 +428,33 @@ POST `play_week_live` (commit + enqueue rest + redirect) and a GET
 entry became a POST `<form>`. Still **no model change, no migration, no
 re-baseline**. The seam contract above documents the superseded design.
 
-### MECH-15 · Gate base capture on active state (no capturing while down)
+### MECH-15 · [DONE] Gate base capture on active state (no capturing while down)
+
+**Status: DONE.** A **one-guard** fix in the planning layer: the `capture_base`
+branch of `matches/sim_helpers/combat.py::plan_action` is wrapped in
+`if player.is_active_at(second):`, so a player inside the **Respawn cooldown**
+(Downed, `last_downed_time` within `RESPAWN_TICKS = 16`) **never plans** a base
+capture — both the map path and the 3-zone fallback. This mirrors the existing
+`use_special` gate one branch down (and the missile gate in `start_missile_lock`
+/ the tag gate in `_resolve_tag_attempts`); the **blast-radius audit confirmed
+base capture was the only deliberate action leaking while down**. `combat.capture_base`
+itself is **left unchanged** (the guard lives upstream in `plan_action`, the
+chosen single layer), and **`award_bases` is deliberately left unchanged** —
+round-end awards to survivors are treated as end-of-round possession, not active
+interaction. **No model change, no migration, no CONTEXT.md edit** (the
+**Base capture** / **Respawn cooldown** / **Not-targetable** / **Reset window**
+terms already cover it), **no ADR**. **Re-baseline:** this is a simulator-mechanics
+change that shifts seeded outcomes (a downed player no longer captures), folded
+into the **single pending post-MOVE-01 Score Calibration re-baseline** — no new
+obligation. The seed-sensitive `test_strong_team_winpct_not_diluted_by_alternation`
+(SIM-08) was re-pinned `master_seed=9001 → 7777` to land on a representative
+sample after the RNG-sequence shift (62.5% team-position win vs 49.2% balanced
+physical side); both the 55% floor and the de-flip contrast guard stay intact.
+**Regression test:** `matches/tests/test_map.py::TestMap04BaseInteraction`
+(`test_downed_player_does_not_plan_capture` + an active-control at the
+`RESPAWN_TICKS` boundary) — pure-unit, RNG pinned so `plan_action` rolls
+`capture_base`, asserts the downed player yields no capture plan while the active
+control does.
 
 **Bug.** A player who has been **Downed** and is still inside the **Respawn
 cooldown** (the not-targetable + reset windows, `RESPAWN_TICKS = 16`) can still
