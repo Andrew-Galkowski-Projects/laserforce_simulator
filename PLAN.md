@@ -408,7 +408,25 @@ CONTEXT.md term (the **One Week (Live)** glossary term was finalised at
 grilling). Seam contract:
 [`.claude/worktrees/lg-01i-one-week-live-seam-contract.md`](.claude/worktrees/lg-01i-one-week-live-seam-contract.md);
 impl notes in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md)
-`## LG-01i Season "One Week (Live)" preview-then-commit replay`.
+`## LG-01i Season "One Week (Live)" play-now-and-watch replay`.
+
+**Redesign (play-now-and-watch — supersedes the preview-then-commit model
+above).** A follow-up reframed the feature: **"One Week (Live)" now PLAYS the
+manager's game immediately** (commits it), kicks off the **rest** of the
+matchday / bracket stage as a **background** `play_season_task(max_matchdays=1)`
+run, and opens a **read-only replay** of the just-played game (the SIM-05 engine
+fed from the *persisted* event log via the extracted
+`matches.views.round_playback_payload`). **Results are final the moment it runs —
+no preview, no commit, no discard, no retry.** This **removed** the preview
+methods (`preview_scheduled_round` / `preview_tournament_match` /
+`_serialize_events_for_preview`), the injected-seed seam (`rng_seed=` /
+`rng_seeds=` on the sim methods + `play_specific_node`), the session pin, and the
+`play_week_live_commit` / `play_week_live_discard` views. The surface is now a
+POST `play_week_live` (commit + enqueue rest + redirect) and a GET
+`play_week_live_watch` (replay the committed game). `_resolve_live_cursor` /
+`_alive_playoff_node` / `play_specific_node` (now seed-less) survive; the dropdown
+entry became a POST `<form>`. Still **no model change, no migration, no
+re-baseline**. The seam contract above documents the superseded design.
 
 ### MECH-15 · Gate base capture on active state (no capturing while down)
 
