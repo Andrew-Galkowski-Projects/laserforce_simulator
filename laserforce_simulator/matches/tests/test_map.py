@@ -960,6 +960,50 @@ class TestMap04BaseInteraction:
         BatchSimulator()._capture_base(player, 14, movement_ctx=None)
         assert player.counters.points_scored == 1001
 
+    def test_downed_player_does_not_plan_capture(self):
+        """MECH-15: a player in the respawn cooldown plans no base capture.
+
+        Force the weighted roll to pick ``capture_base`` so the only thing the
+        downed player's emptiness can be attributed to is the active-state gate.
+        """
+        from matches.sim_helpers.combat import plan_action
+
+        ctx = self._make_ctx({"blue": frozenset({"9,9", "9,8"})})
+        downed = self._make_player("red_cmd", "red", cell_row=9, cell_col=9)
+        down_tick = 100
+        downed.last_downed_time = down_tick  # in the respawn cooldown
+        with patch(
+            "matches.sim_helpers.combat.random.choices",
+            return_value=["capture_base"],
+        ):
+            plans = plan_action(
+                downed, [downed], down_tick + 5, ctx, time_domain="ticks"
+            )
+        assert not any(
+            p["type"] == "capture_base" for p in plans
+        ), "Downed player must not plan a base capture during the respawn cooldown"
+
+    def test_active_player_plans_capture(self):
+        """MECH-15 control: once the respawn cooldown ends, the same player in
+        range plans the capture again (boundary at ``RESPAWN_TICKS``)."""
+        from matches.sim_helpers.combat import plan_action
+        from matches.sim_helpers.time_constants import RESPAWN_TICKS
+
+        ctx = self._make_ctx({"blue": frozenset({"9,9", "9,8"})})
+        active = self._make_player("red_cmd", "red", cell_row=9, cell_col=9)
+        down_tick = 100
+        active.last_downed_time = down_tick
+        with patch(
+            "matches.sim_helpers.combat.random.choices",
+            return_value=["capture_base"],
+        ):
+            plans = plan_action(
+                active, [active], down_tick + RESPAWN_TICKS, ctx, time_domain="ticks"
+            )
+        assert any(
+            p["type"] == "capture_base" for p in plans
+        ), "Active player in range should plan the capture once the cooldown ends"
+
 
 @pytest.mark.django_db
 class TestMap04DBIntegration:

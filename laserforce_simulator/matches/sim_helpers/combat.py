@@ -403,7 +403,11 @@ def plan_action(
             zone = choose_zone_change(player, all_alive)
             plans.append({"type": "change_zone", "actor": player, "zone": zone})
     elif choice == "capture_base":
-        if movement_ctx is not None and player.cell_row is not None:
+        # MECH-15: a player in the respawn cooldown (Downed, not yet active)
+        # cannot interact with a Base — never plan a capture while inactive.
+        if not player.is_active_at(second):
+            pass
+        elif movement_ctx is not None and player.cell_row is not None:
             base_id = _get_base_interaction(player, movement_ctx)
             if base_id is not None:
                 plans.append(
