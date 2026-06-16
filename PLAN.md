@@ -505,16 +505,101 @@ base range with ≥ 3 shots; once active again, capture works as before. Pin it 
 with a deterministic hand-built `PlayerState` in the cooldown window — assert on the
 absence/presence of the `base_capture` event, not on point totals.
 
-### CAR-02 · Performance-based firing
+### CAR-02 · [DONE] Performance-based firing
 
 The system tracks manager performance metrics (win rate, standings position, point differential).
 When a manager's performance falls below a configurable threshold, the system fires them automatically.
 After being fired, the manager can apply for or be assigned to another team in the league.
 
+**Status: DONE.** Shipped as a **ZenGM-faithful owner-mood model**, NOT a single configurable
+threshold (the PLAN's literal "configurable threshold" wording was superseded at grilling — a flat
+knob can't express ZenGM's "over-perform to bank goodwill / rebuilding teams forgiven" fuzziness).
+The team **Owner** judges the **Manager** (the implicit local user = `League.current_team`, CAR-01 —
+**no `Manager`/`User` model**) once per completed Season across **three cumulative Mood factors**:
+*wins* (regular-season Match record vs a .500 baseline,
+`WINS_FACTOR * WINS_BASELINE_SCALE * (won - games/2) / (games/2)`, `games == 0` ⇒ neutral `0.0`),
+*playoffs* (read off the Season's embedded `tournament` Season-phase bracket — `champion` ⇒ `+0.2`,
+`seeded`-no-title ⇒ `(0.16/num_rounds) * rounds_won`, `missed` ⇒ `-0.2`, **`none`** = no tournament
+phase ⇒ neutral `0.0`), and *money* — **DORMANT = 0.0 this slice** (the column exists so a future
+finance subsystem lights it up without a migration; see **FIN-01** below). Each factor's cumulative
+total is **capped at `+1` on the upside ONLY** (`MOOD_FACTOR_CAP = 1.0`, no negative floor — you
+cannot bank goodwill past `+1` but can sink arbitrarily low; "can't win by maxing one factor, can
+lose by neglecting one"). The Manager is **Fired** when, **strictly past a 2-Season Grace period**
+(`GRACE_PERIOD_SEASONS = 2`, flat — ZenGM's +3-if-joined-at-playoffs nuance dropped), the summed mood
+`wins_total + playoffs_total + money_total <= FIRE_THRESHOLD (-1.0)`; a past-grace **Hot seat**
+warning fires at `total + delta < -1` (level 1, "another season…") or `total + 2*delta < -1` (level
+2, "a couple more…"). A fired Manager **must Reassign** via a **New Team** picker (the **worst-5** by
+the just-completed Season's final Standings, old team excluded) — which sets `current_team`, starting
+a **fresh tenure + grace** — before the pre-season rollover can run.
+
+**Model + migration.** One immutable per-`(League, completed Season)` snapshot
+`matches.models.OwnerEvaluation` (FKs `League`/`Season` CASCADE + `teams.Team` SET_NULL `team_managed`;
+the 3 factor deltas + 3 cumulative-capped totals, `verdict` ∈ `{retained, hot_seat, fired}`,
+`hot_seat_level` 0/1/2; `uniq_league_season_owner_evaluation` constraint), migration
+`0049_ownerevaluation` (**CreateModel-only — NO `RunPython`/backfill**, ADR-0004 disposable-data
+posture; existing Leagues get no historical rows, the lazy writer fills them in Season order on first
+reach). **Tenure boundaries + grace derive from the snapshot chain** (a `team_managed` change between
+consecutive rows by Season order = a new tenure, cumulative + grace reset) — **no `tenure_id` field** —
+because firings mutate `League.current_team` and a past Season's managed team is otherwise
+unrecoverable.
+
+**Pure module + orchestration.** A Django-free `matches/owner_mood.py` (frozen import allowlist
+`dataclasses`/`typing`/`collections`, defended by `TestNoDjangoImportsLeaked`) holds the constants, the
+3 frozen dataclasses (`MoodDeltas`/`MoodTotals`/`Verdict`), and 4 pure fns (`compute_wins_delta`,
+`compute_playoffs_delta`, `cap_cumulative`, `decide_verdict` — the **one** decider returns BOTH the
+outcome string AND the hot-seat level). The view assembles flat inputs (ints/strings) from the reused
+`Season._final_standings_for_phase` standings path + the `tournament` bracket and calls them — the
+module never sees a Django object or RNG. `matches.league_views._ensure_owner_evaluations(league,
+up_to_season)` is the **lazy + idempotent writer** (`get_or_create`-keyed on `(league, season)`, walks
+completed Seasons **oldest→newest** threading the per-factor caps + cumulatives + tenure marker). The
+existing `@transaction.atomic next_season` rollover body is extracted **verbatim** into a plain
+`_run_season_rollover(league, latest_completed) -> Season` shared by both `next_season` and the new
+reassign path; `next_season` becomes the **verdict gate** (ensure → read the just-completed eval → a
+`fired`-and-unreassigned Manager is redirected to the New Team picker and **cannot roll**; everyone
+else rolls byte-equivalently to today). New views `owner_evaluation` (GET eval screen, browsable for
+past Seasons) / `new_team_picker` (GET worst-5 list) / `reassign_team` (POST, sets `current_team` +
+runs the shared rollover); URL names `owner_evaluation` / `new_team_picker` / `reassign_team`;
+templates `seasons/owner_evaluation.html` + `leagues/new_team.html`; the dashboard "Start Next Season"
+control is **rerouted** to a GET link to the eval screen (which exposes Start Next Season if retained/
+hot_seat, Choose New Team if fired) — the `data-action-state="start_next_season"` attribute survives on
+the link for LG-01c/e back-compat. The **hot-seat warning IS shipped**.
+
+**Scope-out (locked).** **Money factor DORMANT** (always `0.0` — no finance subsystem; see **FIN-01**).
+Challenge-mode firings (miss-playoffs / luxury-tax) and voluntary rival-offer switching **DEFERRED**
+(both default-off in ZenGM; luxury-tax needs FIN-01). **No `Manager`/`User` model** (the Manager is
+`League.current_team`, CAR-01). **No simulator change → no Score Calibration re-baseline.** **No
+backfill / `RunPython`.** **No new CONTEXT.md term** (all 10 finalised at the grill). CAR-03 will later
+gate firing to single-player `league` mode (this slice already operates only there — the only mode with
+`current_team`). Decision: [ADR-0026](docs/adr/0026-manager-firing-owner-mood.md). Seam contract:
+[`.claude/worktrees/car-02-performance-based-firing-seam-contract.md`](.claude/worktrees/car-02-performance-based-firing-seam-contract.md);
+impl note in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## CAR-02 manager firing
+(owner mood)`. Tests: `matches/tests/test_owner_mood.py` (pure-unit) +
+`test_owner_evaluation_model.py` + `test_owner_evaluations_writer.py` + `test_owner_evaluation_view.py`
++ `test_reassign_team.py` (NEW) + extended `test_league_next_season.py` / `test_league_dashboard.py` /
+`test_season_dashboard_view.py`.
+
 ### CAR-03 · Career isolation from multiplayer
 
 The firing mechanic and team-switching only apply in single-user career mode. In multiplayer leagues,
 each user is locked to their team for the full duration of the league — no transfers, no firing.
+
+### FIN-01 · Team finance subsystem (lights up the dormant *money* mood factor)
+
+The finance epic CAR-02 deferred: introduce **player salary**, a per-team **budget** (allocations
+across *house* / *coaches* / *analysts*), and **season profit** accounting (revenue vs. expenses over
+a Season), so the **dormant `OwnerEvaluation.money_delta` / `money_total` mood factor** CAR-02 shipped
+as a permanent `0.0` column comes **alive**. The activation seam is the ZenGM formula already pinned in
+[`Screenshots_and_video_examples/firing_rules/firing_rules.md`](Screenshots_and_video_examples/firing_rules/firing_rules.md):
+`money = (profit - expectedProfit) / scale` (expected profit / scale tracking ZenGM's
+`15 * salaryCapFactor` / `100 * salaryCapFactor`), capped per-factor at `+1` exactly like *wins* /
+*playoffs*. CAR-02 left the *money* column dormant **by design** so this slice lights it up **without a
+migration to `OwnerEvaluation`** — the writer (`_ensure_owner_evaluations`) simply starts feeding a
+non-zero `money_delta` once the budget feature is enabled, and the eval screen's
+`owner-evaluation-factor-money` row stops rendering `0.0`. This also **unblocks ZenGM's luxury-tax
+challenge-mode firing** (CAR-02 deferred it precisely because it needs a budget / expenses model). Adds
+a **CONTEXT.md** finance vocabulary (Salary / Budget / Profit / Luxury tax) and an **ADR** for the
+finance model + the season-profit accounting interaction with the rollover; depends on **CAR-02**
+(the owner-mood model + the dormant *money* seam) and sits in career mode alongside the CAR slices.
 
 ### SUB-01 · Sub-leagues + per-sub-league rotating map pools
 

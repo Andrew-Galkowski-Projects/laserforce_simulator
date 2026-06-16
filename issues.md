@@ -1,3 +1,41 @@
+# Web testing — CAR-02 (performance-based firing / owner mood)
+
+Date: 2026-06-15
+Branch: `car-02-performance-based-firing`
+Scope: the new manager-firing surfaces — the **Owner Evaluation** screen
+(`/seasons/<id>/owner-evaluation/`), the **New Team** picker
+(`/leagues/<id>/new-team/`) + the reassign POST, and the completed-season
+**dashboard reroute** ("Start Next Season" → GET link to the eval screen +
+a "view past evaluations" link). Seeded league 48 / completed season 53 with a
+hand-written `fired` `OwnerEvaluation` to reach the screens.
+
+## Summary — CAR-02
+| Area | Result |
+|---|---|
+| `/seasons/53/owner-evaluation/` renders — verdict `FIRED`, the 3 factor rows (Wins -0.600/-0.800, Playoffs -0.200/-0.400, Money 0.0/0.0), "Choose New Team" CTA → `/leagues/48/new-team/` | ✅ |
+| **Overall mood total** now shows `-1.200` (was a bug — see Findings) | ✅ (after fix) |
+| `/leagues/48/new-team/` renders the **5 worst teams** (ranks 6→2) with the old team (rank 1) **excluded**, radio + "Take Over This Team" | ✅ |
+| Reassign POST → sets `current_team` (287 → 290, the picked team) + runs the season rollover → redirects to the new "Season 2" draft dashboard `/seasons/54/` | ✅ |
+| Completed-season dashboard reroute: `#season-dashboard-owner-evaluation-link` is a GET `<a>` → `/seasons/53/owner-evaluation/` carrying `data-action-state="start_next_season"`; `#season-dashboard-past-evaluations-link` → `/leagues/48/history/` | ✅ |
+| Console clean + all network 2xx on every CAR-02 page | ✅ |
+
+## Findings — CAR-02
+- **[FIXED] Overall-mood total rendered `0.000` instead of `-1.200`.**
+  `templates/seasons/owner_evaluation.html:65` chained Django's `{{ …|add:…|add:… }}`
+  filter over the **float** cumulative totals, and Django's `add` filter truncates
+  each operand to `int` (`int(-0.8)+int(-0.4)+int(0.0)=0`), so the displayed overall
+  mood was always wrong (the `FIRED` verdict itself was correct — it comes from the
+  pure `decide_verdict`, not the template). Fixed by summing the floats view-side
+  (`overall_mood` context key in `matches/league_views.py::owner_evaluation`) and
+  rendering `{{ overall_mood|floatformat:3 }}`. Verified in-browser: now `-1.200`.
+  Regression test added in `matches/tests/test_owner_evaluation_view.py`.
+- No other bugs. The fired→reassign→rollover flow works end-to-end; current_team
+  moves to the picked team and a fresh draft Season is created in one POST.
+- Test data torn down: League "ChromeTest CAR-02 League" (cascaded seasons 53/54 +
+  the `OwnerEvaluation` row) + the 6 `ChromeTest CAR02 N` teams.
+
+---
+
 # Web testing — LG-02-Part2c-3e (non-single-elim finals embeds)
 
 Date: 2026-06-10
@@ -902,3 +940,30 @@ Test data: **ChromeTest LG05 Potential** (League 45, Season 51, Teams 276–279 
 left in the dev DB (league_create generates non-`ChromeTest`-prefixed teams the teardown script
 can't name-filter; dev data is disposable per ADR-0004). No ChromeTest-prefixed teams, matches,
 or saved rounds were created.
+
+---
+
+## CAR-01 manager team assignment — web smoke (create-League flow)
+
+✅ **Create League** (`/leagues/create/`) — the new **"Your team name"** field (id
+`league-create-manager-team-name`) renders between the League-name and Season-name rows with
+the "Optional … Leave blank to auto-pick." help text. Network all 200; no JS console errors.
+✅ **Named-team submit** — filled League name "ChromeTest CAR01 League" + Your team name
+"ChromeTest United", submitted → 302 to `/seasons/52/standings/` (League 46). The standings list
+exactly **4 teams** (num_teams=4 preserved — the named team is one of the N, not a 5th):
+Ember Enforcers, Zenith Zealots, **ChromeTest United** (team 284), Hyperion Hunters.
+✅ **current_team = named team** — the sidebar TEAM › Schedule link resolves to
+`/leagues/46/team_schedule/284/`, i.e. team 284 = **ChromeTest United** — the manager's named
+team became the career `current_team` (LG-01g "your team" target). Standings page console clean.
+
+### CAR01-1 [LOW, PRE-EXISTING, out-of-scope] `[issue] No label associated with a form field` on `/leagues/create/`
+A single a11y `[issue]` console advisory on the create-League page. NOT the CAR-01 field — the
+new `manager_team_name` input is correctly labeled (snapshot shows accessible name "Your team
+name" + a `<label for=...>`). The unlabeled field is a pre-existing **phase-composer** row
+control (the LG-02-Part2b composer), untouched by CAR-01. Out of scope for this slice.
+
+Test data: **ChromeTest CAR01 League** (League 46, Season 52, Teams 282–285 — ChromeTest United
+= 284, "#31" suffix on the 3 generated rivals) — left in the dev DB (the LG-05 precedent:
+`league_create` generates non-`ChromeTest`-prefixed rival teams the teardown script can't
+name-filter; dev data is disposable per ADR-0004). No ChromeTest-prefixed matches or saved
+rounds were created.

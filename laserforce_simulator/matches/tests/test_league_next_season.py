@@ -1701,3 +1701,230 @@ class TestLg05DevelopRngIndependentOfPotentialRng(TestCase):
                 value = getattr(player, name)
                 self.assertGreaterEqual(value, 0, f"{name} below 0 for {pid}")
                 self.assertLessEqual(value, 100, f"{name} above 100 for {pid}")
+
+
+# ---------------------------------------------------------------------------
+# CAR-02 — next_season is the verdict gate + rollover caller
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/car-02-performance-based-firing-seam-contract.md``
+# §3.2 / §6.6: the rewritten ``next_season`` (kept ``@transaction.atomic``)
+# becomes the VERDICT GATE — it ensures the OwnerEvaluation rows for the
+# just-completed Season, reads the verdict, and:
+#
+#   * non-fired (retained / hot_seat) ⇒ runs ``_run_season_rollover`` exactly as
+#     before — the new-Season output is BYTE-EQUIVALENT to the pre-CAR-02
+#     rollover (same name / start / teams / schedule_format / phases) — AND the
+#     OwnerEvaluation row for the just-completed Season is written.
+#   * fired-AND-unreassigned (``league.current_team`` still == the row's
+#     ``team_managed``) ⇒ redirected to ``new_team_picker``, NO new Season rolled.
+#
+# The existing rollback/atomicity guarantee still holds (the verdict gate +
+# ensure-writer are inside the atomic boundary).
+#
+# Standings come from hand-built completed Matches (the LG-01c fixture-pattern);
+# assertions are schema-level (Season name/start/teams/phase shape, redirect
+# target, row presence) — NEVER simulated point totals. These WILL fail until the
+# Code agent lands the OwnerEvaluation model + the verdict gate — the TDD red
+# state. Appended as NEW classes; no existing class above is modified.
+
+
+from matches.models import OwnerEvaluation as _Car02OwnerEvaluation  # noqa: E402
+
+
+def _car02_add_win(season: Season, winner: Team, loser: Team) -> None:
+    """A completed 2-0 Match the ``winner`` wins — gives the manager team a
+    winning record so its (in-grace) verdict is ``retained``."""
+    match = _Lg04Match.objects.create(
+        team_red=winner,
+        team_blue=loser,
+        season=season,
+        red_round1_points=100,
+        blue_round1_points=1,
+        red_round2_points=100,
+        blue_round2_points=1,
+        is_completed=True,
+    )
+    _Lg04GameRound.objects.create(
+        match=match,
+        team_red=winner,
+        team_blue=loser,
+        round_number=1,
+        red_points=100,
+        blue_points=1,
+        is_completed=True,
+    )
+    _Lg04GameRound.objects.create(
+        match=match,
+        team_red=loser,
+        team_blue=winner,
+        round_number=2,
+        red_points=1,
+        blue_points=100,
+        is_completed=True,
+    )
+
+
+class TestCar02NonFiredRolloverByteEquivalent(TestCase):
+    """A non-fired (retained) Manager's ``next_season`` rollover output is
+    byte-equivalent to the pre-CAR-02 rollover, AND the OwnerEvaluation row for
+    the just-completed Season is written."""
+
+    def _setup(self) -> tuple[League, Season, list[Team]]:
+        teams = _make_teams("Car02NF", 2)
+        manager_team = teams[0]
+        league = _make_league("Car02NFL")
+        league.current_team = manager_team
+        league.save(update_fields=["current_team"])
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 3, 15),
+            team_ids=[t.id for t in teams],
+        )
+        # The single RR phase a real create-path Season carries.
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=1,
+            phase_type="round_robin",
+            schedule_format="single_round_robin",
+        )
+        # Winning record ⇒ inside-grace verdict is retained (NOT fired).
+        _car02_add_win(prev, manager_team, teams[1])
+        return league, prev, teams
+
+    def test_non_fired_creates_byte_equivalent_new_season(self) -> None:
+        league, _prev, teams = self._setup()
+        response = self.client.post(
+            reverse("next_season", kwargs={"league_id": league.id})
+        )
+        self.assertEqual(response.status_code, 302)
+        new_season = league.seasons.order_by("-id").first()
+        # Same Season name / start / teams / schedule_format as today's rollover.
+        self.assertEqual(new_season.state, "draft")
+        self.assertEqual(new_season.name, "Season 2")
+        self.assertEqual(new_season.start_date, date(2026, 1, 1))
+        self.assertEqual(new_season.schedule_format, "single_round_robin")
+        self.assertEqual(
+            set(new_season.teams.values_list("id", flat=True)),
+            {t.id for t in teams},
+        )
+        # The phase composition carried forward (one RR phase).
+        phases = list(new_season.phases.all())
+        self.assertEqual(len(phases), 1)
+        self.assertEqual(phases[0].phase_type, "round_robin")
+
+    def test_non_fired_redirects_to_new_season_dashboard(self) -> None:
+        league, _prev, _teams = self._setup()
+        response = self.client.post(
+            reverse("next_season", kwargs={"league_id": league.id})
+        )
+        new_season = league.seasons.order_by("-id").first()
+        self.assertEqual(
+            response["Location"], reverse("season_dashboard", args=[new_season.id])
+        )
+
+    def test_owner_evaluation_row_written_for_just_completed_season(self) -> None:
+        league, prev, _teams = self._setup()
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        # The verdict gate ensured the just-completed Season's eval row.
+        self.assertTrue(
+            _Car02OwnerEvaluation.objects.filter(league=league, season=prev).exists()
+        )
+        row = _Car02OwnerEvaluation.objects.get(league=league, season=prev)
+        # In-grace retained (the rollover proceeded).
+        self.assertEqual(row.verdict, "retained")
+
+
+class TestCar02FiredUnreassignedBlocked(TestCase):
+    """A fired-and-unreassigned Manager hitting ``next_season`` is redirected to
+    ``new_team_picker`` and NO new Season is created."""
+
+    def _setup(self) -> tuple[League, Season, Team]:
+        teams = _make_teams("Car02Fired", 2)
+        manager_team = teams[0]
+        league = _make_league("Car02FiredL")
+        league.current_team = manager_team
+        league.save(update_fields=["current_team"])
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=1,
+            phase_type="round_robin",
+            schedule_format="single_round_robin",
+        )
+        # Hand-write a "fired" eval row for the just-completed Season (the
+        # writer's idempotent get_or_create leaves it untouched), and leave
+        # current_team == team_managed (the manager has NOT reassigned).
+        _Car02OwnerEvaluation.objects.create(
+            league=league,
+            season=prev,
+            team_managed=manager_team,
+            wins_delta=-0.25,
+            playoffs_delta=-0.2,
+            wins_total=-1.2,
+            playoffs_total=-0.2,
+            verdict="fired",
+            hot_seat_level=0,
+        )
+        return league, prev, manager_team
+
+    def test_fired_unreassigned_redirects_to_new_team_picker(self) -> None:
+        league, _prev, _team = self._setup()
+        response = self.client.post(
+            reverse("next_season", kwargs={"league_id": league.id})
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            reverse("new_team_picker", kwargs={"league_id": league.id}),
+        )
+
+    def test_fired_unreassigned_creates_no_new_season(self) -> None:
+        league, _prev, _team = self._setup()
+        pre_count = league.seasons.count()
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        self.assertEqual(league.seasons.count(), pre_count)
+
+
+class TestCar02VerdictGateAtomicity(TestCase):
+    """The existing rollback guarantee still holds with the verdict gate +
+    ensure-writer inside the atomic boundary: a mid-flow Season.objects.create
+    failure rolls back the whole view body (no new Season, no orphan rows)."""
+
+    def test_mid_flow_create_failure_rolls_back(self) -> None:
+        teams = _make_teams("Car02Atom", 2)
+        manager_team = teams[0]
+        league = _make_league("Car02AtomL")
+        league.current_team = manager_team
+        league.save(update_fields=["current_team"])
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=1,
+            phase_type="round_robin",
+            schedule_format="single_round_robin",
+        )
+        _car02_add_win(prev, manager_team, teams[1])
+
+        pre_season_count = Season.objects.count()
+        with patch(
+            "matches.models.Season.objects.create",
+            side_effect=Exception("contrived create failure"),
+        ):
+            with self.assertRaises(Exception):
+                self.client.post(
+                    reverse("next_season", kwargs={"league_id": league.id})
+                )
+        # No new Season row leaked past the rollback.
+        self.assertEqual(Season.objects.count(), pre_season_count)

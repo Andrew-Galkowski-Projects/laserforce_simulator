@@ -444,10 +444,17 @@ class TestLeagueDashboardNoneBranch(TestCase):
 
 
 class TestLg01eDashboardWiring(TestCase):
-    """LG-01e — the ``action_button_state="start_next_season"`` branch on
-    the league dashboard now renders a real ``<form>`` POSTing to
-    ``next_season``. The other three branches (draft / active / none)
-    MUST NOT render the ``league-dashboard-next-season-form`` id.
+    """LG-01e + CAR-02 BLAST RADIUS — the ``action_button_state="start_next_season"``
+    branch on the league dashboard.
+
+    CAR-02 (§4.3) REROUTES the LG-01e POST ``<form
+    id="league-dashboard-next-season-form">`` into a GET ``<a
+    id="league-dashboard-owner-evaluation-link">`` to the eval screen — the
+    ``data-action-state="start_next_season"`` attribute SURVIVES on the link, but
+    the ``-next-season-form`` POST form id is GONE (replaced by the
+    ``-owner-evaluation-link`` GET link). These LG-01e assertions are updated to
+    the rerouted link shape per the documented blast radius — the coverage is kept,
+    not deleted.
     """
 
     def _make_completed_only_league(self) -> League:
@@ -461,45 +468,48 @@ class TestLg01eDashboardWiring(TestCase):
         )
         return league
 
-    def test_completed_renders_next_season_form_with_correct_action_url(
+    def _displayed_completed_season(self, league: League) -> Season:
+        return league.seasons.filter(state="completed").order_by("-id").first()
+
+    def test_completed_renders_owner_evaluation_link_with_correct_href(
         self,
     ) -> None:
         league = self._make_completed_only_league()
+        season = self._displayed_completed_season(league)
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
         body = response.content.decode()
-        # Locked DOM id.
-        self.assertIn('id="league-dashboard-next-season-form"', body)
-        # Action URL reverses to next_season for THIS league.
-        expected_action = reverse("next_season", kwargs={"league_id": league.id})
-        self.assertIn(f'action="{expected_action}"', body)
-        # method="post" on the form.
-        idx = body.find('id="league-dashboard-next-season-form"')
-        start = body.rfind("<", 0, idx)
-        end = body.find(">", idx)
-        form_element = body[start : end + 1]
-        self.assertIn('method="post"', form_element.lower())
-        # csrf hidden input present.
-        self.assertIn("csrfmiddlewaretoken", body)
-        # Submit button text + data-action-state attribute.
-        self.assertIn("Start Next Season", body)
+        # The rerouted GET eval link replaces the old POST form id.
+        self.assertIn('id="league-dashboard-owner-evaluation-link"', body)
+        self.assertNotIn('id="league-dashboard-next-season-form"', body)
+        # href reverses to the eval screen for the displayed (completed) Season.
+        expected_href = reverse("owner_evaluation", kwargs={"season_id": season.id})
+        self.assertIn(f'href="{expected_href}"', body)
+        # The data-action-state attribute SURVIVES on the link (LG-01c/e scanners).
         self.assertIn('data-action-state="start_next_season"', body)
 
-    def test_draft_does_not_render_next_season_form(self) -> None:
+    def test_completed_renders_past_evaluations_link(self) -> None:
+        league = self._make_completed_only_league()
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertContains(response, 'id="league-dashboard-past-evaluations-link"')
+
+    def test_draft_does_not_render_owner_evaluation_link(self) -> None:
         league = _make_league("LE1eDraft")
         _make_draft_season(league)
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertNotContains(response, 'id="league-dashboard-owner-evaluation-link"')
+        # The old POST form id is gone everywhere too.
         self.assertNotContains(response, 'id="league-dashboard-next-season-form"')
 
-    def test_active_does_not_render_next_season_form(self) -> None:
+    def test_active_does_not_render_owner_evaluation_link(self) -> None:
         league = _make_league("LE1eActive")
         _make_active_season(league)
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
-        self.assertNotContains(response, 'id="league-dashboard-next-season-form"')
+        self.assertNotContains(response, 'id="league-dashboard-owner-evaluation-link"')
 
-    def test_none_does_not_render_next_season_form(self) -> None:
+    def test_none_does_not_render_owner_evaluation_link(self) -> None:
         league = _make_league("LE1eNone")
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
-        self.assertNotContains(response, 'id="league-dashboard-next-season-form"')
+        self.assertNotContains(response, 'id="league-dashboard-owner-evaluation-link"')
 
 
 # ---------------------------------------------------------------------------
