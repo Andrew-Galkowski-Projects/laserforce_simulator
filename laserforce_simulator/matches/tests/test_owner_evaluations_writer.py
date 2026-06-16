@@ -450,6 +450,52 @@ class TestEnsureNoBackfill(TestCase):
 # ---------------------------------------------------------------------------
 
 
+class TestCar03MultiplayerIsolation(TestCase):
+    """CAR-03 — the owner-mood lifecycle is inert for a non-career League.
+
+    The writer ``_ensure_owner_evaluations`` early-returns for
+    ``league.mode != "league"`` (writes 0 ``OwnerEvaluation`` rows), and the
+    ``_is_career_league`` predicate is a tiny unit assertion on the same rule.
+    """
+
+    def _make_multiplayer_league(self, name: str, *, current_team=None) -> League:
+        return League.objects.create(
+            name=name,
+            mode="multiplayer",
+            state="active",
+            current_team=current_team,
+        )
+
+    def _completed_season_for(self, league: League):
+        team = _make_team("Car03MpT")
+        opp = _make_team("Car03MpO")
+        league.current_team = team
+        league.save(update_fields=["current_team"])
+        season = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[team.id, opp.id],
+        )
+        _add_match(season, team, opp, red_pts=100, blue_pts=10)
+        return season
+
+    def test_multiplayer_league_writes_zero_rows(self) -> None:
+        league = self._make_multiplayer_league("Car03MpL")
+        season = self._completed_season_for(league)
+        _ensure_owner_evaluations(league, season)
+        self.assertEqual(OwnerEvaluation.objects.count(), 0)
+        self.assertEqual(league.owner_evaluations.count(), 0)
+
+    def test_is_career_league_predicate(self) -> None:
+        from matches.league_views import _is_career_league
+
+        career = League.objects.create(name="Car03Career", mode="league")
+        multiplayer = League.objects.create(name="Car03Mp", mode="multiplayer")
+        self.assertTrue(_is_career_league(career))
+        self.assertFalse(_is_career_league(multiplayer))
+
+
 class TestClassifyPlayoffsForTeam(TestCase):
     """``_classify_playoffs_for_team`` maps a built bracket to the flat
     ``(playoff_result, rounds_won, num_rounds)`` triple feeding

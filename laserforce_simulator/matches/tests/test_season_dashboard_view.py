@@ -399,6 +399,41 @@ class TestLg01eDashboardWiring(TestCase):
 
 
 # ---------------------------------------------------------------------------
+# TestCar03MultiplayerIsolation
+# ---------------------------------------------------------------------------
+
+
+class TestCar03MultiplayerIsolation(TestCase):
+    """CAR-03 — the completed-Season action button is mode-dependent.
+
+    A ``multiplayer`` League's completed Season renders a plain "Start Next
+    Season" POST ``<form id="season-dashboard-next-season-form">`` (NOT the
+    owner-evaluation link), while a ``league``-mode League still renders the
+    ``…-owner-evaluation-link`` GET link.
+    """
+
+    def _completed(self, *, mode: str):
+        league, season = _make_completed_season_with_match(f"Car03SDash{mode}")
+        league.mode = mode
+        league.save(update_fields=["mode"])
+        return league, season
+
+    def test_multiplayer_renders_next_season_form_not_eval_link(self) -> None:
+        _league, season = self._completed(mode="multiplayer")
+        response = self.client.get(reverse("season_dashboard", args=[season.id]))
+        body = response.content.decode()
+        self.assertIn('id="season-dashboard-next-season-form"', body)
+        self.assertNotIn('id="season-dashboard-owner-evaluation-link"', body)
+
+    def test_league_mode_renders_eval_link_not_next_season_form(self) -> None:
+        _league, season = self._completed(mode="league")
+        response = self.client.get(reverse("season_dashboard", args=[season.id]))
+        body = response.content.decode()
+        self.assertIn('id="season-dashboard-owner-evaluation-link"', body)
+        self.assertNotIn('id="season-dashboard-next-season-form"', body)
+
+
+# ---------------------------------------------------------------------------
 # TestLg01fSidebarRendered (LG-01f — appended per seam contract §9e)
 # ---------------------------------------------------------------------------
 

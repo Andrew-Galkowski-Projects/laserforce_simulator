@@ -332,3 +332,48 @@ class TestReassignTeamEffects(TestCase):
         # current_team unchanged; no new Season rolled.
         self.assertEqual(league.current_team_id, before_team)
         self.assertEqual(league.seasons.count(), pre_count)
+
+
+# ---------------------------------------------------------------------------
+# TestCar03MultiplayerIsolation
+# ---------------------------------------------------------------------------
+
+
+class TestCar03MultiplayerIsolation(TestCase):
+    """CAR-03 — the reassign / picker views reject a non-career League.
+
+    On a ``multiplayer`` League the firing/reassignment lifecycle never runs, so
+    ``new_team_picker`` (GET) and ``reassign_team`` (POST) both 400, and the
+    reassign rejection leaves ``current_team`` unchanged.
+    """
+
+    def _make_multiplayer_ranked_league(self):
+        league, season, teams = _make_ranked_league(8, league_name="Car03MpRsn")
+        league.mode = "multiplayer"
+        league.save(update_fields=["mode"])
+        return league, season, teams
+
+    def test_new_team_picker_get_returns_400(self) -> None:
+        league, _season, _teams = self._make_multiplayer_ranked_league()
+        response = self.client.get(
+            reverse("new_team_picker", kwargs={"league_id": league.id})
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_reassign_team_post_returns_400(self) -> None:
+        league, _season, teams = self._make_multiplayer_ranked_league()
+        response = self.client.post(
+            reverse("reassign_team", kwargs={"league_id": league.id}),
+            data={"team_id": teams[-1].id},  # a worst-5 team in career mode
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_reassign_team_leaves_current_team_unchanged(self) -> None:
+        league, _season, teams = self._make_multiplayer_ranked_league()
+        before_team = league.current_team_id
+        self.client.post(
+            reverse("reassign_team", kwargs={"league_id": league.id}),
+            data={"team_id": teams[-1].id},
+        )
+        league.refresh_from_db()
+        self.assertEqual(league.current_team_id, before_team)
