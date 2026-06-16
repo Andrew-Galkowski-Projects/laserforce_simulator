@@ -220,6 +220,14 @@ class CreateLeagueForm(forms.Form):
         ),
         label="Map pool",
     )
+    # FIN-01 — per-League team finance toggle (default OFF). Gates the whole
+    # finance subsystem ON TOP of career mode.
+    finance_enabled = forms.BooleanField(
+        required=False,
+        initial=False,
+        label="Enable team finances",
+        widget=forms.CheckboxInput(attrs={"id": "league-create-finance-enabled"}),
+    )
     # LG-02-Part2b — hidden composer serialization. The create.html JS
     # serializes the ordered phase rows into this field as a comma-joined
     # list of phase-type tokens; ``clean()`` parses it into phase specs.

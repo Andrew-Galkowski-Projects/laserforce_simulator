@@ -89,6 +89,14 @@ class Team(models.Model):
     # TournamentPlayerEntry (avoids a teams -> matches dependency inversion).
     is_draw_team = models.BooleanField(default=False)
 
+    # FIN-01 — per-Team budget settings (cost-only this slice). Neutral
+    # defaults: DEFAULT_LEVEL=34, ticket_price/cash at their league baseline.
+    budget_scouting = models.PositiveSmallIntegerField(default=34)
+    budget_coaching = models.PositiveSmallIntegerField(default=34)
+    budget_facilities = models.PositiveSmallIntegerField(default=34)
+    ticket_price = models.FloatField(default=0.0)
+    cash = models.FloatField(default=0.0)
+
     def __str__(self):
         return self.name
 
@@ -237,6 +245,10 @@ class Player(models.Model):
     # LG-05 — projected peak overall_rating; set at league_create baseline and
     # each next_season rollover. None for players outside any league flow.
     potential = models.FloatField(null=True, blank=True, default=None)
+
+    # FIN-01 — derived from overall_rating (cap-scaled) at the finance-ensure
+    # pass; None for players outside any finance-enabled League flow.
+    salary = models.FloatField(null=True, blank=True, default=None)
 
     _STAT_VALIDATORS = [MinValueValidator(0), MaxValueValidator(100)]
 

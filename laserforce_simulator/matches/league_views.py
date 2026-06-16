@@ -35,7 +35,7 @@ from teams.constants import PLAYER_NAMES, TEAM_NAMES
 from teams.models import Player, Team
 from teams.views import _coerce_dir, _generate_free_agents, _generate_teams
 
-from . import development, owner_mood
+from . import development, finance, owner_mood
 from .development import STAT_FIELDS
 from .forms import CreateLeagueForm
 from .models import (
@@ -47,6 +47,7 @@ from .models import (
     PlayerSeasonRating,
     Season,
     SeasonPhase,
+    TeamSeasonFinance,
 )
 from .season_awards import (
     AwardSet,
@@ -582,8 +583,14 @@ def _write_baseline_ratings(season: Season, players: "Iterable[Player]") -> None
     founding) via a fresh ``pot_rng`` (one gauss draw per player), sets it on
     the Player, writes it into the baseline rating row, and persists the
     Player.potential mutations in one ``bulk_update``.
+
+    FIN-01 — when the League has ``finance_enabled``, also derives each
+    Player's ``salary`` from ``overall_rating`` (cap-scaled) and appends
+    ``"salary"`` to the bulk_update. When finance is OFF, ``salary`` stays
+    ``None`` (byte-identical to the pre-FIN-01 baseline).
     """
     players = list(players)
+    finance_on = season.league.finance_enabled
     pot_rng = random.Random()
     rows = []
     for p in players:
@@ -593,6 +600,8 @@ def _write_baseline_ratings(season: Season, players: "Iterable[Player]") -> None
             pot_rng,
         )
         p.potential = pot
+        if finance_on:
+            p.salary = finance.salary_for_overall(p.overall_rating)
         rows.append(
             PlayerSeasonRating(
                 player=p,
@@ -604,7 +613,10 @@ def _write_baseline_ratings(season: Season, players: "Iterable[Player]") -> None
             )
         )
     PlayerSeasonRating.objects.bulk_create(rows)
-    Player.objects.bulk_update(players, ["potential"])
+    update_fields = ["potential"]
+    if finance_on:
+        update_fields.append("salary")
+    Player.objects.bulk_update(players, update_fields)
 
 
 def _develop_league_for_new_season(
@@ -622,6 +634,8 @@ def _develop_league_for_new_season(
     # draw, so LG-04's pinned develop RNG sequence (1 gauss + 19 uniform per
     # player) stays byte-unchanged.
     pot_rng = random.Random()
+    # FIN-01 — salary recompute is gated on the per-League toggle.
+    finance_on = league.finance_enabled
     players = _developing_players(league)
     if not players:
         return
@@ -684,6 +698,10 @@ def _develop_league_for_new_season(
         )
         player.potential = pot
 
+        # FIN-01 — recompute salary from the POST-development overall (gated).
+        if finance_on:
+            player.salary = finance.salary_for_overall(player.overall_rating)
+
         overall = sum(new_stats.values()) / len(STAT_FIELDS)
         rating_rows.append(
             PlayerSeasonRating(
@@ -696,9 +714,10 @@ def _develop_league_for_new_season(
             )
         )
 
-    Player.objects.bulk_update(
-        players, [*STAT_FIELDS, "age", "total_games", "potential"]
-    )
+    develop_fields = [*STAT_FIELDS, "age", "total_games", "potential"]
+    if finance_on:
+        develop_fields.append("salary")
+    Player.objects.bulk_update(players, develop_fields)
     PlayerSeasonRating.objects.bulk_create(rating_rows)
 
 
@@ -741,6 +760,8 @@ def league_create(request) -> HttpResponse:
         name=cleaned["league_name"],
         mode="league",
         state="active",
+        # FIN-01 — per-League finance toggle picked at create time.
+        finance_enabled=cleaned["finance_enabled"],
     )
     # This League's dedicated free-agent pool Team. Hidden from
     # ``Team.objects.regular()`` via the ``free_agent_pool`` FK, so it
@@ -1703,7 +1724,7 @@ def _build_league_sidebar_links(
         ("league", "standings", "Standings", standings_url),
         ("league", "schedule", "Schedule", schedule_url),
         ("league", "playoffs", "Playoffs", _cs("league_playoffs")),
-        ("league", "finances", "Finances", _cs("coming_soon_finances")),
+        ("league", "finances", "Finances", _cs("league_finances")),
         ("league", "history", "History", reverse("league_history", args=[league.id])),
         (
             "league",
@@ -1714,7 +1735,7 @@ def _build_league_sidebar_links(
         # TEAM (4)
         ("team", "roster", "Roster", _cs("team_roster")),
         ("team", "schedule_team", "Schedule", schedule_team_url),
-        ("team", "finances_team", "Finances", _cs("coming_soon_team_finances")),
+        ("team", "finances_team", "Finances", _cs("team_finances")),
         ("team", "history_team", "History", _cs("team_history")),
         # PLAYERS (6)
         ("players", "free_agents", "Free Agents", _cs("players_free_agents")),
@@ -2967,6 +2988,127 @@ def _is_career_league(league: League) -> bool:
     return league.mode == "league"
 
 
+def _team_winp_for_season(season: Season, team_id: int) -> float:
+    """Win fraction (wins / matches_played) for ``team_id`` in ``season``.
+
+    Reads the regular-season ``StandingsRow`` via ``_team_wins_games_for_season``
+    (the same ``compute_standings`` assembly). 0 games ⇒ a neutral 0.5 (no
+    div-by-zero), matching the ZenGM new-team 0.500 default.
+    """
+    won, games = _team_wins_games_for_season(season, team_id)
+    if games == 0:
+        return 0.5
+    return won / games
+
+
+def _ensure_team_finances(league: League, up_to_season: Season) -> None:
+    """FIN-01 — lazily ensure a ``TeamSeasonFinance`` row for every enrolled
+    Team of every completed Season up to and including ``up_to_season``.
+
+    The twin of ``_ensure_owner_evaluations``. First line early-returns when
+    ``not _is_career_league(league) or not league.finance_enabled`` (the toggle
+    gate ON TOP of the mode gate) — OFF ⇒ writes ZERO rows.
+
+    Walks completed Seasons oldest→newest so hype carries across Seasons. Per
+    Season, per enrolled Team, ``get_or_create``-keyed on ``(team, season)``
+    (idempotent — a present row left untouched, no backfill). Reads the active-
+    roster salaries in effect for the completed Season (recomputed/refreshed for
+    the Team before summing payroll), the carried ``prev_hype`` / ``winp_old``
+    from the prior Season's row, computes ``compute_team_finance(...)``, persists
+    the row, carries cash across Seasons (``team.cash += result.profit``), and
+    persists the team's cash + refreshed active-roster salaries.
+
+    First-season hype seeding: when no prior ``TeamSeasonFinance`` snapshot
+    exists for that Team, ``prev_hype = 0.0`` and ``winp_old = 0.5`` (the ZenGM
+    new-team default — neutral 0.500 baseline).
+    """
+    if not _is_career_league(league) or not league.finance_enabled:
+        return
+
+    seasons = list(
+        league.seasons.filter(state="completed", id__lte=up_to_season.id).order_by("id")
+    )
+
+    # Per-Team carried state across Seasons (hype + prior win fraction).
+    prev_hype_by_team: dict[int, float] = {}
+    prev_winp_by_team: dict[int, float] = {}
+
+    for season in seasons:
+        # Enrolled Teams of the completed Season: the frozen snapshot the
+        # standings use (defensive fallback to the live M2M).
+        team_ids = list(season.starting_team_ids_json or [])
+        if not team_ids:
+            team_ids = list(season.teams.values_list("id", flat=True))
+        teams_by_id = {t.id: t for t in Team.objects.filter(id__in=team_ids)}
+
+        for team_id in team_ids:
+            team = teams_by_id.get(team_id)
+            if team is None:
+                continue
+
+            existing = TeamSeasonFinance.objects.filter(
+                team=team, season=season
+            ).first()
+            if existing is not None:
+                # Idempotent — re-read the carried state from the present row.
+                prev_hype_by_team[team_id] = existing.hype
+                prev_winp_by_team[team_id] = _team_winp_for_season(season, team_id)
+                continue
+
+            # Active-roster salaries in effect for the completed Season —
+            # recomputed/refreshed before summing payroll (LG-04 precedent).
+            active = list(team.active_players)
+            for p in active:
+                p.salary = finance.salary_for_overall(p.overall_rating)
+            if active:
+                Player.objects.bulk_update(active, ["salary"])
+            payroll = sum(p.salary or 0.0 for p in active)
+
+            winp = _team_winp_for_season(season, team_id)
+            prev_hype = prev_hype_by_team.get(team_id, 0.0)
+            winp_old = prev_winp_by_team.get(team_id, 0.5)
+
+            result = finance.compute_team_finance(
+                payroll=payroll,
+                scouting_level=team.budget_scouting,
+                coaching_level=team.budget_coaching,
+                facilities_level=team.budget_facilities,
+                ticket_price=team.ticket_price,
+                prev_hype=prev_hype,
+                winp=winp,
+                winp_old=winp_old,
+            )
+
+            TeamSeasonFinance.objects.get_or_create(
+                team=team,
+                season=season,
+                defaults={
+                    "ticket": result.revenue_lines.ticket,
+                    "national_tv": result.revenue_lines.national_tv,
+                    "local_tv": result.revenue_lines.local_tv,
+                    "sponsor": result.revenue_lines.sponsor,
+                    "merch": result.revenue_lines.merch,
+                    "payroll": result.expense_lines.payroll,
+                    "scouting_cost": result.expense_lines.scouting,
+                    "coaching_cost": result.expense_lines.coaching,
+                    "facilities_cost": result.expense_lines.facilities,
+                    "luxury_tax": result.expense_lines.luxury_tax,
+                    "min_payroll_penalty": (result.expense_lines.min_payroll_penalty),
+                    "revenue": result.revenue,
+                    "expenses": result.expenses,
+                    "profit": result.profit,
+                    "hype": result.hype,
+                },
+            )
+
+            # Cash carries across Seasons (ZenGM precedent).
+            team.cash += result.profit
+            team.save(update_fields=["cash"])
+
+            prev_hype_by_team[team_id] = result.hype
+            prev_winp_by_team[team_id] = winp
+
+
 def _ensure_owner_evaluations(league: League, up_to_season: Season) -> None:
     """CAR-02 — lazily ensure an ``OwnerEvaluation`` row for every completed
     Season of ``league`` up to and including ``up_to_season``.
@@ -3047,11 +3189,24 @@ def _ensure_owner_evaluations(league: League, up_to_season: Season) -> None:
         playoffs_delta = owner_mood.compute_playoffs_delta(
             playoff_result, rounds_won, num_rounds
         )
+
+        # FIN-01 — the money axis. When finance is ON and a TeamSeasonFinance
+        # row exists for the managed Team, read its profit and compute the
+        # money delta; cap-chain the cumulative through the existing
+        # ``running_money`` thread. When OFF (or no row), keep money_delta /
+        # money_total at 0.0 exactly as today (byte-identical-when-OFF).
         money_delta = 0.0
+        money_total = 0.0
+        if league.finance_enabled and team_managed_id is not None:
+            tsf = TeamSeasonFinance.objects.filter(
+                team_id=team_managed_id, season=season
+            ).first()
+            if tsf is not None:
+                money_delta = finance.money_delta(tsf.profit)
+                money_total = owner_mood.cap_cumulative(running_money, money_delta)
 
         wins_total = owner_mood.cap_cumulative(running_wins, wins_delta)
         playoffs_total = owner_mood.cap_cumulative(running_playoffs, playoffs_delta)
-        money_total = 0.0
 
         verdict = owner_mood.decide_verdict(
             owner_mood.MoodTotals(
@@ -3214,6 +3369,9 @@ def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
         return HttpResponseBadRequest("No completed Season in this League.")
     latest_completed = max(completed, key=lambda s: s.id)
 
+    # FIN-01 — finance rows first (they feed the owner-mood money axis), then
+    # the owner-evaluation ensure (which now reads the finance profit).
+    _ensure_team_finances(league, latest_completed)
     # CAR-02 verdict gate.
     _ensure_owner_evaluations(league, latest_completed)
     evaluation = OwnerEvaluation.objects.filter(
@@ -3243,6 +3401,10 @@ def owner_evaluation(request: HttpRequest, season_id: int) -> HttpResponse:
     request.session["last_league_id"] = season.league_id
 
     league = season.league
+    # FIN-01 — finance rows must exist BEFORE the owner-eval ensure so the
+    # money axis reads a real profit (the eval writer is idempotent — once a
+    # money_delta=0 row is locked in, finance-ensuring later would not fix it).
+    _ensure_team_finances(league, season)
     _ensure_owner_evaluations(league, season)
 
     evaluation = OwnerEvaluation.objects.filter(league=league, season=season).first()

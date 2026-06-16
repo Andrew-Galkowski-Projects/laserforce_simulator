@@ -118,21 +118,22 @@ urlpatterns = [
         league_screens.playoffs,
         name="league_playoffs",
     ),
-    # ---- Remaining LG-01h placeholder routes (still blocked) ----
-    # The 6 below await a roster-economy / potential / awards model and
-    # render an explainer via coming_soon.
+    # ---- FIN-01 live Finance screens ----
+    # League-wide + per-Team finance tables. Replace the LG-01h coming_soon
+    # placeholders (gated additionally by League.finance_enabled).
     path(
         "<int:league_id>/finances/",
-        views.coming_soon,
-        {"feature_key": "league_finances"},
-        name="coming_soon_finances",
+        league_screens.league_finances,
+        name="league_finances",
     ),
     path(
         "<int:league_id>/team/finances/",
-        views.coming_soon,
-        {"feature_key": "team_finances"},
-        name="coming_soon_team_finances",
+        league_screens.team_finances,
+        name="team_finances",
     ),
+    # ---- Remaining LG-01h placeholder routes (still blocked) ----
+    # The 4 below await a roster-economy / potential / awards model and
+    # render an explainer via coming_soon.
     path(
         "<int:league_id>/players/trade/",
         views.coming_soon,
