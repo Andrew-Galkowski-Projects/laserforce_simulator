@@ -55,14 +55,12 @@
                         </ul>
                     </div>
                 {% elif action_button_state == "start_next_season" %}
-                    <form id="league-dashboard-next-season-form" method="post" action="{% url 'next_season' league_id=league.id %}" class="d-inline">
-                        {% csrf_token %}
-                        <button type="submit" class="btn btn-outline-primary btn-sm" data-action-state="{{ action_button_state }}">{{ action_button_label }}</button>
-                    </form>
+                    <a id="league-dashboard-owner-evaluation-link" class="btn btn-outline-primary btn-sm" href="{% url 'owner_evaluation' displayed_season.id %}" data-action-state="{{ action_button_state }}">{{ action_button_label }}</a>
                 {% else %}
                     <button class="btn btn-outline-primary btn-sm" disabled data-action-state="{{ action_button_state }}">{{ action_button_label }}</button>
                 {% endif %}
             </span>
+            <a id="league-dashboard-past-evaluations-link" class="btn btn-link btn-sm" href="{% url 'league_history' league.id %}">View past evaluations</a>
         </div>
     </div>
 

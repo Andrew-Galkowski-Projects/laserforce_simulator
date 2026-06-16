@@ -1578,6 +1578,69 @@ class PlayerSeasonRating(models.Model):
         )
 
 
+class OwnerEvaluation(models.Model):
+    """CAR-02 — one immutable owner-mood snapshot per (League, completed Season).
+
+    The annual performance evaluation the owner makes of the Manager
+    (``League.current_team``, CAR-01). Records the per-Season factor deltas, the
+    per-factor cumulative-capped totals across the tenure, the verdict
+    (retained / hot_seat / fired), and the hot-seat warning level. Written once
+    via ``get_or_create`` by the lazy writer (``_ensure_owner_evaluations``),
+    never updated.
+
+    Tenure boundaries + grace derive from the snapshot chain: a change in
+    ``team_managed`` between two consecutive rows (by Season order) marks a NEW
+    tenure (the cumulative resets and the grace counter restarts). There is no
+    ``tenure_id`` field. ``money_delta`` / ``money_total`` are persisted but
+    ALWAYS ``0.0`` this slice (the column exists so a future finance subsystem
+    lights up without a migration).
+    """
+
+    VERDICT_CHOICES = (
+        ("retained", "Retained"),
+        ("hot_seat", "Hot seat"),
+        ("fired", "Fired"),
+    )
+
+    league = models.ForeignKey(
+        "matches.League", on_delete=models.CASCADE, related_name="owner_evaluations"
+    )
+    season = models.ForeignKey(
+        "matches.Season", on_delete=models.CASCADE, related_name="owner_evaluations"
+    )
+    team_managed = models.ForeignKey(
+        "teams.Team",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    # per-Season factor deltas (pre-cap, this Season only)
+    wins_delta = models.FloatField()
+    playoffs_delta = models.FloatField()
+    money_delta = models.FloatField(default=0.0)  # DORMANT — always 0.0
+
+    # per-factor cumulative-capped totals (across the tenure, through this Season)
+    wins_total = models.FloatField()
+    playoffs_total = models.FloatField()
+    money_total = models.FloatField(default=0.0)  # DORMANT — always 0.0
+
+    verdict = models.CharField(max_length=16, choices=VERDICT_CHOICES)
+    hot_seat_level = models.PositiveSmallIntegerField(default=0)  # 0 / 1 / 2
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["league_id", "season_id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["league", "season"],
+                name="uniq_league_season_owner_evaluation",
+            ),
+        ]
+
+
 class SeasonPhase(models.Model):
     """LG-02-Part2a — one ordered phase within a Season's schedule.
 

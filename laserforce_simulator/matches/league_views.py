@@ -20,6 +20,7 @@ from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Count, Q
 from django.http import (
+    Http404,
     HttpRequest,
     HttpResponse,
     HttpResponseBadRequest,
@@ -34,13 +35,14 @@ from teams.constants import PLAYER_NAMES, TEAM_NAMES
 from teams.models import Player, Team
 from teams.views import _coerce_dir, _generate_free_agents, _generate_teams
 
-from . import development
+from . import development, owner_mood
 from .development import STAT_FIELDS
 from .forms import CreateLeagueForm
 from .models import (
     GameRound,
     League,
     Match,
+    OwnerEvaluation,
     PlayerRoundState,
     PlayerSeasonRating,
     Season,
@@ -2910,42 +2912,190 @@ def team_schedule(request: HttpRequest, league_id: int, team_id: int) -> HttpRes
     return render(request, "leagues/team_schedule.html", context)
 
 
-@transaction.atomic
-def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
-    """LG-01e — POST entry point for the Start Next Season action.
+# --- CAR-02: owner-mood firing -----------------------------------------------
 
-    Creates a fresh ``draft`` Season inside ``league_id`` with copied
-    teams from the latest completed Season's snapshot, an auto-generated
-    name, and a Jan-1-next-year start date. Redirects to the new
-    Season's dashboard on success.
 
-    Guards (in order):
-        1. 405 on non-POST.
-        2. 404 on missing League.
-        3. 302 redirect to ``season_dashboard`` of ``league.active_season``
-           when a non-completed Season already exists (active-Season
-           guard — idempotent on double-submit; the UI hides the
-           button when a Season is in progress, but a stray POST
-           lands the user on the in-progress Season's dashboard).
-        4. 400 ``HttpResponseBadRequest("No completed Season in this League.")``
-           when no completed Season exists (defensive — should never
-           fire because the LG-01c button only shows when displayed
-           Season is completed).
+def _classify_playoffs_for_team(season: Season, team_id: int) -> tuple[str, int, int]:
+    """Classify ``team_id``'s playoff result in ``season`` into the flat triple.
+
+    Returns ``(playoff_result, rounds_won, num_rounds)`` for
+    ``owner_mood.compute_playoffs_delta``. Reads off the Season's embedded
+    ``tournament`` phase (Part2c-1) — the ``SeasonPhase`` whose
+    ``phase_type == "tournament"`` and ``tournament_id is not None``:
+
+    - no such built phase ⇒ ``("none", 0, 0)``;
+    - ``tournament.champion_id == team_id`` ⇒ ``("champion", 0, num_rounds)``;
+    - in the bracket (a participant) but not champion ⇒
+      ``("seeded", rounds_won, num_rounds)`` where ``rounds_won`` is the count of
+      distinct ``bracket_round``s in which the team won a node
+      (``BracketNode.winner_id == team_id``);
+    - a participant cut / never in the bracket ⇒ ``("missed", 0, num_rounds)``.
     """
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
+    tournament = None
+    for phase in season.ordered_phases():
+        if phase.phase_type == "tournament" and phase.tournament_id is not None:
+            tournament = phase.tournament
+            break
 
-    league = get_object_or_404(League, pk=league_id)
-    request.session["last_league_id"] = league.id
+    if tournament is None:
+        return ("none", 0, 0)
 
-    if league.active_season is not None:
-        return redirect("season_dashboard", season_id=league.active_season.id)
+    nodes = list(tournament.nodes.all())
+    num_rounds = max((n.bracket_round for n in nodes), default=0)
 
+    if tournament.champion_id == team_id:
+        return ("champion", 0, num_rounds)
+
+    is_participant = tournament.participants.filter(team_id=team_id).exists()
+    if not is_participant:
+        return ("missed", 0, num_rounds)
+
+    rounds_won = len({n.bracket_round for n in nodes if n.winner_id == team_id})
+    return ("seeded", rounds_won, num_rounds)
+
+
+def _ensure_owner_evaluations(league: League, up_to_season: Season) -> None:
+    """CAR-02 — lazily ensure an ``OwnerEvaluation`` row for every completed
+    Season of ``league`` up to and including ``up_to_season``.
+
+    Written oldest→newest in Season order so the per-factor caps + cumulatives +
+    tenure derivation are correct. ``get_or_create``-keyed on ``(league, season)``
+    (idempotent — a row already present is left untouched; no backfill of Seasons
+    before the first computable one, ADR-0004).
+
+    Tenure boundaries derive from the snapshot chain: the first ever row's
+    ``team_managed`` is ``league.current_team`` at write time (the founding team);
+    each subsequent row inherits the prior row's ``team_managed`` UNLESS the prior
+    row's verdict was ``"fired"`` (which ends the tenure — the next row reads
+    ``league.current_team`` again, the post-Reassignment team). A ``team_managed``
+    change between consecutive rows resets the cumulative + the grace counter.
+    """
+    seasons = list(
+        league.seasons.filter(state="completed", id__lte=up_to_season.id).order_by("id")
+    )
+
+    # Running per-factor cumulative totals + the tenure marker, threaded oldest→newest.
+    running_wins = 0.0
+    running_playoffs = 0.0
+    running_money = 0.0
+    prev_team_managed_id: Optional[int] = None
+    prev_verdict: Optional[str] = None
+    seasons_in_tenure = 0
+    first_row = True
+
+    for season in seasons:
+        existing = OwnerEvaluation.objects.filter(league=league, season=season).first()
+        if existing is not None:
+            # The persisted row is the source of truth for prior Seasons — re-read
+            # its totals / team_managed into the running state and continue. Tenure
+            # tracking re-derives from the persisted chain.
+            team_managed_id = existing.team_managed_id
+            if (not first_row) and team_managed_id == prev_team_managed_id:
+                seasons_in_tenure += 1
+            else:
+                seasons_in_tenure = 1
+            running_wins = existing.wins_total
+            running_playoffs = existing.playoffs_total
+            running_money = existing.money_total
+            prev_team_managed_id = team_managed_id
+            prev_verdict = existing.verdict
+            first_row = False
+            continue
+
+        # Resolve team_managed for this Season from the snapshot chain (§3.1).
+        if first_row or prev_verdict == "fired":
+            team = league.current_team
+            team_managed_id = team.id if team is not None else None
+        else:
+            team_managed_id = prev_team_managed_id
+
+        # Tenure reset on a team_managed change (or first in-tenure row).
+        if first_row or team_managed_id != prev_team_managed_id:
+            running_wins = 0.0
+            running_playoffs = 0.0
+            running_money = 0.0
+            seasons_in_tenure = 1
+        else:
+            seasons_in_tenure += 1
+
+        # Build the flat inputs (§3.1a) for the managed team.
+        if team_managed_id is not None:
+            won, games = _team_wins_games_for_season(season, team_managed_id)
+            playoff_result, rounds_won, num_rounds = _classify_playoffs_for_team(
+                season, team_managed_id
+            )
+        else:
+            won, games = 0, 0
+            playoff_result, rounds_won, num_rounds = ("none", 0, 0)
+
+        wins_delta = owner_mood.compute_wins_delta(won, games)
+        playoffs_delta = owner_mood.compute_playoffs_delta(
+            playoff_result, rounds_won, num_rounds
+        )
+        money_delta = 0.0
+
+        wins_total = owner_mood.cap_cumulative(running_wins, wins_delta)
+        playoffs_total = owner_mood.cap_cumulative(running_playoffs, playoffs_delta)
+        money_total = 0.0
+
+        verdict = owner_mood.decide_verdict(
+            owner_mood.MoodTotals(
+                wins=wins_total, playoffs=playoffs_total, money=money_total
+            ),
+            owner_mood.MoodDeltas(
+                wins=wins_delta, playoffs=playoffs_delta, money=money_delta
+            ),
+            seasons_in_tenure=seasons_in_tenure,
+        )
+
+        OwnerEvaluation.objects.get_or_create(
+            league=league,
+            season=season,
+            defaults={
+                "team_managed_id": team_managed_id,
+                "wins_delta": wins_delta,
+                "playoffs_delta": playoffs_delta,
+                "money_delta": money_delta,
+                "wins_total": wins_total,
+                "playoffs_total": playoffs_total,
+                "money_total": money_total,
+                "verdict": verdict.outcome,
+                "hot_seat_level": verdict.hot_seat_level,
+            },
+        )
+
+        running_wins = wins_total
+        running_playoffs = playoffs_total
+        running_money = money_total
+        prev_team_managed_id = team_managed_id
+        prev_verdict = verdict.outcome
+        first_row = False
+
+
+def _team_wins_games_for_season(season: Season, team_id: int) -> tuple[int, int]:
+    """Regular-season (W, games) record for ``team_id`` in ``season``.
+
+    Reuses ``Season._final_standings_for_phase`` (the same ``compute_standings``
+    assembly the playoff seeding uses) and reads the ``StandingsRow`` for
+    ``team_id``. Returns ``(0, 0)`` when the team has no row.
+    """
+    rows = season._final_standings_for_phase(season.ordered_phases()[-1])
+    for row in rows:
+        if row.team_id == team_id:
+            return (row.wins, row.matches_played)
+    return (0, 0)
+
+
+def _run_season_rollover(league: League, latest_completed: Season) -> Season:
+    """Create + return the next draft Season (teams/map/phases carried, players
+    developed). The shared body consumed by BOTH the normal Start-Next-Season
+    path and the reassign-then-roll path.
+
+    NOT separately decorated — the caller owns the ``@transaction.atomic``
+    boundary (both call sites are atomic). Body extracted VERBATIM from the
+    pre-CAR-02 ``next_season``.
+    """
     all_seasons = list(league.seasons.all())
-    completed = [s for s in all_seasons if s.state == "completed"]
-    if not completed:
-        return HttpResponseBadRequest("No completed Season in this League.")
-    latest_completed = max(completed, key=lambda s: s.id)
 
     name = f"Season {len(all_seasons) + 1}"
     start_date = date(latest_completed.start_date.year + 1, 1, 1)
@@ -3010,4 +3160,206 @@ def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
     # so a failure rolls back the whole rollover.
     _develop_league_for_new_season(league, new_season, latest_completed)
 
+    return new_season
+
+
+@transaction.atomic
+def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
+    """LG-01e / CAR-02 — POST entry point for the Start Next Season action.
+
+    Runs the owner-mood verdict gate, then (for a non-fired or
+    fired-and-already-reassigned Manager) the shared season rollover. A
+    fired-and-unreassigned Manager cannot roll — they are redirected to the
+    New-Team picker.
+
+    Guards (in order):
+        1. 405 on non-POST.
+        2. 404 on missing League.
+        3. 302 redirect to ``season_dashboard`` of ``league.active_season``
+           when a non-completed Season already exists (active-Season
+           guard — idempotent on double-submit).
+        4. 400 ``HttpResponseBadRequest("No completed Season in this League.")``
+           when no completed Season exists (defensive).
+        5. CAR-02 verdict gate: ensure owner-evaluations exist, read the row for
+           ``(league, latest_completed)``; if ``verdict == "fired"`` AND the
+           Manager has NOT yet reassigned (``league.current_team`` still ==
+           ``team_managed``) ⇒ redirect to ``new_team_picker``. Else roll.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    league = get_object_or_404(League, pk=league_id)
+    request.session["last_league_id"] = league.id
+
+    if league.active_season is not None:
+        return redirect("season_dashboard", season_id=league.active_season.id)
+
+    completed = [s for s in league.seasons.all() if s.state == "completed"]
+    if not completed:
+        return HttpResponseBadRequest("No completed Season in this League.")
+    latest_completed = max(completed, key=lambda s: s.id)
+
+    # CAR-02 verdict gate.
+    _ensure_owner_evaluations(league, latest_completed)
+    evaluation = OwnerEvaluation.objects.filter(
+        league=league, season=latest_completed
+    ).first()
+    if evaluation is not None and evaluation.verdict == "fired":
+        # A fired-and-unreassigned Manager (current_team still == the fired team)
+        # cannot roll — they must pick a new team first.
+        if league.current_team_id == evaluation.team_managed_id:
+            return redirect("new_team_picker", league_id=league.id)
+
+    new_season = _run_season_rollover(league, latest_completed)
+    return redirect("season_dashboard", season_id=new_season.id)
+
+
+def owner_evaluation(request: HttpRequest, season_id: int) -> HttpResponse:
+    """CAR-02 — GET-only owner-evaluation screen for a completed Season.
+
+    Lazily ensures THIS Season's row + all prior in-tenure rows exist, then
+    reads the ``(league, season)`` row. 404 when the Season is not completed
+    (the eval screen is only meaningful for a completed Season).
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
+
+    league = season.league
+    _ensure_owner_evaluations(league, season)
+
+    evaluation = OwnerEvaluation.objects.filter(league=league, season=season).first()
+    if evaluation is None:
+        # The writer skips non-completed Seasons — no row means the eval screen
+        # is not meaningful for this Season.
+        raise Http404("No owner evaluation for this Season.")
+
+    displayed_season = season
+    sidebar_links = _build_league_sidebar_links(
+        league, displayed_season, sidebar_active=None
+    )
+
+    is_fired = evaluation.verdict == "fired"
+    # Fired-and-already-reassigned: current_team has moved off the fired team.
+    reassigned = is_fired and league.current_team_id != evaluation.team_managed_id
+
+    context = {
+        "season": season,
+        "league": league,
+        "displayed_season": displayed_season,
+        "sidebar_links": sidebar_links,
+        "sidebar_active": None,
+        "evaluation": evaluation,
+        # Sum the float cumulatives view-side: Django's ``add`` template filter
+        # truncates each operand to int (int(-0.8)+int(-0.4)=0), so the overall
+        # mood must be computed here, not chained in the template.
+        "overall_mood": (
+            evaluation.wins_total + evaluation.playoffs_total + evaluation.money_total
+        ),
+        "is_fired": is_fired,
+        "reassigned": reassigned,
+    }
+    return render(request, "seasons/owner_evaluation.html", context)
+
+
+# CAR-02 — the worst-N eligible teams a fired Manager may choose from.
+WORST_N_ELIGIBLE = 5
+
+
+def _eligible_new_teams(league: League, latest_completed: Season) -> list:
+    """CAR-02 — the worst-``WORST_N_ELIGIBLE`` teams by the just-completed
+    Season's final Standings, EXCLUDING the just-left team
+    (``league.current_team``).
+
+    Returns ``list[(StandingsRow, Team)]`` so the template renders id + name +
+    rank. The just-left team is dropped BEFORE the slice so a manager always sees
+    a full worst-N list (where the field is large enough).
+    """
+    rows = latest_completed._final_standings_for_phase(
+        latest_completed.ordered_phases()[-1]
+    )
+    # Worst = highest rank; sort descending by rank.
+    rows_sorted = sorted(rows, key=lambda r: r.rank, reverse=True)
+    current_id = league.current_team_id
+    eligible = [r for r in rows_sorted if r.team_id != current_id]
+    eligible = eligible[:WORST_N_ELIGIBLE]
+    teams_by_id = Team.objects.in_bulk([r.team_id for r in eligible])
+    return [(r, teams_by_id.get(r.team_id)) for r in eligible]
+
+
+def new_team_picker(request: HttpRequest, league_id: int) -> HttpResponse:
+    """CAR-02 — GET-only New-Team picker for a fired Manager.
+
+    Lists the worst-``WORST_N_ELIGIBLE`` teams of the just-completed Season's
+    final Standings, excluding the just-left team.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    league = get_object_or_404(League, pk=league_id)
+    request.session["last_league_id"] = league.id
+
+    completed = [s for s in league.seasons.all() if s.state == "completed"]
+    if not completed:
+        return HttpResponseBadRequest("No completed Season in this League.")
+    latest_completed = max(completed, key=lambda s: s.id)
+
+    eligible_teams = _eligible_new_teams(league, latest_completed)
+
+    displayed_season = (
+        league.active_season
+        or league.seasons.filter(state="completed").order_by("-id").first()
+    )
+    sidebar_links = _build_league_sidebar_links(
+        league, displayed_season, sidebar_active=None
+    )
+
+    context = {
+        "league": league,
+        "latest_completed": latest_completed,
+        "eligible_teams": eligible_teams,
+        "sidebar_links": sidebar_links,
+        "sidebar_active": None,
+    }
+    return render(request, "leagues/new_team.html", context)
+
+
+@transaction.atomic
+def reassign_team(request: HttpRequest, league_id: int) -> HttpResponse:
+    """CAR-02 — POST: reassign a fired Manager to a worst-N team, then roll.
+
+    Validates the picked ``team_id`` against the eligible worst-N set
+    (re-derived server-side), sets ``league.current_team`` (starting a new
+    tenure), runs the shared rollover, and redirects to the new Season's
+    dashboard.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    league = get_object_or_404(League, pk=league_id)
+    request.session["last_league_id"] = league.id
+
+    completed = [s for s in league.seasons.all() if s.state == "completed"]
+    if not completed:
+        return HttpResponseBadRequest("No completed Season in this League.")
+    latest_completed = max(completed, key=lambda s: s.id)
+
+    raw_team_id = request.POST.get("team_id")
+    try:
+        team_id = int(raw_team_id)
+    except (TypeError, ValueError):
+        return HttpResponseBadRequest("Invalid team_id.")
+
+    eligible = _eligible_new_teams(league, latest_completed)
+    eligible_ids = {row.team_id for row, _team in eligible}
+    if team_id not in eligible_ids:
+        return HttpResponseBadRequest("team_id is not an eligible team.")
+
+    picked = Team.objects.get(pk=team_id)
+    league.current_team = picked
+    league.save(update_fields=["current_team"])
+
+    new_season = _run_season_rollover(league, latest_completed)
     return redirect("season_dashboard", season_id=new_season.id)

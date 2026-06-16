@@ -19,6 +19,16 @@ urlpatterns = [
         name="next_season",
     ),
     path(
+        "<int:league_id>/new-team/",
+        league_views.new_team_picker,
+        name="new_team_picker",
+    ),
+    path(
+        "<int:league_id>/reassign-team/",
+        league_views.reassign_team,
+        name="reassign_team",
+    ),
+    path(
         "<int:league_id>/history/",
         league_views.league_history,
         name="league_history",

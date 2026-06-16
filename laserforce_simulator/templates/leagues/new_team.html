@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}{{ league.name }} — Choose New Team{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
+    <div id="new-team-picker">
+        <h1 class="mb-3">You've been fired — choose a new team</h1>
+        <p class="text-muted">
+            The Owner has let you go. You may take over one of the
+            {{ eligible_teams|length }} worst teams from {{ latest_completed.name }}
+            (your old team is not on the list).
+        </p>
+
+        <form id="new-team-form" method="post" action="{% url 'reassign_team' league.id %}">
+            {% csrf_token %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th></th>
+                            <th>Rank</th>
+                            <th>Team</th>
+                            <th class="text-end">W-L-T</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row, team in eligible_teams %}
+                            <tr id="new-team-option-{{ row.team_id }}">
+                                <td>
+                                    <input type="radio" name="team_id" value="{{ row.team_id }}"
+                                           {% if forloop.first %}checked{% endif %}>
+                                </td>
+                                <td>{{ row.rank }}</td>
+                                <td>{{ team.name }}</td>
+                                <td class="text-end">{{ row.wins }}-{{ row.losses }}-{{ row.ties }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <button id="new-team-submit" type="submit" class="btn btn-primary">Take Over This Team</button>
+        </form>
+    </div>
+    </main>
+</div>
+{% endblock %}
