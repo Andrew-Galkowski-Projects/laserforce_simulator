@@ -1012,8 +1012,10 @@ def _build_dashboard_context(
 ) -> dict:
     """Shared body context for the League and Season dashboards.
 
-    Returns the 11-key body context dict described by the LG-01c seam
-    contract. Branches on ``season_mode`` to materialise the standings
+    Returns the LG-01c body context dict (since extended by LG-01j /
+    LG-02-Part2c / LG-01i / CAR-03 — the original 11 keys plus
+    ``map_config_label``, the playoff-cursor keys, ``live_preview_available``,
+    and ``is_career_mode``). Branches on ``season_mode`` to materialise the standings
     snippet, next-fixture dict, round count, leader snippets, and the
     placeholder action-button label / state.
     """
@@ -1231,6 +1233,10 @@ def _build_dashboard_context(
         "following_tournament_is_final": following_tournament_is_final,
         # LG-01i — "One Week (Live)" Play-dropdown gate.
         "live_preview_available": live_preview_available,
+        # CAR-03 — gate the owner-evaluation / firing surface to career mode.
+        "is_career_mode": (
+            displayed_season is not None and _is_career_league(displayed_season.league)
+        ),
     }
 
 
@@ -2954,6 +2960,13 @@ def _classify_playoffs_for_team(season: Season, team_id: int) -> tuple[str, int,
     return ("seeded", rounds_won, num_rounds)
 
 
+def _is_career_league(league: League) -> bool:
+    """CAR-03 — the owner-mood firing lifecycle runs only in single-player
+    career mode (League.mode == "league"). Sandbox / multiplayer Leagues never
+    fire, evaluate, or reassign."""
+    return league.mode == "league"
+
+
 def _ensure_owner_evaluations(league: League, up_to_season: Season) -> None:
     """CAR-02 — lazily ensure an ``OwnerEvaluation`` row for every completed
     Season of ``league`` up to and including ``up_to_season``.
@@ -2970,6 +2983,8 @@ def _ensure_owner_evaluations(league: League, up_to_season: Season) -> None:
     ``league.current_team`` again, the post-Reassignment team). A ``team_managed``
     change between consecutive rows resets the cumulative + the grace counter.
     """
+    if not _is_career_league(league):
+        return
     seasons = list(
         league.seasons.filter(state="completed", id__lte=up_to_season.id).order_by("id")
     )
@@ -3299,6 +3314,10 @@ def new_team_picker(request: HttpRequest, league_id: int) -> HttpResponse:
         return HttpResponseNotAllowed(["GET"])
 
     league = get_object_or_404(League, pk=league_id)
+    if not _is_career_league(league):
+        return HttpResponseBadRequest(
+            "Manager firing applies only in single-player career mode."
+        )
     request.session["last_league_id"] = league.id
 
     completed = [s for s in league.seasons.all() if s.state == "completed"]
@@ -3339,6 +3358,10 @@ def reassign_team(request: HttpRequest, league_id: int) -> HttpResponse:
         return HttpResponseNotAllowed(["POST"])
 
     league = get_object_or_404(League, pk=league_id)
+    if not _is_career_league(league):
+        return HttpResponseBadRequest(
+            "Manager firing applies only in single-player career mode."
+        )
     request.session["last_league_id"] = league.id
 
     completed = [s for s in league.seasons.all() if s.state == "completed"]
