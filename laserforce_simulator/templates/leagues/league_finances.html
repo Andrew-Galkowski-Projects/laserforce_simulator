@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}{{ league.name }} — Finances{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
+        <h1 class="mb-3">{{ league.name }} — Finances</h1>
+
+        {% if not finance_enabled %}
+            <div id="league-finances-disabled-notice" class="alert alert-secondary">
+                Finances are disabled for this League.
+            </div>
+        {% elif not displayed_season %}
+            <div id="league-finances-empty-notice" class="alert alert-info">
+                No Season in this League yet — start a Season to view finances.
+            </div>
+        {% else %}
+            <p class="text-muted">{{ displayed_season.name }}</p>
+            <div class="table-responsive">
+                <table id="league-finances-table" class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th>Team</th>
+                            <th class="text-end">Revenue</th>
+                            <th class="text-end">Profit</th>
+                            <th class="text-end">Cash</th>
+                            <th class="text-end">Payroll</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in rows %}
+                            <tr>
+                                <td>{{ row.team.name }}</td>
+                                {% if row.finance %}
+                                    <td class="text-end">{{ row.finance.revenue|floatformat:1 }}k</td>
+                                    <td class="text-end">{{ row.finance.profit|floatformat:1 }}k</td>
+                                    <td class="text-end">{{ row.team.cash|floatformat:1 }}k</td>
+                                    <td class="text-end">{{ row.finance.payroll|floatformat:1 }}k</td>
+                                {% else %}
+                                    <td class="text-end text-muted">—</td>
+                                    <td class="text-end text-muted">—</td>
+                                    <td class="text-end">{{ row.team.cash|floatformat:1 }}k</td>
+                                    <td class="text-end text-muted">—</td>
+                                {% endif %}
+                            </tr>
+                        {% empty %}
+                            <tr><td colspan="5" class="text-muted">No enrolled teams.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+    </main>
+</div>
+{% endblock %}

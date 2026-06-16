@@ -1865,26 +1865,8 @@ def player_head_to_head(request) -> HttpResponse:
 # is acknowledged in the agent task notes.
 _FEATURE_REGISTRY: dict[str, dict[str, str | None]] = {
     # League-scoped placeholders still blocked on unbuilt models.
-    # LG-01z made Power Rankings live; the rest carry a ``blocker`` note
-    # rendered on the explainer page.
-    "league_finances": {
-        "label": "Finances",
-        "section": "league",
-        "sidebar_active": "finances",
-        "blocker": (
-            "Needs a salary / contract model (Player.salary, "
-            "Team.cap_space) — not yet built."
-        ),
-    },
-    # Team-scoped placeholders (Roster + History went live in LG-01z).
-    "team_finances": {
-        "label": "Finances",
-        "section": "team",
-        "sidebar_active": "finances_team",
-        "blocker": (
-            "Needs the salary / contract model from League Finances — " "not yet built."
-        ),
-    },
+    # LG-01z made Power Rankings live and FIN-01 made League / Team Finances
+    # live; the rest carry a ``blocker`` note rendered on the explainer page.
     # Players-scoped placeholders (Free Agents + Watch List went live).
     "players_trade": {
         "label": "Trade",

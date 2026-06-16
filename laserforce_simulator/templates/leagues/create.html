@@ -104,6 +104,17 @@
             {{ form.map_pool.errors }}
         </div>
 
+        <div class="mb-3 form-check">
+            {{ form.finance_enabled }}
+            <label for="league-create-finance-enabled" class="form-check-label">Enable team finances</label>
+            <div class="form-text">
+                Turn on the per-team budget &amp; salary economy. Manager-set
+                scouting / coaching / facilities budgets, derived salaries, and
+                a season-level profit that feeds the owner's money mood.
+            </div>
+            {{ form.finance_enabled.errors }}
+        </div>
+
         {% if form.non_field_errors %}
             <div class="alert alert-danger">{{ form.non_field_errors }}</div>
         {% endif %}

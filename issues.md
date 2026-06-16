@@ -1,3 +1,50 @@
+# Web testing — FIN-01 (team finance subsystem)
+
+Date: 2026-06-16
+Branch: `fin-01-team-finance-subsystem`
+Scope: the new finance surfaces — the create-League **Enable team finances**
+toggle, the **Team Finances** screen (`/leagues/<id>/team/finances/`, editable
+budget form), the **League Finances** table (`/leagues/<id>/finances/`), the
+LEAGUE/TEAM sidebar **Finances** links going live, and the **money mood factor**
+end-to-end. Created league 47 (finance ON) + league 48 (finance OFF) via the
+create flow; played season 55 to completion (6 matchdays, sync `play_week`) and
+opened its owner-evaluation screen.
+
+## Summary — FIN-01
+| Area | Result |
+|---|---|
+| `/leagues/create/` renders `#league-create-finance-enabled` checkbox + help text; creating with it ON/OFF persists `League.finance_enabled` | ✅ |
+| Sidebar `#sidebar-league-finances` → `/leagues/47/finances/` and `#sidebar-team-finances_team` → `/leagues/47/team/finances/` resolve **live** (no 404, no `coming_soon_*`) | ✅ |
+| Team Finances (ON): budget form (`team-finances-budget-{scouting,coaching,facilities}` default 34, `team-finances-ticket-price`), live payroll `86.4k`, luxury/min-payroll rows, season-history empty notice | ✅ |
+| Budget-edit POST: set 60/50/40 + ticket 15.0 → `team-finances-budget-save` → **persists** + redirects to the **bare** URL (POST-then-redirect) | ✅ |
+| League Finances (ON): `#league-finances-table` lists all 4 enrolled teams | ✅ |
+| Team Finances (OFF, league 48): `#team-finances-disabled-notice` "Finances are disabled for this League." — no form/table | ✅ |
+| League Finances (OFF): `#league-finances-disabled-notice` — no table | ✅ |
+| **Money axis end-to-end**: completed season 55 → `/seasons/55/owner-evaluation/` → `#owner-evaluation-factor-money` renders **non-zero** `Money -0.4 -0.4` (overspent cost-only budgets ⇒ owner displeased; verdict `retained` under the 2-season grace) | ✅ |
+| Console clean + all network 2xx/3xx on every FIN-01 page | ✅ |
+
+## Findings — FIN-01
+No bugs. Two non-blocking observations:
+- **MINOR (cosmetic, WON'T FIX):** the money factor row formats to 1 decimal
+  (`-0.4`) while Wins/Playoffs use 3 (`-0.083`) —
+  `templates/seasons/owner_evaluation.html` `owner-evaluation-factor-money`.
+  The `:1` is **intentional**: bumping it to `:3` makes a dormant
+  `money_total=0.0` render `"0.000"`, which trips the broad
+  `assertNotContains(response, "0.000")` overall-mood regression guard in
+  `test_owner_evaluation_view.py::test_overall_mood_total_renders_float_sum`.
+  Left at `:1`. (A cleaner future option: scope that guard to the
+  overall-total element, then `:3` everywhere.)
+- **NOTE:** the a11y snapshot reports the ticket-price number input as
+  `valuemax="0"`; this is a Chrome a11y quirk for a `<input type=number>` with no
+  explicit `max` (DOM `.max` is empty) — the field accepts any value (verified by
+  persisting `15.0`). Not a bug.
+
+Leftover test data lives in the disposable dev sqlite (leagues 47/48 + their
+auto-generated teams/seasons/finance rows) — not ChromeTest-prefixed, so the
+standard teardown does not target them.
+
+---
+
 # Web testing — CAR-02 (performance-based firing / owner mood)
 
 Date: 2026-06-15

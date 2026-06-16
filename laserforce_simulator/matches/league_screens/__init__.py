@@ -11,6 +11,7 @@ them directly from the package.
 
 from .free_agents import free_agents
 from .game_log import game_log
+from .league_finances import league_finances
 from .league_leaders import league_leaders
 from .player_detail import player_detail
 from .player_ratings import player_ratings
@@ -18,6 +19,7 @@ from .player_stats import player_stats
 from .playoffs import playoffs
 from .power_rankings import power_rankings
 from .statistical_feats import statistical_feats
+from .team_finances import team_finances
 from .team_history import team_history
 from .team_roster import team_roster
 from .team_stats import team_stats
@@ -26,6 +28,7 @@ from .watch_list import watch_list, watch_list_toggle
 __all__ = [
     "free_agents",
     "game_log",
+    "league_finances",
     "league_leaders",
     "player_detail",
     "player_ratings",
@@ -33,6 +36,7 @@ __all__ = [
     "playoffs",
     "power_rankings",
     "statistical_feats",
+    "team_finances",
     "team_history",
     "team_roster",
     "team_stats",

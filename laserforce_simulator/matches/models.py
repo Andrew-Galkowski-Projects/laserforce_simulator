@@ -865,6 +865,11 @@ class League(models.Model):
         on_delete=models.SET_NULL,
         related_name="free_agent_pool_for",
     )
+    # FIN-01 — per-League team finance toggle. OFF ⇒ the entire finance
+    # subsystem is inert (money mood axis byte-identical to today, zero
+    # TeamSeasonFinance rows, Player.salary stays None). An ADDITIONAL gate
+    # ON TOP of _is_career_league(league).
+    finance_enabled = models.BooleanField(default=False)
 
     def __str__(self) -> str:
         return self.name
@@ -1638,6 +1643,61 @@ class OwnerEvaluation(models.Model):
                 fields=["league", "season"],
                 name="uniq_league_season_owner_evaluation",
             ),
+        ]
+
+
+class TeamSeasonFinance(models.Model):
+    """FIN-01 — one immutable per-(Team, Season) finance snapshot.
+
+    The persisted revenue / expense / profit / hype record the finance writer
+    (``_ensure_team_finances``) fills and the owner-mood money axis reads.
+    Revenue is season-level + deterministic (no RNG, no gauss noise); the
+    facilities budget feeds revenue, while scouting / coaching are cost-only
+    this slice. ``hype`` carries across seasons (the winp loop). Written once
+    via ``get_or_create``-keyed on ``(team, season)`` — never updated, no
+    backfill (ADR-0004 disposable-data posture).
+    """
+
+    team = models.ForeignKey(
+        "teams.Team",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="season_finances",
+    )
+    season = models.ForeignKey(
+        "matches.Season",
+        on_delete=models.CASCADE,
+        related_name="team_finances",
+    )
+
+    # revenue lines
+    ticket = models.FloatField(default=0.0)
+    national_tv = models.FloatField(default=0.0)
+    local_tv = models.FloatField(default=0.0)
+    sponsor = models.FloatField(default=0.0)
+    merch = models.FloatField(default=0.0)
+    # expense lines
+    payroll = models.FloatField(default=0.0)
+    scouting_cost = models.FloatField(default=0.0)
+    coaching_cost = models.FloatField(default=0.0)
+    facilities_cost = models.FloatField(default=0.0)
+    luxury_tax = models.FloatField(default=0.0)
+    min_payroll_penalty = models.FloatField(default=0.0)
+    # derived (persisted for the audit trail + money axis read)
+    revenue = models.FloatField(default=0.0)
+    expenses = models.FloatField(default=0.0)
+    profit = models.FloatField(default=0.0)
+    # carried-across-seasons hype loop
+    hype = models.FloatField(default=0.0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["season_id", "team_id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["team", "season"], name="uniq_team_season_finance"
+            )
         ]
 
 
