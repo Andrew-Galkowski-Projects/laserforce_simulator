@@ -578,10 +578,44 @@ impl note in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## C
 + `test_reassign_team.py` (NEW) + extended `test_league_next_season.py` / `test_league_dashboard.py` /
 `test_season_dashboard_view.py`.
 
-### CAR-03 · Career isolation from multiplayer
+### CAR-03 · [DONE] Career isolation from multiplayer
 
 The firing mechanic and team-switching only apply in single-user career mode. In multiplayer leagues,
 each user is locked to their team for the full duration of the league — no transfers, no firing.
+
+**Status: DONE.** A **defensive gate only** — the CAR-02 owner-evaluation / firing / reassignment
+lifecycle is made **inert unless `League.mode == "league"`**. The gate predicate is a **positive
+allowlist** `mode == "league"` (so `"sandbox"`, `"multiplayer"`, and any future mode are inert by
+default), expressed by the single shared helper `matches/league_views.py::_is_career_league(league) ->
+bool` (`return league.mode == "league"`) — the **one source of truth** consumed by the writer, the two
+reassign views, and the dashboard context. The **chokepoint** is the lazy writer
+`_ensure_owner_evaluations`, which now **early-returns** when `not _is_career_league(league)`: no
+`OwnerEvaluation` rows are ever written for a non-career League. The two reassign-path views
+`new_team_picker` + `reassign_team` add a `not _is_career_league(league)` guard **after** the
+`get_object_or_404(League, ...)` and **before** any `current_team` write ⇒ **HTTP 400** (writes
+nothing). `_build_dashboard_context` gains an `is_career_mode: bool` key; both
+`templates/seasons/dashboard.html` and `templates/leagues/dashboard.html` split the "Start Next Season"
+control on it — career ⇒ the CAR-02 `…-owner-evaluation-link`, non-career ⇒ a direct `next_season` POST
+`…-next-season-form` (the pre-CAR-02 LG-01e shape) — with the outer `…-action-button` wrapper +
+`data-action-state="start_next_season"` preserved in BOTH arms (LG-01c/e back-compat).
+
+**Deliberately NOT guarded.** `next_season` is **UNCHANGED** — the writer no-op means its verdict gate
+reads `evaluation is None` and rolls the Season normally (no firing, no New-Team redirect).
+`owner_evaluation` is **UNCHANGED** — it naturally raises its existing `Http404` on the missing row for
+a non-career completed Season; no explicit guard added (the natural 404 suffices).
+
+**Scope-out (locked).** **No multiplayer creation flow / form field / new mode value**; no
+`Manager`/`User` model (the Manager is `League.current_team`, CAR-01); **no model field change, no
+migration, no simulator or RNG change → no Score Calibration re-baseline**; **no new ADR**; **no new
+CONTEXT.md term** (the **Owner evaluation** glossary entry already carries the league-mode-only clause,
+added this session). Seam contract:
+[`.claude/worktrees/car-03-career-isolation-seam-contract.md`](.claude/worktrees/car-03-career-isolation-seam-contract.md);
+impl note in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## CAR-03 career isolation
+from multiplayer`. Tests extend the existing CAR-02 files with a `mode="multiplayer"` fixture:
+`test_owner_evaluations_writer.py` (0 rows written) + `test_league_next_season.py` (302 + new draft
+Season, no eval row, `current_team` unchanged) + `test_reassign_team.py` (400 on both views,
+`current_team` unchanged) + `test_league_dashboard.py` / `test_season_dashboard_view.py` (multiplayer
+renders `…-next-season-form`, not `…-owner-evaluation-link`; `league` mode unchanged).
 
 ### FIN-01 · Team finance subsystem (lights up the dormant *money* mood factor)
 

@@ -513,6 +513,48 @@ class TestLg01eDashboardWiring(TestCase):
 
 
 # ---------------------------------------------------------------------------
+# TestCar03MultiplayerIsolation
+# ---------------------------------------------------------------------------
+
+
+class TestCar03MultiplayerIsolation(TestCase):
+    """CAR-03 — the completed-Season action button is mode-dependent.
+
+    A ``multiplayer`` League renders a plain "Start Next Season" POST
+    ``<form id="league-dashboard-next-season-form">`` (NOT the owner-evaluation
+    link), while a ``league``-mode League still renders the
+    ``…-owner-evaluation-link`` GET link.
+    """
+
+    def _completed_league(self, *, mode: str) -> League:
+        league = _make_league(f"Car03Dash{mode}")
+        league.mode = mode
+        league.save(update_fields=["mode"])
+        Season.objects.create(
+            league=league,
+            name="Done",
+            start_date=date(2026, 1, 1),
+            state="completed",
+            starting_team_ids_json=[],
+        )
+        return league
+
+    def test_multiplayer_renders_next_season_form_not_eval_link(self) -> None:
+        league = self._completed_league(mode="multiplayer")
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        body = response.content.decode()
+        self.assertIn('id="league-dashboard-next-season-form"', body)
+        self.assertNotIn('id="league-dashboard-owner-evaluation-link"', body)
+
+    def test_league_mode_renders_eval_link_not_next_season_form(self) -> None:
+        league = self._completed_league(mode="league")
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        body = response.content.decode()
+        self.assertIn('id="league-dashboard-owner-evaluation-link"', body)
+        self.assertNotIn('id="league-dashboard-next-season-form"', body)
+
+
+# ---------------------------------------------------------------------------
 # TestLg01fSidebarRendered (LG-01f — appended per seam contract §9d)
 # ---------------------------------------------------------------------------
 

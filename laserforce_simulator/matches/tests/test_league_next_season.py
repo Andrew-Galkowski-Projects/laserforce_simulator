@@ -1928,3 +1928,64 @@ class TestCar02VerdictGateAtomicity(TestCase):
                 )
         # No new Season row leaked past the rollback.
         self.assertEqual(Season.objects.count(), pre_season_count)
+
+
+# ---------------------------------------------------------------------------
+# TestCar03MultiplayerNextSeason (CAR-03 — career isolation)
+# ---------------------------------------------------------------------------
+
+
+class TestCar03MultiplayerNextSeason(TestCase):
+    """CAR-03 — on a ``multiplayer`` League the owner-mood verdict gate is inert:
+    a completed Season simply rolls into a fresh draft Season (302) with NO
+    ``OwnerEvaluation`` row written and ``current_team`` unchanged."""
+
+    def _setup(self) -> tuple[League, Season, Team]:
+        teams = _make_teams("Car03MpNS", 2)
+        manager_team = teams[0]
+        league = _make_league("Car03MpNSL")
+        # Flip to multiplayer — the representative non-career fixture.
+        league.mode = "multiplayer"
+        league.current_team = manager_team
+        league.save(update_fields=["mode", "current_team"])
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=1,
+            phase_type="round_robin",
+            schedule_format="single_round_robin",
+        )
+        _car02_add_win(prev, manager_team, teams[1])
+        return league, prev, manager_team
+
+    def test_post_redirects_to_new_draft_season(self) -> None:
+        league, _prev, _mgr = self._setup()
+        pre_count = league.seasons.count()
+        response = self.client.post(
+            reverse("next_season", kwargs={"league_id": league.id})
+        )
+        self.assertEqual(response.status_code, 302)
+        # A new draft Season was created and is the redirect target.
+        self.assertEqual(league.seasons.count(), pre_count + 1)
+        new_season = league.seasons.order_by("-id").first()
+        self.assertEqual(new_season.state, "draft")
+        self.assertEqual(
+            response["Location"],
+            reverse("season_dashboard", args=[new_season.id]),
+        )
+
+    def test_post_writes_no_owner_evaluation_row(self) -> None:
+        league, _prev, _mgr = self._setup()
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        self.assertEqual(_Car02OwnerEvaluation.objects.count(), 0)
+
+    def test_current_team_unchanged(self) -> None:
+        league, _prev, manager_team = self._setup()
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        league.refresh_from_db()
+        self.assertEqual(league.current_team_id, manager_team.id)
