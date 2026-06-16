@@ -353,47 +353,49 @@ class TestSeasonDashboardBody(TestCase):
 
 
 class TestLg01eDashboardWiring(TestCase):
-    """LG-01e — the ``action_button_state="start_next_season"`` branch on
-    the season dashboard now renders a real ``<form>`` POSTing to
-    ``next_season``. The other two reachable Season-dashboard branches
-    (``draft`` / ``active``) MUST NOT render the
-    ``season-dashboard-next-season-form`` id.
+    """LG-01e + CAR-02 BLAST RADIUS — the ``action_button_state="start_next_season"``
+    branch on the season dashboard.
+
+    CAR-02 (§4.3) REROUTES the LG-01e POST ``<form
+    id="season-dashboard-next-season-form">`` into a GET ``<a
+    id="season-dashboard-owner-evaluation-link">`` to the eval screen — the
+    ``data-action-state="start_next_season"`` attribute SURVIVES on the link, but
+    the ``-next-season-form`` POST form id is GONE. These LG-01e assertions are
+    updated to the rerouted link shape per the documented blast radius — the
+    coverage is kept, not deleted.
     """
 
-    def test_completed_renders_next_season_form_with_correct_action_url(
+    def test_completed_renders_owner_evaluation_link_with_correct_href(
         self,
     ) -> None:
         _league, season = _make_completed_season_with_match("LE1eCompleted")
         response = self.client.get(reverse("season_dashboard", args=[season.id]))
         body = response.content.decode()
-        # Locked DOM id.
-        self.assertIn('id="season-dashboard-next-season-form"', body)
-        # Action URL reverses via season.league_id (NOT season.league.id —
-        # the contract asserts the value, which is equal; the contract
-        # pins season.league_id for JOIN-free derivation).
-        expected_action = reverse("next_season", kwargs={"league_id": season.league_id})
-        self.assertIn(f'action="{expected_action}"', body)
-        # method="post" on the form.
-        idx = body.find('id="season-dashboard-next-season-form"')
-        start = body.rfind("<", 0, idx)
-        end = body.find(">", idx)
-        form_element = body[start : end + 1]
-        self.assertIn('method="post"', form_element.lower())
-        # csrf hidden input present.
-        self.assertIn("csrfmiddlewaretoken", body)
-        # Submit button text + data-action-state attribute.
-        self.assertIn("Start Next Season", body)
+        # The rerouted GET eval link replaces the old POST form id.
+        self.assertIn('id="season-dashboard-owner-evaluation-link"', body)
+        self.assertNotIn('id="season-dashboard-next-season-form"', body)
+        # href reverses to the eval screen for THIS Season (displayed_season).
+        expected_href = reverse("owner_evaluation", kwargs={"season_id": season.id})
+        self.assertIn(f'href="{expected_href}"', body)
+        # csrf is no longer required (the control is a GET link, not a POST form).
+        # The data-action-state attribute SURVIVES on the link (LG-01c/e scanners).
         self.assertIn('data-action-state="start_next_season"', body)
 
-    def test_draft_does_not_render_next_season_form(self) -> None:
+    def test_completed_renders_past_evaluations_link(self) -> None:
+        _league, season = _make_completed_season_with_match("LE1ePastEval")
+        response = self.client.get(reverse("season_dashboard", args=[season.id]))
+        self.assertContains(response, 'id="season-dashboard-past-evaluations-link"')
+
+    def test_draft_does_not_render_owner_evaluation_link(self) -> None:
         _league, season, _teams = _make_league_and_draft_season("LE1eDraft")
         response = self.client.get(reverse("season_dashboard", args=[season.id]))
+        self.assertNotContains(response, 'id="season-dashboard-owner-evaluation-link"')
         self.assertNotContains(response, 'id="season-dashboard-next-season-form"')
 
-    def test_active_does_not_render_next_season_form(self) -> None:
+    def test_active_does_not_render_owner_evaluation_link(self) -> None:
         _league, season, _teams = _make_active_season("LE1eActive")
         response = self.client.get(reverse("season_dashboard", args=[season.id]))
-        self.assertNotContains(response, 'id="season-dashboard-next-season-form"')
+        self.assertNotContains(response, 'id="season-dashboard-owner-evaluation-link"')
 
 
 # ---------------------------------------------------------------------------
