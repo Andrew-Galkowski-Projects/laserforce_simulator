@@ -32,6 +32,17 @@ League `next_season` rollover (and the founding `league_create` baseline) by LG-
 development, **mutated in place** like the 19 stats. It is `None`/`default=None` for players outside
 any league flow. Details in [`matches/CLAUDE.md`](../matches/CLAUDE.md) **LG-05 player potential**.
 
+As of **FIN-01 team finance subsystem**, `Player.salary` (a nullable `FloatField`, `default=None`;
+migration `0013_player_salary_team_finance.py`) holds a **derived salary** — a deterministic
+cap-scaled function of `overall_rating` (`matches.finance.salary_for_overall`), recomputed in place
+at the same write sites LG-05 recomputes `potential` (`_write_baseline_ratings` +
+`_develop_league_for_new_season`), but **only when the League has `finance_enabled`** — otherwise it
+stays `None` (byte-identical to pre-FIN-01). It is **finance-only** (a payroll input — the sum of a
+Team's 6 active-roster salaries — for the owner-mood money axis, never a sim input, never edited via
+a form) and **derived, not contracted** (no free agency / cap space). `None` for players outside any
+finance-enabled flow. Details in [`matches/CLAUDE.md`](../matches/CLAUDE.md) **FIN-01 team finance
+subsystem**.
+
 `stat_for_simulation(stat_name, role)` returns `min(int(raw_value * 1.2), 100)` when `role in self.preferred_roles`, otherwise the raw stat value. Invalid `stat_name` values raise `AttributeError` naturally (no explicit guard). Used by `PlayerRoundState` forwarding properties and `BatchSimulator._make_players` to apply the preferred-role boost at simulation time without affecting stored values or `overall_rating`.
 
 `PlayerForm` exposes all 19 stat fields (default 50) with "Set All to Average (50)" and "Set All to Elite (90)" preset buttons. Profile fields (age, started_playing_age, total_games, home_site, height) are also on the form; when adding a new player, the view pre-fills them via `_random_player_profile()`.
@@ -45,6 +56,22 @@ any league flow. Details in [`matches/CLAUDE.md`](../matches/CLAUDE.md) **LG-05 
 `Team.is_draw_team` (`BooleanField(default=False)`, added by **LG-02x-1**) marks a Team that was assembled by a Random Draw Tournament's tier-balanced draw rather than hand-built. It carries **NO FK to the Tournament / Match** — the durable link from a drawn Team back to its Tournament and its drawn players lives on `matches.TournamentPlayerEntry` (avoiding a `teams → matches` dependency inversion). A drawn Team's `slot_*` FKs hold only the **transient** per-Round role assignment the simulator's `before_round_hook` rewrites in memory each Round; the source of truth for `(player, tier, drawn_team)` is `TournamentPlayerEntry`. Existing rows take `default=False` (no backfill; ADR-0004 disposable-data precedent).
 
 **`Team.roster_errors` relaxation (draw teams only).** Because a drawn Team **references borrowed Players** without `Player.team` ever being reassigned by the draw, the "all players belong to this team" ownership check is **skipped for draw teams**: the `for player, role, slot_name in filled:` belongs-to-team loop (the `player.team_id != self.pk` check) is wrapped in `if not self.is_draw_team:`. **All other validations stay enforced for draw teams** — the all-6-slots-filled check, the **duplicate-player** check, and the **role-distribution** (Scout-only-twice) check. A non-draw Team with a foreign player **still** errors. See [`matches/CLAUDE.md`](../matches/CLAUDE.md) `## LG-02x-1 random draw player-pool tournament` and [ADR-0022](../../docs/adr/0022-random-draw-player-pool-tournament.md).
+
+### Team finance fields (FIN-01)
+
+**FIN-01 team finance subsystem** adds five `Team` finance fields (migration
+`0013_player_salary_team_finance.py`, all neutral defaults so non-finance Teams are unaffected):
+`budget_scouting` / `budget_coaching` / `budget_facilities` (`PositiveSmallIntegerField(default=34)`)
+are **ZenGM 1–100 budget levels** (`matches.finance.DEFAULT_LEVEL = 34` is the neutral level —
+mid-range cost, zero effect) converted to dollars via `finance.level_to_amount`; `ticket_price` /
+`cash` (`FloatField(default=0.0)`) are dollar amounts (`cash` accumulates each Season's profit and
+carries across the rollover). **No choices, no validators** — the per-League `finance_enabled` toggle
++ AI defaults keep the levels in band and the Team Finances form clamps user input to `[1, MAX_LEVEL]`.
+**Cost-only this slice:** all three budgets are pure expense line-items feeding season profit, and
+facilities additionally feeds the revenue/attendance side; scouting & coaching buy **no gameplay edge
+yet** (FIN-02 wires coaching into LG-04 development, FIN-03 wires scouting into LG-05 potential).
+Details in [`matches/CLAUDE.md`](../matches/CLAUDE.md) **FIN-01 team finance subsystem** and
+[ADR-0027](../../docs/adr/0027-team-finance-subsystem.md).
 
 ## Constants (`teams/constants.py`)
 

@@ -617,7 +617,7 @@ Season, no eval row, `current_team` unchanged) + `test_reassign_team.py` (400 on
 `current_team` unchanged) + `test_league_dashboard.py` / `test_season_dashboard_view.py` (multiplayer
 renders `…-next-season-form`, not `…-owner-evaluation-link`; `league` mode unchanged).
 
-### FIN-01 · Team finance subsystem (lights up the dormant *money* mood factor)
+### FIN-01 · [DONE] Team finance subsystem (lights up the dormant *money* mood factor)
 
 The finance epic CAR-02 deferred: introduce **player salary**, a per-team **budget** (allocations
 across *house* / *coaches* / *analysts*), and **season profit** accounting (revenue vs. expenses over
@@ -634,6 +634,128 @@ challenge-mode firing** (CAR-02 deferred it precisely because it needs a budget 
 a **CONTEXT.md** finance vocabulary (Salary / Budget / Profit / Luxury tax) and an **ADR** for the
 finance model + the season-profit accounting interaction with the rollover; depends on **CAR-02**
 (the owner-mood model + the dormant *money* seam) and sits in career mode alongside the CAR slices.
+
+**FIN-01 scope decisions (grill 2026-06-16, ZenGM finance docs in
+[`Screenshots_and_video_examples/finance_system/`](Screenshots_and_video_examples/finance_system/)
+are the base model).** Budgets are **three** levels — **scouting / coaching / facilities** (health
+deferred, see FIN-04) — each a 1–100 ZenGM `level` (`DEFAULT_LEVEL = 34` neutral) plus a ticket price.
+**Cost-only this slice:** all three budgets are pure expense line-items feeding `profit`; **facilities
+additionally feeds the revenue/attendance side**; scouting & coaching buy **no gameplay edge yet**
+(wiring deferred to FIN-02 / FIN-03). **Player salary** is **derived from `overall_rating`** (cap-scaled,
+no contracts / free agency); **payroll** = sum of the active roster's salaries. **Revenue** is
+**season-level** (we batch-sim, no per-game `writeTeamStats` stream) computed at the `next_season`
+rollover, keeping ZenGM's **hype** loop (`winp`-driven) but a **fixed single market** (no `pop` / popRank
+variance). **Luxury tax + min-payroll penalty** ship as expense lines; **tax redistribution is skipped**;
+the **luxury-tax challenge-mode firing stays deferred** (write the term, no toggle). A per-`(team, Season)`
+**finance snapshot** row (the `PlayerSeasonRating` / `OwnerEvaluation` precedent) is written at rollover
+and read by `_ensure_owner_evaluations` to feed `money_delta = (profit − expectedProfit) / (100 *
+salaryCapFactor)`. **Per-League finance toggle at create time** (the ZenGM `budget` master switch): OFF ⇒
+the whole subsystem is **inert** — no salaries, no budget spending, every sim team on defaults, the money
+axis stays `0.0` — so a finance-OFF league is **byte-identical to today** (wins + playoffs sentiment
+only), and LG-04 / LG-05 are untouched. The LG-01h **Finances** placeholder (sidebar + topbar) becomes
+the live **Team Finances** page + a **League Finances** table.
+
+**Status: DONE.** Shipped per the grill decisions above. The **money axis is live**: when a League has
+`finance_enabled`, `_ensure_owner_evaluations` reads the managed Team's per-Season finance profit and
+feeds `money_delta = (profit − 15*scf) / (100*scf)` (`scf = salary_cap / BASELINE_SALARY_CAP`,
+`== 1.0` this slice) into the cap-chain CAR-02 left dormant — **no `OwnerEvaluation` migration** (CAR-02
+designed the seam for exactly this) and **no `owner_mood` change** (the verdict already summed `money`).
+A per-League **`finance_enabled` toggle** (set at create time) gates the whole subsystem ON TOP of
+CAR-03's `_is_career_league` mode gate; **OFF ⇒ inert and byte-identical to today** (zero finance rows,
+`Player.salary` stays `None`, every sim team on neutral budget defaults, the money axis `0.0`, LG-04/
+LG-05 develop output unperturbed) — the load-bearing inertness guarantee.
+
+**Model + migrations.** `teams.Player.salary` (nullable `FloatField`, derived from `overall_rating`
+cap-scaled, recomputed in place at the LG-05 write sites) + five `teams.Team` finance fields
+(`budget_scouting`/`budget_coaching`/`budget_facilities` neutral `34` ZenGM levels, `ticket_price`,
+`cash`) in `teams/migrations/0013_player_salary_team_finance.py`; `matches.League.finance_enabled`
+(`BooleanField(default=False)`) + an **immutable** per-`(Team, Season)` `matches.TeamSeasonFinance`
+snapshot (5 revenue lines + 6 expense lines + derived `revenue`/`expenses`/`profit` + carried `hype`;
+`team` SET_NULL / `season` CASCADE; `uniq_team_season_finance`) in
+`matches/migrations/0050_league_finance_teamseasonfinance.py` (dep `0049_ownerevaluation` + cross-app
+`teams 0013`). Both **AddField/CreateModel-only — NO `RunPython`/backfill** (ADR-0004 disposable-data
+posture; the lazy writer fills rows in Season order on first reach).
+
+**Pure module + orchestration.** A Django-free `matches/finance.py` (frozen import allowlist
+`dataclasses`/`typing`/`math`/`collections` — **no `random`**, defended by `TestNoDjangoImportsLeaked`)
+holds the **locked-but-tunable** magic constants (`DEFAULT_LEVEL = 34`, `EXPECTED_PROFIT_BASE = 15`,
+`SALARY_CAP = BASELINE_SALARY_CAP = 90000`, luxury/min-payroll thresholds, revenue/expense coefficients
+— the LG-04 age-curve precedent, sized so a typical Season's profit lands near the `15` anchor), three
+frozen dataclasses (`RevenueLines` / `ExpenseLines` / `TeamFinanceResult`), and nine pure fns
+(`level_to_amount`, `salary_for_overall`, `compute_hype` — the `winp`-driven `0.55`-anchor loop,
+`season_revenue`, `season_expenses`, `luxury_tax`, `min_payroll_penalty`, `season_profit`,
+`money_delta`) behind the single aggregator `compute_team_finance(...)`. The flat inputs crossing the
+view↔pure seam are ints/floats/levels ONLY — the module **never sees a Django object or RNG**.
+`matches.league_views._ensure_team_finances(league, up_to_season)` is the **lazy + idempotent writer**
+(twin of `_ensure_owner_evaluations`; first-line early-return when not career or not `finance_enabled`;
+`get_or_create`-keyed on `(team, season)`, walks completed Seasons **oldest→newest** so hype carries;
+first-season seed `prev_hype=0.0`/`winp_old=0.5`; `team.cash += profit`). Salary is recomputed in
+`_write_baseline_ratings` + `_develop_league_for_new_season` (the LG-05 `potential` precedent, gated on
+`finance_enabled`). **Rollover order (LOCKED) in `next_season`:** `_ensure_team_finances` **before**
+`_ensure_owner_evaluations` (finance rows feed the money axis), then the verdict gate.
+
+**UI.** `CreateLeagueForm` gains a `finance_enabled` checkbox (DOM id `league-create-finance-enabled`).
+The LG-01h **Finances** placeholders flip live (the LG-01z pattern): two new league-screen views
+`team_finances` (GET + budget-edit POST, keyed on `current_team`, history + budget levels + ticket
+price + cash + live luxury/min-payroll figures) and `league_finances` (GET-only league-wide table); URL
+names `team_finances` / `league_finances` replace the `coming_soon_*` placeholders; `_FEATURE_REGISTRY`
+drops the two finance blockers; `_build_league_sidebar_links` repoints both sidebar + topbar Finances
+entries at once; templates `leagues/team_finances.html` + `leagues/league_finances.html`. A
+finance-disabled League shows a `*-disabled-notice` in place of the body. (`players_trade` /
+`players_trading_block` stay blocked — FIN-01 adds salary but NOT contracts/cap-space.)
+
+**Scope-out (locked).** **Cost-only this slice** — scouting & coaching buy NO gameplay edge yet (wiring
+= **FIN-02** / **FIN-03**). **Health budget + injuries = FIN-04** (only three of ZenGM's four budgets
+ship). **Tax redistribution SKIPPED**; the **luxury-tax challenge-mode firing stays DEFERRED to FIN-05**
+(term written, no toggle). **No contracts / free agency / cap space** (salary derived from
+`overall_rating`). **Fixed single market** (no pop / popRank / per-game gauss). **Finances consume no
+RNG, are outside SIM-07/08, change no sim mechanic → NO Score Calibration re-baseline**; LG-04/LG-05
+develop output is byte-identical toggle ON or OFF. **No new CONTEXT.md term** (the `### Finance`
+glossary + the two "money dormant" caveat edits were finalised at the grill). Decision:
+[ADR-0027](docs/adr/0027-team-finance-subsystem.md). Seam contract:
+[`.claude/worktrees/fin-01-seam-contract.md`](.claude/worktrees/fin-01-seam-contract.md); impl note in
+[`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## FIN-01 team finance subsystem`.
+Tests: `matches/tests/test_finance.py` (pure-unit) + `test_team_finance_model.py` +
+`test_team_finances_writer.py` + `test_finance_money_axis.py` + `test_finance_toggle.py`
+(byte-identical-OFF invariant) + `test_create_form_finance.py` + `test_finance_screens.py`.
+
+### FIN-02 · Wire the *coaching* budget into player development (LG-04)
+
+Follow-up to FIN-01 (which ships the coaching budget as a cost-only line-item). Wire the team's effective
+**coaching** level (`getLevelLastThree("coaching")` → ZenGM `coachingEffect`, `±0.10` around
+`DEFAULT_LEVEL = 34`) into the **LG-04** age-curve development at the `next_season` rollover — better
+coaching speeds development, neglected coaching slows it. Requires a level→effect mapping onto
+`matches/development.py` (the LG-04 coaching knob was shipped **fixed at 0** precisely as this deferral;
+see [ADR-0024](docs/adr/0024-zengm-player-development-ratings-history.md)). **Finance-OFF leagues keep
+coaching effect at 0** (byte-identical to LG-04 today). Changes seeded develop output for finance-ON
+leagues (Stat inputs only, **no Score Calibration re-baseline**). Depends on **FIN-01**.
+
+### FIN-03 · Wire the *scouting* budget into player potential (LG-05)
+
+Follow-up to FIN-01 (which ships the scouting budget as a cost-only line-item). Wire the team's effective
+**scouting** level into **LG-05** `compute_potential`'s scouting-noise band — better scouting tightens the
+potential estimate, neglected scouting widens it. Requires mapping the 1–100 ZenGM level onto LG-05's
+`scouting_budget` `[0,100]` seam, which **FIN-01 leaves fixed at `DEFAULT_SCOUTING_BUDGET = 50`** (the
+LG-05 / CAR-01 deferral). **Finance-OFF leagues keep `scouting_budget = 50`** (byte-identical to LG-05
+today). Changes the seeded potential estimate for finance-ON leagues (read-only to the simulator, **no
+Score Calibration re-baseline**). Depends on **FIN-01**.
+
+### FIN-04 · Health budget + injury/availability system
+
+The **health** budget category FIN-01 deferred (ZenGM: health spending shortens injuries). Introduces a
+minimal **injury / availability** model so the fourth budget category buys a real edge (fewer / shorter
+unavailabilities), then wires the **health** level into it. This is the only one of the four ZenGM
+categories with **no existing seam** in our domain (we have no injuries today), so it carries the most new
+surface — its own grill. Depends on **FIN-01** (the budget-level + finance-toggle infrastructure) and is
+sequenced after FIN-02 / FIN-03.
+
+### FIN-05 · Luxury-tax challenge-mode firing
+
+Re-opens the ZenGM **luxury-tax challenge-mode firing** CAR-02 and FIN-01 both deferred: an optional
+per-League rule that fires the Manager outright whenever they pay the luxury tax in a completed Season
+(independent of cumulative owner mood). FIN-01 ships the luxury-tax **expense line** that makes the trigger
+computable but **not** the firing rule itself. Mirrors ZenGM's `challengeFiredLuxuryTax` game attribute
+(default off). Depends on **FIN-01** (the payroll + luxury-tax model) and on the CAR-02 firing lifecycle.
 
 ### SUB-01 · Sub-leagues + per-sub-league rotating map pools
 
@@ -656,27 +778,6 @@ to CONTEXT.md and ships an ADR for the new model + the
 schedule-generation interaction (a sub-league partition implies
 intra-pool vs cross-pool fixtures, a sequencing decision LG-02
 will also lean on).
-
----
-
----
-
-## Phase 5.6 probability features
-
-### PR-01 · Pre-match win probability forecast
-
-`/matches/forecast/?red=<id>&blue=<id>` — triggers 100-sim batch (requires SIM-02 and STAT-02). 
-Shows win% per team, projected score range (10th–90th percentile), projected avg survivors, per-player risk flags.
-
-### PR-02 · Roster composition comparison
-
-Two side-by-side roster selectors vs same opponent, each running 100 sims. Side-by-side win%, avg score, avg survivors.
-Recommended scenario highlighted with rationale.
-
-### PR-03 · What-if scenario editor
-
-Fork a real `GameRound`, change one variable (swap role, adjust stat, change player), 
-re-simulate, show diff vs original. Forked scenario is temporary, not a permanent Match record.
 
 ---
 
@@ -811,6 +912,28 @@ below all other planned work.
   `TournamentPlayerEntry` (one row per *individual* Player) does not model. Grill the
   sub-group registration + group-aware draw + per-subgroup-stats domain before building;
   it composes the LG-02x-1 draw model rather than replacing it.
+
+---
+
+---
+
+
+## Phase 5.6 probability features
+
+### PR-01 · Pre-match win probability forecast
+
+`/matches/forecast/?red=<id>&blue=<id>` — triggers 100-sim batch (requires SIM-02 and STAT-02). 
+Shows win% per team, projected score range (10th–90th percentile), projected avg survivors, per-player risk flags.
+
+### PR-02 · Roster composition comparison
+
+Two side-by-side roster selectors vs same opponent, each running 100 sims. Side-by-side win%, avg score, avg survivors.
+Recommended scenario highlighted with rationale.
+
+### PR-03 · What-if scenario editor
+
+Fork a real `GameRound`, change one variable (swap role, adjust stat, change player), 
+re-simulate, show diff vs original. Forked scenario is temporary, not a permanent Match record.
 
 ---
 
@@ -981,17 +1104,6 @@ to encode:
 
 These are conditional goal/action overrides keyed off teammate-status memory; they extend the MECH-06
 broadcast/memory hooks and feed into the role goal selection (MAP-05 / MECH-07).
-
-### MOVE-05 · Simulation engine de-duplication (refactor)
-
-`simulation.py` is heavily bloated and contains duplicated logic. Continue the consolidation already
-begun.
-
-**Status:** partially done — `ResourceBasedSimulator` was removed (SIM-09). Several areas still
-**duplicate the tagging-and-related-checks code** (a player tag plus all the associated checks appears
-in more than one place). Extract the shared tag/check path into a single helper so there is one
-implementation. No behavioural change intended; fold any incidental delta into the existing pending
-Score Calibration re-baseline.
 
 ### MECH-07 · Role-aware goal-selection rework (MAP-05 follow-up)
 
