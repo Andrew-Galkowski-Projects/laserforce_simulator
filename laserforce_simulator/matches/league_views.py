@@ -35,7 +35,7 @@ from teams.constants import PLAYER_NAMES, TEAM_NAMES
 from teams.models import Player, Team
 from teams.views import _coerce_dir, _generate_free_agents, _generate_teams
 
-from . import development, finance, owner_mood
+from . import development, finance, injury, owner_mood
 from .development import STAT_FIELDS
 from .forms import CreateLeagueForm
 from .models import (
@@ -854,6 +854,9 @@ def _develop_league_for_new_season(
         if finance_on:
             player.salary = finance.salary_for_overall(player.overall_rating)
 
+        # FIN-04 — availability resets every Season rollover (no carry-over).
+        player.games_unavailable = 0
+
         overall = sum(new_stats.values()) / len(STAT_FIELDS)
         rating_rows.append(
             PlayerSeasonRating(
@@ -866,7 +869,13 @@ def _develop_league_for_new_season(
             )
         )
 
-    develop_fields = [*STAT_FIELDS, "age", "total_games", "potential"]
+    develop_fields = [
+        *STAT_FIELDS,
+        "age",
+        "total_games",
+        "potential",
+        "games_unavailable",
+    ]
     if finance_on:
         develop_fields.append("salary")
     Player.objects.bulk_update(players, develop_fields)
@@ -2535,15 +2544,21 @@ def play_week(request, season_id: int) -> HttpResponse:
                 team_a = team_by_id[fixture.team_a_id]
                 team_b = team_by_id[fixture.team_b_id]
                 arena_map = _resolve_fixture_map(season, fixture, pool_by_id)
-                BatchSimulator().simulate_scheduled_round(
-                    season,
-                    team_a,
-                    team_b,
-                    fixture.round_number,
-                    arena_map=arena_map,
-                    season_phase=phase_by_id.get(phase_id),
-                    leg=fixture.leg,
-                )
+                # FIN-04 — roll injuries / resolve rosters in memory before the
+                # round sims, then restore the temporary roster afterwards.
+                token = resolve_injuries_for_fixture(season, team_a, team_b)
+                try:
+                    BatchSimulator().simulate_scheduled_round(
+                        season,
+                        team_a,
+                        team_b,
+                        fixture.round_number,
+                        arena_map=arena_map,
+                        season_phase=phase_by_id.get(phase_id),
+                        leg=fixture.leg,
+                    )
+                finally:
+                    restore_after_fixture(token)
     except (ValidationError, ValueError) as exc:
         return _render_season_dashboard_error(request, season, str(exc))
 
@@ -2762,15 +2777,23 @@ def play_week_live(request, season_id: int) -> HttpResponse:
                 season.starting_map_pool_ids_json or []
             )
             arena_map = _resolve_fixture_map(season, cursor["fixture"], pool_by_id)
-            game_round = BatchSimulator().simulate_scheduled_round(
-                season,
-                cursor["red_team"],
-                cursor["blue_team"],
-                cursor["fixture"].round_number,
-                arena_map=arena_map,
-                season_phase=cursor["season_phase"],
-                leg=cursor["fixture"].leg,
+            # FIN-04 — roll injuries / resolve rosters in memory before the
+            # round sims, then restore the temporary roster afterwards.
+            token = resolve_injuries_for_fixture(
+                season, cursor["red_team"], cursor["blue_team"]
             )
+            try:
+                game_round = BatchSimulator().simulate_scheduled_round(
+                    season,
+                    cursor["red_team"],
+                    cursor["blue_team"],
+                    cursor["fixture"].round_number,
+                    arena_map=arena_map,
+                    season_phase=cursor["season_phase"],
+                    leg=cursor["fixture"].leg,
+                )
+            finally:
+                restore_after_fixture(token)
             round_ids = [game_round.id]
         else:  # playoff — play the manager's bracket node (its 2-round Match)
             from matches.tournament_engine import play_specific_node
@@ -3146,6 +3169,153 @@ def _is_career_league(league: League) -> bool:
     return league.mode == "league"
 
 
+# FIN-04 — the 6 (slot field, role) pairs of the active roster, in slot order.
+_INJURY_SLOT_FIELDS = (
+    ("slot_commander", "commander"),
+    ("slot_heavy", "heavy"),
+    ("slot_scout_1", "scout"),
+    ("slot_scout_2", "scout"),
+    ("slot_medic", "medic"),
+    ("slot_ammo", "ammo"),
+)
+
+
+def _resolve_injuries_for_team(season: Season, team: Team, token: dict) -> None:
+    """FIN-04 — resolve injuries for ONE Team of a fixture, in-memory.
+
+    Steps (LOCKED order): the subjects are the 6 active-roster STARTERS only
+    (the ``slot_*`` players BEFORE substitution); an unavailable starter
+    decrements by 1 (no re-roll); a healthy starter who fields rolls a NEW
+    injury (fresh ``random.Random()`` per fixture, never the SIM seed chain) and
+    on a hit draws ``N = injury.draw_duration(...)`` from the LIVE current
+    ``Team.budget_health``; each now-unavailable starter resolves via the Team's
+    ``injury_policy`` (``auto_sub`` → bench → free-agent pool, ``play_hurt`` the
+    universal no-sub fallback). Stages the in-memory ``slot_*`` / 19-stat
+    mutations into ``token`` for ``restore_after_fixture`` and persists only the
+    ``games_unavailable`` change (``bulk_update`` with ``update_fields``).
+    """
+    # Snapshot the starters as they stood BEFORE any substitution (the
+    # subjects — fill-ins are never injury subjects, avoiding orphan injuries).
+    starters: list[tuple[str, "Player"]] = []
+    for slot_field, _role in _INJURY_SLOT_FIELDS:
+        player = getattr(team, slot_field)
+        if player is not None:
+            starters.append((slot_field, player))
+
+    rng = random.Random()  # FRESH per fixture — never the SIM seed chain.
+    health_effect = finance.health_effect(team.budget_health)
+
+    persisted: list[Player] = []  # players whose games_unavailable changed
+    for _slot_field, player in starters:
+        if player.games_unavailable > 0:
+            # DECREMENT an already-unavailable starter (whether sub'd out or
+            # playing hurt) — does NOT re-roll.
+            player.games_unavailable -= 1
+            persisted.append(player)
+        else:
+            # ROLL a healthy starter who actually fields.
+            age = player.age if player.age is not None else 25
+            if injury.roll_injury(age, rng):
+                n = injury.draw_duration(health_effect, age, rng)
+                player.games_unavailable = n
+                persisted.append(player)
+
+    if persisted:
+        Player.objects.bulk_update(persisted, ["games_unavailable"])
+
+    # RESOLVE the roster to a valid 6 for each now-unavailable starter.
+    bench_pool = list(team.bench_players)
+    league = season.league
+    free_agent_pool = (
+        list(league.free_agent_pool.players.all())
+        if league.free_agent_pool is not None
+        else []
+    )
+    used_sub_pks: set[int] = set()
+
+    for slot_field, player in starters:
+        if player.games_unavailable == 0:
+            continue  # this starter is fine — fields normally
+
+        if team.injury_policy == "auto_sub":
+            sub = _pick_substitute(bench_pool, free_agent_pool, used_sub_pks)
+            if sub is not None:
+                used_sub_pks.add(sub.pk)
+                # In-memory slot rewrite — restore records the ORIGINAL FK.
+                token["slot_restore"].append((team, slot_field, player))
+                setattr(team, slot_field, sub)
+                continue
+            # No available sub ⇒ play_hurt is the universal no-sub fallback.
+
+        # play_hurt (explicit policy OR the auto_sub no-sub fallback): rewrite
+        # the injured Player's 19 stat fields down by the penalty (clamp 0..100).
+        _apply_play_hurt(player, token)
+
+
+def _pick_substitute(
+    bench_pool: list, free_agent_pool: list, used_sub_pks: set
+) -> "Player | None":
+    """FIN-04 — pick an available substitute (``games_unavailable == 0``),
+    bench first then the League free-agent pool, never re-using one already
+    picked this fixture. Returns ``None`` when none is available."""
+    for source in (bench_pool, free_agent_pool):
+        for candidate in source:
+            if candidate.pk in used_sub_pks:
+                continue
+            if candidate.games_unavailable == 0:
+                return candidate
+    return None
+
+
+def _apply_play_hurt(player: "Player", token: dict) -> None:
+    """FIN-04 — subtract the flat play-hurt penalty from the injured Player's
+    19 stat fields in memory (clamped ``[0, 100]``), staging the originals into
+    ``token`` for restore. Never ``.save()``."""
+    penalty = injury.play_hurt_penalty()
+    originals: dict[str, int] = {}
+    for name in STAT_FIELDS:
+        current = getattr(player, name)
+        originals[name] = current
+        setattr(player, name, max(0, min(100, current - penalty)))
+    token["stat_restore"].append((player, originals))
+
+
+def resolve_injuries_for_fixture(
+    season: Season, team_red: Team, team_blue: Team
+) -> dict:
+    """FIN-04 — the single per-fixture injury resolver.
+
+    Called by every play path BEFORE ``simulate_scheduled_round(...)``. Returns
+    a RESTORE TOKEN (an opaque dict the caller hands to
+    ``restore_after_fixture(token)``). First-line GATE — a no-op ``{}`` when not
+    ``_is_career_league AND finance_enabled`` ⇒ byte-identical OFF. Operates on
+    the two in-memory Team objects the play loop already holds: rolls / decrements
+    availability (the only persisted write), substitutes or plays-hurt in memory.
+    """
+    league = season.league
+    if not (_is_career_league(league) and league.finance_enabled):
+        return {}
+
+    token: dict = {"slot_restore": [], "stat_restore": []}
+    _resolve_injuries_for_team(season, team_red, token)
+    _resolve_injuries_for_team(season, team_blue, token)
+    return token
+
+
+def restore_after_fixture(token: dict) -> None:
+    """FIN-04 — undo every in-memory mutation ``resolve_injuries_for_fixture``
+    applied (Team ``slot_*`` FKs and injured-Player 19-stat fields), restoring
+    the pre-fixture in-memory state. NEVER ``.save()`` — the only persisted
+    writes are the ``games_unavailable`` decrement/set done explicitly above."""
+    if not token:
+        return
+    for team, slot_field, original_player in token.get("slot_restore", []):
+        setattr(team, slot_field, original_player)
+    for player, originals in token.get("stat_restore", []):
+        for name, value in originals.items():
+            setattr(player, name, value)
+
+
 def _team_winp_for_season(season: Season, team_id: int) -> float:
     """Win fraction (wins / matches_played) for ``team_id`` in ``season``.
 
@@ -3231,6 +3401,7 @@ def _ensure_team_finances(league: League, up_to_season: Season) -> None:
                 scouting_level=team.budget_scouting,
                 coaching_level=team.budget_coaching,
                 facilities_level=team.budget_facilities,
+                health_level=team.budget_health,
                 ticket_price=team.ticket_price,
                 prev_hype=prev_hype,
                 winp=winp,
@@ -3252,6 +3423,7 @@ def _ensure_team_finances(league: League, up_to_season: Season) -> None:
                     "facilities_cost": result.expense_lines.facilities,
                     "luxury_tax": result.expense_lines.luxury_tax,
                     "min_payroll_penalty": (result.expense_lines.min_payroll_penalty),
+                    "health_cost": result.expense_lines.health,
                     "revenue": result.revenue,
                     "expenses": result.expenses,
                     "profit": result.profit,

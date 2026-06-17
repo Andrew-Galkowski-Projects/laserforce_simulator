@@ -136,6 +136,13 @@ def team_finances(request: HttpRequest, league_id: int) -> HttpResponse:
             team.budget_facilities = _coerce_level(
                 request.POST.get("budget_facilities"), team.budget_facilities
             )
+            # FIN-04 — the fourth budget + the injury-resolution policy toggle.
+            team.budget_health = _coerce_level(
+                request.POST.get("budget_health"), team.budget_health
+            )
+            posted_policy = request.POST.get("injury_policy")
+            if posted_policy in ("auto_sub", "play_hurt"):
+                team.injury_policy = posted_policy
             team.ticket_price = _coerce_price(
                 request.POST.get("ticket_price"), team.ticket_price
             )
@@ -144,6 +151,8 @@ def team_finances(request: HttpRequest, league_id: int) -> HttpResponse:
                     "budget_scouting",
                     "budget_coaching",
                     "budget_facilities",
+                    "budget_health",
+                    "injury_policy",
                     "ticket_price",
                 ]
             )
@@ -183,7 +192,19 @@ def team_finances(request: HttpRequest, league_id: int) -> HttpResponse:
         "scouting": finance.level_to_amount(team.budget_scouting),
         "coaching": finance.level_to_amount(team.budget_coaching),
         "facilities": finance.level_to_amount(team.budget_facilities),
+        # FIN-04 — the fourth budget cost line.
+        "health": finance.level_to_amount(team.budget_health),
     }
+
+    # FIN-04 — currently-unavailable players (newest-first by games remaining).
+    availability = [
+        {"name": p.name, "games_remaining": p.games_unavailable}
+        for p in sorted(
+            team.players.filter(games_unavailable__gt=0),
+            key=lambda p: p.games_unavailable,
+            reverse=True,
+        )
+    ]
 
     # Headline metrics: this-Season record + the latest finance snapshot tiles.
     wins, games = _team_wins_games_for_season(displayed_season, team.id)
@@ -209,5 +230,8 @@ def team_finances(request: HttpRequest, league_id: int) -> HttpResponse:
         "games": games,
         "current_hype": current_hype,
         "latest_finance": latest_finance,
+        # FIN-04 — health budget + injury policy + availability display.
+        "injury_policy": team.injury_policy,
+        "availability": availability,
     }
     return render(request, "leagues/team_finances.html", context)

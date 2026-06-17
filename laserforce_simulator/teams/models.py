@@ -89,13 +89,28 @@ class Team(models.Model):
     # TournamentPlayerEntry (avoids a teams -> matches dependency inversion).
     is_draw_team = models.BooleanField(default=False)
 
+    # FIN-04 — manager-editable injury-resolution policy. AI teams stay
+    # "auto_sub" (the default).
+    INJURY_POLICY_CHOICES = (
+        ("auto_sub", "Auto-substitute"),
+        ("play_hurt", "Play hurt"),
+    )
+
     # FIN-01 — per-Team budget settings (cost-only this slice). Neutral
     # defaults: DEFAULT_LEVEL=34, ticket_price/cash at their league baseline.
     budget_scouting = models.PositiveSmallIntegerField(default=34)
     budget_coaching = models.PositiveSmallIntegerField(default=34)
     budget_facilities = models.PositiveSmallIntegerField(default=34)
+    # FIN-04 — the fourth ZenGM budget: a health-budget cost line + a ratings
+    # edge that shortens injury durations.
+    budget_health = models.PositiveSmallIntegerField(default=34)
     ticket_price = models.FloatField(default=0.0)
     cash = models.FloatField(default=0.0)
+
+    # FIN-04 — how the Team resolves an injured starter at fixture time.
+    injury_policy = models.CharField(
+        max_length=16, choices=INJURY_POLICY_CHOICES, default="auto_sub"
+    )
 
     def __str__(self):
         return self.name
@@ -249,6 +264,11 @@ class Player(models.Model):
     # FIN-01 — derived from overall_rating (cap-scaled) at the finance-ensure
     # pass; None for players outside any finance-enabled League flow.
     salary = models.FloatField(null=True, blank=True, default=None)
+
+    # FIN-04 — availability counter. > 0 ⇒ the player is out for that many
+    # fixtures; decremented 1 per fixture the player's team plays; reset to 0
+    # at the next_season rollover. No injury-type taxonomy.
+    games_unavailable = models.PositiveSmallIntegerField(default=0)
 
     _STAT_VALIDATORS = [MinValueValidator(0), MaxValueValidator(100)]
 

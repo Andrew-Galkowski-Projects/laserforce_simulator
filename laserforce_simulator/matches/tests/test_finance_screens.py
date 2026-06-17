@@ -380,3 +380,173 @@ class TestFeatureRegistryDropsFinances(TestCase):
 
         self.assertNotIn("league_finances", _FEATURE_REGISTRY)
         self.assertNotIn("team_finances", _FEATURE_REGISTRY)
+
+
+# ===========================================================================
+# FIN-04 — TestTeamFinancesHealthDomIds
+# ===========================================================================
+
+
+class TestTeamFinancesHealthDomIds(TestCase):
+    """The Team Finances screen renders the three FIN-04 DOM ids:
+    ``team-finances-budget-health`` (the health budget ``<input>``),
+    ``team-finances-injury-policy`` (the ``<select name="injury_policy">``), and
+    ``team-finances-availability`` (the availability-display container).
+
+    Written test-first against the FIN-04 seam contract; these FAIL until the
+    Code agent lands the three additions to ``team_finances`` + its template —
+    the expected TDD red state.
+    """
+
+    def test_budget_health_and_injury_policy_and_availability_ids_present(
+        self,
+    ) -> None:
+        league = _make_league()
+        _make_active_season(league)
+        response = self.client.get(
+            reverse("team_finances", kwargs={"league_id": league.id})
+        )
+        body = response.content.decode()
+        for dom_id in (
+            "team-finances-budget-health",
+            "team-finances-injury-policy",
+            "team-finances-availability",
+        ):
+            self.assertIn(f'id="{dom_id}"', body, f"missing DOM id {dom_id!r}")
+
+    def test_existing_budget_form_dom_ids_preserved(self) -> None:
+        # The FIN-01 budget-form ids stay (additive, not a rewrite).
+        league = _make_league()
+        _make_active_season(league)
+        response = self.client.get(
+            reverse("team_finances", kwargs={"league_id": league.id})
+        )
+        body = response.content.decode()
+        for dom_id in (
+            "team-finances-budget-form",
+            "team-finances-budget-scouting",
+            "team-finances-budget-coaching",
+            "team-finances-budget-facilities",
+        ):
+            self.assertIn(f'id="{dom_id}"', body, f"missing DOM id {dom_id!r}")
+
+
+# ===========================================================================
+# FIN-04 — TestTeamFinancesHealthPost (budget_health + injury_policy writes)
+# ===========================================================================
+
+
+class TestTeamFinancesHealthPost(TestCase):
+    """The budget-edit POST writes ``Team.budget_health`` (clamped
+    ``[1, MAX_LEVEL]``) and ``Team.injury_policy`` (only ``"auto_sub"`` /
+    ``"play_hurt"`` accepted, else current kept), alongside the FIN-01 budgets."""
+
+    def _post_data(self, **overrides):
+        data = {
+            "budget_scouting": "50",
+            "budget_coaching": "50",
+            "budget_facilities": "50",
+            "ticket_price": "10.0",
+            "budget_health": "65",
+            "injury_policy": "play_hurt",
+        }
+        data.update(overrides)
+        return data
+
+    def test_post_writes_budget_health_and_injury_policy(self) -> None:
+        league = _make_league()
+        _season, teams = _make_active_season(league)
+        team = teams[0]
+        url = reverse("team_finances", kwargs={"league_id": league.id})
+        response = self.client.post(url, data=self._post_data())
+        self.assertEqual(response.status_code, 302)
+        team.refresh_from_db()
+        self.assertEqual(team.budget_health, 65)
+        self.assertEqual(team.injury_policy, "play_hurt")
+
+    def test_post_clamps_budget_health_below_one(self) -> None:
+        league = _make_league()
+        _season, teams = _make_active_season(league)
+        team = teams[0]
+        url = reverse("team_finances", kwargs={"league_id": league.id})
+        self.client.post(url, data=self._post_data(budget_health="0"))
+        team.refresh_from_db()
+        self.assertGreaterEqual(team.budget_health, 1)
+
+    def test_post_clamps_budget_health_above_max(self) -> None:
+        from matches.finance import MAX_LEVEL
+
+        league = _make_league()
+        _season, teams = _make_active_season(league)
+        team = teams[0]
+        url = reverse("team_finances", kwargs={"league_id": league.id})
+        self.client.post(
+            url, data=self._post_data(budget_health=str(MAX_LEVEL + 50))
+        )
+        team.refresh_from_db()
+        self.assertLessEqual(team.budget_health, MAX_LEVEL)
+
+    def test_post_rejects_unknown_injury_policy_keeps_current(self) -> None:
+        league = _make_league()
+        _season, teams = _make_active_season(league)
+        team = teams[0]
+        # Start from a known policy, then POST a bogus value.
+        team.injury_policy = "auto_sub"
+        team.save(update_fields=["injury_policy"])
+        url = reverse("team_finances", kwargs={"league_id": league.id})
+        self.client.post(url, data=self._post_data(injury_policy="nonsense"))
+        team.refresh_from_db()
+        # Unknown value ⇒ current policy preserved (not corrupted).
+        self.assertEqual(team.injury_policy, "auto_sub")
+
+    def test_post_accepts_auto_sub_policy(self) -> None:
+        league = _make_league()
+        _season, teams = _make_active_season(league)
+        team = teams[0]
+        team.injury_policy = "play_hurt"
+        team.save(update_fields=["injury_policy"])
+        url = reverse("team_finances", kwargs={"league_id": league.id})
+        self.client.post(url, data=self._post_data(injury_policy="auto_sub"))
+        team.refresh_from_db()
+        self.assertEqual(team.injury_policy, "auto_sub")
+
+
+# ===========================================================================
+# FIN-04 — TestTeamFinancesAvailabilityDisplay (lists out players)
+# ===========================================================================
+
+
+class TestTeamFinancesAvailabilityDisplay(TestCase):
+    """The availability display (``team-finances-availability``) lists the
+    Team's players with ``games_unavailable > 0`` (and renders an empty-notice
+    DOM id when none are out)."""
+
+    def test_unavailable_player_listed(self) -> None:
+        from teams.models import Player
+
+        league = _make_league()
+        _season, teams = _make_active_season(league)
+        team = teams[0]
+        # Mark one starter unavailable with a distinctive name.
+        starter = team.active_players[0]
+        starter.name = "OutForThree"
+        starter.games_unavailable = 3
+        starter.save(update_fields=["name", "games_unavailable"])
+        response = self.client.get(
+            reverse("team_finances", kwargs={"league_id": league.id})
+        )
+        body = response.content.decode()
+        self.assertIn("team-finances-availability", body)
+        self.assertIn("OutForThree", body)
+
+    def test_available_player_not_listed_when_none_out(self) -> None:
+        league = _make_league()
+        _make_active_season(league)
+        response = self.client.get(
+            reverse("team_finances", kwargs={"league_id": league.id})
+        )
+        body = response.content.decode()
+        # The availability container still renders; an empty-state notice marks
+        # that nobody is out.
+        self.assertIn("team-finances-availability", body)
+        self.assertIn("team-finances-availability-empty", body)
