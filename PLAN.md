@@ -137,180 +137,6 @@ remaining Part2c follow-up.
   carried forward verbatim. Selected beforehand as a League-level toggle; only
   meaningful once the seeding-mode field + per-tournament-block config above exist.
 
-### LG-03 · [DONE] Season-end awards
-
-Computed from `PlayerRoundState` aggregates: Most Points, Highest K/D by role, Best Medic, 
-Most Efficient Nuke, Best Accuracy. Awards page at `/seasons/<id>/awards/`. Award badge on player profile.
-
-Also surface the headline **season MVP** (and, once LG-02 playoffs land, a
-**Finals MVP**) on the **League History** table (LG-01f) — the reference product
-puts both in its history row next to Champion / Runner-up, and ours currently has
-no awards column. See
-[`docs/zengm-comparison/season-lifecycle.md`](docs/zengm-comparison/season-lifecycle.md).
-
-**Status: DONE.** A **read-only / derived** league screen — every award recomputed
-**on render (transient)** from frozen `PlayerRoundState` rows, with **NO model field,
-NO migration, NO simulator change, NO Score Calibration re-baseline, NO persisted award
-rows**. A new Django-free pure module `matches/season_awards.py` (allowlist
-`dataclasses` / `typing` / `collections`, guarded by `TestNoDjangoImportsLeaked`) exposes
-`compute_season_awards(player_rounds, *, min_games)` and `pick_finals_mvp(final_round_dicts)`
-over frozen `AwardWinner` / `AwardSet` dataclasses; the view does ALL ORM work and feeds the
-pure fn a flat `list[dict]`. **Corpus split:** the regular-season awards read
-`PlayerRoundState.objects.filter(game_round__match__season=season)` — season-embedded
-**playoff** Matches carry `season=NULL` (Part2c-1 #3) and are naturally excluded — while
-**Finals MVP** is computed separately over the championship bracket node's rounds and is set
-**only on a bracket-format playoff** (`single/double_elimination`, `round_robin_double_elim`;
-`None` for `round_robin`/`swiss`/no playoff). The award set is the **6 regular-season awards**
-— **Most Points**, **Best Accuracy**, **K/D by role** (5 winners, one per role), **Best
-Medic**, **Most Efficient Nuke**, **Season MVP** (mean of `get_mvp`) — **plus the separate
-Finals MVP**. **Qualifier:** the rate/mean awards (Season MVP, Best Accuracy, Most Efficient
-Nuke) require `games(player) >= ceil(max_games_any_player / 2)`; the total/count awards (Most
-Points, Best Medic, K/D) are ungated; ties break by metric → games desc → `player_id` asc.
-**Three surfaces:** the new **awards page** (`season_awards` view / `/seasons/<id>/awards/`,
-league-sidebar shell, GET-only); two new **League History** columns (Season MVP / Finals MVP —
-`_build_history_row` grows 11 → 13 keys, reusing the same shared regular-season-dicts +
-finals-corpus helper); and the **player profile** awards badge (the
-`league-player-awards-stub` placeholder becomes the live `league-player-awards` block fed by a
-new `player_awards` context list). Seam contract:
-[`.claude/worktrees/lg-03-season-awards-seam-contract.md`](.claude/worktrees/lg-03-season-awards-seam-contract.md);
-impl notes in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
-
-### LG-04 · [DONE] Season-end stat updates
-
-At the end of each season, all players (on active teams or otherwise) receive a stat update.
-The original framing factored in **new experience** (games played this season), **player age**,
-and **prior experience** (historical games), with default weights fixed in code but overridable
-per season — but the LG-04 grill (2026-06-10) confirmed the system is modeled on **ZenGM**,
-whose `developSeason` is driven **purely by an age curve** (in-game production never moves
-ratings). That framing is therefore **superseded**: LG-04 follows ZenGM — **age-driven**;
-**games-played is cosmetic** (it ticks a counter but is never a develop input), per
-[ADR-0024](docs/adr/0024-zengm-player-development-ratings-history.md).
-
-**Status: DONE.** Development is a **ZenGM-faithful age curve** (young trend up, peak
-mid-to-late 20s, older decline increasingly fast; per-stat age modifiers + change limits +
-random noise, coaching fixed at 0), run **league-scoped at each `next_season` rollover** (the
-preseason analogue) over the rolling League's **developing set** — its snapshot Teams' players
-(active slots + bench) plus the `free_agent_pool` players: each Player is aged `+1`, its 19 live
-`Player` stat fields are **mutated in place** (the first persisted `Player`-stat mutation in the
-league flow), its `total_games` is **cosmetically ticked** (active player by their exact
-regular-season appearance count in the just-completed Season — playoff rounds carry
-`season=NULL` and are excluded; free-agent by a smaller random amount), and one immutable
-**`PlayerSeasonRating`** snapshot row (19 stats + age + `overall_rating` + a reserved nullable
-`potential`) is written for the new Season. A **baseline** `PlayerSeasonRating` row (as-generated
-stats, no development) is written for every founding Player at `league_create`; the live `Player`
-fields stay the Simulator's source of truth and the rating rows are a read-only audit trail. The
-develop math lives in a **Django-free pure module `matches/development.py`** (allowlist
-`dataclasses`/`typing`/`random`/`collections`, RNG **injected**, guarded by
-`TestNoDjangoImportsLeaked`); production builds a **fresh `random.Random()` per rollover and
-stores no seed** (the row is the audit trail). A migration ships
-(`0048_playerseasonrating.py`, one `CreateModel`, no backfill). The LG-06h
-`league-player-ratings-history-stub` becomes the live `league-player-ratings-history` block — a
-Chart.js overall-rating-over-time trend + per-Season stat table (Potential renders `—`).
-**NO Score Calibration re-baseline** (Stat *inputs* change, no simulation *mechanic*).
-**Deferred:** the per-team **coaching/scouting budget** knob (no per-(team, season) state yet —
-coaching effect fixed at 0, deferred to a slice designed with LG-05's scouting budget),
-**retirement / replacement intake**, and **`potential`** (reserved nullable column, computed in
-**LG-05**). See [ADR-0024](docs/adr/0024-zengm-player-development-ratings-history.md), seam
-contract
-[`.claude/worktrees/lg-04-player-development-seam-contract.md`](.claude/worktrees/lg-04-player-development-seam-contract.md),
-and impl notes in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
-
-### LG-05 · [DONE] Player potential
-
-Each player carries a `potential` attribute: a dynamically computed estimate of their likely stat ceiling.
-
-The original framing tied the scouting-noise band to a **per-season scouting budget allocation on
-the team**. That framing is **superseded** the same way LG-04's "experience" framing was: LG-05
-ships the noise band off a **FIXED `DEFAULT_SCOUTING_BUDGET = 50` constant** (no per-(team, season)
-state exists yet), and **CAR-01** later promotes the budget to a per-team field — exactly the
-deferral ADR-0024 recorded for the coaching/scouting knob.
-
-**Status: DONE.** `potential` is a per-`Player` **projected peak overall** (a `FloatField`),
-computed at each **season-end** — the `league_create` baseline AND every per-League `next_season`
-rollover — alongside LG-04 development, never on demand. The compute is a **noise-free
-forward-projection** of the LG-04 age curve (`matches/development.py::_project_peak_overall`):
-the LG-04 per-stat curve is rolled forward from the player's current age to age 40 with **zero
-noise** (a `0.9` midpoint multiplier in place of LG-04's `rng.uniform(0.4, 1.4)`), tracking the
-**running-max overall** across the path — that running max is the ceiling, **floored at the
-player's current overall** (it can never predict regression below the present average) and
-**capped at 100**. `compute_potential(stats, age, rng, *, scouting_budget=DEFAULT_SCOUTING_BUDGET)`
-then lays a **scouting-noise band** over that ceiling: `sd = POTENTIAL_MAX_SD * (1 - budget/100)`
-(budget 0 → max sd, 100 → 0), exactly **one `rng.gauss(0, sd)` draw**, re-clamped to
-`[current_overall, 100]`. Both functions are **pure** (Django-free, no new import —
-`TestNoDjangoImportsLeaked` stays green), and LG-04's `develop_stat` / `develop_player_stats` are
-left **byte-unchanged**.
-
-The value lands in a **new live `Player.potential` FloatField** (nullable, default `None`;
-migration `teams/migrations/0012_player_potential.py`, single `AddField`, dep
-`0011_team_is_draw_team`, no backfill) AND fills the **`PlayerSeasonRating.potential`** column LG-04
-reserved-but-always-`None`. Two write sites in `matches/league_views.py` set it:
-`_write_baseline_ratings` (founding baseline) and `_develop_league_for_new_season` (rollover, on
-the POST-development stats + already-incremented age). Each rollover builds a **SEPARATE fresh
-`random.Random()`** for the gauss draw, INDEPENDENT of LG-04's develop RNG — so LG-04's pinned
-1-gauss-then-19-uniform sequence and its seeded develop output stay **byte-identical**. Players
-outside any league flow keep `potential = None`.
-
-**UI:** `potential` becomes a **sortable `Pot` column** on `player_ratings` + `free_agents`
-(nulls-last in both directions via `F("potential").desc/asc(nulls_last=True)`), a **render-only**
-cell on `team_roster`, a **live card** on the LG-06h player page (`#league-player-potential`,
-replacing the "Arrives with LG-05" stub), and the LG-04 ratings-history `Pot` column now lights up
-for rows written after LG-05. **NO Score Calibration re-baseline** — `potential` is **read-only to
-the simulator** (never a sim input), so no simulation mechanic changes and **no new ADR** (the
-column is a reversible nullable add, recomputed every rollover). MMR / Rank stay non-sortable `—`
-placeholders (STAT-PROXY-01); the global HX-01 career page and the LG-00c `/players/` list are
-untouched. The **Potential** CONTEXT.md term is already written. See
-[ADR-0024](docs/adr/0024-zengm-player-development-ratings-history.md) (the LG-05 consequences
-addendum), seam contract
-[`.claude/worktrees/lg-05-player-potential-seam-contract.md`](.claude/worktrees/lg-05-player-potential-seam-contract.md),
-and impl notes in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## LG-05 player
-potential`.
-
-### INFRA-01 · PostgreSQL/SQLite Parity Hardening
-
-**Status: DONE.** **Reframed on contact:** Postgres was **already canonical** —
-the Docker/CI/Fly deploy work had landed it (`psycopg2-binary` in
-`requirements.txt`, a `postgres:16` service in `docker-compose.yml`, CI
-(`.github/workflows/ci.yml`) running both the full pytest suite **and** a docker
-smoke job against `postgres:16`, Fly.io deploying off that image, and
-`settings.py` reading `DATABASE_URL` via `dj_database_url`). INFRA-01 therefore
-became a **HARDEN + VERIFY + DOCUMENT-parity** slice, **not** a migration: the
-original "switch to Postgres" framing was obsolete before the task started.
-
-**SQLite stays the guarded dev-only default** when `DATABASE_URL` is unset. The
-SQLite write-contention hardening **stays in place, guarded**: the `OPTIONS`
-block in `settings.py` (`timeout` / `transaction_mode`) and the
-`core/db_pragmas.py` WAL `connection_created` hook both early-return / no-op on
-Postgres (`connection.vendor != "sqlite"`).
-
-**Production-code surface: NONE.** `settings.py` and `core/db_pragmas.py` are
-**byte-unchanged**; **no model field change → no migration**; **no Score
-Calibration re-baseline** (nothing touches a simulation input). The only
-artifacts that land are **two pure guards in `core/tests.py`**: **(A)**
-`set_sqlite_pragmas` early-returns on a non-sqlite (`vendor="postgresql"`)
-connection so the WAL PRAGMAs **never run on Postgres** (asserts `cursor` not
-called, no DB hit, backend-agnostic); **(B)** a `MapZoneConfig.zone_data`
-nested-payload round-trip (2D int `zones` + `wall_meta` dict + 2D float
-`elevation`) that deep-equals after `refresh_from_db()`, covering **SQLite-text
-vs Postgres-jsonb** `JSONField` serialization parity (passes on SQLite locally,
-Postgres in CI).
-
-**SQLite-assumption audit came back clean:** no raw SQL / `.extra()` / `.raw()`
-except the guarded PRAGMA; **zero `icontains` / `iexact`** case-insensitive
-lookups (so no Postgres case-sensitivity break); the only residual delta is an
-`order_by("name")` collation difference, which is **cosmetic**.
-
-**Acceptance:** lock-freedom is the documented **Postgres MVCC** property (no
-single-writer lock — the `database is locked` class of error cannot arise);
-**CI proves the full suite green on Postgres**; the "Play Until End of Season on
-compose-Postgres, no lock errors" end-to-end smoke is a **DEFERRED manual
-check** (documented as manual — **not** claimed as run).
-
-See [ADR-0025](docs/adr/0025-postgresql-canonical-sqlite-dev-only.md) (full
-rationale) and the seam contract
-[`.claude/worktrees/infra-01-postgres-sqlite-parity-seam-contract.md`](.claude/worktrees/infra-01-postgres-sqlite-parity-seam-contract.md);
-this PLAN note is the impl note (no app-level `CLAUDE.md` change — the task is
-tests + docs only).
-
 ---
 
 ---
@@ -320,475 +146,7 @@ tests + docs only).
 A single-user play mode where the user acts as a team manager navigating a league season. This phase
 sits between the League system (Phase 5) and full multiplayer (Phase 6).
 
-### CAR-01 · [DONE] Manager role and team assignment
-
-In single-player career mode, the user is a team manager (not a player in the simulation).
-The user is assigned to a team at the start of a career league. Each season the user manages their
-team through the league schedule.
-
-**Status: DONE.** The manager **names their own team at create-League time**, and that named team
-becomes one of the N generated teams **and** the League's `current_team`. **Locked grill decisions:**
-single-player `league` mode **IS** career mode — **NO new mode value**, **NO `Manager` / `User`
-model** (both deferred to **UX-01**; the manager is the implicit local user); `current_team` **is**
-the manager's career team, reusing the **existing `League.current_team` FK** (no new model field).
-
-**Surface = the create-League form field ONLY.** A new optional field
-`matches/forms.py::CreateLeagueForm.manager_team_name` (`forms.CharField(max_length=100,
-required=False, label="Your team name")`, DOM id `league-create-manager-team-name`) is inserted
-**after `league_name` / before `season_name`**, with a matching field row in
-`templates/leagues/create.html` between the league-name and season-name rows. `league_create`
-(inside its existing `@transaction.atomic`) renames the **alphabetical-first generated team** to the
-stripped `manager_team_name` and sets it as `league.current_team`; **blank name → today's LG-01g
-verbatim `sorted(created_teams, key=name)[0]` alphabetical auto-pick** (byte-identical, backward
--compatible). The named team **stays one of the N** (league size unchanged = `num_teams`); the wiring
-runs at the current `current_team` position, **before** `Season.objects.create` / `season.teams.add`
-/ the phase loop / `_write_baseline_ratings`. No `clean()` change, no uniqueness validation (team
-names are not globally unique). The existing LG-01g 'your team' framing already surfaces
-`current_team`.
-
-**Scope-out (locked).** The **per-team scouting budget is DEFERRED** (out of CAR-01 scope — LG-05's
-FIXED `DEFAULT_SCOUTING_BUDGET = 50` stands until a later slice promotes it). **No migration, no new
-model field** (reuses `League.current_team`), **no new mode value**, **no `Manager` / `User` model**,
-**no simulator change**, **no Score Calibration re-baseline**, **no ADR**. Tests:
-`matches/tests/test_league_create.py::TestCar01ManagerTeamName`. Seam contract:
-[`.claude/worktrees/car-01-manager-team-assignment-seam-contract.md`](.claude/worktrees/car-01-manager-team-assignment-seam-contract.md);
-impl note in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## CAR-01 manager team
-assignment`.
-
-### LG-01i · [DONE] Season "One Week (Live)" replay UI
-
-Live replay surface invoked from the Play dropdown — a
-"One Week (Live)" entry that lets the manager watch their team's next
-game replay in the browser (play/pause/scrub) and then commit or
-discard the run. Deferred from LG-01d; re-sequenced from Phase 5 to
-Phase 5.5 (post-CAR-01) on 2026-05-28.
-
-**Status: DONE.** Shipped as **preview-then-commit live replay, NOT server-side
-tick streaming** (the PLAN's original "plays the next matchday tick-by-tick" /
-"tick-stream engine" framing was superseded at grilling — there is no WebSocket /
-SSE / Channels surface; the client SIM-05 playback engine plays pre-baked JSON).
-**Mode B is locked: only `League.current_team`'s game is previewed; the rest of
-the matchday / bracket stage is simmed FRESH at commit, never previewed.** A
-preview draws a seed (or a pair), `random.seed()`s it, runs the in-memory tick
-loop with **NO DB flush**, serializes the events to the SIM-05 `events_data` /
-`players_data` JSON shape, and **pins the captured seed(s) in
-`request.session["live_preview_pin"][str(season_id)]`** keyed to the cursor
-identity ("locked once previewed" — the cursor-identity equality check is the
-auto-invalidation; Discard or a successful commit clears the pin). Commit re-runs
-**only the watched game with the injected captured seed(s)** (SIM-07 ⇒
-byte-identical to what was watched) then sims the rest of the matchday (RR) /
-bracket stage (playoff) fresh, sync, atomically. Two watchable cursors: the **RR
-cursor** = `current_team`'s single next-matchday Round (1 seed; bye ⇒ degrade to
-plain commit), and the **playoff cursor** = its next undecided 2-round Match
-(2 seeds), offered only when `current_team` is **alive** (eliminated ⇒ no live
-entry). The injected-seed seam is additive + keyword-only with `None` ⇒
-verbatim-today (`_simulate_and_flush_round` / `simulate_scheduled_round`
-`rng_seed=`, `simulate_match` `rng_seeds=`, and the new
-`tournament_engine.play_specific_node` extracted from `play_next_node`) ⇒
-byte-identical to every existing caller ⇒ **NO Score Calibration re-baseline**.
-
-**Dependency correction.** The PLAN's original "depends on **CAR-01** + the new
-Season-replay tick-stream engine CAR-01 owns" was **inaccurate** — **CAR-01
-shipped only the manager-team-name create-League form field** (no tick-stream
-engine ever existed). LG-01i builds the preview / replay surface **itself** from
-the **SIM-05 client playback engine** + the **in-memory `_simulate_round` / flush
-split** (the new `preview_scheduled_round` / `preview_tournament_match` no-flush
-bundle reusing the SIM-05 `events_data` / `players_data` shapes). CAR-01 is only
-the `League.current_team` **consumer** — LG-01i watches whatever team CAR-01
-assigned.
-
-**Scope-out (locked).** No migration, no model change (the seed lives in
-`request.session`; the committed round persists it via the existing
-`GameRound.rng_seed`), no re-baseline, no server-side tick streaming /
-WebSocket / SSE, no watching non-manager games, no re-roll within a pin
-(Discard then re-open to draw fresh), no playoff-live when eliminated, no
-SIM-05 partial extraction (the playback JS is duplicated into the new
-`templates/seasons/play_week_live.html`, not factored out), no ADR, no
-CONTEXT.md term (the **One Week (Live)** glossary term was finalised at
-grilling). Seam contract:
-[`.claude/worktrees/lg-01i-one-week-live-seam-contract.md`](.claude/worktrees/lg-01i-one-week-live-seam-contract.md);
-impl notes in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md)
-`## LG-01i Season "One Week (Live)" play-now-and-watch replay`.
-
-**Redesign (play-now-and-watch — supersedes the preview-then-commit model
-above).** A follow-up reframed the feature: **"One Week (Live)" now PLAYS the
-manager's game immediately** (commits it), kicks off the **rest** of the
-matchday / bracket stage as a **background** `play_season_task(max_matchdays=1)`
-run, and opens a **read-only replay** of the just-played game (the SIM-05 engine
-fed from the *persisted* event log via the extracted
-`matches.views.round_playback_payload`). **Results are final the moment it runs —
-no preview, no commit, no discard, no retry.** This **removed** the preview
-methods (`preview_scheduled_round` / `preview_tournament_match` /
-`_serialize_events_for_preview`), the injected-seed seam (`rng_seed=` /
-`rng_seeds=` on the sim methods + `play_specific_node`), the session pin, and the
-`play_week_live_commit` / `play_week_live_discard` views. The surface is now a
-POST `play_week_live` (commit + enqueue rest + redirect) and a GET
-`play_week_live_watch` (replay the committed game). `_resolve_live_cursor` /
-`_alive_playoff_node` / `play_specific_node` (now seed-less) survive; the dropdown
-entry became a POST `<form>`. Still **no model change, no migration, no
-re-baseline**. The seam contract above documents the superseded design.
-
-### MECH-15 · [DONE] Gate base capture on active state (no capturing while down)
-
-**Status: DONE.** A **one-guard** fix in the planning layer: the `capture_base`
-branch of `matches/sim_helpers/combat.py::plan_action` is wrapped in
-`if player.is_active_at(second):`, so a player inside the **Respawn cooldown**
-(Downed, `last_downed_time` within `RESPAWN_TICKS = 16`) **never plans** a base
-capture — both the map path and the 3-zone fallback. This mirrors the existing
-`use_special` gate one branch down (and the missile gate in `start_missile_lock`
-/ the tag gate in `_resolve_tag_attempts`); the **blast-radius audit confirmed
-base capture was the only deliberate action leaking while down**. `combat.capture_base`
-itself is **left unchanged** (the guard lives upstream in `plan_action`, the
-chosen single layer), and **`award_bases` is deliberately left unchanged** —
-round-end awards to survivors are treated as end-of-round possession, not active
-interaction. **No model change, no migration, no CONTEXT.md edit** (the
-**Base capture** / **Respawn cooldown** / **Not-targetable** / **Reset window**
-terms already cover it), **no ADR**. **Re-baseline:** this is a simulator-mechanics
-change that shifts seeded outcomes (a downed player no longer captures), folded
-into the **single pending post-MOVE-01 Score Calibration re-baseline** — no new
-obligation. The seed-sensitive `test_strong_team_winpct_not_diluted_by_alternation`
-(SIM-08) was re-pinned `master_seed=9001 → 7777` to land on a representative
-sample after the RNG-sequence shift (62.5% team-position win vs 49.2% balanced
-physical side); both the 55% floor and the de-flip contrast guard stay intact.
-**Regression test:** `matches/tests/test_map.py::TestMap04BaseInteraction`
-(`test_downed_player_does_not_plan_capture` + an active-control at the
-`RESPAWN_TICKS` boundary) — pure-unit, RNG pinned so `plan_action` rolls
-`capture_base`, asserts the downed player yields no capture plan while the active
-control does.
-
-**Bug.** A player who has been **Downed** and is still inside the **Respawn
-cooldown** (the not-targetable + reset windows, `RESPAWN_TICKS = 16`) can still
-**Capture a base**. Surfaced while watching the LG-01i live replay — a greyed-out
-(downed) player emitted a `base_capture` event and scored the 1001-point capture
-mid-cooldown. A downed player is not active and must not be able to interact with
-a base.
-
-**Root cause.** The per-tick action loop in
-`matches/simulation/entrypoints.py::_simulate_round` builds `plans` by calling
-`_plan_action` for **every** player in `all_alive` — including players currently
-in the respawn cooldown (alive, `final_lives > 0`, but `not is_active_at(second)`).
-The `capture_base` dispatch (`entrypoints.py` ~L1480 → `_capture_base` →
-`matches/sim_helpers/combat.py::capture_base`) range-checks the base, checks
-`final_shots >= 3` (or Ammo), and awards the capture — but has **no
-`is_active_at(second)` guard**. By contrast the shot path gates on active/taggable
-state (`resolve_shot` validity gate; the `_resolve_tag_attempts` `is_active_at` /
-`is_taggable_at` checks at ~L1926) and missiles gate inside `start_missile_lock`,
-so capture is the one deliberate action that leaks through while down.
-
-**Fix.** Add an active-state guard so a player who is not `is_active_at(second)`
-cannot capture a base (nor be awarded one at round end via `award_bases` if that
-path can fire for a downed player — confirm during the grill). **Open question —
-which layer:** (a) inside `combat.capture_base` (single chokepoint, covers the
-live-capture and any award path, returns `False` early when the actor is inactive
-— but the function currently takes no tick-active signal beyond `second`, which it
-already has via `player.is_active_at(second)`); (b) at the dispatch site in
-`_simulate_round`; or (c) in `plan_action` so a downed player never *plans* a
-capture in the first place (most consistent with how the weighted action vector
-already zeroes deliberate actions for inactive players — audit whether
-`capture_base` is even supposed to be a reachable plan for a downed player). Prefer
-the layer that also makes the fix regression-obvious.
-
-**Blast-radius audit (do in the grill):** confirm whether any **other** deliberate
-action (tag/missile/resupply/special) can also leak while in the respawn cooldown,
-or whether base capture is genuinely the only gap. If others leak, widen the fix to
-a single shared "is this player allowed a deliberate action this tick?" gate rather
-than patching capture alone.
-
-**Scope.** Simulator-mechanics change → **this re-baselines seeded outcomes** (a
-downed player no longer captures, so the event log / scores / standings shift on
-affected ticks). Fold it into the single pending post-MOVE-01 Score Calibration
-re-baseline — do **not** open a separate re-baseline obligation. **No model change,
-no migration.** **Regression test (TDD):** a player Downed at tick *T* emits **no**
-`base_capture` event while `T <= tick < T + RESPAWN_TICKS` even when standing in
-base range with ≥ 3 shots; once active again, capture works as before. Pin it in
-`matches/tests/simulation_tests.py` (or `test_map.py::TestMap04BaseInteraction`)
-with a deterministic hand-built `PlayerState` in the cooldown window — assert on the
-absence/presence of the `base_capture` event, not on point totals.
-
-### CAR-02 · [DONE] Performance-based firing
-
-The system tracks manager performance metrics (win rate, standings position, point differential).
-When a manager's performance falls below a configurable threshold, the system fires them automatically.
-After being fired, the manager can apply for or be assigned to another team in the league.
-
-**Status: DONE.** Shipped as a **ZenGM-faithful owner-mood model**, NOT a single configurable
-threshold (the PLAN's literal "configurable threshold" wording was superseded at grilling — a flat
-knob can't express ZenGM's "over-perform to bank goodwill / rebuilding teams forgiven" fuzziness).
-The team **Owner** judges the **Manager** (the implicit local user = `League.current_team`, CAR-01 —
-**no `Manager`/`User` model**) once per completed Season across **three cumulative Mood factors**:
-*wins* (regular-season Match record vs a .500 baseline,
-`WINS_FACTOR * WINS_BASELINE_SCALE * (won - games/2) / (games/2)`, `games == 0` ⇒ neutral `0.0`),
-*playoffs* (read off the Season's embedded `tournament` Season-phase bracket — `champion` ⇒ `+0.2`,
-`seeded`-no-title ⇒ `(0.16/num_rounds) * rounds_won`, `missed` ⇒ `-0.2`, **`none`** = no tournament
-phase ⇒ neutral `0.0`), and *money* — **DORMANT = 0.0 this slice** (the column exists so a future
-finance subsystem lights it up without a migration; see **FIN-01** below). Each factor's cumulative
-total is **capped at `+1` on the upside ONLY** (`MOOD_FACTOR_CAP = 1.0`, no negative floor — you
-cannot bank goodwill past `+1` but can sink arbitrarily low; "can't win by maxing one factor, can
-lose by neglecting one"). The Manager is **Fired** when, **strictly past a 2-Season Grace period**
-(`GRACE_PERIOD_SEASONS = 2`, flat — ZenGM's +3-if-joined-at-playoffs nuance dropped), the summed mood
-`wins_total + playoffs_total + money_total <= FIRE_THRESHOLD (-1.0)`; a past-grace **Hot seat**
-warning fires at `total + delta < -1` (level 1, "another season…") or `total + 2*delta < -1` (level
-2, "a couple more…"). A fired Manager **must Reassign** via a **New Team** picker (the **worst-5** by
-the just-completed Season's final Standings, old team excluded) — which sets `current_team`, starting
-a **fresh tenure + grace** — before the pre-season rollover can run.
-
-**Model + migration.** One immutable per-`(League, completed Season)` snapshot
-`matches.models.OwnerEvaluation` (FKs `League`/`Season` CASCADE + `teams.Team` SET_NULL `team_managed`;
-the 3 factor deltas + 3 cumulative-capped totals, `verdict` ∈ `{retained, hot_seat, fired}`,
-`hot_seat_level` 0/1/2; `uniq_league_season_owner_evaluation` constraint), migration
-`0049_ownerevaluation` (**CreateModel-only — NO `RunPython`/backfill**, ADR-0004 disposable-data
-posture; existing Leagues get no historical rows, the lazy writer fills them in Season order on first
-reach). **Tenure boundaries + grace derive from the snapshot chain** (a `team_managed` change between
-consecutive rows by Season order = a new tenure, cumulative + grace reset) — **no `tenure_id` field** —
-because firings mutate `League.current_team` and a past Season's managed team is otherwise
-unrecoverable.
-
-**Pure module + orchestration.** A Django-free `matches/owner_mood.py` (frozen import allowlist
-`dataclasses`/`typing`/`collections`, defended by `TestNoDjangoImportsLeaked`) holds the constants, the
-3 frozen dataclasses (`MoodDeltas`/`MoodTotals`/`Verdict`), and 4 pure fns (`compute_wins_delta`,
-`compute_playoffs_delta`, `cap_cumulative`, `decide_verdict` — the **one** decider returns BOTH the
-outcome string AND the hot-seat level). The view assembles flat inputs (ints/strings) from the reused
-`Season._final_standings_for_phase` standings path + the `tournament` bracket and calls them — the
-module never sees a Django object or RNG. `matches.league_views._ensure_owner_evaluations(league,
-up_to_season)` is the **lazy + idempotent writer** (`get_or_create`-keyed on `(league, season)`, walks
-completed Seasons **oldest→newest** threading the per-factor caps + cumulatives + tenure marker). The
-existing `@transaction.atomic next_season` rollover body is extracted **verbatim** into a plain
-`_run_season_rollover(league, latest_completed) -> Season` shared by both `next_season` and the new
-reassign path; `next_season` becomes the **verdict gate** (ensure → read the just-completed eval → a
-`fired`-and-unreassigned Manager is redirected to the New Team picker and **cannot roll**; everyone
-else rolls byte-equivalently to today). New views `owner_evaluation` (GET eval screen, browsable for
-past Seasons) / `new_team_picker` (GET worst-5 list) / `reassign_team` (POST, sets `current_team` +
-runs the shared rollover); URL names `owner_evaluation` / `new_team_picker` / `reassign_team`;
-templates `seasons/owner_evaluation.html` + `leagues/new_team.html`; the dashboard "Start Next Season"
-control is **rerouted** to a GET link to the eval screen (which exposes Start Next Season if retained/
-hot_seat, Choose New Team if fired) — the `data-action-state="start_next_season"` attribute survives on
-the link for LG-01c/e back-compat. The **hot-seat warning IS shipped**.
-
-**Scope-out (locked).** **Money factor DORMANT** (always `0.0` — no finance subsystem; see **FIN-01**).
-Challenge-mode firings (miss-playoffs / luxury-tax) and voluntary rival-offer switching **DEFERRED**
-(both default-off in ZenGM; luxury-tax needs FIN-01). **No `Manager`/`User` model** (the Manager is
-`League.current_team`, CAR-01). **No simulator change → no Score Calibration re-baseline.** **No
-backfill / `RunPython`.** **No new CONTEXT.md term** (all 10 finalised at the grill). CAR-03 will later
-gate firing to single-player `league` mode (this slice already operates only there — the only mode with
-`current_team`). Decision: [ADR-0026](docs/adr/0026-manager-firing-owner-mood.md). Seam contract:
-[`.claude/worktrees/car-02-performance-based-firing-seam-contract.md`](.claude/worktrees/car-02-performance-based-firing-seam-contract.md);
-impl note in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## CAR-02 manager firing
-(owner mood)`. Tests: `matches/tests/test_owner_mood.py` (pure-unit) +
-`test_owner_evaluation_model.py` + `test_owner_evaluations_writer.py` + `test_owner_evaluation_view.py`
-+ `test_reassign_team.py` (NEW) + extended `test_league_next_season.py` / `test_league_dashboard.py` /
-`test_season_dashboard_view.py`.
-
-### CAR-03 · [DONE] Career isolation from multiplayer
-
-The firing mechanic and team-switching only apply in single-user career mode. In multiplayer leagues,
-each user is locked to their team for the full duration of the league — no transfers, no firing.
-
-**Status: DONE.** A **defensive gate only** — the CAR-02 owner-evaluation / firing / reassignment
-lifecycle is made **inert unless `League.mode == "league"`**. The gate predicate is a **positive
-allowlist** `mode == "league"` (so `"sandbox"`, `"multiplayer"`, and any future mode are inert by
-default), expressed by the single shared helper `matches/league_views.py::_is_career_league(league) ->
-bool` (`return league.mode == "league"`) — the **one source of truth** consumed by the writer, the two
-reassign views, and the dashboard context. The **chokepoint** is the lazy writer
-`_ensure_owner_evaluations`, which now **early-returns** when `not _is_career_league(league)`: no
-`OwnerEvaluation` rows are ever written for a non-career League. The two reassign-path views
-`new_team_picker` + `reassign_team` add a `not _is_career_league(league)` guard **after** the
-`get_object_or_404(League, ...)` and **before** any `current_team` write ⇒ **HTTP 400** (writes
-nothing). `_build_dashboard_context` gains an `is_career_mode: bool` key; both
-`templates/seasons/dashboard.html` and `templates/leagues/dashboard.html` split the "Start Next Season"
-control on it — career ⇒ the CAR-02 `…-owner-evaluation-link`, non-career ⇒ a direct `next_season` POST
-`…-next-season-form` (the pre-CAR-02 LG-01e shape) — with the outer `…-action-button` wrapper +
-`data-action-state="start_next_season"` preserved in BOTH arms (LG-01c/e back-compat).
-
-**Deliberately NOT guarded.** `next_season` is **UNCHANGED** — the writer no-op means its verdict gate
-reads `evaluation is None` and rolls the Season normally (no firing, no New-Team redirect).
-`owner_evaluation` is **UNCHANGED** — it naturally raises its existing `Http404` on the missing row for
-a non-career completed Season; no explicit guard added (the natural 404 suffices).
-
-**Scope-out (locked).** **No multiplayer creation flow / form field / new mode value**; no
-`Manager`/`User` model (the Manager is `League.current_team`, CAR-01); **no model field change, no
-migration, no simulator or RNG change → no Score Calibration re-baseline**; **no new ADR**; **no new
-CONTEXT.md term** (the **Owner evaluation** glossary entry already carries the league-mode-only clause,
-added this session). Seam contract:
-[`.claude/worktrees/car-03-career-isolation-seam-contract.md`](.claude/worktrees/car-03-career-isolation-seam-contract.md);
-impl note in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## CAR-03 career isolation
-from multiplayer`. Tests extend the existing CAR-02 files with a `mode="multiplayer"` fixture:
-`test_owner_evaluations_writer.py` (0 rows written) + `test_league_next_season.py` (302 + new draft
-Season, no eval row, `current_team` unchanged) + `test_reassign_team.py` (400 on both views,
-`current_team` unchanged) + `test_league_dashboard.py` / `test_season_dashboard_view.py` (multiplayer
-renders `…-next-season-form`, not `…-owner-evaluation-link`; `league` mode unchanged).
-
-### FIN-01 · [DONE] Team finance subsystem (lights up the dormant *money* mood factor)
-
-The finance epic CAR-02 deferred: introduce **player salary**, a per-team **budget** (allocations
-across *house* / *coaches* / *analysts*), and **season profit** accounting (revenue vs. expenses over
-a Season), so the **dormant `OwnerEvaluation.money_delta` / `money_total` mood factor** CAR-02 shipped
-as a permanent `0.0` column comes **alive**. The activation seam is the ZenGM formula already pinned in
-[`Screenshots_and_video_examples/firing_rules/firing_rules.md`](Screenshots_and_video_examples/firing_rules/firing_rules.md):
-`money = (profit - expectedProfit) / scale` (expected profit / scale tracking ZenGM's
-`15 * salaryCapFactor` / `100 * salaryCapFactor`), capped per-factor at `+1` exactly like *wins* /
-*playoffs*. CAR-02 left the *money* column dormant **by design** so this slice lights it up **without a
-migration to `OwnerEvaluation`** — the writer (`_ensure_owner_evaluations`) simply starts feeding a
-non-zero `money_delta` once the budget feature is enabled, and the eval screen's
-`owner-evaluation-factor-money` row stops rendering `0.0`. This also **unblocks ZenGM's luxury-tax
-challenge-mode firing** (CAR-02 deferred it precisely because it needs a budget / expenses model). Adds
-a **CONTEXT.md** finance vocabulary (Salary / Budget / Profit / Luxury tax) and an **ADR** for the
-finance model + the season-profit accounting interaction with the rollover; depends on **CAR-02**
-(the owner-mood model + the dormant *money* seam) and sits in career mode alongside the CAR slices.
-
-**FIN-01 scope decisions (grill 2026-06-16, ZenGM finance docs in
-[`Screenshots_and_video_examples/finance_system/`](Screenshots_and_video_examples/finance_system/)
-are the base model).** Budgets are **three** levels — **scouting / coaching / facilities** (health
-deferred, see FIN-04) — each a 1–100 ZenGM `level` (`DEFAULT_LEVEL = 34` neutral) plus a ticket price.
-**Cost-only this slice:** all three budgets are pure expense line-items feeding `profit`; **facilities
-additionally feeds the revenue/attendance side**; scouting & coaching buy **no gameplay edge yet**
-(wiring deferred to FIN-02 / FIN-03). **Player salary** is **derived from `overall_rating`** (cap-scaled,
-no contracts / free agency); **payroll** = sum of the active roster's salaries. **Revenue** is
-**season-level** (we batch-sim, no per-game `writeTeamStats` stream) computed at the `next_season`
-rollover, keeping ZenGM's **hype** loop (`winp`-driven) but a **fixed single market** (no `pop` / popRank
-variance). **Luxury tax + min-payroll penalty** ship as expense lines; **tax redistribution is skipped**;
-the **luxury-tax challenge-mode firing stays deferred** (write the term, no toggle). A per-`(team, Season)`
-**finance snapshot** row (the `PlayerSeasonRating` / `OwnerEvaluation` precedent) is written at rollover
-and read by `_ensure_owner_evaluations` to feed `money_delta = (profit − expectedProfit) / (100 *
-salaryCapFactor)`. **Per-League finance toggle at create time** (the ZenGM `budget` master switch): OFF ⇒
-the whole subsystem is **inert** — no salaries, no budget spending, every sim team on defaults, the money
-axis stays `0.0` — so a finance-OFF league is **byte-identical to today** (wins + playoffs sentiment
-only), and LG-04 / LG-05 are untouched. The LG-01h **Finances** placeholder (sidebar + topbar) becomes
-the live **Team Finances** page + a **League Finances** table.
-
-**Status: DONE.** Shipped per the grill decisions above. The **money axis is live**: when a League has
-`finance_enabled`, `_ensure_owner_evaluations` reads the managed Team's per-Season finance profit and
-feeds `money_delta = (profit − 15*scf) / (100*scf)` (`scf = salary_cap / BASELINE_SALARY_CAP`,
-`== 1.0` this slice) into the cap-chain CAR-02 left dormant — **no `OwnerEvaluation` migration** (CAR-02
-designed the seam for exactly this) and **no `owner_mood` change** (the verdict already summed `money`).
-A per-League **`finance_enabled` toggle** (set at create time) gates the whole subsystem ON TOP of
-CAR-03's `_is_career_league` mode gate; **OFF ⇒ inert and byte-identical to today** (zero finance rows,
-`Player.salary` stays `None`, every sim team on neutral budget defaults, the money axis `0.0`, LG-04/
-LG-05 develop output unperturbed) — the load-bearing inertness guarantee.
-
-**Model + migrations.** `teams.Player.salary` (nullable `FloatField`, derived from `overall_rating`
-cap-scaled, recomputed in place at the LG-05 write sites) + five `teams.Team` finance fields
-(`budget_scouting`/`budget_coaching`/`budget_facilities` neutral `34` ZenGM levels, `ticket_price`,
-`cash`) in `teams/migrations/0013_player_salary_team_finance.py`; `matches.League.finance_enabled`
-(`BooleanField(default=False)`) + an **immutable** per-`(Team, Season)` `matches.TeamSeasonFinance`
-snapshot (5 revenue lines + 6 expense lines + derived `revenue`/`expenses`/`profit` + carried `hype`;
-`team` SET_NULL / `season` CASCADE; `uniq_team_season_finance`) in
-`matches/migrations/0050_league_finance_teamseasonfinance.py` (dep `0049_ownerevaluation` + cross-app
-`teams 0013`). Both **AddField/CreateModel-only — NO `RunPython`/backfill** (ADR-0004 disposable-data
-posture; the lazy writer fills rows in Season order on first reach).
-
-**Pure module + orchestration.** A Django-free `matches/finance.py` (frozen import allowlist
-`dataclasses`/`typing`/`math`/`collections` — **no `random`**, defended by `TestNoDjangoImportsLeaked`)
-holds the **locked-but-tunable** magic constants (`DEFAULT_LEVEL = 34`, `EXPECTED_PROFIT_BASE = 15`,
-`SALARY_CAP = BASELINE_SALARY_CAP = 90000`, luxury/min-payroll thresholds, revenue/expense coefficients
-— the LG-04 age-curve precedent, sized so a typical Season's profit lands near the `15` anchor), three
-frozen dataclasses (`RevenueLines` / `ExpenseLines` / `TeamFinanceResult`), and nine pure fns
-(`level_to_amount`, `salary_for_overall`, `compute_hype` — the `winp`-driven `0.55`-anchor loop,
-`season_revenue`, `season_expenses`, `luxury_tax`, `min_payroll_penalty`, `season_profit`,
-`money_delta`) behind the single aggregator `compute_team_finance(...)`. The flat inputs crossing the
-view↔pure seam are ints/floats/levels ONLY — the module **never sees a Django object or RNG**.
-`matches.league_views._ensure_team_finances(league, up_to_season)` is the **lazy + idempotent writer**
-(twin of `_ensure_owner_evaluations`; first-line early-return when not career or not `finance_enabled`;
-`get_or_create`-keyed on `(team, season)`, walks completed Seasons **oldest→newest** so hype carries;
-first-season seed `prev_hype=0.0`/`winp_old=0.5`; `team.cash += profit`). Salary is recomputed in
-`_write_baseline_ratings` + `_develop_league_for_new_season` (the LG-05 `potential` precedent, gated on
-`finance_enabled`). **Rollover order (LOCKED) in `next_season`:** `_ensure_team_finances` **before**
-`_ensure_owner_evaluations` (finance rows feed the money axis), then the verdict gate.
-
-**UI.** `CreateLeagueForm` gains a `finance_enabled` checkbox (DOM id `league-create-finance-enabled`).
-The LG-01h **Finances** placeholders flip live (the LG-01z pattern): two new league-screen views
-`team_finances` (GET + budget-edit POST, keyed on `current_team`, history + budget levels + ticket
-price + cash + live luxury/min-payroll figures) and `league_finances` (GET-only league-wide table); URL
-names `team_finances` / `league_finances` replace the `coming_soon_*` placeholders; `_FEATURE_REGISTRY`
-drops the two finance blockers; `_build_league_sidebar_links` repoints both sidebar + topbar Finances
-entries at once; templates `leagues/team_finances.html` + `leagues/league_finances.html`. A
-finance-disabled League shows a `*-disabled-notice` in place of the body. (`players_trade` /
-`players_trading_block` stay blocked — FIN-01 adds salary but NOT contracts/cap-space.)
-
-**Scope-out (locked).** **Cost-only this slice** — scouting & coaching buy NO gameplay edge yet (wiring
-= **FIN-02** / **FIN-03**). **Health budget + injuries = FIN-04** (only three of ZenGM's four budgets
-ship). **Tax redistribution SKIPPED**; the **luxury-tax challenge-mode firing stays DEFERRED to FIN-05**
-(term written, no toggle). **No contracts / free agency / cap space** (salary derived from
-`overall_rating`). **Fixed single market** (no pop / popRank / per-game gauss). **Finances consume no
-RNG, are outside SIM-07/08, change no sim mechanic → NO Score Calibration re-baseline**; LG-04/LG-05
-develop output is byte-identical toggle ON or OFF. **No new CONTEXT.md term** (the `### Finance`
-glossary + the two "money dormant" caveat edits were finalised at the grill). Decision:
-[ADR-0027](docs/adr/0027-team-finance-subsystem.md). Seam contract:
-[`.claude/worktrees/fin-01-seam-contract.md`](.claude/worktrees/fin-01-seam-contract.md); impl note in
-[`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## FIN-01 team finance subsystem`.
-Tests: `matches/tests/test_finance.py` (pure-unit) + `test_team_finance_model.py` +
-`test_team_finances_writer.py` + `test_finance_money_axis.py` + `test_finance_toggle.py`
-(byte-identical-OFF invariant) + `test_create_form_finance.py` + `test_finance_screens.py`.
-
-### FIN-02 · [DONE] Wire the *coaching* budget into player development (LG-04)
-
-**Status: DONE.** Lights up the **coaching** budget FIN-01 shipped cost-only: a Team's effective
-coaching level now **directionally scales** its players' LG-04 age-curve development at each
-`next_season` rollover — better coaching speeds development, neglected coaching slows it — while
-a **finance-OFF (or `coaching_effect=0.0`) league stays byte-identical to LG-04** and **Potential
-(LG-05) is left untouched** (coaching never touches Potential; FIN-03 owns scouting→potential).
-**Mechanism (no new RNG draw).** `matches/development.py::develop_player_stats(stats, age, rng, *,
-coaching_effect=0.0)` gains a **keyword-only** `coaching_effect` float; **between the single
-`base_change_noise` gauss draw and the 19 `develop_stat` `uniform(0.4, 1.4)` draws**, the
-per-player **effective base change** is scaled **once** —
-`effective *= 1 + _sign(effective) * coaching_effect` (a tiny module-private `_sign(x)` helper
-returning `-1.0`/`0.0`/`+1.0`, **no `math` import** — the frozen `dataclasses`/`typing`/`random`/
-`collections` allowlist holds). The `_sign` factor makes the scale **directional**: a positive
-coaching effect pushes a gaining player **up** and a declining player **toward 0** (slower decline),
-a negative effect does the reverse — coaching is a multiplier on the magnitude-with-sign, not a flat
-add. The scale happens **after** the gauss and **before** the 19 uniform draws, so the pinned
-**1-gauss-then-19-uniform** RNG sequence is **unperturbed** and a seeded develop is reproducible;
-`coaching_effect=0.0` (the default) ⇒ multiplier **exactly 1.0** ⇒ **byte-identical to LG-04**.
-`develop_stat` is **unchanged** (the scaled `effective_base_change` still flows through it as before).
-**Mapping (lives in `finance.py`, not `development.py`).** New `matches/finance.py::coaching_effect(level)
--> float` + constant **`MAX_COACHING_EFFECT = 0.09`**, reusing FIN-01's `_bound` + `DEFAULT_LEVEL`
-(34) / `MAX_LEVEL` (100): the 1–100 ZenGM level maps to **`0.0` at level 34** (neutral), **`+0.09`
-at 100**, **`-0.045` at 1** (linear each side of the neutral pivot). The level→effect mapping is
-**deliberately homed in `finance.py`** — `development.py` keeps its frozen no-finance import allowlist
-and only ever sees the resolved **float**; the view threads it across the seam.
-**Model + migration.** `matches.TeamSeasonFinance` gains `budget_scouting` / `budget_coaching` /
-`budget_facilities` (`PositiveSmallIntegerField(default=34)`) + `games_played` (`PSI(default=0)`),
-all inserted **between `hype` and `created_at`**, in
-**`matches/migrations/0051_teamseasonfinance_budget_levels.py`** (dep
-`0050_league_finance_teamseasonfinance`, **4× `AddField`, NO `RunPython`/backfill** — the ADR-0004
-disposable-data posture). The snapshot now carries the budget levels **and** the games count so the
-multi-Season games-weighted average has its inputs on the row.
-**Writer + wiring.** `_ensure_team_finances` now snapshots the four new fields, with `games_played`
-= that Team's **regular-season `matches_played`** for the Season (via
-`Season._final_standings_for_phase(...)`). New `matches/league_views.py::_coaching_effect_by_team(league,
-latest_completed) -> dict[int, float]` (**gated on `league.finance_enabled`** — OFF ⇒ `{}`) computes,
-per Team, a **games-weighted mean of `budget_coaching` over the last ≤3 completed-Season
-`TeamSeasonFinance` rows** (`Sum(level*games)/Sum(games)`, current-level fallback when there is no
-history), then maps it through `finance.coaching_effect(...)`. The dict is threaded into the rollover
-develop call as `coaching_effect=coaching_by_team.get(player.team_id, 0.0)` —
-**active + bench players get their Team's effect; free-agent-pool players get `0.0`** (no Team). **Call
-order:** `_ensure_team_finances` runs **before** the rollover/develop so `latest_completed`'s snapshot
-is already inside the ≤3-Season window. This games-weighted smoothing honours the CONTEXT.md
-**Budget level** multi-Season-average contract (ZenGM `getLevelLastThree`).
-**Scope / decisions (LOCKED).** Potential (LG-05 `_project_stat_noise_free` / `compute_potential`)
-**untouched** (FIN-03 owns scouting→potential). **Backend-only** — no UI / template change. **No
-Score Calibration re-baseline** (coaching mutates Stat *inputs* for finance-ON leagues only, changes
-no simulation *mechanic*; finance-OFF stays byte-identical). The decision is recorded as the **FIN-02
-Consequences addendum on [ADR-0024](docs/adr/0024-zengm-player-development-ratings-history.md)** — the
-ADR that recorded the coaching-knob deferral — so **no new ADR**. CONTEXT.md gained the **Coaching
-effect** term + Budget / Player-development edits (finalised this session). Seam contract:
-[`.claude/worktrees/fin-02-coaching-development-seam-contract.md`](.claude/worktrees/fin-02-coaching-development-seam-contract.md);
-impl note in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## FIN-02 coaching budget
-into player development`. Depends on **FIN-01**. Tests: `matches/tests/test_finance.py`
-(`coaching_effect` mapping + `MAX_COACHING_EFFECT`) + `test_development.py` (the directional scale,
-`coaching_effect=0.0` byte-identical, the no-new-RNG-draw invariant) + `test_team_finances_writer.py`
-(the four new snapshot fields + `games_played`) + `test_league_next_season.py`
-(`_coaching_effect_by_team` games-weighted mean, OFF ⇒ `{}`, free-agents get `0.0`).
-
-Follow-up to FIN-01 (which ships the coaching budget as a cost-only line-item). Wire the team's effective
-**coaching** level (`getLevelLastThree("coaching")` → ZenGM `coachingEffect`, `±0.10` around
-`DEFAULT_LEVEL = 34`) into the **LG-04** age-curve development at the `next_season` rollover — better
-coaching speeds development, neglected coaching slows it. Requires a level→effect mapping onto
-`matches/development.py` (the LG-04 coaching knob was shipped **fixed at 0** precisely as this deferral;
-see [ADR-0024](docs/adr/0024-zengm-player-development-ratings-history.md)). **Finance-OFF leagues keep
-coaching effect at 0** (byte-identical to LG-04 today). Changes seeded develop output for finance-ON
-leagues (Stat inputs only, **no Score Calibration re-baseline**). Depends on **FIN-01**.
-
-### FIN-03 · Wire the *scouting* budget into player potential (LG-05)
+### FIN-03 · [DONE] Wire the *scouting* budget into player potential (LG-05)
 
 Follow-up to FIN-01 (which ships the scouting budget as a cost-only line-item). Wire the team's effective
 **scouting** level into **LG-05** `compute_potential`'s scouting-noise band — better scouting tightens the
@@ -798,7 +156,62 @@ LG-05 / CAR-01 deferral). **Finance-OFF leagues keep `scouting_budget = 50`** (b
 today). Changes the seeded potential estimate for finance-ON leagues (read-only to the simulator, **no
 Score Calibration re-baseline**). Depends on **FIN-01**.
 
-### FIN-04 · Health budget + injury/availability system
+**Status: DONE.** Lights up the **scouting** budget FIN-01 shipped cost-only — the **structural mirror of
+FIN-02** (coaching→development): a Team's effective scouting level now sets the **width of its players'
+LG-05 Potential-estimate band** at each `next_season` rollover (and at founding) — better scouting
+**tightens** the estimate around the noise-free projection, neglected scouting **widens** it — while a
+**finance-OFF (or `scouting_budget=50`) league stays byte-identical to LG-05** and **development (LG-04) is
+left untouched** (scouting never touches realised Stats; FIN-02 owns coaching→development). **Mapping
+(`finance.py`, NOT `development.py`).** NEW pure fn `matches/finance.py::scouting_budget(level: int) ->
+float` + constants `NEUTRAL_SCOUTING_BUDGET = 50.0` / `MAX_SCOUTING_BUDGET = 100.0`, reusing FIN-01's
+`_bound` + `DEFAULT_LEVEL` (34) / `MAX_LEVEL` (100). Unlike FIN-02's dual-slope neutral-pivot
+`coaching_effect`, this is **single-slope** anchored at `DEFAULT_LEVEL`→neutral / `MAX_LEVEL`→max — yields
+**level 1 → 25.0, 34 → 50.0, 100 → 100.0**; `NEUTRAL_SCOUTING_BUDGET` just **equals** LG-05's
+`DEFAULT_SCOUTING_BUDGET = 50` by value (**`finance.py` MUST NOT import `development`**; the frozen
+no-Django allowlist holds). `compute_potential` / `DEFAULT_SCOUTING_BUDGET` / `POTENTIAL_MAX_SD = 8.0` are
+consumed **verbatim** — the band `sd = POTENTIAL_MAX_SD * (1 − scouting_budget/100)` and its
+**one-`rng.gauss`-draw-always** guarantee are LG-05's, unperturbed; FIN-03 only threads a different float
+into the existing keyword arg. **Wiring (`league_views.py`).** NEW `_scouting_budget_by_team(league,
+latest_completed) -> dict[int, float]` (the twin of FIN-02's `_coaching_effect_by_team`; **gated on
+`finance_enabled`, OFF ⇒ `{}`**; per developing Team the games-weighted mean of `budget_scouting` over the
+last ≤3 completed-Season `TeamSeasonFinance` rows with a current-`Team.budget_scouting` fallback, mapped
+via `finance.scouting_budget`), threaded into CHANGED `_develop_league_for_new_season` as
+`scouting_budget=scouting_by_team.get(player.team_id, development.DEFAULT_SCOUTING_BUDGET)` (pool players →
+default 50); CHANGED `_write_baseline_ratings` builds a per-team **current-level** band map (founding pass,
+no completed Season) and threads the same kwarg (finance-ON only). Finance OFF ⇒ `{}` / no band map ⇒ every
+`.get` yields 50 ⇒ **byte-identical to LG-05** (regression-pinned).
+
+**Scope addition (user-decided): strength-seed AI + manager budgets at create.** NEW
+`_seed_team_budgets_by_strength(teams) -> None` (`league_views.py`) at `league_create`, **finance-ON only,
+BEFORE `_write_baseline_ratings`** (so the baseline reads seeded levels): ranks enrolled teams by **mean
+active-roster `overall_rating` desc** (tie-break `team_id` asc), assigns a **rank-linear** level across the
+band `[SEED_BUDGET_MIN, SEED_BUDGET_MAX] = [20, 90]` (strongest → 90, weakest → 20; **single team →
+`SEED_BUDGET_SINGLE = 55`**; int), and sets the **SAME** level on **all three** budget fields
+(`budget_scouting` / `budget_coaching` / `budget_facilities`) for **every** team **including
+`League.current_team`** (the manager edits theirs later), persisted via `bulk_update`. Seeded **ONCE at
+create, frozen forever** — `next_season` carries Team rows forward untouched (NO re-seed). CPU teams never
+adjust their budgets this slice; a future "CPU teams adjust budgets" feature is explicitly **deferred**, the
+manager's own Team stays editable on the Team Finances screen.
+
+**Scope-out (locked).** **Development untouched** (LG-04 `develop_player_stats` / `develop_stat`
+byte-unchanged; coaching→development = FIN-02). **Estimate-precision only** — scouting changes the *seeded
+Potential estimate*, never a realised Stat, read-only to the simulator. **The level→float map is in
+`finance.py`, never `development.py`** (`NEUTRAL_SCOUTING_BUDGET` only *equals* LG-05's
+`DEFAULT_SCOUTING_BUDGET` by value). **NO migration** (`TeamSeasonFinance.budget_scouting` / `.games_played`
++ the `Team.budget_*` fields already exist), **NO simulator change**, **NO Score Calibration re-baseline**
+(estimate-only, finance-ON only; finance-OFF byte-identical). **No new ADR** (FIN-03 Consequences addendum
+on [ADR-0027](docs/adr/0027-team-finance-subsystem.md)). **No new CONTEXT.md term beyond the already-written
+Scouting estimate edge** entry (+ the Potential pointer CAR-01→FIN-03 / Budget avoid-line edits). Seam
+contract: [`.claude/worktrees/fin-03-seam-contract.md`](.claude/worktrees/fin-03-seam-contract.md); impl
+note in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## FIN-03 scouting budget into player
+potential`. Tests (all **extended**, not new files): `matches/tests/test_finance.py` (`scouting_budget`
+mapping 1→25.0 / 34→50.0 / 100→100.0 + clamps) + `test_league_create.py`
+(`_seed_team_budgets_by_strength` — rank-linear `[20, 90]`, single→55, all three fields equal,
+`current_team` included, finance-ON-before-baseline) + `test_league_next_season.py`
+(`_scouting_budget_by_team` games-weighted ≤3-Season mean + fallback, **OFF ⇒ `{}`**, byte-identical-OFF
+Potential rows, AI-budget-frozen-across-rollover).
+
+### FIN-04 · [DONE] Health budget + injury/availability system
 
 The **health** budget category FIN-01 deferred (ZenGM: health spending shortens injuries). Introduces a
 minimal **injury / availability** model so the fourth budget category buys a real edge (fewer / shorter
@@ -806,6 +219,58 @@ unavailabilities), then wires the **health** level into it. This is the only one
 categories with **no existing seam** in our domain (we have no injuries today), so it carries the most new
 surface — its own grill. Depends on **FIN-01** (the budget-level + finance-toggle infrastructure) and is
 sequenced after FIN-02 / FIN-03.
+
+**Status: DONE.** Lands the **fourth ZenGM budget** — a per-Team **health budget** (a cost line plus a
+ratings edge expressed as injury *duration*) backed by a minimal **injury / availability** model.
+Architecture (LOCKED): injuries roll **OUTSIDE the tick loop**, are resolved **in-memory at fixture time**
+(auto-substitute or play-hurt), and a per-Player availability counter is decremented once per fixture the
+Team plays. **Finance-gated** on `_is_career_league(season.league) AND season.league.finance_enabled` —
+OFF (or sandbox / multiplayer) ⇒ no rolls, no roster mutation, no `games_unavailable` change ⇒
+**byte-identical to today**; the simulator is **byte-untouched** (no signature change, no
+`before_round_hook`) ⇒ **NO Score Calibration re-baseline**. **Per-fixture, regular-season round-robin
+fixtures only** (tournaments/playoffs untouched). **Subjects = the 6 active-roster STARTERS only** (bench /
+free-agent fill-ins never roll, never tracked — no orphan injuries); a healthy fielding starter rolls a new
+injury, an already-unavailable starter decrements without re-rolling, and each now-unavailable starter is
+resolved by the Team's `injury_policy` — **`auto_sub`** (rewrite the in-memory `slot_*` FK to a substitute,
+priority bench → League free-agent pool) or **`play_hurt`** (subtract the per-stat penalty from the injured
+Player's 19 stats), with **`play_hurt` as the universal no-sub fallback** so the roster always resolves to a
+valid 6. The health edge reads `finance.health_effect(Team.budget_health)` from the **LIVE current
+`budget_health`** at fixture time (NOT the games-weighted ≤3-Season smoothing FIN-02/03 use) and scales the
+drawn injury **DURATION** down only — frequency is a fixed base rate × age. **No re-baseline.**
+
+**Model + modules.** NEW fields `teams.Player.games_unavailable` (`PositiveSmallIntegerField(default=0)`,
+the availability counter — reset to 0 at `next_season` rollover), `teams.Team.budget_health`
+(`PositiveSmallIntegerField(default=34)`, the fourth budget level), `teams.Team.injury_policy`
+(`CharField(choices=INJURY_POLICY_CHOICES, default="auto_sub")` — `auto_sub` / `play_hurt`), and
+`matches.TeamSeasonFinance.health_cost` (`FloatField(default=0.0)`, after `min_payroll_penalty`). Migrations
+`teams/migrations/0014_player_team_health_injury.py` (dep `0013`; 3× `AddField`) +
+`matches/migrations/0052_teamseasonfinance_health_cost.py` (dep `0051`; 1× `AddField`) — both AddField-only,
+**NO `RunPython`/backfill** (ADR-0004 disposable-data posture). NEW pure module `matches/injury.py`
+(Django-free, frozen import allowlist `dataclasses`/`typing`/`random`/`collections`, RNG **injected**
+per-fixture never the SIM seed chain): fns `age_factor` / `injury_probability` (flat base × age, **no Stat
+input**) / `roll_injury` / `draw_duration` (health-edge-scaled duration) / `play_hurt_penalty`, with the
+RNG-consumption order pinned (`roll_injury` then, if hit, `draw_duration`). NEW `finance.py::health_effect`
++ `MAX_HEALTH_EFFECT = 0.5`, a trailing `ExpenseLines.health` field, and a keyword-only `health_level`
+threaded through `season_expenses` / `compute_team_finance` (the seventh expense line). NEW
+`matches.league_views.resolve_injuries_for_fixture(season, team_red, team_blue) -> dict` /
+`restore_after_fixture(token) -> None` (in-memory mutate-then-restore — **never `.save()`** the temporary
+roster; only `games_unavailable` is persisted), wrapped around the `simulate_scheduled_round(...)` call in
+`play_season_task` / `play_week` / `play_week_live` (the RR branch only — the playoff branch is untouched),
+plus the `games_unavailable = 0` reset in `_develop_league_for_new_season` and the `health_level=` /
+`"health_cost"` thread inside the gated `_ensure_team_finances`. UI: the Team Finances screen gains DOM ids
+`team-finances-budget-health` / `team-finances-injury-policy` / `team-finances-availability` (+
+`-availability-empty`) for the manager-editable level, policy toggle, and unavailable-players display.
+
+**Scope-out (locked).** tournaments/playoffs untouched, no injury-type taxonomy, no in-sim injuries, no
+frequency-from-health, no Stat-driven probability, FIN-05 deferred, **NO Score Calibration re-baseline**.
+Decision: [ADR-0028](docs/adr/0028-health-budget-injury-availability.md). Seam contract:
+[`.claude/worktrees/fin-04-health-injury-seam-contract.md`](.claude/worktrees/fin-04-health-injury-seam-contract.md);
+impl note in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## FIN-04 health budget +
+injury/availability`. Tests: `matches/tests/test_injury.py` (NEW, pure-unit incl. `TestNoDjangoImportsLeaked`)
++ `test_finance.py` (EXTEND — `health_effect` mapping, the seventh expense) + `test_injury_resolution.py`
+(NEW, DB — starter-only subjects, roll/decrement, auto_sub + play_hurt + no-sub fallback, never-`.save()`
+restore, rollover reset, byte-identical-OFF, `health_cost`→`profit`) + `test_finance_screens.py` (EXTEND —
+the `budget_health` / `injury_policy` POST + the new DOM ids + the availability display).
 
 ### FIN-05 · Luxury-tax challenge-mode firing
 

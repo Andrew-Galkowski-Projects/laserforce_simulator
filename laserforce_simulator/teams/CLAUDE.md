@@ -43,6 +43,18 @@ a form) and **derived, not contracted** (no free agency / cap space). `None` for
 finance-enabled flow. Details in [`matches/CLAUDE.md`](../matches/CLAUDE.md) **FIN-01 team finance
 subsystem**.
 
+As of **FIN-04 health budget + injury/availability**, `Player.games_unavailable` (a
+`PositiveSmallIntegerField(default=0)`, declared after `salary`; migration
+`0014_player_team_health_injury.py`) is the **availability counter**: `> 0` ⇒ the player is out and
+unavailable for selection; it is decremented by 1 each fixture the player's Team plays (whether the
+player is substituted out or fielded hurt) and **reset to 0 at the League `next_season` rollover**
+(in `_develop_league_for_new_season`, over the developing set). There is **no injury-type taxonomy** —
+a single integer countdown. The counter only ever moves in a **finance-enabled career League**
+(`_is_career_league AND finance_enabled`); outside that gate it stays `0`, byte-identical to
+pre-FIN-04. The roll/decrement/roster-resolution mechanics live in
+[`matches/CLAUDE.md`](../matches/CLAUDE.md) **FIN-04 health budget + injury/availability** and
+[ADR-0028](../../docs/adr/0028-health-budget-injury-availability.md).
+
 `stat_for_simulation(stat_name, role)` returns `min(int(raw_value * 1.2), 100)` when `role in self.preferred_roles`, otherwise the raw stat value. Invalid `stat_name` values raise `AttributeError` naturally (no explicit guard). Used by `PlayerRoundState` forwarding properties and `BatchSimulator._make_players` to apply the preferred-role boost at simulation time without affecting stored values or `overall_rating`.
 
 `PlayerForm` exposes all 19 stat fields (default 50) with "Set All to Average (50)" and "Set All to Elite (90)" preset buttons. Profile fields (age, started_playing_age, total_games, home_site, height) are also on the form; when adding a new player, the view pre-fills them via `_random_player_profile()`.
@@ -57,7 +69,7 @@ subsystem**.
 
 **`Team.roster_errors` relaxation (draw teams only).** Because a drawn Team **references borrowed Players** without `Player.team` ever being reassigned by the draw, the "all players belong to this team" ownership check is **skipped for draw teams**: the `for player, role, slot_name in filled:` belongs-to-team loop (the `player.team_id != self.pk` check) is wrapped in `if not self.is_draw_team:`. **All other validations stay enforced for draw teams** — the all-6-slots-filled check, the **duplicate-player** check, and the **role-distribution** (Scout-only-twice) check. A non-draw Team with a foreign player **still** errors. See [`matches/CLAUDE.md`](../matches/CLAUDE.md) `## LG-02x-1 random draw player-pool tournament` and [ADR-0022](../../docs/adr/0022-random-draw-player-pool-tournament.md).
 
-### Team finance fields (FIN-01)
+### Team finance fields (FIN-01, FIN-04)
 
 **FIN-01 team finance subsystem** adds five `Team` finance fields (migration
 `0013_player_salary_team_finance.py`, all neutral defaults so non-finance Teams are unaffected):
@@ -67,11 +79,21 @@ mid-range cost, zero effect) converted to dollars via `finance.level_to_amount`;
 `cash` (`FloatField(default=0.0)`) are dollar amounts (`cash` accumulates each Season's profit and
 carries across the rollover). **No choices, no validators** — the per-League `finance_enabled` toggle
 + AI defaults keep the levels in band and the Team Finances form clamps user input to `[1, MAX_LEVEL]`.
-**Cost-only this slice:** all three budgets are pure expense line-items feeding season profit, and
-facilities additionally feeds the revenue/attendance side; scouting & coaching buy **no gameplay edge
-yet** (FIN-02 wires coaching into LG-04 development, FIN-03 wires scouting into LG-05 potential).
-Details in [`matches/CLAUDE.md`](../matches/CLAUDE.md) **FIN-01 team finance subsystem** and
-[ADR-0027](../../docs/adr/0027-team-finance-subsystem.md).
+
+**FIN-04 health budget + injury/availability** lands the **fourth budget** — `budget_health`
+(`PositiveSmallIntegerField(default=34)`, the same ZenGM 1–100 level on the `finance.DEFAULT_LEVEL = 34`
+neutral, migration `0014_player_team_health_injury.py`) — plus `injury_policy`
+(`CharField(max_length=16, choices=INJURY_POLICY_CHOICES, default="auto_sub")`, where
+`INJURY_POLICY_CHOICES = (("auto_sub", "Auto-substitute"), ("play_hurt", "Play hurt"))`), the
+manager-editable per-Team policy for how an injured starter is handled at fixture time (AI teams stay
+`"auto_sub"`). `budget_health` is a fourth pure expense line (no revenue side) **and** buys a real
+edge: its `finance.health_effect` level scales injury **duration** down (better health spending ⇒
+shorter unavailabilities). All four budgets now buy a gameplay edge — **facilities** feeds the
+revenue/attendance side (FIN-01), **coaching** feeds LG-04 development (FIN-02), **scouting** feeds
+LG-05 potential (FIN-03), **health** shortens injuries (FIN-04). Details in
+[`matches/CLAUDE.md`](../matches/CLAUDE.md) **FIN-01 team finance subsystem** /
+**FIN-04 health budget + injury/availability** and
+[ADR-0027](../../docs/adr/0027-team-finance-subsystem.md) / [ADR-0028](../../docs/adr/0028-health-budget-injury-availability.md).
 
 ## Constants (`teams/constants.py`)
 
