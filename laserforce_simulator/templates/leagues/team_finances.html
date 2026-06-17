@@ -140,6 +140,30 @@
                                     </td>
                                 </tr>
                                 <tr>
+                                    <th scope="row">Health</th>
+                                    <td>
+                                        <input type="number" min="1" max="{{ max_level }}"
+                                               id="team-finances-budget-health" name="budget_health"
+                                               class="form-control form-control-sm" value="{{ team.budget_health }}">
+                                    </td>
+                                    <td class="text-muted small">
+                                        ${{ budget_costs.health|floatformat:1 }}k / season
+                                        · level {{ team.budget_health }} (neutral {{ default_level }})
+                                        · shortens injury durations
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row">Injury policy</th>
+                                    <td colspan="2">
+                                        <select id="team-finances-injury-policy" name="injury_policy"
+                                                class="form-select form-select-sm w-auto d-inline-block">
+                                            <option value="auto_sub"{% if injury_policy == "auto_sub" %} selected{% endif %}>Auto-substitute</option>
+                                            <option value="play_hurt"{% if injury_policy == "play_hurt" %} selected{% endif %}>Play hurt</option>
+                                        </select>
+                                        <span class="text-muted small ms-2">how an injured starter is resolved at fixture time</span>
+                                    </td>
+                                </tr>
+                                <tr>
                                     <th scope="row">Ticket price</th>
                                     <td>
                                         <input type="number" min="0" step="0.5"
@@ -196,6 +220,30 @@
                         </table>
                     </div>
                 </div>
+            </div>
+
+            {# ---- FIN-04 availability display (unavailable players) ---- #}
+            <h2 class="h5 mt-4">Player availability</h2>
+            <div id="team-finances-availability" class="table-responsive">
+                {% if availability %}
+                    <table class="table table-sm">
+                        <thead>
+                            <tr><th>Player</th><th class="text-end">Games remaining</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in availability %}
+                                <tr>
+                                    <td>{{ entry.name }}</td>
+                                    <td class="text-end">{{ entry.games_remaining }}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                {% else %}
+                    <p id="team-finances-availability-empty" class="text-muted small mb-0">
+                        Everyone's available — no injured players.
+                    </p>
+                {% endif %}
             </div>
 
             <h2 class="h5 mt-4">Season history</h2>

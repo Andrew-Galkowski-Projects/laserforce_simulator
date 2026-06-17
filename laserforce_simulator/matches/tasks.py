@@ -180,6 +180,10 @@ def play_season_task(
 
     try:
         from core.models import ArenaMap
+        from matches.league_views import (
+            resolve_injuries_for_fixture,
+            restore_after_fixture,
+        )
         from matches.models import GameRound, Season
         from matches.season_dashboard import select_play_fixtures
         from matches.simulation import BatchSimulator
@@ -233,15 +237,21 @@ def play_season_task(
                 # algorithm (3-zone for ``none``, fixed map for ``single``,
                 # deterministic per-fixture draw for ``random_per_round``).
                 arena_map = _resolve_fixture_map(season, fixture, pool_by_id)
-                BatchSimulator().simulate_scheduled_round(
-                    season,
-                    team_a,
-                    team_b,
-                    fixture.round_number,
-                    arena_map=arena_map,
-                    season_phase=phase_by_id.get(phase_id),
-                    leg=fixture.leg,
-                )
+                # FIN-04 — roll injuries / resolve rosters in memory before the
+                # round sims, then restore the temporary roster afterwards.
+                token = resolve_injuries_for_fixture(season, team_a, team_b)
+                try:
+                    BatchSimulator().simulate_scheduled_round(
+                        season,
+                        team_a,
+                        team_b,
+                        fixture.round_number,
+                        arena_map=arena_map,
+                        season_phase=phase_by_id.get(phase_id),
+                        leg=fixture.leg,
+                    )
+                finally:
+                    restore_after_fixture(token)
                 self.update_state(
                     state="PROGRESS",
                     meta={"completed": k + 1, "total": n},

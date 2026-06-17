@@ -1684,6 +1684,8 @@ class TeamSeasonFinance(models.Model):
     facilities_cost = models.FloatField(default=0.0)
     luxury_tax = models.FloatField(default=0.0)
     min_payroll_penalty = models.FloatField(default=0.0)
+    # FIN-04 — health-budget cost line (the fourth ZenGM budget).
+    health_cost = models.FloatField(default=0.0)
     # derived (persisted for the audit trail + money axis read)
     revenue = models.FloatField(default=0.0)
     expenses = models.FloatField(default=0.0)

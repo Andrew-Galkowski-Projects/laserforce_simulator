@@ -44,6 +44,7 @@ MAX_LEVEL = 100
 DEFAULT_LEVEL = 34  # neutral level — facility cost mid-range, effect 0
 BUDGET_LEVEL_SCALE = 1.1
 MAX_COACHING_EFFECT = 0.09  # FIN-02 — max develop-curve scale at MAX_LEVEL
+MAX_HEALTH_EFFECT = 0.5  # FIN-04 — max injury-duration edge at MAX_LEVEL
 
 # FIN-03 — scouting budget level (1..100) → its effective scouting budget. The
 # neutral DEFAULT_LEVEL maps to NEUTRAL_SCOUTING_BUDGET (== LG-05's fixed
@@ -126,6 +127,7 @@ class ExpenseLines:
     facilities: float
     luxury_tax: float
     min_payroll_penalty: float
+    health: float
 
 
 @dataclass(frozen=True)
@@ -168,6 +170,22 @@ def coaching_effect(level: int) -> float:
     """
     lvl = _bound(float(level), 1.0, float(MAX_LEVEL))
     return MAX_COACHING_EFFECT * (lvl - DEFAULT_LEVEL) / (MAX_LEVEL - DEFAULT_LEVEL)
+
+
+def health_effect(level: int) -> float:
+    """FIN-04 — a health budget level (1..100) → its injury-duration edge.
+
+    Sign-flipped ZenGM ``healthEffect`` analogue. Linear in the level relative
+    to the neutral ``DEFAULT_LEVEL``: the neutral level yields 0.0,
+    ``MAX_LEVEL`` yields ``MAX_HEALTH_EFFECT`` (0.5), and the floor of 1 yields
+    a negative effect (≈ -0.25). ``injury.draw_duration`` consumes this float —
+    a positive edge shortens the drawn duration, a negative edge lengthens it.
+    Frequency is unaffected (a fixed base rate × age). Mirrors
+    ``coaching_effect`` (dual-slope neutral pivot); the level→float mapping
+    lives here, not in ``injury.py``.
+    """
+    lvl = _bound(float(level), 1.0, float(MAX_LEVEL))
+    return MAX_HEALTH_EFFECT * (lvl - DEFAULT_LEVEL) / (MAX_LEVEL - DEFAULT_LEVEL)
 
 
 def scouting_budget(level: int) -> float:
@@ -304,13 +322,16 @@ def season_expenses(
     scouting_level: int,
     coaching_level: int,
     facilities_level: int,
+    *,
+    health_level: int,
     salary_cap: float = SALARY_CAP,
 ) -> ExpenseLines:
-    """The six season expense lines (thousands), cap-scaled.
+    """The seven season expense lines (thousands), cap-scaled.
 
-    Payroll is the summed active-roster salary; the three budgets convert
+    Payroll is the summed active-roster salary; the four budgets convert
     level→dollars via ``level_to_amount``; the two penalties are pure functions
-    of payroll. Scouting / coaching are pure cost (no gameplay edge this slice).
+    of payroll. Scouting / coaching / health are pure cost (no gameplay edge in
+    the money math — health buys an injury-duration edge, scored elsewhere).
     """
     return ExpenseLines(
         payroll=payroll,
@@ -319,6 +340,7 @@ def season_expenses(
         facilities=level_to_amount(facilities_level, salary_cap),
         luxury_tax=luxury_tax(payroll, salary_cap),
         min_payroll_penalty=min_payroll_penalty(payroll, salary_cap),
+        health=level_to_amount(health_level, salary_cap),
     )
 
 
@@ -349,6 +371,7 @@ def compute_team_finance(
     scouting_level: int,
     coaching_level: int,
     facilities_level: int,
+    health_level: int,
     ticket_price: float,
     prev_hype: float,
     winp: float,
@@ -365,7 +388,12 @@ def compute_team_finance(
         prev_hype, ticket_price, facilities_level, salary_cap
     )
     expense_lines = season_expenses(
-        payroll, scouting_level, coaching_level, facilities_level, salary_cap
+        payroll,
+        scouting_level,
+        coaching_level,
+        facilities_level,
+        health_level=health_level,
+        salary_cap=salary_cap,
     )
 
     revenue = (
@@ -382,6 +410,7 @@ def compute_team_finance(
         + expense_lines.facilities
         + expense_lines.luxury_tax
         + expense_lines.min_payroll_penalty
+        + expense_lines.health
     )
     profit = season_profit(revenue, expenses)
     hype = compute_hype(prev_hype, winp, winp_old)
