@@ -56,6 +56,11 @@ from matches.finance import (
     season_revenue,
 )
 from matches.finance import MAX_COACHING_EFFECT
+from matches.finance import (
+    MAX_SCOUTING_BUDGET,
+    NEUTRAL_SCOUTING_BUDGET,
+    scouting_budget,
+)
 
 # ===========================================================================
 # §4.1 — TestConstants (the locked-but-tunable module constants)
@@ -617,6 +622,67 @@ class TestCoachingEffect(SimpleTestCase):
         prev = coaching_effect(1)
         for level in range(2, MAX_LEVEL + 1):
             cur = coaching_effect(level)
+            self.assertGreaterEqual(cur, prev - 1e-9, f"level={level}")
+            prev = cur
+
+
+# ===========================================================================
+# FIN-03 — TestScoutingBudget (scouting budget -> compute_potential band)
+# ===========================================================================
+
+
+class TestScoutingBudget(SimpleTestCase):
+    """``scouting_budget(level)`` maps a scouting budget level (1..100) to the
+    effective scouting budget LG-05's ``compute_potential`` consumes to size the
+    potential-noise band. Single-slope, anchored at the neutral ``DEFAULT_LEVEL``
+    (34) — level 1 -> 25.0, 34 -> 50.0, 100 -> 100.0. Clamps to ``[1, 100]``.
+
+    Written test-first against the FIN-03 seam contract; these FAIL until the
+    Code agent lands ``scouting_budget`` + ``NEUTRAL_SCOUTING_BUDGET`` +
+    ``MAX_SCOUTING_BUDGET`` in ``matches/finance.py``.
+    """
+
+    def test_consts_exist_with_locked_values(self) -> None:
+        self.assertAlmostEqual(NEUTRAL_SCOUTING_BUDGET, 50.0, places=9)
+        self.assertAlmostEqual(MAX_SCOUTING_BUDGET, 100.0, places=9)
+
+    def test_returns_float(self) -> None:
+        self.assertIsInstance(scouting_budget(DEFAULT_LEVEL), float)
+
+    def test_neutral_level_is_fifty(self) -> None:
+        # DEFAULT_LEVEL (34) is the neutral anchor == NEUTRAL_SCOUTING_BUDGET.
+        self.assertAlmostEqual(scouting_budget(34), 50.0, places=9)
+
+    def test_min_level_is_twenty_five(self) -> None:
+        # Level 1 (the floor) yields a band-widening 25.0.
+        self.assertAlmostEqual(scouting_budget(1), 25.0, places=6)
+
+    def test_max_level_is_one_hundred(self) -> None:
+        self.assertAlmostEqual(scouting_budget(100), 100.0, places=6)
+
+    def test_clamps_below_one(self) -> None:
+        # A level below the floor clamps to level 1 (25.0).
+        self.assertAlmostEqual(scouting_budget(0), 25.0, places=6)
+        self.assertAlmostEqual(scouting_budget(-5), 25.0, places=6)
+
+    def test_clamps_above_one_hundred(self) -> None:
+        # A level above the ceiling clamps to level 100 (100.0).
+        self.assertAlmostEqual(scouting_budget(150), 100.0, places=6)
+
+    def test_midpoints(self) -> None:
+        # 67 sits halfway between 34 and 100 -> halfway between 50 and 100 = 75.
+        self.assertAlmostEqual(scouting_budget(67), 75.0, places=6)
+        # 17.5 below the neutral pivot scales linearly below 50.
+        # level == DEFAULT_LEVEL + (MAX_LEVEL - DEFAULT_LEVEL)/2 == 67 done above;
+        # a level between the floor and the pivot stays in [25, 50].
+        mid_low = scouting_budget(17)
+        self.assertGreater(mid_low, 25.0)
+        self.assertLess(mid_low, 50.0)
+
+    def test_monotone_non_decreasing_in_level(self) -> None:
+        prev = scouting_budget(1)
+        for level in range(2, MAX_LEVEL + 1):
+            cur = scouting_budget(level)
             self.assertGreaterEqual(cur, prev - 1e-9, f"level={level}")
             prev = cur
 
