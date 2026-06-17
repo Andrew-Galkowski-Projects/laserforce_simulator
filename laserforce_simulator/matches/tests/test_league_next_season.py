@@ -2015,6 +2015,7 @@ class TestCar03MultiplayerNextSeason(TestCase):
 
 
 from matches import finance as _Fin02Finance  # noqa: E402
+from matches import development as _Fin03Development  # noqa: E402
 from matches.models import TeamSeasonFinance as _Fin02TeamSeasonFinance  # noqa: E402
 
 
@@ -2199,3 +2200,206 @@ class TestFin02NextSeasonFasterWithCoaching(TestCase):
             gain_neutral,
             "high coaching should grow a young player more than a neutral budget",
         )
+
+
+# ---------------------------------------------------------------------------
+# FIN-03 — scouting budget feeds player potential at next_season
+# ---------------------------------------------------------------------------
+#
+# Seam contract (FIN-03): inside next_season's develop loop the per-team
+# scouting budget (games-weighted-smoothed across completed-Season
+# TeamSeasonFinance rows via ``_scouting_budget_by_team``, mapped through
+# ``finance.scouting_budget``) is threaded into
+# ``development.compute_potential(..., scouting_budget=...)``. A finance-OFF
+# League returns ``{}`` from the helper (every ``.get(tid, DEFAULT_SCOUTING_
+# BUDGET)`` lookup yields the fixed 50 band ⇒ byte-identical to LG-05). The
+# AI-set Team budget levels are FROZEN across a next_season rollover (no
+# re-seed; only league_create seeds them, see test_league_create.py).
+#
+# Assertion discipline: assert on the ``_scouting_budget_by_team`` dict, the
+# seeded budget levels, ``finance.scouting_budget`` outputs, ``{}``-when-OFF,
+# and frozen-across-rollover budgets — NEVER on exact unseeded potential gauss
+# values (potential carries a fresh-rng gauss; assert the band/level not the
+# float). Appended as NEW classes; no existing class is modified. These WILL
+# fail where production is not yet landed — the TDD red state.
+
+
+class TestFin03ScoutingBudgetByTeamHelper(TestCase):
+    """``_scouting_budget_by_team(league, latest_completed) -> {team_id: budget}``
+    returns the games-weighted-smoothed scouting budget per Team (mapped via
+    ``finance.scouting_budget``), ``{}`` for a finance-OFF League, and the
+    current-level fallback for a Team with no finance rows / zero games."""
+
+    def test_finance_off_returns_empty_mapping(self) -> None:
+        from matches.league_views import _scouting_budget_by_team
+
+        league = League.objects.create(
+            name="Fin03OffL", mode="league", state="active", finance_enabled=False
+        )
+        teams = _make_teams("Fin03OffT", 2)
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        self.assertEqual(_scouting_budget_by_team(league, prev), {})
+
+    def test_games_weighted_smoothing_of_scouting_level(self) -> None:
+        from matches.league_views import _scouting_budget_by_team
+
+        league, prev, teams = _fin02_finance_league("Fin03SmoothL")
+        team = teams[0]
+        # Two prior completed-Season finance rows of differing budget_scouting /
+        # games_played. Weighted level = (100*3 + 40*1) / (3 + 1) = 340/4 = 85.
+        s_old = _make_completed_season(
+            league,
+            name="Season 0",
+            start_date=date(2024, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        _Fin02TeamSeasonFinance.objects.create(
+            team=team, season=s_old, budget_scouting=100, games_played=3
+        )
+        _Fin02TeamSeasonFinance.objects.create(
+            team=team, season=prev, budget_scouting=40, games_played=1
+        )
+        budget_by_team = _scouting_budget_by_team(league, prev)
+        self.assertIn(team.id, budget_by_team)
+        self.assertAlmostEqual(
+            budget_by_team[team.id],
+            _Fin02Finance.scouting_budget(85),
+            places=6,
+        )
+
+    def test_current_level_fallback_when_no_rows(self) -> None:
+        from matches.league_views import _scouting_budget_by_team
+
+        league, prev, teams = _fin02_finance_league("Fin03FallbackL")
+        team = teams[0]
+        # No TeamSeasonFinance rows for this Team => weight 0 => fall back to the
+        # Team's current budget_scouting level.
+        team.budget_scouting = 72
+        team.save(update_fields=["budget_scouting"])
+        budget_by_team = _scouting_budget_by_team(league, prev)
+        self.assertIn(team.id, budget_by_team)
+        self.assertAlmostEqual(
+            budget_by_team[team.id],
+            _Fin02Finance.scouting_budget(72),
+            places=6,
+        )
+
+    def test_zero_games_falls_back_to_current_level(self) -> None:
+        from matches.league_views import _scouting_budget_by_team
+
+        league, prev, teams = _fin02_finance_league("Fin03ZeroGamesL")
+        team = teams[0]
+        team.budget_scouting = 60
+        team.save(update_fields=["budget_scouting"])
+        # A finance row exists but carries zero games_played => weight 0 =>
+        # current-level fallback (not a div-by-zero, not the row's level).
+        _Fin02TeamSeasonFinance.objects.create(
+            team=team, season=prev, budget_scouting=100, games_played=0
+        )
+        budget_by_team = _scouting_budget_by_team(league, prev)
+        self.assertAlmostEqual(
+            budget_by_team[team.id],
+            _Fin02Finance.scouting_budget(60),
+            places=6,
+        )
+
+
+class TestFin03ScoutingBudgetByTeamOffByteIdentical(TestCase):
+    """The byte-identical-OFF anchor: a finance-OFF League's
+    ``_scouting_budget_by_team`` returns ``{}`` so the develop loop's
+    ``.get(team_id, DEFAULT_SCOUTING_BUDGET)`` yields the fixed LG-05 band for
+    every player ⇒ potential is computed with the default 50 band exactly as
+    LG-05."""
+
+    def test_off_helper_is_empty_so_default_band_path_taken(self) -> None:
+        from matches.league_views import _scouting_budget_by_team
+
+        league = League.objects.create(
+            name="Fin03OffByte", mode="league", state="active", finance_enabled=False
+        )
+        teams = _make_teams("Fin03OffByteT", 2)
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        band_map = _scouting_budget_by_team(league, prev)
+        self.assertEqual(band_map, {})
+        # The develop loop reads band_map.get(team_id, DEFAULT_SCOUTING_BUDGET);
+        # with an empty map every player takes the LG-05 default 50 band.
+        for team in teams:
+            self.assertEqual(
+                band_map.get(team.id, _Fin03Development.DEFAULT_SCOUTING_BUDGET),
+                _Fin03Development.DEFAULT_SCOUTING_BUDGET,
+            )
+        self.assertEqual(_Fin03Development.DEFAULT_SCOUTING_BUDGET, 50)
+
+
+class TestFin03BudgetsFrozenAcrossRollover(TestCase):
+    """AI-set Team budget levels are UNCHANGED across a next_season rollover —
+    only league_create seeds budgets; next_season does NOT re-seed. The carried
+    ``budget_scouting`` / ``budget_coaching`` / ``budget_facilities`` survive a
+    full rollover verbatim."""
+
+    def test_team_budget_levels_unchanged_after_next_season(self) -> None:
+        league, prev, teams = _fin02_finance_league("Fin03FrozenL")
+        team = teams[0]
+        team.budget_scouting = 80
+        team.budget_coaching = 25
+        team.budget_facilities = 90
+        team.save(
+            update_fields=[
+                "budget_scouting",
+                "budget_coaching",
+                "budget_facilities",
+            ]
+        )
+
+        response = self.client.post(
+            reverse("next_season", kwargs={"league_id": league.id})
+        )
+        self.assertEqual(response.status_code, 302)
+
+        team.refresh_from_db()
+        # next_season did NOT re-seed: the AI budget levels are frozen.
+        self.assertEqual(team.budget_scouting, 80)
+        self.assertEqual(team.budget_coaching, 25)
+        self.assertEqual(team.budget_facilities, 90)
+
+
+class TestFin03NextSeasonThreadsBandViaHelper(TestCase):
+    """The develop pass threads the per-Team scouting band — asserted via the
+    band map / seeded levels (NOT exact potential floats). A HIGH budget_scouting
+    yields a HIGHER ``scouting_budget`` band than a neutral (34) level, which
+    LG-05 turns into a TIGHTER potential-noise band (``sd = POTENTIAL_MAX_SD *
+    (1 - budget/100)``)."""
+
+    def test_higher_budget_yields_higher_band_tighter_sd(self) -> None:
+        league, prev, teams = _fin02_finance_league("Fin03BandL")
+        hi_team, lo_team = teams[0], teams[1]
+        hi_team.budget_scouting = 100
+        hi_team.save(update_fields=["budget_scouting"])
+        lo_team.budget_scouting = 34
+        lo_team.save(update_fields=["budget_scouting"])
+
+        from matches.league_views import _scouting_budget_by_team
+
+        band_map = _scouting_budget_by_team(league, prev)
+        hi_band = band_map[hi_team.id]
+        lo_band = band_map[lo_team.id]
+        # Higher scouting budget => higher effective band.
+        self.assertGreater(hi_band, lo_band)
+        # The neutral team maps to exactly the LG-05 default band (50).
+        self.assertAlmostEqual(
+            lo_band, _Fin03Development.DEFAULT_SCOUTING_BUDGET, places=6
+        )
+        # A higher band => a tighter (smaller) potential-noise sd.
+        sd_hi = _Fin03Development.POTENTIAL_MAX_SD * (1 - hi_band / 100)
+        sd_lo = _Fin03Development.POTENTIAL_MAX_SD * (1 - lo_band / 100)
+        self.assertLess(sd_hi, sd_lo)

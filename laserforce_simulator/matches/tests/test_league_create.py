@@ -1621,3 +1621,184 @@ class TestCar01ManagerTeamName(TestCase):
         form = _Lg01jCreateLeagueForm(_valid_payload(manager_team_name="Galkowski FC"))
         self.assertTrue(form.is_valid(), msg=form.errors.as_json())
         self.assertEqual(form.cleaned_data["manager_team_name"], "Galkowski FC")
+
+
+# ---------------------------------------------------------------------------
+# FIN-03 — league_create seeds AI budgets by team strength
+# ---------------------------------------------------------------------------
+#
+# Seam contract (FIN-03): finance-ON ``league_create`` calls
+# ``_seed_team_budgets_by_strength(created_teams)`` BEFORE
+# ``_write_baseline_ratings``, seeding EVERY team (incl. ``current_team``).
+# Teams are ranked by mean active-roster ``overall_rating`` DESC (tie-break
+# team_id ASC), then assigned a rank-linear band ``[SEED_BUDGET_MIN=20,
+# SEED_BUDGET_MAX=90]`` (strongest -> 90, weakest -> 20; single team ->
+# SEED_BUDGET_SINGLE=55; round int). The SAME level is set on all THREE
+# ``budget_scouting`` / ``budget_coaching`` / ``budget_facilities`` fields via
+# a ``bulk_update``. Finance-OFF: NO seeding — budgets stay at the field
+# default 34.
+#
+# Assertion discipline: assert on the SEEDED LEVELS (differentiation by
+# strength, all-3-equal-per-team, current_team seeded, single-team -> 55,
+# OFF -> default 34) — NOT on exact baseline potential gauss floats. These WILL
+# fail until the Code agent lands ``_seed_team_budgets_by_strength`` + the
+# SEED_BUDGET_* consts + the league_create seeding call — the TDD red state.
+
+from matches.tests.conftest import make_team_with_slots as _fin03_team  # noqa: E402
+
+
+def _fin03_payload(**overrides) -> dict:
+    payload = _valid_payload(**overrides)
+    payload.setdefault("finance_enabled", "on")
+    return payload
+
+
+class TestFin03SeedBudgetsByStrengthHelper(TestCase):
+    """``_seed_team_budgets_by_strength(teams)`` ranks by mean active-roster
+    overall DESC (team_id ASC tiebreak), assigns the rank-linear band
+    ``[20, 90]`` to all 3 budget fields, and bulk-updates. Exercised directly so
+    the strength ordering is deterministic."""
+
+    def _pin_roster_overall(self, team, value: int) -> None:
+        for p in team.active_players:
+            for name in _Lg04StatFields:
+                setattr(p, name, value)
+            p.save()
+
+    def test_consts_exist_with_locked_values(self) -> None:
+        from matches.league_views import (
+            SEED_BUDGET_MAX,
+            SEED_BUDGET_MIN,
+            SEED_BUDGET_SINGLE,
+        )
+
+        self.assertEqual(SEED_BUDGET_MIN, 20)
+        self.assertEqual(SEED_BUDGET_MAX, 90)
+        self.assertEqual(SEED_BUDGET_SINGLE, 55)
+
+    def test_strongest_gets_max_weakest_gets_min(self) -> None:
+        from matches.league_views import _seed_team_budgets_by_strength
+
+        strong, _ = _fin03_team("Fin03Strong")
+        weak, _ = _fin03_team("Fin03Weak")
+        self._pin_roster_overall(strong, 90)
+        self._pin_roster_overall(weak, 20)
+
+        _seed_team_budgets_by_strength([strong, weak])
+
+        strong.refresh_from_db()
+        weak.refresh_from_db()
+        # Strongest roster -> SEED_BUDGET_MAX (90), weakest -> SEED_BUDGET_MIN (20).
+        self.assertEqual(strong.budget_scouting, 90)
+        self.assertEqual(weak.budget_scouting, 20)
+
+    def test_all_three_budget_fields_equal_per_team(self) -> None:
+        from matches.league_views import _seed_team_budgets_by_strength
+
+        a, _ = _fin03_team("Fin03TripA")
+        b, _ = _fin03_team("Fin03TripB")
+        c, _ = _fin03_team("Fin03TripC")
+        self._pin_roster_overall(a, 80)
+        self._pin_roster_overall(b, 50)
+        self._pin_roster_overall(c, 30)
+
+        _seed_team_budgets_by_strength([a, b, c])
+
+        for team in (a, b, c):
+            team.refresh_from_db()
+            self.assertEqual(team.budget_scouting, team.budget_coaching)
+            self.assertEqual(team.budget_scouting, team.budget_facilities)
+
+    def test_single_team_gets_seed_budget_single(self) -> None:
+        from matches.league_views import _seed_team_budgets_by_strength
+
+        solo, _ = _fin03_team("Fin03Solo")
+        self._pin_roster_overall(solo, 60)
+
+        _seed_team_budgets_by_strength([solo])
+
+        solo.refresh_from_db()
+        self.assertEqual(solo.budget_scouting, 55)
+        self.assertEqual(solo.budget_coaching, 55)
+        self.assertEqual(solo.budget_facilities, 55)
+
+    def test_rank_linear_spread_strongest_above_weakest(self) -> None:
+        from matches.league_views import _seed_team_budgets_by_strength
+
+        strong, _ = _fin03_team("Fin03SpreadStrong")
+        mid, _ = _fin03_team("Fin03SpreadMid")
+        weak, _ = _fin03_team("Fin03SpreadWeak")
+        self._pin_roster_overall(strong, 95)
+        self._pin_roster_overall(mid, 55)
+        self._pin_roster_overall(weak, 15)
+
+        _seed_team_budgets_by_strength([strong, mid, weak])
+
+        strong.refresh_from_db()
+        mid.refresh_from_db()
+        weak.refresh_from_db()
+        self.assertEqual(strong.budget_scouting, 90)
+        self.assertEqual(weak.budget_scouting, 20)
+        # The middle team lands strictly between the band ends (rank-linear).
+        self.assertGreater(mid.budget_scouting, weak.budget_scouting)
+        self.assertLess(mid.budget_scouting, strong.budget_scouting)
+
+
+class TestFin03CreateSeedsBudgets(TestCase):
+    """Finance-ON ``league_create`` seeds differentiated budgets across the
+    generated teams, with ``current_team`` ALSO seeded; finance-OFF leaves every
+    budget at the field default 34."""
+
+    def test_finance_on_seeds_differentiated_budgets(self) -> None:
+        payload = _fin03_payload(league_name="Fin03CreateDiff", num_teams="4")
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        league = League.objects.get(name="Fin03CreateDiff")
+        season = league.seasons.get()
+
+        levels = sorted(t.budget_scouting for t in season.teams.all())
+        # Seeding produced a rank-linear spread: strongest != weakest.
+        self.assertEqual(levels[0], 20, "weakest team should seed to SEED_BUDGET_MIN")
+        self.assertEqual(
+            levels[-1], 90, "strongest team should seed to SEED_BUDGET_MAX"
+        )
+        self.assertGreater(
+            levels[-1], levels[0], "finance-ON create should differentiate budgets"
+        )
+
+    def test_finance_on_all_three_fields_equal_per_team(self) -> None:
+        payload = _fin03_payload(league_name="Fin03CreateEqual", num_teams="4")
+        self.client.post(reverse("league_create"), payload)
+        league = League.objects.get(name="Fin03CreateEqual")
+        for team in league.seasons.get().teams.all():
+            self.assertEqual(team.budget_scouting, team.budget_coaching)
+            self.assertEqual(team.budget_scouting, team.budget_facilities)
+
+    def test_finance_on_current_team_is_seeded_not_default(self) -> None:
+        payload = _fin03_payload(league_name="Fin03CreateCurrent", num_teams="4")
+        self.client.post(reverse("league_create"), payload)
+        league = League.objects.get(name="Fin03CreateCurrent")
+        league.refresh_from_db()
+        current = league.current_team
+        self.assertIsNotNone(current)
+        current.refresh_from_db()
+        # current_team is ALSO seeded — its budgets are NOT left at the 34 default.
+        self.assertNotEqual(
+            current.budget_scouting,
+            34,
+            "current_team must be seeded by strength, not left at the default",
+        )
+        self.assertEqual(current.budget_scouting, current.budget_coaching)
+        self.assertEqual(current.budget_scouting, current.budget_facilities)
+
+    def test_finance_off_leaves_budgets_at_default_34(self) -> None:
+        payload = _valid_payload(league_name="Fin03CreateOff", num_teams="4")
+        # No finance_enabled key => toggle OFF.
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        league = League.objects.get(name="Fin03CreateOff")
+        self.assertFalse(league.finance_enabled)
+        for team in league.seasons.get().teams.all():
+            self.assertEqual(team.budget_scouting, 34)
+            self.assertEqual(team.budget_coaching, 34)
+            self.assertEqual(team.budget_facilities, 34)

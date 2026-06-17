@@ -45,6 +45,12 @@ DEFAULT_LEVEL = 34  # neutral level — facility cost mid-range, effect 0
 BUDGET_LEVEL_SCALE = 1.1
 MAX_COACHING_EFFECT = 0.09  # FIN-02 — max develop-curve scale at MAX_LEVEL
 
+# FIN-03 — scouting budget level (1..100) → its effective scouting budget. The
+# neutral DEFAULT_LEVEL maps to NEUTRAL_SCOUTING_BUDGET (== LG-05's fixed
+# DEFAULT_SCOUTING_BUDGET by value), MAX_LEVEL to MAX_SCOUTING_BUDGET.
+NEUTRAL_SCOUTING_BUDGET = 50.0
+MAX_SCOUTING_BUDGET = 100.0
+
 BASELINE_SALARY_CAP = 90000.0  # frozen baseline — salaryCapFactor denominator
 SALARY_CAP = 90000.0  # the league cap (== baseline this slice; tunable)
 
@@ -162,6 +168,23 @@ def coaching_effect(level: int) -> float:
     """
     lvl = _bound(float(level), 1.0, float(MAX_LEVEL))
     return MAX_COACHING_EFFECT * (lvl - DEFAULT_LEVEL) / (MAX_LEVEL - DEFAULT_LEVEL)
+
+
+def scouting_budget(level: int) -> float:
+    """FIN-03 — a scouting budget level (1..100) → its effective scouting budget.
+
+    Linear in the level relative to the neutral ``DEFAULT_LEVEL``: the neutral
+    level yields ``NEUTRAL_SCOUTING_BUDGET`` (50.0), ``MAX_LEVEL`` yields
+    ``MAX_SCOUTING_BUDGET`` (100.0), and the floor of 1 yields ≈ 25.0. LG-05's
+    ``development.compute_potential`` consumes the budget to size the potential
+    scouting-noise band (``sd = POTENTIAL_MAX_SD * (1 - budget / 100)``).
+    Mapping lives here, not in ``development.py`` — the 50.0 just equals LG-05's
+    ``DEFAULT_SCOUTING_BUDGET`` by value (no import).
+    """
+    lvl = _bound(float(level), 1.0, float(MAX_LEVEL))
+    return NEUTRAL_SCOUTING_BUDGET + (MAX_SCOUTING_BUDGET - NEUTRAL_SCOUTING_BUDGET) * (
+        lvl - DEFAULT_LEVEL
+    ) / (MAX_LEVEL - DEFAULT_LEVEL)
 
 
 def level_to_amount(level: int, salary_cap: float = SALARY_CAP) -> float:

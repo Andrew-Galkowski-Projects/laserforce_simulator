@@ -102,6 +102,14 @@ RATING_SORT_KEYS_DISPLAY: tuple[tuple[str, str, str], ...] = (
     ("potential", "Pot", "Potential"),
 )
 
+# FIN-03 — strength-ranked initial budget band for newly-created Leagues. The
+# strongest enrolled Team seeds at SEED_BUDGET_MAX, the weakest at
+# SEED_BUDGET_MIN, rank-linear between; a single-Team League seeds at
+# SEED_BUDGET_SINGLE.
+SEED_BUDGET_MIN = 20
+SEED_BUDGET_MAX = 90
+SEED_BUDGET_SINGLE = 55
+
 # ====================================================================
 # LG-01 — Season views
 # ====================================================================
@@ -574,6 +582,40 @@ def _developing_players(league: League) -> "list[Player]":
     return players
 
 
+def _seed_team_budgets_by_strength(teams: "Iterable[Team]") -> None:
+    """FIN-03 — seed every enrolled Team's three budget levels by roster strength.
+
+    Ranks the enrolled Teams by mean active-roster ``overall_rating`` DESC
+    (tie-break ``team_id`` ASC), then assigns a rank-linear budget level across
+    ``[SEED_BUDGET_MIN, SEED_BUDGET_MAX]`` — rank 0 (strongest) → SEED_BUDGET_MAX,
+    rank N-1 (weakest) → SEED_BUDGET_MIN, rounded to int. A single-Team League
+    seeds at ``SEED_BUDGET_SINGLE``. The same level is set on all three of
+    ``budget_scouting`` / ``budget_coaching`` / ``budget_facilities``. Seeds
+    EVERY enrolled Team INCLUDING ``League.current_team``. Persisted in one
+    ``bulk_update``. A Team with no active players ⇒ mean 0.0.
+    """
+    teams = list(teams)
+    if not teams:
+        return
+
+    ranked = sorted(teams, key=lambda t: (-_compute_team_overall(t), t.id))
+    n = len(ranked)
+    for rank, team in enumerate(ranked):
+        if n == 1:
+            level = SEED_BUDGET_SINGLE
+        else:
+            level = round(
+                SEED_BUDGET_MAX - (SEED_BUDGET_MAX - SEED_BUDGET_MIN) * rank / (n - 1)
+            )
+        team.budget_scouting = level
+        team.budget_coaching = level
+        team.budget_facilities = level
+
+    Team.objects.bulk_update(
+        teams, ["budget_scouting", "budget_coaching", "budget_facilities"]
+    )
+
+
 def _write_baseline_ratings(season: Season, players: "Iterable[Player]") -> None:
     """LG-04 — write an as-generated PlayerSeasonRating baseline row for each
     founding Player (current stats, current age, current overall_rating).
@@ -592,12 +634,29 @@ def _write_baseline_ratings(season: Season, players: "Iterable[Player]") -> None
     players = list(players)
     finance_on = season.league.finance_enabled
     pot_rng = random.Random()
+
+    # FIN-03 — founding pass: NO completed Season exists, so the games-weighted
+    # _scouting_budget_by_team smoothing has no input. Use each founding Team's
+    # CURRENT scouting budget level instead (finance ON only; OFF ⇒ {} ⇒ every
+    # .get(...) yields the LG-05 default ⇒ byte-identical to LG-05). Pool players
+    # / finance OFF ⇒ the DEFAULT_SCOUTING_BUDGET default applies.
+    band_map: dict[int, float] = {}
+    if finance_on:
+        founding_team_ids = {p.team_id for p in players if p.team_id is not None}
+        band_map = {
+            t.id: finance.scouting_budget(t.budget_scouting)
+            for t in Team.objects.filter(id__in=founding_team_ids)
+        }
+
     rows = []
     for p in players:
         pot = development.compute_potential(
             {name: getattr(p, name) for name in STAT_FIELDS},
             p.age if p.age is not None else 25,
             pot_rng,
+            scouting_budget=band_map.get(
+                p.team_id, development.DEFAULT_SCOUTING_BUDGET
+            ),
         )
         p.potential = pot
         if finance_on:
@@ -658,6 +717,47 @@ def _coaching_effect_by_team(
     return result
 
 
+def _scouting_budget_by_team(
+    league: League, latest_completed: Season
+) -> "dict[int, float]":
+    """FIN-03 — per developing Team's potential scouting budget.
+
+    Returns ``{team_id: scouting_budget}``. A missing team_id (e.g. a
+    free-agent-pool player) yields ``development.DEFAULT_SCOUTING_BUDGET`` at
+    the ``.get(tid, DEFAULT_SCOUTING_BUDGET)`` lookup, so the potential step is
+    unaffected for those players.
+
+    Gated on ``league.finance_enabled`` ONLY — finance OFF ⇒ ``{}`` ⇒ every
+    lookup yields the LG-05 default ⇒ byte-identical to LG-05. For each
+    developing Team (the just-completed Season's snapshot Teams) the scouting
+    budget level is games-weighted over the last <=3 completed-Season
+    ``TeamSeasonFinance`` rows
+    (``smoothed = sum(budget_scouting * games_played) / sum(games_played)``;
+    no games / no rows ⇒ the team's current ``budget_scouting``), then mapped
+    to a scouting budget via ``finance.scouting_budget(level)``.
+    """
+    if not league.finance_enabled:
+        return {}
+
+    result: dict[int, float] = {}
+    team_ids = list(latest_completed.starting_team_ids_json or [])
+    teams_by_id = {t.id: t for t in Team.objects.filter(id__in=team_ids)}
+    for tid in team_ids:
+        team = teams_by_id.get(tid)
+        if team is None:
+            continue
+        rows = list(
+            TeamSeasonFinance.objects.filter(
+                team_id=tid, season__state="completed"
+            ).order_by("-season_id")[:3]
+        )
+        total = sum(row.budget_scouting * row.games_played for row in rows)
+        weight = sum(row.games_played for row in rows)
+        smoothed_level = total / weight if weight > 0 else team.budget_scouting
+        result[tid] = finance.scouting_budget(smoothed_level)
+    return result
+
+
 def _develop_league_for_new_season(
     league: League, new_season: Season, latest_completed: Season
 ) -> None:
@@ -682,6 +782,11 @@ def _develop_league_for_new_season(
     # FIN-02 — per-Team develop-curve coaching effect ({} when finance OFF, so
     # every .get(tid, 0.0) yields 0.0 ⇒ byte-identical to LG-04).
     coaching_by_team = _coaching_effect_by_team(league, latest_completed)
+
+    # FIN-03 — per-Team potential scouting budget ({} when finance OFF, so every
+    # .get(tid, DEFAULT_SCOUTING_BUDGET) yields the LG-05 default ⇒ byte-identical
+    # to LG-05).
+    scouting_by_team = _scouting_budget_by_team(league, latest_completed)
 
     # Active-Team player-id set, derived from the already-loaded developing set:
     # a developing player is on an active Team iff its team_id is one of the
@@ -739,6 +844,9 @@ def _develop_league_for_new_season(
             {name: getattr(player, name) for name in STAT_FIELDS},
             player.age,
             pot_rng,
+            scouting_budget=scouting_by_team.get(
+                player.team_id, development.DEFAULT_SCOUTING_BUDGET
+            ),
         )
         player.potential = pot
 
@@ -894,6 +1002,12 @@ def league_create(request) -> HttpResponse:
         if p.pk not in seen_founding:
             seen_founding.add(p.pk)
             founding_players.append(p)
+    # FIN-03 — seed the enrolled Teams' budget levels by roster strength
+    # (finance ON only) BEFORE the baseline ratings, so the founding-pass
+    # band map reads the just-seeded scouting levels.
+    if cleaned["finance_enabled"]:
+        _seed_team_budgets_by_strength(created_teams)
+
     _write_baseline_ratings(season, founding_players)
 
     return redirect("season_standings", season_id=season.id)

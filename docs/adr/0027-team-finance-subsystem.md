@@ -179,3 +179,57 @@ career-mode world FIN-01 ships into.
 
 Decision recorded for FIN-01; CAR-02's [ADR-0026](0026-manager-firing-owner-mood.md)
 stays Accepted (the dormant-money column it shipped is now fed, not changed).
+
+## Consequences — FIN-03 (scouting budget → potential + strength-seeded AI/manager budgets)
+
+FIN-03 (2026-06-17) fulfils the **second half** of the budget-knob deferral this
+ADR named (Decisions, bullet 5; Consequences, the FIN-02..05 follow-ups note) —
+the **scouting → potential** wire — and is the **structural mirror of FIN-02**
+(coaching → development, recorded as a Consequences addendum on
+[ADR-0024](0024-zengm-player-development-ratings-history.md)). It also records a
+**new behavioural decision** beyond the original FIN-01 scope: strength-seeding
+AI **and** manager team budgets at League create.
+
+- **Scouting → potential (estimate-precision only, no realised-stat change).**
+  LG-05's `compute_potential` was shipped (CAR-01) with its scouting-noise band
+  fixed at `DEFAULT_SCOUTING_BUDGET = 50`. FIN-03 promotes that fixed knob to read
+  a per-Team **scouting Budget level**: a new pure `finance.scouting_budget(level)
+  -> float` (`NEUTRAL_SCOUTING_BUDGET = 50.0` / `MAX_SCOUTING_BUDGET = 100.0`,
+  reusing FIN-01's `_bound` + `DEFAULT_LEVEL`/`MAX_LEVEL`) **single-slope**-maps
+  the level — level 1 → 25.0, neutral 34 → 50.0, 100 → 100.0 — and the view threads
+  that float into the existing `scouting_budget` keyword arg. Better scouting
+  **tightens** the Potential estimate band (`sd = POTENTIAL_MAX_SD *
+  (1 − scouting_budget/100)`); neglect **widens** it. This changes only the
+  **seeded Potential *estimate***, never a realised Stat — it is read-only to the
+  simulator. `compute_potential` is byte-unchanged (the band always consumes
+  **exactly one `rng.gauss` draw** regardless of budget); `development.py` keeps its
+  frozen import allowlist (`NEUTRAL_SCOUTING_BUDGET` only *equals* LG-05's
+  `DEFAULT_SCOUTING_BUDGET` by value — **`finance.py` does not import
+  `development`**). The level fed in is the same **games-weighted ≤3-Season**
+  average (the `getLevelLastThree` / CONTEXT.md "Budget level" contract) FIN-02
+  uses, sourced from the per-Season budget snapshots on `TeamSeasonFinance` FIN-02
+  already added — so **no migration, no simulator change, and no Score Calibration
+  re-baseline**. Gated on `League.finance_enabled`; finance-OFF (or any Team at the
+  default) ⇒ band 50 ⇒ **byte-identical to LG-05**.
+
+- **Strength-seeded AI + manager budgets at create (new decision; one deferred
+  follow-up).** Previously every Team started at the neutral budget level (34). The
+  maintainer decided that at **League create (finance-ON only)** every enrolled
+  Team — **including `League.current_team`** — is seeded a starting budget by
+  talent: `_seed_team_budgets_by_strength(teams)` ranks teams by **mean
+  active-roster `overall_rating` desc** and assigns a **rank-linear** level across
+  `[SEED_BUDGET_MIN, SEED_BUDGET_MAX] = [20, 90]` (single team → `SEED_BUDGET_SINGLE
+  = 55`), the **same** level on all three budget fields. The seed runs **once,
+  before `_write_baseline_ratings`** (so the founding Potential estimates read the
+  seeded levels), and is **frozen forever** — `next_season` carries the Team rows
+  forward untouched. CPU teams therefore **never adjust their budgets** this slice;
+  the manager's own Team stays editable on the Team Finances screen. A future
+  **"CPU teams adjust budgets"** feature (AI re-budgeting season to season) is
+  explicitly **deferred**.
+
+- **No new ADR.** Both halves are **reversible** (a level→float mapping fn + a
+  one-shot seed routine; recomputed/seeded in view code, no schema change) and
+  unsurprising given this ADR + FIN-02 — hence a Consequences addendum, **not** a
+  new ADR. This ADR stays Accepted (FIN-01). Tests extend
+  `matches/tests/test_finance.py` / `test_league_create.py` /
+  `test_league_next_season.py`.
