@@ -373,3 +373,65 @@ class TestSalaryRecomputeBaseline(TestCase):
         for player in players:
             player.refresh_from_db()
             self.assertIsNone(player.salary)
+
+
+# ===========================================================================
+# FIN-02 — TestEnsureBudgetSnapshot (the 4 new TeamSeasonFinance columns)
+# ===========================================================================
+
+
+class TestEnsureBudgetSnapshot(TestCase):
+    """A ``TeamSeasonFinance`` row written by ``_ensure_team_finances`` carries
+    ``budget_scouting`` / ``budget_coaching`` / ``budget_facilities`` equal to
+    the Team's current ``budget_*`` levels, and ``games_played`` equal to that
+    Team's regular-season matches-played that Season — the inputs FIN-02's
+    games-weighted coaching smoothing reads.
+
+    Written test-first against the FIN-02 seam contract; these FAIL until the
+    Code agent lands the four new ``TeamSeasonFinance`` columns + the writer
+    snapshot — the expected TDD red state.
+    """
+
+    def test_budget_columns_snapshot_team_current_levels(self) -> None:
+        team = _make_team("BudgetT")
+        opp = _make_team("BudgetO")
+        # Pin non-default budget levels so the equality is meaningful.
+        team.budget_scouting = 70
+        team.budget_coaching = 88
+        team.budget_facilities = 55
+        team.save(
+            update_fields=["budget_scouting", "budget_coaching", "budget_facilities"]
+        )
+        league = _make_league("BudgetL", current_team=team)
+        s1 = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[team.id, opp.id],
+        )
+        _add_match(s1, team, opp, red_pts=100, blue_pts=10)
+        _ensure_team_finances(league, s1)
+        row = TeamSeasonFinance.objects.get(team=team, season=s1)
+        self.assertEqual(row.budget_scouting, 70)
+        self.assertEqual(row.budget_coaching, 88)
+        self.assertEqual(row.budget_facilities, 55)
+
+    def test_games_played_equals_regular_season_matches_played(self) -> None:
+        team = _make_team("GamesT")
+        opp = _make_team("GamesO")
+        league = _make_league("GamesL", current_team=team)
+        s1 = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[team.id, opp.id],
+        )
+        # Two completed regular-season Matches between the pair ⇒ each team's
+        # matches-played that Season is 2.
+        _add_match(s1, team, opp, red_pts=100, blue_pts=10)
+        _add_match(s1, opp, team, red_pts=20, blue_pts=90)
+        _ensure_team_finances(league, s1)
+        row = TeamSeasonFinance.objects.get(team=team, season=s1)
+        self.assertEqual(row.games_played, 2)
+        opp_row = TeamSeasonFinance.objects.get(team=opp, season=s1)
+        self.assertEqual(opp_row.games_played, 2)
