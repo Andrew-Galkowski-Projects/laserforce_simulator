@@ -62,6 +62,15 @@ from matches.finance import (
     scouting_budget,
 )
 
+# FIN-04 — health budget → expense line + injury-duration edge (seam contract
+# §3). These imports + every ``TestHealthEffect`` / ``TestExpenseLinesHealth`` /
+# ``TestSeasonExpensesHealth`` / ``TestComputeTeamFinanceHealth`` class below
+# WILL ImportError / fail until the Code agent lands ``health_effect`` +
+# ``MAX_HEALTH_EFFECT`` + the trailing ``ExpenseLines.health`` field + the
+# ``health_level=`` thread on ``season_expenses`` / ``compute_team_finance`` —
+# the expected TDD red state, NOT a defect in this file.
+from matches.finance import MAX_HEALTH_EFFECT, health_effect  # noqa: E402
+
 # ===========================================================================
 # §4.1 — TestConstants (the locked-but-tunable module constants)
 # ===========================================================================
@@ -116,6 +125,7 @@ class TestDataclasses(SimpleTestCase):
         self.assertEqual(r.merch, 5.0)
 
     def test_expense_lines_fields_and_frozen(self) -> None:
+        # FIN-04 — ExpenseLines gained a trailing ``health`` field (7th).
         e = ExpenseLines(
             payroll=10.0,
             scouting=1.0,
@@ -123,6 +133,7 @@ class TestDataclasses(SimpleTestCase):
             facilities=3.0,
             luxury_tax=4.0,
             min_payroll_penalty=5.0,
+            health=6.0,
         )
         self.assertEqual(
             (
@@ -132,24 +143,26 @@ class TestDataclasses(SimpleTestCase):
                 e.facilities,
                 e.luxury_tax,
                 e.min_payroll_penalty,
+                e.health,
             ),
-            (10.0, 1.0, 2.0, 3.0, 4.0, 5.0),
+            (10.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0),
         )
         with self.assertRaises(Exception):
             e.payroll = 0.0  # type: ignore[misc]
 
     def test_expense_lines_positional_field_order(self) -> None:
-        e = ExpenseLines(10.0, 1.0, 2.0, 3.0, 4.0, 5.0)
+        e = ExpenseLines(10.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
         self.assertEqual(e.payroll, 10.0)
         self.assertEqual(e.scouting, 1.0)
         self.assertEqual(e.coaching, 2.0)
         self.assertEqual(e.facilities, 3.0)
         self.assertEqual(e.luxury_tax, 4.0)
         self.assertEqual(e.min_payroll_penalty, 5.0)
+        self.assertEqual(e.health, 6.0)
 
     def test_team_finance_result_fields_and_frozen(self) -> None:
         rl = RevenueLines(1.0, 1.0, 1.0, 1.0, 1.0)
-        el = ExpenseLines(1.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        el = ExpenseLines(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         res = TeamFinanceResult(
             revenue_lines=rl,
             expense_lines=el,
@@ -335,18 +348,38 @@ class TestSeasonExpenses(SimpleTestCase):
     facilities_level, salary_cap=...)`` returns an ``ExpenseLines``; budgets are
     cost-only this slice (higher level ⇒ at-least-as-high cost)."""
 
+    # FIN-04 — season_expenses gained a keyword-only health_level (required); the
+    # FIN-01 cost-only reconciliation calls thread the neutral level.
     def test_returns_expense_lines(self) -> None:
         self.assertIsInstance(
-            season_expenses(40000.0, DEFAULT_LEVEL, DEFAULT_LEVEL, DEFAULT_LEVEL),
+            season_expenses(
+                40000.0,
+                DEFAULT_LEVEL,
+                DEFAULT_LEVEL,
+                DEFAULT_LEVEL,
+                health_level=DEFAULT_LEVEL,
+            ),
             ExpenseLines,
         )
 
     def test_payroll_passed_through(self) -> None:
-        e = season_expenses(40000.0, DEFAULT_LEVEL, DEFAULT_LEVEL, DEFAULT_LEVEL)
+        e = season_expenses(
+            40000.0,
+            DEFAULT_LEVEL,
+            DEFAULT_LEVEL,
+            DEFAULT_LEVEL,
+            health_level=DEFAULT_LEVEL,
+        )
         self.assertAlmostEqual(e.payroll, 40000.0, places=6)
 
     def test_all_lines_non_negative(self) -> None:
-        e = season_expenses(40000.0, DEFAULT_LEVEL, DEFAULT_LEVEL, DEFAULT_LEVEL)
+        e = season_expenses(
+            40000.0,
+            DEFAULT_LEVEL,
+            DEFAULT_LEVEL,
+            DEFAULT_LEVEL,
+            health_level=DEFAULT_LEVEL,
+        )
         for name in (
             "payroll",
             "scouting",
@@ -354,22 +387,35 @@ class TestSeasonExpenses(SimpleTestCase):
             "facilities",
             "luxury_tax",
             "min_payroll_penalty",
+            "health",
         ):
             self.assertGreaterEqual(getattr(e, name), 0.0, name)
 
     def test_higher_scouting_level_not_cheaper(self) -> None:
-        low = season_expenses(40000.0, 1, DEFAULT_LEVEL, DEFAULT_LEVEL)
-        high = season_expenses(40000.0, MAX_LEVEL, DEFAULT_LEVEL, DEFAULT_LEVEL)
+        low = season_expenses(
+            40000.0, 1, DEFAULT_LEVEL, DEFAULT_LEVEL, health_level=DEFAULT_LEVEL
+        )
+        high = season_expenses(
+            40000.0, MAX_LEVEL, DEFAULT_LEVEL, DEFAULT_LEVEL, health_level=DEFAULT_LEVEL
+        )
         self.assertGreaterEqual(high.scouting, low.scouting - 1e-6)
 
     def test_higher_coaching_level_not_cheaper(self) -> None:
-        low = season_expenses(40000.0, DEFAULT_LEVEL, 1, DEFAULT_LEVEL)
-        high = season_expenses(40000.0, DEFAULT_LEVEL, MAX_LEVEL, DEFAULT_LEVEL)
+        low = season_expenses(
+            40000.0, DEFAULT_LEVEL, 1, DEFAULT_LEVEL, health_level=DEFAULT_LEVEL
+        )
+        high = season_expenses(
+            40000.0, DEFAULT_LEVEL, MAX_LEVEL, DEFAULT_LEVEL, health_level=DEFAULT_LEVEL
+        )
         self.assertGreaterEqual(high.coaching, low.coaching - 1e-6)
 
     def test_higher_facilities_level_not_cheaper(self) -> None:
-        low = season_expenses(40000.0, DEFAULT_LEVEL, DEFAULT_LEVEL, 1)
-        high = season_expenses(40000.0, DEFAULT_LEVEL, DEFAULT_LEVEL, MAX_LEVEL)
+        low = season_expenses(
+            40000.0, DEFAULT_LEVEL, DEFAULT_LEVEL, 1, health_level=DEFAULT_LEVEL
+        )
+        high = season_expenses(
+            40000.0, DEFAULT_LEVEL, DEFAULT_LEVEL, MAX_LEVEL, health_level=DEFAULT_LEVEL
+        )
         self.assertGreaterEqual(high.facilities, low.facilities - 1e-6)
 
 
@@ -506,6 +552,10 @@ def _result(**overrides) -> TeamFinanceResult:
         scouting_level=DEFAULT_LEVEL,
         coaching_level=DEFAULT_LEVEL,
         facilities_level=DEFAULT_LEVEL,
+        # FIN-04 — health_level is a keyword-only param appended after
+        # facilities_level; the existing helper threads the neutral level so
+        # the FIN-01 TestComputeTeamFinance reconciliation tests still pass.
+        health_level=DEFAULT_LEVEL,
         ticket_price=10.0,
         prev_hype=0.5,
         winp=0.5,
@@ -539,6 +589,7 @@ class TestComputeTeamFinance(SimpleTestCase):
         )
 
     def test_expenses_equals_sum_of_expense_lines(self) -> None:
+        # FIN-04 — the sum now includes the seventh ``health`` expense line.
         res = _result()
         el = res.expense_lines
         self.assertAlmostEqual(
@@ -548,7 +599,8 @@ class TestComputeTeamFinance(SimpleTestCase):
             + el.coaching
             + el.facilities
             + el.luxury_tax
-            + el.min_payroll_penalty,
+            + el.min_payroll_penalty
+            + el.health,
             places=6,
         )
 
@@ -688,6 +740,202 @@ class TestScoutingBudget(SimpleTestCase):
 
 
 # ===========================================================================
+# FIN-04 — TestHealthEffect (the new health budget → injury-duration edge)
+# ===========================================================================
+
+
+class TestHealthEffect(SimpleTestCase):
+    """``health_effect(level)`` maps a health budget level (1..100) to the
+    sign-flipped ZenGM ``healthEffect`` analogue float that scales injury
+    DURATION: the neutral ``DEFAULT_LEVEL`` (34) → ``0.0``, ``MAX_LEVEL`` (100)
+    → ``MAX_HEALTH_EFFECT`` (0.5), level 1 → a negative effect. Mirrors
+    ``coaching_effect`` (dual-slope neutral pivot), clamps to ``[1, 100]``.
+
+    Written test-first against the FIN-04 seam contract; these FAIL until the
+    Code agent lands ``health_effect`` + ``MAX_HEALTH_EFFECT`` in
+    ``matches/finance.py``.
+    """
+
+    def test_max_health_effect_constant(self) -> None:
+        self.assertAlmostEqual(MAX_HEALTH_EFFECT, 0.5, places=9)
+
+    def test_returns_float(self) -> None:
+        self.assertIsInstance(health_effect(DEFAULT_LEVEL), float)
+
+    def test_neutral_level_is_zero_effect(self) -> None:
+        # DEFAULT_LEVEL (34) is the neutral anchor — zero effect, so a
+        # neutral-budget team rolls injury durations byte-for-byte like the
+        # un-scaled (health-OFF) baseline.
+        self.assertAlmostEqual(health_effect(34), 0.0, places=9)
+
+    def test_max_level_is_max_health_effect(self) -> None:
+        self.assertAlmostEqual(health_effect(100), MAX_HEALTH_EFFECT, places=6)
+
+    def test_min_level_is_negative(self) -> None:
+        # Level 1 (the floor) softens the health edge to a negative value
+        # (longer injuries — a neglected budget).
+        self.assertLess(health_effect(1), 0.0)
+
+    def test_clamps_below_one(self) -> None:
+        self.assertAlmostEqual(health_effect(0), health_effect(1), places=9)
+        self.assertAlmostEqual(health_effect(-5), health_effect(1), places=9)
+
+    def test_clamps_above_one_hundred(self) -> None:
+        self.assertAlmostEqual(health_effect(200), health_effect(100), places=9)
+
+    def test_monotone_non_decreasing_in_level(self) -> None:
+        prev = health_effect(1)
+        for level in range(2, MAX_LEVEL + 1):
+            cur = health_effect(level)
+            self.assertGreaterEqual(cur, prev - 1e-9, f"level={level}")
+            prev = cur
+
+
+# ===========================================================================
+# FIN-04 — TestExpenseLinesHealth (the trailing ``health`` field)
+# ===========================================================================
+
+
+class TestExpenseLinesHealth(SimpleTestCase):
+    """``ExpenseLines`` gains a trailing ``health: float`` field, appended LAST
+    after ``min_payroll_penalty`` (pinned field order:
+    ``payroll, scouting, coaching, facilities, luxury_tax,
+    min_payroll_penalty, health``)."""
+
+    def test_health_field_present_by_keyword(self) -> None:
+        e = ExpenseLines(
+            payroll=10.0,
+            scouting=1.0,
+            coaching=2.0,
+            facilities=3.0,
+            luxury_tax=4.0,
+            min_payroll_penalty=5.0,
+            health=6.0,
+        )
+        self.assertEqual(e.health, 6.0)
+
+    def test_health_is_last_positional_field(self) -> None:
+        # Pinned field order — health is the 7th and final positional field.
+        e = ExpenseLines(10.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+        self.assertEqual(e.payroll, 10.0)
+        self.assertEqual(e.scouting, 1.0)
+        self.assertEqual(e.coaching, 2.0)
+        self.assertEqual(e.facilities, 3.0)
+        self.assertEqual(e.luxury_tax, 4.0)
+        self.assertEqual(e.min_payroll_penalty, 5.0)
+        self.assertEqual(e.health, 6.0)
+
+    def test_still_frozen(self) -> None:
+        e = ExpenseLines(10.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+        with self.assertRaises(Exception):
+            e.health = 0.0  # type: ignore[misc]
+
+
+# ===========================================================================
+# FIN-04 — TestSeasonExpensesHealth (health_level threaded into ExpenseLines)
+# ===========================================================================
+
+
+class TestSeasonExpensesHealth(SimpleTestCase):
+    """``season_expenses(...)`` gains a keyword-only ``health_level`` parameter
+    and sets ``health=level_to_amount(health_level, salary_cap)`` on the
+    returned ``ExpenseLines`` — the same per-level dollar map as the other three
+    budgets."""
+
+    def test_health_line_equals_level_to_amount(self) -> None:
+        e = season_expenses(
+            40000.0,
+            DEFAULT_LEVEL,
+            DEFAULT_LEVEL,
+            DEFAULT_LEVEL,
+            health_level=DEFAULT_LEVEL,
+        )
+        self.assertAlmostEqual(
+            e.health, level_to_amount(DEFAULT_LEVEL), places=6
+        )
+
+    def test_health_line_non_negative(self) -> None:
+        e = season_expenses(
+            40000.0, DEFAULT_LEVEL, DEFAULT_LEVEL, DEFAULT_LEVEL, health_level=1
+        )
+        self.assertGreaterEqual(e.health, 0.0)
+
+    def test_higher_health_level_not_cheaper(self) -> None:
+        low = season_expenses(
+            40000.0, DEFAULT_LEVEL, DEFAULT_LEVEL, DEFAULT_LEVEL, health_level=1
+        )
+        high = season_expenses(
+            40000.0,
+            DEFAULT_LEVEL,
+            DEFAULT_LEVEL,
+            DEFAULT_LEVEL,
+            health_level=MAX_LEVEL,
+        )
+        self.assertGreaterEqual(high.health, low.health - 1e-6)
+
+    def test_health_level_is_keyword_only(self) -> None:
+        # Passing health_level positionally (as a 5th positional arg) must fail
+        # — it is keyword-only (after facilities_level, before salary_cap).
+        with self.assertRaises(TypeError):
+            season_expenses(
+                40000.0, DEFAULT_LEVEL, DEFAULT_LEVEL, DEFAULT_LEVEL, DEFAULT_LEVEL
+            )  # type: ignore[misc]
+
+
+# ===========================================================================
+# FIN-04 — TestComputeTeamFinanceHealth (the 7th expense line in the totals)
+# ===========================================================================
+
+
+class TestComputeTeamFinanceHealth(SimpleTestCase):
+    """``compute_team_finance(...)`` gains a keyword-only ``health_level``
+    parameter, threads it into ``season_expenses(...)``, and adds
+    ``expense_lines.health`` to the ``expenses`` sum — so the new health expense
+    flows through ``expenses`` / ``profit`` automatically (no money formula
+    change)."""
+
+    def test_health_level_keyword_only(self) -> None:
+        # compute_team_finance is already all-keyword; a positional call fails.
+        with self.assertRaises(TypeError):
+            compute_team_finance(40000.0)  # type: ignore[misc]
+
+    def test_health_expense_present_on_result(self) -> None:
+        res = _result(health_level=DEFAULT_LEVEL)
+        self.assertAlmostEqual(
+            res.expense_lines.health, level_to_amount(DEFAULT_LEVEL), places=6
+        )
+
+    def test_expenses_include_the_health_line(self) -> None:
+        res = _result(health_level=DEFAULT_LEVEL)
+        el = res.expense_lines
+        self.assertAlmostEqual(
+            res.expenses,
+            el.payroll
+            + el.scouting
+            + el.coaching
+            + el.facilities
+            + el.luxury_tax
+            + el.min_payroll_penalty
+            + el.health,
+            places=6,
+        )
+
+    def test_higher_health_level_lowers_profit(self) -> None:
+        # A more expensive health budget is a larger expense line, so (revenue
+        # held fixed) profit is at-most-as-high. DIRECTION, not magnitude.
+        low = _result(health_level=1)
+        high = _result(health_level=MAX_LEVEL)
+        # Revenue is identical (health is cost-only, no revenue side), so the
+        # higher health spend yields a lower-or-equal profit.
+        self.assertAlmostEqual(low.revenue, high.revenue, places=6)
+        self.assertLessEqual(high.profit, low.profit + 1e-6)
+
+    def test_profit_still_revenue_minus_expenses_with_health(self) -> None:
+        res = _result(health_level=MAX_LEVEL)
+        self.assertAlmostEqual(res.profit, res.revenue - res.expenses, places=6)
+
+
+# ===========================================================================
 # §8 — TestNoDjangoImportsLeaked
 # ===========================================================================
 
@@ -737,7 +985,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
             salary_for_overall(50.0)
             compute_hype(0.5, 0.6, 0.5)
             season_revenue(0.5, 10.0, 34)
-            season_expenses(40000.0, 34, 34, 34)
+            season_expenses(40000.0, 34, 34, 34, health_level=34)
             luxury_tax(50000.0)
             min_payroll_penalty(0.0)
             season_profit(100.0, 40.0)
@@ -747,6 +995,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
                 scouting_level=34,
                 coaching_level=34,
                 facilities_level=34,
+                health_level=34,
                 ticket_price=10.0,
                 prev_hype=0.5,
                 winp=0.5,
