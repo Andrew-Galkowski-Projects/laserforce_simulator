@@ -1690,6 +1690,13 @@ class TeamSeasonFinance(models.Model):
     profit = models.FloatField(default=0.0)
     # carried-across-seasons hype loop
     hype = models.FloatField(default=0.0)
+    # FIN-02 — budget levels + games-weight snapshot for the coaching-smoothing
+    # window (the develop-curve coaching effect is games-weighted over the last
+    # <=3 completed Seasons' TeamSeasonFinance rows).
+    budget_scouting = models.PositiveSmallIntegerField(default=34)
+    budget_coaching = models.PositiveSmallIntegerField(default=34)
+    budget_facilities = models.PositiveSmallIntegerField(default=34)
+    games_played = models.PositiveSmallIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

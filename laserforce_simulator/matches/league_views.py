@@ -619,6 +619,45 @@ def _write_baseline_ratings(season: Season, players: "Iterable[Player]") -> None
     Player.objects.bulk_update(players, update_fields)
 
 
+def _coaching_effect_by_team(
+    league: League, latest_completed: Season
+) -> "dict[int, float]":
+    """FIN-02 — per developing Team's develop-curve coaching effect.
+
+    Returns ``{team_id: coaching_effect}``. A missing team_id (e.g. a
+    free-agent-pool player) yields ``0.0`` at the ``.get(tid, 0.0)`` lookup,
+    so the develop step is unaffected for those players.
+
+    Gated on ``league.finance_enabled`` ONLY — finance OFF ⇒ ``{}`` ⇒ every
+    lookup yields 0.0 ⇒ byte-identical to LG-04. For each developing Team
+    (the just-completed Season's snapshot Teams) the coaching budget level is
+    games-weighted over the last <=3 completed-Season ``TeamSeasonFinance``
+    rows (``smoothed = sum(budget_coaching * games_played) / sum(games_played)``;
+    no games / no rows ⇒ the team's current ``budget_coaching``), then mapped
+    to an effect via ``finance.coaching_effect(level)``.
+    """
+    if not league.finance_enabled:
+        return {}
+
+    result: dict[int, float] = {}
+    team_ids = list(latest_completed.starting_team_ids_json or [])
+    teams_by_id = {t.id: t for t in Team.objects.filter(id__in=team_ids)}
+    for tid in team_ids:
+        team = teams_by_id.get(tid)
+        if team is None:
+            continue
+        rows = list(
+            TeamSeasonFinance.objects.filter(
+                team_id=tid, season__state="completed"
+            ).order_by("-season_id")[:3]
+        )
+        total = sum(row.budget_coaching * row.games_played for row in rows)
+        weight = sum(row.games_played for row in rows)
+        smoothed_level = total / weight if weight > 0 else team.budget_coaching
+        result[tid] = finance.coaching_effect(smoothed_level)
+    return result
+
+
 def _develop_league_for_new_season(
     league: League, new_season: Season, latest_completed: Season
 ) -> None:
@@ -639,6 +678,10 @@ def _develop_league_for_new_season(
     players = _developing_players(league)
     if not players:
         return
+
+    # FIN-02 — per-Team develop-curve coaching effect ({} when finance OFF, so
+    # every .get(tid, 0.0) yields 0.0 ⇒ byte-identical to LG-04).
+    coaching_by_team = _coaching_effect_by_team(league, latest_completed)
 
     # Active-Team player-id set, derived from the already-loaded developing set:
     # a developing player is on an active Team iff its team_id is one of the
@@ -679,6 +722,7 @@ def _develop_league_for_new_season(
             {name: getattr(player, name) for name in STAT_FIELDS},
             player.age,
             rng,
+            coaching_effect=coaching_by_team.get(player.team_id, 0.0),
         )
         for name, val in new_stats.items():
             setattr(player, name, val)
@@ -3098,6 +3142,10 @@ def _ensure_team_finances(league: League, up_to_season: Season) -> None:
                     "expenses": result.expenses,
                     "profit": result.profit,
                     "hype": result.hype,
+                    "budget_scouting": team.budget_scouting,
+                    "budget_coaching": team.budget_coaching,
+                    "budget_facilities": team.budget_facilities,
+                    "games_played": _team_wins_games_for_season(season, team_id)[1],
                 },
             )
 
