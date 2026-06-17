@@ -106,3 +106,46 @@ Because `potential` is **read-only to the simulator** (never a sim input — no
 Score Calibration re-baseline) and **reversible** (recomputed each rollover; a
 nullable `FloatField` add — `teams/0012_player_potential.py`), LG-05 needed
 **no new ADR**; this ADR stays Accepted/LG-04.
+
+## Consequences — FIN-02 (coaching budget → development)
+
+FIN-02 (2026-06-16) fulfils the **coaching/scouting budget knob** this ADR
+deferred (Consequences, bullet 3) — the half about **coaching → development**
+(scouting → potential remains deferred to FIN-03). The fixed-at-`0` coaching
+effect is replaced by a real, ZenGM-faithful **Coaching effect** drawn from
+FIN-01's per-Team coaching **Budget level**:
+
+- **Mechanism (ZenGM-faithful, per `03-player-development.md`).** The per-player
+  base age-change (`base_change(age) + base_change_noise(age, rng)`) is scaled
+  once, directionally, **before** the per-stat loop:
+  `effective *= 1 + sign(effective) * coaching_effect`. Good coaching amplifies
+  positive growth and *softens* decline; the per-stat `age_modifier` /
+  `change_limits` / `uniform(0.4, 1.4)` math is otherwise byte-unchanged.
+  **No new RNG draw** — the pinned 1-gauss-then-19-uniform sequence is preserved.
+- **Effect source.** A new pure `finance.coaching_effect(level) -> float`
+  (`MAX_COACHING_EFFECT = 0.09`, reusing FIN-01's asymmetric facilities-band
+  shape `(clamp(level,1,100) − 34) / (100 − 34)`) — `0.0` at the neutral level
+  34, `+0.09` at level 100, `≈ −0.045` at level 1. The view passes the float into
+  `development.develop_player_stats(..., coaching_effect=0.0)`; `development.py`
+  keeps its frozen import allowlist (no `finance` import). **Default `0.0` ⇒
+  multiplier exactly `1.0` ⇒ byte-identical to LG-04.**
+- **Multi-Season smoothing (the `getLevelLastThree` / CONTEXT.md "Budget level"
+  contract).** The level fed to the effect is a **games-weighted average over the
+  last up-to-3 completed Seasons**, sourced from **new per-Season budget-level
+  snapshots on `TeamSeasonFinance`** (all three of `coaching` / `scouting` /
+  `facilities`, one migration — future-proofs FIN-03/FIN-04), with a fallback to
+  the team's current `budget_coaching` when no snapshot history exists. The
+  current/upcoming budget choice does **not** reach development until it has been
+  a played, snapshotted Season — "a single splurge barely moves the needle."
+- **Gating.** Active only when `League.finance_enabled` (the FIN-01 toggle) ON
+  TOP of CAR-03's `_is_career_league`. Finance-OFF (and any Team left at the
+  neutral level) ⇒ effect `0.0` ⇒ develop output **byte-identical to LG-04**.
+- **Potential is untouched.** `_project_stat_noise_free` /
+  `_project_peak_overall` gain **no** `coaching_effect` — LG-05's seeded
+  potential output is byte-unchanged (coaching → potential is FIN-03's lane). A
+  well-coached player may now develop *past* their projected ceiling; the
+  `[current_overall, 100]` clamp keeps that safe.
+- **No Score Calibration re-baseline.** Stat *inputs* shift for finance-ON
+  Leagues but no simulation *mechanic* changes (the same posture as LG-04/LG-05).
+  Reversible (a snapshot column + a multiplier) and unsurprising given this ADR +
+  ADR-0027 (FIN-01) — hence a Consequences addendum, **not** a new ADR.
