@@ -442,6 +442,109 @@ class TestDevelopPlayerStats(SimpleTestCase):
 
 
 # ===========================================================================
+# FIN-02 — TestDevelopPlayerStatsCoachingEffect (the new coaching_effect= kwarg)
+# ===========================================================================
+
+
+SEED = 42
+
+
+class TestDevelopPlayerStatsCoachingEffect(SimpleTestCase):
+    """``develop_player_stats(stats, age, rng, coaching_effect=0.0)`` gains an
+    optional coaching multiplier. The default ``0.0`` is byte-identical to the
+    no-kwarg call (same seed ⇒ same 19-stat dict); a nonzero effect consumes
+    the SAME number of RNG draws (1 gauss + 19 uniform — the multiply adds no
+    draw); and a positive effect amplifies a young player's growth + softens an
+    old player's decline.
+
+    Written test-first against the FIN-02 seam contract; these FAIL until the
+    Code agent lands the ``coaching_effect=`` kwarg on
+    ``matches.development.develop_player_stats`` — the expected TDD red state.
+    """
+
+    def test_default_zero_is_byte_identical_to_no_kwarg(self) -> None:
+        # Same seed: the no-kwarg call and coaching_effect=0.0 must produce the
+        # IDENTICAL 19-stat dict (the new kwarg defaulting to 0.0 changes
+        # nothing).
+        stats = _flat_stats(50)
+        no_kwarg = develop_player_stats(stats, 25, random.Random(SEED))
+        explicit_zero = develop_player_stats(
+            stats, 25, random.Random(SEED), coaching_effect=0.0
+        )
+        self.assertEqual(no_kwarg, explicit_zero)
+        self.assertEqual(set(explicit_zero), set(STAT_FIELDS))
+
+    def test_nonzero_effect_consumes_same_rng_draw_count(self) -> None:
+        # A nonzero coaching_effect must consume exactly the same RNG draws as
+        # zero (1 gauss + 19 uniform; the multiply adds no draw). Demonstrate by
+        # checking the post-call rng position matches between the zero-effect
+        # and nonzero-effect runs given the SAME seed: a follow-up rng.random()
+        # is equal because the same number of draws were consumed.
+        stats = _flat_stats(50)
+
+        rng_zero = random.Random(SEED)
+        develop_player_stats(stats, 25, rng_zero, coaching_effect=0.0)
+        follow_zero = rng_zero.random()
+
+        rng_nonzero = random.Random(SEED)
+        develop_player_stats(stats, 25, rng_nonzero, coaching_effect=0.06)
+        follow_nonzero = rng_nonzero.random()
+
+        self.assertEqual(
+            follow_zero,
+            follow_nonzero,
+            "a nonzero coaching_effect must not change the RNG draw count",
+        )
+
+    def test_positive_effect_amplifies_young_player_growth(self) -> None:
+        # Age 20 ⇒ base_change +2 (clearly positive): a positive coaching_effect
+        # should yield AT LEAST as large an aggregate stat gain as zero effect
+        # under the same pinned RNG. Assert direction, not magnitude.
+        base = _flat_stats(50)
+        out_zero = develop_player_stats(
+            base, 20, random.Random(SEED), coaching_effect=0.0
+        )
+        out_boost = develop_player_stats(
+            base, 20, random.Random(SEED), coaching_effect=0.08
+        )
+        delta_zero = sum(out_zero[n] - base[n] for n in STAT_FIELDS)
+        delta_boost = sum(out_boost[n] - base[n] for n in STAT_FIELDS)
+        self.assertGreaterEqual(
+            delta_boost,
+            delta_zero,
+            "coaching should amplify a young player's growth, not shrink it",
+        )
+
+    def test_positive_effect_softens_old_player_decline(self) -> None:
+        # Age 38 ⇒ base_change -4 (clearly negative): a positive coaching_effect
+        # should yield a SMALLER aggregate loss (closer to 0) than zero effect
+        # under the same pinned RNG. Assert direction, not magnitude.
+        base = _flat_stats(50)
+        out_zero = develop_player_stats(
+            base, 38, random.Random(SEED), coaching_effect=0.0
+        )
+        out_boost = develop_player_stats(
+            base, 38, random.Random(SEED), coaching_effect=0.08
+        )
+        delta_zero = sum(out_zero[n] - base[n] for n in STAT_FIELDS)
+        delta_boost = sum(out_boost[n] - base[n] for n in STAT_FIELDS)
+        # Both decline (negative); the boosted decline is shallower (>=).
+        self.assertLess(delta_zero, 0, "age-38 baseline should net-decline")
+        self.assertGreaterEqual(
+            delta_boost,
+            delta_zero,
+            "coaching should soften an old player's decline, not deepen it",
+        )
+
+    def test_returns_exactly_19_keys_with_kwarg(self) -> None:
+        out = develop_player_stats(
+            _flat_stats(50), 25, random.Random(SEED), coaching_effect=0.05
+        )
+        self.assertEqual(set(out), set(STAT_FIELDS))
+        self.assertEqual(len(out), 19)
+
+
+# ===========================================================================
 # §3.8 — TestFreeAgentGamesTick (bounds + (0,rng)==0 + determinism)
 # ===========================================================================
 

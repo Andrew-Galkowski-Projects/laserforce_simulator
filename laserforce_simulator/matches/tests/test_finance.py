@@ -43,6 +43,7 @@ from matches.finance import (
     ExpenseLines,
     RevenueLines,
     TeamFinanceResult,
+    coaching_effect,
     compute_hype,
     compute_team_finance,
     level_to_amount,
@@ -54,6 +55,7 @@ from matches.finance import (
     season_profit,
     season_revenue,
 )
+from matches.finance import MAX_COACHING_EFFECT
 
 # ===========================================================================
 # §4.1 — TestConstants (the locked-but-tunable module constants)
@@ -569,6 +571,57 @@ class TestComputeTeamFinance(SimpleTestCase):
 
 
 # ===========================================================================
+# FIN-02 — TestCoachingEffect (the new coaching budget -> develop multiplier)
+# ===========================================================================
+
+
+class TestCoachingEffect(SimpleTestCase):
+    """``coaching_effect(level)`` maps a coaching budget level (1..100) to a
+    development multiplier offset, centred at 0.0 on the neutral
+    ``DEFAULT_LEVEL`` (34) — the byte-identical-OFF anchor — rising to
+    ``MAX_COACHING_EFFECT`` (0.09) at level 100 and falling to roughly
+    ``-MAX_COACHING_EFFECT / 2`` at level 1. Clamps to ``[1, 100]``.
+
+    Written test-first against the FIN-02 seam contract; these FAIL until the
+    Code agent lands ``coaching_effect`` + ``MAX_COACHING_EFFECT`` in
+    ``matches/finance.py``.
+    """
+
+    def test_max_coaching_effect_constant(self) -> None:
+        self.assertAlmostEqual(MAX_COACHING_EFFECT, 0.09, places=9)
+
+    def test_returns_float(self) -> None:
+        self.assertIsInstance(coaching_effect(DEFAULT_LEVEL), float)
+
+    def test_neutral_level_is_zero_effect(self) -> None:
+        # DEFAULT_LEVEL (34) is the byte-identical-OFF anchor — zero effect, so
+        # a neutral-budget League develops byte-for-byte like coaching OFF.
+        self.assertAlmostEqual(coaching_effect(34), 0.0, places=9)
+
+    def test_max_level_near_max_effect(self) -> None:
+        self.assertAlmostEqual(coaching_effect(100), 0.09, places=6)
+
+    def test_min_level_negative_half(self) -> None:
+        # Level 1 (the floor) softens development by ~ -MAX/2.
+        self.assertAlmostEqual(coaching_effect(1), -0.045, places=6)
+
+    def test_clamps_below_one(self) -> None:
+        # A level below the floor clamps to level 1.
+        self.assertAlmostEqual(coaching_effect(0), coaching_effect(1), places=9)
+
+    def test_clamps_above_one_hundred(self) -> None:
+        # A level above the ceiling clamps to level 100.
+        self.assertAlmostEqual(coaching_effect(200), coaching_effect(100), places=9)
+
+    def test_monotone_non_decreasing_in_level(self) -> None:
+        prev = coaching_effect(1)
+        for level in range(2, MAX_LEVEL + 1):
+            cur = coaching_effect(level)
+            self.assertGreaterEqual(cur, prev - 1e-9, f"level={level}")
+            prev = cur
+
+
+# ===========================================================================
 # §8 — TestNoDjangoImportsLeaked
 # ===========================================================================
 
@@ -600,6 +653,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
             import sys
             sys.path.insert(0, {str(project_root)!r})
             from matches.finance import (
+                coaching_effect,
                 compute_hype,
                 compute_team_finance,
                 level_to_amount,
@@ -612,6 +666,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
                 season_revenue,
             )
 
+            coaching_effect(34)
             level_to_amount(34)
             salary_for_overall(50.0)
             compute_hype(0.5, 0.6, 0.5)

@@ -719,7 +719,65 @@ Tests: `matches/tests/test_finance.py` (pure-unit) + `test_team_finance_model.py
 `test_team_finances_writer.py` + `test_finance_money_axis.py` + `test_finance_toggle.py`
 (byte-identical-OFF invariant) + `test_create_form_finance.py` + `test_finance_screens.py`.
 
-### FIN-02 · Wire the *coaching* budget into player development (LG-04)
+### FIN-02 · [DONE] Wire the *coaching* budget into player development (LG-04)
+
+**Status: DONE.** Lights up the **coaching** budget FIN-01 shipped cost-only: a Team's effective
+coaching level now **directionally scales** its players' LG-04 age-curve development at each
+`next_season` rollover — better coaching speeds development, neglected coaching slows it — while
+a **finance-OFF (or `coaching_effect=0.0`) league stays byte-identical to LG-04** and **Potential
+(LG-05) is left untouched** (coaching never touches Potential; FIN-03 owns scouting→potential).
+**Mechanism (no new RNG draw).** `matches/development.py::develop_player_stats(stats, age, rng, *,
+coaching_effect=0.0)` gains a **keyword-only** `coaching_effect` float; **between the single
+`base_change_noise` gauss draw and the 19 `develop_stat` `uniform(0.4, 1.4)` draws**, the
+per-player **effective base change** is scaled **once** —
+`effective *= 1 + _sign(effective) * coaching_effect` (a tiny module-private `_sign(x)` helper
+returning `-1.0`/`0.0`/`+1.0`, **no `math` import** — the frozen `dataclasses`/`typing`/`random`/
+`collections` allowlist holds). The `_sign` factor makes the scale **directional**: a positive
+coaching effect pushes a gaining player **up** and a declining player **toward 0** (slower decline),
+a negative effect does the reverse — coaching is a multiplier on the magnitude-with-sign, not a flat
+add. The scale happens **after** the gauss and **before** the 19 uniform draws, so the pinned
+**1-gauss-then-19-uniform** RNG sequence is **unperturbed** and a seeded develop is reproducible;
+`coaching_effect=0.0` (the default) ⇒ multiplier **exactly 1.0** ⇒ **byte-identical to LG-04**.
+`develop_stat` is **unchanged** (the scaled `effective_base_change` still flows through it as before).
+**Mapping (lives in `finance.py`, not `development.py`).** New `matches/finance.py::coaching_effect(level)
+-> float` + constant **`MAX_COACHING_EFFECT = 0.09`**, reusing FIN-01's `_bound` + `DEFAULT_LEVEL`
+(34) / `MAX_LEVEL` (100): the 1–100 ZenGM level maps to **`0.0` at level 34** (neutral), **`+0.09`
+at 100**, **`-0.045` at 1** (linear each side of the neutral pivot). The level→effect mapping is
+**deliberately homed in `finance.py`** — `development.py` keeps its frozen no-finance import allowlist
+and only ever sees the resolved **float**; the view threads it across the seam.
+**Model + migration.** `matches.TeamSeasonFinance` gains `budget_scouting` / `budget_coaching` /
+`budget_facilities` (`PositiveSmallIntegerField(default=34)`) + `games_played` (`PSI(default=0)`),
+all inserted **between `hype` and `created_at`**, in
+**`matches/migrations/0051_teamseasonfinance_budget_levels.py`** (dep
+`0050_league_finance_teamseasonfinance`, **4× `AddField`, NO `RunPython`/backfill** — the ADR-0004
+disposable-data posture). The snapshot now carries the budget levels **and** the games count so the
+multi-Season games-weighted average has its inputs on the row.
+**Writer + wiring.** `_ensure_team_finances` now snapshots the four new fields, with `games_played`
+= that Team's **regular-season `matches_played`** for the Season (via
+`Season._final_standings_for_phase(...)`). New `matches/league_views.py::_coaching_effect_by_team(league,
+latest_completed) -> dict[int, float]` (**gated on `league.finance_enabled`** — OFF ⇒ `{}`) computes,
+per Team, a **games-weighted mean of `budget_coaching` over the last ≤3 completed-Season
+`TeamSeasonFinance` rows** (`Sum(level*games)/Sum(games)`, current-level fallback when there is no
+history), then maps it through `finance.coaching_effect(...)`. The dict is threaded into the rollover
+develop call as `coaching_effect=coaching_by_team.get(player.team_id, 0.0)` —
+**active + bench players get their Team's effect; free-agent-pool players get `0.0`** (no Team). **Call
+order:** `_ensure_team_finances` runs **before** the rollover/develop so `latest_completed`'s snapshot
+is already inside the ≤3-Season window. This games-weighted smoothing honours the CONTEXT.md
+**Budget level** multi-Season-average contract (ZenGM `getLevelLastThree`).
+**Scope / decisions (LOCKED).** Potential (LG-05 `_project_stat_noise_free` / `compute_potential`)
+**untouched** (FIN-03 owns scouting→potential). **Backend-only** — no UI / template change. **No
+Score Calibration re-baseline** (coaching mutates Stat *inputs* for finance-ON leagues only, changes
+no simulation *mechanic*; finance-OFF stays byte-identical). The decision is recorded as the **FIN-02
+Consequences addendum on [ADR-0024](docs/adr/0024-zengm-player-development-ratings-history.md)** — the
+ADR that recorded the coaching-knob deferral — so **no new ADR**. CONTEXT.md gained the **Coaching
+effect** term + Budget / Player-development edits (finalised this session). Seam contract:
+[`.claude/worktrees/fin-02-coaching-development-seam-contract.md`](.claude/worktrees/fin-02-coaching-development-seam-contract.md);
+impl note in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## FIN-02 coaching budget
+into player development`. Depends on **FIN-01**. Tests: `matches/tests/test_finance.py`
+(`coaching_effect` mapping + `MAX_COACHING_EFFECT`) + `test_development.py` (the directional scale,
+`coaching_effect=0.0` byte-identical, the no-new-RNG-draw invariant) + `test_team_finances_writer.py`
+(the four new snapshot fields + `games_played`) + `test_league_next_season.py`
+(`_coaching_effect_by_team` games-weighted mean, OFF ⇒ `{}`, free-agents get `0.0`).
 
 Follow-up to FIN-01 (which ships the coaching budget as a cost-only line-item). Wire the team's effective
 **coaching** level (`getLevelLastThree("coaching")` → ZenGM `coachingEffect`, `±0.10` around

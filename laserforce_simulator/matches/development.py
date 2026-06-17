@@ -111,6 +111,11 @@ def _bound(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
 
+def _sign(x: float) -> float:
+    """Sign of ``x`` as a float: 1.0, -1.0, or 0.0 (no ``math`` import)."""
+    return 1.0 if x > 0 else -1.0 if x < 0 else 0.0
+
+
 def base_change_noise(age: int, rng: random.Random) -> float:
     """Age-banded gaussian noise added to the base change.
 
@@ -211,6 +216,8 @@ def develop_player_stats(
     stats: Mapping[str, int],
     age: int,
     rng: random.Random,
+    *,
+    coaching_effect: float = 0.0,
 ) -> dict[str, int]:
     """Develop all 19 stats one season for a player of the given (aged) ``age``.
 
@@ -220,8 +227,16 @@ def develop_player_stats(
     Pure: receives the RNG; consumes exactly 1 gauss + 19 uniform draws, in
     (noise, then ``STAT_FIELDS`` order) sequence. The view passes the
     already-incremented age (the develop step runs on age ``+1``).
+
+    FIN-02 — ``coaching_effect`` (default ``0.0``) directionally scales the
+    base age-change: a positive effect amplifies gains and softens declines,
+    a negative effect does the reverse, via ``effective *= 1 + sign(effective)
+    * coaching_effect``. The multiply happens AFTER the gauss noise draw and
+    BEFORE the 19 uniform draws, so RNG order is preserved (1 gauss + 19
+    uniform). ``coaching_effect == 0.0`` ⇒ multiplier 1.0 ⇒ byte-identical.
     """
     effective = base_change(age) + base_change_noise(age, rng)
+    effective *= 1.0 + _sign(effective) * coaching_effect
     return {
         name: develop_stat(stats[name], name, age, effective, rng)
         for name in STAT_FIELDS

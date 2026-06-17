@@ -43,6 +43,7 @@ from dataclasses import dataclass
 MAX_LEVEL = 100
 DEFAULT_LEVEL = 34  # neutral level — facility cost mid-range, effect 0
 BUDGET_LEVEL_SCALE = 1.1
+MAX_COACHING_EFFECT = 0.09  # FIN-02 — max develop-curve scale at MAX_LEVEL
 
 BASELINE_SALARY_CAP = 90000.0  # frozen baseline — salaryCapFactor denominator
 SALARY_CAP = 90000.0  # the league cap (== baseline this slice; tunable)
@@ -147,6 +148,20 @@ def _bound(value: float, lo: float, hi: float) -> float:
 
 
 # --- Pure functions --------------------------------------------------------
+
+
+def coaching_effect(level: int) -> float:
+    """FIN-02 — a coaching budget level (1..100) → its develop-curve effect.
+
+    Linear in the level relative to the neutral ``DEFAULT_LEVEL``: the neutral
+    level yields 0.0, ``MAX_LEVEL`` yields ``MAX_COACHING_EFFECT`` (0.09), and
+    the floor of 1 yields a negative effect (≈ -0.045). The
+    ``development.develop_player_stats`` curve multiplies the base age-change by
+    ``1 + sign(change) * coaching_effect`` (FIN-02). Mapping lives here, not in
+    ``development.py``.
+    """
+    lvl = _bound(float(level), 1.0, float(MAX_LEVEL))
+    return MAX_COACHING_EFFECT * (lvl - DEFAULT_LEVEL) / (MAX_LEVEL - DEFAULT_LEVEL)
 
 
 def level_to_amount(level: int, salary_cap: float = SALARY_CAP) -> float:

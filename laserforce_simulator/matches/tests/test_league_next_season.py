@@ -1989,3 +1989,213 @@ class TestCar03MultiplayerNextSeason(TestCase):
         self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
         league.refresh_from_db()
         self.assertEqual(league.current_team_id, manager_team.id)
+
+
+# ---------------------------------------------------------------------------
+# FIN-02 — coaching budget feeds player development at next_season
+# ---------------------------------------------------------------------------
+#
+# Seam contract (FIN-02): inside next_season's develop loop the per-team
+# coaching effect (games-weighted-smoothed across completed-Season
+# TeamSeasonFinance rows via ``_coaching_effect_by_team``) is threaded into
+# ``develop_player_stats(..., coaching_effect=...)``. A finance-OFF League
+# develops byte-identically to coaching 0.0 (``_coaching_effect_by_team`` ⇒
+# ``{}``); a HIGH budget_coaching develops a young player MORE than a neutral
+# (34) budget under a pinned RNG; and the smoothed level feeding the effect is
+# ``Sum(level*games)/Sum(games)`` over the team's completed-Season finance rows.
+#
+# These integration tests pin the develop RNG by patching the
+# ``matches.league_views.random.Random`` construction to a fixed seed (the
+# develop loop builds a fresh unseeded Random per rollover — LG-05 precedent),
+# and assert DIRECTION / seeded-equality / the helper return — NEVER raw
+# unseeded stat values. Appended as NEW classes; no existing class is modified.
+# These WILL fail until the Code agent lands ``finance.coaching_effect`` +
+# ``_coaching_effect_by_team`` + the develop_player_stats wiring — the TDD red
+# state.
+
+
+from matches import finance as _Fin02Finance  # noqa: E402
+from matches.models import TeamSeasonFinance as _Fin02TeamSeasonFinance  # noqa: E402
+
+
+def _fin02_seeded_random_patch(seed: int = 12345):
+    """Patch ``matches.league_views.random.Random`` so every fresh Random() the
+    develop loop builds is seeded deterministically — makes two otherwise-
+    identical rollovers develop reproducibly. Returns a ``patch`` context
+    manager (mirrors the LG-05 tracking-Random patch)."""
+    import random as _random
+
+    real_cls = _random.Random
+
+    def _seeded(*args, **kwargs):
+        # Ignore the (typically empty) production args; force a fixed seed.
+        return real_cls(seed)
+
+    return patch("matches.league_views.random.Random", side_effect=_seeded)
+
+
+def _fin02_finance_league(name: str, *, n_teams: int = 2):
+    """A finance-enabled career League with a completed Season + snapshot Teams
+    (no free-agent pool). Returns ``(league, prev_completed_season, teams)``."""
+    league = League.objects.create(
+        name=name, mode="league", state="active", finance_enabled=True
+    )
+    teams = _make_teams(f"{name}T", n_teams)
+    team_ids = [t.id for t in teams]
+    prev = _make_completed_season(
+        league,
+        name="Season 1",
+        start_date=date(2025, 1, 1),
+        team_ids=team_ids,
+    )
+    return league, prev, teams
+
+
+def _fin02_pin_young_stats(team: Team, *, value: int = 50, age: int = 20) -> None:
+    """Pin every roster player of ``team`` to a known young age + flat stats so
+    development is clearly positive and comparable across Leagues."""
+    for player in team.players.all():
+        player.age = age
+        for name in _Lg04StatFields:
+            setattr(player, name, value)
+        player.save()
+
+
+class TestFin02CoachingEffectByTeamHelper(TestCase):
+    """``_coaching_effect_by_team(league, latest_completed) -> {team_id: effect}``
+    returns the games-weighted-smoothed coaching effect per Team, ``{}`` for a
+    finance-OFF League, and ``0.0`` for free-agent-pool players (no team rows)."""
+
+    def test_finance_off_returns_empty_mapping(self) -> None:
+        from matches.league_views import _coaching_effect_by_team
+
+        league = League.objects.create(
+            name="Fin02OffL", mode="league", state="active", finance_enabled=False
+        )
+        teams = _make_teams("Fin02OffT", 2)
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        self.assertEqual(_coaching_effect_by_team(league, prev), {})
+
+    def test_games_weighted_smoothing_of_coaching_level(self) -> None:
+        from matches.league_views import _coaching_effect_by_team
+
+        league, prev, teams = _fin02_finance_league("Fin02SmoothL")
+        team = teams[0]
+        # Two prior completed-Season finance rows of differing budget_coaching /
+        # games_played. Weighted level = (100*3 + 40*1) / (3 + 1) = 340/4 = 85.
+        s_old = _make_completed_season(
+            league,
+            name="Season 0",
+            start_date=date(2024, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        _Fin02TeamSeasonFinance.objects.create(
+            team=team, season=s_old, budget_coaching=100, games_played=3
+        )
+        _Fin02TeamSeasonFinance.objects.create(
+            team=team, season=prev, budget_coaching=40, games_played=1
+        )
+        effect_by_team = _coaching_effect_by_team(league, prev)
+        self.assertIn(team.id, effect_by_team)
+        self.assertAlmostEqual(
+            effect_by_team[team.id],
+            _Fin02Finance.coaching_effect(85),
+            places=6,
+        )
+
+
+class TestFin02NextSeasonByteIdenticalOff(TestCase):
+    """A finance-OFF League's rollover develops the SAME developed stats it
+    would with coaching wiring entirely absent (coaching_effect 0.0 for every
+    player) — the byte-identical-OFF anchor.
+
+    Pin the develop RNG to a fixed seed and compare a finance-OFF League's
+    developed PlayerSeasonRating stats against an independently-built baseline
+    League (also finance-OFF, identical roster shape + pinned stats) under the
+    same seed: equal seed + equal coaching_effect (0.0 both) ⇒ equal develop.
+    """
+
+    def _build(self, name: str) -> tuple[League, Season, list[Team]]:
+        league = League.objects.create(
+            name=name, mode="league", state="active", finance_enabled=False
+        )
+        teams = _make_teams(f"{name}T", 2)
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        _fin02_pin_young_stats(teams[0])
+        return league, prev, teams
+
+    def test_finance_off_develops_like_zero_coaching(self) -> None:
+        league_a, _prev_a, teams_a = self._build("Fin02OffByteA")
+        league_b, _prev_b, teams_b = self._build("Fin02OffByteB")
+
+        with _fin02_seeded_random_patch():
+            self.client.post(reverse("next_season", kwargs={"league_id": league_a.id}))
+        with _fin02_seeded_random_patch():
+            self.client.post(reverse("next_season", kwargs={"league_id": league_b.id}))
+
+        # The two finance-OFF Leagues, same pinned seed + same pinned input
+        # stats, develop their first roster player identically (coaching 0.0).
+        pa = teams_a[0].players.order_by("name").first()
+        pb = teams_b[0].players.order_by("name").first()
+        pa.refresh_from_db()
+        pb.refresh_from_db()
+        for name in _Lg04StatFields:
+            self.assertEqual(
+                getattr(pa, name),
+                getattr(pb, name),
+                f"finance-OFF develop diverged on {name}",
+            )
+
+
+class TestFin02NextSeasonFasterWithCoaching(TestCase):
+    """A finance-ON League with a HIGH ``budget_coaching`` develops a young
+    player MORE (greater aggregate stat gain) than a neutral-budget (34) League,
+    given the same pinned develop RNG. Assert DIRECTION, not magnitude."""
+
+    def _build(self, name: str, *, coaching_level: int) -> tuple[League, Team]:
+        league, prev, teams = _fin02_finance_league(name)
+        team = teams[0]
+        team.budget_coaching = coaching_level
+        team.save(update_fields=["budget_coaching"])
+        _fin02_pin_young_stats(team)
+        # A completed-Season finance row carrying that coaching level so the
+        # smoothing has something to read (games_played 1).
+        _Fin02TeamSeasonFinance.objects.create(
+            team=team, season=prev, budget_coaching=coaching_level, games_played=1
+        )
+        return league, team
+
+    def test_high_coaching_grows_young_player_more(self) -> None:
+        league_hi, team_hi = self._build("Fin02FastHi", coaching_level=100)
+        league_neutral, team_neutral = self._build(
+            "Fin02FastNeutral", coaching_level=34
+        )
+
+        with _fin02_seeded_random_patch():
+            self.client.post(reverse("next_season", kwargs={"league_id": league_hi.id}))
+        with _fin02_seeded_random_patch():
+            self.client.post(
+                reverse("next_season", kwargs={"league_id": league_neutral.id})
+            )
+
+        p_hi = team_hi.players.order_by("name").first()
+        p_neutral = team_neutral.players.order_by("name").first()
+        p_hi.refresh_from_db()
+        p_neutral.refresh_from_db()
+        gain_hi = sum(getattr(p_hi, n) - 50 for n in _Lg04StatFields)
+        gain_neutral = sum(getattr(p_neutral, n) - 50 for n in _Lg04StatFields)
+        self.assertGreater(
+            gain_hi,
+            gain_neutral,
+            "high coaching should grow a young player more than a neutral budget",
+        )
