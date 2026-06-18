@@ -340,25 +340,80 @@ for `luxury_tax` vs `owner_mood`/legacy `""` vs no element when not fired).
 
 ### SUB-01 · Sub-leagues + per-sub-league rotating map pools
 
-Introduce **sub-leagues** as a first-class domain concept: an
-optional partition of a `Season`'s enrolled Teams into named groups
-(conferences / divisions / pools), modelled as a new `SubLeague`
-container under `Season` with its own `teams` M2M and an ordered
-list of `ArenaMap`s. Each Round's map is then resolved from the
-sub-league's pool by matchday (`maps[matchday % len(maps)]`), giving
-the deterministic-rotation third mode that LG-01j originally
-listed but had no domain referent for. Carved out of LG-01j on
-2026-05-28 because no `SubLeague` model existed at LG-01j time and
-the user wanted to defer the introduction until the career-mode
-slice was in place. Depends on **LG-01j** (the per-Season map
-config UI + `play_season_task` `arena_map` thread it adds — SUB-01
-extends both with a sub-league-aware map-resolver branch) and on
-**CAR-03** (sub-league grouping is most useful once manager-mode
-career play is driving the Season). Adds the **SubLeague** term
-to CONTEXT.md and ships an ADR for the new model + the
-schedule-generation interaction (a sub-league partition implies
-intra-pool vs cross-pool fixtures, a sequencing decision LG-02
-will also lean on).
+**Re-sliced (2026-06-17, user decision) into THREE sequenced pieces.** The
+original monolith — "first-class `SubLeague` model + per-sub-league rotating map
+pools" — was too coarse: the *deterministic-rotation map mode* LG-01j deferred
+does not actually require a `SubLeague` model, only a Season-level ordered map
+list. The pieces (mirroring how LG-02-Part2 was sliced):
+
+1. **[DONE] Season-level `rotate_by_matchday` arena-map mode** — shipped this run
+   (see impl note below). NO `SubLeague` model.
+2. **LG-07 · Member nights** — sequenced **NEXT** (already its own PLAN item in
+   Phase 3 backlog; just noted here for ordering — the third SUB-01 slice waits
+   on it).
+3. **[NOT STARTED] Sub-league intra-pool scheduling** — the first-class
+   `SubLeague` concept + per-sub-league rotating pools, sequenced **AFTER LG-07**
+   (re-scoped below).
+
+- **SUB-01 (piece 1) · [DONE] Season `rotate_by_matchday` arena-map mode.** A 4th
+  `Season.map_mode` value `rotate_by_matchday` extending the shipped LG-01j
+  per-Season map config with a Season-level **author-ordered** ArenaMap rotation
+  keyed on **matchday alone**: a Round's map = `ordered_ids[fixture.matchday %
+  len(ordered_ids)]`, so every fixture on matchday N shares one arena and a
+  Match's two Rounds (different matchdays) rotate. This **satisfies LG-01j's
+  deferred "mode (c)" at the Season level** (the per-*sub-league* rotation remains
+  the third slice). **Fully deterministic, consumes NO RNG** (simpler than
+  `random_per_round`); the `map_pool` M2M stays **EMPTY** for this mode (the
+  ordered JSON is the sole source); **no simulator change, NO Score Calibration
+  re-baseline**; tournament/playoff fixtures unaffected (they never call
+  `_resolve_fixture_map`). Surface: `Season.MAP_MODE_CHOICES` +1 tuple + TWO NEW
+  `JSONField`s — `map_rotation_ids_json` (live, author-ordered) +
+  `starting_map_rotation_ids_json` (activation snapshot, author order PRESERVED,
+  the order-preserving twin of the id-sorted `starting_map_pool_ids_json`);
+  migration `matches/migrations/0054_season_map_rotation.py` (dep
+  `0053_fin05_luxury_tax_firing`; 1× `AlterField(map_mode)` + 2× `AddField`, **no
+  `RunPython`/backfill** — ADR-0004); a NEW `_resolve_fixture_map`
+  `rotate_by_matchday` branch reading `starting_map_rotation_ids_json` (no RNG,
+  defensive `None` on empty/deleted), with the THREE play-loop call sites
+  (`tasks.play_season_task`, `league_views.play_week`,
+  `league_views.play_week_live` RR branch) unioning **both** snapshots into one
+  `in_bulk`; `Season.start_season()` snapshots `list(self.map_rotation_ids_json or
+  [])` (author order); `CreateLeagueForm` gains a hidden `map_rotation` field +
+  inline order-preserving parse to `cleaned_data["map_rotation_ids"]` + the FULL
+  4×2 cross-guard validation matrix; `league_create` writes / `next_season`
+  carries the rotation forward verbatim; `_build_map_config_label` 5th branch
+  `"Map: Rotating (N maps: a, b, c)"` in AUTHOR order; a vanilla-JS "+ Add map"
+  composer in `templates/leagues/create.html` (LG-02b pattern) — dashboards
+  already render the label, no `SeasonAdmin` change. **No new ADR** (reversible
+  model fields + a deterministic branch on the existing LG-01j helper; the
+  CONTEXT.md `Map mode` / `Map pool` / `Per-fixture map resolution` terms already
+  cover the vocabulary). Seam contract:
+  [`.claude/worktrees/sub-01-rotate-by-matchday-seam-contract.md`](.claude/worktrees/sub-01-rotate-by-matchday-seam-contract.md);
+  impl note in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md)
+  `## SUB-01 rotate_by_matchday arena-map mode`.
+
+- **SUB-01 (piece 3) · [NOT STARTED] First-class `SubLeague` + per-sub-league
+  rotating map pools — needs its own grill + an ADR.** Sequenced **AFTER LG-07
+  member nights** (piece 2). Introduce **sub-leagues** as a first-class domain
+  concept: an optional partition of a `Season`'s enrolled Teams into named groups
+  (conferences / divisions / pools), modelled as a new `SubLeague` container under
+  `Season` with its own `teams` M2M and an ordered list of `ArenaMap`s. Each
+  Round's map would then resolve from the **sub-league's** pool by matchday
+  (`maps[matchday % len(maps)]`) — the per-sub-league analogue of the Season-level
+  rotation piece 1 already ships. The Season-level `rotate_by_matchday` mode does
+  **not** subsume this: it rotates one Season-wide list; this slice rotates a
+  *different* list per sub-league, which requires the sub-league partition to
+  resolve a fixture **unambiguously to one pool** — i.e. **intra-pool vs
+  cross-pool fixtures** must be a first-class scheduling concept (a fixture
+  between two sub-leagues has no single pool). That schedule-generation
+  interaction (intra/cross-pool fixture generation, a sequencing decision LG-02
+  also leans on) is the risky core to grill. Carved out of LG-01j on 2026-05-28
+  (no `SubLeague` model existed then; the user deferred the introduction until the
+  career-mode slice was in place). Depends on **LG-07** (sequenced after member
+  nights) and on **CAR-03** (sub-league grouping is most useful once manager-mode
+  career play is driving the Season). Adds the **SubLeague** term to CONTEXT.md
+  and ships an **ADR for the new model + the intra/cross-pool schedule-generation
+  interaction**.
 
 ---
 
