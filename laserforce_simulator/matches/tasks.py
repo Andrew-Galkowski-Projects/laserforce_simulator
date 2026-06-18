@@ -64,6 +64,11 @@ def _resolve_fixture_map(
         rng = random.Random(seed_str)
         chosen_id = rng.choice(pool_ids)
         return pool_by_id.get(chosen_id)
+    if mode == "rotate_by_matchday":
+        ids = season.starting_map_rotation_ids_json or []
+        if not ids:
+            return None
+        return pool_by_id.get(ids[fixture.matchday % len(ids)])
     raise ValueError(f"Unknown map_mode: {mode!r}")
 
 
@@ -227,8 +232,12 @@ def play_season_task(
             # the per-fixture loop (single ORM query regardless of
             # ``len(to_play)``). ``in_bulk`` on an empty list is a no-op
             # returning an empty dict.
-            pool_ids = season.starting_map_pool_ids_json or []
-            pool_by_id: dict[int, ArenaMap] = ArenaMap.objects.in_bulk(pool_ids)
+            # SUB-01 — UNION of the pool snapshot and the rotation snapshot so
+            # ``rotate_by_matchday`` resolves its maps from the same bulk-load.
+            pool_by_id: dict[int, ArenaMap] = ArenaMap.objects.in_bulk(
+                (season.starting_map_pool_ids_json or [])
+                + (season.starting_map_rotation_ids_json or [])
+            )
 
             for k, (phase_id, fixture) in enumerate(to_play):
                 team_a = team_by_id[fixture.team_a_id]

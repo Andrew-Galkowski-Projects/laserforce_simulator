@@ -911,6 +911,7 @@ class Season(models.Model):
         ("none", "3-zone fallback"),
         ("single", "Single map"),
         ("random_per_round", "Random per Round"),
+        ("rotate_by_matchday", "Rotate by matchday"),
     )
 
     league = models.ForeignKey(
@@ -951,6 +952,14 @@ class Season(models.Model):
         related_name="seasons_using_pool",
     )
     starting_map_pool_ids_json = models.JSONField(null=True, blank=True, default=None)
+    # SUB-01 — author-ordered Season-level arena-map rotation list (live) +
+    # its activation snapshot. Used by the ``rotate_by_matchday`` map mode;
+    # author order is PRESERVED (NOT id-sorted) in both, since the matchday
+    # index keys directly into the ordered list.
+    map_rotation_ids_json = models.JSONField(null=True, blank=True, default=None)
+    starting_map_rotation_ids_json = models.JSONField(
+        null=True, blank=True, default=None
+    )
 
     def __str__(self) -> str:
         return f"{self.league.name} — {self.name}"
@@ -1002,6 +1011,9 @@ class Season(models.Model):
         # determinism). Empty pool ⇒ ``[]`` (NOT ``None``); ``None``
         # remains the pre-activation sentinel.
         self.starting_map_pool_ids_json = sorted(m.id for m in self.map_pool.all())
+        # SUB-01 — snapshot the rotation list at activation, author order
+        # PRESERVED (``list(...)``, NOT ``sorted(...)``). Empty/None ⇒ ``[]``.
+        self.starting_map_rotation_ids_json = list(self.map_rotation_ids_json or [])
         self.state = "active"
         self.save()
         # LG-02-Part2c-3c — a FIRST-phase mid-season tournament
