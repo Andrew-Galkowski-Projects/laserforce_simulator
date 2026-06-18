@@ -1377,3 +1377,131 @@ class TestPlaySeasonTaskSharedBudget(TestCase):
         self.assertIsNotNone(tp.tournament.champion_id)
         self.assertEqual(season.state, "completed")
         self.assertEqual(season.champion_team_id, tp.tournament.champion_id)
+
+
+# ===========================================================================
+# SUB-01 piece 1 — play_season_task over a rotate_by_matchday Season
+# ===========================================================================
+#
+# Seam contract (APPROVED):
+#   - rotate branch of ``_resolve_fixture_map``:
+#       ids = season.starting_map_rotation_ids_json or []
+#       empty ⇒ None; else pool_by_id.get(ids[fixture.matchday % len(ids)])
+#       NO RNG; keyed on matchday ALONE; missing id ⇒ None via .get.
+#   - the play loop bulk-loads
+#       pool_by_id = ArenaMap.objects.in_bulk(
+#           (starting_map_pool_ids_json or []) + (starting_map_rotation_ids_json or [])
+#       )
+#     so a rotate Season (empty pool snapshot, non-empty rotation snapshot)
+#     still resolves its rotation ids through the union in_bulk.
+#
+# Asserts on the MAP ATTRIBUTION (``GameRound.arena_map_id``) per matchday —
+# NEVER on simulated point totals. Runs under the EAGER conftest.
+
+
+class TestPlaySeasonTaskRotateByMatchday(TestCase):
+    """SUB-01 — each persisted Round's ``arena_map_id`` equals
+    ``ids[matchday % len(ids)]`` for that Round's fixture matchday."""
+
+    def _make_active_rotate_season(
+        self, prefix: str, *, rotation_ids: list[int], n_teams: int = 2
+    ):
+        """Active Season carrying a ``rotate_by_matchday`` snapshot (the LG-01j
+        fixture pattern — set the rotate config + author-order rotation
+        snapshot AFTER ``start_season()``; pool snapshot empty for rotate)."""
+        season, teams = _active_season(prefix, n_teams=n_teams)
+        season.map_mode = "rotate_by_matchday"
+        season.starting_map_rotation_ids_json = list(rotation_ids)
+        season.starting_map_pool_ids_json = []
+        season.save()
+        season.refresh_from_db()
+        return season, teams
+
+    def _matchday_by_fixture_key(self, season) -> dict:
+        out = {}
+        for f in season.scheduled_fixtures():
+            out[(frozenset({f.team_a_id, f.team_b_id}), f.round_number)] = f.matchday
+        return out
+
+    def test_each_round_arena_map_matches_rotation_index(self) -> None:
+        from matches.tasks import play_season_task
+
+        ms = [_lg01j_make_arena_map(f"RotPlay{i}") for i in range(3)]
+        rotation_ids = [ms[0].id, ms[1].id, ms[2].id]
+        season, _teams = self._make_active_rotate_season(
+            "RotPlay", rotation_ids=rotation_ids, n_teams=4
+        )
+        md_by_key = self._matchday_by_fixture_key(season)
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_season_task.delay(season.id, max_matchdays=None)
+        self.assertEqual(result.state, "SUCCESS")
+
+        rounds = GameRound.objects.filter(match__season=season).select_related("match")
+        self.assertGreater(rounds.count(), 0)
+        for gr in rounds:
+            m = gr.match
+            key = (frozenset({m.team_red_id, m.team_blue_id}), gr.round_number)
+            matchday = md_by_key[key]
+            expected_id = rotation_ids[matchday % len(rotation_ids)]
+            self.assertEqual(
+                gr.arena_map_id,
+                expected_id,
+                f"round (matchday={matchday}) arena_map_id={gr.arena_map_id!r} "
+                f"!= rotation ids[{matchday} % {len(rotation_ids)}]={expected_id!r}",
+            )
+
+    def test_union_in_bulk_resolves_rotation_ids(self) -> None:
+        """A rotate Season has an EMPTY pool snapshot and a NON-empty rotation
+        snapshot. The union ``in_bulk`` must still resolve the rotation ids —
+        every persisted Round gets a non-NULL arena_map."""
+        from matches.tasks import play_season_task
+
+        ms = [_lg01j_make_arena_map(f"RotUnion{i}") for i in range(2)]
+        rotation_ids = [ms[0].id, ms[1].id]
+        season, _teams = self._make_active_rotate_season(
+            "RotUnion", rotation_ids=rotation_ids, n_teams=2
+        )
+        self.assertEqual(season.starting_map_pool_ids_json, [])
+        self.assertEqual(season.starting_map_rotation_ids_json, rotation_ids)
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(season.id, max_matchdays=None)
+
+        for gr in GameRound.objects.filter(match__season=season):
+            self.assertIn(
+                gr.arena_map_id,
+                rotation_ids,
+                "rotate Round resolved to a map outside the rotation "
+                "(union in_bulk did not load the rotation ids)",
+            )
+
+    def test_simulate_scheduled_round_receives_rotation_map_kwarg(self) -> None:
+        """Every ``simulate_scheduled_round`` call carries an ``arena_map=``
+        from the rotation (never None for a non-empty rotation)."""
+        from matches.tasks import play_season_task
+
+        ms = [_lg01j_make_arena_map(f"RotKwarg{i}") for i in range(3)]
+        rotation_ids = [m.id for m in ms]
+        season, _teams = self._make_active_rotate_season(
+            "RotKwarg", rotation_ids=rotation_ids, n_teams=4
+        )
+        original_sim = BatchSimulator.simulate_scheduled_round
+        captured: list = []
+
+        def _spy(self_, season_, team_a, team_b, round_number, **kwargs):
+            captured.append(kwargs.get("arena_map"))
+            return original_sim(self_, season_, team_a, team_b, round_number, **kwargs)
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            with patch.object(BatchSimulator, "simulate_scheduled_round", _spy):
+                play_season_task.delay(season.id, max_matchdays=None)
+
+        self.assertGreater(len(captured), 0)
+        for arena_map in captured:
+            self.assertIsNotNone(
+                arena_map,
+                "rotate_by_matchday with a non-empty rotation should never "
+                "pass arena_map=None",
+            )
+            self.assertIn(arena_map.id, rotation_ids)

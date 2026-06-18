@@ -220,6 +220,13 @@ class CreateLeagueForm(forms.Form):
         ),
         label="Map pool",
     )
+    # SUB-01 — hidden author-ordered rotation list (comma-joined ArenaMap ids
+    # in row order). The create.html rotation composer serializes the ordered
+    # rows into this field; ``clean()`` parses + validates it.
+    map_rotation = forms.CharField(
+        widget=forms.HiddenInput(attrs={"id": "league-create-map-rotation"}),
+        required=False,
+    )
     # FIN-01 — per-League team finance toggle (default OFF). Gates the whole
     # finance subsystem ON TOP of career mode.
     finance_enabled = forms.BooleanField(
@@ -276,34 +283,111 @@ class CreateLeagueForm(forms.Form):
         mode = cleaned_data.get("map_mode")
         if mode is None:
             return cleaned_data
+        # SUB-01 — order-preserving parse of the rotation wire string into an
+        # ordered list[int] (NOT sorted). Validate every id is a confirmed map.
+        rotation_ids: list[int] = []
+        raw_rotation = cleaned_data.get("map_rotation", "") or ""
+        valid_map_ids = set(_maps_with_confirmed_config().values_list("id", flat=True))
+        for token in raw_rotation.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            try:
+                map_id = int(token)
+            except (TypeError, ValueError):
+                self.add_error(
+                    "map_rotation",
+                    forms.ValidationError("Map rotation contains an invalid id."),
+                )
+                continue
+            if map_id not in valid_map_ids:
+                self.add_error(
+                    "map_rotation",
+                    forms.ValidationError("Map rotation contains an unknown map id."),
+                )
+                continue
+            rotation_ids.append(map_id)
+        cleaned_data["map_rotation_ids"] = rotation_ids
         pool = cleaned_data.get("map_pool") or []
         pool_count = len(pool)
-        if mode == "none" and pool_count > 0:
-            raise forms.ValidationError(
-                {
-                    "map_pool": (
-                        "Map pool must be empty when Map mode is " "'3-zone fallback'."
-                    )
-                }
-            )
-        if mode == "single" and pool_count != 1:
-            raise forms.ValidationError(
-                {
-                    "map_pool": (
-                        "Map pool must contain exactly 1 map when Map "
-                        "mode is 'Single map'."
-                    )
-                }
-            )
-        if mode == "random_per_round" and pool_count < 1:
-            raise forms.ValidationError(
-                {
-                    "map_pool": (
-                        "Map pool must contain at least 1 map when Map "
-                        "mode is 'Random per Round'."
-                    )
-                }
-            )
+        rotation_count = len(cleaned_data.get("map_rotation_ids") or [])
+        # SUB-01 — full 4×2 mode-vs-(pool, rotation) cross-guard matrix.
+        if mode == "none":
+            if pool_count > 0:
+                raise forms.ValidationError(
+                    {
+                        "map_pool": (
+                            "Map pool must be empty when Map mode is "
+                            "'3-zone fallback'."
+                        )
+                    }
+                )
+            if rotation_count > 0:
+                raise forms.ValidationError(
+                    {
+                        "map_rotation": (
+                            "Map rotation must be empty when Map mode is "
+                            "'3-zone fallback'."
+                        )
+                    }
+                )
+        if mode == "single":
+            if pool_count != 1:
+                raise forms.ValidationError(
+                    {
+                        "map_pool": (
+                            "Map pool must contain exactly 1 map when Map "
+                            "mode is 'Single map'."
+                        )
+                    }
+                )
+            if rotation_count > 0:
+                raise forms.ValidationError(
+                    {
+                        "map_rotation": (
+                            "Map rotation must be empty when Map mode is "
+                            "'Single map'."
+                        )
+                    }
+                )
+        if mode == "random_per_round":
+            if pool_count < 1:
+                raise forms.ValidationError(
+                    {
+                        "map_pool": (
+                            "Map pool must contain at least 1 map when Map "
+                            "mode is 'Random per Round'."
+                        )
+                    }
+                )
+            if rotation_count > 0:
+                raise forms.ValidationError(
+                    {
+                        "map_rotation": (
+                            "Map rotation must be empty when Map mode is "
+                            "'Random per Round'."
+                        )
+                    }
+                )
+        if mode == "rotate_by_matchday":
+            if pool_count > 0:
+                raise forms.ValidationError(
+                    {
+                        "map_pool": (
+                            "Map pool must be empty when Map mode is "
+                            "'Rotate by matchday'."
+                        )
+                    }
+                )
+            if rotation_count < 1:
+                raise forms.ValidationError(
+                    {
+                        "map_rotation": (
+                            "Map rotation must contain at least 1 map when Map "
+                            "mode is 'Rotate by matchday'."
+                        )
+                    }
+                )
         return cleaned_data
 
 

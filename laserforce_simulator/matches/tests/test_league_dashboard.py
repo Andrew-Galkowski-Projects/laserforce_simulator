@@ -800,3 +800,71 @@ class TestLg01iDashboardEntry(TestCase):
         self.assertFalse(ctx["live_preview_available"])
         body = self._body(league)
         self.assertNotIn('id="league-dashboard-play-one-week-live"', body)
+
+
+# ===========================================================================
+# SUB-01 piece 1 — rotate_by_matchday 5th label branch on the LEAGUE dashboard
+# ===========================================================================
+#
+# Seam contract (APPROVED): ``_build_map_config_label`` (or the inline
+# ``_build_dashboard_context`` ladder) gains a 5th branch —
+#   "Map: Rotating (N maps: a, b, c)" in AUTHOR order
+#   empty ⇒ "Map: Rotating (no maps)"
+# draft reads the LIVE ``map_rotation_ids_json``; active/completed read the
+# ``starting_map_rotation_ids_json`` snapshot. Rendered inside the existing
+# ``league-dashboard-map-config`` DOM id.
+#
+# WILL fail until the Code agent lands the rotate label branch.
+
+
+class TestLg_Sub01LeagueDashboardRotateLabel(TestCase):
+    """SUB-01 — the rotate_by_matchday label branch on the league dashboard."""
+
+    _DOM_ID = "league-dashboard-map-config"
+
+    def _get_body(self, league: League) -> str:
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertEqual(response.status_code, 200)
+        return response.content.decode()
+
+    def test_draft_reads_live_rotation_in_author_order(self) -> None:
+        """A DRAFT rotate Season reads the LIVE ``map_rotation_ids_json``
+        and renders the names in AUTHOR order (NOT sorted)."""
+        league = _make_league("SubLgRotDraft")
+        season, _ = _make_draft_season(league, n_teams=2)
+        m_a = _lg01j_arena_map("Alpha")
+        m_b = _lg01j_arena_map("Bravo")
+        m_c = _lg01j_arena_map("Charlie")
+        season.map_mode = "rotate_by_matchday"
+        # Author order: Charlie, Alpha, Bravo — NOT alphabetical, NOT id-sorted.
+        season.map_rotation_ids_json = [m_c.id, m_a.id, m_b.id]
+        season.save()
+        body = self._get_body(league)
+        self.assertIn("Map: Rotating (3 maps: Charlie, Alpha, Bravo)", body)
+
+    def test_active_reads_snapshot_in_author_order(self) -> None:
+        """An ACTIVE rotate Season reads the
+        ``starting_map_rotation_ids_json`` snapshot (author order)."""
+        league = _make_league("SubLgRotActive")
+        season, _ = _make_draft_season(league, n_teams=2)
+        m_a = _lg01j_arena_map("AlphaA")
+        m_b = _lg01j_arena_map("BravoA")
+        season.map_mode = "rotate_by_matchday"
+        season.start_season()
+        # Snapshot in author order (Bravo, Alpha) — set post-activation
+        # directly (mirrors the LG-01j fixture pattern).
+        season.starting_map_rotation_ids_json = [m_b.id, m_a.id]
+        season.save()
+        body = self._get_body(league)
+        self.assertIn("Map: Rotating (2 maps: BravoA, AlphaA)", body)
+
+    def test_empty_rotation_renders_no_maps(self) -> None:
+        league = _make_league("SubLgRotEmpty")
+        season, _ = _make_draft_season(league, n_teams=2)
+        season.map_mode = "rotate_by_matchday"
+        season.map_rotation_ids_json = []
+        season.save()
+        body = self._get_body(league)
+        self.assertIn("Map: Rotating (no maps)", body)
+        # Still inside the existing map-config DOM id.
+        self.assertIn(f'id="{self._DOM_ID}"', body)

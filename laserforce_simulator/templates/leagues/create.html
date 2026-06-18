@@ -104,6 +104,28 @@
             {{ form.map_pool.errors }}
         </div>
 
+        {# SUB-01 -- vanilla-JS rotation composer. Writes the ordered map ids #}
+        {# into the hidden #league-create-map-rotation field (comma-joined). #}
+        <div class="mb-3">
+            <label class="form-label">Map rotation</label>
+            <div id="league-create-map-rotation-composer"></div>
+            <button type="button" id="league-create-add-map"
+                    class="btn btn-outline-secondary btn-sm mt-2">+ Add map</button>
+            <div class="form-text">
+                Author-ordered rotation, used when Map mode is
+                "Rotate by matchday". A Round's map is
+                <code>rotation[matchday % len(rotation)]</code> — keyed on the
+                matchday alone, fully deterministic.
+            </div>
+            {{ form.map_rotation }}
+            {{ form.map_rotation.errors }}
+        </div>
+        <script id="league-create-confirmed-maps" type="application/json">[
+            {% for m in form.map_pool.field.queryset %}
+                {"id": {{ m.id }}, "name": "{{ m.name|escapejs }}"}{% if not forloop.last %},{% endif %}
+            {% endfor %}
+        ]</script>
+
         <div class="mb-3 form-check">
             {{ form.finance_enabled }}
             <label for="league-create-finance-enabled" class="form-check-label">Enable team finances</label>
@@ -430,6 +452,87 @@
     // Seed one default round_robin row so an unmodified submit composes a
     // single round-robin phase (the Part2a default).
     buildRow();
+    serialize();
+})();
+
+// SUB-01 -- vanilla-JS map-rotation composer. Each "+ Add map" appends a row
+// with a map <select>; serialize() writes the ordered ids (row order) into the
+// hidden #league-create-map-rotation input as a comma-joined string.
+(function () {
+    "use strict";
+
+    var composer = document.getElementById("league-create-map-rotation-composer");
+    var addBtn = document.getElementById("league-create-add-map");
+    var hidden = document.getElementById("league-create-map-rotation");
+    var form = document.getElementById("league-create-form");
+    var dataEl = document.getElementById("league-create-confirmed-maps");
+    if (!composer || !addBtn || !hidden || !form || !dataEl) {
+        return;
+    }
+
+    var maps = [];
+    try {
+        maps = JSON.parse(dataEl.textContent);
+    } catch (e) {
+        maps = [];
+    }
+
+    var rowSeq = 0;
+
+    function buildRow() {
+        var i = rowSeq++;
+
+        var row = document.createElement("div");
+        row.id = "league-create-map-rotation-row-" + i;
+        row.className = "map-rotation-row card card-body mb-2";
+
+        var select = document.createElement("select");
+        select.id = "league-create-map-rotation-select-" + i;
+        select.className = "map-rotation-select form-select mb-2";
+        select.setAttribute("aria-label", "Rotation map");
+        for (var m = 0; m < maps.length; m++) {
+            var opt = document.createElement("option");
+            opt.value = maps[m].id;
+            opt.textContent = maps[m].name;
+            select.appendChild(opt);
+        }
+        select.addEventListener("change", serialize);
+
+        var removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "map-rotation-remove btn btn-outline-danger btn-sm";
+        removeBtn.textContent = "Remove";
+        removeBtn.addEventListener("click", function () {
+            composer.removeChild(row);
+            serialize();
+        });
+
+        row.appendChild(select);
+        row.appendChild(removeBtn);
+        composer.appendChild(row);
+        return row;
+    }
+
+    function serialize() {
+        var rows = composer.querySelectorAll(".map-rotation-row");
+        var ids = [];
+        for (var k = 0; k < rows.length; k++) {
+            var sel = rows[k].querySelector(".map-rotation-select");
+            if (sel && sel.value !== "") {
+                ids.push(sel.value);
+            }
+        }
+        hidden.value = ids.join(",");
+    }
+
+    addBtn.addEventListener("click", function () {
+        buildRow();
+        serialize();
+    });
+
+    form.addEventListener("submit", serialize);
+
+    // No default row -- the rotation list is empty unless the user adds maps.
     serialize();
 })();
 </script>

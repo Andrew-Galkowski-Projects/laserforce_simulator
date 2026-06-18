@@ -962,6 +962,9 @@ def league_create(request) -> HttpResponse:
         schedule_format=cleaned["schedule_format"],
         # LG-01j — persist the picked map_mode at create-League time.
         map_mode=cleaned["map_mode"],
+        # SUB-01 — persist the author-ordered rotation list (empty for
+        # every mode except ``rotate_by_matchday``).
+        map_rotation_ids_json=cleaned["map_rotation_ids"],
     )
     season.teams.add(*created_teams)
     # LG-01j — materialise the M2M map_pool rows in the same atomic
@@ -1563,6 +1566,21 @@ def _build_map_config_label(
         if not names:
             return "Map: Random per Round (no maps)"
         return f"Map: Random per Round ({len(names)} maps: {', '.join(names)})"
+
+    if mode == "rotate_by_matchday":
+        # SUB-01 — the rotation reads its OWN snapshot (active/completed) or
+        # live list (draft), in AUTHOR order (NOT alphabetical).
+        if season_mode in ("active", "completed"):
+            ids = displayed_season.starting_map_rotation_ids_json or []
+        else:
+            ids = displayed_season.map_rotation_ids_json or []
+        names_by_id = dict(
+            ArenaMap.objects.filter(id__in=ids).values_list("id", "name")
+        )
+        names = [names_by_id[i] for i in ids if i in names_by_id]
+        if not names:
+            return "Map: Rotating (no maps)"
+        return f"Map: Rotating ({len(names)} maps: {', '.join(names)})"
 
     # Defensive fallback — an unknown enum value (admin-side raw write)
     # surfaces as the 3-zone label rather than crashing the dashboard.
@@ -2540,8 +2558,12 @@ def play_week(request, season_id: int) -> HttpResponse:
             }
             team_by_id = Team.objects.in_bulk(team_ids)
             # LG-01j — bulk-load the frozen-snapshot map pool once.
-            pool_ids = season.starting_map_pool_ids_json or []
-            pool_by_id: dict[int, ArenaMap] = ArenaMap.objects.in_bulk(pool_ids)
+            # SUB-01 — UNION the pool snapshot with the rotation snapshot so the
+            # ``rotate_by_matchday`` mode resolves its maps from the same load.
+            pool_by_id: dict[int, ArenaMap] = ArenaMap.objects.in_bulk(
+                (season.starting_map_pool_ids_json or [])
+                + (season.starting_map_rotation_ids_json or [])
+            )
             for phase_id, fixture in to_play:
                 team_a = team_by_id[fixture.team_a_id]
                 team_b = team_by_id[fixture.team_b_id]
@@ -2775,8 +2797,10 @@ def play_week_live(request, season_id: int) -> HttpResponse:
             from core.models import ArenaMap
             from matches.tasks import _resolve_fixture_map
 
+            # SUB-01 — UNION pool + rotation snapshots for the map resolver.
             pool_by_id = ArenaMap.objects.in_bulk(
-                season.starting_map_pool_ids_json or []
+                (season.starting_map_pool_ids_json or [])
+                + (season.starting_map_rotation_ids_json or [])
             )
             arena_map = _resolve_fixture_map(season, cursor["fixture"], pool_by_id)
             # FIN-04 — roll injuries / resolve rosters in memory before the
@@ -3652,6 +3676,13 @@ def _run_season_rollover(league: League, latest_completed: Season) -> Season:
     map_pool_ids = latest_completed.starting_map_pool_ids_json or []
     if map_pool_ids:
         new_season.map_pool.set(ArenaMap.objects.filter(id__in=map_pool_ids))
+
+    # SUB-01 — carry the previous Season's author-ordered rotation list
+    # forward verbatim (no re-sort).
+    new_season.map_rotation_ids_json = list(
+        latest_completed.map_rotation_ids_json or []
+    )
+    new_season.save(update_fields=["map_rotation_ids_json"])
 
     # LG-02-Part2b — carry the previous Season's full phase composition
     # forward (mirrors the team-id / map-pool carry-forward). Copy
