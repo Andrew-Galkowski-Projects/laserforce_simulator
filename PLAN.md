@@ -272,13 +272,71 @@ injury/availability`. Tests: `matches/tests/test_injury.py` (NEW, pure-unit incl
 restore, rollover reset, byte-identical-OFF, `health_cost`→`profit`) + `test_finance_screens.py` (EXTEND —
 the `budget_health` / `injury_policy` POST + the new DOM ids + the availability display).
 
-### FIN-05 · Luxury-tax challenge-mode firing
+### FIN-05 · [DONE] Luxury-tax challenge-mode firing
 
 Re-opens the ZenGM **luxury-tax challenge-mode firing** CAR-02 and FIN-01 both deferred: an optional
 per-League rule that fires the Manager outright whenever they pay the luxury tax in a completed Season
 (independent of cumulative owner mood). FIN-01 ships the luxury-tax **expense line** that makes the trigger
 computable but **not** the firing rule itself. Mirrors ZenGM's `challengeFiredLuxuryTax` game attribute
 (default off). Depends on **FIN-01** (the payroll + luxury-tax model) and on the CAR-02 firing lifecycle.
+
+**Status: DONE.** Lands the deferred **luxury-tax challenge fire** — an **optional per-League rule**
+(`League.challenge_fired_luxury_tax`, default off, **set at create only, no mid-League edit surface**) that
+fires the Manager **outright** any completed Season their Current team pays the luxury tax, **independent of
+cumulative owner mood** — the faithful analogue of ZenGM's `challengeFiredLuxuryTax`. It **respects the same
+Grace period** as mood firing (no luxury fire during grace) and is **checked FIRST inside the past-grace
+gate** so it takes precedence over the mood verdict. The firing **reason** is persisted immutably on the
+`OwnerEvaluation` row and surfaced as a distinct flavour line on the owner-evaluation screen. **No simulator
+change → NO Score Calibration re-baseline.** **Silently inert** when team finances are OFF (no
+`TeamSeasonFinance` row ⇒ nothing to fire on) or outside career mode (the writer early-returns, the CAR-03
+posture) — **no cross-field form validation** (a toggle on a non-finance League is harmless).
+
+**Locked seam.** The decision stays in the single pure decider: `matches/owner_mood.py::decide_verdict` gains
+**two keyword-only bools, both `default False`** — `luxury_tax_paid` and `challenge_fired_luxury_tax` — and a
+**new branch placed FIRST inside the existing `past_grace` block, BEFORE the mood `total <= FIRE_THRESHOLD`
+check**: `if past_grace and challenge_fired_luxury_tax and luxury_tax_paid: return Verdict("fired", 0)`. The
+mood / hot-seat / retained branches are **byte-unchanged**, only shifted down; the default-`False` bools mean
+**zero blast radius** on every existing caller. The module stays **Django-free** (the two new params are plain
+bools, no new import — the frozen `dataclasses`/`typing`/`collections` allowlist holds, `TestNoDjangoImportsLeaked`
+stays green) and the frozen `Verdict` dataclass is **UNCHANGED** (no `fired_reason` on the pure seam — the
+reason is persisted by the writer, never carried through the decider). The firing reason lands on a NEW
+**`OwnerEvaluation.fired_reason`** (`CharField(max_length=16, choices=FIRED_REASON_CHOICES, default="")`;
+choices `""` / `"owner_mood"` / `"luxury_tax"`; legacy pre-FIN-05 fired rows default `""` and render as the
+mood message) plus the NEW **`League.challenge_fired_luxury_tax`** (`BooleanField(default=False)`), both
+shipped in **`matches/migrations/0053_fin05_luxury_tax_firing.py`** (2× `AddField`, dep
+`0052_teamseasonfinance_health_cost`, **no `RunPython`/backfill** — the ADR-0004 disposable-data posture).
+The writer **`_ensure_owner_evaluations`** **reuses the existing per-Season `tsf` lookup** FIN-01 already
+fetches for the money axis (`luxury_tax_paid = tsf is not None and tsf.luxury_tax > 0`), passes both bools
+into `decide_verdict`, reconstructs `fired_reason` from the same inputs (`"luxury_tax"` on a challenge fire,
+else `"owner_mood"` on any other fire, else `""`), and stamps it into the existing
+`OwnerEvaluation.objects.get_or_create(... defaults={...})` block — and on a challenge fire **still records the
+`wins`/`playoffs`/`money` deltas and cap-chains the cumulative totals exactly as today** (the challenge only
+flips `verdict.outcome` → `"fired"` and `fired_reason` → `"luxury_tax"`; nothing about the factor math, the
+running totals, or the tenure derivation changes). **`next_season` is UNCHANGED** — a challenge fire produces
+`verdict == "fired"` and routes to `new_team_picker` by the existing reason-independent gate. The create form
+gains a **`CreateLeagueForm.challenge_fired_luxury_tax`** toggle (DOM id `league-create-challenge-luxury-tax`,
+no `clean()` change) threaded through `league_create`'s `League.objects.create(...)`, and the eval screen
+gains a distinct **fired-reason flavour element** (DOM id `owner-evaluation-fired-reason`) keyed on
+`evaluation.fired_reason` read straight off the row (no new context key — CONTEXT.md forbids recomputing a past
+evaluation from current state).
+
+**Scope-out (locked).** **No mid-League edit surface** for the toggle (create-time only). **No cross-field form
+validation** (a toggle on a non-finance League is silently inert). **No `Verdict.fired_reason`** on the pure
+seam (the reason is persisted on the row, never carried through `decide_verdict`). **No re-derivation of
+`fired_reason`** from current state (stamped at write time, read back verbatim). **No `next_season` code
+change.** **No simulator change → NO Score Calibration re-baseline.** **No backfill / `RunPython`.** **No new
+ADR** (FIN-05 Consequences addendum on [ADR-0026](docs/adr/0026-manager-firing-owner-mood.md)). **No new
+CONTEXT.md term.** Seam contract:
+[`.claude/worktrees/fin-05-luxury-tax-firing-seam-contract.md`](.claude/worktrees/fin-05-luxury-tax-firing-seam-contract.md);
+impl note in [`matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) `## FIN-05 luxury-tax challenge-mode
+firing`. Tests (all **extended**, not new files): `matches/tests/test_owner_mood.py` (challenge precedence
+over mood, grace suppression, both-bools-required, default-off byte-identical, `TestNoDjangoImportsLeaked`) +
+`test_owner_evaluation_model.py` (`fired_reason` default `""` + the three choices; `League.challenge_fired_luxury_tax`
+default `False`) + `test_owner_evaluations_writer.py` (`fired_reason` values across challenge / mood / retained;
+mood-recorded-normally on a challenge fire; **finance-OFF inert** byte-identical; **non-career inert**) +
+`test_league_next_season.py` (challenge-fired → picker, no new Season) + `test_league_create.py` (the toggle
+persists + the DOM id renders) + `test_owner_evaluation_view.py` (the `owner-evaluation-fired-reason` flavour
+for `luxury_tax` vs `owner_mood`/legacy `""` vs no element when not fired).
 
 ### SUB-01 · Sub-leagues + per-sub-league rotating map pools
 

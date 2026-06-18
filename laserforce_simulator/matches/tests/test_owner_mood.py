@@ -375,6 +375,214 @@ class TestDecideVerdict(SimpleTestCase):
 
 
 # ===========================================================================
+# FIN-05 — TestDecideVerdictLuxuryChallenge (the luxury-tax challenge branch)
+# ===========================================================================
+#
+# Seam contract `.claude/worktrees/fin-05-luxury-tax-firing-seam-contract.md`
+# §1 / §7.1. `decide_verdict` gains two keyword-only bools (both default
+# `False`): `luxury_tax_paid` and `challenge_fired_luxury_tax`. The new branch
+# is placed FIRST inside the existing `past_grace` block — it takes precedence
+# over the mood-fire / hot-seat checks but is gated by the SAME grace period.
+#
+# Pure-unit over `decide_verdict` ONLY (no DB). Appended as NEW classes; no
+# existing class above is modified. These WILL fail until the Code agent lands
+# the two new params + the branch — the TDD red state.
+
+
+class TestDecideVerdictLuxuryChallenge(SimpleTestCase):
+    """The FIN-05 luxury-tax challenge fire: gated by grace, precedence over
+    mood, both bools required, and falls through to the mood path otherwise."""
+
+    def test_challenge_precedence_fires_above_mood_threshold(self) -> None:
+        # Mood is well ABOVE the fire threshold (would otherwise be retained),
+        # past grace, both challenge bools True ⇒ the luxury rule fires outright.
+        totals = _totals(wins=0.8)  # total +0.8 (>> -1, mood would retain)
+        deltas = _deltas(wins=0.1)  # safe projections too
+        v = decide_verdict(
+            totals,
+            deltas,
+            seasons_in_tenure=5,
+            luxury_tax_paid=True,
+            challenge_fired_luxury_tax=True,
+        )
+        self.assertEqual(v, Verdict("fired", 0))
+
+    def test_grace_suppresses_luxury_fire(self) -> None:
+        # SAME bools but inside the grace period ⇒ NOT fired by the luxury rule.
+        # The grace-gated path returns the mood verdict, which is retained here
+        # (mood is safely positive).
+        totals = _totals(wins=0.8)
+        deltas = _deltas(wins=0.1)
+        for tenure in (1, GRACE_PERIOD_SEASONS):  # 1 and 2
+            v = decide_verdict(
+                totals,
+                deltas,
+                seasons_in_tenure=tenure,
+                luxury_tax_paid=True,
+                challenge_fired_luxury_tax=True,
+            )
+            self.assertEqual(v, Verdict("retained", 0), f"tenure={tenure}")
+
+    def test_grace_boundary_is_strictly_past_for_luxury(self) -> None:
+        # At exactly GRACE_PERIOD_SEASONS the luxury fire is suppressed; one
+        # past it the gate opens (mirrors the mood-fire grace boundary).
+        totals = _totals(wins=0.8)
+        deltas = _deltas(wins=0.1)
+        self.assertEqual(
+            decide_verdict(
+                totals,
+                deltas,
+                seasons_in_tenure=GRACE_PERIOD_SEASONS,
+                luxury_tax_paid=True,
+                challenge_fired_luxury_tax=True,
+            ),
+            Verdict("retained", 0),
+        )
+        self.assertEqual(
+            decide_verdict(
+                totals,
+                deltas,
+                seasons_in_tenure=GRACE_PERIOD_SEASONS + 1,
+                luxury_tax_paid=True,
+                challenge_fired_luxury_tax=True,
+            ),
+            Verdict("fired", 0),
+        )
+
+    def test_both_bools_required_toggle_on_no_tax_paid(self) -> None:
+        # challenge_fired_luxury_tax=True but luxury_tax_paid=False ⇒ no luxury
+        # fire; falls through to the mood path (retained for a safe mood).
+        totals = _totals(wins=0.8)
+        deltas = _deltas(wins=0.1)
+        v = decide_verdict(
+            totals,
+            deltas,
+            seasons_in_tenure=5,
+            luxury_tax_paid=False,
+            challenge_fired_luxury_tax=True,
+        )
+        self.assertEqual(v, Verdict("retained", 0))
+
+    def test_both_bools_required_tax_paid_but_toggle_off(self) -> None:
+        # luxury_tax_paid=True but challenge_fired_luxury_tax=False ⇒ no luxury
+        # fire; falls through to the mood path (retained for a safe mood).
+        totals = _totals(wins=0.8)
+        deltas = _deltas(wins=0.1)
+        v = decide_verdict(
+            totals,
+            deltas,
+            seasons_in_tenure=5,
+            luxury_tax_paid=True,
+            challenge_fired_luxury_tax=False,
+        )
+        self.assertEqual(v, Verdict("retained", 0))
+
+    def test_luxury_off_still_fires_on_mood(self) -> None:
+        # With the challenge bools off, a sunk mood past grace still mood-fires
+        # exactly as today — the luxury branch never reached.
+        totals = _totals(wins=-1.5)  # total -1.5 <= -1
+        deltas = _deltas()
+        v = decide_verdict(
+            totals,
+            deltas,
+            seasons_in_tenure=5,
+            luxury_tax_paid=True,  # paid, but toggle off ⇒ no luxury fire
+            challenge_fired_luxury_tax=False,
+        )
+        self.assertEqual(v, Verdict("fired", 0))
+
+    def test_keyword_only_bools(self) -> None:
+        # The two new params are keyword-only — passing extra positional args
+        # (past the two positional totals/deltas) raises TypeError because
+        # seasons_in_tenure is itself keyword-only, so nothing positional can
+        # follow.
+        totals = _totals()
+        deltas = _deltas()
+        with self.assertRaises(TypeError):
+            decide_verdict(totals, deltas, True, True)  # type: ignore[misc]
+
+
+# ===========================================================================
+# FIN-05 — TestDecideVerdictDefaultOffByteIdentical (the zero-blast-radius)
+# ===========================================================================
+#
+# Seam contract §1 / §7.1 default-off byte-identical: calling `decide_verdict`
+# with NEITHER new bool yields the SAME `Verdict` as the pre-FIN-05 decider
+# across a small mood / hot-seat / retained matrix. We pin this by re-deriving
+# the expected verdict from the SAME byte-unchanged mood/hot-seat formula and
+# asserting the live `decide_verdict` (no new kwargs) matches.
+
+
+def _expected_pre_fin05_verdict(totals, deltas, *, seasons_in_tenure) -> Verdict:
+    """The pre-FIN-05 mood/hot-seat decider, reconstructed from the locked
+    formula (seam contract §1). Used to pin that the live decider is
+    byte-identical when neither new bool is passed."""
+    total = totals.wins + totals.playoffs + totals.money
+    delta = deltas.wins + deltas.playoffs + deltas.money
+    past_grace = seasons_in_tenure > GRACE_PERIOD_SEASONS
+    if past_grace and total <= FIRE_THRESHOLD:
+        return Verdict("fired", 0)
+    if past_grace and total + delta < FIRE_THRESHOLD:
+        return Verdict("hot_seat", 1)
+    if past_grace and total + 2 * delta < FIRE_THRESHOLD:
+        return Verdict("hot_seat", 2)
+    return Verdict("retained", 0)
+
+
+class TestDecideVerdictDefaultOffByteIdentical(SimpleTestCase):
+    """Default-off (neither new bool) is byte-identical to the pre-FIN-05
+    decider across fired / hot-seat 1 / hot-seat 2 / retained, in and out of
+    grace."""
+
+    # (totals_kwargs, deltas_kwargs, seasons_in_tenure) — representative triples
+    # spanning every outcome.
+    MATRIX = (
+        # fired: past grace, total <= -1
+        (dict(wins=-1.2), dict(), 5),
+        # hot_seat 1: total above -1, total + delta < -1
+        (dict(wins=-0.9), dict(wins=-0.3), 3),
+        # hot_seat 2: total + delta >= -1, total + 2*delta < -1
+        (dict(wins=-0.8), dict(wins=-0.15), 3),
+        # retained past grace: no projection trips
+        (dict(wins=0.5), dict(wins=0.1), 5),
+        # retained inside grace: sunk mood but tenure <= grace
+        (dict(wins=-2.0), dict(wins=-0.5), 1),
+        (dict(wins=-2.0), dict(wins=-0.5), GRACE_PERIOD_SEASONS),
+        # boundary: fired exactly at -1
+        (dict(wins=-1.0), dict(), 3),
+    )
+
+    def test_no_new_bool_matches_pre_fin05_across_matrix(self) -> None:
+        for t_kw, d_kw, tenure in self.MATRIX:
+            totals = _totals(**t_kw)
+            deltas = _deltas(**d_kw)
+            expected = _expected_pre_fin05_verdict(
+                totals, deltas, seasons_in_tenure=tenure
+            )
+            got = decide_verdict(totals, deltas, seasons_in_tenure=tenure)
+            self.assertEqual(
+                got,
+                expected,
+                f"default-off drift: totals={t_kw} deltas={d_kw} tenure={tenure}",
+            )
+
+    def test_explicit_false_false_also_byte_identical(self) -> None:
+        # Passing the two new bools explicitly as False must equal omitting them.
+        for t_kw, d_kw, tenure in self.MATRIX:
+            totals = _totals(**t_kw)
+            deltas = _deltas(**d_kw)
+            omitted = decide_verdict(totals, deltas, seasons_in_tenure=tenure)
+            explicit = decide_verdict(
+                totals,
+                deltas,
+                seasons_in_tenure=tenure,
+                luxury_tax_paid=False,
+                challenge_fired_luxury_tax=False,
+            )
+            self.assertEqual(omitted, explicit, f"{t_kw} {d_kw} {tenure}")
+
+
+# ===========================================================================
 # §6.1 — TestNoDjangoImportsLeaked
 # ===========================================================================
 

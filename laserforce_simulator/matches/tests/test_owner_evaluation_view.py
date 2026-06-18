@@ -396,3 +396,101 @@ class TestOwnerEvaluationPastSeasonBrowsable(TestCase):
         _add_win(season, team, opp)
         response = self.client.get(_url(season))
         self.assertIsNone(response.context["sidebar_active"])
+
+
+# ---------------------------------------------------------------------------
+# FIN-05 — TestOwnerEvaluationFiredReasonFlavour
+# ---------------------------------------------------------------------------
+#
+# Seam contract `.claude/worktrees/fin-05-luxury-tax-firing-seam-contract.md`
+# §6 / §7.6: the eval screen renders a distinct flavour element (DOM id
+# ``owner-evaluation-fired-reason``) keyed on ``evaluation.fired_reason``:
+#   - ``"luxury_tax"`` ⇒ the luxury-tax flavour (stable substring "luxury tax")
+#   - ``"owner_mood"`` AND legacy ``""`` ⇒ the mood-firing message
+#   - a non-fired (retained / hot_seat) eval ⇒ NO fired-reason element
+#
+# We hand-write the eval row to pin the verdict + fired_reason deterministically
+# (the writer's idempotent get_or_create leaves it untouched). Appended as a NEW
+# class; no existing class above is modified. These WILL fail until the Code
+# agent lands the model field + the template flavour element — the TDD red state.
+
+
+def _write_eval_with_reason(
+    league, season, team, *, verdict, fired_reason="", hot_seat_level=0
+):
+    return OwnerEvaluation.objects.create(
+        league=league,
+        season=season,
+        team_managed=team,
+        wins_delta=0.1,
+        playoffs_delta=0.2,
+        wins_total=0.3,
+        playoffs_total=0.4,
+        verdict=verdict,
+        hot_seat_level=hot_seat_level,
+        fired_reason=fired_reason,
+    )
+
+
+class TestOwnerEvaluationFiredReasonFlavour(TestCase):
+    """The ``owner-evaluation-fired-reason`` flavour element keyed on
+    ``fired_reason``."""
+
+    def _setup(self, *, verdict, fired_reason="", hot_seat_level=0):
+        team = _make_team("FrFlavT")
+        opp = _make_team("FrFlavO")
+        league = _make_league("FrFlavL", current_team=team)
+        season = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[team.id, opp.id],
+        )
+        _add_win(season, team, opp)
+        _write_eval_with_reason(
+            league,
+            season,
+            team,
+            verdict=verdict,
+            fired_reason=fired_reason,
+            hot_seat_level=hot_seat_level,
+        )
+        return league, season, team
+
+    def test_luxury_tax_renders_luxury_flavour(self) -> None:
+        _league, season, _team = self._setup(
+            verdict="fired", fired_reason="luxury_tax"
+        )
+        response = self.client.get(_url(season))
+        self.assertContains(response, 'id="owner-evaluation-fired-reason"')
+        # Stable substring of the luxury-tax flavour (case-insensitive guard).
+        self.assertIn("luxury tax", response.content.decode().lower())
+
+    def test_owner_mood_renders_mood_message(self) -> None:
+        _league, season, _team = self._setup(
+            verdict="fired", fired_reason="owner_mood"
+        )
+        response = self.client.get(_url(season))
+        self.assertContains(response, 'id="owner-evaluation-fired-reason"')
+        # The mood message is NOT the luxury-tax flavour.
+        self.assertNotIn("luxury tax", response.content.decode().lower())
+
+    def test_legacy_empty_reason_renders_mood_message(self) -> None:
+        # A pre-FIN-05 fired row defaults fired_reason="" and renders as the
+        # mood message (the template treats "" and "owner_mood" identically).
+        _league, season, _team = self._setup(verdict="fired", fired_reason="")
+        response = self.client.get(_url(season))
+        self.assertContains(response, 'id="owner-evaluation-fired-reason"')
+        self.assertNotIn("luxury tax", response.content.decode().lower())
+
+    def test_retained_renders_no_fired_reason_element(self) -> None:
+        _league, season, _team = self._setup(verdict="retained")
+        response = self.client.get(_url(season))
+        self.assertNotContains(response, 'id="owner-evaluation-fired-reason"')
+
+    def test_hot_seat_renders_no_fired_reason_element(self) -> None:
+        _league, season, _team = self._setup(
+            verdict="hot_seat", hot_seat_level=1
+        )
+        response = self.client.get(_url(season))
+        self.assertNotContains(response, 'id="owner-evaluation-fired-reason"')

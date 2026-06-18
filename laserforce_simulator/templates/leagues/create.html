@@ -115,6 +115,17 @@
             {{ form.finance_enabled.errors }}
         </div>
 
+        <div class="mb-3 form-check">
+            {{ form.challenge_fired_luxury_tax }}
+            <label for="league-create-challenge-luxury-tax" class="form-check-label">Fire on luxury tax</label>
+            <div class="form-text">
+                When on, the owner fires the manager outright any season the
+                team pays the luxury tax — independent of cumulative mood.
+                Only takes effect with team finances enabled.
+            </div>
+            {{ form.challenge_fired_luxury_tax.errors }}
+        </div>
+
         {% if form.non_field_errors %}
             <div class="alert alert-danger">{{ form.non_field_errors }}</div>
         {% endif %}

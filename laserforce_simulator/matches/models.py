@@ -870,6 +870,11 @@ class League(models.Model):
     # TeamSeasonFinance rows, Player.salary stays None). An ADDITIONAL gate
     # ON TOP of _is_career_league(league).
     finance_enabled = models.BooleanField(default=False)
+    # FIN-05 — luxury-tax challenge-mode firing. When ON, the owner fires the
+    # Manager outright any Season their Current team pays the luxury tax,
+    # independent of cumulative owner mood. Create-time only; inert unless
+    # finances are enabled.
+    challenge_fired_luxury_tax = models.BooleanField(default=False)
 
     def __str__(self) -> str:
         return self.name
@@ -1607,6 +1612,15 @@ class OwnerEvaluation(models.Model):
         ("fired", "Fired"),
     )
 
+    # FIN-05 — why a "fired" verdict was reached. "" (legacy / pre-FIN-05 rows
+    # and non-fired rows) and "owner_mood" both render as the mood-firing
+    # message; "luxury_tax" renders the distinct luxury-tax message.
+    FIRED_REASON_CHOICES = (
+        ("", ""),
+        ("owner_mood", "Owner mood"),
+        ("luxury_tax", "Luxury tax"),
+    )
+
     league = models.ForeignKey(
         "matches.League", on_delete=models.CASCADE, related_name="owner_evaluations"
     )
@@ -1633,6 +1647,9 @@ class OwnerEvaluation(models.Model):
 
     verdict = models.CharField(max_length=16, choices=VERDICT_CHOICES)
     hot_seat_level = models.PositiveSmallIntegerField(default=0)  # 0 / 1 / 2
+    fired_reason = models.CharField(
+        max_length=16, choices=FIRED_REASON_CHOICES, default=""
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
 

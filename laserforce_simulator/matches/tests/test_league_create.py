@@ -1802,3 +1802,76 @@ class TestFin03CreateSeedsBudgets(TestCase):
             self.assertEqual(team.budget_scouting, 34)
             self.assertEqual(team.budget_coaching, 34)
             self.assertEqual(team.budget_facilities, 34)
+
+
+# ===========================================================================
+# FIN-05 — TestCreateLeagueChallengeLuxuryTax
+# ===========================================================================
+#
+# Seam contract `.claude/worktrees/fin-05-luxury-tax-firing-seam-contract.md`
+# §5 / §7.5: ``CreateLeagueForm`` gains ``challenge_fired_luxury_tax``
+# (BooleanField, required=False, DOM id ``league-create-challenge-luxury-tax``);
+# a checked POST persists ``League.challenge_fired_luxury_tax=True``; the DOM id
+# renders on the create form; default (unchecked) ⇒ ``False``.
+#
+# Appended as a NEW class; no existing class above is modified. These WILL fail
+# until the Code agent lands the form field + the view wiring + the template
+# row — the TDD red state.
+
+
+from matches.forms import CreateLeagueForm as _Fin05CreateLeagueForm  # noqa: E402
+
+
+class TestCreateLeagueChallengeLuxuryTax(TestCase):
+    """The ``challenge_fired_luxury_tax`` create-form field + persistence + the
+    DOM id."""
+
+    def test_form_has_challenge_field(self) -> None:
+        self.assertIn(
+            "challenge_fired_luxury_tax", _Fin05CreateLeagueForm().fields
+        )
+
+    def test_challenge_field_not_required(self) -> None:
+        self.assertFalse(
+            _Fin05CreateLeagueForm().fields["challenge_fired_luxury_tax"].required
+        )
+
+    def test_unchecked_payload_is_valid_and_false(self) -> None:
+        form = _Fin05CreateLeagueForm(data=_valid_payload())
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertFalse(form.cleaned_data["challenge_fired_luxury_tax"])
+
+    def test_checked_payload_is_valid_and_true(self) -> None:
+        form = _Fin05CreateLeagueForm(
+            data=_valid_payload(challenge_fired_luxury_tax="on")
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertTrue(form.cleaned_data["challenge_fired_luxury_tax"])
+
+    def test_dom_id_rendered(self) -> None:
+        response = self.client.get(reverse("league_create"))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            'id="league-create-challenge-luxury-tax"',
+            response.content.decode(),
+        )
+
+    def test_checked_post_persists_true(self) -> None:
+        response = self.client.post(
+            reverse("league_create"),
+            data=_valid_payload(
+                league_name="ChalOnLeague", challenge_fired_luxury_tax="on"
+            ),
+        )
+        self.assertEqual(response.status_code, 302)
+        league = League.objects.get(name="ChalOnLeague")
+        self.assertTrue(league.challenge_fired_luxury_tax)
+
+    def test_unchecked_post_persists_false(self) -> None:
+        response = self.client.post(
+            reverse("league_create"),
+            data=_valid_payload(league_name="ChalOffLeague"),
+        )
+        self.assertEqual(response.status_code, 302)
+        league = League.objects.get(name="ChalOffLeague")
+        self.assertFalse(league.challenge_fired_luxury_tax)

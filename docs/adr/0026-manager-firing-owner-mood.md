@@ -51,3 +51,39 @@ Seasons. Source spec: `Screenshots_and_video_examples/firing_rules/firing_rules.
 - CAR-03 will gate firing to single-player career (`league`) mode; in the deferred
   `multiplayer` mode each user is locked to their team (no firing), mirroring ZenGM's
   "skip the whole system in multi-team mode."
+
+## FIN-05 addendum — luxury-tax challenge fire (a second, mood-independent trigger)
+
+FIN-05 lights up the **luxury-tax challenge-mode firing** this ADR's "Considered options"
+deferred (it needed the finance subsystem FIN-01 ships). The firing decision now has a
+**second trigger**: an optional per-League rule (`League.challenge_fired_luxury_tax`,
+default off, set at League creation, never edited mid-League) that fires the Manager
+**outright any Season their Current team pays the luxury tax — independent of cumulative
+owner mood**, the faithful analogue of ZenGM's `challengeFiredLuxuryTax`.
+
+- **`decide_verdict` stays the single decider.** The mood-independent trigger is **not** a
+  second decision path — `matches/owner_mood.py::decide_verdict` gains two keyword-only
+  bools (`luxury_tax_paid`, `challenge_fired_luxury_tax`, both `default False`, so every
+  existing caller is byte-unchanged) and one new branch. The pure module stays Django-free
+  (plain bools, no new import) and the `Verdict` dataclass is unchanged (no `fired_reason`
+  on the seam).
+- **Checked first, but inside the same Grace-period gate.** The luxury-tax branch is the
+  FIRST check *inside* the existing `past_grace` block — so it **takes precedence over the
+  mood verdict** yet still **respects the Grace period** (no luxury firing during grace),
+  exactly as mood firing does. It does not bypass grace.
+- **The reason is persisted immutably.** Consistent with this ADR's rejection of recomputing
+  mood from current state, the firing *reason* is **stamped on the immutable per-(League,
+  Season) `OwnerEvaluation` row at write time** (`OwnerEvaluation.fired_reason`,
+  `""`/`"owner_mood"`/`"luxury_tax"`) and read back verbatim on the owner-evaluation screen —
+  never re-derived. Legacy pre-FIN-05 fired rows default `""` and render as the mood message.
+- **Mood is still recorded normally on a challenge fire.** The writer still computes the
+  *wins*/*playoffs*/*money* deltas and cap-chains the cumulative totals exactly as before;
+  the challenge only flips the verdict to *fired* and the reason to luxury-tax. `next_season`
+  is unchanged — a challenge fire is a `verdict == "fired"` and routes to the New Team picker
+  by the existing reason-independent gate.
+- **Inert finance-OFF / non-career.** With team finances OFF there is no `TeamSeasonFinance`
+  row, so `luxury_tax_paid` is `False` and the branch never fires (a toggle on a non-finance
+  League is silently harmless — no cross-field validation). Outside career mode the writer
+  early-returns and writes no evaluation at all (the CAR-03 posture). No simulator change ⇒
+  **no Score Calibration re-baseline**. One migration (two `AddField`s, no backfill — the
+  ADR-0004 disposable-data posture); **no new ADR** (this addendum records the consequence).

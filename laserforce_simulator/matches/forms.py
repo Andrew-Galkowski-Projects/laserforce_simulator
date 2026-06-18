@@ -228,6 +228,14 @@ class CreateLeagueForm(forms.Form):
         label="Enable team finances",
         widget=forms.CheckboxInput(attrs={"id": "league-create-finance-enabled"}),
     )
+    # FIN-05 — luxury-tax challenge-mode firing toggle (default OFF). Only takes
+    # effect with team finances enabled.
+    challenge_fired_luxury_tax = forms.BooleanField(
+        required=False,
+        initial=False,
+        label="Fire on luxury tax",
+        widget=forms.CheckboxInput(attrs={"id": "league-create-challenge-luxury-tax"}),
+    )
     # LG-02-Part2b — hidden composer serialization. The create.html JS
     # serializes the ordered phase rows into this field as a comma-joined
     # list of phase-type tokens; ``clean()`` parses it into phase specs.

@@ -1306,6 +1306,123 @@ class TestLg04NextSeasonAgeTick(TestCase):
             self.assertEqual(p.age, 31)
 
 
+# ---------------------------------------------------------------------------
+# FIN-05 — next_season verdict gate redirects a luxury-challenge-fired manager
+# ---------------------------------------------------------------------------
+#
+# Seam contract `.claude/worktrees/fin-05-luxury-tax-firing-seam-contract.md`
+# §4 / §7.4: a challenge fire produces verdict=="fired", which routes through
+# the UNCHANGED `next_season` gate exactly like a mood fire — a fired-and-
+# unreassigned Manager hitting `next_season` is redirected to `new_team_picker`
+# and NO new Season is created.
+#
+# The managed team must: be in a finance-ON + challenge-ON League, have paid the
+# luxury tax in the just-completed Season, and be past the 2-Season grace
+# period. We hand-construct the standings (team wins each Season ⇒ mood-safe so
+# ONLY the luxury rule can fire) + stamp `TeamSeasonFinance.luxury_tax > 0`
+# directly — NO real simulations for the firing assertion.
+#
+# Appended as a NEW class; no existing class above is modified. These WILL fail
+# until the Code agent lands the luxury wire — the TDD red state.
+
+
+from matches.models import (  # noqa: E402
+    GameRound as _Fin05GameRound,
+    Match as _Fin05Match,
+    TeamSeasonFinance as _Fin05TSF,
+)
+
+
+def _fin05_make_challenge_league(name, *, current_team):
+    return League.objects.create(
+        name=name,
+        mode="league",
+        state="active",
+        current_team=current_team,
+        finance_enabled=True,
+        challenge_fired_luxury_tax=True,
+    )
+
+
+def _fin05_add_win(season, team, opp):
+    """A dominant completed Match so the standings are well-defined; the managed
+    team wins (mood-safe ⇒ only the luxury rule can fire)."""
+    match = _Fin05Match.objects.create(
+        team_red=team,
+        team_blue=opp,
+        season=season,
+        red_round1_points=100,
+        blue_round1_points=1,
+        red_round2_points=100,
+        blue_round2_points=1,
+        is_completed=True,
+    )
+    _Fin05GameRound.objects.create(
+        match=match,
+        team_red=team,
+        team_blue=opp,
+        round_number=1,
+        red_points=100,
+        blue_points=1,
+        is_completed=True,
+    )
+    _Fin05GameRound.objects.create(
+        match=match,
+        team_red=opp,
+        team_blue=team,
+        round_number=2,
+        red_points=1,
+        blue_points=100,
+        is_completed=True,
+    )
+
+
+class TestFin05NextSeasonChallengeFireRedirectsToPicker(TestCase):
+    """A challenge-fired-and-unreassigned manager hitting next_season ⇒ 302 to
+    new_team_picker, no new Season created (same route as a mood fire)."""
+
+    def _setup(self) -> tuple[League, Season]:
+        team, _ = make_team_with_slots("Fin05NxtT")
+        opp, _ = make_team_with_slots("Fin05NxtO")
+        league = _fin05_make_challenge_league("Fin05NxtL", current_team=team)
+        team_ids = [team.id, opp.id]
+        seasons = []
+        # Three completed mood-safe Seasons ⇒ the manager is past the 2-Season
+        # grace at the latest Season.
+        for i in range(3):
+            s = Season.objects.create(
+                league=league,
+                name=f"Season {i + 1}",
+                start_date=date(2023 + i, 1, 1),
+                schedule_format="single_round_robin",
+                state="completed",
+                starting_team_ids_json=sorted(team_ids),
+            )
+            _fin05_add_win(s, team, opp)
+            seasons.append(s)
+        latest = seasons[-1]
+        # Managed team paid the luxury tax in the latest Season.
+        _Fin05TSF.objects.create(team=team, season=latest, luxury_tax=50_000.0)
+        return league, latest
+
+    def test_redirects_to_new_team_picker(self) -> None:
+        league, _latest = self._setup()
+        response = self.client.post(
+            reverse("next_season", kwargs={"league_id": league.id})
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            reverse("new_team_picker", kwargs={"league_id": league.id}),
+        )
+
+    def test_no_new_season_created(self) -> None:
+        league, _latest = self._setup()
+        pre_count = league.seasons.count()
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        self.assertEqual(league.seasons.count(), pre_count)
+
+
 class TestLg04NextSeasonStatRangeInvariants(TestCase):
     """Every developing-set Player's 19 live stat fields stay within [0,100]
     after development (range / clamp invariant — NOT exact values)."""
