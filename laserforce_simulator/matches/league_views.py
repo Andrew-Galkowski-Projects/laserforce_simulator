@@ -923,6 +923,8 @@ def league_create(request) -> HttpResponse:
         state="active",
         # FIN-01 — per-League finance toggle picked at create time.
         finance_enabled=cleaned["finance_enabled"],
+        # FIN-05 — luxury-tax challenge-mode firing toggle.
+        challenge_fired_luxury_tax=cleaned["challenge_fired_luxury_tax"],
     )
     # This League's dedicated free-agent pool Team. Hidden from
     # ``Team.objects.regular()`` via the ``free_agent_pool`` FK, so it
@@ -3531,6 +3533,10 @@ def _ensure_owner_evaluations(league: League, up_to_season: Season) -> None:
         # money_total at 0.0 exactly as today (byte-identical-when-OFF).
         money_delta = 0.0
         money_total = 0.0
+        # FIN-05 — whether the managed team paid the luxury tax this Season.
+        # Initialised False BEFORE the finance gate so a finance-OFF League
+        # leaves it False (no luxury fire possible).
+        luxury_tax_paid = False
         if league.finance_enabled and team_managed_id is not None:
             tsf = TeamSeasonFinance.objects.filter(
                 team_id=team_managed_id, season=season
@@ -3538,6 +3544,7 @@ def _ensure_owner_evaluations(league: League, up_to_season: Season) -> None:
             if tsf is not None:
                 money_delta = finance.money_delta(tsf.profit)
                 money_total = owner_mood.cap_cumulative(running_money, money_delta)
+                luxury_tax_paid = tsf.luxury_tax > 0
 
         wins_total = owner_mood.cap_cumulative(running_wins, wins_delta)
         playoffs_total = owner_mood.cap_cumulative(running_playoffs, playoffs_delta)
@@ -3550,6 +3557,20 @@ def _ensure_owner_evaluations(league: League, up_to_season: Season) -> None:
                 wins=wins_delta, playoffs=playoffs_delta, money=money_delta
             ),
             seasons_in_tenure=seasons_in_tenure,
+            luxury_tax_paid=luxury_tax_paid,
+            challenge_fired_luxury_tax=league.challenge_fired_luxury_tax,
+        )
+
+        # FIN-05 — reconstruct the firing reason from the same inputs the
+        # decider used; stamped on the immutable row, read back verbatim.
+        fired_reason = (
+            "luxury_tax"
+            if (
+                verdict.outcome == "fired"
+                and league.challenge_fired_luxury_tax
+                and luxury_tax_paid
+            )
+            else ("owner_mood" if verdict.outcome == "fired" else "")
         )
 
         OwnerEvaluation.objects.get_or_create(
@@ -3565,6 +3586,7 @@ def _ensure_owner_evaluations(league: League, up_to_season: Season) -> None:
                 "money_total": money_total,
                 "verdict": verdict.outcome,
                 "hot_seat_level": verdict.hot_seat_level,
+                "fired_reason": fired_reason,
             },
         )
 

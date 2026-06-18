@@ -31,6 +31,18 @@
             </div>
         {% endif %}
 
+        {% if evaluation.verdict == "fired" %}
+            {% if evaluation.fired_reason == "luxury_tax" %}
+                <div id="owner-evaluation-fired-reason" class="alert alert-danger">
+                    Fired for paying the luxury tax.
+                </div>
+            {% else %}
+                <div id="owner-evaluation-fired-reason" class="alert alert-danger">
+                    Fired by the owner — mood fell too low.
+                </div>
+            {% endif %}
+        {% endif %}
+
         <div class="table-responsive">
             <table class="table table-sm">
                 <thead>

@@ -119,7 +119,12 @@ def cap_cumulative(prev_cumulative: float, delta: float) -> float:
 
 
 def decide_verdict(
-    totals: MoodTotals, deltas: MoodDeltas, *, seasons_in_tenure: int
+    totals: MoodTotals,
+    deltas: MoodDeltas,
+    *,
+    seasons_in_tenure: int,
+    luxury_tax_paid: bool = False,
+    challenge_fired_luxury_tax: bool = False,
 ) -> Verdict:
     """The firing / hot-seat verdict (ZenGM-faithful, LOCKED).
 
@@ -130,10 +135,20 @@ def decide_verdict(
     fired; else the hot-seat projection — ``total + delta < -1`` ⇒ level 1 ("another
     season..."), ``total + 2*delta < -1`` ⇒ level 2 ("a couple more..."), with
     level 1 winning when both hold (checked first).
+
+    FIN-05 — the luxury-tax challenge fire is checked FIRST inside the same
+    past-grace gate: when the per-League ``challenge_fired_luxury_tax`` rule is on
+    and the managed team paid the luxury tax this Season (``luxury_tax_paid``), the
+    Manager is fired outright — independent of cumulative owner mood. Both params
+    default ``False`` so every existing caller gets exactly today's behaviour.
     """
     total = totals.wins + totals.playoffs + totals.money
     delta = deltas.wins + deltas.playoffs + deltas.money
     past_grace = seasons_in_tenure > GRACE_PERIOD_SEASONS
+
+    # FIN-05 — luxury-tax challenge fire, checked FIRST inside the same past-grace gate.
+    if past_grace and challenge_fired_luxury_tax and luxury_tax_paid:
+        return Verdict("fired", 0)
 
     if past_grace and total <= FIRE_THRESHOLD:
         return Verdict("fired", 0)
