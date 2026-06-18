@@ -326,3 +326,74 @@ class TestOwnerEvaluationRelatedNames(TestCase):
         team = _make_team("NoRev")
         # related_name="+" suppresses the reverse accessor.
         self.assertFalse(hasattr(team, "owner_evaluations"))
+
+
+# ---------------------------------------------------------------------------
+# FIN-05 — TestOwnerEvaluationFiredReason
+# ---------------------------------------------------------------------------
+#
+# Seam contract `.claude/worktrees/fin-05-luxury-tax-firing-seam-contract.md`
+# §2.1 / §7.2: `OwnerEvaluation.fired_reason` is a CharField with default `""`
+# and the three FIRED_REASON_CHOICES (`""`, `"owner_mood"`, `"luxury_tax"`).
+# Appended as a NEW class; no existing class above is modified.
+
+
+class TestOwnerEvaluationFiredReason(TestCase):
+    """``fired_reason`` default ``""`` + the three FIRED_REASON_CHOICES."""
+
+    def test_fired_reason_defaults_to_empty_string(self) -> None:
+        league = _make_league("FrDefaultL")
+        season = _make_season(league)
+        team = _make_team("FRD")
+        # Create WITHOUT specifying fired_reason — it must default to "".
+        ev = OwnerEvaluation.objects.create(
+            league=league,
+            season=season,
+            team_managed=team,
+            wins_delta=0.0,
+            playoffs_delta=0.0,
+            wins_total=0.0,
+            playoffs_total=0.0,
+            verdict="retained",
+        )
+        ev.refresh_from_db()
+        self.assertEqual(ev.fired_reason, "")
+
+    def test_fired_reason_choices_locked(self) -> None:
+        choices = dict(OwnerEvaluation._meta.get_field("fired_reason").choices)
+        self.assertEqual(set(choices), {"", "owner_mood", "luxury_tax"})
+
+    def test_each_fired_reason_value_persists(self) -> None:
+        league = _make_league("FrPersistL")
+        team = _make_team("FRP")
+        for i, reason in enumerate(("", "owner_mood", "luxury_tax")):
+            season = _make_season(league, name=f"Season {i + 1}")
+            ev = _make_eval(
+                league, season, team, verdict="fired", fired_reason=reason
+            )
+            ev.refresh_from_db()
+            self.assertEqual(ev.fired_reason, reason)
+
+
+# ---------------------------------------------------------------------------
+# FIN-05 — TestLeagueChallengeFiredLuxuryTax
+# ---------------------------------------------------------------------------
+#
+# Seam contract §2.2 / §7.2: `League.challenge_fired_luxury_tax` is a
+# BooleanField defaulting `False`. Appended as a NEW class.
+
+
+class TestLeagueChallengeFiredLuxuryTax(TestCase):
+    """``League.challenge_fired_luxury_tax`` default ``False``."""
+
+    def test_default_false(self) -> None:
+        league = League.objects.create(name="ChalDefaultL", mode="league")
+        league.refresh_from_db()
+        self.assertFalse(league.challenge_fired_luxury_tax)
+
+    def test_persists_true(self) -> None:
+        league = League.objects.create(
+            name="ChalTrueL", mode="league", challenge_fired_luxury_tax=True
+        )
+        league.refresh_from_db()
+        self.assertTrue(league.challenge_fired_luxury_tax)

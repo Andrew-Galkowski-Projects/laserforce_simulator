@@ -581,3 +581,255 @@ class TestClassifyPlayoffsForTeam(TestCase):
         self.assertEqual(
             _classify_playoffs_for_team(season, outsider.id), ("missed", 0, 1)
         )
+
+
+# ---------------------------------------------------------------------------
+# FIN-05 — luxury-tax challenge firing through the writer
+# ---------------------------------------------------------------------------
+#
+# Seam contract `.claude/worktrees/fin-05-luxury-tax-firing-seam-contract.md`
+# §3 / §7.3. The writer derives `luxury_tax_paid = tsf is not None and
+# tsf.luxury_tax > 0`, passes it + `league.challenge_fired_luxury_tax` into
+# `decide_verdict`, and stamps `fired_reason` on the row:
+#   - challenge fire (finance ON, toggle ON, luxury_tax > 0, past grace)
+#     ⇒ verdict="fired" + fired_reason="luxury_tax"
+#   - mood fire (no luxury tax, mood <= -1 past grace)
+#     ⇒ fired_reason="owner_mood"
+#   - retained / hot_seat ⇒ fired_reason=""
+#
+# A challenge fire still records the wins/playoffs/money deltas + cap-chained
+# totals (NOT zeroed). Finance OFF ⇒ no TeamSeasonFinance row ⇒ never a luxury
+# fire (byte-identical to a toggle-OFF run). Non-career ⇒ writer early-returns.
+#
+# Appended as NEW classes; no existing class above is modified. These WILL fail
+# until the Code agent lands the model field + the writer's luxury wire — the
+# TDD red state.
+
+
+from datetime import date as _fin05_date  # noqa: E402
+
+from matches import finance as _fin05_finance  # noqa: E402
+from matches.league_views import (  # noqa: E402
+    _ensure_owner_evaluations as _fin05_ensure,
+    _ensure_team_finances as _fin05_ensure_finances,
+)
+from matches.models import TeamSeasonFinance as _fin05_TSF  # noqa: E402
+
+
+def _fin05_make_league(
+    name: str, *, current_team=None, finance_enabled=True, challenge=True
+):
+    return League.objects.create(
+        name=name,
+        mode="league",
+        state="active",
+        current_team=current_team,
+        finance_enabled=finance_enabled,
+        challenge_fired_luxury_tax=challenge,
+    )
+
+
+def _fin05_completed_season(league, *, name, start_date, team_ids):
+    return Season.objects.create(
+        league=league,
+        name=name,
+        start_date=start_date,
+        schedule_format="single_round_robin",
+        state="completed",
+        starting_team_ids_json=sorted(team_ids),
+    )
+
+
+def _fin05_three_completed_seasons(league, team, opp, *, win=True):
+    """Three completed Seasons so the managed team is strictly PAST the 2-Season
+    grace period at the latest Season (`seasons_in_tenure == 3 > 2`). The
+    `win` flag controls whether `team` wins (mood-safe) or loses (mood-fire)
+    each Season."""
+    seasons = []
+    for i in range(3):
+        s = _fin05_completed_season(
+            league,
+            name=f"Season {i + 1}",
+            start_date=_fin05_date(2023 + i, 1, 1),
+            team_ids=[team.id, opp.id],
+        )
+        if win:
+            _add_match(s, team, opp, red_pts=100, blue_pts=1)  # team wins
+        else:
+            _add_match(s, opp, team, red_pts=100, blue_pts=1)  # team loses
+        seasons.append(s)
+    return seasons
+
+
+def _fin05_stamp_luxury_tax(team, season, *, amount):
+    """Hand-construct the managed team's TeamSeasonFinance row with a controlled
+    luxury_tax (write the row directly per the assertion-discipline rule — do
+    NOT run real simulations for the firing assertions)."""
+    tsf, _ = _fin05_TSF.objects.get_or_create(
+        team=team,
+        season=season,
+        defaults={"luxury_tax": amount},
+    )
+    tsf.luxury_tax = amount
+    tsf.save(update_fields=["luxury_tax"])
+    return tsf
+
+
+class TestFin05ChallengeFireWritesLuxuryReason(TestCase):
+    """A challenge fire ⇒ verdict="fired" + fired_reason="luxury_tax"."""
+
+    def test_challenge_fire_row(self) -> None:
+        team = _make_team("Fin05ChT")
+        opp = _make_team("Fin05ChO")
+        league = _fin05_make_league(
+            "Fin05ChL", current_team=team, finance_enabled=True, challenge=True
+        )
+        # team WINS each Season (mood is safe — only the luxury rule can fire).
+        seasons = _fin05_three_completed_seasons(league, team, opp, win=True)
+        latest = seasons[-1]
+        # Managed team paid the luxury tax in the latest Season.
+        _fin05_stamp_luxury_tax(team, latest, amount=50_000.0)
+
+        _fin05_ensure_finances(league, latest)
+        # Re-stamp after the finance writer (it may overwrite luxury_tax).
+        _fin05_stamp_luxury_tax(team, latest, amount=50_000.0)
+        _fin05_ensure(league, latest)
+
+        ev = OwnerEvaluation.objects.get(league=league, season=latest)
+        self.assertEqual(ev.verdict, "fired")
+        self.assertEqual(ev.fired_reason, "luxury_tax")
+
+    def test_challenge_fire_records_deltas_and_totals_not_zeroed(self) -> None:
+        # Mood-recorded-normally invariant (decision #6): a challenge fire still
+        # carries the computed wins/playoffs/money deltas + cap-chained totals.
+        team = _make_team("Fin05MoodT")
+        opp = _make_team("Fin05MoodO")
+        league = _fin05_make_league(
+            "Fin05MoodL", current_team=team, finance_enabled=True, challenge=True
+        )
+        seasons = _fin05_three_completed_seasons(league, team, opp, win=True)
+        latest = seasons[-1]
+        _fin05_stamp_luxury_tax(team, latest, amount=50_000.0)
+        _fin05_ensure_finances(league, latest)
+        _fin05_stamp_luxury_tax(team, latest, amount=50_000.0)
+        _fin05_ensure(league, latest)
+
+        ev = OwnerEvaluation.objects.get(league=league, season=latest)
+        self.assertEqual(ev.verdict, "fired")
+        # team won every Season ⇒ a positive wins delta (NOT zeroed by the fire).
+        self.assertGreater(ev.wins_delta, 0.0)
+        # cap-chained cumulative across the in-tenure Seasons (not zeroed).
+        self.assertGreater(ev.wins_total, 0.0)
+        self.assertLessEqual(ev.wins_total, MOOD_FACTOR_CAP + 1e-9)
+
+
+class TestFin05MoodFireWritesMoodReason(TestCase):
+    """A mood fire (no luxury tax, mood <= -1 past grace) ⇒
+    fired_reason="owner_mood"."""
+
+    def test_mood_fire_row(self) -> None:
+        team = _make_team("Fin05MdT")
+        opp = _make_team("Fin05MdO")
+        # Toggle ON but the team never pays the luxury tax ⇒ only mood can fire.
+        league = _fin05_make_league(
+            "Fin05MdL", current_team=team, finance_enabled=True, challenge=True
+        )
+        # team LOSES each Season ⇒ mood sinks below -1 past grace ⇒ mood fire.
+        seasons = _fin05_three_completed_seasons(league, team, opp, win=False)
+        latest = seasons[-1]
+        _fin05_ensure_finances(league, latest)
+        # Ensure no luxury tax for the managed team in any Season.
+        _fin05_TSF.objects.filter(team=team).update(luxury_tax=0.0)
+        _fin05_ensure(league, latest)
+
+        ev = OwnerEvaluation.objects.get(league=league, season=latest)
+        self.assertEqual(ev.verdict, "fired")
+        self.assertEqual(ev.fired_reason, "owner_mood")
+
+
+class TestFin05RetainedOrHotSeatWritesEmptyReason(TestCase):
+    """A retained / hot-seat row ⇒ fired_reason=""."""
+
+    def test_retained_row_empty_reason(self) -> None:
+        team = _make_team("Fin05RtT")
+        opp = _make_team("Fin05RtO")
+        league = _fin05_make_league(
+            "Fin05RtL", current_team=team, finance_enabled=True, challenge=True
+        )
+        # team WINS each Season ⇒ retained; no luxury tax stamped.
+        seasons = _fin05_three_completed_seasons(league, team, opp, win=True)
+        latest = seasons[-1]
+        _fin05_ensure_finances(league, latest)
+        _fin05_TSF.objects.filter(team=team).update(luxury_tax=0.0)
+        _fin05_ensure(league, latest)
+
+        ev = OwnerEvaluation.objects.get(league=league, season=latest)
+        self.assertEqual(ev.verdict, "retained")
+        self.assertEqual(ev.fired_reason, "")
+
+
+class TestFin05FinanceOffInert(TestCase):
+    """Toggle ON but `finance_enabled` OFF ⇒ no TeamSeasonFinance row ⇒ never a
+    luxury fire; the row set is byte-identical to a no-FIN-05 (toggle-OFF) run
+    with identical inputs."""
+
+    def _run(self, *, finance_enabled, challenge):
+        team = _make_team(
+            f"Fin05Off{int(finance_enabled)}{int(challenge)}T"
+        )
+        opp = _make_team(f"Fin05Off{int(finance_enabled)}{int(challenge)}O")
+        league = _fin05_make_league(
+            f"Fin05Off{int(finance_enabled)}{int(challenge)}L",
+            current_team=team,
+            finance_enabled=finance_enabled,
+            challenge=challenge,
+        )
+        # team WINS each Season ⇒ mood-safe; only a luxury fire could occur.
+        seasons = _fin05_three_completed_seasons(league, team, opp, win=True)
+        latest = seasons[-1]
+        # Stamp luxury tax ONLY makes sense with finance ON; with finance OFF the
+        # writer never reads a finance row, so stamping is harmless.
+        _fin05_ensure_finances(league, latest)
+        _fin05_ensure(league, latest)
+        return league, latest, team
+
+    def test_finance_off_never_luxury_fires(self) -> None:
+        league, latest, _team = self._run(finance_enabled=False, challenge=True)
+        ev = OwnerEvaluation.objects.get(league=league, season=latest)
+        # Mood-safe + no finance row ⇒ retained, empty reason, never luxury.
+        self.assertEqual(ev.verdict, "retained")
+        self.assertEqual(ev.fired_reason, "")
+
+    def test_finance_off_byte_identical_to_toggle_off(self) -> None:
+        # finance OFF + toggle ON vs finance OFF + toggle OFF must produce the
+        # same row shape (verdict + fired_reason + deltas/totals).
+        league_a, latest_a, _ta = self._run(finance_enabled=False, challenge=True)
+        league_b, latest_b, _tb = self._run(finance_enabled=False, challenge=False)
+        ev_a = OwnerEvaluation.objects.get(league=league_a, season=latest_a)
+        ev_b = OwnerEvaluation.objects.get(league=league_b, season=latest_b)
+        self.assertEqual(ev_a.verdict, ev_b.verdict)
+        self.assertEqual(ev_a.fired_reason, ev_b.fired_reason)
+        self.assertAlmostEqual(ev_a.wins_total, ev_b.wins_total, places=6)
+        self.assertAlmostEqual(ev_a.playoffs_total, ev_b.playoffs_total, places=6)
+        self.assertEqual(ev_a.money_delta, ev_b.money_delta)
+
+
+class TestFin05NonCareerInert(TestCase):
+    """`mode="multiplayer"` ⇒ writer early-returns, zero rows (CAR-03)."""
+
+    def test_multiplayer_writes_zero_rows(self) -> None:
+        team = _make_team("Fin05MpT")
+        opp = _make_team("Fin05MpO")
+        league = League.objects.create(
+            name="Fin05MpL",
+            mode="multiplayer",
+            state="active",
+            current_team=team,
+            finance_enabled=True,
+            challenge_fired_luxury_tax=True,
+        )
+        seasons = _fin05_three_completed_seasons(league, team, opp, win=True)
+        latest = seasons[-1]
+        _fin05_stamp_luxury_tax(team, latest, amount=50_000.0)
+        _fin05_ensure(league, latest)
+        self.assertEqual(OwnerEvaluation.objects.count(), 0)
