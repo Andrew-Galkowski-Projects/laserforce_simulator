@@ -450,15 +450,17 @@ class TestSeasonMapModeField(TestCase):
         field = Season._meta.get_field("map_mode")
         self.assertEqual(field.default, "none")
 
-    def test_field_choices_are_the_three_locked_tuples(self) -> None:
+    def test_field_choices_are_the_four_locked_tuples(self) -> None:
         field = Season._meta.get_field("map_mode")
-        # Locked at seam contract §3 + §13 Locked Names Index.
+        # SUB-01 widened the LG-01j 3-tuple to 4 by adding the
+        # ``rotate_by_matchday`` Season-level rotation mode.
         self.assertEqual(
             list(field.choices),
             [
                 ("none", "3-zone fallback"),
                 ("single", "Single map"),
                 ("random_per_round", "Random per Round"),
+                ("rotate_by_matchday", "Rotate by matchday"),
             ],
         )
 
@@ -705,3 +707,283 @@ class TestSeasonStartSeasonSnapshotsMapPool(TestCase):
         season.start_season()
         season.refresh_from_db()
         self.assertEqual(season.starting_map_pool_ids_json, sorted([m1.id, m2.id]))
+
+
+# ===========================================================================
+# SUB-01 piece 1 — Season-level ``rotate_by_matchday`` arena-map mode
+# ===========================================================================
+#
+# Seam contract (APPROVED, locked names):
+#   - ``Season.MAP_MODE_CHOICES`` gains
+#     ``("rotate_by_matchday", "Rotate by matchday")`` (now a 4-tuple).
+#   - New ``Season.map_rotation_ids_json`` (live, author order) +
+#     ``Season.starting_map_rotation_ids_json`` (snapshot, author order
+#     PRESERVED, NOT sorted), both ``JSONField(null=True, blank=True,
+#     default=None)``.
+#   - ``Season.start_season()`` snapshots
+#     ``starting_map_rotation_ids_json = list(map_rotation_ids_json or [])``
+#     (author order; empty/None ⇒ ``[]``; frozen after activation; the
+#     existing ``starting_map_pool_ids_json`` id-sorted snapshot unchanged).
+#   - ``matches.tasks._resolve_fixture_map`` rotate branch:
+#     ``ids = season.starting_map_rotation_ids_json or []``; empty ⇒ ``None``;
+#     else ``pool_by_id.get(ids[fixture.matchday % len(ids)])``; NO RNG;
+#     missing id (admin-deleted) ⇒ ``None`` via ``.get``. Keyed on matchday
+#     ALONE — fully deterministic.
+#
+# These WILL fail until the Code agent lands the production code — the
+# expected TDD red state.
+
+
+@dataclass
+class _RotateSeasonStub:
+    """Minimal Season duck-type for the rotate branch — exposes the 3 attrs
+    ``_resolve_fixture_map`` reads in the rotate path (``id``, ``map_mode``,
+    ``starting_map_rotation_ids_json``)."""
+
+    id: int
+    map_mode: str
+    starting_map_rotation_ids_json: list | None
+    starting_map_pool_ids_json: list | None = None
+
+
+def _rotate_season(
+    *,
+    id: int = 1,
+    starting_map_rotation_ids_json: list | None = None,
+) -> _RotateSeasonStub:
+    return _RotateSeasonStub(
+        id=id,
+        map_mode="rotate_by_matchday",
+        starting_map_rotation_ids_json=starting_map_rotation_ids_json,
+    )
+
+
+class TestResolveFixtureMapRotateByMatchday(unittest.TestCase):
+    """``mode == "rotate_by_matchday"`` ⇒ deterministic
+    ``ids[matchday % len(ids)]`` indexing, keyed on matchday ALONE, NO RNG."""
+
+    def _pool(self, ids: list[int]) -> dict[int, _MapStub]:
+        return {i: _MapStub(id=i, name=f"M{i}") for i in ids}
+
+    def test_empty_snapshot_returns_none(self) -> None:
+        season = _rotate_season(starting_map_rotation_ids_json=[])
+        self.assertIsNone(_resolve_fixture_map(season, _fixture(), {}))
+
+    def test_null_snapshot_returns_none(self) -> None:
+        season = _rotate_season(starting_map_rotation_ids_json=None)
+        self.assertIsNone(_resolve_fixture_map(season, _fixture(), {}))
+
+    def test_indexing_first_matchday(self) -> None:
+        ids = [10, 20, 30]
+        season = _rotate_season(starting_map_rotation_ids_json=ids)
+        result = _resolve_fixture_map(season, _fixture(matchday=0), self._pool(ids))
+        self.assertIsNotNone(result)
+        self.assertEqual(result.id, 10)
+
+    def test_indexing_across_several_matchdays(self) -> None:
+        ids = [10, 20, 30]
+        season = _rotate_season(starting_map_rotation_ids_json=ids)
+        pool = self._pool(ids)
+        for matchday, expected_id in [(0, 10), (1, 20), (2, 30), (3, 10), (4, 20)]:
+            result = _resolve_fixture_map(season, _fixture(matchday=matchday), pool)
+            self.assertEqual(
+                result.id,
+                expected_id,
+                f"matchday={matchday} ⇒ ids[{matchday} % 3] should be {expected_id}",
+            )
+
+    def test_wraparound_when_len_less_than_matchday(self) -> None:
+        ids = [7, 9]
+        season = _rotate_season(starting_map_rotation_ids_json=ids)
+        pool = self._pool(ids)
+        self.assertEqual(_resolve_fixture_map(season, _fixture(matchday=8), pool).id, 7)
+        self.assertEqual(_resolve_fixture_map(season, _fixture(matchday=9), pool).id, 9)
+
+    def test_single_id_always_returns_that_map(self) -> None:
+        season = _rotate_season(starting_map_rotation_ids_json=[42])
+        pool = self._pool([42])
+        for matchday in range(0, 6):
+            result = _resolve_fixture_map(season, _fixture(matchday=matchday), pool)
+            self.assertEqual(result.id, 42)
+
+    def test_keyed_on_matchday_alone_independent_of_round_and_teams(self) -> None:
+        ids = [10, 20, 30]
+        season = _rotate_season(starting_map_rotation_ids_json=ids)
+        pool = self._pool(ids)
+        a = _resolve_fixture_map(
+            season, _fixture(matchday=4, round_number=1, team_a_id=1, team_b_id=2), pool
+        )
+        b = _resolve_fixture_map(
+            season, _fixture(matchday=4, round_number=2, team_a_id=9, team_b_id=8), pool
+        )
+        self.assertIsNotNone(a)
+        self.assertEqual(a.id, b.id)
+        self.assertEqual(a.id, 20)
+
+    def test_no_rng_consumed_does_not_perturb_global_seed(self) -> None:
+        ids = [10, 20, 30]
+        season = _rotate_season(starting_map_rotation_ids_json=ids)
+        pool = self._pool(ids)
+        random.seed(42)
+        before = random.random()
+        random.seed(42)
+        for matchday in range(0, 5):
+            _resolve_fixture_map(season, _fixture(matchday=matchday), pool)
+        after = random.random()
+        self.assertEqual(
+            before,
+            after,
+            "rotate_by_matchday must consume NO RNG (no global-state perturbation)",
+        )
+
+    def test_chosen_id_absent_from_pool_returns_none(self) -> None:
+        ids = [10, 20, 30]
+        season = _rotate_season(starting_map_rotation_ids_json=ids)
+        pool = {10: _MapStub(id=10), 30: _MapStub(id=30)}  # id 20 missing
+        self.assertIsNone(_resolve_fixture_map(season, _fixture(matchday=1), pool))
+        self.assertEqual(
+            _resolve_fixture_map(season, _fixture(matchday=0), pool).id, 10
+        )
+
+
+class TestSeasonMapModeRotateChoice(TestCase):
+    """``Season.map_mode`` choices include the locked 4th tuple."""
+
+    def test_rotate_by_matchday_choice_present(self) -> None:
+        field = Season._meta.get_field("map_mode")
+        self.assertIn(("rotate_by_matchday", "Rotate by matchday"), list(field.choices))
+
+    def test_choices_are_the_four_locked_tuples(self) -> None:
+        field = Season._meta.get_field("map_mode")
+        self.assertEqual(
+            list(field.choices),
+            [
+                ("none", "3-zone fallback"),
+                ("single", "Single map"),
+                ("random_per_round", "Random per Round"),
+                ("rotate_by_matchday", "Rotate by matchday"),
+            ],
+        )
+
+    def test_full_clean_accepts_rotate_by_matchday(self) -> None:
+        league = _make_league("RotateAccept")
+        season = Season(
+            league=league,
+            name="S-rotate",
+            start_date=date(2026, 1, 1),
+            map_mode="rotate_by_matchday",
+        )
+        try:
+            season.full_clean()
+        except ValidationError as exc:
+            self.assertNotIn(
+                "map_mode",
+                exc.message_dict,
+                f"rotate_by_matchday unexpectedly rejected on map_mode: "
+                f"{exc.message_dict!r}",
+            )
+
+
+class TestSeasonMapRotationFields(TestCase):
+    """The two new rotation JSONFields — null/blank/default-None, accept a list."""
+
+    _FIELDS = ("map_rotation_ids_json", "starting_map_rotation_ids_json")
+
+    def test_both_fields_exist(self) -> None:
+        for name in self._FIELDS:
+            self.assertIsNotNone(Season._meta.get_field(name))
+
+    def test_both_fields_are_json_fields(self) -> None:
+        for name in self._FIELDS:
+            self.assertIsInstance(
+                Season._meta.get_field(name), django_models.JSONField, name
+            )
+
+    def test_both_fields_null_true(self) -> None:
+        for name in self._FIELDS:
+            self.assertTrue(Season._meta.get_field(name).null, name)
+
+    def test_both_fields_blank_true(self) -> None:
+        for name in self._FIELDS:
+            self.assertTrue(Season._meta.get_field(name).blank, name)
+
+    def test_both_fields_default_none(self) -> None:
+        for name in self._FIELDS:
+            self.assertIsNone(Season._meta.get_field(name).default, name)
+
+    def test_new_draft_season_has_none_rotation_fields(self) -> None:
+        league = _make_league("RotPreAct")
+        season, _ = _make_draft_season(league)
+        self.assertIsNone(season.map_rotation_ids_json)
+        self.assertIsNone(season.starting_map_rotation_ids_json)
+
+    def test_fields_accept_a_list(self) -> None:
+        league = _make_league("RotAcceptList")
+        season, _ = _make_draft_season(league)
+        season.map_rotation_ids_json = [30, 10, 20]
+        season.save()
+        season.refresh_from_db()
+        self.assertEqual(season.map_rotation_ids_json, [30, 10, 20])
+
+
+class TestSeasonStartSeasonSnapshotsMapRotation(TestCase):
+    """``start_season()`` snapshots ``starting_map_rotation_ids_json`` in
+    AUTHOR order (NOT sorted); empty/None ⇒ ``[]``; frozen after activation."""
+
+    def test_snapshot_preserves_author_order_not_sorted(self) -> None:
+        league = _make_league("RotSnapOrder")
+        season, _ = _make_draft_season(league)
+        season.map_rotation_ids_json = [30, 10, 20]  # NON-ascending
+        season.save()
+        season.start_season()
+        season.refresh_from_db()
+        self.assertEqual(season.starting_map_rotation_ids_json, [30, 10, 20])
+
+    def test_snapshot_empty_when_live_is_none(self) -> None:
+        league = _make_league("RotSnapNone")
+        season, _ = _make_draft_season(league)
+        season.start_season()
+        season.refresh_from_db()
+        self.assertEqual(season.starting_map_rotation_ids_json, [])
+
+    def test_snapshot_empty_when_live_is_empty_list(self) -> None:
+        league = _make_league("RotSnapEmpty")
+        season, _ = _make_draft_season(league)
+        season.map_rotation_ids_json = []
+        season.save()
+        season.start_season()
+        season.refresh_from_db()
+        self.assertEqual(season.starting_map_rotation_ids_json, [])
+
+    def test_snapshot_frozen_after_activation(self) -> None:
+        league = _make_league("RotSnapFrozen")
+        season, _ = _make_draft_season(league)
+        season.map_rotation_ids_json = [30, 10, 20]
+        season.save()
+        season.start_season()
+        snap_at_activation = list(season.starting_map_rotation_ids_json or [])
+        self.assertEqual(snap_at_activation, [30, 10, 20])
+        season.map_rotation_ids_json = [99, 98, 97]
+        season.save(update_fields=["map_rotation_ids_json"])
+        season.refresh_from_db()
+        self.assertEqual(season.starting_map_rotation_ids_json, [30, 10, 20])
+
+    def test_existing_pool_snapshot_still_id_sorted_alongside_rotation(self) -> None:
+        league = _make_league("RotPoolCoexist")
+        season, _ = _make_draft_season(league)
+        m_c = _make_arena_map("CoC")
+        m_a = _make_arena_map("CoA")
+        m_b = _make_arena_map("CoB")
+        season.map_pool.add(m_c, m_a, m_b)
+        season.map_rotation_ids_json = [m_c.id, m_a.id, m_b.id]
+        season.save()
+        season.start_season()
+        season.refresh_from_db()
+        # Pool snapshot: ascending by id (UNCHANGED rule).
+        self.assertEqual(
+            season.starting_map_pool_ids_json, sorted([m_a.id, m_b.id, m_c.id])
+        )
+        # Rotation snapshot: author order.
+        self.assertEqual(
+            season.starting_map_rotation_ids_json, [m_c.id, m_a.id, m_b.id]
+        )

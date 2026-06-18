@@ -1069,3 +1069,60 @@ class TestLg01iDashboardEntry(TestCase):
         self.assertFalse(ctx["live_preview_available"])
         body = self._body(season)
         self.assertNotIn('id="season-dashboard-play-one-week-live"', body)
+
+
+# ===========================================================================
+# SUB-01 piece 1 — rotate_by_matchday 5th label branch on the SEASON dashboard
+# ===========================================================================
+#
+# Seam contract (APPROVED): the 5th label branch renders
+#   "Map: Rotating (N maps: a, b, c)" in AUTHOR order
+#   empty ⇒ "Map: Rotating (no maps)"
+# inside the existing ``season-dashboard-map-config`` DOM id. Draft reads the
+# LIVE ``map_rotation_ids_json``; active/completed read the
+# ``starting_map_rotation_ids_json`` snapshot.
+#
+# WILL fail until the Code agent lands the rotate label branch.
+
+
+class TestLg_Sub01SeasonDashboardRotateLabel(TestCase):
+    """SUB-01 — the rotate_by_matchday label branch on the season dashboard."""
+
+    _DOM_ID = "season-dashboard-map-config"
+
+    def _get_body(self, season: Season) -> str:
+        response = self.client.get(reverse("season_dashboard", args=[season.id]))
+        self.assertEqual(response.status_code, 200)
+        return response.content.decode()
+
+    def test_draft_reads_live_rotation_in_author_order(self) -> None:
+        _league, season, _teams = _make_league_and_draft_season("SubSbRotDraft")
+        m_a = _lg01j_arena_map("AlphaD")
+        m_b = _lg01j_arena_map("BravoD")
+        m_c = _lg01j_arena_map("CharlieD")
+        season.map_mode = "rotate_by_matchday"
+        # Author order: Charlie, Alpha, Bravo.
+        season.map_rotation_ids_json = [m_c.id, m_a.id, m_b.id]
+        season.save()
+        body = self._get_body(season)
+        self.assertIn("Map: Rotating (3 maps: CharlieD, AlphaD, BravoD)", body)
+
+    def test_active_reads_snapshot_in_author_order(self) -> None:
+        _league, season, _teams = _make_league_and_draft_season("SubSbRotActive")
+        m_a = _lg01j_arena_map("AlphaS")
+        m_b = _lg01j_arena_map("BravoS")
+        season.map_mode = "rotate_by_matchday"
+        season.start_season()
+        season.starting_map_rotation_ids_json = [m_b.id, m_a.id]
+        season.save()
+        body = self._get_body(season)
+        self.assertIn("Map: Rotating (2 maps: BravoS, AlphaS)", body)
+
+    def test_empty_rotation_renders_no_maps(self) -> None:
+        _league, season, _teams = _make_league_and_draft_season("SubSbRotEmpty")
+        season.map_mode = "rotate_by_matchday"
+        season.map_rotation_ids_json = []
+        season.save()
+        body = self._get_body(season)
+        self.assertIn("Map: Rotating (no maps)", body)
+        self.assertIn(f'id="{self._DOM_ID}"', body)

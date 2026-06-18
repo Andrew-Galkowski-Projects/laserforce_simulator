@@ -764,6 +764,56 @@ class TestNextSeasonMapConfigCarryForward(TestCase):
 
 
 # ---------------------------------------------------------------------------
+# TestNextSeasonRotateByMatchdayCarryForward (SUB-01 piece 1)
+# ---------------------------------------------------------------------------
+#
+# Seam contract (APPROVED): ``next_season`` carries ``map_mode`` forward and
+# carries ``map_rotation_ids_json`` forward VERBATIM (author order PRESERVED,
+# NOT sorted) onto the new draft Season for a ``rotate_by_matchday`` source.
+#
+# Appended as a NEW class; no existing class is modified. WILL fail until the
+# Code agent lands the rotate-mode carry-forward + the rotation field.
+
+
+class TestNextSeasonRotateByMatchdayCarryForward(TestCase):
+    """SUB-01 — ``next_season`` carries ``map_mode="rotate_by_matchday"`` +
+    a NON-ascending ``map_rotation_ids_json`` forward verbatim."""
+
+    def _setup_completed_rotate(self, *, rotation_ids: list[int]) -> League:
+        league = _make_league("RotateCarryL")
+        teams = _make_teams("RotateCarry", 2)
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        prev.map_mode = "rotate_by_matchday"
+        prev.map_rotation_ids_json = rotation_ids
+        prev.starting_map_rotation_ids_json = list(rotation_ids)
+        prev.save()
+        return league
+
+    def test_rotation_ids_carried_forward_verbatim_author_order(self) -> None:
+        # NON-ascending author order — proves the carry preserves order.
+        rotation_ids = [30, 10, 20]
+        league = self._setup_completed_rotate(rotation_ids=rotation_ids)
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        self.assertEqual(new_season.map_mode, "rotate_by_matchday")
+        self.assertEqual(new_season.map_rotation_ids_json, rotation_ids)
+        # The new draft Season's pool stays empty (rotate-mode invariant).
+        self.assertEqual(new_season.map_pool.count(), 0)
+
+    def test_single_rotation_id_carried_forward(self) -> None:
+        league = self._setup_completed_rotate(rotation_ids=[42])
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        new_season = league.seasons.order_by("-id").first()
+        self.assertEqual(new_season.map_mode, "rotate_by_matchday")
+        self.assertEqual(new_season.map_rotation_ids_json, [42])
+
+
+# ---------------------------------------------------------------------------
 # LG-02-Part2a — next_season seeds one explicit round_robin SeasonPhase
 # ---------------------------------------------------------------------------
 #

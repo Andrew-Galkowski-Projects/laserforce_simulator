@@ -472,19 +472,19 @@ class TestLeagueCreateMapMode(TestCase):
         form = _Lg01jCreateLeagueForm()
         self.assertIn("map_mode", form.fields)
 
-    def test_map_mode_choices_match_three_locked_tuples(self) -> None:
+    def test_map_mode_choices_match_four_locked_tuples(self) -> None:
         form = _Lg01jCreateLeagueForm()
         choices = list(form.fields["map_mode"].choices)
-        # Choices come from the model field; locked at §3 + §13.
-        # Allow the Django default blank choice prefix to be omitted
-        # since ``required=True`` + ``initial="none"`` is the locked
-        # form definition (no blank choice).
+        # Choices come from the model field. SUB-01 widened the LG-01j
+        # 3-tuple to 4 with the ``rotate_by_matchday`` mode.
+        # ``required=True`` + ``initial="none"`` ⇒ no blank choice.
         self.assertEqual(
             choices,
             [
                 ("none", "3-zone fallback"),
                 ("single", "Single map"),
                 ("random_per_round", "Random per Round"),
+                ("rotate_by_matchday", "Rotate by matchday"),
             ],
         )
 
@@ -1827,9 +1827,7 @@ class TestCreateLeagueChallengeLuxuryTax(TestCase):
     DOM id."""
 
     def test_form_has_challenge_field(self) -> None:
-        self.assertIn(
-            "challenge_fired_luxury_tax", _Fin05CreateLeagueForm().fields
-        )
+        self.assertIn("challenge_fired_luxury_tax", _Fin05CreateLeagueForm().fields)
 
     def test_challenge_field_not_required(self) -> None:
         self.assertFalse(
@@ -1875,3 +1873,206 @@ class TestCreateLeagueChallengeLuxuryTax(TestCase):
         self.assertEqual(response.status_code, 302)
         league = League.objects.get(name="ChalOffLeague")
         self.assertFalse(league.challenge_fired_luxury_tax)
+
+
+# ===========================================================================
+# SUB-01 piece 1 — ``rotate_by_matchday`` create-League map mode
+# ===========================================================================
+#
+# Seam contract (APPROVED, locked):
+#   - ``CreateLeagueForm`` gains a hidden field ``map_rotation`` (widget id
+#     ``league-create-map-rotation``); ``clean()`` parses it order-preserving
+#     into ``cleaned_data["map_rotation_ids"]`` (ordered ``list[int]``),
+#     validating each id ∈ ``_maps_with_confirmed_config()``.
+#   - FULL 4×2 cross-guard matrix (mode ⇒ pool rule + rotation rule):
+#       none:               pool empty + rotation empty
+#       single:             pool == 1 + rotation empty
+#       random_per_round:   pool >= 1 + rotation empty
+#       rotate_by_matchday: pool EMPTY + rotation >= 1
+#   - ``league_create`` persists ``map_rotation_ids_json`` in AUTHOR order
+#     (+ ``map_pool`` empty) for a rotate_by_matchday create.
+#   - Composer DOM ids: league-create-map-rotation-composer /
+#     league-create-add-map / league-create-map-rotation-row-{i} /
+#     league-create-map-rotation-select-{i} / league-create-map-rotation (hidden).
+#
+# Error strings (assert on SUBSTRINGS to stay robust) — rotation rules:
+#   "Map rotation must be empty when Map mode is '3-zone fallback'." /
+#   "… 'Single map'." / "… 'Random per Round'." /
+#   "Map rotation must contain at least 1 map when Map mode is
+#    'Rotate by matchday'." — and the rotate-mode pool rule:
+#   "Map pool must be empty when Map mode is 'Rotate by matchday'."
+#
+# REAL form/view end-to-end (no mock of ``_generate_teams`` — the file's
+# precedent). ``map_rotation`` is posted as a comma-joined ordered id string
+# (the composer's serialized hidden-field wire-format); assertions stay on
+# persisted outcomes + error substrings. WILL fail until the Code agent lands
+# the form field + clean() + view persistence + template ids.
+
+
+def _rotation_wire(ids: list[int]) -> str:
+    """Serialize an ordered id list to the ``map_rotation`` hidden-field
+    wire-format (comma-joined, author order preserved)."""
+    return ",".join(str(i) for i in ids)
+
+
+class TestLeagueCreateRotateByMatchdayGet(TestCase):
+    """SUB-01 — the rotate composer DOM ids render on GET."""
+
+    def test_composer_dom_ids_present_on_get(self) -> None:
+        response = self.client.get(reverse("league_create"))
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode()
+        for dom_id in (
+            "league-create-map-rotation-composer",
+            "league-create-add-map",
+            "league-create-map-rotation",  # the hidden input
+        ):
+            self.assertIn(
+                f'id="{dom_id}"', body, f"missing rotate composer DOM id {dom_id!r}"
+            )
+
+
+class TestLeagueCreateRotateByMatchdayPersist(TestCase):
+    """SUB-01 — a ``rotate_by_matchday`` create persists
+    ``map_rotation_ids_json`` in AUTHOR order with ``map_pool`` empty."""
+
+    def test_post_persists_rotation_ids_in_author_order_pool_empty(self) -> None:
+        # Three confirmed-config maps; rotation order deliberately NON-ascending.
+        m_a = _lg01j_make_map_with_config("RotA")
+        m_b = _lg01j_make_map_with_config("RotB")
+        m_c = _lg01j_make_map_with_config("RotC")
+        author_order = [m_c.id, m_a.id, m_b.id]
+        payload = _valid_payload(map_mode="rotate_by_matchday", league_name="RotateOK")
+        payload["map_rotation"] = _rotation_wire(author_order)
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="RotateOK").seasons.first()
+        self.assertEqual(season.map_mode, "rotate_by_matchday")
+        # Author order PRESERVED (NOT sorted).
+        self.assertEqual(season.map_rotation_ids_json, author_order)
+        # map_pool M2M is EMPTY for rotate mode.
+        self.assertEqual(season.map_pool.count(), 0)
+
+    def test_post_single_map_rotation_persists(self) -> None:
+        m = _lg01j_make_map_with_config("RotSolo")
+        payload = _valid_payload(
+            map_mode="rotate_by_matchday", league_name="RotateSolo"
+        )
+        payload["map_rotation"] = _rotation_wire([m.id])
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 302)
+        season = League.objects.get(name="RotateSolo").seasons.first()
+        self.assertEqual(season.map_rotation_ids_json, [m.id])
+        self.assertEqual(season.map_pool.count(), 0)
+
+
+class TestLeagueCreateRotateByMatchdayValidationMatrix(TestCase):
+    """SUB-01 — the FULL 4×2 cross-guard matrix, driven through the REAL
+    form (mirrors the LG-01j ``TestLeagueCreateMapPool`` form-unit pattern).
+
+    Rotation-rule errors attach to the ``map_rotation`` field; the
+    rotate-mode pool rule attaches to ``map_pool``. Asserts on locked error
+    SUBSTRINGS via ``form.errors.get(field, [])``. Also POSTs through the
+    view to confirm the invalid create writes nothing (atomic boundary).
+    """
+
+    def _errors(self, payload: dict, field: str) -> list:
+        form = _Lg01jCreateLeagueForm(payload)
+        self.assertFalse(form.is_valid())
+        return form.errors.get(field, [])
+
+    def _assert_view_writes_nothing(self, payload: dict) -> None:
+        before = League.objects.count()
+        response = self.client.post(reverse("league_create"), payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(League.objects.count(), before)
+
+    # ---- rotation must be empty for the three non-rotate modes ----
+
+    def test_mode_none_with_non_empty_rotation_rejected(self) -> None:
+        m = _lg01j_make_map_with_config("NoneRot")
+        payload = _valid_payload(map_mode="none", league_name="NoneRotL")
+        payload["map_rotation"] = _rotation_wire([m.id])
+        errs = self._errors(payload, "map_rotation")
+        self.assertTrue(
+            any("must be empty when Map mode is '3-zone fallback'." in e for e in errs),
+            f"map_rotation errors={errs!r}",
+        )
+        self._assert_view_writes_nothing(payload)
+
+    def test_mode_single_with_non_empty_rotation_rejected(self) -> None:
+        m1 = _lg01j_make_map_with_config("SingleRotPool")
+        m2 = _lg01j_make_map_with_config("SingleRotRot")
+        payload = _valid_payload(map_mode="single", league_name="SingleRotL")
+        payload["map_pool"] = [str(m1.id)]
+        payload["map_rotation"] = _rotation_wire([m2.id])
+        errs = self._errors(payload, "map_rotation")
+        self.assertTrue(
+            any("must be empty when Map mode is 'Single map'." in e for e in errs),
+            f"map_rotation errors={errs!r}",
+        )
+        self._assert_view_writes_nothing(payload)
+
+    def test_mode_random_per_round_with_non_empty_rotation_rejected(self) -> None:
+        m1 = _lg01j_make_map_with_config("RandRotPool")
+        m2 = _lg01j_make_map_with_config("RandRotRot")
+        payload = _valid_payload(map_mode="random_per_round", league_name="RandRotL")
+        payload["map_pool"] = [str(m1.id)]
+        payload["map_rotation"] = _rotation_wire([m2.id])
+        errs = self._errors(payload, "map_rotation")
+        self.assertTrue(
+            any(
+                "must be empty when Map mode is 'Random per Round'." in e for e in errs
+            ),
+            f"map_rotation errors={errs!r}",
+        )
+        self._assert_view_writes_nothing(payload)
+
+    # ---- rotate mode: pool must be empty, rotation >= 1 ----
+
+    def test_mode_rotate_with_non_empty_pool_rejected(self) -> None:
+        m_pool = _lg01j_make_map_with_config("RotateWithPoolPool")
+        m_rot = _lg01j_make_map_with_config("RotateWithPoolRot")
+        payload = _valid_payload(
+            map_mode="rotate_by_matchday", league_name="RotateWithPoolL"
+        )
+        payload["map_pool"] = [str(m_pool.id)]  # must be empty for rotate
+        payload["map_rotation"] = _rotation_wire([m_rot.id])
+        errs = self._errors(payload, "map_pool")
+        self.assertTrue(
+            any(
+                "Map pool must be empty when Map mode is 'Rotate by matchday'." in e
+                for e in errs
+            ),
+            f"map_pool errors={errs!r}",
+        )
+        self._assert_view_writes_nothing(payload)
+
+    def test_mode_rotate_with_empty_rotation_rejected(self) -> None:
+        payload = _valid_payload(
+            map_mode="rotate_by_matchday", league_name="RotateEmptyRotL"
+        )
+        # No map_rotation key ⇒ empty rotation.
+        errs = self._errors(payload, "map_rotation")
+        self.assertTrue(
+            any(
+                "must contain at least 1 map when Map mode is 'Rotate by matchday'."
+                in e
+                for e in errs
+            ),
+            f"map_rotation errors={errs!r}",
+        )
+        self._assert_view_writes_nothing(payload)
+
+    def test_rotation_id_without_confirmed_config_rejected(self) -> None:
+        """An id NOT in ``_maps_with_confirmed_config()`` is rejected at the
+        form layer; the create writes nothing."""
+        good = _lg01j_make_map_with_config("RotConfGood")
+        skipped = _lg01j_make_map_without_config("RotConfSkipped")
+        payload = _valid_payload(map_mode="rotate_by_matchday", league_name="RotConfL")
+        payload["map_rotation"] = _rotation_wire([good.id, skipped.id])
+        form = _Lg01jCreateLeagueForm(payload)
+        self.assertFalse(form.is_valid())
+        # The error attaches to map_rotation (the field carrying the bad id).
+        self.assertIn("map_rotation", form.errors)
+        self._assert_view_writes_nothing(payload)
