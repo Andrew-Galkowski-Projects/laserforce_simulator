@@ -850,9 +850,7 @@ class TestSeasonExpensesHealth(SimpleTestCase):
             DEFAULT_LEVEL,
             health_level=DEFAULT_LEVEL,
         )
-        self.assertAlmostEqual(
-            e.health, level_to_amount(DEFAULT_LEVEL), places=6
-        )
+        self.assertAlmostEqual(e.health, level_to_amount(DEFAULT_LEVEL), places=6)
 
     def test_health_line_non_negative(self) -> None:
         e = season_expenses(

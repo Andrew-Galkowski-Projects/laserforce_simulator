@@ -458,18 +458,14 @@ class TestOwnerEvaluationFiredReasonFlavour(TestCase):
         return league, season, team
 
     def test_luxury_tax_renders_luxury_flavour(self) -> None:
-        _league, season, _team = self._setup(
-            verdict="fired", fired_reason="luxury_tax"
-        )
+        _league, season, _team = self._setup(verdict="fired", fired_reason="luxury_tax")
         response = self.client.get(_url(season))
         self.assertContains(response, 'id="owner-evaluation-fired-reason"')
         # Stable substring of the luxury-tax flavour (case-insensitive guard).
         self.assertIn("luxury tax", response.content.decode().lower())
 
     def test_owner_mood_renders_mood_message(self) -> None:
-        _league, season, _team = self._setup(
-            verdict="fired", fired_reason="owner_mood"
-        )
+        _league, season, _team = self._setup(verdict="fired", fired_reason="owner_mood")
         response = self.client.get(_url(season))
         self.assertContains(response, 'id="owner-evaluation-fired-reason"')
         # The mood message is NOT the luxury-tax flavour.
@@ -489,8 +485,6 @@ class TestOwnerEvaluationFiredReasonFlavour(TestCase):
         self.assertNotContains(response, 'id="owner-evaluation-fired-reason"')
 
     def test_hot_seat_renders_no_fired_reason_element(self) -> None:
-        _league, season, _team = self._setup(
-            verdict="hot_seat", hot_seat_level=1
-        )
+        _league, season, _team = self._setup(verdict="hot_seat", hot_seat_level=1)
         response = self.client.get(_url(season))
         self.assertNotContains(response, 'id="owner-evaluation-fired-reason"')

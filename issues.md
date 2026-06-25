@@ -1014,3 +1014,89 @@ Test data: **ChromeTest CAR01 League** (League 46, Season 52, Teams 282–285 �
 `league_create` generates non-`ChromeTest`-prefixed rival teams the teardown script can't
 name-filter; dev data is disposable per ADR-0004). No ChromeTest-prefixed matches or saved
 rounds were created.
+
+---
+
+## FIN-04 health budget + injury/availability — web smoke (2026-06-17)
+
+✅ **Team Finances screen (`/leagues/49/team/finances/`, finance-ON career League "ChromeTest
+FIN04 League").** New FIN-04 surface renders fully integrated into the FIN-01 screen with **zero
+console messages and all network requests 200**:
+- `team-finances-budget-health` — number input, default **34**, helper `$9.0k / season · level 34
+  (neutral 34) · shortens injury durations`.
+- `team-finances-injury-policy` — `<select>` with options `auto_sub` / `play_hurt`, default
+  Auto-substitute.
+- `team-finances-availability` (+ `-availability-empty`) — "Player availability" section,
+  empty-state "Everyone's available — no injured players."
+- FIN-01 ids preserved (`-budget-form` / `-budget-scouting`=43 from the FIN-03 strength-seed /
+  `-budget-save` / salaries table / season-history).
+
+✅ **POST round-trip.** Set Health **34→80** + policy **Auto-substitute→Play hurt**, Save → 302 →
+reload shows **Health=80, policy=play_hurt persisted**, cost helper recomputed to `$14.5k / season
+· level 80 (neutral 34)`. No console/network errors.
+
+✅ **Responsive.** Clean layout at 720×1115 (navbar collapses) and 1280×900 (screenshots
+`.claude/worktrees/fin-04-team-finances-{720,1280}.png`); sidebar + expense table + availability
+section all intact, no overflow.
+
+✅ **Smoke.** Homepage + create-League (finance checkbox) + season standings all load with no
+console errors. Django `manage.py check` clean; `runserver` boots without error.
+
+**No bugs found.** Full pytest suite green (4796 passed / 0 failed) including the FIN-04
+`test_injury.py` / `test_injury_resolution.py` / extended `test_finance.py` / `test_finance_screens.py`.
+
+Test data: **ChromeTest FIN04 League** (League 49, Season 57; manager team "ChromeTest United"
+= Team 299, three `#34`-suffixed generated rivals) — left in the dev DB (the LG-05/CAR-01
+precedent: `league_create` generates non-`ChromeTest`-prefixed rivals the teardown can't
+name-filter; dev data disposable per ADR-0004). No ChromeTest matches or saved rounds created.
+
+---
+
+## FIN-05 luxury-tax challenge-mode firing — web smoke (2026-06-18)
+
+✅ **Create-League form** (`/leagues/create/`). New **"Fire on luxury tax"** checkbox renders
+directly under "Enable team finances" with help text ("…Only takes effect with team finances
+enabled."). DOM id `league-create-challenge-luxury-tax`, `name=challenge_fired_luxury_tax`,
+`type=checkbox`, unchecked by default. No console errors; all network 200.
+
+✅ **Owner-evaluation screen** (`/seasons/55/owner-evaluation/`). Retained verdict → the new
+`owner-evaluation-fired-reason` element is correctly **absent** (only rendered on a fired
+verdict); page renders, no console messages. Temporarily flipping eval id 2 to
+`verdict="fired", fired_reason="luxury_tax"` → the element renders **"Fired for paying the
+luxury tax."** (DOM id `owner-evaluation-fired-reason`), no console errors; restored to
+`retained`/`""` after (screenshot `.claude/worktrees/fin-05-owner-eval-luxury-fire.png`).
+
+ℹ️ **Pre-existing (not FIN-05).** The create form emits one generic Chrome a11y `[issue]`
+("No label associated with a form field"); a per-field audit found **zero** unlabeled
+inputs/selects (both FIN-05 checkboxes carry proper `for`/`id` labels) — the hint predates
+FIN-05 and is out of scope.
+
+**No bugs found.** Full pytest suite green (4831 passed, 3 skipped, 1 xfailed, 0 failed). No
+test data created (only eval id 2 flipped + restored) — no teardown needed.
+
+---
+
+## SUB-01 `rotate_by_matchday` — Chrome smoke pass (create-League composer + dashboard label)
+
+✅ **`/leagues/create/`** — 200, no JS console errors. The new "Map rotation" composer
+(`#league-create-map-rotation-composer`, `#league-create-add-map`, hidden
+`#league-create-map-rotation` name=`map_rotation`) renders; `map_mode` options include
+`rotate_by_matchday`; the `#league-create-confirmed-maps` island exposes the 2 confirmed maps.
+
+✅ **"+ Add map" composer flow** — clicking appends `.map-rotation-row` rows, each with a
+`#league-create-map-rotation-select-{i}` `<select>` (options = the 2 confirmed maps) + a
+`.map-rotation-remove` button. Picking map id **4 then 1** serialized the hidden field to
+`"4,1"` — **author order preserved, NOT id-sorted** (the load-bearing rotation-order
+behaviour). Removing the first row re-serialized to `"1"`.
+
+✅ **League dashboard** (`/leagues/47/`) — 200, `#league-dashboard-map-config` renders
+("Map: 3-zone fallback (no map)" for the existing `map_mode=none` season). The
+`rotate_by_matchday` "Map: Rotating (N maps: …)" branch is covered by view tests.
+
+**LOW — a11y (pre-existing style, out of SUB-01 scope):** `/leagues/create/` console emits
+one `[issue]` "No label associated with a form field (count: 2)" — the hidden `map_rotation`
+input + the composer's `<label>` lacks a `for`/`id` association. Cosmetic a11y hint on a
+hidden field; not a functional defect. Mirrors the pre-existing FIN-05 label-hint note above.
+
+**No functional bugs.** No persistent test data created (composer exercised in-memory via JS;
+no League submitted). Server torn down.
