@@ -368,9 +368,7 @@ class TestOwnerEvaluationFiredReason(TestCase):
         team = _make_team("FRP")
         for i, reason in enumerate(("", "owner_mood", "luxury_tax")):
             season = _make_season(league, name=f"Season {i + 1}")
-            ev = _make_eval(
-                league, season, team, verdict="fired", fired_reason=reason
-            )
+            ev = _make_eval(league, season, team, verdict="fired", fired_reason=reason)
             ev.refresh_from_db()
             self.assertEqual(ev.fired_reason, reason)
 

@@ -774,9 +774,7 @@ class TestFin05FinanceOffInert(TestCase):
     with identical inputs."""
 
     def _run(self, *, finance_enabled, challenge):
-        team = _make_team(
-            f"Fin05Off{int(finance_enabled)}{int(challenge)}T"
-        )
+        team = _make_team(f"Fin05Off{int(finance_enabled)}{int(challenge)}T")
         opp = _make_team(f"Fin05Off{int(finance_enabled)}{int(challenge)}O")
         league = _fin05_make_league(
             f"Fin05Off{int(finance_enabled)}{int(challenge)}L",

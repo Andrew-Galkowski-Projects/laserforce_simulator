@@ -49,7 +49,6 @@ from matches.injury import (
     roll_injury,
 )
 
-
 # ===========================================================================
 # §2 — TestConstants (the locked-but-tunable module constants)
 # ===========================================================================
@@ -133,7 +132,9 @@ class TestAgeFactor(SimpleTestCase):
     def test_clamped_below_at_min(self) -> None:
         # A very young player never drops below AGE_FACTOR_MIN.
         for age in (1, 5, 10):
-            self.assertGreaterEqual(age_factor(age), AGE_FACTOR_MIN - 1e-12, f"age={age}")
+            self.assertGreaterEqual(
+                age_factor(age), AGE_FACTOR_MIN - 1e-12, f"age={age}"
+            )
 
     def test_consumes_no_rng(self) -> None:
         random.seed(99)
@@ -242,9 +243,7 @@ class TestDrawDuration(SimpleTestCase):
     Exactly ONE RNG draw."""
 
     def test_returns_int(self) -> None:
-        self.assertIsInstance(
-            draw_duration(0.0, 30, random.Random(0)), int
-        )
+        self.assertIsInstance(draw_duration(0.0, 30, random.Random(0)), int)
 
     def test_within_clamp_bounds_over_many_seeds(self) -> None:
         for he in (-0.5, 0.0, 0.5):

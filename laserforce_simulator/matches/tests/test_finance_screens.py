@@ -480,9 +480,7 @@ class TestTeamFinancesHealthPost(TestCase):
         _season, teams = _make_active_season(league)
         team = teams[0]
         url = reverse("team_finances", kwargs={"league_id": league.id})
-        self.client.post(
-            url, data=self._post_data(budget_health=str(MAX_LEVEL + 50))
-        )
+        self.client.post(url, data=self._post_data(budget_health=str(MAX_LEVEL + 50)))
         team.refresh_from_db()
         self.assertLessEqual(team.budget_health, MAX_LEVEL)
 
