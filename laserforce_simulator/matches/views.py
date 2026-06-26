@@ -910,6 +910,101 @@ def round_playback_payload(game_round, *, include_movement: bool = True):
     return events_data, players_data
 
 
+def _build_playback_map(game_round: GameRound) -> dict | None:
+    """Reconstruct corridor-faithful player routes for the map playback overlay.
+
+    Returns ``{"zone_size": int, "players": [...]}`` consumed by the canvas
+    overlay in ``game_round_events.html``, or ``None`` when the round ran
+    without a map (3-zone fallback) or its map config can't be resolved.
+
+    Each ``event_type="movement"`` ``GameEvent`` records only its Advance's
+    start + end cell (MOVE-01); the exact intermediate route is recomputed here
+    with the simulator's own A* (``astar_path``) over the map's adjacency +
+    elevation, so the trail follows corridors faithfully instead of cutting
+    straight lines through walls. Per player the payload carries
+    ``spawn = [r, c]`` and ``moves = [[tick, polyline], ...]`` where the
+    polyline excludes the start cell and ends at the end cell (the
+    ``astar_path`` shape); the client expands these into timed keyframes.
+    """
+    from .sim_helpers.map_loader import load_map_context
+    from .sim_helpers.pathfinding import astar_path
+
+    arena_map = game_round.arena_map
+    if arena_map is None:
+        return None
+    try:
+        mctx, zone_size = load_map_context(arena_map)
+    except ValueError:
+        return None
+    if mctx is None or not zone_size:
+        return None
+
+    adj = mctx.get_adjacency()
+    elevation = mctx.elevation_grid
+
+    # Per player: list of (tick, polyline) where the polyline is the cells
+    # walked that Advance (excludes the start, ends at the end cell). Prefer the
+    # TRUE route persisted in metadata["route"] (newly-simulated rounds); fall
+    # back to a fresh A* reconstruction for older rounds that predate it.
+    moves_by_player: dict[int, list] = defaultdict(list)
+    move_events = game_round.events.filter(event_type="movement").only(
+        "actor_id", "timestamp", "metadata"
+    )
+    for ev in move_events:
+        m = ev.metadata or {}
+        try:
+            start = (m["start_row"], m["start_col"])
+            end = (m["end_row"], m["end_col"])
+        except KeyError:
+            continue
+        if None in start or None in end:
+            continue
+        stored = m.get("route")
+        if stored:
+            polyline = [list(c) for c in stored]
+        else:
+            route = astar_path(start, end, adj, elevation)
+            polyline = [list(c) for c in route] if route else [list(end)]
+        moves_by_player[ev.actor_id].append((ev.timestamp, list(start), polyline))
+
+    states = list(game_round.player_states.select_related("player").all())
+
+    # Number the two scouts per team (1/2) so the markers can be told apart.
+    scout_nums: dict[int, int] = {}
+    team_scouts: dict[str, list] = defaultdict(list)
+    for ps in states:
+        if ps.role == "scout":
+            team_scouts[ps.team_color].append(ps)
+    for scouts in team_scouts.values():
+        for i, ps in enumerate(sorted(scouts, key=lambda s: s.player.name)):
+            scout_nums[ps.player_id] = i + 1
+
+    players = []
+    for ps in states:
+        moves = sorted(moves_by_player.get(ps.player_id, []), key=lambda x: x[0])
+        if moves:
+            spawn = list(moves[0][1])
+        elif ps.cell_row is not None and ps.cell_col is not None:
+            spawn = [ps.cell_row, ps.cell_col]
+        else:
+            # No cell position recorded — defensive; skip on a map round.
+            continue
+        out_moves = [[ts, polyline] for ts, _start, polyline in moves]
+        players.append(
+            {
+                "id": ps.player_id,
+                "name": ps.player.name,
+                "team": ps.team_color,
+                "role": ps.role,
+                "scout": scout_nums.get(ps.player_id, 0),
+                "spawn": spawn,
+                "moves": out_moves,
+            }
+        )
+
+    return {"zone_size": zone_size, "players": players}
+
+
 def game_round_events(request, round_id):
     """Display the detailed event log for a game round.
 
@@ -925,6 +1020,15 @@ def game_round_events(request, round_id):
     game_round = get_object_or_404(GameRound, id=round_id)
     events_data, players_data = round_playback_payload(game_round)
 
+    # Map playback overlay: corridor-faithful routes drawn on the processed
+    # map PNG. None when the round ran on the 3-zone fallback (no map).
+    playback_map = _build_playback_map(game_round)
+    processed_image_url = (
+        reverse("processed_image", args=[game_round.arena_map_id])
+        if playback_map is not None
+        else None
+    )
+
     context = {
         "round": game_round,
         "events_data": events_data,
@@ -933,6 +1037,8 @@ def game_round_events(request, round_id):
         # RV-02: auto-flagged highlights (built at round completion). Coalesce
         # null (pre-RV-02 rounds) to [] so the template/JS always sees a list.
         "highlights_json": game_round.highlights_json or [],
+        "playback_map_json": playback_map,
+        "processed_image_url": processed_image_url,
     }
 
     return render(request, "matches/game_round_events.html", context)

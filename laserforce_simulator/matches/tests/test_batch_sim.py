@@ -1628,7 +1628,9 @@ class TestMove01FlushTrailToCompactEvents(_FastRoundsMixin):
         team, _ = make_team_with_slots(prefix)
         return list(team.active_roster), team
 
-    _ROUTE_KEYS = ("route", "path", "cells", "cell_path", "trail", "steps")
+    # Alternative route encodings that must NOT appear — the canonical key is
+    # "route" (now stored for the playback overlay), so it is excluded here.
+    _ROUTE_KEYS = ("path", "cells", "cell_path", "trail", "steps")
 
     def test_save_games_emits_compact_movement_events_from_trail(self):
         from matches.models import GameEvent
@@ -1664,12 +1666,17 @@ class TestMove01FlushTrailToCompactEvents(_FastRoundsMixin):
                 md["end_row"],
                 md["end_col"],
             ), f"compact event must reflect a real Advance: {md}"
+            route = md.get("route")
+            assert isinstance(route, list) and route, md
+            assert route[-1] == [md["end_row"], md["end_col"]], md
             for bad in self._ROUTE_KEYS:
-                assert bad not in md, f"no route list allowed in metadata: {md}"
-            for v in md.values():
+                assert bad not in md, f"only 'route' may carry a path: {md}"
+            for k, v in md.items():
+                if k == "route":
+                    continue
                 assert not isinstance(
                     v, (list, tuple)
-                ), f"metadata must be flat scalars: {md}"
+                ), f"non-route metadata must be flat scalars: {md}"
 
     def test_unsaved_run_persists_no_movement_events(self):
         """run() is pure in-memory: a movement_trail accumulates but NO
@@ -1877,7 +1884,9 @@ class TestMove02FlushTrailUnderCaching(_FastRoundsMixin):
         team, _ = make_team_with_slots(prefix)
         return list(team.active_roster), team
 
-    _ROUTE_KEYS = ("route", "path", "cells", "cell_path", "trail", "steps")
+    # Alternative route encodings that must NOT appear — the canonical key is
+    # "route" (now stored for the playback overlay), so it is excluded here.
+    _ROUTE_KEYS = ("path", "cells", "cell_path", "trail", "steps")
 
     def test_flushed_movement_trail_coherent_with_path_cache(self):
         from matches.models import GameEvent
@@ -1919,15 +1928,19 @@ class TestMove02FlushTrailUnderCaching(_FastRoundsMixin):
                 md["end_row"],
                 md["end_col"],
             ), f"compact event must reflect a real Advance (cell changed): {md}"
+            route = md.get("route")
+            assert isinstance(route, list) and route, md
+            assert route[-1] == [md["end_row"], md["end_col"]], md
             for bad in self._ROUTE_KEYS:
-                assert bad not in md, (
-                    f"route commitment must NOT leak a route list into "
-                    f"metadata: {md}"
-                )
-            for v in md.values():
+                assert (
+                    bad not in md
+                ), f"only the canonical 'route' key may carry a path: {md}"
+            for k, v in md.items():
+                if k == "route":
+                    continue
                 assert not isinstance(
                     v, (list, tuple)
-                ), f"metadata must be flat scalars: {md}"
+                ), f"non-route metadata must be flat scalars: {md}"
             by_actor.setdefault(ev.actor_id, []).append(ev)
 
         # Per-actor trail continuity: consecutive Advances are contiguous —

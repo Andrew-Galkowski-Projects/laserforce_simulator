@@ -145,7 +145,8 @@ def flush_to_db(
         actor_obj = players_by_id.get(p.player_id)
         if not actor_obj:
             continue
-        for start_cell, end_cell, ts in p.movement_trail:
+        routes = getattr(p, "movement_routes", None) or []
+        for i, (start_cell, end_cell, ts) in enumerate(p.movement_trail):
             if spawn_cells is not None:
                 new_zone = zone_from_cell(end_cell[0], end_cell[1], spawn_cells)
             else:
@@ -156,6 +157,22 @@ def flush_to_db(
             # poisoned the per-player chart series (every movement event
             # stamped the final value, so chart lines jumped to end-of-round
             # values immediately after spawn).
+            metadata = {
+                "actor_role": p.role,
+                "start_row": start_cell[0],
+                "start_col": start_cell[1],
+                "end_row": end_cell[0],
+                "end_col": end_cell[1],
+                "cell_row": end_cell[0],
+                "cell_col": end_cell[1],
+                "new_zone": new_zone,
+            }
+            # Playback overlay: persist the EXACT cells walked this Advance
+            # (excludes the start, ends at the end cell) so the replay map
+            # draws the true path. Appended in lockstep with movement_trail.
+            route = routes[i] if i < len(routes) else None
+            if route:
+                metadata["route"] = route
             GameEvent.objects.create(
                 game_round=game_round,
                 timestamp=ts,
@@ -164,16 +181,7 @@ def flush_to_db(
                 target=None,
                 points_awarded=0,
                 description=f"{p.name} moves to cell ({end_cell[0]}, {end_cell[1]})",
-                metadata={
-                    "actor_role": p.role,
-                    "start_row": start_cell[0],
-                    "start_col": start_cell[1],
-                    "end_row": end_cell[0],
-                    "end_col": end_cell[1],
-                    "cell_row": end_cell[0],
-                    "cell_col": end_cell[1],
-                    "new_zone": new_zone,
-                },
+                metadata=metadata,
             )
 
     # RES-04: cell-occupancy snapshot. Only populated when a map is active
