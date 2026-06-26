@@ -280,8 +280,12 @@ class TestRoundTicksPatchable:
     def test_short_round_terminates_within_patched_tick_window(self):
         red, _ = make_team_with_slots("Sim09TicksR")
         blue, _ = make_team_with_slots("Sim09TicksB")
+        # GEN-01: default tier is ``scores`` (no GameEvent rows); this test
+        # asserts on persisted event timestamps, so request the ``full`` tier.
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            gr = BatchSimulator().simulate_single_round_detailed(red, blue)
+            gr = BatchSimulator().simulate_single_round_detailed(
+                red, blue, fidelity="full"
+            )
         events = list(GameEvent.objects.filter(game_round=gr))
         # No event timestamp may exceed the patched round length.
         for ev in events:
@@ -389,9 +393,11 @@ class TestFlushToDBExtendedSignature:
         arena_map, expected_zone_size = _make_minimal_arena_map("Sim09RES04Map")
         red, _ = make_team_with_slots("Sim09RES04R")
         blue, _ = make_team_with_slots("Sim09RES04B")
+        # GEN-01: cell_occupancy_json is a ``full``-tier write; the default
+        # ``scores`` tier leaves it null. Request ``full``.
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
             gr = BatchSimulator().simulate_single_round_detailed(
-                red, blue, arena_map=arena_map
+                red, blue, arena_map=arena_map, fidelity="full"
             )
         assert gr.arena_map == arena_map
         assert gr.zone_size == expected_zone_size
@@ -428,8 +434,12 @@ class TestFlushToDBExtendedSignature:
         # --- Map-less round -----------------------------------------------
         red_no, _ = make_team_with_slots("Sim09RES04NoMapR")
         blue_no, _ = make_team_with_slots("Sim09RES04NoMapB")
+        # GEN-01: request ``full`` so the null below is genuinely the map-less
+        # ``movement_ctx is None`` gate, not the (scores-tier) occupancy skip.
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            gr_no = BatchSimulator().simulate_single_round_detailed(red_no, blue_no)
+            gr_no = BatchSimulator().simulate_single_round_detailed(
+                red_no, blue_no, fidelity="full"
+            )
         assert gr_no.arena_map is None
         assert gr_no.cell_occupancy_json is None, (
             "RES-04 gate regression: a map-less round must leave "
@@ -483,8 +493,12 @@ class TestRV02HighlightsFlush:
         red, _ = make_team_with_slots("Sim09RV02R")
         blue, _ = make_team_with_slots("Sim09RV02B")
         # A longer round so real combat produces at least one highlight.
+        # GEN-01: highlights_json is a ``combat``/``full`` write; request
+        # ``full`` (default ``scores`` leaves it null).
         with patch.object(BatchSimulator, "ROUND_TICKS", 400):
-            gr = BatchSimulator().simulate_single_round_detailed(red, blue)
+            gr = BatchSimulator().simulate_single_round_detailed(
+                red, blue, fidelity="full"
+            )
 
         assert isinstance(gr.highlights_json, list), (
             "RV-02: highlights_json must be a list; got "
@@ -813,3 +827,92 @@ class TestSimulateMatchHookRewritesRoster:
             .role
         )
         assert "commander" in role.lower()
+
+
+# ===========================================================================
+# GEN-01 — fidelity / roster_snapshot persistence on each create path
+# ===========================================================================
+#
+# These pin the GEN-01 per-create-path contract (§7e): the sandbox create
+# paths DEFAULT to ``scores`` (and stamp a non-null ``roster_snapshot_json``),
+# while an explicit ``fidelity="full"`` writes the full-fidelity rows. The 13
+# snapshot stat keys are checked against the locked set.
+
+_GEN01_SNAPSHOT_STATS = {
+    "accuracy",
+    "survival",
+    "player_awareness",
+    "game_awareness",
+    "decision_making",
+    "stamina",
+    "special_usage",
+    "resupply_efficiency",
+    "resupply_synergy",
+    "teamwork",
+    "communication",
+    "resource_awareness",
+    "speed",
+}
+
+
+def _assert_snapshot_shape(snap):
+    assert isinstance(snap, dict) and set(snap) == {"red", "blue"}, snap
+    for side in ("red", "blue"):
+        assert isinstance(snap[side], list) and snap[side]
+        for entry in snap[side]:
+            assert {"player_id", "name", "role", "stats"} <= set(entry), entry
+            assert set(entry["stats"]) == _GEN01_SNAPSHOT_STATS, entry["stats"]
+            assert all(isinstance(v, int) for v in entry["stats"].values())
+
+
+@pytest.mark.django_db
+class TestGen01CreatePathFidelity:
+    """``simulate_single_round_detailed`` and ``simulate_match`` default to
+    ``scores`` and always stamp a non-null ``roster_snapshot_json``; an explicit
+    ``fidelity="full"`` lands the full-fidelity rows."""
+
+    def test_single_round_defaults_to_scores_with_snapshot(self):
+        red, _ = make_team_with_slots("Gen01SRDefR")
+        blue, _ = make_team_with_slots("Gen01SRDefB")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            gr = BatchSimulator().simulate_single_round_detailed(red, blue)
+        assert gr.fidelity == "scores"
+        assert GameEvent.objects.filter(game_round=gr).count() == 0
+        assert gr.cell_occupancy_json is None
+        assert gr.highlights_json is None
+        _assert_snapshot_shape(gr.roster_snapshot_json)
+
+    def test_single_round_full_writes_full_rows_and_snapshot(self):
+        red, _ = make_team_with_slots("Gen01SRFullR")
+        blue, _ = make_team_with_slots("Gen01SRFullB")
+        with patch.object(BatchSimulator, "ROUND_TICKS", 400):
+            gr = BatchSimulator().simulate_single_round_detailed(
+                red, blue, fidelity="full"
+            )
+        assert gr.fidelity == "full"
+        assert GameEvent.objects.filter(game_round=gr).count() > 0
+        assert gr.highlights_json is not None
+        _assert_snapshot_shape(gr.roster_snapshot_json)
+
+    def test_match_defaults_to_scores_on_both_rounds(self):
+        red, _ = make_team_with_slots("Gen01MatchDefR")
+        blue, _ = make_team_with_slots("Gen01MatchDefB")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            match = BatchSimulator().simulate_match(red, blue)
+        for r in match.game_rounds.all():
+            assert r.fidelity == "scores"
+            assert GameEvent.objects.filter(game_round=r).count() == 0
+            assert r.cell_occupancy_json is None
+            assert r.highlights_json is None
+            _assert_snapshot_shape(r.roster_snapshot_json)
+
+    def test_match_full_writes_full_rows_on_both_rounds(self):
+        red, _ = make_team_with_slots("Gen01MatchFullR")
+        blue, _ = make_team_with_slots("Gen01MatchFullB")
+        with patch.object(BatchSimulator, "ROUND_TICKS", 400):
+            match = BatchSimulator().simulate_match(red, blue, fidelity="full")
+        for r in match.game_rounds.all():
+            assert r.fidelity == "full"
+            assert GameEvent.objects.filter(game_round=r).count() > 0
+            assert r.highlights_json is not None
+            _assert_snapshot_shape(r.roster_snapshot_json)

@@ -763,10 +763,12 @@ class TestMap03DBIntegration:
 
         with patch.object(BatchSimulator, "ROUND_TICKS", 40):
             game_round = BatchSimulator().simulate_single_round_detailed(
-                team_red, team_blue, arena_map=arena_map
+                team_red, team_blue, arena_map=arena_map, fidelity="full"
             )
 
         # With teams pinned to opposite sides of the wall, no enemy tags possible
+        # GEN-01: ``tag`` rows are combat events — request ``full`` so they
+        # persist (default ``scores`` writes none).
         tag_events = list(
             GameEvent.objects.filter(game_round=game_round, event_type="tag")
         )
@@ -2885,9 +2887,11 @@ class TestMove01CompactMovementEvent:
         team_red, _ = make_team_with_slots("CmpR")
         team_blue, _ = make_team_with_slots("CmpB")
 
+        # GEN-01: movement rows are a ``full``-tier write — request ``full``
+        # (default ``scores`` persists no movement events).
         with patch.object(BatchSimulator, "ROUND_TICKS", 40):
             game_round = BatchSimulator().simulate_single_round_detailed(
-                team_red, team_blue, arena_map=arena_map
+                team_red, team_blue, arena_map=arena_map, fidelity="full"
             )
 
         move_events = list(
@@ -2935,9 +2939,11 @@ class TestMove01CompactMovementEvent:
         team_red, _ = make_team_with_slots("NoMapR")
         team_blue, _ = make_team_with_slots("NoMapB")
 
+        # GEN-01: request ``full`` so the absence asserted below is genuinely
+        # the 3-zone-fallback "no cell coords" rule, not the scores-tier skip.
         with patch.object(BatchSimulator, "ROUND_TICKS", 40):
             game_round = BatchSimulator().simulate_single_round_detailed(
-                team_red, team_blue
+                team_red, team_blue, fidelity="full"
             )
 
         for ev in GameEvent.objects.filter(
