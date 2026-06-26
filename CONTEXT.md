@@ -24,6 +24,10 @@ _Avoid_: treating an Actual game log as a **Replay** (a Replay re-runs the **Sim
 **Round report**:
 The single-**Round** PDF export at `GET /matches/game-round/<id>/export/` (RV-03) — round summary, scoreboards, per-player table, and resource summary, generated server-side with ReportLab. A **Simulated round** is stamped with a "[Simulated]" watermark; charts are deliberately *not* in the first cut (deferred — see PLAN.md).
 
+**Persistence fidelity**:
+The depth at which a **Simulated round** is written to the DB — one of three cumulative tiers, `scores` ⊂ `combat` ⊂ `full` (GEN-01). `scores` persists only the `GameRound` / `PlayerRoundState` rows (final scoreboard); `combat` adds the who-hit-who combat **GameEvent** log (tag / missile / resupply / down / elimination) plus `highlights_json`, but **not** movement; `full` adds the movement events + per-Advance `route` + `cell_occupancy_json` for **round-playback**. **A persistence tier, NOT a compute tier** (grilled 2026-06-25): because movement drives combat (LOS gates who can tag whom), the **Simulator** always runs the full per-tick loop to produce *any* scores — the tiers differ only in *what `flush_to_db` writes*, so the **same RNG seed reproduces the identical game at every tier**. Recorded on `GameRound.fidelity` (`CharField`, choices `scores`/`combat`/`full`, `default="full"` — legacy rows hold events + movement, so `full` is true for them, no backfill per [ADR-0004](docs/adr/0004-simulation-data-is-disposable.md)). Because `rng_seed` is persisted, a `scores`-tier round stays re-playable at a higher tier later by re-simulating its seed.
+_Avoid_: calling it a "compute tier" or a "fast scores estimator" — a genuinely cheaper scores-only model (a separate non-spatial estimator that would *not* match full-fidelity scores) is explicitly deferred; the GEN-01 tiers always compute the identical game.
+
 **Roster**:
 The six **Players** fielded by a **Team** for a match — one of each role plus one duplicate.
 

@@ -5,6 +5,143 @@ Story IDs from `sm5_user_stories_v2.html` are referenced where applicable.
 
 ---
 
+## Found Issues — UX & Live-Play Fixes (added 2026-06-25)
+
+Surfaced from hands-on use of the running app. Grouped here at the top because they
+are cross-cutting UX / live-play defects rather than new feature phases. The
+simulation-mechanics bugs from the same review (start-of-game state, cell-occupancy,
+goal-balling) were distributed into the **Phase 3 — Simulation Mechanics Backlog**
+(see `MECH-15` / `MOVE-05` / `MOVE-06`), and the score-rebase ask into `CAL-01`
+there.
+
+### GEN-01 · [DONE] Three persistence-tier game generation off one seed
+
+**Prio: Very High.** Generate a game at one of **three fidelity tiers** off the
+**same seed**, choosing the cheapest tier sufficient for the surface that requested
+it:
+
+1. **Final scores + scoreboard** — persist the `Match` / `GameRound` /
+   `PlayerRoundState` rows only.
+2. **+ Who-hit-who** — also persist the combat `GameEvent` log (tag / missile /
+   resupply / down / elimination), but **not** movement.
+3. **+ Full game with paths** — also persist movement events + the per-Advance
+   route / `cell_occupancy_json` for round-playback.
+
+**Locked design — persistence tiers, NOT compute tiers (grilled 2026-06-25).**
+Because movement drives combat (LOS / positioning gate who can tag whom),
+`BatchSimulator._simulate_round` must run the **full per-tick loop** to produce
+*any* scores. The three tiers therefore differ only in **what `_flush_to_db`
+writes**, never in what the tick loop computes — so the **same seed reproduces the
+identical game at every tier** (the speed win is from skipping DB writes +
+movement-route recording, not from skipping simulation). A genuinely fast "scores
+only" estimator (a separate, cheaper 3-zone/statistical model that would *not* match
+the full-fidelity scores) is **explicitly deferred** to its own later grill — it
+would break the same-seed-same-scores guarantee and is a different piece of work.
+
+**Implementation surface:** thread a `fidelity` (or `persist_level`) selector through
+`BatchSimulator.simulate_match` / `simulate_single_round_detailed` /
+`simulate_scheduled_round` / `save_games` and the league/batch play loops, consumed
+by `flush_to_db` (`matches/simulation/persistence.py`) to gate the event-log +
+movement-trail + `cell_occupancy_json` + route writes. `rng_seed` is already
+persisted, so a tier-1 round stays re-playable at higher fidelity later by
+re-simulating the seed. **Open questions for its own grill — RESOLVED as shipped:**
+(a) **surface → tier mapping** — the LG-01i live watch (`play_week_live` RR branch +
+the live-playoff `play_specific_node`) ships **`full`** (you must see the game you are
+watching in the same request); **everything else defaults `scores`** (bulk season
+play, sandbox creates, `save_games`) and **lazy-upgrades on view click** — the events
+page + heatmap to `full`, the missile log to `combat`, the round-detail scoreboard
+stays `scores`. (b) **upgrade in place — YES**, re-sim the stored seed and backfill
+the higher-tier rows onto the existing row, made faithful by a **roster-stat
+snapshot** (`GameRound.roster_snapshot_json`) so the re-sim reads frozen sim-stats,
+not the LG-04-mutated live roster — **no verify-or-degrade, no re-create** (both
+alternatives rejected in ADR-0029). (c) **the `GameRound.fidelity` field records the
+tier** (`scores` / `combat` / `full`, `default="full"`).
+
+**[DONE] Shipped (2026-06-26).** Persistence-only: the tick loop always runs in full;
+the three cumulative tiers `scores` ⊂ `combat` ⊂ `full` differ ONLY in what
+`flush_to_db` writes (and, at `scores`, in skipping event-buffer collection), so the
+same seed reproduces a byte-identical game at every tier — **no Score Calibration
+re-baseline**. Two new `GameRound` fields (migration
+`0055_gameround_fidelity_roster_snapshot.py`, dep `0054`, two `AddField`s, no
+backfill): `fidelity` (`CharField`, `default="full"` so legacy rows read as `full`)
+and `roster_snapshot_json` (the boosted per-side `_SIMULATION_STATS` inputs built from
+the in-memory `PlayerState` lists, stored on every tier). A keyword-only
+`fidelity: str = "scores"` selector threads through `simulate_match` /
+`simulate_single_round_detailed` / `simulate_scheduled_round` / `save_games` /
+`_simulate_and_flush_round` / `_flush_to_db` / `persistence.flush_to_db` /
+`tournament_engine.play_next_node` / `play_specific_node`; only the LG-01i live call
+sites override to `"full"`. `flush_to_db`'s write-blocks are factored into shared
+`persistence._write_*` helpers gated on `FIDELITY_RANK`, reused by both the fresh
+flush and the lazy-upgrade backfill; at `scores` the sim runs `event_log=None` (no
+buffer). `BatchSimulator.ensure_fidelity(game_round, target)` (`@transaction.atomic`,
+idempotent) re-sims from `(rng_seed + roster_snapshot_json + arena_map)` and backfills
+the missing rows onto the existing row, **never** rewriting the scoreboard /
+`PlayerRoundState`. View triggers: `game_round_events` + `movement_heatmap` →
+`ensure_fidelity(gr, "full")`, `missile_log` → `"combat"`, `game_round_detail`
+unchanged (`scores`). Residual caveat: map edits after a round was played can still
+drift its replay (map context is re-derived from the `arena_map` FK, not snapshotted)
+— stays under the pre-existing `rng_seed` "map config unchanged" caveat. See
+[ADR-0029](docs/adr/0029-persistence-fidelity-tiers-and-faithful-lazy-upgrade.md), the
+CONTEXT.md **Persistence fidelity** term, the seam contract
+[`.claude/worktrees/gen-01-seam-contract.md`](.claude/worktrees/gen-01-seam-contract.md),
+and the **GEN-01 persistence-fidelity tiers** subsection in
+[`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+
+### NAV-01 · Dedicated `Play ▾` top-nav dropdown
+
+**Prio: High.** The Play actions are currently **dashboard-only**
+(`season-dashboard-play-*` / `league-dashboard-play-*` in
+`templates/seasons/dashboard.html` / `templates/leagues/dashboard.html`); the top nav
+(`templates/base.html`, league mode) has no Play entry. Add a **dedicated `Play ▾`
+dropdown** (league mode only, sibling to `League ▾` / `Team ▾` / `Players ▾` /
+`Stats ▾` / `Tools ▾` / `Help ▾`) holding the same play actions — One Week / Two
+Months / Until End of Season (honouring the existing Part2c "Until Playoffs" /
+"Until Tournament" terminal relabel) / Play Single Round (Live) — resolved against the
+active Season's cursor via the `core.context_processors.league_nav` resolution chain
+(extend `top_bar_links` / `top_bar_dashboard_url`), reusing the existing `play_week` /
+`play_two_months` / `play_until_end` / `play_week_live` POST endpoints so Play is
+reachable from any league-mode page, not just the dashboard. **Interplay with
+PLAY-01:** while a multi-game run is in progress the dropdown's running entry follows
+the same Play→Stop swap + progress affordance.
+
+### PLAY-01 · Live incremental stats + Stop/Cancel for multi-game runs
+
+**Prio: High.** Today `play_two_months` / `play_until_end` enqueue `play_season_task`
+(Celery), which commits each Round atomically and emits `PROGRESS`, but the dashboard
+inline poll JS only `reload()`s on `status === "complete"` — so **nothing updates
+until the whole run finishes**, and there is **no way to stop it mid-run** (ADR-0013
+explicitly scoped cancel out). Three parts (all confirmed in scope):
+
+1. **Live incremental stats** — surface progress as each matchday commits: the poll
+   endpoint (`play_status`) returns the current partial standings / leaders so the
+   dashboard re-renders progressively instead of only on completion.
+2. **Stop / cancel** — a control to halt an in-progress run; already-played games
+   stay committed (a cooperative stop the task checks between fixtures, plus
+   `AsyncResult.revoke`). **Reopens the ADR-0013 cancel scope-out** — record the new
+   decision.
+3. **Play→Stop button swap** — while a multi-week / month / until-end run is in
+   progress, **the Play control itself becomes a Stop/Cancel button** carrying a
+   loading spinner with live progress (games played / total), and reverts to Play on
+   completion or cancel. Applies on both the dashboard control and the NAV-01 `Play ▾`
+   entry.
+
+**Implementation surface:** extend the `play_status` polling JSON with the partial
+standings/leaders payload; a cooperative-cancel flag the task body checks between
+fixtures + a new cancel view/URL (`AsyncResult.revoke`); the dashboard inline poll JS
+(and NAV-01 dropdown) for the Play↔Stop swap + the per-game progress spinner.
+
+### DEL-01 · Delete League button
+
+**Prio: Low.** No delete-League surface exists outside Django admin. Add a guarded
+**Delete League** action — `POST /leagues/<int:league_id>/delete/` with a confirm
+step — relying on the existing FK `on_delete` rules to cascade out Seasons /
+`SeasonPhase`s / season-scoped Matches (sandbox Matches `SET_NULL` survive). Career
+state (`current_team`, `OwnerEvaluation`, `TeamSeasonFinance`) is `CASCADE`/`SET_NULL`
+per its model definitions. Mirror the existing league-screen view shell
+(405-guard / `get_object_or_404` / redirect to the leagues list).
+
+---
+
 ## Phase 5 — Infrastructure & League System
 
 ### LG-02 · Tournament formats
@@ -482,10 +619,63 @@ to encode:
 These are conditional goal/action overrides keyed off teammate-status memory; they extend the MECH-06
 broadcast/memory hooks and feed into the role goal selection (MAP-05 / MECH-07).
 
-### MECH-07 · Role-aware goal-selection rework (MAP-05 follow-up)
+### MECH-15 · Persisted start-of-game (tick-0) state event
 
-Make changes to role-aware goal selection (MAP-05). Shape is **still being worked out** — scope and
-acceptance criteria are deliberately deferred.
+**Prio: Medium (found 2026-06-25).** The event log has no authoritative opening
+frame — it begins at the first action, so the replay/playback surfaces cannot show
+where players actually started or their initial resources. Add a **persisted tick-0
+`GameEvent`** (a new `event_type`, e.g. `game_start`, added to `EVENT_TYPES` via
+migration — the RV-02 `0027 AlterField` precedent) recording, for every player, their
+**spawn cell** and **initial resources** (lives / shots / special / missiles). Emitted
+via the `EventLog` / `flush_to_db` path so it lands on every save path. Gives
+round-playback and the LG-01i live-watch an authoritative opening state instead of
+reconstructing it. **Locked (grilled 2026-06-25):** persisted event, **not** a
+playback-only derivation. Pairs with the replay system but is logged for *all* rounds.
+
+### MOVE-05 · Enforce cell occupancy (no two players end a tick on the same cell)
+
+**Prio: Medium (found 2026-06-25).** Players sometimes **end a tick on the same cell
+as another player**, which should be impossible. Enforce single-occupancy at the
+**destination** cell in the movement path (`BatchSimulator._move_player_in_memory` /
+`astar_advance_cached`, `sim_helpers/pathfinding.py`): a player may not finish an
+Advance on a cell already occupied by another player — claim/skip the occupied target
+and resolve to the nearest free cell along the committed route. **Open questions for
+its own grill:** hard block vs allow transient mid-Advance pass-through but forbid
+end-of-tick co-occupancy; whether occupancy is enemy-only or also same-team; tie-break
+when two players target the same free cell the same tick. Consumes/perturbs movement
+resolution → folds into the `CAL-01` re-baseline.
+
+### MOVE-06 · Goal-location noise to reduce balling-up
+
+**Prio: Medium (found 2026-06-25).** Players **ball up** because role-aware goal
+selection converges too tightly on the same target cells. Add **noise** to
+`choose_goal_cell` (`sim_helpers/pathfinding.py`) so goal locations spread out — e.g.
+sample among the top-N candidate cells rather than always taking the argmax, or
+perturb the chosen goal within a small radius. Reactive overrides (MECH-04
+nuke-reaction, critical-resource, `seek_medic`) stay deterministic; only the
+steady-state positioning layer gains jitter. **Consumes RNG** → shifts seeded
+outcomes; folds into the `CAL-01` re-baseline (no separate obligation).
+
+### CAL-01 · Score Calibration re-baseline
+
+**Prio: Medium (found 2026-06-25).** Rebase the map-model average scores toward the
+documented **Score Calibration Targets** (Commander 9,952 / Heavy 6,482 / Scout
+5,102 / Ammo 3,242 / Medic 2,282 — `matches/CLAUDE.md`). This is the long-pending
+post-MOVE-01 re-baseline and **absorbs** the seeded-outcome deltas from MOVE-05 /
+MOVE-06 (and SIM-12) in a single pass — do **not** create separate re-baseline
+obligations for those. **Locked (grilled 2026-06-25):** **tune** the existing action
+weights / hit-chance / movement constants to converge on the targets; keep the 19-stat
+model + role MVP/weight formulas as-is for now. The **deeper rework** the user wants
+scheduled later — revisiting action selection, movement selection, and goal selection
+themselves — is tracked by `MECH-07` below (extended to cover actions/movement, not
+just goals); do that only if calibration tuning alone cannot hit the targets.
+
+### MECH-07 · Role-aware action / movement / goal-selection rework (MAP-05 follow-up)
+
+Make changes to role-aware goal selection (MAP-05) — and, per the 2026-06-25 review,
+the broader **action-selection and movement-selection** layers it sits on (the deeper
+rework `CAL-01` defers to once calibration tuning is exhausted). Shape is **still
+being worked out** — scope and acceptance criteria are deliberately deferred.
 
 **Status:** TBD — intentionally sequenced **last** in this batch until the design is settled.
 

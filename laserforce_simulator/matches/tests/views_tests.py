@@ -344,8 +344,13 @@ class TestM1EventLogWindowing:
         red, _ = make_team_with_slots("M1Red")
         blue, _ = make_team_with_slots("M1Blue")
         # SIM-09: view-path now drives BatchSimulator. Short round for speed.
+        # GEN-01: the default tier is ``scores`` (no GameEvent rows); this
+        # windowing suite needs a round that has persisted events, so upgrade
+        # to ``full`` (the same upgrade the events view itself performs).
         with patch.object(BatchSimulator, "ROUND_TICKS", 40):
             gr = BatchSimulator().simulate_single_round_detailed(red, blue)
+            BatchSimulator().ensure_fidelity(gr, "full")
+        gr.refresh_from_db()
         return gr
 
     def test_view_emits_json_not_per_event_rows(self):
@@ -4143,3 +4148,114 @@ class TestLg01iLiveWatch(_Lg01iTestCase):
     def test_missing_season_returns_404(self):
         response = self.client.get(reverse("play_week_live_watch", args=[9_999_999]))
         self.assertEqual(response.status_code, 404)
+
+
+# ===========================================================================
+# GEN-01 — view-triggered fidelity upgrades (contract §6 / §7f)
+# ===========================================================================
+#
+# A round persisted at the default ``scores`` tier is lazily upgraded on the
+# first view hit: ``game_round_events`` / ``movement_heatmap`` upgrade to
+# ``full``; ``missile_log`` upgrades to ``combat``; ``game_round_detail`` leaves
+# it at ``scores`` (the scoreboard / MVP already live from PlayerRoundState).
+
+
+@pytest.mark.django_db
+class TestGen01ViewUpgrades:
+    """Hitting the upgrading views bumps a ``scores`` round's persisted
+    ``fidelity`` on demand."""
+
+    def _scores_round(self, prefix, *, arena_map=None, ticks=400):
+        red, _ = make_team_with_slots(f"{prefix}R")
+        blue, _ = make_team_with_slots(f"{prefix}B")
+        with patch.object(BatchSimulator, "ROUND_TICKS", ticks):
+            gr = BatchSimulator().simulate_single_round_detailed(
+                red, blue, arena_map=arena_map, fidelity="scores"
+            )
+        assert gr.fidelity == "scores", "fixture must start at scores tier"
+        return gr
+
+    def _make_arena_map(self, name):
+        from core.models import (
+            ArenaMap,
+            BaseSightLineConfig,
+            MapBaseConfig,
+            MapZoneConfig,
+            SightLineConfig,
+        )
+        from core.map_processing import compute_sight_lines
+
+        zone_size = 50
+        zone_data = [[1] * 4 for _ in range(4)]
+        arena_map = ArenaMap.objects.create(
+            name=name, img_width=4 * zone_size, img_height=4 * zone_size
+        )
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=zone_size,
+            zone_data=zone_data,
+            confirmed=True,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="red", x_px=25, y_px=25
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="blue", x_px=175, y_px=175
+        )
+        SightLineConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=zone_size,
+            sight_data=compute_sight_lines(zone_data),
+        )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="red", zone_size=zone_size, visible_cells=[]
+        )
+        BaseSightLineConfig.objects.create(
+            arena_map=arena_map, base_type="blue", zone_size=zone_size, visible_cells=[]
+        )
+        return arena_map
+
+    def test_game_round_events_upgrades_scores_to_full(self):
+        gr = self._scores_round("Gen01EvtsUp")
+        client = Client()
+        with patch.object(BatchSimulator, "ROUND_TICKS", 400):
+            resp = client.get(reverse("game_round_events", kwargs={"round_id": gr.id}))
+        assert resp.status_code == 200
+        gr.refresh_from_db()
+        assert (
+            gr.fidelity == "full"
+        ), "hitting game_round_events must upgrade a scores round to full"
+
+    def test_movement_heatmap_upgrades_scores_to_full(self):
+        arena_map = self._make_arena_map("Gen01HeatmapMap")
+        gr = self._scores_round("Gen01HeatmapUp", arena_map=arena_map)
+        client = Client()
+        with patch.object(BatchSimulator, "ROUND_TICKS", 400):
+            resp = client.get(reverse("movement_heatmap", kwargs={"round_id": gr.id}))
+        assert resp.status_code == 200
+        gr.refresh_from_db()
+        assert (
+            gr.fidelity == "full"
+        ), "hitting movement_heatmap must upgrade a scores round to full"
+
+    def test_missile_log_upgrades_scores_to_combat(self):
+        gr = self._scores_round("Gen01MissileUp")
+        client = Client()
+        with patch.object(BatchSimulator, "ROUND_TICKS", 400):
+            resp = client.get(reverse("missile_log", kwargs={"round_id": gr.id}))
+        assert resp.status_code == 200
+        gr.refresh_from_db()
+        assert (
+            gr.fidelity == "combat"
+        ), "hitting missile_log must upgrade a scores round to combat"
+
+    def test_game_round_detail_leaves_scores_unchanged(self):
+        gr = self._scores_round("Gen01DetailNoUp")
+        client = Client()
+        resp = client.get(reverse("game_round_detail", kwargs={"round_id": gr.id}))
+        assert resp.status_code == 200
+        gr.refresh_from_db()
+        assert gr.fidelity == "scores", (
+            "game_round_detail must NOT upgrade — scoreboard/MVP live from "
+            "PlayerRoundState"
+        )

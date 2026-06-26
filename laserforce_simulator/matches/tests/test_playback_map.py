@@ -188,9 +188,11 @@ class TestSimulationPersistsRoute(TestCase):
         blue, _b = make_team_with_slots("PbSimB")
 
         random.seed(42)
+        # GEN-01: movement events (and their route metadata) are a ``full``-tier
+        # write — request ``full`` (default ``scores`` persists no movement).
         with patch.object(BatchSimulator, "ROUND_TICKS", 120):
             gr = BatchSimulator().simulate_single_round_detailed(
-                red, blue, arena_map=arena_map
+                red, blue, arena_map=arena_map, fidelity="full"
             )
 
         moves = list(GE.objects.filter(game_round=gr, event_type="movement"))

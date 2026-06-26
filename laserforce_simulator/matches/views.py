@@ -1018,6 +1018,10 @@ def game_round_events(request, round_id):
     pinned by ``TestM1EventLogWindowing``.
     """
     game_round = get_object_or_404(GameRound, id=round_id)
+    # GEN-01: this surface needs the full event log + movement + cell
+    # occupancy. Lazily upgrade the round to ``full`` (no-op if already
+    # there); the first click pays the re-sim + backfill once.
+    BatchSimulator().ensure_fidelity(game_round, "full")
     events_data, players_data = round_playback_payload(game_round)
 
     # Map playback overlay: corridor-faithful routes drawn on the processed
@@ -1053,6 +1057,9 @@ def missile_log(request, round_id):
     leaks through to the template). Friendly-fire hits count as hits.
     """
     game_round = get_object_or_404(GameRound, id=round_id)
+    # GEN-01: the missile log needs the combat event rows. Lazily upgrade
+    # to ``combat`` (no-op if already at combat/full).
+    BatchSimulator().ensure_fidelity(game_round, "combat")
 
     events_qs = GameEvent.objects.filter(
         game_round=game_round,
@@ -1089,6 +1096,9 @@ def movement_heatmap(request, round_id: int):
         return HttpResponseNotAllowed(["GET"])
 
     game_round = get_object_or_404(GameRound, pk=round_id)
+    # GEN-01: the heatmap reads cell_occupancy_json + movement. Lazily
+    # upgrade to ``full`` (no-op if already there).
+    BatchSimulator().ensure_fidelity(game_round, "full")
 
     has_map = game_round.arena_map_id is not None
     arena_map = game_round.arena_map if has_map else None

@@ -1646,6 +1646,7 @@ class TestMove01FlushTrailToCompactEvents(_FastRoundsMixin):
             seeds=[(20240517, False)],
             n=1,
             arena_map=arena_map,
+            fidelity="full",
         )
         assert saved, "save_games returned no rounds"
         gr = saved[0]
@@ -1902,6 +1903,7 @@ class TestMove02FlushTrailUnderCaching(_FastRoundsMixin):
             seeds=[(20240517, False)],
             n=1,
             arena_map=arena_map,
+            fidelity="full",
         )
         assert saved, "save_games returned no rounds"
         gr = saved[0]
@@ -1983,6 +1985,7 @@ class TestMove02FlushTrailUnderCaching(_FastRoundsMixin):
             seeds=[(13131313, False)],
             n=1,
             arena_map=arena_map,
+            fidelity="full",
         )
         assert saved
         gr = saved[0]

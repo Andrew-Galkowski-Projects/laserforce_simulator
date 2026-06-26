@@ -476,3 +476,86 @@ class TestSaveGamesTaskInvalidTeam:
             save_games_task.apply(
                 args=(bogus_red_id, blue.id, [[12345, False]], 1, None)
             )
+
+
+@pytest.mark.django_db
+class TestBatchWorkerCount:
+    """GEN-01 — intra-task multi-core batch sim, daemon-guarded.
+
+    ``simulate_batch_task`` revives the SIM-11 ``_workers_for`` heuristic so a
+    single batch run can use multiple cores, but guards it on
+    ``multiprocessing.current_process().daemon`` so a Celery *prefork* worker
+    (a daemonic child, which may not spawn subprocesses) stays serial.
+    """
+
+    def test_workers_for_below_threshold_is_serial(self) -> None:
+        from matches.tasks import _workers_for
+
+        assert _workers_for(1) == 1
+        assert _workers_for(49) == 1
+
+    def test_workers_for_at_threshold_is_multicore(self) -> None:
+        import os
+
+        from matches.tasks import _workers_for
+
+        cores = os.cpu_count() or 1
+        # No 4-cap: all cores, bounded only by the game count.
+        assert _workers_for(50) == min(cores, 50)
+        assert _workers_for(100) == min(cores, 100)
+        assert _workers_for(50) >= 1
+        # A batch with fewer games than cores never over-spawns.
+        assert _workers_for(60) == min(cores, 60)
+
+    def test_batch_workers_serial_in_daemonic_process(self) -> None:
+        """A daemonic (prefork) process may not spawn children -> workers=1."""
+        from types import SimpleNamespace
+
+        from matches import tasks
+
+        with patch.object(
+            tasks.multiprocessing,
+            "current_process",
+            return_value=SimpleNamespace(daemon=True),
+        ):
+            assert tasks._batch_workers(100) == 1
+            assert tasks._batch_workers(2) == 1
+
+    def test_batch_workers_parallel_when_not_daemonic(self) -> None:
+        from types import SimpleNamespace
+
+        from matches import tasks
+
+        with patch.object(
+            tasks.multiprocessing,
+            "current_process",
+            return_value=SimpleNamespace(daemon=False),
+        ):
+            assert tasks._batch_workers(100) == tasks._workers_for(100)
+            assert tasks._batch_workers(2) == 1
+
+    def test_task_threads_computed_workers_into_run_incremental(self) -> None:
+        """Under EAGER the task body runs in the (non-daemonic) test process,
+        so a large-n run threads workers>1 into ``run_incremental`` and a
+        small-n run threads workers=1. Captured via a spy that yields a
+        terminal snapshot WITHOUT actually running any games."""
+        import os
+
+        from matches.tasks import simulate_batch_task
+
+        red, _ = make_team_with_slots("Gen01WkR")
+        blue, _ = make_team_with_slots("Gen01WkB")
+        captured: dict = {}
+
+        def _spy(self, team_red, team_blue, n=100, *, arena_map=None, workers=1, **kw):
+            captured["workers"] = workers
+            yield {"completed": 0, "total": 0, "aggregate": {"n": 0}}
+
+        with patch.object(BatchSimulator, "run_incremental", _spy):
+            simulate_batch_task.apply(args=(red.id, blue.id, 60, None, 42))
+        assert captured["workers"] == min(os.cpu_count() or 1, 60)
+
+        captured.clear()
+        with patch.object(BatchSimulator, "run_incremental", _spy):
+            simulate_batch_task.apply(args=(red.id, blue.id, 2, None, 42))
+        assert captured["workers"] == 1

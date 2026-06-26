@@ -513,8 +513,12 @@ class TestBatchSimMinimalTickUnits:
         blue, _ = make_team_with_slots("T01BSB")
 
         random.seed(42)
+        # GEN-01: this asserts on persisted GameEvent timestamps; the default
+        # ``scores`` tier writes no events, so request ``full``.
         with patch.object(BatchSimulator, "ROUND_TICKS", 40):
-            gr = BatchSimulator().simulate_single_round_detailed(red, blue)
+            gr = BatchSimulator().simulate_single_round_detailed(
+                red, blue, fidelity="full"
+            )
 
         assert gr is not None and gr.is_completed
 
@@ -551,7 +555,8 @@ class TestBatchSimMinimalTickUnits:
         red, _ = make_team_with_slots("T01BSDefR")
         blue, _ = make_team_with_slots("T01BSDefB")
         random.seed(1)
-        gr = BatchSimulator().simulate_single_round_detailed(red, blue)
+        # GEN-01: asserts on persisted GameEvent timestamps — request ``full``.
+        gr = BatchSimulator().simulate_single_round_detailed(red, blue, fidelity="full")
         events = list(GameEvent.objects.filter(game_round=gr))
         if events:
             max_ts = max(e.timestamp for e in events)

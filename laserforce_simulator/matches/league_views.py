@@ -2817,6 +2817,7 @@ def play_week_live(request, season_id: int) -> HttpResponse:
                     arena_map=arena_map,
                     season_phase=cursor["season_phase"],
                     leg=cursor["fixture"].leg,
+                    fidelity="full",
                 )
             finally:
                 restore_after_fixture(token)
@@ -2825,7 +2826,7 @@ def play_week_live(request, season_id: int) -> HttpResponse:
             from matches.tournament_engine import play_specific_node
 
             node = cursor["node"]
-            play_specific_node(node)
+            play_specific_node(node, fidelity="full")
             node.refresh_from_db()
             latest = (
                 node.series_matches.select_related("match")

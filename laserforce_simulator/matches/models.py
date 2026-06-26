@@ -139,6 +139,23 @@ class Match(models.Model):
         super().save(*args, **kwargs)
 
 
+# GEN-01: persistence-fidelity tiers. Three cumulative tiers
+# scores ⊂ combat ⊂ full; ``flush_to_db`` writes only what the tier
+# requires, and ``BatchSimulator.ensure_fidelity`` lazily backfills the
+# higher-tier rows onto an existing GameRound from (rng_seed +
+# roster_snapshot_json + arena_map). See ADR-0029 and CONTEXT.md
+# "Persistence fidelity".
+FIDELITY_CHOICES = (
+    ("scores", "Scores"),
+    ("combat", "Combat"),
+    ("full", "Full"),
+)
+# Module-level dict (NOT a @staticmethod) keyed tier_string → int for
+# ordering tiers; importable as ``from matches.models import FIDELITY_RANK``.
+# Used by flush_to_db gating and ensure_fidelity's idempotency check.
+FIDELITY_RANK = {"scores": 1, "combat": 2, "full": 3}
+
+
 class GameRound(models.Model):
     """Detailed round tracking with player resources"""
 
@@ -224,6 +241,21 @@ class GameRound(models.Model):
     # the exported PDF report. Existing rows take the default=True (no backfill,
     # ADR-0004 precedent — rng_seed / cell_occupancy_json / highlights_json).
     is_simulated = models.BooleanField(default=True)
+
+    # GEN-01: persisted persistence-fidelity tier. default="full" because
+    # legacy rows already hold events + movement, so ``full`` is TRUE for
+    # them (no backfill, ADR-0004). max_length=6 fits "scores"/"combat".
+    fidelity = models.CharField(
+        max_length=6,
+        choices=FIDELITY_CHOICES,
+        default="full",
+    )
+    # GEN-01: the boosted _PlayerData sim-stat inputs per side that drove
+    # this round, so ensure_fidelity can re-simulate exactly from
+    # (rng_seed + this snapshot + arena_map). None ⇒ unupgradeable (only
+    # legacy rows, which are already ``full`` so never reach the re-sim
+    # branch — the defensive guard in ensure_fidelity).
+    roster_snapshot_json = models.JSONField(null=True, blank=True, default=None)
 
     def __str__(self):
         if self.match:
