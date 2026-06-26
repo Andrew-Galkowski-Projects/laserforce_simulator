@@ -1,3 +1,59 @@
+# Web testing — NAV-01 (`Play ▾` top-nav dropdown, single advancement surface)
+
+Date: 2026-06-26
+Branch: `nav-01-play-dropdown`
+Scope: the relocated league-mode `Play ▾` top-nav dropdown — present on league
+pages / absent on sandbox, state-correct items, the relocated forms POSTing
+against the league's resolved Season, and the dashboards stripped of advancement
+controls. Exercised on dev leagues 41/48.
+
+## Summary — NAV-01
+| Area | Result |
+|---|---|
+| `Play ▾` (`play-nav-link` / `topbar-play-dropdown`) renders in league mode; ABSENT on `/` (start) and `/teams/` (sandbox, flat links present) | ✅ |
+| Draft season → dropdown shows only `topbar-play-start-season` (state-correct); `topbar-play-progress` / `-error` affordances present | ✅ |
+| Start Season POST (from nav, on `/leagues/41/`) advanced the league's **resolved** season 47 draft→active → 302 to `/seasons/47/`; targeted the resolved season, not the URL's league | ✅ |
+| Active season → dropdown flips to the 4 actions `topbar-play-{one-week,two-months,until-end,one-week-live}`; `start_season` gone; Until-End label "Play Until End of Season" (no following tournament phase) | ✅ |
+| One Week POST (sync) ran a real matchday ("Rounds played: 2 / 12", leaders populated) → 302 back to the dashboard | ✅ |
+| Dashboards show NO advancement Play controls; read-only `view-past-evaluations` / `view-bracket` / Awards / standings / leaders retained | ✅ |
+| Console clean + network all 200 (page doc + Bootstrap CDN) on every surface | ✅ |
+
+## Findings — NAV-01
+- **🔴 → FIXED — multi-line `{# … #}` Django comments rendered as visible page
+  text.** Django `{# #}` is single-line only; a `{# #}` spanning two lines is not
+  stripped and prints literally. The NAV-01 code agent wrote four such comments,
+  visible on every league dashboard (and in the navbar on every league page):
+  `templates/leagues/dashboard.html:26-27`, `templates/seasons/dashboard.html:22-23`
+  (the "read-only View bracket link survives…" comment), and
+  `templates/_partials/topnav_play.html:1-6` + `:79-80` and
+  `templates/_partials/topnav_play_script.html:1-6` (the partial header comments).
+  Fix: the two dashboard comments collapsed to single-line `{# #}`; the three
+  partial comments converted to `{% comment %}…{% endcomment %}` (multi-line-safe;
+  inner `{% csrf_token %}` text treated as raw). Verified in-browser: leaked text
+  gone, all `topbar-play-*` ids still render, no console errors. **This is the same
+  recurring mistake + same remedy logged in the LG-02c RR→DE run below.**
+- **🟠 → FIXED (user-reported) — progress spinner/bar shown all the time.** The
+  `topbar-play-progress` block used `class="… d-flex … " hidden`; Bootstrap's
+  `.d-flex { display:flex !important }` overrides the `hidden` attribute, so the
+  "Running…" spinner + bar were permanently visible even with no run in progress.
+  Fix: default the block to **`d-none`** (no `d-flex`, no `hidden`), and have the
+  poll JS **swap** — `showProgress` hides the `Play ▾` dropdown
+  (`dropdown.hidden=true`) and shows the progress (`d-none`→`d-flex`), `clearPolling`
+  reverses it — so the progress **replaces** the Play button while a run polls and
+  **disappears** when idle. Verified in-browser (idle: progress hidden / Play
+  visible; running: progress `display:flex` + Play hidden; restored: Play back /
+  progress hidden). `templates/_partials/topnav_play.html` + `…_script.html`.
+- `start_next_season` (owner-eval link / next-season form) and the playoff group
+  (`topbar-play-play-single-round` / `-play-playoffs`) render through the same
+  partial + `league_nav` keys; covered by the unit state-matrix tests
+  (`matches/tests/test_nav_play_dropdown.py`), not re-driven in-browser (need a
+  completed season / live bracket). Async `play_playoffs`/`two_months` not exercised
+  (no Celery worker in the smoke env — same env note as prior runs).
+- Dev-DB churn: league 41 ("new test") season 47 started + matchday 1 played during
+  the end-to-end check. Low impact (throwaway dev league); not ChromeTest-prefixed.
+
+---
+
 # Web testing — GEN-01 (persistence-fidelity tiers + lazy upgrade)
 
 Date: 2026-06-26

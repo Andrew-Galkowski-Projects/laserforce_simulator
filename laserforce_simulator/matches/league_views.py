@@ -1382,26 +1382,18 @@ def _build_dashboard_context(
     # live M2M (the snapshot is None pre-activation).
     map_config_label = _build_map_config_label(displayed_season, season_mode)
 
-    # LG-02-Part2c-1 — playoff-cursor keys, derived from the displayed
-    # Season's phase cursor.
+    # LG-02-Part2c-1 — playoff-cursor keys. NAV-01 factored the 9 play keys
+    # (action button + playoff group + One-Week-Live gate + career flag) OUT
+    # of this body into ``_build_play_controls_context`` (the topnav ``Play ▾``
+    # dropdown source). ``_build_dashboard_context`` KEEPS ``playoff_tournament_id``
+    # ONLY — the read-only "View bracket" dashboard link still needs it (§4).
     (
-        playoff_phase_active,
+        _playoff_phase_active,
         playoff_tournament_id,
-        playoff_completed,
-        has_following_tournament_phase,
-        following_tournament_is_final,
+        _playoff_completed,
+        _has_following_tournament_phase,
+        _following_tournament_is_final,
     ) = _playoff_cursor_keys(displayed_season)
-
-    # LG-01i — gate the "One Week (Live)" Play-dropdown entry. True iff the
-    # manager (League.current_team) has a watchable RR or playoff cursor; False
-    # for a bye / eliminated / no-current_team state (the entry never renders).
-    live_preview_available = False
-    if displayed_season is not None and season_mode == "active":
-        cursor = _resolve_live_cursor(displayed_season)
-        live_preview_available = cursor is not None and cursor.get("kind") in (
-            "rr",
-            "playoff",
-        )
 
     return {
         "displayed_season": displayed_season,
@@ -1413,23 +1405,91 @@ def _build_dashboard_context(
         "leaders_points": leaders_points,
         "leaders_tags": leaders_tags,
         "leaders_ratio": leaders_ratio,
+        # LG-01j — read-only map-config label.
+        "map_config_label": map_config_label,
+        # NAV-01 — KEPT for the read-only dashboard "View bracket" link (§4);
+        # the playoff *play* forms moved to the topnav ``Play ▾`` dropdown.
+        "playoff_tournament_id": playoff_tournament_id,
+    }
+
+
+def _build_play_controls_context(
+    league: League, displayed_season: Optional[Season]
+) -> dict:
+    """NAV-01 §1 — the 9 play-control keys for the league-mode ``Play ▾`` topnav.
+
+    Factored OUT of ``_build_dashboard_context`` — this is the SINGLE source of
+    the league-advancement Play controls, consumed by
+    ``core.context_processors.league_nav`` (which merges these 9 keys plus
+    ``play_displayed_season_id`` / ``play_league_id`` into the topnav context).
+
+    The helper takes the **resolved** ``displayed_season`` (already chosen by
+    ``league_nav``'s session-pin → single-League → fallback chain), so it does
+    NOT re-implement the resolution. ``season_mode`` is derived from
+    ``displayed_season.state`` (or ``"none"`` when ``displayed_season is None``)
+    mirroring the current view logic.
+
+    Returns the 9 keys (contract §1 table):
+
+    * ``action_button_label`` / ``action_button_state`` — the placeholder
+      action-button label / state machine ("No Season" / "Start Season" /
+      "Play Next" / "Start Next Season").
+    * ``playoff_phase_active`` / ``playoff_tournament_id`` / ``playoff_completed``
+      / ``has_following_tournament_phase`` / ``following_tournament_is_final`` —
+      the ``_playoff_cursor_keys`` tuple.
+    * ``live_preview_available`` — the LG-01i "One Week (Live)" gate.
+    * ``is_career_mode`` — the CAR-03 career-mode gate.
+    """
+    # season_mode derivation (mirrors the dashboard views): None ⇒ "none",
+    # else the Season's state (draft / active / completed).
+    if displayed_season is None:
+        season_mode = "none"
+    else:
+        season_mode = displayed_season.state
+
+    # Action-button label / state machine.
+    if season_mode == "none":
+        action_button_label = "No Season"
+        action_button_state = "none"
+    elif season_mode == "draft":
+        action_button_label = "Start Season"
+        action_button_state = "start_season"
+    elif season_mode == "active":
+        action_button_label = "Play Next"
+        action_button_state = "play_next"
+    else:  # completed
+        action_button_label = "Start Next Season"
+        action_button_state = "start_next_season"
+
+    # LG-02-Part2c-1 — playoff-cursor keys.
+    (
+        playoff_phase_active,
+        playoff_tournament_id,
+        playoff_completed,
+        has_following_tournament_phase,
+        following_tournament_is_final,
+    ) = _playoff_cursor_keys(displayed_season)
+
+    # LG-01i — "One Week (Live)" gate. True iff the manager
+    # (League.current_team) has a watchable RR or playoff cursor.
+    live_preview_available = False
+    if displayed_season is not None and season_mode == "active":
+        cursor = _resolve_live_cursor(displayed_season)
+        live_preview_available = cursor is not None and cursor.get("kind") in (
+            "rr",
+            "playoff",
+        )
+
+    return {
         "action_button_label": action_button_label,
         "action_button_state": action_button_state,
-        # LG-01j — 12th key.
-        "map_config_label": map_config_label,
-        # LG-02-Part2c-1 — playoff-cursor keys.
         "playoff_phase_active": playoff_phase_active,
         "playoff_tournament_id": playoff_tournament_id,
         "playoff_completed": playoff_completed,
         "has_following_tournament_phase": has_following_tournament_phase,
-        # LG-02-Part2c-3c — terminal-label split.
         "following_tournament_is_final": following_tournament_is_final,
-        # LG-01i — "One Week (Live)" Play-dropdown gate.
         "live_preview_available": live_preview_available,
-        # CAR-03 — gate the owner-evaluation / firing surface to career mode.
-        "is_career_mode": (
-            displayed_season is not None and _is_career_league(displayed_season.league)
-        ),
+        "is_career_mode": _is_career_league(league),
     }
 
 

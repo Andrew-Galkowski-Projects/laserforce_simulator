@@ -87,7 +87,18 @@ CONTEXT.md **Persistence fidelity** term, the seam contract
 and the **GEN-01 persistence-fidelity tiers** subsection in
 [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
-### NAV-01 · Dedicated `Play ▾` top-nav dropdown
+### GEN-02 · [DEFERRED to bottom — see "Parked — deferred compute-tier work" (2026-06-26)]
+
+**Deferred (2026-06-26 grill).** Pushed to the bottom of this plan — too thorny to
+build now, no easy path. Two blockers surfaced: (1) a compute-tier "upgrade" can't be
+the GEN-01 `ensure_fidelity` pattern — a higher *compute* tier is a genuinely different
+game, so an in-place upgrade must either rewrite the scoreboard (retroactive
+Standings-shift, the ADR-0029 hazard) or leave an incoherent scoreboard-vs-replay; and
+(2) the `scores`-compute statistical model is blocked on baseline `score_averages` data
+that doesn't exist yet (entangled with the still-pending CAL-01 re-baseline). Full
+write-up parked below. Proceeding to the next item (NAV-01).
+
+### NAV-01 · [DONE] Dedicated `Play ▾` top-nav dropdown
 
 **Prio: High.** The Play actions are currently **dashboard-only**
 (`season-dashboard-play-*` / `league-dashboard-play-*` in
@@ -103,6 +114,60 @@ active Season's cursor via the `core.context_processors.league_nav` resolution c
 reachable from any league-mode page, not just the dashboard. **Interplay with
 PLAY-01:** while a multi-game run is in progress the dropdown's running entry follows
 the same Play→Stop swap + progress affordance.
+
+**[DONE] Shipped (2026-06-26).** Relocate-not-duplicate: the league-mode `Play ▾`
+topnav dropdown becomes the **SOLE** league-advancement surface — all advancement
+controls (Start Season / One Week / Two Months / Until End / One Week Live / Start
+Next Season / owner-evaluation entry / Play Single Round / Play Playoffs) move OUT of
+both dashboards into the league branch of `templates/base.html`; the dashboards keep
+only read-only panels + the View-bracket / View-past-evaluations links + the
+`play_error` banner. **League-mode only** (rendered in the `app_mode == "league"`
+branch, LG-01k path-prefix). The nav advances the league's **resolved
+active/displayed Season** via the `core.context_processors.league_nav` resolution
+chain (session `last_league_id` → single-League → fallback; displayed Season =
+`league.active_season` → most-recent completed → `None`) — **NOT** the `season_id` in
+the URL. The 9 play keys (`action_button_label` / `action_button_state` /
+`playoff_phase_active` / `playoff_tournament_id` / `playoff_completed` /
+`has_following_tournament_phase` / `following_tournament_is_final` /
+`live_preview_available` / `is_career_mode`) are factored OUT of
+`matches.league_views._build_dashboard_context` into a new shared module-level helper
+`matches.league_views._build_play_controls_context(league, displayed_season) -> dict`;
+`league_nav` is EXTENDED (lazy local import, the LG-01f apps-loading-cycle guard) to
+call that helper GATED on the league path-prefix and merge its 9 keys plus
+`play_displayed_season_id` / `play_league_id` (the reverse-helper ids the topnav forms
+need, since the nav has no `season`/`league` template var) — the keys are ABSENT
+off-league and on the no-League `_fallback()` path. After the factor-out
+`_build_dashboard_context` STOPS emitting the 9 play keys, KEEPS `playoff_tournament_id`
+(read-only View-bracket link) + the read-only body keys; `top_bar_links` /
+`top_bar_dashboard_url` unchanged. NEW nav DOM ids: toggle `play-nav-link`; wrapper
+`topbar-play-dropdown`; items `topbar-play-start-season` / `-one-week` / `-two-months`
+/ `-until-end` / `-one-week-live` / `-owner-evaluation` / `-next-season` /
+`-play-single-round` / `-play-playoffs`; progress `topbar-play-progress` (+
+`.play-progress-spinner` / `.play-progress-label` / `.play-progress-bar`); error
+`topbar-play-error`. RETIRED dashboard ids: the full `{season,league}-dashboard-play-*`
+advancement set + `-owner-evaluation-link` + `-next-season-form` + `-action-button`
+wrapper + both inline poll `<script>` blocks DELETED; `-state-badge` /
+`-view-bracket-link` / `-past-evaluations-link` / `-play-error` KEPT (read-only). All
+**10 play endpoints reused verbatim** (`start_season` / `play_week` / `play_two_months`
+/ `play_until_end` / `play_week_live` / `play_single_round` / `play_playoffs` /
+`play_status` / `next_season` / `owner_evaluation`) — they already 302 (sync) / return
+202 JSON (async) regardless of request origin, so a topnav submit needs no view tweak;
+sync errors still land on the dashboard `play_error` banner. Async actions (Two Months
+/ Until End / Play Playoffs) ship **progress-display only** — reuse `play_status` +
+`_build_play_status_response` + `_celery_state_to_job_status` verbatim; the inline poll
+JS is relocated to ONE copy in the league branch of `base.html` (DOM contract
+`interceptAsync` / `startPolling` / `showProgress` / `clearPolling` /
+`setDropdownDisabled` / `ensureErrorEl`, re-targeted at the `topbar-play-*` hooks); the
+**Play→Stop swap, cancel/revoke, live incremental standings/leaders, and cross-page
+resumable progress are DEFERRED to PLAY-01**. **No model change, no migration, no new
+routes, no new view functions** — the only code edit beyond templates is the
+`_build_play_controls_context` factor-out + the `league_nav` extension; pure
+view-context + template relocation, no simulator touch, **no Score Calibration
+re-baseline**. See
+[ADR-0030](docs/adr/0030-play-controls-relocated-to-topnav.md), the seam contract
+[`.claude/worktrees/nav-01-seam-contract.md`](.claude/worktrees/nav-01-seam-contract.md),
+and the **NAV-01** subsection in
+[`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
 ### PLAY-01 · Live incremental stats + Stop/Cancel for multi-game runs
 
@@ -893,3 +958,149 @@ real values (and make them sortable where it makes sense). Unblocks the **Hall o
 screen's Peak MMR / Peak Overall columns (`stats.md` §11). No simulator-mechanic change;
 no Score Calibration re-baseline. Coordinate with SIM-04 (import-driven Elo) so MMR has a
 single source of truth.
+
+---
+
+---
+
+## Parked — deferred compute-tier work
+
+Deprioritised to the bottom of the plan (2026-06-26 grill). Pushed below all other
+planned work — no easy build path, two hard blockers.
+
+### GEN-02 · [DEFERRED — needs its own grill + resolution of the two blockers below] Three compute tiers mirroring the persistence tiers
+
+**Why deferred (2026-06-26 grill).** Two blockers, neither easy:
+
+1. **The compute-tier "upgrade" is NOT the GEN-01 `ensure_fidelity` pattern.** GEN-01's
+   lazy upgrade is faithful *because the re-sim reproduces the identical game* — so
+   backfilling detail rows onto the existing scoreboard is coherent and the scoreboard
+   is never rewritten ([ADR-0029](docs/adr/0029-persistence-fidelity-tiers-and-faithful-lazy-upgrade.md)
+   decision 3 + the equivalence invariant). At GEN-02 a higher **compute** tier produces
+   a **genuinely different game** (accepted up front — a `scores`-compute scoreboard
+   will not byte-match a `full`-compute one). So an in-place compute upgrade is stuck:
+   either **(i)** rewrite the scoreboard to match the new full-compute game →
+   retroactively shifts completed-season Standings the instant an old game is clicked
+   (the verify-then-degrade failure ADR-0029 rejected, "sharper here"); or **(ii)** keep
+   the cheap scoreboard and only add detail rows → you then watch a `full` replay whose
+   combat log + movement produce a *different* score than the scoreboard shown above it
+   (an incoherent game). The PLAN's "reuse `ensure_fidelity` verbatim / upgrade re-runs a
+   higher `compute_tier`" wording does **not** transfer. A candidate resolution (not yet
+   accepted): make a cheap-compute season game **terminal for Standings** — its cheap
+   scoreboard authoritative forever — and make "watching" a **transient, non-persisted
+   `full`-compute re-sim** from the stored `(master_seed + roster_snapshot + map)`, the
+   PR-03 fork-and-resim pattern, that never writes back. That sidesteps the hazard but
+   abandons in-place compute upgrade and needs its own grill.
+2. **The `scores`-compute statistical model is blocked on data that doesn't exist yet.**
+   Fitting per-role closed-form distributions needs baseline `score_averages` output, the
+   same dependency the deferred per-stat-per-role weight tuning has — and it's entangled
+   with the still-pending **CAL-01** Score Calibration re-baseline (GEN-02 open question
+   (e) DOES touch calibration, unlike GEN-01). The `combat`-compute tier (the existing
+   3-zone fallback) is *largely already built and calibrated*; the `scores`-compute tier
+   is a brand-new model that can't be fit until that baseline data lands.
+
+**Likely re-slice when revived:** ship `combat`-compute first (reuse the already-built,
+already-calibrated 3-zone fallback path — just the tier selector + skipping
+event/movement collection), and defer `scores`-compute (the unbuilt statistical model)
+until CAL-01 + baseline batch data exist. The original full write-up follows.
+
+---
+
+**Prio: High (when unblocked).** GEN-01 shipped **persistence** tiers (`scores` ⊂ `combat` ⊂ `full`)
+where the tick loop **always runs in full** and the tiers differ only in what
+`flush_to_db` writes — so the **same seed reproduces a byte-identical game at every
+tier**, and the only saving is skipped DB writes / event-buffer collection.
+[ADR-0029](docs/adr/0029-persistence-fidelity-tiers-and-faithful-lazy-upgrade.md)
+**explicitly deferred** the genuinely-cheaper path — "a separate statistical model
+that would *not* match full-fidelity scores… would break the same-seed-same-scores
+guarantee and is a different piece of work." **GEN-02 is that piece of work:** three
+**compute** tiers that actually do *less arithmetic* for a game nobody will watch, so
+bulk season play (`play_season_task` simulating hundreds of rounds whose only consumer
+is Standings) stops paying the full ~200 ms-per-round (no-map) / multiple-× (map) tick
+cost when a closed-form scoreboard would do.
+
+**Accepted up front (user decision):** because a cheaper *computation* produces a
+*different* game, **the same seed cannot generate all three compute tiers** — a
+`scores`-compute scoreboard will not byte-match a `full`-compute one. What GEN-02
+guarantees instead is (a) **reproducibility within a tier** — `(seed + roster snapshot
++ map + tier)` deterministically regenerates *that tier's* result, so any cheap result
+is auditable/replayable; and (b) **a documented deterministic mapping** from a stored
+seed to a higher-tier regeneration of the same matchup (different exact scores, same
+distribution — see the calibration anchor below).
+
+**The three compute tiers (mirroring the persistence tiers):**
+
+1. **`scores` compute — closed-form statistical model (no tick loop).** Draw each
+   player's final line from per-role distributions parameterised by their boosted
+   `roster_snapshot_json` stats + the opponent's relative strength; decide the round
+   winner from the aggregate. Microseconds, no movement / no LOS / no A* / no events.
+   Produces a scoreboard **only**.
+2. **`combat` compute — abstract-zone reduced-spatial model.** The **existing 3-zone
+   fallback** (`movement_ctx is None`): a per-tick loop with role-weighted actions +
+   zone-adjacency combat but **no per-cell A* and no LOS scan** (the two dominant
+   costs). Produces a scoreboard + a who-hit-who combat log, but **no movement trails**
+   (there are no cells). **Largely already built and already calibrated** (see below).
+3. **`full` compute — the current spatial engine** (MOVE-01..04 per-cell movement →
+   LOS → combat). The canonical scoreboard + combat + movement. Unchanged.
+
+**Big de-risk — the middle tier already exists and is the calibration baseline.** The
+3-zone fallback is live today (the `movement_ctx is None` path), and the **Score
+Calibration Targets** (Commander 9,952 / Heavy 6,482 / … — `matches/CLAUDE.md`) "were
+tuned against the non-spatial 3-zone fallback model." So `combat`-compute is mostly
+*deliberately reusing an already-calibrated path*, not new mechanics — the work there
+is the tier selector + skipping the event/movement collection, not a new simulator.
+
+**Mock concepts investigated (to land on the seed↔tier mapping):**
+
+- **Mock A — independent per-tier seeds.** Each tier draws its own seed; a `scores`
+  round and its `full` regeneration are unrelated games. Simplest, but an "upgrade"
+  yields a totally different scoreboard — exactly the retroactive-Standings-shift
+  failure ADR-0029 rejected for *verify-then-degrade*. **Rejected.**
+- **Mock B — shared master seed, per-tier deterministic model.** Store ONE master
+  seed; each tier is `Random(master_seed)` feeding *its* model. Same master seed ⇒ each
+  tier deterministically reproduces its own result, and the tiers are *anchored*
+  (correlated samples of one matchup, not identical games). The mapping is
+  `master_seed → {scores_result | combat_result | full_result}`, one deterministic
+  function per tier; "upgrade" = re-run a higher-tier model from the stored
+  `(master_seed + roster_snapshot_json + arena_map)` — **the GEN-01 `ensure_fidelity`
+  pattern, extended from a write-selector to a model-selector.** **Kept** — but see
+  Blocker 1 above: this "upgrade" cannot keep the cheap scoreboard *and* show a faithful
+  replay, so the in-place framing is unresolved.
+- **Mock C — hierarchical conditioning (cheap tier constrains the expensive).** Make
+  the spatial sim reproduce the `scores` tier's predetermined scoreboard while filling
+  in detail. Recovers same-scores-across-tiers (the persistence-tier property) but needs
+  rejection-sampling / biased simulation — *more* expensive than `full`, and it breaks
+  calibration. **Rejected** (it re-derives the persistence-tier guarantee and defeats
+  the whole compute-savings purpose).
+- **Mock D — calibration-bridged tiers.** Independently calibrate **all three** tiers
+  to the **same** Score Calibration Targets, so although a given seed differs across
+  tiers, the *aggregate distributions agree* — a season simulated at `scores` produces
+  Standings statistically indistinguishable from one at `full`. This is the property the
+  real use case (bulk season play) actually needs: not per-game identity, but a faithful
+  *sample of the same distribution*. **Kept, combined with B.**
+
+**Landing (robust solution = B + D).** A **`compute_tier`** selector
+(`scores`/`combat`/`full`) that picks the **model**, orthogonal to GEN-01's
+**`fidelity`** selector that picks what gets **written** — the two compose
+(bulk season = `compute=scores, persist=scores`; LG-01i live watch =
+`compute=full, persist=full`; a lazy upgrade re-runs a higher `compute_tier` from the
+stored seed). Reuse GEN-01's `rng_seed` + `roster_snapshot_json` + the
+`@transaction.atomic` lazy-resim plumbing verbatim. **All three tiers stay pinned to
+the same calibration targets**, so the cheap tiers are faithful samples, not a
+different game.
+
+**Open questions for its own grill (NOT pre-resolved here):** (a) the exact `scores`
+statistical model + its fitting — **depends on baseline batch data** (`score_averages`
+output) the same way the deferred per-stat-per-role weight tuning does (see Blocker 2);
+(b) whether `combat`-compute persists at-all-without-movement or folds into GEN-01
+`fidelity=combat` (the two axes overlap at that tier and the seam must disambiguate);
+(c) the **surface→compute-tier mapping** (bulk season → `scores`; live watch / sandbox
+create → `full`; the missile-log / events views trigger a `combat`/`full` *recompute*,
+not just a persistence upgrade); (d) whether an "upgrade" stores the *new* tier's
+scoreboard or keeps the cheap one and only adds detail — the retroactive-Standings-shift
+hazard ADR-0029 names is sharper here because the scoreboards genuinely differ between
+tiers (see Blocker 1 — likely resolved by making cheap-compute games terminal for
+Standings + a transient full re-sim for watching); (e) a **dedicated re-baseline** of
+each tier against the targets (this DOES touch Score Calibration, unlike GEN-01). Needs
+a new ADR (the seed↔tier mapping + the two-axis `compute_tier` × `fidelity` model) and a
+CONTEXT.md **Compute tier** term.

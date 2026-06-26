@@ -1,0 +1,89 @@
+{% comment %}NAV-01 §3/§5 — the league-mode Play dropdown. The SINGLE
+   advancement surface (relocated out of both dashboards). Branches on
+   action_button_state; reverses against the resolved play_displayed_season_id
+   / play_league_id (the topnav has no season/league template var).
+   csrf_token in every form; data-action-state on each submit
+   control (test-hook parity with the old dashboard controls).{% endcomment %}
+<div id="topbar-play-dropdown" class="nav-item dropdown">
+    <a class="nav-link dropdown-toggle" id="play-nav-link" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Play ▾</a>
+    <ul class="dropdown-menu" aria-labelledby="play-nav-link">
+        {% if action_button_state == "start_season" %}
+            <li>
+                <form id="topbar-play-start-season" method="post" action="{% url 'start_season' season_id=play_displayed_season_id %}" class="px-2">
+                    {% csrf_token %}
+                    <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">Start Season</button>
+                </form>
+            </li>
+        {% elif action_button_state == "play_next" %}
+            <li>
+                <form id="topbar-play-one-week" method="post" action="{% url 'play_week' season_id=play_displayed_season_id %}" class="px-2">
+                    {% csrf_token %}
+                    <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">Play One Week</button>
+                </form>
+            </li>
+            <li>
+                <form id="topbar-play-two-months" method="post" action="{% url 'play_two_months' season_id=play_displayed_season_id %}" class="px-2">
+                    {% csrf_token %}
+                    <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">Play Two Months</button>
+                </form>
+            </li>
+            <li>
+                <form id="topbar-play-until-end" method="post" action="{% url 'play_until_end' season_id=play_displayed_season_id %}" class="px-2">
+                    {% csrf_token %}
+                    <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">{% if has_following_tournament_phase %}{% if following_tournament_is_final %}Play Until Playoffs{% else %}Play Until Tournament{% endif %}{% else %}Play Until End of Season{% endif %}</button>
+                </form>
+            </li>
+            {% if live_preview_available %}
+            <li>
+                <form id="topbar-play-one-week-live" method="post" action="{% url 'play_week_live' play_displayed_season_id %}" class="px-2">
+                    {% csrf_token %}
+                    <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">One Week (Live)</button>
+                </form>
+            </li>
+            {% endif %}
+        {% elif action_button_state == "start_next_season" %}
+            {% if is_career_mode %}
+                <li>
+                    <a id="topbar-play-owner-evaluation" class="dropdown-item" href="{% url 'owner_evaluation' play_displayed_season_id %}" data-action-state="{{ action_button_state }}">Start Next Season</a>
+                </li>
+            {% else %}
+                <li>
+                    <form id="topbar-play-next-season" method="post" action="{% url 'next_season' league_id=play_league_id %}" class="px-2">
+                        {% csrf_token %}
+                        <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">Start Next Season</button>
+                    </form>
+                </li>
+            {% endif %}
+        {% else %}
+            <li><span class="dropdown-item disabled" data-action-state="{{ action_button_state }}">Play</span></li>
+        {% endif %}
+
+        {% if playoff_phase_active %}
+            <li><hr class="dropdown-divider"></li>
+            <li>
+                <form id="topbar-play-play-single-round" method="post" action="{% url 'play_single_round' season_id=play_displayed_season_id %}" class="px-2">
+                    {% csrf_token %}
+                    <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">Play Single Round</button>
+                </form>
+            </li>
+            <li>
+                <form id="topbar-play-play-playoffs" method="post" action="{% url 'play_playoffs' season_id=play_displayed_season_id %}" class="px-2">
+                    {% csrf_token %}
+                    <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">Play Playoffs</button>
+                </form>
+            </li>
+        {% endif %}
+    </ul>
+</div>
+
+{% comment %}Navbar progress + error affordances. Present in the league branch but
+   ``d-none`` by default — the JS swaps the Play dropdown OUT and this progress block
+   IN only while an async run polls (NOT the ``hidden`` attribute, which Bootstrap's
+   ``d-flex`` ``!important`` would override). The relocated LG-01d progress DOM
+   contract (.play-progress-spinner / .play-progress-label / .play-progress-bar).{% endcomment %}
+<div id="topbar-play-progress" class="nav-item align-items-center text-light px-2 d-none">
+    <span class="play-progress-spinner spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+    <span class="play-progress-label">Running…</span>
+    <progress class="play-progress-bar ms-2" value="0" max="1"></progress>
+</div>
+<div id="topbar-play-error" class="nav-item text-danger px-2" hidden></div>

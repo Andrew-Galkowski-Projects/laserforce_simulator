@@ -20,6 +20,8 @@
                     {% if app_mode == "league" %}
                         {% regroup top_bar_links by section as sections %}
                         <a class="nav-link" id="dashboard-nav-link" href="{{ top_bar_dashboard_url }}" aria-label="League dashboard">⌂</a>
+                        {# NAV-01 — the `Play ▾` advancement dropdown, positioned after ⌂ and before `League ▾`. #}
+                        {% include "_partials/topnav_play.html" %}
                         {# Section keys hard-coded in lockstep with `_build_league_sidebar_links` (matches.league_views) — adding a 5th section requires updating both. #}
                         {% for section in sections %}
                             {% if section.grouper == "league" %}
@@ -53,6 +55,8 @@
                             {% endif %}
                         {% endfor %}
                         {% include "_partials/topnav_tools_help.html" %}
+                        {# NAV-01 — ONE relocated poll block (league branch only). #}
+                        {% include "_partials/topnav_play_script.html" %}
                     {% elif app_mode == "sandbox" %}
                         <a class="nav-link" href="{% url 'team_list' %}">Teams</a>
                         <a class="nav-link" id="player-list-nav-link" href="{% url 'player_list' %}">Players</a>
