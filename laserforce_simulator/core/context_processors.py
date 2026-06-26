@@ -62,9 +62,21 @@ def league_nav(request: HttpRequest) -> dict[str, Any]:
     # we still want League / helper visible at function scope, not module
     # scope (avoids the ``core`` ↔ ``matches`` apps-loading cycle).
     from matches.models import League, Season
-    from matches.league_views import _build_league_sidebar_links
+    from matches.league_views import (
+        _build_league_sidebar_links,
+        _build_play_controls_context,
+    )
 
     list_url = reverse("league_list")
+
+    # NAV-01 §2 — the topnav ``Play ▾`` dropdown renders ONLY on a league-prefix
+    # path (the ``app_mode == "league"`` rule: ``/leagues/`` or ``/seasons/``).
+    # Off-league pages skip the play-control ORM work entirely (the keys are
+    # ABSENT, never read).
+    request_path = getattr(request, "path", "") or ""
+    is_league_path = request_path.startswith("/leagues/") or request_path.startswith(
+        "/seasons/"
+    )
 
     def _fallback() -> dict[str, Any]:
         """Empty-links + list-page-dashboard fallback shape."""
@@ -108,10 +120,30 @@ def league_nav(request: HttpRequest) -> dict[str, Any]:
             )
             return _fallback()
         dashboard_url = reverse("league_dashboard", kwargs={"league_id": league_obj.id})
-        return {
+        result: dict[str, Any] = {
             "top_bar_links": links,
             "top_bar_dashboard_url": dashboard_url,
         }
+        # NAV-01 §2 — merge the 9 play keys + the 2 URL/id keys ONLY on a
+        # league-prefix path. Off-league pages leave them ABSENT (the topnav
+        # ``Play ▾`` dropdown renders only in the league branch). Wrapped in the
+        # same defensive ``DatabaseError`` guard the file already uses.
+        if is_league_path:
+            try:
+                play_keys = _build_play_controls_context(league_obj, displayed)
+            except DatabaseError:
+                logger.debug(
+                    "league_nav: _build_play_controls_context raised inside "
+                    "broken transaction; omitting play keys",
+                    exc_info=True,
+                )
+            else:
+                result.update(play_keys)
+                result["play_displayed_season_id"] = (
+                    displayed.id if displayed is not None else None
+                )
+                result["play_league_id"] = league_obj.id
+        return result
 
     session = getattr(request, "session", None)
     last_league_id = session.get("last_league_id") if session is not None else None

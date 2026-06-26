@@ -1,0 +1,132 @@
+{% comment %}NAV-01 §5 — ONE relocated poll block (collapsed from the two dashboard IIFEs).
+   Intercepts the async Play forms (Two Months / Until End / Play Playoffs),
+   polls play_status at 500 ms with a ?season_id= carry, reloads on complete,
+   surfaces errors into topbar-play-error, and disables the whole
+   topbar-play-dropdown while a run polls. Rendered only when a displayed
+   Season exists (the async forms / playoff group never render without one).{% endcomment %}
+{% if play_displayed_season_id %}
+<script>
+(function() {
+    "use strict";
+    var POLL_INTERVAL_MS = 500;
+    var STATUS_URL_TEMPLATE = "{% url 'play_status' season_id=play_displayed_season_id job_id='JOB' %}";
+    var SEASON_ID = "{{ play_displayed_season_id }}";
+    var CSRF_TOKEN = document.querySelector("input[name=csrfmiddlewaretoken]");
+    CSRF_TOKEN = CSRF_TOKEN ? CSRF_TOKEN.value : "";
+
+    var dropdown = document.getElementById("topbar-play-dropdown");
+    var progressContainer = document.getElementById("topbar-play-progress");
+    var progressBar = progressContainer ? progressContainer.querySelector(".play-progress-bar") : null;
+    var progressLabel = progressContainer ? progressContainer.querySelector(".play-progress-label") : null;
+
+    var pollTimer = null;
+
+    function ensureErrorEl() {
+        var el = document.getElementById("topbar-play-error");
+        if (el) { el.hidden = false; return el; }
+        el = document.createElement("div");
+        el.id = "topbar-play-error";
+        el.className = "nav-item text-danger px-2";
+        if (progressContainer && progressContainer.parentNode) {
+            progressContainer.parentNode.insertBefore(el, progressContainer.nextSibling);
+        }
+        return el;
+    }
+
+    function setDropdownDisabled(disabled) {
+        if (!dropdown) return;
+        var controls = dropdown.querySelectorAll("button, [type=submit]");
+        for (var i = 0; i < controls.length; i++) {
+            controls[i].disabled = disabled;
+        }
+    }
+
+    // Swap the Play dropdown OUT and the progress block IN (replace, not
+    // sit-beside). Toggling the d-none/d-flex classes — NOT the ``hidden``
+    // attribute, which Bootstrap's ``d-flex !important`` would defeat.
+    function showProgress(completed, total) {
+        if (dropdown) { dropdown.hidden = true; }
+        if (progressContainer) {
+            progressContainer.classList.remove("d-none");
+            progressContainer.classList.add("d-flex");
+        }
+        if (progressBar) {
+            progressBar.value = completed;
+            progressBar.max = total > 0 ? total : 1;
+        }
+        if (progressLabel) {
+            progressLabel.textContent = "Running… " + completed + " / " + total;
+        }
+    }
+
+    function clearPolling() {
+        if (pollTimer !== null) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+        }
+        // Restore: Play dropdown back IN, progress block back OUT.
+        if (dropdown) { dropdown.hidden = false; }
+        if (progressContainer) {
+            progressContainer.classList.add("d-none");
+            progressContainer.classList.remove("d-flex");
+        }
+    }
+
+    function startPolling(jobId) {
+        setDropdownDisabled(true);
+        showProgress(0, 0);
+        pollTimer = setInterval(function() {
+            var url = STATUS_URL_TEMPLATE.replace("JOB", jobId);
+            fetch(url + "?season_id=" + SEASON_ID, {credentials: "same-origin"})
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    showProgress(data.completed || 0, data.total || 0);
+                    if (data.status === "complete") {
+                        clearPolling();
+                        window.location.reload();
+                    } else if (data.status === "error") {
+                        clearPolling();
+                        setDropdownDisabled(false);
+                        var el = ensureErrorEl();
+                        el.textContent = data.error || "Play job failed.";
+                    }
+                })
+                .catch(function() {
+                    // Network blip — keep polling.
+                });
+        }, POLL_INTERVAL_MS);
+    }
+
+    function interceptAsync(form) {
+        if (!form) return;
+        form.addEventListener("submit", function(e) {
+            e.preventDefault();
+            var fd = new FormData(form);
+            fetch(form.action, {
+                method: "POST",
+                body: fd,
+                headers: {"X-CSRFToken": CSRF_TOKEN},
+                credentials: "same-origin",
+            })
+                .then(function(r) { return r.json().then(function(j) { return {ok: r.ok, json: j}; }); })
+                .then(function(res) {
+                    if (res.ok && res.json && res.json.job_id) {
+                        startPolling(res.json.job_id);
+                    } else {
+                        var el = ensureErrorEl();
+                        el.textContent = (res.json && res.json.error) || "Failed to start job.";
+                    }
+                })
+                .catch(function(err) {
+                    var el = ensureErrorEl();
+                    el.textContent = String(err);
+                });
+        });
+    }
+
+    interceptAsync(document.getElementById("topbar-play-two-months"));
+    interceptAsync(document.getElementById("topbar-play-until-end"));
+    interceptAsync(document.getElementById("topbar-play-play-playoffs"));
+})();
+</script>
+{% endif %}
