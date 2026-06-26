@@ -85,7 +85,9 @@ def _build_role_hook(tournament: Tournament):
     return hook
 
 
-def play_next_node(tournament: Tournament) -> "BracketNode | None":
+def play_next_node(
+    tournament: Tournament, *, fidelity: str = "scores"
+) -> "BracketNode | None":
     """Simulate the NEXT Match of the next playable Bracket node's best-of-N
     Series, recording it as a SeriesMatch. Advances the node only once its
     Series clinches.
@@ -98,15 +100,20 @@ def play_next_node(tournament: Tournament) -> "BracketNode | None":
     :func:`play_specific_node` (which carries the ``@transaction.atomic``), so
     the LG-01i live-watch commit can play a SPECIFIC node (the manager's) while
     this entry point keeps playing the next playable one.
+
+    GEN-01: ``fidelity`` is forwarded into ``simulate_match``; defaults to
+    ``scores`` so background drains persist scoreboard-only.
     """
     node = tournament.find_next_playable_node()
     if node is None:
         return None
-    return play_specific_node(node)
+    return play_specific_node(node, fidelity=fidelity)
 
 
 @transaction.atomic
-def play_specific_node(node: "BracketNode") -> "BracketNode | None":
+def play_specific_node(
+    node: "BracketNode", *, fidelity: str = "scores"
+) -> "BracketNode | None":
     """The per-Match resolve/advance body, taking the node DIRECTLY (skips
     ``find_next_playable_node``).
 
@@ -115,6 +122,10 @@ def play_specific_node(node: "BracketNode") -> "BracketNode | None":
     the bracket stage is drained in the background). @transaction.atomic — one
     Match = one transactional unit (ADR-0016 per-node-atomic precedent, now
     per-Match).
+
+    GEN-01: ``fidelity`` is forwarded into both ``simulate_match`` calls; the
+    LG-01i live-playoff path overrides to ``full`` so the watch view can
+    replay the just-played Match off the persisted rows.
     """
     # Defer the heavy import inside the function (not at module scope).
     from .simulation.entrypoints import BatchSimulator
@@ -132,12 +143,14 @@ def play_specific_node(node: "BracketNode") -> "BracketNode | None":
             node.team_b,
             match_type="tournament",
             before_round_hook=hook,
+            fidelity=fidelity,
         )
     else:
         match = BatchSimulator().simulate_match(
             node.team_a,
             node.team_b,
             match_type="tournament",
+            fidelity=fidelity,
         )
     match_winner = match.winner
     if match_winner is None:

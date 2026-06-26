@@ -18,7 +18,7 @@ from typing import Iterator, Optional
 
 from django.db import transaction
 
-from ..models import Match, GameRound
+from ..models import FIDELITY_RANK, Match, GameRound
 from ..sim_helpers.combat import (
     plan_action,
     attempt_resupply as _attempt_resupply_shared,
@@ -125,6 +125,23 @@ _SIMULATION_STATS = (
     "resource_awareness",
     "speed",
 )
+
+
+def _roster_from_snapshot(side_list) -> list:
+    """GEN-01: rebuild a ``list[(role, _PlayerData)]`` from a snapshot side.
+
+    Each entry in ``side_list`` is a roster-snapshot dict
+    ``{"player_id", "name", "role", "stats": {<13 sim-stats>: int}}``. The
+    snapshot already holds the boosted (post-``stat_for_simulation``) values,
+    so ``_PlayerData.stat_for_simulation`` returning them verbatim re-bakes
+    IDENTICAL ``PlayerState``s — exact reproduction. The 13 ``"stats"`` keys
+    are exactly the keys ``_make_players`` reads (``_SIMULATION_STATS``), so
+    no ``KeyError``.
+    """
+    return [
+        (entry["role"], _PlayerData(entry["player_id"], entry["name"], entry["stats"]))
+        for entry in side_list
+    ]
 
 
 def _precompute_roster(roster) -> list:
@@ -563,6 +580,7 @@ class BatchSimulator:
         movement_ctx,
         arena_map,
         zone_size: int | None,
+        fidelity: str = "scores",
     ) -> "GameRound":
         """Draw a fresh 63-bit seed, ``random.seed()`` it, simulate one round
         in-memory via ``_simulate_round``, and persist it through
@@ -583,7 +601,16 @@ class BatchSimulator:
         seed = random.Random().getrandbits(63)
         random.seed(seed)
 
-        events: list = []
+        # GEN-01: the scores tier collects NO event buffer (the tick loop
+        # still runs in full; only persistence differs). At combat/full a
+        # real list is collected so the combat/movement/highlights blocks
+        # have rows to write. _simulate_round(event_log=None) builds the
+        # null-object EventLog(persist=False), so scores allocates nothing.
+        events: list | None
+        if FIDELITY_RANK[fidelity] >= FIDELITY_RANK["combat"]:
+            events = []
+        else:
+            events = None
         result, red_players, blue_players = self._simulate_round(
             red_roster,
             blue_roster,
@@ -603,6 +630,7 @@ class BatchSimulator:
             round_number=round_number,
             arena_map=arena_map,
             zone_size=zone_size,
+            fidelity=fidelity,
         )
 
     @transaction.atomic
@@ -614,6 +642,7 @@ class BatchSimulator:
         *,
         arena_map=None,
         before_round_hook=None,
+        fidelity: str = "scores",
     ) -> Match:
         """Create a ``Match``, simulate its two rounds in-memory, and
         persist everything to the DB.
@@ -657,6 +686,7 @@ class BatchSimulator:
             movement_ctx=movement_ctx,
             arena_map=arena_map,
             zone_size=zone_size,
+            fidelity=fidelity,
         )
         match.red_round1_points = round1.red_points
         match.blue_round1_points = round1.blue_points
@@ -681,6 +711,7 @@ class BatchSimulator:
             movement_ctx=movement_ctx,
             arena_map=arena_map,
             zone_size=zone_size,
+            fidelity=fidelity,
         )
         # round2.red_points is the score of the team that played red this
         # round (= the canonical team_blue argument), so swap when copying
@@ -709,7 +740,7 @@ class BatchSimulator:
 
     @transaction.atomic
     def simulate_single_round_detailed(
-        self, team_red, team_blue, *, arena_map=None
+        self, team_red, team_blue, *, arena_map=None, fidelity: str = "scores"
     ) -> "GameRound":
         """Simulate a single standalone round (no parent Match) and
         persist it to the DB.
@@ -727,7 +758,83 @@ class BatchSimulator:
             movement_ctx=movement_ctx,
             arena_map=arena_map,
             zone_size=zone_size,
+            fidelity=fidelity,
         )
+
+    # ------------------------------------------------------------------ #
+    # GEN-01 — lazy persistence-fidelity upgrade
+    # ------------------------------------------------------------------ #
+
+    @transaction.atomic
+    def ensure_fidelity(self, game_round, target_fidelity: str) -> "GameRound":
+        """Backfill the higher-tier rows onto an existing ``GameRound``.
+
+        GEN-01: re-simulates from ``(rng_seed + roster_snapshot_json +
+        arena_map)`` — reading the STORED snapshot, NOT the live
+        ``Team.active_roster`` — so the re-sim is exact regardless of LG-04
+        development or any later roster edit, then backfills the missing
+        higher-tier rows and bumps ``fidelity``. **Never** rewrites the
+        scoreboard (``GameRound`` scalar columns / ``PlayerRoundState``):
+        re-sim off the same seed + snapshot + map reproduces them exactly,
+        so re-writing them is forbidden, not just unnecessary. Idempotent.
+
+        No-op (returns ``game_round`` unchanged) iff the round already meets
+        the target tier, OR the snapshot is ``None`` (the defensive guard —
+        a ``fidelity < full`` row with a null snapshot is impossible in
+        practice, but never crash; render scores-only by returning as-is).
+        """
+        if (
+            FIDELITY_RANK[game_round.fidelity] >= FIDELITY_RANK[target_fidelity]
+            or game_round.roster_snapshot_json is None
+        ):
+            return game_round
+
+        # Rebuild the _PlayerData rosters from the stored snapshot. Each side
+        # is a list[(role, _PlayerData)] — the shape _make_players reads.
+        snapshot = game_round.roster_snapshot_json
+        red_data = _roster_from_snapshot(snapshot["red"])
+        blue_data = _roster_from_snapshot(snapshot["blue"])
+
+        # Map context from the round's arena_map (None ⇒ 3-zone fallback,
+        # matching every other path). zone_size is unused on the backfill.
+        movement_ctx, _ = load_map_context(game_round.arena_map)
+
+        # Re-seed from the stored seed and re-run with full buffer collection
+        # (we are upgrading TO at least combat/full). ``_simulate_round``
+        # populates the passed ``event_log`` list IN PLACE, so hold a named
+        # reference to read the collected events back below.
+        events: list = []
+        random.seed(game_round.rng_seed)
+        # The re-sim result is identical to the stored scoreboard (same seed
+        # + snapshot + map), so it is intentionally discarded — ensure_fidelity
+        # never rewrites the scoreboard, only backfills the higher-tier rows.
+        _result, red_players, blue_players = self._simulate_round(
+            red_data, blue_data, event_log=events, movement_ctx=movement_ctx
+        )
+
+        # GEN-01: build players_by_id with a tiny read-only query (NOT
+        # _write_player_states — that would duplicate the scoreboard rows).
+        players_by_id = persistence._players_by_id(red_players, blue_players)
+
+        rank = FIDELITY_RANK[target_fidelity]
+        if rank >= FIDELITY_RANK["combat"]:
+            persistence._write_combat_events(game_round, events, players_by_id)
+            persistence._write_highlights(game_round, events, red_players, blue_players)
+        if rank >= FIDELITY_RANK["full"]:
+            persistence._write_movement_events(
+                game_round,
+                red_players,
+                blue_players,
+                movement_ctx,
+                players_by_id,
+            )
+            persistence._write_cell_occupancy(
+                game_round, red_players, blue_players, movement_ctx
+            )
+
+        game_round.fidelity = target_fidelity
+        game_round.save(update_fields=["fidelity"])
+        return game_round
 
     # ------------------------------------------------------------------ #
     # LG-01 — Season-scheduled round simulation
@@ -744,6 +851,7 @@ class BatchSimulator:
         arena_map=None,
         season_phase=None,
         leg: int = 1,
+        fidelity: str = "scores",
     ) -> "GameRound":
         """Simulate one Round of a Season Match.
 
@@ -827,6 +935,7 @@ class BatchSimulator:
                 movement_ctx=movement_ctx,
                 arena_map=arena_map,
                 zone_size=zone_size,
+                fidelity=fidelity,
             )
 
             self._persist_round_results(
@@ -856,6 +965,7 @@ class BatchSimulator:
             movement_ctx=movement_ctx,
             arena_map=arena_map,
             zone_size=zone_size,
+            fidelity=fidelity,
         )
 
         self._persist_round_results(match, game_round, round_number=2, swapped=True)
@@ -1907,6 +2017,8 @@ class BatchSimulator:
         seed: int,
         flipped: bool,
         movement_ctx=None,
+        *,
+        fidelity: str = "full",
     ):
         """Replay one round from a stored (seed, orientation) pair.
 
@@ -1917,8 +2029,18 @@ class BatchSimulator:
         the same (seed, orientation). The returned ``red_players`` /
         ``blue_players`` therefore reflect the ACTUAL physical sides simulated
         (a flipped game's ``red_players`` are the team_blue roster's players).
+
+        GEN-01: ``fidelity`` chooses whether to collect an event buffer. At
+        ``scores`` no buffer is collected (``event_log=None`` → the
+        null-object EventLog), so the returned ``events`` is ``None``;
+        ``save_games`` then flushes at ``scores`` with no combat/movement
+        rows. Defaults to ``full`` so existing direct callers are unchanged.
         """
-        events: list = []
+        events: list | None
+        if FIDELITY_RANK[fidelity] >= FIDELITY_RANK["combat"]:
+            events = []
+        else:
+            events = None
         random.seed(seed)
         if flipped:
             sim_red, sim_blue = blue_roster, red_roster
@@ -1937,6 +2059,7 @@ class BatchSimulator:
         n,
         *,
         arena_map=None,
+        fidelity: str = "scores",
     ):
         """Replay and persist n games from carried (seed, orientation) pairs.
 
@@ -1963,6 +2086,7 @@ class BatchSimulator:
                 seed,
                 flipped,
                 movement_ctx=movement_ctx,
+                fidelity=fidelity,
             )
             # SIM-08: persist the ACTUAL sides. red_players/blue_players from
             # replay_round are already the physical sides; pass the matching
@@ -1986,6 +2110,7 @@ class BatchSimulator:
                 movement_ctx=movement_ctx,
                 arena_map=arena_map,
                 zone_size=zone_size,
+                fidelity=fidelity,
             )
             saved.append(gr)
         return saved
@@ -2005,6 +2130,7 @@ class BatchSimulator:
         round_number: int = 1,
         arena_map=None,
         zone_size: int | None = None,
+        fidelity: str = "scores",
     ):
         """Thin delegator onto :func:`persistence.flush_to_db`.
 
@@ -2029,4 +2155,5 @@ class BatchSimulator:
             round_number=round_number,
             arena_map=arena_map,
             zone_size=zone_size,
+            fidelity=fidelity,
         )
