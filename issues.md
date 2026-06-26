@@ -1,3 +1,31 @@
+# Web testing — GEN-01 (persistence-fidelity tiers + lazy upgrade)
+
+Date: 2026-06-26
+Branch: `gen-01-persistence-fidelity-tiers`
+Scope: the GEN-01 drill-in flow — a sandbox match now persists at `scores`
+fidelity by default, and the round detail / event-log+playback / movement-heatmap
+/ missile-log views lazily upgrade the round to `combat`/`full` via
+`BatchSimulator.ensure_fidelity` on first view. Created match **858** (Phoenix vs
+Vipers, San Marcos map) → rounds **1758** / **1759**.
+
+## Summary — GEN-01
+| Area | Result |
+|---|---|
+| Create+simulate match (`/matches/create/`) → redirect to match detail, "Vipers won!" banner, both rounds linked | ✅ |
+| Sandbox create persists at `scores` (unviewed round 1759: `fidelity='scores'`, 0 events, occupancy/highlights null) | ✅ |
+| `roster_snapshot_json` written at every tier (both rounds `ok(6+6)` — 6 red + 6 blue) | ✅ |
+| Round detail (`/game-round/1758/`) stays `scores`, scoreboard/MVP render, no console errors | ✅ |
+| Event log + playback (`/events/`) → `ensure_fidelity('full')`: 3389 events (combat + 2145 movement), 12 players / 2145 playback moves, all event types present | ✅ |
+| Movement heatmap (`/heatmap/`) → `full`: `cell_occupancy_json` backfilled (12 players, 686 cells), no "no map" notice | ✅ |
+| Missile log (`/missile-log/`) → `combat` (idempotent no-op since already `full`): "fired:3 hit:3 efficiency:100.0%", 3 rows | ✅ |
+| After viewing events+heatmap, round 1758 is `fidelity='full'` (3389 events, occupancy set, highlights set) — upgrade persisted | ✅ |
+| Console + network across all 5 surfaces: zero errors / warnings / non-2xx (favicon aside) | ✅ |
+
+**No defects found.** The lazy persist-then-upgrade tiering works end-to-end in a
+real browser + DB exactly as the GEN-01 / ADR-0029 contract specifies.
+
+---
+
 # Web testing — FIN-01 (team finance subsystem)
 
 Date: 2026-06-16

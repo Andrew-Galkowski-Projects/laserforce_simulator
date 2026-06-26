@@ -175,3 +175,33 @@ determinism contract holds in form (same `master_seed` + Orientation +
 rosters + map ⇒ identical games; serial == parallel at every chunk
 boundary; faithful **Replay**). **No Score Calibration re-baseline** is
 triggered (mirrors the SIM-10 / SIM-11 precedent).
+
+## GEN-01 addendum (2026-06-26) — daemon-guarded intra-task parallelism
+
+This ADR set `simulate_batch_task` to `workers=1` and pushed scaling to the
+Celery `--concurrency` knob. That parallelises *across* tasks (many runs at
+once) but **never within a single run** — so one user clicking "simulate 100"
+stays single-core regardless of `--concurrency`. GEN-01 revives the SIM-11
+`_workers_for(n)` heuristic (`1` for `n < 50`, else `min(os.cpu_count() or 1,
+n)` — all cores, bounded only by the game count) for `simulate_batch_task` so
+a single large run uses every core. The SIM-11 4-worker cap is dropped: the
+`n < 50` gate already keeps every test/CI batch serial, so the cap only ever
+throttled real user runs.
+
+The revival is **guarded**, not a blanket reversal. A Celery **prefork** worker
+runs each task in a *daemonic* child process, and a daemonic process may not
+spawn its own children (`ProcessPoolExecutor` ⇒ `AssertionError: daemonic
+processes are not allowed to have children`). `_batch_workers(n)` therefore
+returns `1` whenever `multiprocessing.current_process().daemon` is true. Net
+effect by execution context:
+
+- **Prefork worker (e.g. Fly.io/Linux prod):** daemonic child ⇒ `workers=1`,
+  unchanged from this ADR; horizontal scaling stays `--concurrency`.
+- **EAGER (dev without Redis) / `solo` / `threads` pool:** non-daemonic ⇒ the
+  run goes multi-core for `n ≥ 50`.
+
+`save_games_task` is untouched (serial replay of a few avg/outlier seeds).
+Determinism is unaffected — the SIM-10 serial==parallel-at-every-boundary
+guarantee holds for any `workers` value, so **no Score Calibration
+re-baseline**. The decision is reversible (a helper + one `workers=` argument),
+so no new ADR — this addendum records the partial, guarded reversal.
