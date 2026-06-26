@@ -164,13 +164,16 @@ class TestSeasonDashboardStateMatrix(TestCase):
         # sidebar partial — see ADR-0017); ``TestLg01fSidebarRendered``
         # below covers the new ``league-sidebar`` / ``sidebar-{section}-{key}``
         # ids and asserts the obsolete LG-01c ids are absent.
+        # NAV-01 RETIRED the ``season-dashboard-action-button`` wrapper (the
+        # advancement Play controls relocated to the topnav ``Play ▾``); the
+        # read-only ``-state-badge`` STAYS.
         for dom_id in (
             "season-dashboard-header",
             "season-dashboard-state-badge",
-            "season-dashboard-action-button",
             "season-dashboard-standings-snippet",
         ):
             self.assertContains(response, f'id="{dom_id}"')
+        self.assertNotContains(response, 'id="season-dashboard-action-button"')
         # Active-only DOM ids ABSENT in draft.
         for dom_id in (
             "season-dashboard-next-round",
@@ -187,10 +190,10 @@ class TestSeasonDashboardStateMatrix(TestCase):
         # LG-01f removed the LG-01c ``season-dashboard-sidebar*`` ids
         # (ADR-0017); the new ``league-sidebar`` ids are asserted by
         # ``TestLg01fSidebarRendered``.
+        # NAV-01 RETIRED the ``-action-button`` wrapper; ``-state-badge`` STAYS.
         for dom_id in (
             "season-dashboard-header",
             "season-dashboard-state-badge",
-            "season-dashboard-action-button",
             "season-dashboard-standings-snippet",
             "season-dashboard-next-round",
             "season-dashboard-round-count",
@@ -199,17 +202,17 @@ class TestSeasonDashboardStateMatrix(TestCase):
             "season-dashboard-leaders-ratio",
         ):
             self.assertContains(response, f'id="{dom_id}"')
+        self.assertNotContains(response, 'id="season-dashboard-action-button"')
 
     def test_completed_renders_all_locked_dom_ids(self) -> None:
         _league, season = _make_completed_season_with_match("Matrix3")
         response = self.client.get(reverse("season_dashboard", args=[season.id]))
         # LG-01f removed the LG-01c ``season-dashboard-sidebar*`` ids
-        # (ADR-0017); the new ``league-sidebar`` ids are asserted by
-        # ``TestLg01fSidebarRendered``.
+        # (ADR-0017). NAV-01 RETIRED the ``-action-button`` wrapper;
+        # ``-state-badge`` STAYS.
         for dom_id in (
             "season-dashboard-header",
             "season-dashboard-state-badge",
-            "season-dashboard-action-button",
             "season-dashboard-standings-snippet",
             "season-dashboard-next-round",
             "season-dashboard-round-count",
@@ -218,6 +221,7 @@ class TestSeasonDashboardStateMatrix(TestCase):
             "season-dashboard-leaders-ratio",
         ):
             self.assertContains(response, f'id="{dom_id}"')
+        self.assertNotContains(response, 'id="season-dashboard-action-button"')
 
     def test_action_button_label_per_state(self) -> None:
         # Draft → "Start Season"
@@ -233,21 +237,23 @@ class TestSeasonDashboardStateMatrix(TestCase):
         r3 = self.client.get(reverse("season_dashboard", args=[s3.id]))
         self.assertEqual(r3.context["action_button_label"], "Start Next Season")
 
-    def test_action_button_state_data_attribute_per_state(self) -> None:
+    def test_action_button_state_context_key_per_state(self) -> None:
+        # NAV-01 — the ``action_button_state`` context key is still present on a
+        # league-prefix page (the ``league_nav`` context processor populates it),
+        # but the ``data-action-state`` test hook now lives on the topnav
+        # ``Play ▾`` forms, NOT on a dashboard control. The dashboard renders no
+        # ``data-action-state`` attribute anymore.
         _l1, s1, _t = _make_league_and_draft_season("DataA1")
         r1 = self.client.get(reverse("season_dashboard", args=[s1.id]))
         self.assertEqual(r1.context["action_button_state"], "start_season")
-        self.assertContains(r1, 'data-action-state="start_season"')
 
         _l2, s2, _t = _make_active_season("DataA2")
         r2 = self.client.get(reverse("season_dashboard", args=[s2.id]))
         self.assertEqual(r2.context["action_button_state"], "play_next")
-        self.assertContains(r2, 'data-action-state="play_next"')
 
         _l3, s3 = _make_completed_season_with_match("DataA3")
         r3 = self.client.get(reverse("season_dashboard", args=[s3.id]))
         self.assertEqual(r3.context["action_button_state"], "start_next_season")
-        self.assertContains(r3, 'data-action-state="start_next_season"')
 
 
 # ---------------------------------------------------------------------------
@@ -353,63 +359,58 @@ class TestSeasonDashboardBody(TestCase):
 
 
 class TestLg01eDashboardWiring(TestCase):
-    """LG-01e + CAR-02 BLAST RADIUS — the ``action_button_state="start_next_season"``
+    """NAV-01 BLAST RADIUS — the ``action_button_state="start_next_season"``
     branch on the season dashboard.
 
-    CAR-02 (§4.3) REROUTES the LG-01e POST ``<form
-    id="season-dashboard-next-season-form">`` into a GET ``<a
-    id="season-dashboard-owner-evaluation-link">`` to the eval screen — the
-    ``data-action-state="start_next_season"`` attribute SURVIVES on the link, but
-    the ``-next-season-form`` POST form id is GONE. These LG-01e assertions are
-    updated to the rerouted link shape per the documented blast radius — the
-    coverage is kept, not deleted.
+    NAV-01 (§4) RELOCATES the LG-01e/CAR-02 advancement controls
+    (``season-dashboard-owner-evaluation-link`` / ``-next-season-form``) into the
+    topnav ``Play ▾`` dropdown (``topbar-play-owner-evaluation`` /
+    ``topbar-play-next-season`` — see ``test_nav_play_dropdown.py``). These
+    dashboard ids are now RETIRED — ASSERT ABSENT. The read-only KEPT
+    ``-past-evaluations-link`` STAYS on the dashboard.
     """
 
-    def test_completed_renders_owner_evaluation_link_with_correct_href(
+    def test_completed_retired_advancement_ids_absent_kept_link_present(
         self,
     ) -> None:
         _league, season = _make_completed_season_with_match("LE1eCompleted")
         response = self.client.get(reverse("season_dashboard", args=[season.id]))
         body = response.content.decode()
-        # The rerouted GET eval link replaces the old POST form id.
-        self.assertIn('id="season-dashboard-owner-evaluation-link"', body)
+        # RETIRED — relocated to the topnav Play ▾ dropdown.
+        self.assertNotIn('id="season-dashboard-owner-evaluation-link"', body)
         self.assertNotIn('id="season-dashboard-next-season-form"', body)
-        # href reverses to the eval screen for THIS Season (displayed_season).
-        expected_href = reverse("owner_evaluation", kwargs={"season_id": season.id})
-        self.assertIn(f'href="{expected_href}"', body)
-        # csrf is no longer required (the control is a GET link, not a POST form).
-        # The data-action-state attribute SURVIVES on the link (LG-01c/e scanners).
-        self.assertIn('data-action-state="start_next_season"', body)
+        # KEPT (read-only) — the CAR-02 "View past evaluations" link STAYS.
+        self.assertIn('id="season-dashboard-past-evaluations-link"', body)
 
     def test_completed_renders_past_evaluations_link(self) -> None:
         _league, season = _make_completed_season_with_match("LE1ePastEval")
         response = self.client.get(reverse("season_dashboard", args=[season.id]))
         self.assertContains(response, 'id="season-dashboard-past-evaluations-link"')
 
-    def test_draft_does_not_render_owner_evaluation_link(self) -> None:
+    def test_draft_does_not_render_retired_advancement_ids(self) -> None:
         _league, season, _teams = _make_league_and_draft_season("LE1eDraft")
         response = self.client.get(reverse("season_dashboard", args=[season.id]))
         self.assertNotContains(response, 'id="season-dashboard-owner-evaluation-link"')
         self.assertNotContains(response, 'id="season-dashboard-next-season-form"')
 
-    def test_active_does_not_render_owner_evaluation_link(self) -> None:
+    def test_active_does_not_render_retired_advancement_ids(self) -> None:
         _league, season, _teams = _make_active_season("LE1eActive")
         response = self.client.get(reverse("season_dashboard", args=[season.id]))
         self.assertNotContains(response, 'id="season-dashboard-owner-evaluation-link"')
+        self.assertNotContains(response, 'id="season-dashboard-next-season-form"')
 
 
 # ---------------------------------------------------------------------------
-# TestCar03MultiplayerIsolation
+# TestCar03MultiplayerIsolation (NAV-01 — flipped to dashboard-absence)
 # ---------------------------------------------------------------------------
 
 
 class TestCar03MultiplayerIsolation(TestCase):
-    """CAR-03 — the completed-Season action button is mode-dependent.
-
-    A ``multiplayer`` League's completed Season renders a plain "Start Next
-    Season" POST ``<form id="season-dashboard-next-season-form">`` (NOT the
-    owner-evaluation link), while a ``league``-mode League still renders the
-    ``…-owner-evaluation-link`` GET link.
+    """NAV-01 — the completed-Season advancement controls are RELOCATED to the
+    topnav, so the career-vs-non-career split (owner-eval link vs next-season
+    form) now lives on the ``Play ▾`` dropdown, NOT the dashboard. Both the
+    RETIRED dashboard ids are ABSENT regardless of mode; the career/non-career
+    split is covered by ``test_nav_play_dropdown.py``.
     """
 
     def _completed(self, *, mode: str):
@@ -418,18 +419,18 @@ class TestCar03MultiplayerIsolation(TestCase):
         league.save(update_fields=["mode"])
         return league, season
 
-    def test_multiplayer_renders_next_season_form_not_eval_link(self) -> None:
+    def test_multiplayer_retired_dashboard_ids_absent(self) -> None:
         _league, season = self._completed(mode="multiplayer")
         response = self.client.get(reverse("season_dashboard", args=[season.id]))
         body = response.content.decode()
-        self.assertIn('id="season-dashboard-next-season-form"', body)
+        self.assertNotIn('id="season-dashboard-next-season-form"', body)
         self.assertNotIn('id="season-dashboard-owner-evaluation-link"', body)
 
-    def test_league_mode_renders_eval_link_not_next_season_form(self) -> None:
+    def test_league_mode_retired_dashboard_ids_absent(self) -> None:
         _league, season = self._completed(mode="league")
         response = self.client.get(reverse("season_dashboard", args=[season.id]))
         body = response.content.decode()
-        self.assertIn('id="season-dashboard-owner-evaluation-link"', body)
+        self.assertNotIn('id="season-dashboard-owner-evaluation-link"', body)
         self.assertNotIn('id="season-dashboard-next-season-form"', body)
 
 
@@ -757,14 +758,22 @@ class TestSeasonDashboardPlayoffContext(TestCase):
 
 
 class TestSeasonDashboardPlayoffDomIds(TestCase):
-    """LG-02-Part2c-1 — playoff DOM ids render only in the active sub-state."""
+    """NAV-01 — the RETIRED playoff PLAY controls
+    (``season-dashboard-play-single-round-*`` / ``-play-playoffs-*``) are
+    relocated to the topnav ``Play ▾`` dropdown (``topbar-play-play-single-round``
+    / ``topbar-play-play-playoffs`` — see ``test_nav_play_dropdown.py``) and are
+    ABSENT from the dashboard. The KEPT read-only
+    ``season-dashboard-view-bracket-link`` STAYS (contract §4).
+    """
 
     def _body(self, season):
         return self.client.get(
             reverse("season_dashboard", args=[season.id])
         ).content.decode()
 
-    def test_playoff_buttons_render_in_active_built_substate(self) -> None:
+    def test_retired_playoff_play_ids_absent_kept_bracket_link_present(
+        self,
+    ) -> None:
         _l, season, teams = _lg02c1_rr_tournament_season("PdId1")
         _lg02c1_play_rr(season, teams)
         season.refresh_from_db()
@@ -775,11 +784,12 @@ class TestSeasonDashboardPlayoffDomIds(TestCase):
             "season-dashboard-play-playoffs-form",
             "season-dashboard-play-playoffs-submit",
             "season-dashboard-play-playoffs-progress",
-            "season-dashboard-view-bracket-link",
         ):
-            self.assertIn(f'id="{dom_id}"', body)
+            self.assertNotIn(f'id="{dom_id}"', body)
+        # KEPT — the read-only View-bracket link STAYS on the dashboard.
+        self.assertIn('id="season-dashboard-view-bracket-link"', body)
 
-    def test_playoff_buttons_absent_in_rr_active_substate(self) -> None:
+    def test_retired_playoff_play_ids_absent_in_rr_active_substate(self) -> None:
         _l, season, _teams = _lg02c1_rr_tournament_season("PdId2")
         body = self._body(season)
         for dom_id in (
@@ -796,7 +806,7 @@ class TestSeasonDashboardPlayoffDomIds(TestCase):
         tournament_phase.refresh_from_db()
         body = self._body(season)
         # The bracket now lives inside the league shell, not the standalone
-        # /tournaments/<id>/ page.
+        # /tournaments/<id>/ page. (View-bracket link is KEPT, read-only.)
         self.assertIn(reverse("league_playoffs", args=[season.league_id]), body)
         self.assertNotIn(f"/tournaments/{tournament_phase.tournament_id}/", body)
 
@@ -811,34 +821,38 @@ class TestSeasonDashboardPlayoffDomIds(TestCase):
         season.refresh_from_db()
         body = self._body(season)
         self.assertIn('id="season-dashboard-view-bracket-link"', body)
-        # The active play buttons are gone once the tournament is completed.
+        # The RETIRED play buttons are absent on the dashboard at every substate.
         self.assertNotIn('id="season-dashboard-play-single-round-form"', body)
 
 
 class TestSeasonDashboardUntilPlayoffsRelabel(TestCase):
-    """LG-02-Part2c-1 — terminal play-dropdown 'Until Playoffs' relabel."""
+    """NAV-01 — the terminal play-dropdown ('Until Playoffs' / 'Until End') is
+    RELOCATED to the topnav. The RETIRED ``season-dashboard-play-until-end`` id
+    is ABSENT on the dashboard; the terminal relabel is asserted on the topnav
+    by ``test_nav_play_dropdown.py``.
+    """
 
     def _body(self, season):
         return self.client.get(
             reverse("season_dashboard", args=[season.id])
         ).content.decode()
 
-    def test_until_playoffs_label_when_tournament_phase_follows(self) -> None:
-        # RR active with a following tournament phase ⇒ terminal label relabels.
+    def test_retired_until_end_id_absent_when_tournament_phase_follows(
+        self,
+    ) -> None:
         _l, season, _teams = _lg02c1_rr_tournament_season("RelabelYes")
         body = self._body(season)
-        # The until-end button DOM id is UNCHANGED; only the visible text swaps.
-        self.assertIn('id="season-dashboard-play-until-end"', body)
-        self.assertIn("Until Playoffs", body)
+        self.assertNotIn('id="season-dashboard-play-until-end"', body)
 
-    def test_until_end_label_when_no_tournament_phase_follows(self) -> None:
+    def test_retired_until_end_id_absent_when_no_tournament_phase_follows(
+        self,
+    ) -> None:
         _l, season, _teams = _make_active_season("RelabelNo")
         _Lg02c1_SeasonPhase.objects.create(
             season=season, ordinal=1, phase_type="round_robin"
         )
         body = self._body(season)
-        self.assertNotIn("Until Playoffs", body)
-        self.assertIn("Until End of Season", body)
+        self.assertNotIn('id="season-dashboard-play-until-end"', body)
 
 
 # ===========================================================================
@@ -894,61 +908,52 @@ def _lg3c_mid_season_tournament_season(name: str = "L3cMid"):
 
 
 class TestSeasonDashboardTerminalLabelSplit(TestCase):
-    """LG-02-Part2c-3c — Season-dashboard terminal label split."""
+    """NAV-01 — the LG-02-Part2c-3c terminal label split is RELOCATED to the
+    topnav. The RETIRED ``season-dashboard-play-until-end`` id is ABSENT on the
+    dashboard; the 'Until Playoffs' / 'Until Tournament' split is asserted on
+    the topnav by ``test_nav_play_dropdown.py``.
+    """
 
     def _body(self, season):
         return self.client.get(
             reverse("season_dashboard", args=[season.id])
         ).content.decode()
 
-    def test_until_playoffs_when_final_tournament_phase(self) -> None:
+    def test_retired_until_end_id_absent_final_tournament_phase(self) -> None:
         _l, season, _teams = _lg3c_final_tournament_season("L3cSeasonFinal")
         body = self._body(season)
-        # The until-end button DOM id is UNCHANGED; only the visible text swaps.
-        self.assertIn('id="season-dashboard-play-until-end"', body)
-        self.assertIn("Until Playoffs", body)
-        self.assertNotIn("Until Tournament", body)
+        self.assertNotIn('id="season-dashboard-play-until-end"', body)
 
-    def test_until_tournament_when_mid_season_tournament_phase(self) -> None:
+    def test_retired_until_end_id_absent_mid_season_tournament_phase(
+        self,
+    ) -> None:
         _l, season, _teams = _lg3c_mid_season_tournament_season("L3cSeasonMid")
         body = self._body(season)
-        # DOM id + action unchanged; the mid-season label is "Until Tournament".
-        self.assertIn('id="season-dashboard-play-until-end"', body)
-        self.assertIn("Until Tournament", body)
-        self.assertNotIn("Until Playoffs", body)
-
-    def test_play_until_end_action_unchanged_both_cases(self) -> None:
-        # The form action still POSTs to play_until_end in BOTH label cases.
-        _l, final_season, _t = _lg3c_final_tournament_season("L3cActFinal")
-        _l2, mid_season, _t2 = _lg3c_mid_season_tournament_season("L3cActMid")
-        final_action = reverse("play_until_end", args=[final_season.id])
-        mid_action = reverse("play_until_end", args=[mid_season.id])
-        self.assertIn(final_action, self._body(final_season))
-        self.assertIn(mid_action, self._body(mid_season))
+        self.assertNotIn('id="season-dashboard-play-until-end"', body)
 
 
 class TestLeagueDashboardTerminalLabelSplit(TestCase):
-    """LG-02-Part2c-3c — League-dashboard terminal label split (mirrors the
-    Season dashboard; the League dashboard renders the active Season)."""
+    """NAV-01 — the League-dashboard terminal label is RELOCATED to the topnav.
+    The RETIRED ``league-dashboard-play-until-end`` id is ABSENT on the
+    dashboard.
+    """
 
     def _body(self, league):
         return self.client.get(
             reverse("league_dashboard", args=[league.id])
         ).content.decode()
 
-    def test_until_playoffs_when_final_tournament_phase(self) -> None:
+    def test_retired_until_end_id_absent_final_tournament_phase(self) -> None:
         league, _season, _teams = _lg3c_final_tournament_season("L3cLeagueFinal")
         body = self._body(league)
-        self.assertIn('id="league-dashboard-play-until-end"', body)
-        self.assertIn("Until Playoffs", body)
-        self.assertNotIn("Until Tournament", body)
+        self.assertNotIn('id="league-dashboard-play-until-end"', body)
 
-    def test_until_tournament_when_mid_season_tournament_phase(self) -> None:
+    def test_retired_until_end_id_absent_mid_season_tournament_phase(
+        self,
+    ) -> None:
         league, _season, _teams = _lg3c_mid_season_tournament_season("L3cLeagueMid")
         body = self._body(league)
-        self.assertIn('id="league-dashboard-play-until-end"', body)
-        self.assertIn("Until Tournament", body)
-        self.assertNotIn("Until Playoffs", body)
+        self.assertNotIn('id="league-dashboard-play-until-end"', body)
 
 
 # ===========================================================================
@@ -989,22 +994,27 @@ def _lg01i_dash_active_rr_season(name: str, n: int = 2, *, manager_idx: int = 0)
 
 
 class TestLg01iDashboardEntry(TestCase):
-    """LG-01i — the season-dashboard ``play-one-week-live`` dropdown entry."""
+    """NAV-01 — the LG-01i 'One Week (Live)' entry is RELOCATED to the topnav
+    (``topbar-play-one-week-live`` — see ``test_nav_play_dropdown.py``). The
+    RETIRED ``season-dashboard-play-one-week-live`` id is ABSENT on the
+    dashboard. The ``live_preview_available`` context key STILL drives the gate
+    (now supplied by the ``league_nav`` processor on a league-prefix page).
+    """
 
     def _body(self, season):
         return self.client.get(
             reverse("season_dashboard", args=[season.id])
         ).content.decode()
 
-    def test_entry_present_and_links_to_play_week_live_when_available(self) -> None:
+    def test_retired_entry_id_absent_even_when_available(self) -> None:
         _l, season, _teams = _lg01i_dash_active_rr_season(
             "DashEntryYes", n=2, manager_idx=0
         )
         ctx = self.client.get(reverse("season_dashboard", args=[season.id])).context
         self.assertTrue(ctx["live_preview_available"])
         body = self._body(season)
-        self.assertIn('id="season-dashboard-play-one-week-live"', body)
-        self.assertIn(reverse("play_week_live", args=[season.id]), body)
+        # The retired dashboard id is gone; the live entry lives on the topnav.
+        self.assertNotIn('id="season-dashboard-play-one-week-live"', body)
 
     def test_entry_absent_when_no_current_team(self) -> None:
         _l, season, _teams = _lg01i_dash_active_rr_season(

@@ -212,22 +212,23 @@ class TestLeagueDashboardSeasonPick(TestCase):
 class TestLeagueDashboardDraftBranch(TestCase):
     """Draft branch: ``Start Season`` button, alphabetical top-3, no body DOM ids."""
 
-    def test_draft_renders_action_button_with_start_season_state(self) -> None:
+    def test_draft_state_context_keys_set_retired_advancement_ids_absent(
+        self,
+    ) -> None:
         league = _make_league("LDraftAction")
         _make_draft_season(league)
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        # The action-button label / state context keys are STILL present (the
+        # ``league_nav`` context processor supplies them on a league-prefix page).
         self.assertEqual(response.context["action_button_label"], "Start Season")
         self.assertEqual(response.context["action_button_state"], "start_season")
         body = response.content.decode()
-        # LG-01d activated the LG-01c `<button disabled>` placeholder into a
-        # working Start Season POST form. The wrapper id remains for DOM
-        # parity; the Start Season form id is the new functional element.
-        self.assertIn('id="league-dashboard-action-button"', body)
-        self.assertIn('id="league-dashboard-play-start-season"', body)
-        self.assertIn(
-            f'action="/seasons/{response.context["displayed_season"].id}/start-season/"',
-            body,
-        )
+        # NAV-01 RETIRED the advancement controls on the dashboard — the Start
+        # Season form + the action-button wrapper are RELOCATED to the topnav
+        # ``Play ▾`` dropdown (``topbar-play-start-season`` — see
+        # ``test_nav_play_dropdown.py``).
+        self.assertNotIn('id="league-dashboard-action-button"', body)
+        self.assertNotIn('id="league-dashboard-play-start-season"', body)
 
     def test_draft_standings_snippet_sorted_by_team_name_asc_top_3(self) -> None:
         league = _make_league("LDraftSort")
@@ -444,17 +445,15 @@ class TestLeagueDashboardNoneBranch(TestCase):
 
 
 class TestLg01eDashboardWiring(TestCase):
-    """LG-01e + CAR-02 BLAST RADIUS — the ``action_button_state="start_next_season"``
+    """NAV-01 BLAST RADIUS — the ``action_button_state="start_next_season"``
     branch on the league dashboard.
 
-    CAR-02 (§4.3) REROUTES the LG-01e POST ``<form
-    id="league-dashboard-next-season-form">`` into a GET ``<a
-    id="league-dashboard-owner-evaluation-link">`` to the eval screen — the
-    ``data-action-state="start_next_season"`` attribute SURVIVES on the link, but
-    the ``-next-season-form`` POST form id is GONE (replaced by the
-    ``-owner-evaluation-link`` GET link). These LG-01e assertions are updated to
-    the rerouted link shape per the documented blast radius — the coverage is kept,
-    not deleted.
+    NAV-01 (§4) RELOCATES the LG-01e/CAR-02 advancement controls
+    (``league-dashboard-owner-evaluation-link`` / ``-next-season-form``) into the
+    topnav ``Play ▾`` dropdown (``topbar-play-owner-evaluation`` /
+    ``topbar-play-next-season`` — see ``test_nav_play_dropdown.py``). These
+    dashboard ids are RETIRED — ASSERT ABSENT. The read-only KEPT
+    ``-past-evaluations-link`` STAYS on the dashboard.
     """
 
     def _make_completed_only_league(self) -> League:
@@ -468,62 +467,55 @@ class TestLg01eDashboardWiring(TestCase):
         )
         return league
 
-    def _displayed_completed_season(self, league: League) -> Season:
-        return league.seasons.filter(state="completed").order_by("-id").first()
-
-    def test_completed_renders_owner_evaluation_link_with_correct_href(
+    def test_completed_retired_advancement_ids_absent_kept_link_present(
         self,
     ) -> None:
         league = self._make_completed_only_league()
-        season = self._displayed_completed_season(league)
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
         body = response.content.decode()
-        # The rerouted GET eval link replaces the old POST form id.
-        self.assertIn('id="league-dashboard-owner-evaluation-link"', body)
+        # RETIRED — relocated to the topnav Play ▾ dropdown.
+        self.assertNotIn('id="league-dashboard-owner-evaluation-link"', body)
         self.assertNotIn('id="league-dashboard-next-season-form"', body)
-        # href reverses to the eval screen for the displayed (completed) Season.
-        expected_href = reverse("owner_evaluation", kwargs={"season_id": season.id})
-        self.assertIn(f'href="{expected_href}"', body)
-        # The data-action-state attribute SURVIVES on the link (LG-01c/e scanners).
-        self.assertIn('data-action-state="start_next_season"', body)
+        # KEPT (read-only) — the CAR-02 "View past evaluations" link STAYS.
+        self.assertIn('id="league-dashboard-past-evaluations-link"', body)
 
     def test_completed_renders_past_evaluations_link(self) -> None:
         league = self._make_completed_only_league()
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
         self.assertContains(response, 'id="league-dashboard-past-evaluations-link"')
 
-    def test_draft_does_not_render_owner_evaluation_link(self) -> None:
+    def test_draft_does_not_render_retired_advancement_ids(self) -> None:
         league = _make_league("LE1eDraft")
         _make_draft_season(league)
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
         self.assertNotContains(response, 'id="league-dashboard-owner-evaluation-link"')
-        # The old POST form id is gone everywhere too.
         self.assertNotContains(response, 'id="league-dashboard-next-season-form"')
 
-    def test_active_does_not_render_owner_evaluation_link(self) -> None:
+    def test_active_does_not_render_retired_advancement_ids(self) -> None:
         league = _make_league("LE1eActive")
         _make_active_season(league)
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
         self.assertNotContains(response, 'id="league-dashboard-owner-evaluation-link"')
+        self.assertNotContains(response, 'id="league-dashboard-next-season-form"')
 
-    def test_none_does_not_render_owner_evaluation_link(self) -> None:
+    def test_none_does_not_render_retired_advancement_ids(self) -> None:
         league = _make_league("LE1eNone")
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
         self.assertNotContains(response, 'id="league-dashboard-owner-evaluation-link"')
+        self.assertNotContains(response, 'id="league-dashboard-next-season-form"')
 
 
 # ---------------------------------------------------------------------------
-# TestCar03MultiplayerIsolation
+# TestCar03MultiplayerIsolation (NAV-01 — flipped to dashboard-absence)
 # ---------------------------------------------------------------------------
 
 
 class TestCar03MultiplayerIsolation(TestCase):
-    """CAR-03 — the completed-Season action button is mode-dependent.
-
-    A ``multiplayer`` League renders a plain "Start Next Season" POST
-    ``<form id="league-dashboard-next-season-form">`` (NOT the owner-evaluation
-    link), while a ``league``-mode League still renders the
-    ``…-owner-evaluation-link`` GET link.
+    """NAV-01 — the completed-Season advancement controls are RELOCATED to the
+    topnav, so the career-vs-non-career split (owner-eval link vs next-season
+    form) now lives on the ``Play ▾`` dropdown, NOT the dashboard. The RETIRED
+    dashboard ids are ABSENT regardless of mode; the career/non-career split is
+    covered by ``test_nav_play_dropdown.py``.
     """
 
     def _completed_league(self, *, mode: str) -> League:
@@ -539,18 +531,18 @@ class TestCar03MultiplayerIsolation(TestCase):
         )
         return league
 
-    def test_multiplayer_renders_next_season_form_not_eval_link(self) -> None:
+    def test_multiplayer_retired_dashboard_ids_absent(self) -> None:
         league = self._completed_league(mode="multiplayer")
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
         body = response.content.decode()
-        self.assertIn('id="league-dashboard-next-season-form"', body)
+        self.assertNotIn('id="league-dashboard-next-season-form"', body)
         self.assertNotIn('id="league-dashboard-owner-evaluation-link"', body)
 
-    def test_league_mode_renders_eval_link_not_next_season_form(self) -> None:
+    def test_league_mode_retired_dashboard_ids_absent(self) -> None:
         league = self._completed_league(mode="league")
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
         body = response.content.decode()
-        self.assertIn('id="league-dashboard-owner-evaluation-link"', body)
+        self.assertNotIn('id="league-dashboard-owner-evaluation-link"', body)
         self.assertNotIn('id="league-dashboard-next-season-form"', body)
 
 
@@ -781,16 +773,18 @@ class TestLg01iDashboardEntry(TestCase):
     def _ctx(self, league):
         return self.client.get(reverse("league_dashboard", args=[league.id])).context
 
-    def test_entry_present_and_links_to_play_week_live_when_available(self) -> None:
+    def test_retired_entry_id_absent_even_when_available(self) -> None:
+        # NAV-01 — the live entry is RELOCATED to the topnav
+        # (``topbar-play-one-week-live`` — see ``test_nav_play_dropdown.py``).
+        # The ``live_preview_available`` context key STILL drives the gate.
         league = _make_league("LgEntryYes")
-        season, teams = _make_active_season(league, n_teams=2)
+        _season, teams = _make_active_season(league, n_teams=2)
         league.current_team = teams[0]
         league.save(update_fields=["current_team"])
         ctx = self._ctx(league)
         self.assertTrue(ctx["live_preview_available"])
         body = self._body(league)
-        self.assertIn('id="league-dashboard-play-one-week-live"', body)
-        self.assertIn(reverse("play_week_live", args=[season.id]), body)
+        self.assertNotIn('id="league-dashboard-play-one-week-live"', body)
 
     def test_entry_absent_when_no_current_team(self) -> None:
         league = _make_league("LgEntryNoTeam")

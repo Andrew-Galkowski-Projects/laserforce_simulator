@@ -474,12 +474,18 @@ class TestSeasonPhaseReadPathEquivalence(TestCase):
         season = self._make_active_two_team_season("SchedEq")
         url = reverse("season_schedule", args=[season.id])
 
-        before = self.client.get(url).content
+        # NAV-01 added the league-mode ``Play ▾`` topnav dropdown (CSRF-bearing
+        # POST forms) to ``base.html``, so a ``/seasons/`` page now carries a
+        # ``{% csrf_token %}`` and is no longer raw-byte-identical across two
+        # renders (the dashboard test already strips for the same reason). The
+        # invariant pinned here is ``scheduled_fixtures()`` equivalence, NOT the
+        # per-render CSRF masking — so normalise the token out before comparing.
+        before = self._strip_csrf(self.client.get(url).content)
         # Add ONE explicit round_robin phase to the SAME Season.
         _Lg02SeasonPhase.objects.create(
             season=season, ordinal=1, phase_type="round_robin"
         )
-        after = self.client.get(url).content
+        after = self._strip_csrf(self.client.get(url).content)
 
         self.assertEqual(before, after)
 

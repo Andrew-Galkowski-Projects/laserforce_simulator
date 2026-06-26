@@ -284,3 +284,134 @@ class TestLg01kProcessorRobustness(TestCase):
         self.assertIn("top_bar_dashboard_url", result)
         self.assertIsInstance(result["top_bar_links"], list)
         self.assertIsInstance(result["top_bar_dashboard_url"], str)
+
+
+# ---------------------------------------------------------------------------
+# NAV-01 — `league_nav` merges the 9 play keys + play_displayed_season_id +
+# play_league_id on a league-prefix request with a resolvable league; the play
+# keys are ABSENT off-league (sandbox path) and on the `_fallback()` path (no
+# resolvable league).
+#
+# Seam contract: ``.claude/worktrees/nav-01-seam-contract.md`` §2 + §8.
+#
+# These assertions WILL fail until the Code agent extends ``league_nav`` to
+# merge the play keys — the expected TDD red state, not a defect in this file.
+# ---------------------------------------------------------------------------
+
+
+def _request(path: str, *, session_data: dict | None = None):
+    """A ``RequestFactory()`` GET request at ``path`` with a real session."""
+    factory = RequestFactory()
+    request = factory.get(path)
+    middleware = SessionMiddleware(lambda r: None)
+    middleware.process_request(request)
+    request.session.save()
+    if session_data:
+        for k, v in session_data.items():
+            request.session[k] = v
+        request.session.save()
+    return request
+
+
+# The 9 play keys (§1 table) + the 2 URL/id keys (§2 table).
+_NAV01_PLAY_KEYS = (
+    "action_button_label",
+    "action_button_state",
+    "playoff_phase_active",
+    "playoff_tournament_id",
+    "playoff_completed",
+    "has_following_tournament_phase",
+    "following_tournament_is_final",
+    "live_preview_available",
+    "is_career_mode",
+    "play_displayed_season_id",
+    "play_league_id",
+)
+
+
+class TestNav01LeagueNavPlayKeys(TestCase):
+    """NAV-01 — the play keys merge on a resolvable league-prefix request."""
+
+    def test_play_keys_present_on_leagues_prefix_with_session_pin(self) -> None:
+        league = _make_league("Nav01Pin")
+        _make_season(league, state="active")
+        request = _request("/leagues/", session_data={"last_league_id": league.id})
+        result = league_nav(request)
+        for key in _NAV01_PLAY_KEYS:
+            self.assertIn(key, result, f"play key {key!r} missing from league_nav")
+
+    def test_play_keys_present_on_seasons_prefix_with_session_pin(self) -> None:
+        # A ``/seasons/<id>/`` page has no league template var — ``league_nav``
+        # resolves it via the ``last_league_id`` session pin.
+        league = _make_league("Nav01Season")
+        season = _make_season(league, state="active")
+        request = _request(
+            f"/seasons/{season.id}/",
+            session_data={"last_league_id": league.id},
+        )
+        result = league_nav(request)
+        for key in _NAV01_PLAY_KEYS:
+            self.assertIn(key, result)
+
+    def test_play_league_id_and_displayed_season_id_resolve(self) -> None:
+        league = _make_league("Nav01Ids")
+        season = _make_season(league, state="active")
+        request = _request("/leagues/", session_data={"last_league_id": league.id})
+        result = league_nav(request)
+        self.assertEqual(result["play_league_id"], league.id)
+        self.assertEqual(result["play_displayed_season_id"], season.id)
+
+    def test_play_displayed_season_id_none_when_no_season(self) -> None:
+        league = _make_league("Nav01NoSeason")
+        request = _request("/leagues/", session_data={"last_league_id": league.id})
+        result = league_nav(request)
+        self.assertEqual(result["play_league_id"], league.id)
+        self.assertIsNone(result["play_displayed_season_id"])
+        self.assertEqual(result["action_button_state"], "none")
+
+    def test_action_button_state_matches_season_state(self) -> None:
+        league = _make_league("Nav01Draft")
+        _make_season(league, state="draft")
+        request = _request("/leagues/", session_data={"last_league_id": league.id})
+        result = league_nav(request)
+        self.assertEqual(result["action_button_state"], "start_season")
+
+
+class TestNav01LeagueNavPlayKeysAbsent(TestCase):
+    """NAV-01 — the play keys are ABSENT off-league and on the fallback path."""
+
+    def test_play_keys_absent_off_league_sandbox_path(self) -> None:
+        # A resolvable league exists + is pinned, but the request path is the
+        # sandbox ``/teams/`` page ⇒ the play work is gated off.
+        league = _make_league("Nav01OffLeague")
+        _make_season(league, state="active")
+        request = _request("/teams/", session_data={"last_league_id": league.id})
+        result = league_nav(request)
+        for key in _NAV01_PLAY_KEYS:
+            self.assertNotIn(
+                key, result, f"play key {key!r} leaked onto a sandbox path"
+            )
+
+    def test_play_keys_absent_on_fallback_no_resolvable_league(self) -> None:
+        # Zero Leagues exist ⇒ ``_fallback()`` ⇒ no play keys.
+        request = _request("/leagues/")
+        result = league_nav(request)
+        for key in _NAV01_PLAY_KEYS:
+            self.assertNotIn(key, result)
+
+    def test_play_keys_absent_on_fallback_two_leagues_no_pin(self) -> None:
+        _make_league("Nav01A")
+        _make_league("Nav01B")
+        request = _request("/leagues/")  # no session pin, 2+ Leagues
+        result = league_nav(request)
+        for key in _NAV01_PLAY_KEYS:
+            self.assertNotIn(key, result)
+
+    def test_existing_2_keys_unchanged_off_league(self) -> None:
+        # The LG-01k 2-key shape (top_bar_links / top_bar_dashboard_url) is
+        # still present off-league; only the play keys are gated.
+        league = _make_league("Nav01TwoKeys")
+        request = _request("/teams/", session_data={"last_league_id": league.id})
+        result = league_nav(request)
+        self.assertIn("top_bar_links", result)
+        self.assertIn("top_bar_dashboard_url", result)
