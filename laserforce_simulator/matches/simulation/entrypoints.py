@@ -1505,10 +1505,17 @@ class BatchSimulator:
         # MOVE-01: append a compact (start, end, timestamp) entry to the
         # transient movement_trail (no DB column / no migration). _flush_to_db
         # turns these into compact movement GameEvents when a batch round is
-        # persisted, mirroring RBS movement-event semantics. The intermediate
-        # route is NOT stored; it is recomputed on demand at replay via
-        # deterministic A* start->end.
+        # persisted, mirroring RBS movement-event semantics.
         player.movement_trail.append((current, next_cell, second))
+        # Playback overlay: also capture the EXACT cells walked this Advance
+        # (the committed-route slice ``astar_advance_cached`` just popped, on
+        # ``_last_step_cells`` — intermediate cells + end, excluding ``current``)
+        # in lockstep, so the replay map draws the true path instead of an
+        # independent per-Advance A* reconstruction. RES-04 / the movement-event
+        # flush still read the 3-tuple trail; this parallel list is additive.
+        player.movement_routes.append(
+            [list(c) for c in (getattr(player, "_last_step_cells", None) or [])]
+        )
 
     def _collect_overwatch_attempts(
         self, all_alive: list, second: int, movement_ctx

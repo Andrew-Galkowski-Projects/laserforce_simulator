@@ -96,6 +96,15 @@ class PlayerState:
     # deterministic A* start->end (not stored here).
     movement_trail: list = field(default_factory=list)
 
+    # Playback overlay: transient per-Advance route (the exact cells the player
+    # walked this Advance — ``_last_step_cells``, excluding the start cell,
+    # ending at the end cell), appended in lockstep with ``movement_trail`` so
+    # the round-playback map can draw the TRUE path rather than re-deriving it
+    # with an independent A* per Advance (which diverges/zig-zags). No DB
+    # column / no migration; ``_flush_to_db`` writes it to each movement
+    # GameEvent's ``metadata["route"]``.
+    movement_routes: list = field(default_factory=list)
+
     # MOVE-02: transient goal-keyed A* path cache (BatchSimulator only —
     # ADR-0008). None or a (goal_cell, remaining_cells, anchor) tuple:
     # remaining_cells is the ordered list of cells still to walk (head = next

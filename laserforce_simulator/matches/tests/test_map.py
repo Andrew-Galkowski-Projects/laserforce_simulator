@@ -2872,7 +2872,9 @@ class TestMove01CompactMovementEvent:
 
     # Any key that would represent a stored full route/path list. The compact
     # event must contain NONE of these — the route is recomputed at replay.
-    _ROUTE_KEYS = ("route", "path", "cells", "cell_path", "trail", "steps")
+    # Alternative route encodings that must NOT appear — the canonical key is
+    # "route" (now stored for the playback overlay), so it is excluded here.
+    _ROUTE_KEYS = ("path", "cells", "cell_path", "trail", "steps")
 
     def test_movement_event_has_compact_start_end_timestamp(self):
         import random
@@ -2901,16 +2903,23 @@ class TestMove01CompactMovementEvent:
             assert "end_row" in md and "end_col" in md, md
             # timestamp present on the event itself
             assert ev.timestamp is not None
-            # NO route/path list stored anywhere in metadata
+            # The exact route IS now stored (playback overlay): a non-empty
+            # list of [r, c] cells ending at the end cell.
+            route = md.get("route")
+            assert isinstance(route, list) and route, md
+            assert route[-1] == [md["end_row"], md["end_col"]], md
+            # No ALTERNATIVE route encoding leaks in; non-route keys stay scalar.
             for bad in self._ROUTE_KEYS:
                 assert bad not in md, (
-                    f"compact movement metadata must not store a route list; "
+                    f"only the canonical 'route' key may carry a path; "
                     f"found {bad!r} in {md}"
                 )
-            for v in md.values():
+            for k, v in md.items():
+                if k == "route":
+                    continue
                 assert not isinstance(
                     v, (list, tuple)
-                ), f"movement metadata must be flat scalars, got list/tuple: {md}"
+                ), f"non-route movement metadata must be flat scalars: {md}"
             # the cell actually changed (no no-op events emitted)
             assert (md["start_row"], md["start_col"]) != (
                 md["end_row"],

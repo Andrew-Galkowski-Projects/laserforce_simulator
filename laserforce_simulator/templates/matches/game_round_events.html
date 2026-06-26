@@ -296,12 +296,39 @@
         </div>
     </div>
     <div class="card-body py-2">
+        {% if playback_map_json %}
+        {# Map above: player markers + comet trails drawn on the processed PNG #}
+        <div id="pb-map-stage" class="mb-3 mx-auto"
+             style="position:relative; display:block; width:fit-content; max-width:100%;">
+            <img id="pb-map-bg" src="{{ processed_image_url }}" alt="Arena map"
+                 style="display:block; max-width:100%; height:auto;">
+            <canvas id="pb-map-canvas"
+                    style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;"></canvas>
+        </div>
+        {% else %}
+        <div class="alert alert-secondary py-2 mb-3" id="pb-no-map-notice">
+            No map for this round &mdash; scoreboard and live feed only.
+        </div>
+        {% endif %}
+        {# Scoreboard directly below the map, live feed beside it (matched height) #}
         <div class="row g-3">
-            <div class="col-md-6" id="pb-sb-red"></div>
-            <div class="col-md-6" id="pb-sb-blue"></div>
+            <div class="col-lg-8" id="pb-scoreboard-col">
+                <div class="row g-3">
+                    <div class="col-md-6" id="pb-sb-red"></div>
+                    <div class="col-md-6" id="pb-sb-blue"></div>
+                </div>
+            </div>
+            <div class="col-lg-4">
+                <div id="pb-feed-card" class="border rounded d-flex flex-column">
+                    <div class="px-2 py-1 border-bottom fw-bold small">Live Feed</div>
+                    <div id="pb-live-feed" class="flex-grow-1"
+                         style="overflow-y:auto; min-height:0;"></div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
+{{ playback_map_json|json_script:"pb-map-data" }}
 
 {# ===================== RES-02b CHART CARDS =====================        #}
 {# Four symmetric stacked cards: Shots, Lives, Points, SP. Each card has #}
@@ -1050,6 +1077,7 @@
         // ===== SIM-05 PLAYBACK ENGINE (reads JSON, drives the window) =====
         const MAX_SH = { commander: 3, heavy: 3, scout: 1, medic: 1, ammo: 1 };
         const SHOT_POWER = { commander: 2, heavy: 3, scout: 1, medic: 1, ammo: 1 };
+        const MAX_MSL = { commander: 5, heavy: 5, scout: 0, medic: 0, ammo: 0 };
         const ROLE_ICONS = {
             commander: '{% static "commander.png" %}',
             heavy: '{% static "heavy.png" %}',
@@ -1069,6 +1097,7 @@
                 id, name: p.name || id, team: p.team || 'red',
                 role, startLives: sl, startShots: ss, startShields: sh,
                 lives: sl, shots: ss, shields: sh, score: 0, sp: 0,
+                missiles: MAX_MSL[role] || 0,
                 lastDownedAt: null, isElim: false,
             };
         });
@@ -1091,7 +1120,8 @@
         function pbReset() {
             Object.values(pbPlayers).forEach(p => {
                 p.lives = p.startLives; p.shots = p.startShots; p.shields = p.startShields;
-                p.score = 0; p.sp = 0; p.lastDownedAt = null; p.isElim = false;
+                p.score = 0; p.sp = 0; p.missiles = MAX_MSL[p.role] || 0;
+                p.lastDownedAt = null; p.isElim = false;
             });
         }
 
@@ -1130,6 +1160,9 @@
                 if (t) { t.lives += ev.livesRes; t.shields = MAX_SH[t.role] || 1; t.lastDownedAt = ev.sec; }
             } else if (ev.type === 'base_capture') {
                 if (a && a.role !== 'ammo') a.shots = Math.max(0, a.shots - 3);
+            } else if (ev.type === 'locking') {
+                // A missile lock consumes one of the actor's missiles.
+                if (a && a.missiles > 0) a.missiles = Math.max(0, a.missiles - 1);
             }
         }
 
@@ -1148,6 +1181,8 @@
             document.getElementById('pb-time-display').textContent = mm + ':' + ss;
             document.getElementById('pb-scrubber').value = pbCur;
             pbDrawBoards();
+            pbDrawFeed();
+            pbDrawMap();
             pbHighlight(scroll, smoothScroll);
         }
 
@@ -1167,7 +1202,17 @@
             if (row) {
                 row.classList.add('pb-cur-evt');
                 row.style.outline = '2px solid #ffc107';
-                if (scroll) row.scrollIntoView({ block: 'nearest', behavior: smoothScroll ? 'smooth' : 'instant' });
+                // Scroll ONLY the timeline container (never the window/page) so
+                // playback/scrubbing doesn't yank the viewport to this section.
+                if (scroll) {
+                    const scroller = document.getElementById('timeline-scroll');
+                    if (scroller) {
+                        const rr = row.getBoundingClientRect();
+                        const sr = scroller.getBoundingClientRect();
+                        if (rr.top < sr.top) scroller.scrollTop += rr.top - sr.top;
+                        else if (rr.bottom > sr.bottom) scroller.scrollTop += rr.bottom - sr.bottom;
+                    }
+                }
             }
         }
 
@@ -1193,18 +1238,20 @@
                 const rowCls = pbRowClass(p);
                 const cc = pbCellClass(p);
                 const livesTxt = p.isElim ? '&#9760;' : p.lives;
+                const mslTxt = (MAX_MSL[p.role] || 0) ? p.missiles : '&mdash;';
                 return '<tr class="' + rowCls + '">' +
                     '<td class="' + cc + '">' + esc(p.name) + '<img src="' + (ROLE_ICONS[p.role] || '') + '" alt="' + esc(p.role) + '" title="' + esc(p.role) + '" height="16" class="ms-1" style="vertical-align:middle"></td>' +
                     '<td class="' + cc + ' fw-bold">' + p.score.toLocaleString() + '</td>' +
                     '<td class="' + cc + '">' + livesTxt + '</td>' +
                     '<td class="' + cc + '">' + p.shots + '</td>' +
+                    '<td class="' + cc + '">' + mslTxt + '</td>' +
                     '<td class="' + cc + '">' + p.sp + '</td></tr>';
             }).join('');
             document.getElementById(id).innerHTML =
                 '<div class="d-flex justify-content-between fw-bold text-' + color + ' mb-1">' +
                 '<span>' + esc(teamName) + '</span><span>' + total.toLocaleString() + '</span></div>' +
                 '<table class="table table-sm table-bordered mb-0">' +
-                '<thead class="table-' + color + '"><tr><th>Player</th><th>Score</th><th>Lives</th><th>Shots</th><th>SP</th></tr></thead>' +
+                '<thead class="table-' + color + '"><tr><th>Player</th><th>Score</th><th>Lives</th><th>Shots</th><th>Msl</th><th>SP</th></tr></thead>' +
                 '<tbody>' + rows + '</tbody></table>';
         }
 
@@ -1249,6 +1296,236 @@
         });
         document.getElementById('pb-speed').addEventListener('change', e => { pbSpeed = parseFloat(e.target.value); });
         document.getElementById('pb-scrubber').addEventListener('input', e => { pbPause(); pbSetTime(parseFloat(e.target.value), false); });
+
+        // ===== Live feed (events up to the cursor, newest first) =====
+        function pbDrawFeed() {
+            const feedEl = document.getElementById('pb-live-feed');
+            if (!feedEl) return;
+            const upto = [];
+            for (const e of ALL) {
+                if (e.sec > pbCur) break;          // ALL is in tick order
+                if (e.type === 'movement') continue; // movement is on the map
+                upto.push(e);
+            }
+            const CAP = 40;
+            const shown = upto.slice(Math.max(0, upto.length - CAP)).reverse();
+            feedEl.innerHTML = shown.length
+                ? shown.map(e =>
+                    '<div class="small border-bottom px-2 py-1">' +
+                    '<span class="text-muted me-1">' + esc(e.tf || '') + '</span>' +
+                    (e.icon ? esc(e.icon) + ' ' : '') +
+                    esc(e.desc || '') + '</div>').join('')
+                : '<div class="text-muted small p-2">No events yet</div>';
+            // Match the feed pane's height to the scoreboard so the two
+            // columns are the same size (feed scrolls within that height).
+            const sbCol = document.getElementById('pb-scoreboard-col');
+            const feedCard = document.getElementById('pb-feed-card');
+            if (sbCol && feedCard) {
+                const hh = sbCol.offsetHeight;
+                if (hh > 0) feedCard.style.height = hh + 'px';
+            }
+        }
+
+        // ===== Map overlay: reconstructed routes on the processed PNG =====
+        // pbDrawMap() reads route keyframes (server reconstructs each Advance's
+        // exact A* polyline; MOVE-01 stores only start+end) and the current
+        // per-player state (pbPlayers, already advanced to pbCur) for dimming.
+        const TRAIL_SEC = 16;         // comet tail length (s) = 32 ticks
+        const TRAIL_DT = 0.1;         // trail sample resolution (s)
+        const DEACT_SEC = 8;          // greyed-out window after a down/resupply
+        const TEAM_COLOR = { red: '#e23b3b', blue: '#3b7de2' };
+        const TEAM_TRAIL = { red: '#f6a6a6', blue: '#a6c6f6' };
+        // Darker/greyer trail for the stretch a player was downed/deactivated.
+        const TEAM_TRAIL_DIM = { red: '#7d5050', blue: '#505d7d' };
+
+        // Per-player down times (s) + elimination time, so a trail segment can
+        // be dimmed for exactly the window the player was deactivated. Built by
+        // replaying every event through the same pbApply logic the scoreboard
+        // uses (single source of truth) and recording each fresh lastDownedAt.
+        let pbDeact = { downs: {}, elim: {} };
+        function pbComputeDeact() {
+            const downs = {}, elim = {}, prev = {};
+            for (const id in pbPlayers) { downs[id] = []; prev[id] = null; }
+            pbReset();
+            for (const ev of pbEvts) {
+                pbApply(ev);
+                for (const id in pbPlayers) {
+                    const p = pbPlayers[id];
+                    if (p.lastDownedAt !== null && p.lastDownedAt !== prev[id]) {
+                        downs[id].push(p.lastDownedAt);
+                        prev[id] = p.lastDownedAt;
+                    }
+                    if (p.isElim && elim[id] === undefined) {
+                        elim[id] = p.lastDownedAt != null ? p.lastDownedAt : ev.sec;
+                    }
+                }
+            }
+            pbReset();
+            return { downs, elim };
+        }
+        function pbIsDeact(id, ss) {
+            const e = pbDeact.elim[id];
+            if (e !== undefined && ss >= e) return true;   // eliminated → stays dim
+            const ds = pbDeact.downs[id] || [];
+            for (let i = 0; i < ds.length; i++) {
+                if (ds[i] <= ss && ss < ds[i] + DEACT_SEC) return true;
+                if (ds[i] > ss) break;
+            }
+            return false;
+        }
+
+        let pbMap = null, pbZone = 0, pbIconCache = {}, pbMapInit = false;
+        (function pbInitMap() {
+            const dataEl = document.getElementById('pb-map-data');
+            if (!dataEl) return;
+            let parsed = null;
+            try { parsed = JSON.parse(dataEl.textContent || 'null'); } catch (e) { parsed = null; }
+            if (!parsed || !parsed.players) return;
+            pbZone = parsed.zone_size || 0;
+            pbDeact = pbComputeDeact();
+            // Build per-player keyframes in seconds from spawn + moves.
+            pbMap = parsed.players.map(p => {
+                const kf = [[0, p.spawn[0], p.spawn[1]]];
+                let prev = p.spawn;
+                (p.moves || []).forEach(m => {
+                    const ts = m[0], poly = m[1] || [];
+                    if (!poly.length) return;
+                    const t0 = ts / 2, t1 = (ts + 1) / 2;   // Advance = 1 tick = 0.5s
+                    // Hold-anchor at the start of the Advance ONLY when the
+                    // player was stationary since the last keyframe (a real time
+                    // gap). For back-to-back Advances t0 == the previous cell's
+                    // keyframe time, so an anchor there would be a coincident
+                    // (duplicate-time) point — that makes the Catmull-Rom curve
+                    // overshoot, and whether the sampler lands on the overshoot
+                    // shifts with playback speed (the "wiggle on 5x→1x" bug).
+                    if (t0 > kf[kf.length - 1][0] + 1e-6) {
+                        kf.push([t0, prev[0], prev[1]]);
+                    }
+                    const n = poly.length;
+                    for (let i = 0; i < n; i++) {
+                        const t = t0 + (t1 - t0) * ((i + 1) / n);
+                        kf.push([t, poly[i][0], poly[i][1]]);
+                        prev = poly[i];
+                    }
+                });
+                return { id: String(p.id), team: p.team || 'red', role: (p.role || 'scout').toLowerCase(), scout: p.scout || 0, kf };
+            });
+            // Pre-load the role PNG icons (reuse the scoreboard set).
+            Object.keys(ROLE_ICONS).forEach(role => {
+                const img = new Image();
+                img.onload = () => { if (pbMapInit) pbDrawMap(); };
+                img.src = ROLE_ICONS[role];
+                pbIconCache[role] = img;
+            });
+            const bg = document.getElementById('pb-map-bg');
+            if (bg) bg.addEventListener('load', pbDrawMap);
+            pbMapInit = true;
+        })();
+
+        function pbCellXY(r, c) { return [(c + 0.5) * pbZone, (r + 0.5) * pbZone]; }
+
+        // Uniform Catmull-Rom on one axis — rounds the 4-connected grid
+        // staircase into a flowing curve through the cell centres.
+        function pbCR(p0, p1, p2, p3, u) {
+            const u2 = u * u, u3 = u2 * u;
+            return 0.5 * (2 * p1 + (-p0 + p2) * u +
+                (2 * p0 - 5 * p1 + 4 * p2 - p3) * u2 +
+                (-p0 + 3 * p1 - 3 * p2 + p3) * u3);
+        }
+
+        function pbPosAt(kf, t) {
+            if (!kf.length) return null;
+            if (t <= kf[0][0]) return [kf[0][1], kf[0][2]];
+            const last = kf[kf.length - 1];
+            if (t >= last[0]) return [last[1], last[2]];
+            let lo = 0, hi = kf.length - 1;
+            while (lo + 1 < hi) { const mid = (lo + hi) >> 1; if (kf[mid][0] <= t) lo = mid; else hi = mid; }
+            const k0 = kf[Math.max(0, lo - 1)], k1 = kf[lo], k2 = kf[lo + 1], k3 = kf[Math.min(kf.length - 1, lo + 2)];
+            const span = k2[0] - k1[0];
+            const u = span > 0 ? (t - k1[0]) / span : 0;
+            return [pbCR(k0[1], k1[1], k2[1], k3[1], u), pbCR(k0[2], k1[2], k2[2], k3[2], u)];
+        }
+
+        function pbDrawMap() {
+            if (!pbMap || !pbZone) return;
+            const bg = document.getElementById('pb-map-bg');
+            const cv = document.getElementById('pb-map-canvas');
+            if (!bg || !cv) return;
+            const w = bg.naturalWidth || bg.width, h = bg.naturalHeight || bg.height;
+            if (!w || !h) return;
+            if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+            const ctx = cv.getContext('2d');
+            ctx.clearRect(0, 0, w, h);
+
+            // Frame the map edges (the PNG often blends into the page).
+            ctx.globalAlpha = 1;
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#6c7682';
+            ctx.strokeRect(1.5, 1.5, w - 3, h - 3);
+
+            // Comet trails first, so markers sit on top.
+            ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+            pbMap.forEach(p => {
+                let prev = null;
+                const drawSeg = (ss, xy) => {
+                    if (prev) {
+                        const age = (pbCur - ss) / TRAIL_SEC;
+                        ctx.globalAlpha = 0.8 * (1 - age) + 0.05;
+                        ctx.lineWidth = Math.max(1.5, pbZone * (0.08 + 0.12 * (1 - age)));
+                        // Colour the segment by the player's state WHEN it was
+                        // laid down: darker for the stretch it was deactivated.
+                        ctx.strokeStyle = (pbIsDeact(p.id, ss) ? TEAM_TRAIL_DIM : TEAM_TRAIL)[p.team] || '#999';
+                        ctx.beginPath(); ctx.moveTo(prev[0], prev[1]); ctx.lineTo(xy[0], xy[1]); ctx.stroke();
+                    }
+                    prev = xy;
+                };
+                // Sample on an ABSOLUTE time grid (fixed multiples of TRAIL_DT),
+                // NOT a pbCur-relative one, so the trail's vertices stay put as
+                // pbCur advances. A pbCur-relative grid shifts phase with pbCur
+                // (hence with play speed), so the straight chords between coarse
+                // samples shimmer differently at each speed — the "wiggle returns
+                // on speed change" bug.
+                const t0 = Math.max(0, pbCur - TRAIL_SEC);
+                const gridStart = Math.ceil(t0 / TRAIL_DT) * TRAIL_DT;
+                for (let s = gridStart; s <= pbCur - 1e-6; s += TRAIL_DT) {
+                    const pos = pbPosAt(p.kf, s);
+                    if (!pos) { prev = null; continue; }
+                    drawSeg(s, pbCellXY(pos[0], pos[1]));
+                }
+                // Final segment to the exact current marker position.
+                const endPos = pbPosAt(p.kf, pbCur);
+                if (endPos) drawSeg(pbCur, pbCellXY(endPos[0], endPos[1]));
+            });
+            ctx.globalAlpha = 1;
+
+            // Player markers.
+            const size = Math.max(18, pbZone * 1.3);
+            pbMap.forEach(p => {
+                const pos = pbPosAt(p.kf, pbCur);
+                if (!pos) return;
+                const xy = pbCellXY(pos[0], pos[1]);
+                const st = pbPlayers[p.id];
+                const dim = st ? (st.isElim || (st.lastDownedAt !== null && (pbCur - st.lastDownedAt) < 8)) : false;
+                ctx.globalAlpha = dim ? 0.4 : 1;
+                // Team-colored chip.
+                ctx.beginPath(); ctx.arc(xy[0], xy[1], size * 0.6, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255,255,255,0.92)'; ctx.fill();
+                ctx.lineWidth = Math.max(2, size * 0.12); ctx.strokeStyle = TEAM_COLOR[p.team] || '#666'; ctx.stroke();
+                const icon = pbIconCache[p.role];
+                if (icon && icon.complete && icon.naturalWidth) {
+                    ctx.drawImage(icon, xy[0] - size / 2, xy[1] - size / 2, size, size);
+                }
+                if (p.scout) {
+                    const bx = xy[0] + size * 0.32, by = xy[1] + size * 0.32, br = size * 0.26;
+                    ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2);
+                    ctx.fillStyle = TEAM_COLOR[p.team] || '#666'; ctx.fill();
+                    ctx.fillStyle = '#fff'; ctx.font = 'bold ' + Math.round(br * 1.4) + 'px sans-serif';
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                    ctx.fillText(String(p.scout), bx, by + 0.5);
+                }
+                ctx.globalAlpha = 1;
+            });
+        }
 
         // ===== Initial render =====
         recomputeFiltered();
