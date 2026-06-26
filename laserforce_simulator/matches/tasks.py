@@ -1,3 +1,5 @@
+import multiprocessing
+import os
 import random
 from typing import TYPE_CHECKING
 
@@ -89,6 +91,41 @@ def _resolve_arena_map(arena_map_id: int | None):
         return None
 
 
+def _workers_for(n: int) -> int:
+    """Intra-task worker count for a single batch run (revived SIM-11 heuristic).
+
+    Returns ``1`` for ``n < 50`` (ProcessPoolExecutor spawn cost dominates a
+    small batch) and ``min(os.cpu_count() or 1, n)`` otherwise — i.e. **all
+    cores**, bounded only by the game count (never spawn more workers than
+    games). GEN-01 originally re-capped this at 4 (SIM-11's CI-box bound), but
+    the ``n < 50`` gate already keeps every test/CI batch serial, so the cap
+    only ever throttled real user runs; it is removed. API-03 retired this
+    helper when it set ``workers=1`` and pushed scaling to Celery
+    ``--concurrency``; that only parallelises *across* tasks (multiple runs),
+    so a single "simulate N" click stayed single-core. The revival is
+    daemon-guarded by :func:`_batch_workers`, so one run uses multiple cores.
+    """
+    return 1 if n < 50 else min(os.cpu_count() or 1, n)
+
+
+def _batch_workers(n: int) -> int:
+    """Production-safe worker count for ``simulate_batch_task``.
+
+    A Celery **prefork** worker runs each task in a *daemonic* child process,
+    and a daemonic process may not spawn its own children (Python raises
+    ``AssertionError: daemonic processes are not allowed to have children``),
+    so a ``ProcessPoolExecutor`` inside such a task would crash. Guard on
+    ``multiprocessing.current_process().daemon``: parallelise only when we are
+    NOT daemonic — i.e. EAGER mode (the task runs in the Django process) or a
+    ``solo``/``threads`` Celery pool. Under prefork the task stays serial
+    (``workers=1``, unchanged from API-03) and horizontal scaling remains the
+    ``--concurrency`` knob across workers.
+    """
+    if multiprocessing.current_process().daemon:
+        return 1
+    return _workers_for(n)
+
+
 @shared_task(bind=True, name="matches.simulate_batch")
 def simulate_batch_task(
     self,
@@ -115,7 +152,7 @@ def simulate_batch_task(
             team_blue,
             n,
             arena_map=arena_map,
-            workers=1,
+            workers=_batch_workers(n),
             master_seed=master_seed,
         ):
             self.update_state(state="PROGRESS", meta=snap)
