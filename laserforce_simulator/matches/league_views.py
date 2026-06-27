@@ -1490,6 +1490,14 @@ def _build_play_controls_context(
         "following_tournament_is_final": following_tournament_is_final,
         "live_preview_available": live_preview_available,
         "is_career_mode": _is_career_league(league),
+        # PLAY-01 — the Celery job id of the in-flight async run on the
+        # resolved displayed Season (else None). Drives the topnav resume-on-load
+        # + Play/Stop swap. league_nav merges this key via result.update(...).
+        "active_play_job_id": (
+            displayed_season.active_play_job_id
+            if displayed_season is not None
+            else None
+        ),
     }
 
 
@@ -2670,6 +2678,9 @@ def play_two_months(request, season_id: int) -> HttpResponse:
         )
 
     result = play_season_task.delay(season.id, max_matchdays=8)
+    season.active_play_job_id = result.id
+    season.play_cancel_requested = False
+    season.save(update_fields=["active_play_job_id", "play_cancel_requested"])
     return JsonResponse({"job_id": result.id, "season_id": season.id}, status=202)
 
 
@@ -2689,6 +2700,9 @@ def play_until_end(request, season_id: int) -> HttpResponse:
         )
 
     result = play_season_task.delay(season.id, max_matchdays=None)
+    season.active_play_job_id = result.id
+    season.play_cancel_requested = False
+    season.save(update_fields=["active_play_job_id", "play_cancel_requested"])
     return JsonResponse({"job_id": result.id, "season_id": season.id}, status=202)
 
 
@@ -2741,18 +2755,53 @@ def play_playoffs(request, season_id: int) -> JsonResponse:
         return JsonResponse({"error": "No active playoff bracket to play."}, status=409)
 
     result = play_playoffs_task.delay(season.id)
+    season.active_play_job_id = result.id
+    season.play_cancel_requested = False
+    season.save(update_fields=["active_play_job_id", "play_cancel_requested"])
     return JsonResponse({"job_id": result.id, "season_id": season.id}, status=202)
+
+
+def play_cancel(request, season_id: int) -> JsonResponse:
+    """PLAY-01 — POST-only cooperative cancel for an in-flight async run.
+
+    Sets ``Season.play_cancel_requested = True`` and returns
+    ``JsonResponse({"cancelled": True, "season_id": ...})`` (HTTP 200).
+    No active-run guard — a stale flag is cleared by the next enqueue.
+    The task reads the flag (top + between fixtures), stops cleanly, and
+    returns NORMALLY (Celery SUCCESS, mapped to ``"complete"``).
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
+
+    season.play_cancel_requested = True
+    season.save(update_fields=["play_cancel_requested"])
+    return JsonResponse({"cancelled": True, "season_id": season.id})
 
 
 def _build_play_status_response(
     async_result: AsyncResult,
     *,
     season_id: int,
+    season: Optional[Season] = None,
 ) -> dict:
-    """Assemble the locked 5-key polling JSON for a Play Season job.
+    """Assemble the polling JSON for a Play Season job.
 
-    Returns ``{"status", "completed", "total", "error", "season_id"}``
-    per the LG-01d seam contract §3.
+    The LG-01d 5 keys (``status`` / ``completed`` / ``total`` / ``error`` /
+    ``season_id``) are unchanged. PLAY-01 ADDS:
+
+    * ``standings`` — server-rendered live partial-standings HTML fragment.
+    * ``leaders`` — ``{"points": <html>, "tags": <html>, "ratio": <html>}``.
+    * ``cancelled`` — ``True`` when the task returned ``cancelled: true`` on
+      SUCCESS; else ``False``. Status stays ``"complete"`` either way.
+
+    The live standings / leaders recompute VIEW-SIDE from committed rows each
+    poll (NOT from Celery meta), via the same helpers ``_build_dashboard_context``
+    uses, then render the shared dashboard snippet partials. Computed on EVERY
+    poll (running OR complete). ``season`` is resolved by the caller and passed
+    in; when absent (defensive) the live fragments fall back to empty strings.
     """
     state = async_result.state
     status = _celery_state_to_job_status(state)
@@ -2760,6 +2809,7 @@ def _build_play_status_response(
     completed = 0
     total = 0
     error: str | None = None
+    cancelled = False
 
     if state == "PROGRESS":
         info = async_result.info or {}
@@ -2771,10 +2821,13 @@ def _build_play_status_response(
         if isinstance(result, dict):
             completed = int(result.get("completed", 0) or 0)
             total = int(result.get("total", 0) or 0)
+            cancelled = bool(result.get("cancelled", False))
     elif state in ("FAILURE", "REVOKED"):
         info = async_result.info
         if info is not None:
             error = str(info)
+
+    standings_html, leaders = _render_live_play_panels(season)
 
     return {
         "status": status,
@@ -2782,7 +2835,46 @@ def _build_play_status_response(
         "total": total,
         "error": error,
         "season_id": season_id,
+        "standings": standings_html,
+        "leaders": leaders,
+        "cancelled": cancelled,
     }
+
+
+def _render_live_play_panels(season: Optional[Season]) -> tuple[str, dict[str, str]]:
+    """PLAY-01 — recompute + render the live standings + leaders fragments.
+
+    Recomputes from committed rows via ``_build_dashboard_context`` (the same
+    ``compute_standings`` / ``compute_leaders`` source the dashboards use), then
+    server-renders the shared dashboard snippet partials. Returns
+    ``(standings_html, {"points", "tags", "ratio"})``. ``season is None`` ⇒
+    empty fragments (the JS patch is existence-guarded and no-ops off-dashboard).
+    """
+    from django.template.loader import render_to_string
+
+    if season is None:
+        return "", {"points": "", "tags": "", "ratio": ""}
+
+    body = _build_dashboard_context(season, season.state)
+    standings_html = render_to_string(
+        "_partials/dashboard_standings_snippet.html",
+        {"standings_snippet": body["standings_snippet"]},
+    )
+    leaders = {
+        "points": render_to_string(
+            "_partials/dashboard_leaders_snippet.html",
+            {"leaders": body["leaders_points"], "leaders_title": "Points per game"},
+        ),
+        "tags": render_to_string(
+            "_partials/dashboard_leaders_snippet.html",
+            {"leaders": body["leaders_tags"], "leaders_title": "Tags per game"},
+        ),
+        "ratio": render_to_string(
+            "_partials/dashboard_leaders_snippet.html",
+            {"leaders": body["leaders_ratio"], "leaders_title": "Tag ratio"},
+        ),
+    }
+    return standings_html, leaders
 
 
 def play_status(request, season_id: int, job_id: str) -> JsonResponse:
@@ -2806,7 +2898,9 @@ def play_status(request, season_id: int, job_id: str) -> JsonResponse:
         request.session["last_league_id"] = season.league_id
 
     async_result = AsyncResult(job_id)
-    return JsonResponse(_build_play_status_response(async_result, season_id=season_id))
+    return JsonResponse(
+        _build_play_status_response(async_result, season_id=season_id, season=season)
+    )
 
 
 # ---------------------------------------------------------------------------

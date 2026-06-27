@@ -1,0 +1,14 @@
+{% comment %}PLAY-01 — shared top-standings snippet body. Included by both
+   dashboards inside their {season,league}-dashboard-standings-snippet panel
+   and rendered by _build_play_status_response (render_to_string) as the live
+   incremental fragment the poll JS patches into that panel's innerHTML.
+   Context: standings_snippet — list of (row, team) tuples.{% endcomment %}
+<div class="card-header"><strong>Top standings</strong></div>
+<ul class="list-group list-group-flush">
+    {% for row, team in standings_snippet %}
+        <li class="list-group-item d-flex justify-content-between">
+            <span>{{ row.rank }}. {% if team %}{{ team.name }}{% else %}(unknown){% endif %}</span>
+            <span>{{ row.league_points }} pts</span>
+        </li>
+    {% endfor %}
+</ul>

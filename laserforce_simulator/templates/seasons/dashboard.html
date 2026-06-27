@@ -35,17 +35,7 @@
     </div>
 
     <div>
-        <div id="season-dashboard-standings-snippet" class="card mb-3">
-                <div class="card-header"><strong>Top standings</strong></div>
-                <ul class="list-group list-group-flush">
-                    {% for row, team in standings_snippet %}
-                        <li class="list-group-item d-flex justify-content-between">
-                            <span>{{ row.rank }}. {% if team %}{{ team.name }}{% else %}(unknown){% endif %}</span>
-                            <span>{{ row.league_points }} pts</span>
-                        </li>
-                    {% endfor %}
-                </ul>
-            </div>
+        <div id="season-dashboard-standings-snippet" class="card mb-3">{% include "_partials/dashboard_standings_snippet.html" %}</div>
 
             {% if season_mode == "active" or season_mode == "completed" %}
                 <div id="season-dashboard-next-round" class="card mb-3">
@@ -69,43 +59,13 @@
 
                 <div class="row">
                     <div class="col-md-4">
-                        <div id="season-dashboard-leaders-points" class="card mb-3">
-                            <div class="card-header"><strong>Points per game</strong></div>
-                            <ul class="list-group list-group-flush">
-                                {% for row in leaders_points %}
-                                    <li class="list-group-item d-flex justify-content-between">
-                                        <a href="/players/{{ row.player_id }}/career-stats/">{{ row.player_name }}</a>
-                                        <span>{{ row.value|floatformat:2 }}</span>
-                                    </li>
-                                {% endfor %}
-                            </ul>
-                        </div>
+                        <div id="season-dashboard-leaders-points" class="card mb-3">{% include "_partials/dashboard_leaders_snippet.html" with leaders=leaders_points leaders_title="Points per game" %}</div>
                     </div>
                     <div class="col-md-4">
-                        <div id="season-dashboard-leaders-tags" class="card mb-3">
-                            <div class="card-header"><strong>Tags per game</strong></div>
-                            <ul class="list-group list-group-flush">
-                                {% for row in leaders_tags %}
-                                    <li class="list-group-item d-flex justify-content-between">
-                                        <a href="/players/{{ row.player_id }}/career-stats/">{{ row.player_name }}</a>
-                                        <span>{{ row.value|floatformat:2 }}</span>
-                                    </li>
-                                {% endfor %}
-                            </ul>
-                        </div>
+                        <div id="season-dashboard-leaders-tags" class="card mb-3">{% include "_partials/dashboard_leaders_snippet.html" with leaders=leaders_tags leaders_title="Tags per game" %}</div>
                     </div>
                     <div class="col-md-4">
-                        <div id="season-dashboard-leaders-ratio" class="card mb-3">
-                            <div class="card-header"><strong>Tag ratio</strong></div>
-                            <ul class="list-group list-group-flush">
-                                {% for row in leaders_ratio %}
-                                    <li class="list-group-item d-flex justify-content-between">
-                                        <a href="/players/{{ row.player_id }}/career-stats/">{{ row.player_name }}</a>
-                                        <span>{{ row.value|floatformat:2 }}</span>
-                                    </li>
-                                {% endfor %}
-                            </ul>
-                        </div>
+                        <div id="season-dashboard-leaders-ratio" class="card mb-3">{% include "_partials/dashboard_leaders_snippet.html" with leaders=leaders_ratio leaders_title="Tag ratio" %}</div>
                     </div>
                 </div>
 
