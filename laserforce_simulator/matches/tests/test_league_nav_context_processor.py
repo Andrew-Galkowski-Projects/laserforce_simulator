@@ -415,3 +415,73 @@ class TestNav01LeagueNavPlayKeysAbsent(TestCase):
         result = league_nav(request)
         self.assertIn("top_bar_links", result)
         self.assertIn("top_bar_dashboard_url", result)
+
+
+# ---------------------------------------------------------------------------
+# PLAY-01 — resumable-render context. ``_build_play_controls_context`` gains
+# ONE key ``active_play_job_id`` so the topnav can render the Stop control +
+# resume polling on page load; ``league_nav`` merges it on the league-prefix
+# path (ABSENT off-league / on the fallback path, exactly like the other play
+# keys).
+#
+# Seam contract: ``.claude/worktrees/play-01-seam-contract.md`` §4 + §6 item 5.
+#
+# PRE-CODE-LANDING NOTE: ``_build_play_controls_context`` currently returns the
+# 9 NAV-01 keys (no ``active_play_job_id``), so these assertions WILL fail until
+# the Code agent adds the 10th key. Expected TDD red, not a defect here.
+# ---------------------------------------------------------------------------
+
+
+class TestPlay01ResumableRenderContext(TestCase):
+    """``active_play_job_id`` flows through the helper + ``league_nav``."""
+
+    def test_helper_emits_active_play_job_id_from_displayed_season(self) -> None:
+        from matches.league_views import _build_play_controls_context
+
+        league = _make_league("Play01HelperActive")
+        season = _make_season(league, state="active")
+        season.active_play_job_id = "running-job-7"
+        season.save(update_fields=["active_play_job_id"])
+        result = _build_play_controls_context(league, season)
+        self.assertEqual(result["active_play_job_id"], "running-job-7")
+
+    def test_helper_active_play_job_id_none_when_no_displayed_season(self) -> None:
+        from matches.league_views import _build_play_controls_context
+
+        league = _make_league("Play01HelperNoSeason")
+        result = _build_play_controls_context(league, None)
+        self.assertIsNone(result["active_play_job_id"])
+
+    def test_helper_active_play_job_id_none_when_idle(self) -> None:
+        from matches.league_views import _build_play_controls_context
+
+        league = _make_league("Play01HelperIdle")
+        season = _make_season(league, state="active")
+        # active_play_job_id left at its None default.
+        result = _build_play_controls_context(league, season)
+        self.assertIsNone(result["active_play_job_id"])
+
+    def test_league_nav_merges_active_play_job_id_on_league_prefix(self) -> None:
+        league = _make_league("Play01NavActive")
+        season = _make_season(league, state="active")
+        season.active_play_job_id = "nav-job-9"
+        season.save(update_fields=["active_play_job_id"])
+        request = _request("/leagues/", session_data={"last_league_id": league.id})
+        result = league_nav(request)
+        self.assertIn("active_play_job_id", result)
+        self.assertEqual(result["active_play_job_id"], "nav-job-9")
+
+    def test_league_nav_active_play_job_id_absent_off_league(self) -> None:
+        league = _make_league("Play01NavOff")
+        season = _make_season(league, state="active")
+        season.active_play_job_id = "off-league-job"
+        season.save(update_fields=["active_play_job_id"])
+        request = _request("/teams/", session_data={"last_league_id": league.id})
+        result = league_nav(request)
+        self.assertNotIn("active_play_job_id", result)
+
+    def test_league_nav_active_play_job_id_absent_on_fallback(self) -> None:
+        # Zero Leagues ⇒ _fallback() ⇒ no play keys at all.
+        request = _request("/leagues/")
+        result = league_nav(request)
+        self.assertNotIn("active_play_job_id", result)

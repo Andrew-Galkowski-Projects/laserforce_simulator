@@ -1,0 +1,14 @@
+{% comment %}PLAY-01 — shared leaders snippet body (one board). Included by both
+   dashboards inside each {season,league}-dashboard-leaders-{points,tags,ratio}
+   panel and rendered by _build_play_status_response (render_to_string) as the
+   live incremental fragment the poll JS patches into that panel's innerHTML.
+   Context: leaders — list of LeaderRow; leaders_title — the board header.{% endcomment %}
+<div class="card-header"><strong>{{ leaders_title }}</strong></div>
+<ul class="list-group list-group-flush">
+    {% for row in leaders %}
+        <li class="list-group-item d-flex justify-content-between">
+            <a href="/players/{{ row.player_id }}/career-stats/">{{ row.player_name }}</a>
+            <span>{{ row.value|floatformat:2 }}</span>
+        </li>
+    {% endfor %}
+</ul>

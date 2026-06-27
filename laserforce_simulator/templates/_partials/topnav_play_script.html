@@ -15,11 +15,34 @@
     CSRF_TOKEN = CSRF_TOKEN ? CSRF_TOKEN.value : "";
 
     var dropdown = document.getElementById("topbar-play-dropdown");
+    var stopForm = document.getElementById("topbar-play-stop");
     var progressContainer = document.getElementById("topbar-play-progress");
     var progressBar = progressContainer ? progressContainer.querySelector(".play-progress-bar") : null;
     var progressLabel = progressContainer ? progressContainer.querySelector(".play-progress-label") : null;
 
     var pollTimer = null;
+
+    // PLAY-01 — patch the dashboard standings + 3 leaders panels each poll from
+    // the live-recomputed server fragments. Existence-guarded: off-dashboard
+    // (the topnav alone) these getElementById lookups miss and patching no-ops.
+    function setPanel(id, html) {
+        if (html === undefined || html === null) { return; }
+        var el = document.getElementById(id);
+        if (el) { el.innerHTML = html; }
+    }
+    function patchPanels(data) {
+        if (!data) { return; }
+        setPanel("season-dashboard-standings-snippet", data.standings);
+        setPanel("league-dashboard-standings-snippet", data.standings);
+        if (data.leaders) {
+            setPanel("season-dashboard-leaders-points", data.leaders.points);
+            setPanel("league-dashboard-leaders-points", data.leaders.points);
+            setPanel("season-dashboard-leaders-tags", data.leaders.tags);
+            setPanel("league-dashboard-leaders-tags", data.leaders.tags);
+            setPanel("season-dashboard-leaders-ratio", data.leaders.ratio);
+            setPanel("league-dashboard-leaders-ratio", data.leaders.ratio);
+        }
+    }
 
     function ensureErrorEl() {
         var el = document.getElementById("topbar-play-error");
@@ -46,6 +69,7 @@
     // attribute, which Bootstrap's ``d-flex !important`` would defeat.
     function showProgress(completed, total) {
         if (dropdown) { dropdown.hidden = true; }
+        if (stopForm) { stopForm.hidden = false; }
         if (progressContainer) {
             progressContainer.classList.remove("d-none");
             progressContainer.classList.add("d-flex");
@@ -64,8 +88,9 @@
             clearInterval(pollTimer);
             pollTimer = null;
         }
-        // Restore: Play dropdown back IN, progress block back OUT.
+        // Restore: Play dropdown back IN, Stop + progress block back OUT.
         if (dropdown) { dropdown.hidden = false; }
+        if (stopForm) { stopForm.hidden = true; }
         if (progressContainer) {
             progressContainer.classList.add("d-none");
             progressContainer.classList.remove("d-flex");
@@ -81,6 +106,7 @@
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
                     showProgress(data.completed || 0, data.total || 0);
+                    patchPanels(data);
                     if (data.status === "complete") {
                         clearPolling();
                         window.location.reload();
@@ -127,6 +153,32 @@
     interceptAsync(document.getElementById("topbar-play-two-months"));
     interceptAsync(document.getElementById("topbar-play-until-end"));
     interceptAsync(document.getElementById("topbar-play-play-playoffs"));
+
+    // PLAY-01 — wire Stop: cooperative cancel (POST play_cancel) without leaving
+    // the page; the task returns "complete" + cancelled:true and the existing
+    // clearPolling() + reload fires. Keep polling after Stop.
+    if (stopForm) {
+        stopForm.addEventListener("submit", function(e) {
+            e.preventDefault();
+            var fd = new FormData(stopForm);
+            fetch(stopForm.action, {
+                method: "POST",
+                body: fd,
+                headers: {"X-CSRFToken": CSRF_TOKEN},
+                credentials: "same-origin",
+            }).catch(function() {
+                // Cancel is best-effort; the next poll surfaces the outcome.
+            });
+        });
+    }
+
+    // PLAY-01 — resume on load: an in-flight async run (active_play_job_id set)
+    // re-attaches the poll rail so the progress + live panels keep updating
+    // after a navigation/refresh.
+    var ACTIVE_PLAY_JOB_ID = "{{ active_play_job_id|default:'' }}";
+    if (ACTIVE_PLAY_JOB_ID) {
+        startPolling(ACTIVE_PLAY_JOB_ID);
+    }
 })();
 </script>
 {% endif %}

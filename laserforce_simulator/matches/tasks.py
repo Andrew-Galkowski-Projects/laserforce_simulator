@@ -74,6 +74,18 @@ def _resolve_fixture_map(
     raise ValueError(f"Unknown map_mode: {mode!r}")
 
 
+def _play_cancel_requested(season_id: int) -> bool:
+    """PLAY-01 — cooperative cancel check (a single-column EXISTS query).
+
+    Returns ``True`` when ``Season.play_cancel_requested`` is set for the
+    given Season. Read by ``play_season_task`` / ``play_playoffs_task`` at
+    their top AND between fixtures; the task never WRITES the flag.
+    """
+    from matches.models import Season
+
+    return Season.objects.filter(id=season_id, play_cancel_requested=True).exists()
+
+
 def _resolve_arena_map(arena_map_id: int | None):
     """Resolve an arena_map_id to an ArenaMap or None.
 
@@ -233,6 +245,12 @@ def play_season_task(
 
         season = Season.objects.get(id=season_id)
 
+        # PLAY-01 — top (queued) cancel check, BEFORE the loop. Stop cleanly
+        # and return NORMALLY (Celery SUCCESS ⇒ "complete") with a partial
+        # {completed, total, cancelled}.
+        if _play_cancel_requested(season_id):
+            return {"completed": 0, "total": 0, "cancelled": True}
+
         # LG-02-Part2c-2 — by-phase fixtures (global-continuous matchday
         # offset already applied) + phase-aware played_keys.
         # LG-02-Part2c-3c — the barrier-aware variant halts the RR loop at an
@@ -277,6 +295,13 @@ def play_season_task(
             )
 
             for k, (phase_id, fixture) in enumerate(to_play):
+                # PLAY-01 — between-fixtures (running) cancel check, BEFORE
+                # simulating this Round. Break + return NORMALLY with the
+                # k Rounds committed so far; already-played Rounds stay
+                # committed, the Season stays active, the run is resumable.
+                if _play_cancel_requested(season_id):
+                    return {"completed": k, "total": n, "cancelled": True}
+
                 team_a = team_by_id[fixture.team_a_id]
                 team_b = team_by_id[fixture.team_b_id]
                 # LG-01j — resolve the per-Round arena_map via the locked
@@ -361,6 +386,11 @@ def play_season_task(
 
         return {"completed": n, "total": n}
     finally:
+        # PLAY-01 — clear the active-run marker on success / cancel / failure.
+        # The cancel flag is NOT cleared here (the next enqueue clears it).
+        from matches.models import Season
+
+        Season.objects.filter(id=season_id).update(active_play_job_id=None)
         django.db.close_old_connections()
 
 
@@ -390,6 +420,11 @@ def play_playoffs_task(self, season_id: int) -> dict:
         from matches.tournament_engine import play_next_node
 
         season = Season.objects.get(id=season_id)
+
+        # PLAY-01 — top (queued) cancel check, BEFORE the drain.
+        if _play_cancel_requested(season_id):
+            return {"completed": 0, "total": 0, "cancelled": True}
+
         phase = season.current_phase()
         if (
             phase is None
@@ -408,7 +443,16 @@ def play_playoffs_task(self, season_id: int) -> dict:
             ]
             return stage_progress(flat)
 
-        while play_next_node(tournament) is not None:
+        while True:
+            # PLAY-01 — between-stage (running) cancel check, BEFORE draining
+            # the next bracket node. Stop cleanly with the stages resolved so
+            # far; resolved nodes stay committed and the run is resumable.
+            if _play_cancel_requested(season_id):
+                completed, total = _stage_counts()
+                return {"completed": completed, "total": total, "cancelled": True}
+
+            if play_next_node(tournament) is None:
+                break
             completed, total = _stage_counts()
             self.update_state(
                 state="PROGRESS",
@@ -419,6 +463,10 @@ def play_playoffs_task(self, season_id: int) -> dict:
         completed, total = _stage_counts()
         return {"completed": completed, "total": total}
     finally:
+        # PLAY-01 — clear the active-run marker on success / cancel / failure.
+        from matches.models import Season
+
+        Season.objects.filter(id=season_id).update(active_play_job_id=None)
         django.db.close_old_connections()
 
 

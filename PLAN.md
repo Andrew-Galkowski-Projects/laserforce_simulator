@@ -169,7 +169,7 @@ re-baseline**. See
 and the **NAV-01** subsection in
 [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
-### PLAY-01 · Live incremental stats + Stop/Cancel for multi-game runs
+### PLAY-01 · [DONE] Live incremental stats + Stop/Cancel for multi-game runs
 
 **Prio: High.** Today `play_two_months` / `play_until_end` enqueue `play_season_task`
 (Celery), which commits each Round atomically and emits `PROGRESS`, but the dashboard
@@ -194,6 +194,56 @@ explicitly scoped cancel out). Three parts (all confirmed in scope):
 standings/leaders payload; a cooperative-cancel flag the task body checks between
 fixtures + a new cancel view/URL (`AsyncResult.revoke`); the dashboard inline poll JS
 (and NAV-01 dropdown) for the Play↔Stop swap + the per-game progress spinner.
+
+**[DONE] Shipped (2026-06-26).** Cooperative between-fixture cancel + live polling
+stats — **NO `AsyncResult.revoke`** (the original surface note's `revoke` line is
+superseded; revoke would leave a half-committed Round, forbidden by ADR-0016).
+**Scope: async runs only** (`play_two_months` / `play_until_end` / `play_playoffs`);
+the sync paths are untouched; no simulator/RNG touch ⇒ **no Score Calibration
+re-baseline**. **Model:** `Season` grows `active_play_job_id`
+(`CharField(max_length=255, null=True, blank=True, default=None)`) +
+`play_cancel_requested` (`BooleanField(default=False)`) via migration
+`0056_season_play_job_cancel` (2× `AddField`, no `RunPython` — existing Seasons take
+the `null`/`False` defaults). **Cancel view:** NEW `matches.league_views.play_cancel(request, season_id)`
+— POST-only (405 guard / 404 on missing Season), sets `play_cancel_requested = True`
+(`save(update_fields=[...])`), returns `200 {"cancelled": True, "season_id"}`; URL name
+`play_cancel`, path `/seasons/<int:season_id>/play-cancel/`. **Extended poll JSON:**
+`_build_play_status_response` keeps its 5 keys (`status` / `completed` / `total` /
+`error` / `season_id`) and ADDS `standings` (server-rendered HTML fragment), `leaders`
+(3-key dict of HTML fragments — `points` / `tags` / `ratio`), `cancelled` (bool, `True`
+only when the task returned `cancelled: true` on SUCCESS) — all recomputed **view-side
+from committed rows each poll** via `compute_standings` / `compute_leaders` (NOT from
+Celery task meta); `_celery_state_to_job_status` reused verbatim, **no new status
+string**. **Enqueue edits:** the 3 async views set `active_play_job_id = result.id` +
+clear `play_cancel_requested = False` (`save(update_fields=[...])`) before the unchanged
+`202 {job_id, season_id}`. **Task control-flow:** NEW module-level helper
+`matches.tasks._play_cancel_requested(season_id) -> bool` (single-column exists query,
+re-read each call) checked at the task TOP and at the TOP of every fixture /
+bracket-stage iteration; on a set flag the task **breaks cleanly and returns normally**
+`{"completed", "total", "cancelled": True}` ⇒ Celery SUCCESS ⇒ `complete`; both
+`play_season_task` + `play_playoffs_task` clear `active_play_job_id` via
+`.update(active_play_job_id=None)` in their existing `finally` (fires on success /
+cancel / failure, alongside `django.db.close_old_connections()`). **Render/resume:**
+`_build_play_controls_context` adds `active_play_job_id` (flows through
+`core.context_processors.league_nav` on the league-prefix path; absent off-league /
+fallback). **Templates:** `topnav_play.html` adds the `topbar-play-stop` POST-to-`play_cancel`
+control (renders iff `active_play_job_id`); `topnav_play_script.html` resumes polling on
+load when `active_play_job_id`, patches the existence-guarded dashboard panels
+`{season,league}-dashboard-standings-snippet` / `-leaders-points` / `-leaders-tags` /
+`-leaders-ratio`, and wires Stop (fetch-POST, keeps polling until the task returns
+`complete` + `cancelled`); NEW shared partials
+`templates/_partials/dashboard_standings_snippet.html` +
+`dashboard_leaders_snippet.html` single-source the patched markup for both dashboard
+variants and the poll-rendered fragments. **Transport:** the existing NAV-01 polling
+rail (the `play_status` poll) — **WebSockets/Channels deferred** (no cancel-latency win,
+the safe-stop granularity is the fixture boundary not the network round-trip; needs an
+ASGI/Channels/deploy migration). See
+[ADR-0031](docs/adr/0031-cooperative-cancel-and-live-polling-stats.md) (which reverses
+the ADR-0013 / ADR-0016 cancel scope-out — the `revoke` rejection stands), the seam
+contract
+[`.claude/worktrees/play-01-seam-contract.md`](.claude/worktrees/play-01-seam-contract.md),
+and the **PLAY-01** subsection in
+[`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
 ### DEL-01 · Delete League button
 

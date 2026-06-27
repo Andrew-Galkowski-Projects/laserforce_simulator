@@ -455,9 +455,12 @@ class TestNavPlayDropdownOffLeague(TestCase):
 
 
 class TestBuildPlayControlsContext(TestCase):
-    """The shared helper returns the correct 9-key dict across the state matrix
+    """The shared helper returns the correct key dict across the state matrix
     (contract §1 table). The helper takes the RESOLVED league + displayed
-    Season and never re-implements the resolution.
+    Season and never re-implements the resolution. PLAY-01 added the 10th key
+    ``active_play_job_id`` (the resumable-progress render hint) — the
+    load-bearing invariant is still "the helper emits exactly this fixed key
+    set", just one wider.
     """
 
     _KEYS = (
@@ -470,9 +473,10 @@ class TestBuildPlayControlsContext(TestCase):
         "following_tournament_is_final",
         "live_preview_available",
         "is_career_mode",
+        "active_play_job_id",
     )
 
-    def test_returns_exactly_the_nine_keys(self) -> None:
+    def test_returns_exactly_the_ten_keys(self) -> None:
         league = _make_none_league("HelperKeys")
         result = _build_play_controls_context(league, None)
         self.assertEqual(set(result.keys()), set(self._KEYS))

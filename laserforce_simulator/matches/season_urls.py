@@ -49,6 +49,11 @@ urlpatterns = [
         name="play_status",
     ),
     path(
+        "<int:season_id>/play-cancel/",
+        league_views.play_cancel,
+        name="play_cancel",
+    ),
+    path(
         "<int:season_id>/awards/",
         league_views.season_awards,
         name="season_awards",

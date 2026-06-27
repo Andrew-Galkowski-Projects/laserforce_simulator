@@ -992,6 +992,17 @@ class Season(models.Model):
     starting_map_rotation_ids_json = models.JSONField(
         null=True, blank=True, default=None
     )
+    # PLAY-01 — Celery job id of the in-flight async run. The async enqueue
+    # views SET it; the task CLEARS it (= None) in its finally. Render/poll
+    # treats a TERMINAL AsyncResult (status not "running") as "no active run"
+    # regardless of this column.
+    active_play_job_id = models.CharField(
+        max_length=255, null=True, blank=True, default=None
+    )
+    # PLAY-01 — cooperative between-fixture cancel flag. Async enqueue views
+    # CLEAR it (= False) at enqueue; play_cancel SETS it (= True); the task
+    # READS it (top + between fixtures), never writes it.
+    play_cancel_requested = models.BooleanField(default=False)
 
     def __str__(self) -> str:
         return f"{self.league.name} — {self.name}"

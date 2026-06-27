@@ -165,3 +165,20 @@ corruption possible. A server-side `Season.state` lock would require a
 new `Season.is_playing` field + migration + a state-restoration story
 when a worker dies mid-run — far more machinery than the actual
 concurrency surface justifies.
+
+## PLAY-01 addendum (2026-06-26) — between-fixture cancel adopted (not revoke)
+
+The rejected-alternatives section above turned down "Mid-job cancel via
+`AsyncResult.revoke`", noting that only **between-Round** cancellation is safe
+and that it needs cooperative-cancel polling inside the task body. PLAY-01
+([ADR-0031](0031-cooperative-cancel-and-live-polling-stats.md)) implements
+exactly that cooperative polling: a `Season.play_cancel_requested` DB flag set by
+a new `play_cancel` view, re-read via `_play_cancel_requested(season_id)` at the
+task top and at every fixture / bracket-stage iteration; on a set flag the task
+**breaks cleanly and returns normally** with `{"completed", "total", "cancelled":
+True}` ⇒ Celery SUCCESS ⇒ the existing `complete` status (no new vocabulary
+string). Already-played Rounds stay committed and the run is resumable — exactly
+the per-Round-atomic-commit property this ADR established. **The `revoke`
+rejection is unchanged** — PLAY-01 does NOT use `AsyncResult.revoke` in any form
+(terminating revoke would leave the half-committed Round this ADR forbids).
+Async runs only; no simulator touch ⇒ **no Score Calibration re-baseline**.

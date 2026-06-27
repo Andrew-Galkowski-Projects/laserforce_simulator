@@ -4,6 +4,17 @@
    / play_league_id (the topnav has no season/league template var).
    csrf_token in every form; data-action-state on each submit
    control (test-hook parity with the old dashboard controls).{% endcomment %}
+{% comment %}PLAY-01 — Play→Stop swap. When active_play_job_id is truthy an async
+   run is in flight (resolved from the displayed Season): the Stop form renders a
+   cooperative cancel (POST play_cancel). The JS hides topbar-play-dropdown +
+   shows this Stop form (and the progress block) for the duration of a polled run.
+   The play_cancel reverse uses play_displayed_season_id.{% endcomment %}
+{% if active_play_job_id %}
+<form id="topbar-play-stop" method="post" action="{% url 'play_cancel' season_id=play_displayed_season_id %}" class="nav-item d-flex align-items-center px-2">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-sm btn-outline-danger" data-action-state="{{ action_button_state }}">Stop</button>
+</form>
+{% endif %}
 <div id="topbar-play-dropdown" class="nav-item dropdown">
     <a class="nav-link dropdown-toggle" id="play-nav-link" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Play ▾</a>
     <ul class="dropdown-menu" aria-labelledby="play-nav-link">
