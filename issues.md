@@ -1184,3 +1184,46 @@ hidden field; not a functional defect. Mirrors the pre-existing FIN-05 label-hin
 
 **No functional bugs.** No persistent test data created (composer exercised in-memory via JS;
 no League submitted). Server torn down.
+
+---
+
+# Web testing — PLAY-01 (live incremental stats + Stop/Cancel)
+
+Date: 2026-06-26
+Branch: `play-01-live-stats-cancel`
+Scope: the PLAY-01 surfaces — the league-mode `Play ▾` topnav (`topnav_play.html` +
+`topnav_play_script.html`: Play→Stop swap, the new `topbar-play-stop` control,
+resume-on-load polling) and the season/league dashboards (the extracted
+`dashboard_standings_snippet.html` / `dashboard_leaders_snippet.html` partials the
+poll patches). Exercised on dev league 41 / active season 47.
+
+## Summary — PLAY-01
+| Area | Result |
+|---|---|
+| Leagues list + league dashboard render; extracted standings/leaders snippet partials show correct data (Top standings / Points-per-game / Tags-per-game / Tag-ratio) | ✅ |
+| `Play ▾` opens on an active season → `play_next` entries (One Week / Two Months / Until End / One Week Live); NO `topbar-play-stop` when idle (no active run) | ✅ |
+| Poll script (`topnav_play_script.html`: `patchPanels` / `startPolling` / Stop wiring) loads with **zero console errors** on every page | ✅ |
+| `play_cancel` endpoint (DB-flag only, no Redis): POST `/seasons/47/play-cancel/` → 200 `{"cancelled":true,"season_id":47}`; GET → 405 | ✅ |
+| Responsive: navbar collapses to hamburger < 992px; dashboard panels stack cleanly at 720×1115; clean at 1280×900 | ✅ |
+| Console clean on page loads across landing / leagues / league dashboard | ✅ |
+
+## Findings — PLAY-01
+- **⚪ Out-of-scope (pre-existing dev-env limitation, NOT a PLAY-01 regression) —
+  `play_status` 500s without a Redis broker.** `GET /seasons/47/play-status/<job>/`
+  returns HTTP 500 `ConnectionError` in this dev server because
+  `AsyncResult(job_id).state` reads the Celery result backend, and the dev server
+  runs with **no Redis and not EAGER** (ADR-0013: "Local dev requires Redis + a
+  celery worker"). The pre-PLAY-01 NAV-01 `play_status` has the identical Redis
+  dependency — PLAY-01 reads `async_result.state` at the same point, before the new
+  view-side standings/leaders recompute, so it introduces no new failure surface.
+  The full live-stats + Stop poll round-trip can't be exercised black-box here
+  without a worker; it is covered by the EAGER `test_play_cancel.py` suite instead.
+  No code change warranted.
+- The two console errors observed (a 500 and a 405) were from the **test harness's
+  own probe fetches** (the dummy-job `play_status` probe and the `play_cancel` GET
+  405 check), not from any page render.
+
+## Data note
+No `ChromeTest`-prefixed teams/matches/rounds were created this run (existing dev
+data only). The `play_cancel` POST flipped `Season(47).play_cancel_requested=True`
+— harmless and idempotent (cleared at the next run's enqueue); no teardown needed.

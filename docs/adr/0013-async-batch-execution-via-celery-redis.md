@@ -205,3 +205,18 @@ Determinism is unaffected — the SIM-10 serial==parallel-at-every-boundary
 guarantee holds for any `workers` value, so **no Score Calibration
 re-baseline**. The decision is reversible (a helper + one `workers=` argument),
 so no new ADR — this addendum records the partial, guarded reversal.
+
+## PLAY-01 addendum (2026-06-26) — cancel scope-out reversed (cooperatively)
+
+This ADR's status vocabulary maps Celery `REVOKED` to `error` but shipped no
+cancel-in-flight UX. PLAY-01 reverses that scope-out for Play Season jobs:
+[ADR-0031](0031-cooperative-cancel-and-live-polling-stats.md) adds a
+**cooperative between-fixture cancel** via a DB flag (`Season.play_cancel_requested`)
+that the task checks at its top and between fixtures, then **returns normally**
+(Celery SUCCESS, partial counts, `cancelled: true`) — mapping to the existing
+`complete` status with **no new status string**. **The `AsyncResult.revoke`
+rejection still stands** — PLAY-01 stops runs cooperatively, never by revoke.
+Live incremental standings/leaders ride this ADR's existing polling rail (the
+`play_status` poll), recomputed view-side from committed rows each poll;
+WebSockets/Channels were rejected (see ADR-0031). Async runs only; no simulator
+touch, so **no Score Calibration re-baseline**.
