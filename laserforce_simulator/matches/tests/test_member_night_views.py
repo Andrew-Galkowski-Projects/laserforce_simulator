@@ -506,3 +506,27 @@ class TestMemberNightScheduleSurfaces(TestCase):
             any(name in body for name in player_names),
             "expected one of the Team's players in a member-night appearance",
         )
+
+
+class TestMemberNightScoreboard(TestCase):
+    """LG-07 — a member-night game's Round scoreboard shows the borrowed Players.
+
+    Regression: ``game_round_detail`` grouped by ``player__team``, but a drawn
+    team BORROWS Players (their ``Player.team`` is their real team), so both
+    sides showed 0 players. Grouping by ``team_color`` fixes it."""
+
+    def test_round_detail_shows_borrowed_players_per_side(self) -> None:
+        from matches.models import GameRound
+        from matches.tasks import play_member_night_task
+
+        _league, season, _teams, mn = _member_night_active_season("MnScoreboard")
+        _post_setup(self.client, season)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_member_night_task.delay(season.id)
+        game_round = GameRound.objects.filter(match__season_phase=mn).first()
+        self.assertIsNotNone(game_round)
+        r = self.client.get(reverse("game_round_detail", args=[game_round.id]))
+        self.assertEqual(r.status_code, 200)
+        # Both drawn sides show their 6 borrowed Players (not 0).
+        self.assertEqual(len(r.context["red_players"]), 6)
+        self.assertEqual(len(r.context["blue_players"]), 6)
