@@ -442,6 +442,9 @@ class TestPlayStatusExtendedJson(TestCase):
         self.assertIn("standings", payload)
         self.assertIn("leaders", payload)
         self.assertIn("cancelled", payload)
+        # PLAY-01 (LG-07 extension) — Next round + Rounds-played also live-patch.
+        self.assertIn("next_round", payload)
+        self.assertIn("round_count", payload)
 
     def test_standings_is_string_and_leaders_is_three_key_dict(self) -> None:
         season, _teams = _active_season("PSTypes", n_teams=2)
@@ -459,6 +462,11 @@ class TestPlayStatusExtendedJson(TestCase):
         self.assertEqual(set(payload["leaders"].keys()), {"points", "tags", "ratio"})
         for fragment in payload["leaders"].values():
             self.assertIsInstance(fragment, str)
+        # PLAY-01 (LG-07 extension) — the two new panel fragments are strings,
+        # and the Rounds-played fragment carries the live "completed / total".
+        self.assertIsInstance(payload["next_round"], str)
+        self.assertIsInstance(payload["round_count"], str)
+        self.assertIn("Rounds played", payload["round_count"])
 
     def test_cancelled_true_only_when_task_returned_cancelled(self) -> None:
         season, _teams = _active_season("PSCancelTrue", n_teams=2)

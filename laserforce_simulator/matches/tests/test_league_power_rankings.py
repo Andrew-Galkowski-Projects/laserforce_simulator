@@ -538,3 +538,77 @@ class TestPowerRankingsSort(TestCase):
         # season-agnostic substring rather than the old "?sort=" prefix.
         self.assertIn("sort=mean_rating&dir=desc", content)
         self.assertIn("&uarr;", content)
+
+
+# ===========================================================================
+# LG-07a — member-night Matches excluded from Power Rankings (ADR-0033)
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-07-member-night-seam-contract.md`` §3
+# (site #7): the power-rankings win% component appends
+# ``.exclude(season_phase__phase_type="member_night")`` — member nights are
+# social, not ranked, so they must not move power rankings or add drawn-team rows.
+
+
+class TestLg07aMemberNightPowerExclusion(TestCase):
+    """A member-night Match adds NO drawn-team row and does not move the ranking."""
+
+    def setUp(self) -> None:
+        from matches.models import SeasonPhase
+        from teams.models import Team
+
+        self.league = _make_league("MnPR")
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = self.teams
+        _set_team_rating(self.team_a, 90)
+        _set_team_rating(self.team_b, 30)
+        _make_completed_match(self.season, self.team_a, self.team_b, winner=self.team_a)
+
+        # Member-night completed Match between two drawn Teams (excluded).
+        self.mn = SeasonPhase.objects.create(
+            season=self.season, ordinal=2, phase_type="member_night"
+        )
+        self.da = Team.objects.create(name="MN PR Draw A", is_draw_team=True)
+        self.db = Team.objects.create(name="MN PR Draw B", is_draw_team=True)
+        mnm = Match.objects.create(
+            team_red=self.da,
+            team_blue=self.db,
+            season=self.season,
+            season_phase=self.mn,
+            red_round1_points=100,
+            blue_round1_points=0,
+            red_round2_points=100,
+            blue_round2_points=0,
+            is_completed=True,
+        )
+        GameRound.objects.create(
+            match=mnm,
+            team_red=self.da,
+            team_blue=self.db,
+            round_number=1,
+            red_points=100,
+            blue_points=0,
+            is_completed=True,
+        )
+        GameRound.objects.create(
+            match=mnm,
+            team_red=self.db,
+            team_blue=self.da,
+            round_number=2,
+            red_points=0,
+            blue_points=100,
+            is_completed=True,
+        )
+
+    def _content(self) -> str:
+        return power_rankings(_get(self.league.id), self.league.id).content.decode()
+
+    def test_drawn_teams_not_ranked(self) -> None:
+        content = self._content()
+        self.assertNotIn(f"power-rankings-row-{self.da.id}", content)
+        self.assertNotIn(f"power-rankings-row-{self.db.id}", content)
+
+    def test_enrolled_teams_still_ranked(self) -> None:
+        content = self._content()
+        self.assertIn(f"power-rankings-row-{self.team_a.id}", content)
+        self.assertIn(f"power-rankings-row-{self.team_b.id}", content)

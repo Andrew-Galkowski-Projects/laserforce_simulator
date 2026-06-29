@@ -530,3 +530,116 @@ class TestSeasonPhaseReadPathEquivalence(TestCase):
         r = self.client.get(url)
         self.assertEqual(r.status_code, 200)
         self.assertIn(b"season-schedule-matchday-1", r.content)
+
+
+# ===========================================================================
+# LG-07a — member-night Matches excluded from Standings (ADR-0033)
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-07-member-night-seam-contract.md`` §3:
+# a member-night Match (stamped ``season`` + ``season_phase=<member_night>``,
+# played by two ``is_draw_team`` Teams) is excluded from the Standings corpus via
+# ``.exclude(season_phase__phase_type="member_night")``; a regular RR Match still
+# counts. Asserted at the DB/view layer (the exclusion lives in the view/model
+# corpora, not the pure ``compute_standings``).
+
+
+class TestLg07aMemberNightStandingsExclusion(TestCase):
+    """A member-night Match does NOT move ``season_standings``; a regular one does."""
+
+    def setUp(self) -> None:
+        from matches.models import SeasonPhase
+        from teams.models import Team
+
+        self.league = League.objects.create(name="Mn07 League")
+        self.season = Season.objects.create(
+            league=self.league, name="S1", start_date=date(2026, 1, 1)
+        )
+        self.team_a, _ = make_team_with_slots("Mn07A")
+        self.team_b, _ = make_team_with_slots("Mn07B")
+        self.season.teams.add(self.team_a, self.team_b)
+        self.season.start_season()
+
+        # Regular completed RR Match — team_a sweeps team_b (must COUNT).
+        reg = Match.objects.create(
+            team_red=self.team_a,
+            team_blue=self.team_b,
+            season=self.season,
+            red_round1_points=100,
+            blue_round1_points=50,
+            red_round2_points=90,
+            blue_round2_points=40,
+            is_completed=True,
+        )
+        GameRound.objects.create(
+            match=reg,
+            round_number=1,
+            team_red=self.team_a,
+            team_blue=self.team_b,
+            red_points=100,
+            blue_points=50,
+        )
+        GameRound.objects.create(
+            match=reg,
+            round_number=2,
+            team_red=self.team_b,
+            team_blue=self.team_a,
+            red_points=40,
+            blue_points=90,
+        )
+
+        # Member-night completed Match between two drawn Teams (must be EXCLUDED).
+        self.mn = SeasonPhase.objects.create(
+            season=self.season, ordinal=2, phase_type="member_night"
+        )
+        self.da = Team.objects.create(name="MN Draw Excluded A", is_draw_team=True)
+        self.db = Team.objects.create(name="MN Draw Excluded B", is_draw_team=True)
+        mnm = Match.objects.create(
+            team_red=self.da,
+            team_blue=self.db,
+            season=self.season,
+            season_phase=self.mn,
+            red_round1_points=999,
+            blue_round1_points=0,
+            red_round2_points=999,
+            blue_round2_points=0,
+            is_completed=True,
+        )
+        GameRound.objects.create(
+            match=mnm,
+            round_number=1,
+            team_red=self.da,
+            team_blue=self.db,
+            red_points=999,
+            blue_points=0,
+        )
+        GameRound.objects.create(
+            match=mnm,
+            round_number=2,
+            team_red=self.db,
+            team_blue=self.da,
+            red_points=0,
+            blue_points=999,
+        )
+
+    def _rows(self):
+        r = self.client.get(reverse("season_standings", args=[self.season.id]))
+        self.assertEqual(r.status_code, 200)
+        return r, {row.team_id: row for row in r.context["rows"]}
+
+    def test_only_enrolled_teams_in_standings_rows(self) -> None:
+        _r, by_id = self._rows()
+        self.assertEqual(set(by_id), {self.team_a.id, self.team_b.id})
+        self.assertNotIn(self.da.id, by_id)
+        self.assertNotIn(self.db.id, by_id)
+
+    def test_enrolled_team_counts_only_the_regular_match(self) -> None:
+        _r, by_id = self._rows()
+        a = by_id[self.team_a.id]
+        self.assertEqual(a.wins, 1)
+        self.assertEqual(a.matches_played, 1)
+
+    def test_drawn_team_names_not_rendered(self) -> None:
+        r, _by = self._rows()
+        self.assertNotContains(r, "MN Draw Excluded A")
+        self.assertNotContains(r, "MN Draw Excluded B")

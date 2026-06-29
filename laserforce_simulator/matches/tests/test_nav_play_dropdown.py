@@ -377,6 +377,23 @@ class TestNavPlayDropdownPlayoff(TestCase):
         self.assertNotIn('id="topbar-play-play-single-round"', body)
         self.assertNotIn('id="topbar-play-play-playoffs"', body)
 
+    def test_rr_trio_hidden_and_playoff_controls_present(self) -> None:
+        # LG-07a — on a tournament cursor the RR trio is suppressed and the
+        # playoff set (single round / two months / through playoffs) renders.
+        _league, season, teams = _rr_tournament_season("NavPlayoffSwap")
+        _play_rr(season, teams)
+        season.refresh_from_db()
+        body = self.client.get(
+            reverse("league_dashboard", args=[season.league_id])
+        ).content.decode()
+        # RR trio gone.
+        self.assertNotIn('id="topbar-play-one-week"', body)
+        self.assertNotIn('id="topbar-play-two-months"', body)
+        self.assertNotIn('id="topbar-play-until-end"', body)
+        # Playoff "Play Two Months" (8 bracket rounds) is its own id + action.
+        self.assertIn('id="topbar-play-play-two-months"', body)
+        self.assertIn(reverse("play_two_months", args=[season.id]), body)
+
 
 # ---------------------------------------------------------------------------
 # Poll path — async submit + progress affordance
@@ -458,9 +475,9 @@ class TestBuildPlayControlsContext(TestCase):
     """The shared helper returns the correct key dict across the state matrix
     (contract §1 table). The helper takes the RESOLVED league + displayed
     Season and never re-implements the resolution. PLAY-01 added the 10th key
-    ``active_play_job_id`` (the resumable-progress render hint) — the
-    load-bearing invariant is still "the helper emits exactly this fixed key
-    set", just one wider.
+    ``active_play_job_id`` (the resumable-progress render hint); LG-07a added the
+    three ``member_night_*`` keys — the load-bearing invariant is still "the
+    helper emits exactly this fixed key set", just three wider.
     """
 
     _KEYS = (
@@ -474,9 +491,12 @@ class TestBuildPlayControlsContext(TestCase):
         "live_preview_available",
         "is_career_mode",
         "active_play_job_id",
+        "member_night_phase_active",
+        "member_night_sites",
+        "member_night_has_unplayed",
     )
 
-    def test_returns_exactly_the_ten_keys(self) -> None:
+    def test_returns_exactly_the_thirteen_keys(self) -> None:
         league = _make_none_league("HelperKeys")
         result = _build_play_controls_context(league, None)
         self.assertEqual(set(result.keys()), set(self._KEYS))
@@ -556,3 +576,126 @@ class TestBuildPlayControlsContext(TestCase):
         self.assertEqual(
             result["playoff_tournament_id"], tournament_phase.tournament_id
         )
+
+
+# ===========================================================================
+# LG-07a — member-night Play ▾ controls + context keys (ADR-0033)
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-07-member-night-seam-contract.md`` §7:
+# ``_build_play_controls_context`` appends 3 member-night keys —
+# ``member_night_phase_active`` (bool), ``member_night_sites`` (viable
+# ``[(site, count)]``), ``member_night_has_unplayed`` (bool). On a member_night
+# cursor the topnav SUPPRESSES the RR One Week / Two Months / Until End trio and
+# renders ``topbar-play-member-night-setup`` (POST form + an
+# ``topbar-play-member-night-all`` master toggle and per-Site
+# ``topbar-play-member-night-site-cb`` toggle boxes posting the multi-valued
+# ``sites`` field), plus the three play controls
+# ``topbar-play-member-night-single`` / ``-live`` / ``-play`` only when an unplayed
+# member-night Match exists.
+
+
+def _member_night_active_season(name: str, *, site: str = "SiteA"):
+    """An active Season whose cursor is on an ordinal-1 ``member_night`` phase
+    with a single VIABLE Site (2 teams × 6 = 12 players all share ``site``)."""
+    from teams.models import Player
+
+    league, season, teams = _make_draft_season(name, n_teams=2)
+    Player.objects.filter(team__in=teams).update(home_site=site)
+    SeasonPhase.objects.create(season=season, ordinal=1, phase_type="member_night")
+    season.start_season()
+    season.refresh_from_db()
+    return league, season, teams
+
+
+def _add_member_night_shell(season):
+    from matches.models import Match
+    from teams.models import Team
+
+    mn = season.current_phase()
+    da = Team.objects.create(name="MN Nav Draw A", is_draw_team=True)
+    db = Team.objects.create(name="MN Nav Draw B", is_draw_team=True)
+    Match.objects.create(
+        season=season, season_phase=mn, team_red=da, team_blue=db, is_completed=False
+    )
+
+
+class TestNavPlayMemberNightContext(TestCase):
+    """``_build_play_controls_context`` member-night keys across the gating."""
+
+    def test_active_with_viable_site_and_no_unplayed(self) -> None:
+        league, season, _teams = _member_night_active_season("NavMnCtxA")
+        result = _build_play_controls_context(league, season)
+        self.assertTrue(result["member_night_phase_active"])
+        self.assertEqual(result["member_night_sites"], [("SiteA", 12)])
+        self.assertFalse(result["member_night_has_unplayed"])
+
+    def test_has_unplayed_true_with_shell(self) -> None:
+        league, season, _teams = _member_night_active_season("NavMnCtxB")
+        _add_member_night_shell(season)
+        result = _build_play_controls_context(league, season)
+        self.assertTrue(result["member_night_has_unplayed"])
+
+    def test_keys_inactive_off_member_night(self) -> None:
+        # An RR-cursor Season ⇒ the member-night keys are inactive / empty.
+        _league, season, _teams = _make_active_season("NavMnCtxOff", n_teams=2)
+        result = _build_play_controls_context(season.league, season)
+        self.assertFalse(result["member_night_phase_active"])
+        self.assertEqual(result["member_night_sites"], [])
+        self.assertFalse(result["member_night_has_unplayed"])
+
+
+class TestNavPlayMemberNightDom(TestCase):
+    """The league-branch topnav renders the member-night DOM ids, gated."""
+
+    def _body(self, league) -> str:
+        return self.client.get(
+            reverse("league_dashboard", args=[league.id])
+        ).content.decode()
+
+    def test_setup_form_and_site_toggles_render(self) -> None:
+        league, _season, _teams = _member_night_active_season("NavMnDom")
+        body = self._body(league)
+        self.assertIn('id="topbar-play-member-night-setup"', body)
+        # The "All Sites" master toggle + per-Site toggle boxes (multi-valued
+        # ``sites`` field) replace the old single-Site <select>.
+        self.assertIn('id="topbar-play-member-night-all"', body)
+        self.assertIn('class="topbar-play-member-night-site-cb"', body)
+        self.assertIn('name="sites"', body)
+        # The retired single-Site select is gone.
+        self.assertNotIn('id="topbar-play-member-night-site"', body)
+
+    def test_rr_trio_hidden_during_member_night(self) -> None:
+        # On a member_night cursor the RR One Week / Two Months / Until End trio
+        # is suppressed — the member night is not advanced by the RR actions.
+        league, _season, _teams = _member_night_active_season("NavMnHideRR")
+        body = self._body(league)
+        self.assertNotIn('id="topbar-play-one-week"', body)
+        self.assertNotIn('id="topbar-play-two-months"', body)
+        self.assertNotIn('id="topbar-play-until-end"', body)
+
+    def test_single_live_all_present_with_shell(self) -> None:
+        league, season, _teams = _member_night_active_season("NavMnPlay3")
+        # No shells yet ⇒ none of the three play controls render.
+        body0 = self._body(league)
+        for pid in (
+            "topbar-play-member-night-single",
+            "topbar-play-member-night-live",
+            "topbar-play-member-night-play",
+        ):
+            self.assertNotIn(f'id="{pid}"', body0)
+        # An unplayed shell ⇒ all three (single / live / all) appear.
+        _add_member_night_shell(season)
+        body1 = self._body(league)
+        for pid in (
+            "topbar-play-member-night-single",
+            "topbar-play-member-night-live",
+            "topbar-play-member-night-play",
+        ):
+            self.assertIn(f'id="{pid}"', body1)
+
+    def test_setup_ids_absent_off_member_night(self) -> None:
+        _league, season, _teams = _make_active_season("NavMnDomOff", n_teams=2)
+        body = self._body(season.league)
+        self.assertNotIn('id="topbar-play-member-night-setup"', body)
+        self.assertNotIn('id="topbar-play-member-night-play"', body)

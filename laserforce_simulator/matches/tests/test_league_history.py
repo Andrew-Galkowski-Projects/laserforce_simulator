@@ -958,3 +958,88 @@ class TestLeagueHistoryAwardCells(TestCase):
 
 # Reference to silence unused-import warnings.
 _ = PlayerRoundState
+
+
+# ===========================================================================
+# LG-07a — member-night Matches excluded from the League-History row (ADR-0033)
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-07-member-night-seam-contract.md`` §3
+# (site #5): ``_build_history_row`` skips member-night Matches (in-Python, to
+# preserve the ``season.matches`` prefetch), so the row's ``matches_played`` does
+# NOT count member-night games; a regular RR Match still does.
+
+
+class TestLg07aMemberNightHistoryExclusion(TestCase):
+    """A member-night Match does NOT inflate a completed Season's matches_played."""
+
+    def _add_member_night_match(self, season) -> None:
+        from matches.models import SeasonPhase
+
+        mn = SeasonPhase.objects.create(
+            season=season, ordinal=2, phase_type="member_night"
+        )
+        da = Team.objects.create(name="MN Hist Draw A", is_draw_team=True)
+        db = Team.objects.create(name="MN Hist Draw B", is_draw_team=True)
+        mnm = Match.objects.create(
+            team_red=da,
+            team_blue=db,
+            season=season,
+            season_phase=mn,
+            red_round1_points=100,
+            blue_round1_points=0,
+            red_round2_points=0,
+            blue_round2_points=100,
+            is_completed=True,
+        )
+        GameRound.objects.create(
+            match=mnm,
+            team_red=da,
+            team_blue=db,
+            round_number=1,
+            red_points=100,
+            blue_points=0,
+            is_completed=True,
+        )
+        GameRound.objects.create(
+            match=mnm,
+            team_red=db,
+            team_blue=da,
+            round_number=2,
+            red_points=0,
+            blue_points=100,
+            is_completed=True,
+        )
+
+    def test_member_night_match_not_counted_in_matches_played(self) -> None:
+        league = _make_league("MnHistEx")
+        teams = _make_teams("MnHE", 2)
+        season = _make_completed_season(
+            league, team_ids=[t.id for t in teams], champion_team=teams[0]
+        )
+        # One regular completed Match — counts.
+        _make_completed_match(season, teams[0], teams[1])
+        # One member-night completed Match — must NOT count.
+        self._add_member_night_match(season)
+
+        response = self.client.get(
+            reverse("league_history", kwargs={"league_id": league.id})
+        )
+        rows = response.context["completed_rows"]
+        self.assertEqual(rows[0]["matches_played"], 1)
+
+    def test_regular_match_still_counted(self) -> None:
+        league = _make_league("MnHistReg")
+        teams = _make_teams("MnHR", 2)
+        season = _make_completed_season(
+            league, team_ids=[t.id for t in teams], champion_team=teams[0]
+        )
+        _make_completed_match(season, teams[0], teams[1])
+        _make_completed_match(season, teams[0], teams[1])
+        self._add_member_night_match(season)
+
+        response = self.client.get(
+            reverse("league_history", kwargs={"league_id": league.id})
+        )
+        # 2 regular completed Matches count; the member-night game does not.
+        self.assertEqual(response.context["completed_rows"][0]["matches_played"], 2)

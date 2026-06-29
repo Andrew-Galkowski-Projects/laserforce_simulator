@@ -250,14 +250,16 @@ class TestUnknownPhaseTypeRejected(SimpleTestCase):
         # Exact message includes ``repr`` of the offending token.
         self.assertEqual(str(ctx.exception), "unknown phase type: 'bogus'")
 
-    def test_member_night_token_rejected_as_unknown_type(self) -> None:
-        # ``member_night`` is declared in the model enum but is NOT selectable
-        # in Part2b — the composer must reject it as an unknown phase type.
-        with self.assertRaises(ValueError) as ctx:
-            parse_phase_composition(
-                "round_robin,member_night", season_schedule_format=_SSF
-            )
-        self.assertEqual(str(ctx.exception), "unknown phase type: 'member_night'")
+    def test_member_night_token_now_accepted(self) -> None:
+        # LG-07a FLIP (ADR-0033): ``member_night`` is now a VALID phase type —
+        # the composer ACCEPTS a bare ``member_night`` token (it was rejected as
+        # an unknown type in Part2b). It parses to a member_night spec carrying
+        # no schedule_format. See TestParseMemberNightToken for the full surface.
+        specs = parse_phase_composition(
+            "round_robin,member_night", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[1].phase_type, "member_night")
+        self.assertIsNone(specs[1].schedule_format)
 
 
 # ---------------------------------------------------------------------------
@@ -686,14 +688,15 @@ class TestParseTournamentModeRejected(SimpleTestCase):
             )
         self.assertEqual(str(ctx.exception), "unknown tournament_mode: 'bogus'")
 
-    def test_member_night_still_unknown_phase_type(self) -> None:
-        # member_night is rejected at the TYPE level (not the mode level) — the
-        # exact preserved unknown-type string with the repr of the WHOLE token.
-        with self.assertRaises(ValueError) as ctx:
-            parse_phase_composition(
-                "round_robin,member_night", season_schedule_format=_SSF
-            )
-        self.assertEqual(str(ctx.exception), "unknown phase type: 'member_night'")
+    def test_member_night_token_now_accepted(self) -> None:
+        # LG-07a FLIP (ADR-0033): member_night is a VALID phase type, accepted at
+        # the TYPE level (it was rejected as unknown-type here in Part2c-3c). A
+        # bare token carries no sub-config and keeps the default tournament_mode.
+        specs = parse_phase_composition(
+            "round_robin,member_night", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[1].phase_type, "member_night")
+        self.assertEqual(specs[1].tournament_mode, "standings")
 
 
 class TestParseTournamentModePreservedErrors(SimpleTestCase):
@@ -1461,3 +1464,83 @@ class TestParseFullSubConfigBackCompat(SimpleTestCase):
                 season_schedule_format=_SSF,
             )
         self.assertEqual(str(ctx.exception), "unknown tournament_mode: 'bogus'")
+
+
+# ===========================================================================
+# LG-07a — member_night is a selectable phase type (ADR-0033)
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-07-member-night-seam-contract.md`` §6a:
+# ``parse_phase_composition`` STOPS rejecting ``member_night``. A bare
+# ``member_night`` token parses to ``PhaseSpec(phase_type="member_night",
+# schedule_format=None)``; ``member_night:<anything>`` (a colon ⇒ sub-config) ⇒
+# ``"malformed phase composition"`` (member nights take no sub-config); the
+# preceding-RR guard does NOT fire for member_night (it may sit anywhere, even
+# first). Every pre-existing ValueError string is preserved verbatim and the
+# module stays Django-free (TestNoDjangoImportsLeaked above still passes).
+
+
+class TestParseMemberNightToken(SimpleTestCase):
+    """LG-07a — the member_night token acceptance surface."""
+
+    def test_bare_member_night_parses_to_member_night_spec(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,member_night", season_schedule_format=_SSF
+        )
+        self.assertEqual(len(specs), 2)
+        self.assertEqual(specs[1].phase_type, "member_night")
+        self.assertIsNone(specs[1].schedule_format)
+
+    def test_member_night_may_sit_first(self) -> None:
+        # No preceding-RR requirement for member_night (the guard is
+        # standings-tournament-only); the >=1-RR rule is met by the trailing RR.
+        specs = parse_phase_composition(
+            "member_night,round_robin", season_schedule_format=_SSF
+        )
+        self.assertEqual([s.phase_type for s in specs], ["member_night", "round_robin"])
+        self.assertEqual([s.ordinal for s in specs], [1, 2])
+
+    def test_member_night_may_sit_mid_season(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,member_night,round_robin", season_schedule_format=_SSF
+        )
+        self.assertEqual(
+            [s.phase_type for s in specs],
+            ["round_robin", "member_night", "round_robin"],
+        )
+
+    def test_mixed_rr_member_night_tournament_contiguous_ordinals(self) -> None:
+        specs = parse_phase_composition(
+            "round_robin,member_night,tournament", season_schedule_format=_SSF
+        )
+        self.assertEqual(
+            [s.phase_type for s in specs],
+            ["round_robin", "member_night", "tournament"],
+        )
+        self.assertEqual([s.ordinal for s in specs], [1, 2, 3])
+
+    def test_member_night_with_colon_subconfig_is_malformed(self) -> None:
+        # member nights take NO sub-config — a colon ⇒ the existing malformed
+        # ValueError (NOT unknown-type / unknown-mode).
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition(
+                "round_robin,member_night:standings", season_schedule_format=_SSF
+            )
+        self.assertEqual(str(ctx.exception), "malformed phase composition")
+
+    def test_member_night_only_still_needs_one_round_robin(self) -> None:
+        # A composition of only member_night (no RR) still fails the >=1-RR rule.
+        with self.assertRaises(ValueError) as ctx:
+            parse_phase_composition("member_night", season_schedule_format=_SSF)
+        self.assertEqual(
+            str(ctx.exception),
+            "composition must contain at least one round-robin phase",
+        )
+
+    def test_member_night_does_not_trigger_preceding_rr_guard(self) -> None:
+        # A member_night before the first round_robin must NOT raise the
+        # tournament preceding-RR guard (that guard is standings-tournament-only).
+        specs = parse_phase_composition(
+            "member_night,round_robin", season_schedule_format=_SSF
+        )
+        self.assertEqual(specs[0].phase_type, "member_night")
