@@ -21,7 +21,12 @@
         {% for league in active_leagues %}
         <tr>
             <td><a href="/leagues/{{ league.id }}/">{{ league.name }}</a></td>
-            <td><span class="state-badge badge bg-primary">{{ league.state }}</span></td>
+            <td>
+                <span class="state-badge badge bg-primary">{{ league.state }}</span>
+                {% if league.mode == "league" %}
+                <a id="league-list-delete-link-{{ league.id }}" class="ms-2 text-danger" href="{% url 'league_delete' league.id %}">Delete</a>
+                {% endif %}
+            </td>
         </tr>
         {% endfor %}
     </tbody>
@@ -41,7 +46,12 @@
         {% for league in archived_leagues %}
         <tr>
             <td><a href="/leagues/{{ league.id }}/">{{ league.name }}</a></td>
-            <td><span class="state-badge badge bg-secondary">{{ league.state }}</span></td>
+            <td>
+                <span class="state-badge badge bg-secondary">{{ league.state }}</span>
+                {% if league.mode == "league" %}
+                <a id="league-list-delete-link-{{ league.id }}" class="ms-2 text-danger" href="{% url 'league_delete' league.id %}">Delete</a>
+                {% endif %}
+            </td>
         </tr>
         {% endfor %}
     </tbody>

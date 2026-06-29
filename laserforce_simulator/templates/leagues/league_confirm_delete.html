@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}{{ league.name }} — Delete League{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
+    <div id="league-delete-confirm">
+        <h1 class="mb-3">Delete "{{ league.name }}"?</h1>
+
+        <div class="alert alert-danger">
+            <strong>This action is permanent and cannot be undone.</strong>
+            Deleting this League will remove all of the data it owns.
+        </div>
+
+        <div id="league-delete-summary" class="card mb-3">
+            <div class="card-header"><strong>This will permanently delete</strong></div>
+            <ul class="list-group list-group-flush">
+                <li class="list-group-item d-flex justify-content-between">
+                    <span>Seasons</span><span>{{ delete_summary.seasons }}</span>
+                </li>
+                <li class="list-group-item d-flex justify-content-between">
+                    <span>Matches</span><span>{{ delete_summary.matches }}</span>
+                </li>
+                <li class="list-group-item d-flex justify-content-between">
+                    <span>Tournaments</span><span>{{ delete_summary.tournaments }}</span>
+                </li>
+                <li class="list-group-item d-flex justify-content-between">
+                    <span>Teams</span><span>{{ delete_summary.teams }}</span>
+                </li>
+                <li class="list-group-item d-flex justify-content-between">
+                    <span>Players</span><span>{{ delete_summary.players }}</span>
+                </li>
+            </ul>
+        </div>
+
+        <form id="league-delete-form" method="post" action="{% url 'league_delete' league.id %}">
+            {% csrf_token %}
+            <button id="league-delete-submit" type="submit" class="btn btn-danger">
+                Delete permanently
+            </button>
+            <a id="league-delete-cancel" class="btn btn-secondary" href="{% url 'league_dashboard' league.id %}">
+                Cancel
+            </a>
+        </form>
+    </div>
+    </main>
+</div>
+{% endblock %}

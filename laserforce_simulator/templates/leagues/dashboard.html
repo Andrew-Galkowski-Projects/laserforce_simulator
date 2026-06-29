@@ -16,6 +16,9 @@
             {% endif %}
             {# NAV-01 — the advancement Play controls moved to the topnav `Play ▾` dropdown. #}
             <a id="league-dashboard-past-evaluations-link" class="btn btn-link btn-sm" href="{% url 'league_history' league.id %}">View past evaluations</a>
+            {% if league.mode == "league" %}
+            <a id="league-dashboard-delete-link" class="btn btn-outline-danger btn-sm" href="{% url 'league_delete' league.id %}">Delete League</a>
+            {% endif %}
         </div>
     </div>
 
