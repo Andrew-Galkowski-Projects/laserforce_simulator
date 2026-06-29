@@ -1311,6 +1311,157 @@ derived from Rounds / watch flag + single script / external career link /
 Potential placeholder / 5 stubs / 23-entry sidebar with zero active); existing
 link-target assertions on the 8 screens were repointed to the new route.
 
+## DEL-01 delete league
+
+A guarded **Delete League** that performs a FULL TEARDOWN of all data a
+**career-mode** (`League.mode == "league"`) League owns, identified by **PK/FK
+identity, never by name**, in a single atomic block. There is no delete-League
+surface outside Django admin; DEL-01 adds `GET/POST /leagues/<int:league_id>/delete/`
+(URL name `league_delete`, bare — `league_urls.py` has no `app_name`) with a
+confirm step. The teardown owns work the schema does NOT express: `Match.season`
+is `SET_NULL` (a plain `league.delete()` would orphan the season's played Matches
+into the sandbox match list with `season=NULL`, still feeding player career
+stats), season-embedded playoff Tournaments are reached only via
+`SeasonPhase.tournament` (`SET_NULL` — cascading the Season merely orphans them),
+and the generated competitive Teams + free-agent pool + their hundreds of Players
+have **no League FK** (`current_team` / `free_agent_pool` are `SET_NULL` FKs *on*
+the League; `Season.teams` is M2M). Correctness rests on the one-context
+ownership invariant — **a Team and its Players belong to exactly one context (the
+sandbox or a single League) and are never shared** — written into the CONTEXT.md
+**Team** / **Player** entries. Design locked in
+[ADR-0032](../../docs/adr/0032-delete-league-full-teardown.md).
+
+**View — `matches.league_views.league_delete(request, league_id) -> HttpResponse`.**
+Mirrors the `teams/views.py` `player_delete` precedent: a **single GET+POST
+view, NO 405 guard** (GET legitimately renders the confirm page; POST acts).
+`get_object_or_404(League, pk=league_id)` → **career gate** (reuse the verified
+`matches.league_views._is_career_league(league) -> bool`, returning
+`league.mode == "league"`); on `not _is_career_league(league)` return
+`HttpResponseBadRequest(<msg>)` (already imported) — the gate sits AFTER the 404
+read and BEFORE any write, so a bad id still 404s and a sandbox/multiplayer
+League POST → **400**, nothing deleted. On POST: capture `league.name`, call
+`_teardown_league(league)`, `messages.success(...)`, **clear** the soon-deleted
+id with `request.session.pop("last_league_id", None)` (do NOT pin a deleted id —
+the `core.context_processors.league_nav` probe degrades gracefully but clearing
+is cleaner), and `redirect("league_list")` (302). On GET: build a `delete_summary`
+counts dict and `render("leagues/league_confirm_delete.html", {"league",
+"delete_summary"})`.
+
+**Teardown helper — `matches.league_views._teardown_league(league) -> None`.**
+Ordered, all inside ONE inline `with transaction.atomic():` (the atomic boundary
+lives in the helper, NOT a view decorator, because `league_delete` is GET+POST —
+wrapping the whole view would needlessly wrap the GET render). Candidate Team ids
+are collected **before** any delete (critical:
+`TournamentPlayerEntry.tournament` is CASCADE, so the drawn-team reverse accessor
+vanishes once the Tournaments are deleted). The six steps:
+
+1. **Collect embedded tournament ids** —
+   `SeasonPhase.objects.filter(season__league=league, tournament__isnull=False)
+   .values_list("tournament_id", flat=True)`. `Season.league` is CASCADE
+   (`related_name="seasons"`); `SeasonPhase.season` CASCADE (`related_name=
+   "phases"`); `SeasonPhase.tournament` SET_NULL (`related_name="season_phases"`)
+   — so the Tournament rows are NOT cascaded and step 4 must delete them
+   explicitly.
+2. **Collect candidate Team ids by PK/FK only** (set, never by name): Teams
+   enrolled in this league's Seasons (`Team.enrolled_seasons` —
+   `Season.teams` M2M, `related_name="enrolled_seasons"`); `league.current_team_id`
+   (`League.current_team` SET_NULL, `related_name="managed_in_leagues"`);
+   `league.free_agent_pool_id` (`League.free_agent_pool` SET_NULL,
+   `related_name="free_agent_pool_for"`); drawn teams of the embedded tournaments
+   (`Team.drawn_player_entries__tournament_id__in=tournament_ids` —
+   `TournamentPlayerEntry.drawn_team` SET_NULL, `related_name=
+   "drawn_player_entries"`).
+3. **Delete league Matches** — both regular-season and embedded-tournament
+   bracket: `Match.objects.filter(Q(season__league=league) |
+   Q(series_match__node__tournament_id__in=tournament_ids)).distinct().delete()`.
+   `Match.season` is **SET_NULL** (`related_name="matches"`), so a season-scoped
+   Match would survive orphaned without this explicit delete — the whole point of
+   DEL-01. The playoff Matches are reached via the verified
+   Match→SeriesMatch→BracketNode→Tournament chain: `SeriesMatch.match` SET_NULL
+   (reverse accessor `series_match`, **singular**); `SeriesMatch.node` →
+   `BracketNode` CASCADE (`related_name="series_matches"`); `BracketNode.tournament`
+   CASCADE (`related_name="nodes"`). `.distinct()` is required (the to-many join
+   can duplicate Match rows). Deleting the Match rows cleanly cascades
+   `GameRound` → `GameEvent` / `PlayerRoundState` (all `match`/`game_round` FKs
+   CASCADE), so no league game orphans into the sandbox match list or player
+   career stats.
+4. **Delete the embedded Tournaments** —
+   `Tournament.objects.filter(id__in=tournament_ids).delete()`; cascades
+   participants / nodes / `SeriesMatch` rows / pool entries
+   (`TournamentParticipant` / `BracketNode` / `TournamentPlayerEntry.tournament`
+   all CASCADE). No orphaned bracket remains in `/tournaments/`.
+5. **Delete the League** — `league.delete()` cascades each Season and its
+   dependents (`SeasonPhase`, `PlayerSeasonRating`, `TeamSeasonFinance`,
+   `OwnerEvaluation`, and the `Season.teams` M2M join rows) and the directly-owned
+   `OwnerEvaluation.league` rows; the `current_team` / `free_agent_pool` SET_NULL
+   columns drop with the row (the referenced Teams are NOT cascaded — that's why
+   step 6 exists).
+6. **Zero-reference Team guard, per candidate id** — a candidate Team is deleted
+   **only if** all five of these are False: `team.red_matches.exists()` /
+   `team.blue_matches.exists()` (`Match.team_red`/`team_blue` CASCADE,
+   `related_name="red_matches"`/`"blue_matches"`) / `team.enrolled_seasons.exists()`
+   (surviving Season) / `team.managed_in_leagues.exists()` (surviving League's
+   `current_team`) / `team.free_agent_pool_for.exists()` (surviving League's
+   `free_agent_pool`). Deleting the Team cascades its Players (`Player.team`
+   CASCADE, `related_name="players"`). Given the one-context invariant this guard
+   passes for every candidate; it exists so the single unenforced edge (a sandbox
+   tournament that "selected existing" a league Team, or a deliberately shared
+   Team) can never CASCADE a foreign Match or foreign career row — anything still
+   referenced is **left behind** (safe over complete, ADR-0032).
+
+**Confirm template — `templates/leagues/league_confirm_delete.html`.** Extends
+`base.html`, uses the `d-flex` + `{% include "_partials/league_sidebar.html" %}`
+shell (matching `new_team.html` and every league-context screen). Context keys
+`league` + `delete_summary` (5 int keys: `seasons` / `matches` / `tournaments` /
+`teams` / `players`, computed on GET). LOCKED DOM ids: `league-delete-confirm`
+(root), `league-delete-summary` (counts block), `league-delete-form` (the POST
+`<form>` with mandatory `{% csrf_token %}`), `league-delete-submit` (destructive
+button), `league-delete-cancel` (link back to `league_dashboard`).
+
+**Entry points (rendered ONLY when `league.mode == "league"`).** Both gated
+`{% if league.mode == "league" %}` so archived / non-career rows are unaffected:
+`templates/leagues/dashboard.html` — a link with DOM id
+**`league-dashboard-delete-link`** → `{% url 'league_delete' league.id %}`
+(header block, beside `league-dashboard-past-evaluations-link`);
+`templates/leagues/list.html` — a per-row control with DOM id
+**`league-list-delete-link-{{ league.id }}`** → `{% url 'league_delete'
+league.id %}` (iterating `active_leagues` / `archived_leagues`).
+
+**Tests — `matches/tests/test_league_delete.py`** (Django `TestCase`, assert on
+row counts / existence / status codes / redirect targets, never simulated point
+totals): full-teardown happy path (populated career League → zero rows remain,
+`/teams/` `/players/` `/tournaments/` + sandbox match list unaffected); the
+load-bearing **cross-context SAFETY** test (a candidate Team also enrolled in
+ANOTHER League's Season, or one that played a sandbox `season=NULL` Match,
+SURVIVES with its Players); embedded-tournament + playoff-Match teardown;
+mode-gate 400; GET-renders-summary 200; POST-redirects-to-`league_list` 302; both
+entry points present for a league-mode League, ABSENT for a non-`league` League.
+
+**Scope-out (locked).** **No model change, no migration** (a view +
+confirm-template + URL addition over the existing FK graph). **No simulator
+touch, no RNG, no `_flush_to_db` / `BatchSimulator` interaction.** **No Score
+Calibration re-baseline obligation.** **No CONTEXT.md / ADR edit** (ADR-0032 +
+the CONTEXT.md Team/Player one-context ownership invariant are already written).
+
+**Locked names (quick index).** View `matches.league_views.league_delete(request,
+league_id) -> HttpResponse` (GET+POST, no 405; `_is_career_league` gate →
+`HttpResponseBadRequest` on non-`league`; POST → `_teardown_league` +
+`session.pop("last_league_id", None)` + `redirect("league_list")` 302); helper
+`matches.league_views._teardown_league(league) -> None` (inline
+`with transaction.atomic():`, 6 ordered steps; candidate ids collected before
+delete; per-candidate zero-reference Team guard); reused gate
+`matches.league_views._is_career_league(league) -> bool`; URL name `league_delete`,
+path `/leagues/<int:league_id>/delete/` (`matches/league_urls.py`, after the
+`history/` entry, before the `""` catch-all); template
+`templates/leagues/league_confirm_delete.html` (DOM ids `league-delete-confirm` /
+`-summary` / `-form` / `-submit` / `-cancel`; context `league` + `delete_summary`
+with keys `seasons`/`matches`/`tournaments`/`teams`/`players`); entry-point DOM ids
+`league-dashboard-delete-link` (`templates/leagues/dashboard.html`) +
+`league-list-delete-link-{id}` (`templates/leagues/list.html`), both gated
+`league.mode == "league"`; tests `matches/tests/test_league_delete.py`. ADR:
+[ADR-0032](../../docs/adr/0032-delete-league-full-teardown.md). Seam contract:
+[`.claude/worktrees/del-01-seam-contract.md`](../../.claude/worktrees/del-01-seam-contract.md).
+
 ## Tests
 
 `matches/tests/` package:

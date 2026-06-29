@@ -34,6 +34,11 @@ urlpatterns = [
         name="league_history",
     ),
     path(
+        "<int:league_id>/delete/",
+        league_views.league_delete,
+        name="league_delete",
+    ),
+    path(
         "<int:league_id>/team_schedule/<int:team_id>/",
         league_views.team_schedule,
         name="team_schedule",

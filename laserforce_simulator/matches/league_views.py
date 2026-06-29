@@ -15,6 +15,7 @@ from math import ceil
 from typing import Iterable, Optional
 
 from celery.result import AsyncResult
+from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db import transaction
@@ -48,6 +49,7 @@ from .models import (
     Season,
     SeasonPhase,
     TeamSeasonFinance,
+    Tournament,
 )
 from .season_awards import (
     AwardSet,
@@ -3348,6 +3350,134 @@ def _is_career_league(league: League) -> bool:
     career mode (League.mode == "league"). Sandbox / multiplayer Leagues never
     fire, evaluate, or reassign."""
     return league.mode == "league"
+
+
+def _delete_team_if_orphaned(team_id: int) -> None:
+    """DEL-01 — delete a candidate Team iff, after the League's Seasons /
+    Matches / Tournaments are gone, it has zero remaining references.
+
+    Deleting the Team cascades its Players. Anything still referenced (a Team
+    deliberately shared across contexts, or one that played a sandbox match) is
+    left behind — safe over complete (ADR-0032)."""
+    team = Team.objects.filter(pk=team_id).first()
+    if team is None:
+        return
+    still_referenced = (
+        team.red_matches.exists()
+        or team.blue_matches.exists()
+        or team.enrolled_seasons.exists()
+        or team.managed_in_leagues.exists()
+        or team.free_agent_pool_for.exists()
+    )
+    if not still_referenced:
+        team.delete()
+
+
+def _league_teardown_targets(league: League) -> tuple[list[int], set[int]]:
+    """DEL-01 — the PK/FK-identified teardown targets for a League: its embedded
+    tournament ids and its candidate Team ids (by PK/FK, never by name). Single
+    source for both the GET confirm summary and the POST teardown so the two
+    cannot drift. MUST be called before any delete — the drawn-team reverse
+    accessor vanishes once the Tournaments go (ADR-0032)."""
+    tournament_ids = list(
+        SeasonPhase.objects.filter(
+            season__league=league, tournament__isnull=False
+        ).values_list("tournament_id", flat=True)
+    )
+    candidate_team_ids: set[int] = set()
+    candidate_team_ids.update(
+        Team.objects.filter(enrolled_seasons__league=league).values_list(
+            "id", flat=True
+        )
+    )
+    if league.current_team_id is not None:
+        candidate_team_ids.add(league.current_team_id)
+    if league.free_agent_pool_id is not None:
+        candidate_team_ids.add(league.free_agent_pool_id)
+    candidate_team_ids.update(
+        Team.objects.filter(
+            drawn_player_entries__tournament_id__in=tournament_ids
+        ).values_list("id", flat=True)
+    )
+    return tournament_ids, candidate_team_ids
+
+
+def _league_match_q(league: League, tournament_ids: list[int]) -> Q:
+    """DEL-01 — the filter matching a League's Matches: regular-season
+    (``Match.season``) plus embedded-tournament bracket Matches (which carry
+    ``season=NULL`` and are reached via the series chain). Shared by the teardown
+    delete and the confirm-summary count."""
+    return Q(season__league=league) | Q(
+        series_match__node__tournament_id__in=tournament_ids
+    )
+
+
+def _teardown_league(league: League) -> None:
+    """DEL-01 — full teardown of all data a career League owns, by PK/FK
+    identity (never by name), in one atomic block (ADR-0032)."""
+    with transaction.atomic():
+        # 1+2 — embedded tournament ids + candidate Team ids, collected NOW
+        #     (before any delete) via the shared target helper.
+        tournament_ids, candidate_team_ids = _league_teardown_targets(league)
+
+        # 3 — delete league Matches (regular-season + embedded-tournament
+        #     bracket). Match.season is SET_NULL, so they must be deleted
+        #     explicitly or they survive orphaned.
+        Match.objects.filter(
+            _league_match_q(league, tournament_ids)
+        ).distinct().delete()
+
+        # 4 — delete embedded Tournaments (cascades participants / nodes /
+        #     series / entries).
+        Tournament.objects.filter(id__in=tournament_ids).delete()
+
+        # 5 — delete the League (cascades Seasons + their dependents; SET_NULLs
+        #     current_team / free_agent_pool FKs).
+        league.delete()
+
+        # 6 — zero-reference guard, per candidate Team id.
+        for team_id in candidate_team_ids:
+            _delete_team_if_orphaned(team_id)
+
+
+def league_delete(request: HttpRequest, league_id: int) -> HttpResponse:
+    """DEL-01 — guarded Delete League (full teardown).
+
+    GET renders a confirm page with a summary of what will be deleted; POST
+    performs the teardown and redirects to the league list. Career-mode only.
+    Mirrors the ``teams.views.player_delete`` GET-confirm / POST-act precedent
+    (no 405 guard — GET legitimately renders the confirm page)."""
+    league = get_object_or_404(League, pk=league_id)
+
+    if not _is_career_league(league):
+        return HttpResponseBadRequest(
+            "Delete League is only available for career (league-mode) Leagues."
+        )
+
+    if request.method == "POST":
+        league_name = league.name
+        _teardown_league(league)
+        request.session.pop("last_league_id", None)
+        messages.success(request, f'League "{league_name}" deleted.')
+        return redirect("league_list")
+
+    # GET — compute the delete summary via the same target helpers the teardown
+    # uses (as counts) and render the confirm page.
+    tournament_ids, candidate_team_ids = _league_teardown_targets(league)
+    delete_summary = {
+        "seasons": league.seasons.count(),
+        "matches": Match.objects.filter(_league_match_q(league, tournament_ids))
+        .distinct()
+        .count(),
+        "tournaments": len(tournament_ids),
+        "teams": len(candidate_team_ids),
+        "players": Player.objects.filter(team_id__in=candidate_team_ids).count(),
+    }
+    return render(
+        request,
+        "leagues/league_confirm_delete.html",
+        {"league": league, "delete_summary": delete_summary},
+    )
 
 
 # FIN-04 — the 6 (slot field, role) pairs of the active roster, in slot order.
