@@ -1,0 +1,6 @@
+{% comment %}PLAY-01 (LG-07 extension) — live-patchable "Rounds played" panel inner.
+   The inner HTML of #{season,league}-dashboard-round-count. Context:
+   round_count_completed, round_count_total. Re-rendered server-side by
+   _render_live_play_panels for the per-poll patch.{% endcomment %}<div class="card-body">
+    <strong>Rounds played:</strong> {{ round_count_completed }} / {{ round_count_total }}
+</div>

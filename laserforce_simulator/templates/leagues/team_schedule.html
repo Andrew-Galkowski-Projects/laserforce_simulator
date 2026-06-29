@@ -121,6 +121,39 @@
                 {% endif %}
             </section>
         </div>
+
+        {% comment %}LG-07 — member-night games where one of this Team's Players
+           played (borrowed onto a drawn Team). Read-only / derived.{% endcomment %}
+        {% if member_night_appearances %}
+        <section id="team-schedule-member-nights" class="mb-4">
+            <h2 class="h4">Member Night Appearances</h2>
+            <p class="text-muted small">Casual member-night games where one of {{ team.name }}'s players played (drawn onto a mixed team — not counted toward Standings).</p>
+            <table id="team-schedule-member-night-list" class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Game</th>
+                        <th>Result</th>
+                        <th>Your players</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for g in member_night_appearances %}
+                        <tr id="team-schedule-member-night-row-{{ g.match_id }}">
+                            <td>{{ g.team_a_name }} VS {{ g.team_b_name }}</td>
+                            <td>
+                                {% if g.is_completed %}{{ g.red_points }} &mdash; {{ g.blue_points }}{% if g.winner_name %} ({{ g.winner_name }}){% endif %}{% else %}<span class="text-muted">Not played</span>{% endif %}
+                            </td>
+                            <td>{{ g.players|join:", " }}</td>
+                            <td>
+                                {% for r in g.rounds %}<a href="/matches/game-round/{{ r.id }}/">R{{ r.round_number }}</a>{% if not forloop.last %} &middot; {% endif %}{% endfor %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+        {% endif %}
     </main>
 </div>
 {% endblock %}

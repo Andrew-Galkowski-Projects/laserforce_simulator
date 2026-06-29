@@ -223,8 +223,11 @@ def _build_seasons_context(team: Team, seasons_by_id: dict[int, Season]) -> dict
 
         # Per-Season completed Matches → standings dicts for rank, and the
         # team's own per-Round record for the W-L-T columns.
+        # LG-07a — exclude social member-night Matches from the Seasons-tab rank.
         completed = list(
-            season.matches.filter(is_completed=True).prefetch_related("game_rounds")
+            season.matches.filter(is_completed=True)
+            .exclude(season_phase__phase_type="member_night")
+            .prefetch_related("game_rounds")
         )
         match_dicts: list[dict] = []
         wins = losses = ties = 0

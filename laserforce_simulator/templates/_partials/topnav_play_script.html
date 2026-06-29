@@ -34,6 +34,11 @@
         if (!data) { return; }
         setPanel("season-dashboard-standings-snippet", data.standings);
         setPanel("league-dashboard-standings-snippet", data.standings);
+        // PLAY-01 (LG-07 extension) — Next round + Rounds-played update per poll.
+        setPanel("season-dashboard-next-round", data.next_round);
+        setPanel("league-dashboard-next-round", data.next_round);
+        setPanel("season-dashboard-round-count", data.round_count);
+        setPanel("league-dashboard-round-count", data.round_count);
         if (data.leaders) {
             setPanel("season-dashboard-leaders-points", data.leaders.points);
             setPanel("league-dashboard-leaders-points", data.leaders.points);
@@ -153,6 +158,21 @@
     interceptAsync(document.getElementById("topbar-play-two-months"));
     interceptAsync(document.getElementById("topbar-play-until-end"));
     interceptAsync(document.getElementById("topbar-play-play-playoffs"));
+    // LG-07a — the playoff "Play Two Months" (8 bracket rounds) is async too.
+    interceptAsync(document.getElementById("topbar-play-play-two-months"));
+    // LG-07a — the member-night "Play All" drain is an async run polled by the
+    // same rail. (Play Single / Single Live / Setup submit synchronously.)
+    interceptAsync(document.getElementById("topbar-play-member-night-play"));
+
+    // LG-07a — the member-night "All Sites" master toggle checks/unchecks every
+    // per-Site toggle box in the setup form.
+    var mnAll = document.getElementById("topbar-play-member-night-all");
+    if (mnAll) {
+        mnAll.addEventListener("change", function() {
+            var cbs = document.querySelectorAll(".topbar-play-member-night-site-cb");
+            for (var i = 0; i < cbs.length; i++) { cbs[i].checked = mnAll.checked; }
+        });
+    }
 
     // PLAY-01 — wire Stop: cooperative cancel (POST play_cancel) without leaving
     // the page; the task returns "complete" + cancelled:true and the existing

@@ -1,0 +1,14 @@
+{% comment %}PLAY-01 (LG-07 extension) — live-patchable "Next round" panel inner.
+   The inner HTML of #{season,league}-dashboard-next-round. Context: next_fixture.
+   Included by both dashboards AND re-rendered server-side by
+   matches.league_views._render_live_play_panels so the poll patch and the
+   dashboard render byte-identical markup.{% endcomment %}<div class="card-header"><strong>Next round</strong></div>
+<div class="card-body">
+    {% if next_fixture %}
+        <p class="mb-1">Matchday {{ next_fixture.matchday }} · Round {{ next_fixture.round_number }}</p>
+        <p class="mb-1">{{ next_fixture.team_a_name }} vs {{ next_fixture.team_b_name }}</p>
+        <p class="mb-0 text-muted">{{ next_fixture.date|date:"Y-m-d" }}</p>
+    {% else %}
+        <p class="mb-0">All fixtures played</p>
+    {% endif %}
+</div>

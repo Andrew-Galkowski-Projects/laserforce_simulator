@@ -320,12 +320,17 @@ def game_round_detail(request, round_id):
     game_round = get_object_or_404(GameRound, id=round_id)
 
     red_states = (
-        game_round.player_states.filter(player__team=game_round.team_red)
+        # LG-07: group by the physical Side (team_color), NOT player__team — a
+        # member-night drawn-team game BORROWS Players (their Player.team is their
+        # real team, not the drawn team), so a player__team filter matches 0. For
+        # a regular game player.team == team_red ⟺ team_color == "red", so this is
+        # behaviour-neutral there and fixes the empty drawn-team scoreboard.
+        game_round.player_states.filter(team_color="red")
         .select_related("player")
         .order_by("-points_scored", "role", "player__name")
     )
     blue_states = (
-        game_round.player_states.filter(player__team=game_round.team_blue)
+        game_round.player_states.filter(team_color="blue")
         .select_related("player")
         .order_by("-points_scored", "role", "player__name")
     )
@@ -1202,12 +1207,17 @@ def export_round_report(request, round_id: int):
     game_round = get_object_or_404(GameRound, pk=round_id)
 
     red_states = (
-        game_round.player_states.filter(player__team=game_round.team_red)
+        # LG-07: group by the physical Side (team_color), NOT player__team — a
+        # member-night drawn-team game BORROWS Players (their Player.team is their
+        # real team, not the drawn team), so a player__team filter matches 0. For
+        # a regular game player.team == team_red ⟺ team_color == "red", so this is
+        # behaviour-neutral there and fixes the empty drawn-team scoreboard.
+        game_round.player_states.filter(team_color="red")
         .select_related("player")
         .order_by("-points_scored", "role", "player__name")
     )
     blue_states = (
-        game_round.player_states.filter(player__team=game_round.team_blue)
+        game_round.player_states.filter(team_color="blue")
         .select_related("player")
         .order_by("-points_scored", "role", "player__name")
     )

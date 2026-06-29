@@ -862,3 +862,68 @@ class TestLg_Sub01LeagueDashboardRotateLabel(TestCase):
         self.assertIn("Map: Rotating (no maps)", body)
         # Still inside the existing map-config DOM id.
         self.assertIn(f'id="{self._DOM_ID}"', body)
+
+
+# ===========================================================================
+# LG-07a — member-night Matches excluded from the dashboard standings snippet
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-07-member-night-seam-contract.md`` §3
+# (site #4): ``_build_dashboard_context`` appends the member-night exclude to its
+# standings query, so the live ``standings_snippet`` never shows drawn-team rows;
+# PLAY-01 live polling is covered transitively through the same helper.
+
+
+class TestLg07aMemberNightDashboardExclusion(TestCase):
+    """The dashboard standings snippet excludes member-night drawn Teams."""
+
+    def test_member_night_match_not_in_standings_snippet(self) -> None:
+        from matches.models import SeasonPhase
+        from teams.models import Team
+
+        league = _make_league("MnDash")
+        season, teams = _make_active_season(league, n_teams=2)
+        team_a, team_b = teams
+        _make_completed_match(season, team_a, team_b, winner=team_a)
+
+        mn = SeasonPhase.objects.create(
+            season=season, ordinal=2, phase_type="member_night"
+        )
+        da = Team.objects.create(name="MN Dash Draw A", is_draw_team=True)
+        db = Team.objects.create(name="MN Dash Draw B", is_draw_team=True)
+        mnm = Match.objects.create(
+            team_red=da,
+            team_blue=db,
+            season=season,
+            season_phase=mn,
+            red_round1_points=100,
+            blue_round1_points=0,
+            red_round2_points=0,
+            blue_round2_points=100,
+            is_completed=True,
+        )
+        GameRound.objects.create(
+            match=mnm,
+            team_red=da,
+            team_blue=db,
+            round_number=1,
+            red_points=100,
+            blue_points=0,
+            is_completed=True,
+        )
+        GameRound.objects.create(
+            match=mnm,
+            team_red=db,
+            team_blue=da,
+            round_number=2,
+            red_points=0,
+            blue_points=100,
+            is_completed=True,
+        )
+
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        snippet = response.context["standings_snippet"]
+        snippet_team_ids = {team.id for _row, team in snippet}
+        self.assertNotIn(da.id, snippet_team_ids)
+        self.assertNotIn(db.id, snippet_team_ids)
+        self.assertTrue(snippet_team_ids <= {team_a.id, team_b.id})

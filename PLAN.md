@@ -403,12 +403,13 @@ list. The pieces (mirroring how LG-02-Part2 was sliced):
 
 1. **[DONE] Season-level `rotate_by_matchday` arena-map mode** — shipped; full
    impl note moved to [`PLAN-completed.md`](PLAN-completed.md). NO `SubLeague` model.
-2. **LG-07 · Member nights** — sequenced **NEXT** (already its own PLAN item in
-   Phase 3 backlog; just noted here for ordering — the third SUB-01 slice waits
-   on it).
+2. **LG-07 · Member nights** — **[DONE] LG-07a core slice shipped** (its own PLAN
+   item in Phase 3 backlog; noted here for ordering — the third SUB-01 slice was
+   sequenced after it). Only the deferred **LG-07b** player-stat filter remains,
+   which does not block piece 3.
 3. **[NOT STARTED] Sub-league intra-pool scheduling** — the first-class
-   `SubLeague` concept + per-sub-league rotating pools, sequenced **AFTER LG-07**
-   (re-scoped below).
+   `SubLeague` concept + per-sub-league rotating pools, was sequenced **AFTER
+   LG-07** (now unblocked — LG-07a shipped; re-scoped below).
 
 - **SUB-01 (piece 1) · [DONE] Season `rotate_by_matchday` arena-map mode.**
   Shipped — full implementation note moved to
@@ -418,8 +419,10 @@ list. The pieces (mirroring how LG-02-Part2 was sliced):
   (the per-*sub-league* rotation remains the third slice). NO `SubLeague` model.
 
 - **SUB-01 (piece 3) · [NOT STARTED] First-class `SubLeague` + per-sub-league
-  rotating map pools — needs its own grill + an ADR.** Sequenced **AFTER LG-07
-  member nights** (piece 2). Introduce **sub-leagues** as a first-class domain
+  rotating map pools — needs its own grill + an ADR.** Was sequenced **AFTER LG-07
+  member nights** (piece 2) — now unblocked, LG-07a shipped (only the deferred
+  LG-07b player-stat filter remains, which does not gate this piece). Introduce
+  **sub-leagues** as a first-class domain
   concept: an optional partition of a `Season`'s enrolled Teams into named groups
   (conferences / divisions / pools), modelled as a new `SubLeague` container under
   `Season` with its own `teams` M2M and an ordered list of `ArenaMap`s. Each
@@ -434,8 +437,9 @@ list. The pieces (mirroring how LG-02-Part2 was sliced):
   interaction (intra/cross-pool fixture generation, a sequencing decision LG-02
   also leans on) is the risky core to grill. Carved out of LG-01j on 2026-05-28
   (no `SubLeague` model existed then; the user deferred the introduction until the
-  career-mode slice was in place). Depends on **LG-07** (sequenced after member
-  nights) and on **CAR-03** (sub-league grouping is most useful once manager-mode
+  career-mode slice was in place). Depended on **LG-07** (sequenced after member
+  nights — now satisfied, LG-07a shipped) and on **CAR-03** (sub-league grouping is
+  most useful once manager-mode
   career play is driving the Season). Adds the **SubLeague** term to CONTEXT.md
   and ships an **ADR for the new model + the intra/cross-pool schedule-generation
   interaction**.
@@ -989,24 +993,63 @@ Touches: `Season.state` enum + migration, free-agent ↔ Team move flows, roster
 tournament bracket model (LG-02 overlap), simulator's `simulate_scheduled_round` phase guard,
 dashboard branches per phase.
 
-### LG-07 · Member night simulator (sandbox mode)
+### LG-07 · [DONE] Member night simulator (LG-07a core slice)
 
-**[NOT STARTED — needs its own grill.]** The deferred **`member_night`** phase
-type (declared inert in the `SeasonPhase.PHASE_TYPE_CHOICES` enum since
-LG-02-Part2a — see
-[ADR-0023](docs/adr/0023-season-phase-composable-structure.md)). A "member
-night" is the real-world casual/social play session a laser-tag venue runs
-between competitive fixtures — ad-hoc games among whoever shows up, not a
-structured round-robin or bracket. As a `SeasonPhase` it would model a sandbox
-play window inside a Season's flow (e.g. RR → member night → Tournament): how
-participants are gathered, what (if anything) it contributes to **Standings**
-(likely nothing — it is social, not ranked), and how its games are simulated and
-stored. **Open questions for the grill:** does it produce `season=NULL`
-sandbox-style Rounds or season-attached ones; does it touch Standings / career
-stats at all; what is its play-loop UI; does it reuse the Random-Draw player-pool
-intake (LG-02x-1) for "whoever shows up"; how does the Part2c multi-phase play
-loop advance *past* a member-night phase. Until grilled, the enum value stays
-documented-but-inert (only `round_robin` resolves fixtures).
+**[DONE — LG-07a core slice shipped (2026-06-29).]** Grilled into
+[ADR-0033](docs/adr/0033-member-night-season-attached-social-play.md) and sliced
+into a core slice (LG-07a, this item) plus a deferred player-stat-filter follow-up
+(**LG-07b**, below). The deferred **`member_night`** `SeasonPhase.phase_type`
+(declared inert in `PHASE_TYPE_CHOICES` since LG-02-Part2a) is now **LIVE**: a
+casual/social play interlude run **per Site** (`Player.home_site`), embedded in a
+Season's phase flow (e.g. RR → member night → Tournament). Full implementation note
+in [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md)
+(**LG-07a member night (core slice)**); seam contract:
+[`.claude/worktrees/lg-07-member-night-seam-contract.md`](.claude/worktrees/lg-07-member-night-seam-contract.md).
+
+**Shipped design (resolved by ADR-0033).** A member-night game is a drawn-team
+2-Round **`Match` stamped `season=<this>` AND `season_phase=<the member_night
+phase>`** — **season-attached on purpose**, diverging from the playoff `season=NULL`
+FK-chain precedent (ADR-0023) so games are discoverable in raw
+`Match.objects.filter(season=...)` season history, while kept out of the competitive
+**Standings**. The two Teams are `is_draw_team=True` and **borrow** real Players (the
+LG-02x-1 / ADR-0022 posture — `PlayerRoundState` references the real Player, career
+stats stay unified). A NEW Django-free pure module `matches/member_night.py`
+(constants `MIN_POOL=12` / `MAX_POOL=18` / `MIN_GAMES=5` / `MAX_GAMES=9` /
+`PLAYERS_PER_GAME=12`; `MemberNightGame` dataclass; `split_balanced` /
+`draw_member_night_games` / `draw_site_games`; reuses
+`build_random_role_assignment`) owns the balanced 6/6 split + game-count / pool
+draws over a 12–18 Site pool. **Completion is DERIVED** (`_member_night_phase_complete`:
+≥1 member-night Match AND all `is_completed`, OR no viable Site — no
+`SeasonPhase.state`, ADR-0023 honoured); the play-loop barrier
+`_tournament_barrier_ordinal` is renamed → **`_phase_barrier_ordinal`** and
+generalised to also halt the RR loop on an incomplete `member_night` phase. The
+single predicate `.exclude(season_phase__phase_type="member_night")` keeps member
+nights out of Standings at **7 sites** (PLAY-01 live poll covered transitively). The
+run is **build-then-drain** — `member_night_setup` (POST sync, 302) pre-creates the
+drawn Teams + unplayed Match shells; `play_member_night` (POST async, 202) enqueues
+`play_member_night_task` which drains via `simulate_scheduled_round` VERBATIM (GAME
+counts, PLAY-01 cancel + `finally` cleanup), polled through the reused `play_status`.
+The composer (`parse_phase_composition`) stops rejecting a bare `member_night` token
+and `templates/leagues/create.html` makes the "coming soon" placeholder a live
+option; the NAV-01 `Play ▾` topnav gains the setup/drain controls
+(`topbar-play-member-night-setup` / `-site` / `-play`). **NO migration, NO Score
+Calibration re-baseline, NON-deterministic by design** (fresh `random.Random()`
+outside the SIM-07/08 seed chain). `_rr_phase_complete`, `_is_finished`, and
+`next_season` carry-forward are UNCHANGED.
+
+### LG-07b · Member-nights player-stat filter (DEFERRED follow-up to LG-07a)
+
+**[NOT STARTED — the remaining LG-07 follow-up.]** The per-Season player-stat
+**include / exclude / only** member-nights selector — over **Player Stats**, **League
+Leaders**, **Statistical Feats**, and the **Team-History Players** tab — was **DEFERRED
+out of the LG-07a core slice** (ADR-0033 §"per-Season player-stat screens gain a
+member-nights filter"; seam contract §8 scope-out). LG-07a excludes member-night
+Matches from **Standings only**; member-night `PlayerRoundState` rows currently flow
+into the player-stat screens **unfiltered**. LG-07b adds the include/exclude/only
+selector (the LG-06d `?provenance=` filter precedent) so the viewer chooses whether
+casual games appear; the global all-time career page (HX-01) stays unaffected
+(league-agnostic). No model change is anticipated (the discriminator is the
+member-night `season_phase` already stamped on the Match).
 
 ### SIM-04 · Simulation confidence display
 

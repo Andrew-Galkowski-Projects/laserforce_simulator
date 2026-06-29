@@ -1391,3 +1391,70 @@ class TestTeamHistoryOverallRecordPlayoffFieldFlow(TestCase):
         # The W/L/T fold is unchanged.
         self.assertEqual((rec.wins, rec.losses, rec.ties), (1, 1, 1))
         self.assertEqual(rec.championships, 1)
+
+
+# ===========================================================================
+# LG-07a — member-night Matches excluded from the Seasons-tab rank (ADR-0033)
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/lg-07-member-night-seam-contract.md`` §3
+# (site #6): ``team_history._build_seasons_context`` appends the member-night
+# exclude to ``season.matches.filter(is_completed=True)``, so a member-night Match
+# (``season=<this>``, ``season_phase=<member_night>``) does NOT move a Season's
+# rank. Mirrors ``TestTeamHistorySeasonsRankUnaffectedByPlayoff``.
+
+
+class TestLg07aTeamHistorySeasonsRankExcludesMemberNight(TestCase):
+    """The Seasons-tab ``rank`` is UNAFFECTED by member-night Matches."""
+
+    def setUp(self) -> None:
+        self.league = _make_league()
+        self.season, self.teams = _make_active_season(self.league, n_teams=2)
+        self.team_a, self.team_b = self.teams
+        self.league.current_team = self.team_a
+        self.league.save(update_fields=["current_team"])
+
+    def _content(self) -> str:
+        return team_history(_get(self.league.id), self.league.id).content.decode()
+
+    def test_member_night_match_does_not_change_seasons_rank(self) -> None:
+        from matches.models import SeasonPhase
+        from teams.models import Team
+
+        # team_a beats team_b in the regular season ⇒ a stable rank.
+        _play_round(
+            self.season,
+            self.team_a,
+            self.team_b,
+            round_number=1,
+            red_points=100,
+            blue_points=50,
+        )
+        rank_before = _season_row_rank(self._content(), self.season.id)
+
+        # Add a member-night Match (season=this, season_phase=mn, drawn Teams)
+        # team_a is not even in — it must not touch the Seasons-tab rank.
+        mn = SeasonPhase.objects.create(
+            season=self.season, ordinal=2, phase_type="member_night"
+        )
+        da = Team.objects.create(name="MN TH Draw A", is_draw_team=True)
+        db = Team.objects.create(name="MN TH Draw B", is_draw_team=True)
+        mnm = Match.objects.create(
+            team_red=da,
+            team_blue=db,
+            season=self.season,
+            season_phase=mn,
+            is_completed=True,
+        )
+        GameRound.objects.create(
+            match=mnm,
+            round_number=1,
+            team_red=da,
+            team_blue=db,
+            red_points=999,
+            blue_points=0,
+            is_completed=True,
+        )
+
+        rank_after = _season_row_rank(self._content(), self.season.id)
+        self.assertEqual(rank_after, rank_before)

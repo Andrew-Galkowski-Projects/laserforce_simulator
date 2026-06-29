@@ -75,7 +75,8 @@
             <button type="button" id="league-create-add-block"
                     class="btn btn-outline-secondary btn-sm mt-2">+ Add block</button>
             <div id="league-create-member-night-note" class="form-text">
-                Member nights coming soon.
+                Add a "Member night" block for a casual, per-Site social play
+                interlude (excluded from the Standings).
             </div>
             {{ form.phases }}
             {{ form.phases.errors }}
@@ -189,8 +190,14 @@
         var optT = document.createElement("option");
         optT.value = "tournament";
         optT.textContent = "Tournament";
+        // LG-07a — member night (social play interlude, ADR-0033). A bare token
+        // with no sub-config; serialize() emits "member_night".
+        var optMN = document.createElement("option");
+        optMN.value = "member_night";
+        optMN.textContent = "Member night";
         typeSelect.appendChild(optRR);
         typeSelect.appendChild(optT);
+        typeSelect.appendChild(optMN);
 
         // Schedule-format select (shown for round_robin rows only).
         var formatSelect = document.createElement("select");
@@ -338,21 +345,25 @@
         }
 
         function applyType() {
-            var isRR = typeSelect.value === "round_robin";
+            // LG-07a — member_night rows show NEITHER the RR schedule-format
+            // select NOR any tournament sub-config (a bare token).
+            var type = typeSelect.value;
+            var isRR = type === "round_robin";
+            var isTournament = type === "tournament";
             formatSelect.style.display = isRR ? "" : "none";
-            modeSelect.style.display = isRR ? "none" : "";
-            tFormatSelect.style.display = isRR ? "none" : "";
-            cutInput.style.display = isRR ? "none" : "";
-            pending.style.display = isRR ? "none" : "";
-            if (isRR) {
+            modeSelect.style.display = isTournament ? "" : "none";
+            tFormatSelect.style.display = isTournament ? "" : "none";
+            cutInput.style.display = isTournament ? "" : "none";
+            pending.style.display = isTournament ? "" : "none";
+            if (isTournament) {
+                applyFormat();
+            } else {
                 finalSlSelect.style.display = "none";
                 semiSlSelect.style.display = "none";
                 quarterSlSelect.style.display = "none";
                 earlierSlSelect.style.display = "none";
                 comboSelect.style.display = "none";
                 swissInput.style.display = "none";
-            } else {
-                applyFormat();
             }
             serialize();
         }
@@ -404,6 +415,9 @@
                 var formatSelect = rows[k].querySelector(".phase-format-select");
                 var fmt = formatSelect ? formatSelect.value : "single_round_robin";
                 tokens.push("round_robin:" + fmt);
+            } else if (typeSelect.value === "member_night") {
+                // LG-07a — bare token, no sub-config.
+                tokens.push("member_night");
             } else {
                 // LG-02-Part2c-3e — emit the positional 11-field tournament
                 // token "tournament:mode:cut:format:fsl:ssl:qsl:esl:wb:lb:swiss".

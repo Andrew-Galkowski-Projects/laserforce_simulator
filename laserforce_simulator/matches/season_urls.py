@@ -74,6 +74,26 @@ urlpatterns = [
         name="play_week_live_watch",
     ),
     path(
+        "<int:season_id>/member-night/setup/",
+        league_views.member_night_setup,
+        name="member_night_setup",
+    ),
+    path(
+        "<int:season_id>/member-night/play/",
+        league_views.play_member_night,
+        name="play_member_night",
+    ),
+    path(
+        "<int:season_id>/member-night/play-single/",
+        league_views.play_member_night_single,
+        name="play_member_night_single",
+    ),
+    path(
+        "<int:season_id>/member-night/play-single-live/",
+        league_views.play_member_night_live,
+        name="play_member_night_live",
+    ),
+    path(
         "<int:season_id>/standings/",
         league_views.season_standings,
         name="season_standings",

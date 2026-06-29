@@ -26,6 +26,11 @@
                 </form>
             </li>
         {% elif action_button_state == "play_next" %}
+            {% comment %}LG-07a — the round-robin trio is suppressed when the cursor
+               sits on a member_night OR tournament phase; those phases render their
+               own control set below (a member night / a playoff is not advanced by
+               the One Week / Two Months / Until End RR actions).{% endcomment %}
+            {% if not playoff_phase_active and not member_night_phase_active %}
             <li>
                 <form id="topbar-play-one-week" method="post" action="{% url 'play_week' season_id=play_displayed_season_id %}" class="px-2">
                     {% csrf_token %}
@@ -52,6 +57,7 @@
                 </form>
             </li>
             {% endif %}
+            {% endif %}{# /not playoff and not member_night #}
         {% elif action_button_state == "start_next_season" %}
             {% if is_career_mode %}
                 <li>
@@ -69,8 +75,12 @@
             <li><span class="dropdown-item disabled" data-action-state="{{ action_button_state }}">Play</span></li>
         {% endif %}
 
+        {% comment %}LG-07a — playoff control set (replaces the RR trio while the
+           cursor is on the tournament phase): Play Single Round (one bracket node,
+           sync) / Play Two Months (up to 8 bracket rounds, async) / Through Playoffs
+           (drain to the Season champion, async) / Live (the manager's next bracket
+           Match, sync → replay, only when a live preview is available).{% endcomment %}
         {% if playoff_phase_active %}
-            <li><hr class="dropdown-divider"></li>
             <li>
                 <form id="topbar-play-play-single-round" method="post" action="{% url 'play_single_round' season_id=play_displayed_season_id %}" class="px-2">
                     {% csrf_token %}
@@ -78,11 +88,76 @@
                 </form>
             </li>
             <li>
-                <form id="topbar-play-play-playoffs" method="post" action="{% url 'play_playoffs' season_id=play_displayed_season_id %}" class="px-2">
+                <form id="topbar-play-play-two-months" method="post" action="{% url 'play_two_months' season_id=play_displayed_season_id %}" class="px-2">
                     {% csrf_token %}
-                    <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">Play Playoffs</button>
+                    <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">Play Two Months</button>
                 </form>
             </li>
+            <li>
+                <form id="topbar-play-play-playoffs" method="post" action="{% url 'play_playoffs' season_id=play_displayed_season_id %}" class="px-2">
+                    {% csrf_token %}
+                    <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">Through Playoffs</button>
+                </form>
+            </li>
+            {% if live_preview_available %}
+            <li>
+                <form id="topbar-play-playoff-live" method="post" action="{% url 'play_week_live' play_displayed_season_id %}" class="px-2">
+                    {% csrf_token %}
+                    <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">Play Single Round (Live)</button>
+                </form>
+            </li>
+            {% endif %}
+        {% endif %}
+
+        {% comment %}LG-07a — member-night controls (ADR-0033). Rendered only on a
+           member_night phase cursor. The Setup form submits SYNCHRONOUSLY (server-side
+           302 redirect), NOT intercepted; the Play form's 202 {job_id, season_id} is
+           polled by the same JS against play_status (the async Play rail).{% endcomment %}
+        {% if member_night_phase_active %}
+            <li>
+                {% comment %}Setup: per-Site toggle boxes + an "All Sites" master
+                   toggle (JS checks/unchecks every per-Site box) + a Confirm button.
+                   The form POSTs the checked Site names as the multi-valued ``sites``
+                   field. Submits SYNCHRONOUSLY (302 → dashboard); re-running appends
+                   more games.{% endcomment %}
+                <form id="topbar-play-member-night-setup" method="post" action="{% url 'member_night_setup' season_id=play_displayed_season_id %}" class="px-2">
+                    {% csrf_token %}
+                    <div class="px-1 mb-1">
+                        <label class="d-block small fw-bold">
+                            <input type="checkbox" id="topbar-play-member-night-all"> All Sites
+                        </label>
+                        {% for site, count in member_night_sites %}
+                        <label class="d-block small">
+                            <input type="checkbox" class="topbar-play-member-night-site-cb" name="sites" value="{{ site }}">
+                            {% if site %}{{ site }}{% else %}(no site){% endif %} ({{ count }})
+                        </label>
+                        {% empty %}
+                        <span class="small text-muted">No Site has enough players (need 12+).</span>
+                        {% endfor %}
+                    </div>
+                    <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">Confirm — Set Up Member Night</button>
+                </form>
+            </li>
+            {% if member_night_has_unplayed %}
+            <li>
+                <form id="topbar-play-member-night-single" method="post" action="{% url 'play_member_night_single' season_id=play_displayed_season_id %}" class="px-2">
+                    {% csrf_token %}
+                    <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">Play Single Members Game</button>
+                </form>
+            </li>
+            <li>
+                <form id="topbar-play-member-night-live" method="post" action="{% url 'play_member_night_live' season_id=play_displayed_season_id %}" class="px-2">
+                    {% csrf_token %}
+                    <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">Single Members Game (Live)</button>
+                </form>
+            </li>
+            <li>
+                <form id="topbar-play-member-night-play" method="post" action="{% url 'play_member_night' season_id=play_displayed_season_id %}" class="px-2">
+                    {% csrf_token %}
+                    <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">Play All</button>
+                </form>
+            </li>
+            {% endif %}
         {% endif %}
     </ul>
 </div>
