@@ -52,24 +52,9 @@
     {% endif %}
 
     {% if season_mode == "active" or season_mode == "completed" %}
-        <div id="league-dashboard-next-round" class="card mb-3">
-            <div class="card-header"><strong>Next round</strong></div>
-            <div class="card-body">
-                {% if next_fixture %}
-                    <p class="mb-1">Matchday {{ next_fixture.matchday }} · Round {{ next_fixture.round_number }}</p>
-                    <p class="mb-1">{{ next_fixture.team_a_name }} vs {{ next_fixture.team_b_name }}</p>
-                    <p class="mb-0 text-muted">{{ next_fixture.date|date:"Y-m-d" }}</p>
-                {% else %}
-                    <p class="mb-0">All fixtures played</p>
-                {% endif %}
-            </div>
-        </div>
+        <div id="league-dashboard-next-round" class="card mb-3">{% include "_partials/dashboard_next_round.html" %}</div>
 
-        <div id="league-dashboard-round-count" class="card mb-3">
-            <div class="card-body">
-                <strong>Rounds played:</strong> {{ round_count_completed }} / {{ round_count_total }}
-            </div>
-        </div>
+        <div id="league-dashboard-round-count" class="card mb-3">{% include "_partials/dashboard_round_count.html" %}</div>
 
         <div class="row">
             <div class="col-md-4">

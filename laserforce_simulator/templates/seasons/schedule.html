@@ -77,6 +77,48 @@
             {% endfor %}
         {% endif %}
     </div>
+
+    {% comment %}LG-07 — member-night games (drawn-team Matches, excluded from
+       Standings but surfaced here per member_night phase). Read-only.{% endcomment %}
+    {% if member_night_games %}
+    <section id="season-schedule-member-nights" class="mt-5">
+        <h2>Member nights</h2>
+        <p class="text-muted small">Casual per-Site social games — not counted toward Standings.</p>
+        {% for mn in member_night_games %}
+        <section id="season-schedule-member-night-{{ mn.ordinal }}" class="mb-4">
+            <h4 class="h6">Member night <small class="text-muted">— phase {{ mn.ordinal }}</small></h4>
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered">
+                    <thead>
+                        <tr>
+                            <th>Teams</th>
+                            <th class="text-end">Result</th>
+                            <th>Rounds</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for g in mn.games %}
+                        <tr id="member-night-game-{{ g.match_id }}">
+                            <td>{{ g.team_a_name }} <span class="text-muted">vs</span> {{ g.team_b_name }}</td>
+                            <td class="text-end">
+                                {% if g.is_completed %}
+                                    {{ g.red_points }}–{{ g.blue_points }}{% if g.winner_name %} <span class="text-muted">({{ g.winner_name }})</span>{% endif %}
+                                {% else %}
+                                    <span class="text-muted">Not played</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% for r in g.rounds %}<a href="{% url 'game_round_detail' r.id %}">R{{ r.round_number }}</a>{% if not forloop.last %} · {% endif %}{% endfor %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        {% endfor %}
+    </section>
+    {% endif %}
     </main>
 </div>
 {% endblock %}

@@ -470,6 +470,74 @@ def play_playoffs_task(self, season_id: int) -> dict:
         django.db.close_old_connections()
 
 
+@shared_task(bind=True, name="matches.play_member_night")
+def play_member_night_task(self, season_id: int) -> dict:
+    """LG-07a — drain a Season's member-night game shells to completion (ADR-0033).
+
+    Loads the Season, resolves the current (member_night) phase, then plays
+    every unplayed pre-created 2-Round ``Match`` shell via
+    ``simulate_scheduled_round(..., season_phase=<mn phase>)`` VERBATIM (Round 1
+    finds the shell, Round 2 completes it), emitting GAME-count progress. After
+    the drain, ``season.complete_if_finished()`` lets the cursor advance once
+    every member-night Match is complete.
+
+    Per-Round commits — each ``simulate_scheduled_round`` Round is its own
+    atomic commit (ADR-0016), so there is NO outer ``@transaction.atomic``: a
+    mid-drain failure leaves completed games committed and the run resumable.
+
+    PLAY-01 — top + between-game cancel checks return NORMALLY (Celery SUCCESS,
+    mapped to ``"complete"``) carrying ``cancelled: True`` + partial counts.
+
+    Returns:
+        ``{"completed": int, "total": int}`` — GAME counts (completed / total).
+    """
+    import django.db
+
+    try:
+        from matches.models import Match, Season
+
+        season = Season.objects.get(id=season_id)
+        phase = season.current_phase()
+        if phase is None or phase.phase_type != "member_night":
+            return {"completed": 0, "total": 0}
+
+        total = Match.objects.filter(season_phase=phase).count()
+
+        # PLAY-01 — top (queued) cancel check, BEFORE the drain.
+        if _play_cancel_requested(season_id):
+            return {"completed": 0, "total": total, "cancelled": True}
+
+        completed = 0
+        unplayed = list(Match.objects.filter(season_phase=phase, is_completed=False))
+        for shell in unplayed:
+            # PLAY-01 — between-game (running) cancel check, BEFORE playing the
+            # next shell. Stop cleanly with the games drained so far committed;
+            # the run is resumable.
+            if _play_cancel_requested(season_id):
+                return {"completed": completed, "total": total, "cancelled": True}
+
+            BatchSimulator().simulate_scheduled_round(
+                season, shell.team_red, shell.team_blue, 1, season_phase=phase
+            )
+            BatchSimulator().simulate_scheduled_round(
+                season, shell.team_red, shell.team_blue, 2, season_phase=phase
+            )
+            completed += 1
+            self.update_state(
+                state="PROGRESS",
+                meta={"completed": completed, "total": total},
+            )
+
+        season.complete_if_finished()
+        return {"completed": completed, "total": total}
+    finally:
+        # PLAY-01 — clear the active-run marker on success / cancel / failure.
+        from matches.models import Season
+
+        Season.objects.filter(id=season_id).update(active_play_job_id=None)
+        django.db.close_old_connections()
+
+
 @shared_task(bind=True, name="matches.play_tournament")
 def play_tournament_task(self, tournament_id: int) -> dict:
     """LG-02a-2 — Play every remaining decisive Bracket node to a champion.

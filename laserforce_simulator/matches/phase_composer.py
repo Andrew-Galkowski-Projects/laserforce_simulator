@@ -218,6 +218,17 @@ def parse_phase_composition(
                     )
             # (7) swiss rounds.
             swiss_rounds = _int_field(10, "0")
+        elif type_part == "member_night":
+            # LG-07a — member_night carries NO sub-config (no schedule_format /
+            # mode / cut / format / series / wb / lb / swiss). A bare token
+            # only; a colon (any sub-config) ⇒ malformed. A member night may
+            # sit anywhere, including first (the preceding-RR guard below only
+            # fires for a season-ending ``standings`` tournament).
+            if format_part:
+                raise ValueError("malformed phase composition")
+            schedule_format = None
+            # tournament_* / series / wb / lb / swiss keep their declared
+            # defaults (inert for a member_night phase).
         else:
             raise ValueError(f"unknown phase type: {token!r}")
         specs.append(

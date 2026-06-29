@@ -1132,7 +1132,67 @@ class Season(models.Model):
                 phase.tournament_id is not None
                 and phase.tournament.state == "completed"
             )
+        if phase.phase_type == "member_night":
+            return self._member_night_phase_complete(phase)
         return False
+
+    def _member_night_phase_complete(self, phase) -> bool:
+        """LG-07a — DERIVED member_night completion (no stored state; ADR-0033).
+
+        A member_night phase is complete IFF:
+          * at least one member-night Match exists for it AND every such Match
+            is ``is_completed``; OR
+          * no Site in the pool has >= MIN_POOL available players (nobody to
+            play — the phase auto-completes so the cursor never parks forever
+            on an empty Site pool).
+
+        Before setup ⇒ 0 games ⇒ falls to the pool branch (cursor parks while a
+        viable Site exists). During the drain ⇒ >=1 game AND some
+        ``is_completed=False`` ⇒ incomplete. After the drain ⇒ all complete ⇒
+        complete (cursor advances).
+        """
+        from .member_night import MIN_POOL  # deferred import; pure module
+
+        games = Match.objects.filter(season_phase=phase)
+        if games.exists():
+            return not games.filter(is_completed=False).exists()
+        pool_by_site = self._member_night_pool_by_site()
+        return not any(len(pool) >= MIN_POOL for pool in pool_by_site.values())
+
+    def _member_night_pool_by_site(self) -> "dict[str, list[tuple[int, float]]]":
+        """LG-07a — gather the member-night Player pool grouped by Site.
+
+        Pool = the Season's enrolled-Team Players (active slots AND bench, i.e.
+        ``team.players.all()``) PLUS the League's ``free_agent_pool`` Players,
+        grouped by ``Player.home_site``. Mirrors the ``_developing_players``
+        enrolled+free-agent precedent. A blank ``home_site`` groups under ``""``
+        (a single bucket; viability still needs >= MIN_POOL there).
+
+        Used by BOTH ``_member_night_phase_complete`` (the "no viable Site"
+        fallback) and the setup view (the draw).
+        """
+        team_ids = list(self.starting_team_ids_json or []) or [
+            t.id for t in self.teams.all()
+        ]
+        seen: set[int] = set()
+        by_site: dict[str, list[tuple[int, float]]] = {}
+
+        def _add(player):
+            if player.pk in seen:
+                return
+            seen.add(player.pk)
+            by_site.setdefault(player.home_site, []).append(
+                (player.id, player.overall_rating)
+            )
+
+        for team in Team.objects.filter(id__in=team_ids).prefetch_related("players"):
+            for player in team.players.all():
+                _add(player)
+        pool = self.league.free_agent_pool
+        if pool is not None:
+            for player in pool.players.all():
+                _add(player)
+        return by_site
 
     def _rr_phase_complete(self, phase: "SeasonPhase") -> bool:
         """True iff every fixture of THIS RR phase has a persisted GameRound.
@@ -1214,7 +1274,9 @@ class Season(models.Model):
         from .standings import compute_standings
 
         team_ids = self.starting_team_ids_json or []
-        matches_qs = Match.objects.filter(season=self, is_completed=True)
+        matches_qs = Match.objects.filter(season=self, is_completed=True).exclude(
+            season_phase__phase_type="member_night"
+        )
         completed_matches: list[dict] = []
         for match in matches_qs:
             completed_matches.append(
@@ -1544,16 +1606,19 @@ class Season(models.Model):
             flat.extend(fixtures)
         return flat
 
-    def _tournament_barrier_ordinal(self) -> "int | None":
-        """LG-02-Part2c-3c — the ordinal of the first INCOMPLETE tournament
-        phase, or ``None`` when no tournament phase is incomplete.
+    def _phase_barrier_ordinal(self) -> "int | None":
+        """LG-02-Part2c-3c / LG-07a — the ordinal of the first INCOMPLETE non-RR
+        play-loop barrier phase (``tournament`` OR ``member_night``), or
+        ``None`` when none is incomplete.
 
         Walks ``ordered_phases()``; the barrier halts the RR loop so a
-        mid-season bracket drains through the existing playoff views before
-        later RR phases play.
+        mid-season bracket OR member night drains through the existing playoff /
+        member-night views before later RR phases play.
         """
         for phase in self.ordered_phases():
-            if phase.phase_type == "tournament" and not self._phase_complete(phase):
+            if phase.phase_type in ("tournament", "member_night") and not (
+                self._phase_complete(phase)
+            ):
                 return phase.ordinal
         return None
 
@@ -1567,7 +1632,7 @@ class Season(models.Model):
         ordinal. When no tournament phase is incomplete, returns ALL RR phases
         (the full ``scheduled_fixtures_by_phase()`` output).
         """
-        barrier = self._tournament_barrier_ordinal()
+        barrier = self._phase_barrier_ordinal()
         by_phase = self.scheduled_fixtures_by_phase()
         if barrier is None:
             return by_phase

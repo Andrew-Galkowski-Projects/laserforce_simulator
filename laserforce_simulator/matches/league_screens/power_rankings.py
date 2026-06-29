@@ -132,7 +132,11 @@ def power_rankings(request: HttpRequest, league_id: int) -> HttpResponse:
     match_filter = {k[len("match__") :]: v for k, v in season_filter.items()}
 
     # --- Component 2: win% via compute_standings over completed Matches ---
-    completed_qs = Match.objects.filter(is_completed=True, **match_filter)
+    # LG-07a — member nights are social, not ranked: they must not move the
+    # power rankings either.
+    completed_qs = Match.objects.filter(is_completed=True, **match_filter).exclude(
+        season_phase__phase_type="member_night"
+    )
     completed_matches: list[dict] = []
     for match in completed_qs:
         completed_matches.append(

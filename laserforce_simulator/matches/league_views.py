@@ -36,7 +36,7 @@ from teams.constants import PLAYER_NAMES, TEAM_NAMES
 from teams.models import Player, Team
 from teams.views import _coerce_dir, _generate_free_agents, _generate_teams
 
-from . import development, finance, injury, owner_mood
+from . import development, finance, injury, member_night, owner_mood
 from .development import STAT_FIELDS
 from .forms import CreateLeagueForm
 from .models import (
@@ -67,7 +67,7 @@ from .season_dashboard import (
 )
 from .simulation import BatchSimulator
 from .standings import StandingsRow, compute_standings
-from .tasks import play_playoffs_task, play_season_task
+from .tasks import play_member_night_task, play_playoffs_task, play_season_task
 from .views import _celery_state_to_job_status
 
 # Abbreviated column headers for the wide rating tables (Player Ratings,
@@ -308,7 +308,11 @@ def season_standings(request, season_id: int) -> HttpResponse:
                 }
             )
     else:
-        completed_qs = Match.objects.filter(season=season, is_completed=True)
+        # LG-07a — member-night Matches (season_phase.phase_type == "member_night")
+        # are social, never ranked — exclude them from the Standings query.
+        completed_qs = Match.objects.filter(season=season, is_completed=True).exclude(
+            season_phase__phase_type="member_night"
+        )
         completed_matches: list[dict] = []
         for match in completed_qs:
             completed_matches.append(
@@ -338,7 +342,9 @@ def season_standings(request, season_id: int) -> HttpResponse:
                 "blue_points": r["blue_points"],
                 "date_played": r["date_played"],
             }
-            for r in GameRound.objects.filter(match__season=season).values(
+            for r in GameRound.objects.filter(match__season=season)
+            .exclude(match__season_phase__phase_type="member_night")
+            .values(
                 "id",
                 "team_red_id",
                 "team_blue_id",
@@ -409,6 +415,79 @@ def season_standings(request, season_id: int) -> HttpResponse:
     return render(request, "seasons/standings.html", context)
 
 
+def _member_night_game_dict(match: Match) -> dict:
+    """LG-07 — one read-only display row for a member-night game (a drawn-team
+    Match stamped ``season_phase.phase_type == "member_night"``). The drawn-Team
+    names encode the Site (``MN <site> G<n> A/B``). ``game_rounds`` must be
+    prefetched by the caller. Used by both schedule surfaces."""
+    rounds = sorted(match.game_rounds.all(), key=lambda r: r.round_number)
+    return {
+        "match_id": match.id,
+        "team_a_name": match.team_red.name if match.team_red_id else "?",
+        "team_b_name": match.team_blue.name if match.team_blue_id else "?",
+        "is_completed": match.is_completed,
+        "red_points": match.red_total_points,
+        "blue_points": match.blue_total_points,
+        "winner_name": match.winner.name if match.winner_id else None,
+        "rounds": [{"id": r.id, "round_number": r.round_number} for r in rounds],
+    }
+
+
+def _member_night_games_for_season(season: Season) -> list[dict]:
+    """LG-07 — the Season's member-night games grouped by ``member_night`` phase
+    ordinal (a Season may hold more than one member-night phase). Read-only /
+    derived; member-night Matches are ``season=<this>, season_phase=<mn phase>``
+    and excluded from Standings, but surfaced here on the League schedule."""
+    matches = (
+        Match.objects.filter(season=season, season_phase__phase_type="member_night")
+        .select_related("team_red", "team_blue", "season_phase", "winner")
+        .prefetch_related("game_rounds")
+        .order_by("season_phase__ordinal", "id")
+    )
+    by_ordinal: dict[int, dict] = {}
+    for match in matches:
+        ordinal = match.season_phase.ordinal
+        section = by_ordinal.setdefault(ordinal, {"ordinal": ordinal, "games": []})
+        section["games"].append(_member_night_game_dict(match))
+    return [by_ordinal[o] for o in sorted(by_ordinal)]
+
+
+def _member_night_appearances_for_team(season: Season, team: Team) -> list[dict]:
+    """LG-07 — member-night games of ``season`` in which a Player of ``team``
+    appeared (borrowed onto a drawn Team). Found via ``PlayerRoundState`` →
+    the real Player's ``team`` FK; each game lists which of the Team's Players
+    played. Read-only / derived (the Team-schedule surface)."""
+    players_by_match: dict[int, list[str]] = {}
+    prs = (
+        PlayerRoundState.objects.filter(
+            game_round__match__season=season,
+            game_round__match__season_phase__phase_type="member_night",
+            player__team=team,
+        )
+        .select_related("player", "game_round")
+        .order_by("game_round__match_id")
+    )
+    for state in prs:
+        match_id = state.game_round.match_id
+        names = players_by_match.setdefault(match_id, [])
+        if state.player.name not in names:
+            names.append(state.player.name)
+    if not players_by_match:
+        return []
+    matches = (
+        Match.objects.filter(id__in=players_by_match)
+        .select_related("team_red", "team_blue", "winner")
+        .prefetch_related("game_rounds")
+        .order_by("season_phase__ordinal", "id")
+    )
+    appearances: list[dict] = []
+    for match in matches:
+        game = _member_night_game_dict(match)
+        game["players"] = players_by_match.get(match.id, [])
+        appearances.append(game)
+    return appearances
+
+
 def season_schedule(request, season_id: int) -> HttpResponse:
     """LG-01 — Schedule page for a Season.
 
@@ -441,6 +520,7 @@ def season_schedule(request, season_id: int) -> HttpResponse:
         context = {
             "season": season,
             "matchdays": [],
+            "member_night_games": _member_night_games_for_season(season),
             "sidebar_active": "schedule",
             "sidebar_links": sidebar_links,
         }
@@ -526,6 +606,7 @@ def season_schedule(request, season_id: int) -> HttpResponse:
     context = {
         "season": season,
         "matchdays": matchdays,
+        "member_night_games": _member_night_games_for_season(season),
         "sidebar_active": "schedule",
         "sidebar_links": sidebar_links,
     }
@@ -1255,7 +1336,10 @@ def _build_dashboard_context(
             action_button_state = "start_next_season"
 
         # --- Standings snippet (real compute_standings, top 3) --------
-        completed_qs = Match.objects.filter(season=displayed_season, is_completed=True)
+        # LG-07a — exclude social member-night Matches from the Standings query.
+        completed_qs = Match.objects.filter(
+            season=displayed_season, is_completed=True
+        ).exclude(season_phase__phase_type="member_night")
         completed_matches: list[dict] = []
         for match in completed_qs:
             completed_matches.append(
@@ -1482,6 +1566,27 @@ def _build_play_controls_context(
             "playoff",
         )
 
+    # LG-07a — member-night topnav controls. Gated on the cursor being a
+    # member_night phase. ``member_night_sites`` are the VIABLE Sites only
+    # (>= MIN_POOL), sorted by Site name; ``member_night_has_unplayed`` gates
+    # the drain button.
+    member_night_phase_active = False
+    member_night_sites: list[tuple[str, int]] = []
+    member_night_has_unplayed = False
+    if displayed_season is not None:
+        mn_phase = displayed_season.current_phase()
+        if mn_phase is not None and mn_phase.phase_type == "member_night":
+            member_night_phase_active = True
+            pool_by_site = displayed_season._member_night_pool_by_site()
+            member_night_sites = sorted(
+                (site, len(pool))
+                for site, pool in pool_by_site.items()
+                if len(pool) >= member_night.MIN_POOL
+            )
+            member_night_has_unplayed = Match.objects.filter(
+                season_phase=mn_phase, is_completed=False
+            ).exists()
+
     return {
         "action_button_label": action_button_label,
         "action_button_state": action_button_state,
@@ -1492,6 +1597,10 @@ def _build_play_controls_context(
         "following_tournament_is_final": following_tournament_is_final,
         "live_preview_available": live_preview_available,
         "is_career_mode": _is_career_league(league),
+        # LG-07a — member-night topnav controls.
+        "member_night_phase_active": member_night_phase_active,
+        "member_night_sites": member_night_sites,
+        "member_night_has_unplayed": member_night_has_unplayed,
         # PLAY-01 — the Celery job id of the in-flight async run on the
         # resolved displayed Season (else None). Drives the topnav resume-on-load
         # + Play/Stop swap. league_nav merges this key via result.update(...).
@@ -2279,6 +2388,14 @@ def _build_history_row(
     for match in season.matches.all():
         if not match.is_completed:
             continue
+        # LG-07a — skip social member-night Matches in-Python so the
+        # ``season.matches`` prefetch cache is preserved (a queryset .exclude
+        # here would consume the prefetch).
+        if (
+            match.season_phase_id is not None
+            and match.season_phase.phase_type == "member_night"
+        ):
+            continue
         matches_list_in.append(
             {
                 "match_id": match.id,
@@ -2360,7 +2477,10 @@ def league_history(request: HttpRequest, league_id: int) -> HttpResponse:
 
     seasons_qs = (
         league.seasons.select_related("champion_team")
-        .prefetch_related("matches", "teams")
+        # LG-07a — prefetch ``matches__season_phase`` so the member-night
+        # in-Python skip in ``_build_history_row`` reads the FK off the cache
+        # (no per-Match N+1 on ``match.season_phase``).
+        .prefetch_related("matches", "matches__season_phase", "teams")
         .filter(state__in=["active", "draft", "completed"])
         .order_by("-id")
     )
@@ -2783,6 +2903,174 @@ def play_cancel(request, season_id: int) -> JsonResponse:
     return JsonResponse({"cancelled": True, "season_id": season.id})
 
 
+def member_night_setup(request, season_id: int) -> HttpResponse:
+    """LG-07a — POST-only sync setup for a member night (ADR-0033).
+
+    Draws the member-night games for the chosen Sites (a multi-valued ``sites``
+    POST field — the checked per-Site toggle boxes; ≥1 required), creates the
+    two ``is_draw_team`` Teams per game (roles fixed once here onto the drawn
+    Teams' ``slot_*`` FKs from ``MemberNightGame.team_a`` / ``team_b``) plus the
+    unplayed ``Match`` shell stamped ``season`` + ``season_phase`` (the
+    build-then-drain race-free step), then 302-redirects to the dashboard. The
+    draw consumes a FRESH ``random.Random()`` (non-deterministic by design,
+    outside the SIM-07/08 seed chain). Re-running setup APPENDS more games.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
+
+    phase = season.current_phase()
+    if phase is None or phase.phase_type != "member_night":
+        return _render_season_dashboard_error(
+            request, season, "No member night to set up."
+        )
+
+    chosen = request.POST.getlist("sites")
+    if not chosen:
+        return _render_season_dashboard_error(
+            request, season, "Pick at least one Site for the member night."
+        )
+    full_pool = season._member_night_pool_by_site()
+    pool_by_site = {s: full_pool.get(s, []) for s in chosen}
+
+    with transaction.atomic():
+        games = member_night.draw_member_night_games(pool_by_site, random.Random())
+        for game in games:
+            base_name = f"MN {game.site} G{game.game_index + 1}"
+            team_a = Team.objects.create(name=f"{base_name} A", is_draw_team=True)
+            for suffix, player_id in game.team_a.items():
+                setattr(team_a, f"slot_{suffix}_id", player_id)
+            team_a.save()
+            team_b = Team.objects.create(name=f"{base_name} B", is_draw_team=True)
+            for suffix, player_id in game.team_b.items():
+                setattr(team_b, f"slot_{suffix}_id", player_id)
+            team_b.save()
+            Match.objects.create(
+                season=season,
+                season_phase=phase,
+                team_red=team_a,
+                team_blue=team_b,
+                is_completed=False,
+            )
+
+    return redirect("season_dashboard", season_id=season.id)
+
+
+def play_member_night(request, season_id: int) -> JsonResponse:
+    """LG-07a — POST-only async drain of the member-night game shells.
+
+    Requires the cursor be on a member_night phase with >= 1 unplayed
+    member-night Match; otherwise 409 JSON ``{"error": ...}`` (the
+    ``play_playoffs`` async-guard precedent). Happy path enqueues
+    ``play_member_night_task.delay(season_id)`` and returns
+    ``JsonResponse({"job_id", "season_id"}, status=202)``. Polling REUSES the
+    ``play_status`` view verbatim (same URL, same 5-base-key + PLAY-01 JSON).
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
+
+    phase = season.current_phase()
+    if (
+        phase is None
+        or phase.phase_type != "member_night"
+        or not Match.objects.filter(season_phase=phase, is_completed=False).exists()
+    ):
+        return JsonResponse({"error": "No member night to play."}, status=409)
+
+    result = play_member_night_task.delay(season.id)
+    season.active_play_job_id = result.id
+    season.play_cancel_requested = False
+    season.save(update_fields=["active_play_job_id", "play_cancel_requested"])
+    return JsonResponse({"job_id": result.id, "season_id": season.id}, status=202)
+
+
+def _next_member_night_shell(season: "Season") -> "tuple[SeasonPhase, Match] | None":
+    """LG-07a — the current member_night phase + its first unplayed game shell,
+    or ``None`` when the cursor is not on a member_night phase / nothing unplayed.
+    """
+    phase = season.current_phase()
+    if phase is None or phase.phase_type != "member_night":
+        return None
+    shell = Match.objects.filter(season_phase=phase, is_completed=False).first()
+    if shell is None:
+        return None
+    return phase, shell
+
+
+def play_member_night_single(request, season_id: int) -> HttpResponse:
+    """LG-07a — POST-only SYNC play of ONE member-night game (ADR-0033).
+
+    Drains the first unplayed member-night ``Match`` shell (both Rounds via
+    ``simulate_scheduled_round(..., season_phase=<mn phase>)``), then
+    ``complete_if_finished`` and 302-redirects to the dashboard. The analogue of
+    ``play_single_round`` for the playoff bracket. ``fidelity`` stays the default
+    (no replay needed for the non-live single).
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
+
+    resolved = _next_member_night_shell(season)
+    if resolved is None:
+        return _render_season_dashboard_error(
+            request, season, "No member-night game to play."
+        )
+    phase, shell = resolved
+    BatchSimulator().simulate_scheduled_round(
+        season, shell.team_red, shell.team_blue, 1, season_phase=phase
+    )
+    BatchSimulator().simulate_scheduled_round(
+        season, shell.team_red, shell.team_blue, 2, season_phase=phase
+    )
+    season.complete_if_finished()
+    return redirect("season_dashboard", season_id=season.id)
+
+
+def play_member_night_live(request, season_id: int) -> HttpResponse:
+    """LG-07a — POST-only SYNC play of ONE member-night game + a live replay.
+
+    Drains the first unplayed member-night ``Match`` shell at ``fidelity="full"``
+    (so the persisted event log can drive the SIM-05 replay — GEN-01), stashes
+    the two committed Round ids in the ``live_watch`` session handoff (the LG-01i
+    pattern, ``kind="member_night"``), and redirects to ``play_week_live_watch``
+    — reusing the existing watch view/template verbatim (it renders a 2-Round
+    game from ``round_ids``; ``kind`` is cosmetic).
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
+
+    resolved = _next_member_night_shell(season)
+    if resolved is None:
+        return _render_season_dashboard_error(
+            request, season, "No member-night game to play."
+        )
+    phase, shell = resolved
+    round_1 = BatchSimulator().simulate_scheduled_round(
+        season, shell.team_red, shell.team_blue, 1, season_phase=phase, fidelity="full"
+    )
+    round_2 = BatchSimulator().simulate_scheduled_round(
+        season, shell.team_red, shell.team_blue, 2, season_phase=phase, fidelity="full"
+    )
+    season.complete_if_finished()
+    request.session["live_watch"] = {
+        "season_id": season.id,
+        "kind": "member_night",
+        "round_ids": [round_1.id, round_2.id],
+    }
+    request.session.modified = True
+    return redirect("play_week_live_watch", season_id=season.id)
+
+
 def _build_play_status_response(
     async_result: AsyncResult,
     *,
@@ -2829,7 +3117,7 @@ def _build_play_status_response(
         if info is not None:
             error = str(info)
 
-    standings_html, leaders = _render_live_play_panels(season)
+    panels = _render_live_play_panels(season)
 
     return {
         "status": status,
@@ -2837,25 +3125,37 @@ def _build_play_status_response(
         "total": total,
         "error": error,
         "season_id": season_id,
-        "standings": standings_html,
-        "leaders": leaders,
+        "standings": panels["standings"],
+        "leaders": panels["leaders"],
+        # PLAY-01 (LG-07 extension) — the Next round + Rounds-played panels also
+        # update per poll (they change per Round, unlike Match-keyed standings).
+        "next_round": panels["next_round"],
+        "round_count": panels["round_count"],
         "cancelled": cancelled,
     }
 
 
-def _render_live_play_panels(season: Optional[Season]) -> tuple[str, dict[str, str]]:
-    """PLAY-01 — recompute + render the live standings + leaders fragments.
+def _render_live_play_panels(season: Optional[Season]) -> dict:
+    """PLAY-01 — recompute + render the live dashboard panel fragments.
 
     Recomputes from committed rows via ``_build_dashboard_context`` (the same
-    ``compute_standings`` / ``compute_leaders`` source the dashboards use), then
-    server-renders the shared dashboard snippet partials. Returns
-    ``(standings_html, {"points", "tags", "ratio"})``. ``season is None`` ⇒
-    empty fragments (the JS patch is existence-guarded and no-ops off-dashboard).
+    ``compute_standings`` / ``compute_leaders`` / ``find_next_fixture`` /
+    ``round_progress`` source the dashboards use), then server-renders the shared
+    dashboard snippet partials. Returns a dict with ``standings`` (str),
+    ``leaders`` (``{"points", "tags", "ratio"}``), ``next_round`` (str), and
+    ``round_count`` (str). ``season is None`` ⇒ empty fragments (the JS patch is
+    existence-guarded and no-ops off-dashboard).
     """
     from django.template.loader import render_to_string
 
+    empty = {
+        "standings": "",
+        "leaders": {"points": "", "tags": "", "ratio": ""},
+        "next_round": "",
+        "round_count": "",
+    }
     if season is None:
-        return "", {"points": "", "tags": "", "ratio": ""}
+        return empty
 
     body = _build_dashboard_context(season, season.state)
     standings_html = render_to_string(
@@ -2876,7 +3176,23 @@ def _render_live_play_panels(season: Optional[Season]) -> tuple[str, dict[str, s
             {"leaders": body["leaders_ratio"], "leaders_title": "Tag ratio"},
         ),
     }
-    return standings_html, leaders
+    next_round_html = render_to_string(
+        "_partials/dashboard_next_round.html",
+        {"next_fixture": body["next_fixture"]},
+    )
+    round_count_html = render_to_string(
+        "_partials/dashboard_round_count.html",
+        {
+            "round_count_completed": body["round_count_completed"],
+            "round_count_total": body["round_count_total"],
+        },
+    )
+    return {
+        "standings": standings_html,
+        "leaders": leaders,
+        "next_round": next_round_html,
+        "round_count": round_count_html,
+    }
 
 
 def play_status(request, season_id: int, job_id: str) -> JsonResponse:
@@ -3295,6 +3611,9 @@ def team_schedule(request: HttpRequest, league_id: int, team_id: int) -> HttpRes
         "team": team,
         "upcoming_rows": rows["upcoming"],
         "completed_rows": rows["completed"],
+        "member_night_appearances": _member_night_appearances_for_team(
+            displayed_season, team
+        ),
         "team_picker_options": displayed_season.teams.order_by("name"),
         "sidebar_links": sidebar_links,
         "sidebar_active": "schedule_team",
