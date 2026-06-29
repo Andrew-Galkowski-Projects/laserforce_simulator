@@ -155,6 +155,7 @@ Action weights live in `matches/sim_helpers/weights.py` and shift dynamically ba
 | `/seasons/<id>/awards/` | Season-end awards (Most Points, K/D by role, Best Medic, Most Efficient Nuke, Best Accuracy, Season MVP, Finals MVP) |
 | `/seasons/<id>/owner-evaluation/` | Career owner evaluation — per-factor owner mood, verdict, hot-seat warning (browsable for past seasons) |
 | `/leagues/<id>/new-team/` | New Team picker shown after a firing — choose from the five worst-performing eligible teams |
+| `/leagues/<id>/delete/` | Delete a career League (confirm step) — fully tears down its Seasons, Matches, embedded playoff tournaments, and generated teams + players |
 | `/matches/` | Match list and creation |
 | `/matches/create/` | Create a full 2-round match |
 | `/matches/single-round/create/` | Create a standalone game round |

@@ -1,3 +1,37 @@
+# Web testing — DEL-01 (Delete League button, full teardown)
+
+Date: 2026-06-28
+Branch: `del-01-delete-league`
+Scope: the career-mode-only Delete League flow — dashboard + leagues-list entry
+points, the GET confirm page (summary + DOM ids), and the POST teardown
+(redirect + league removed). Exercised on a freshly created dev league 50
+(created + deleted via the UI); responsive check on league 49's confirm page
+(not submitted).
+
+## Summary — DEL-01
+| Area | Result |
+|---|---|
+| `/leagues/` per-row `Delete` links (`league-list-delete-link-<id>`) render for league-mode rows → `/leagues/<id>/delete/` | ✅ |
+| League dashboard `league-dashboard-delete-link` ("Delete League") present, href `/leagues/50/delete/` | ✅ |
+| GET confirm page renders heading + irreversible-action warning + summary table (Seasons/Matches/Tournaments/Teams/Players counts correct: new league = 1/0/0/5/135; played league 49 = 1/6/0/5/185) | ✅ |
+| Confirm page locked DOM ids all present (`league-delete-confirm` / `-summary` / `-form` / `-submit` / `-cancel`) | ✅ |
+| POST "Delete permanently" → 302 redirect to `/leagues/`; league 50 row gone (`/leagues/50/` link absent); success flash `…deleted.` rendered | ✅ |
+| Responsive — confirm page clean at 720×1115 and 1280×900; destructive red banner + red submit + gray Cancel | ✅ |
+| Console clean + network all 2xx (page doc + Bootstrap CDN) on every surface walked | ✅ |
+
+## Findings — DEL-01
+- **No bugs found.** The DEL-01 flow worked end-to-end on the first pass: both
+  entry points render gated on `league.mode == "league"`, the confirm summary
+  counts match the fixture, the POST teardown deletes the League + cascades and
+  redirects to the leagues list, and the deleted league no longer appears. Zero
+  console errors, zero non-2xx requests across `/leagues/`, `/leagues/create/`,
+  the dashboard, and the confirm page. (The full pytest suite separately covers
+  the cross-context safety guard, embedded-tournament teardown, and the
+  non-league-mode 400 gate, which the UI walk can't reach with only league-mode
+  leagues present.)
+
+---
+
 # Web testing — NAV-01 (`Play ▾` top-nav dropdown, single advancement surface)
 
 Date: 2026-06-26

@@ -245,7 +245,7 @@ contract
 and the **PLAY-01** subsection in
 [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
-### DEL-01 · Delete League button
+### DEL-01 · [DONE] Delete League button
 
 **Prio: Low.** No delete-League surface exists outside Django admin. Add a guarded
 **Delete League** action — `POST /leagues/<int:league_id>/delete/` with a confirm
@@ -254,6 +254,38 @@ step — relying on the existing FK `on_delete` rules to cascade out Seasons /
 state (`current_team`, `OwnerEvaluation`, `TeamSeasonFinance`) is `CASCADE`/`SET_NULL`
 per its model definitions. Mirror the existing league-screen view shell
 (405-guard / `get_object_or_404` / redirect to the leagues list).
+
+**[DONE] Shipped (2026-06-28).** Grilling the one-line cascade assumption surfaced
+three gaps and reframed DEL-01 as a **full teardown** of all data a career-mode
+(`League.mode == "league"`) League owns, identified by **PK/FK identity, never by
+name**, in one atomic block — see
+[ADR-0032](docs/adr/0032-delete-league-full-teardown.md). `Match.season` is
+**SET_NULL**, so the league's played Matches (regular-season + embedded-tournament
+bracket, the latter reached via `series_match__node__tournament`) are **explicitly
+deleted** rather than orphaned into the sandbox match list (`GameRound` →
+`GameEvent` / `PlayerRoundState` cascade clean). Season-embedded playoff
+**Tournaments** (collected via `SeasonPhase.tournament` before the cascade nulls
+the link) are torn down with their participants / nodes / series. The generated
+competitive **Teams + free-agent pool + their Players** — which have no League FK
+(`current_team` / `free_agent_pool` SET_NULL, `Season.teams` M2M; `Player.team`
+CASCADE) — are deleted under a **post-teardown zero-reference guard** keyed on
+PK/FK (`red_matches` / `blue_matches` / `enrolled_seasons` / `managed_in_leagues`
+/ `free_agent_pool_for`), leaving behind anything still referenced (safe over
+complete). Correctness rests on the one-context ownership invariant now in the
+CONTEXT.md **Team** / **Player** entries (a Team + its Players belong to exactly
+one context, never shared). Ships as a GET-confirm / POST-teardown view
+(`matches.league_views.league_delete` + the `_teardown_league` helper), gated by
+`_is_career_league` (`HttpResponseBadRequest` 400 on non-`league` mode), with both
+entry points (`league-dashboard-delete-link` + per-row
+`league-list-delete-link-{id}`, gated `league.mode == "league"`), a confirm
+template (`templates/leagues/league_confirm_delete.html`), URL name `league_delete`,
+redirect to `league_list`, and `matches/tests/test_league_delete.py`. **No model
+change, no migration, no simulator / RNG touch, no Score Calibration re-baseline.**
+See [ADR-0032](docs/adr/0032-delete-league-full-teardown.md), the CONTEXT.md
+**Team** / **Player** one-context ownership invariant, the seam contract
+[`.claude/worktrees/del-01-seam-contract.md`](.claude/worktrees/del-01-seam-contract.md),
+and the **DEL-01 delete league** subsection in
+[`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
 ---
 

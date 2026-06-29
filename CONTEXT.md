@@ -34,10 +34,11 @@ The six **Players** fielded by a **Team** for a match — one of each role plus 
 ### Teams and players
 
 **Team**:
-A named group of exactly six **Players**, one per **Role** plus one duplicate role.
+A named group of exactly six **Players**, one per **Role** plus one duplicate role. A Team (and its Players) belongs to exactly **one** context — the sandbox, or a single **League** — and is never shared across them; this ownership is a convention, **not** schema-enforced (there is no Team→League FK; `Season.teams` is M2M and sandbox tournaments can "select existing" Teams), so any operation that identifies a Team's owner must do so by **PK/FK identity, never by name** (Team and Player names may legitimately overlap across contexts).
+_Avoid_: assuming a generated League Team is shareable with another League or the sandbox; matching Teams/Players by name when resolving ownership (e.g. for **Delete League**) — names collide, only PKs/FKs are reliable.
 
 **Player**:
-A team member assigned a **Role**, carrying 19 numeric **Stats** that the simulator uses as behavioural weights.
+A team member assigned a **Role**, carrying 19 numeric **Stats** that the simulator uses as behavioural weights. Owned by exactly one **Team** (single-CASCADE `Player.team`), and therefore by that Team's one context — never shared across leagues or with the sandbox (see **Team**).
 
 **Role**:
 One of the five SM5 positions — **Commander**, **Heavy**, **Scout**, **Medic**, **Ammo** — determining a player's resources, mechanics, and simulated behaviour. Only **Scout** may appear twice in a roster.
