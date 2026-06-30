@@ -1505,3 +1505,77 @@ class TestPlaySeasonTaskRotateByMatchday(TestCase):
                 "pass arena_map=None",
             )
             self.assertIn(arena_map.id, rotation_ids)
+
+
+# ---------------------------------------------------------------------------
+# CONF-01 — play_season_task stamps Match.conference from conference_by_team_id
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/conf-01-seam-contract.md`` (play loop):
+# ``play_season_task`` builds ``conf_by_team = season.conference_by_team_id()``
+# once and passes ``conference=conf_by_team.get(fixture.team_a_id)`` into
+# ``simulate_scheduled_round`` for every created Match (intra-Conference, so
+# ``team_a_id`` and ``team_b_id`` share a Conference). A zero-Conference Season
+# yields an empty map ⇒ ``conference=None`` ⇒ byte-identical (null) stamping.
+# Run under the existing ``CELERY_TASK_ALWAYS_EAGER`` conftest. Appended as a
+# NEW class; the ``Conference`` import is lazy so the file still COLLECTS.
+
+
+def _active_conf_season_lg07(prefix: str, sizes: list[int]):
+    """An active Season with ``len(sizes)`` snapshotted Conferences (created
+    BEFORE ``start_season``). Conference ``i+1`` enrolls ``sizes[i]`` Teams.
+    Returns ``(season, [conference, ...])``.
+    """
+    from matches.models import Conference
+
+    league = League.objects.create(name=f"L{prefix}")
+    season = Season.objects.create(league=league, name="S1", start_date=date.today())
+    confs = []
+    for ci, size in enumerate(sizes, start=1):
+        conf = Conference.objects.create(
+            season=season, name=f"{prefix} Conf {ci}", ordinal=ci
+        )
+        for ti in range(size):
+            team, _ = make_team_with_slots(f"{prefix}{ci}x{ti}")
+            season.teams.add(team)
+            conf.teams.add(team)
+        confs.append(conf)
+    season.start_season()
+    season.refresh_from_db()
+    return season, confs
+
+
+class TestConf01PlaySeasonTaskStampsConference(TestCase):
+    """CONF-01 — every Match created by ``play_season_task`` carries the
+    Conference of its (intra-Conference) pairing; a zero-Conference Season
+    leaves ``Match.conference`` null."""
+
+    def test_each_match_stamped_with_its_conference(self) -> None:
+        from matches.tasks import play_season_task
+
+        # Two Conferences, 2 Teams each ⇒ 2 intra-Conference RRs ⇒ 4 fixtures.
+        season, _confs = _active_conf_season_lg07("Conf07A", [2, 2])
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(season.id, max_matchdays=None)
+
+        conf_by_team = season.conference_by_team_id()
+        matches = list(Match.objects.filter(season=season))
+        self.assertGreater(len(matches), 0)
+        for match in matches:
+            expected = conf_by_team.get(match.team_red_id)
+            self.assertIsNotNone(
+                expected,
+                f"team_red {match.team_red_id!r} not in any Conference map",
+            )
+            self.assertEqual(match.conference_id, expected.id)
+            # Intra-Conference: the two sides share the Conference.
+            self.assertEqual(conf_by_team.get(match.team_blue_id).id, expected.id)
+
+    def test_zero_conference_season_leaves_match_conference_null(self) -> None:
+        from matches.tasks import play_season_task
+
+        season, _teams = _active_season("Conf07Zero", n_teams=2)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(season.id, max_matchdays=None)
+        for match in Match.objects.filter(season=season):
+            self.assertIsNone(match.conference_id)
