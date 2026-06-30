@@ -6669,6 +6669,75 @@ discriminator change.
   (CONF-03) + the Worlds Tournament (CONF-04), the create-League Conference composer (CONF-05),
   per-Conference rotating map pools (CONF-06).
 
+## CONF-05 manage conferences
+
+The in-app **draft-Season Conference composer** (the user-facing surface CONF-01 deferred,
+"Option B") — a dedicated page to partition a draft Season's enrolled Teams into Conferences
+before Start Season, replacing the original "create-League composer" framing. **No model
+change, no migration, no simulator touch, no Score Calibration re-baseline** — a pure view +
+template on top of the CONF-01 `Conference` model.
+
+**View `matches.league_views.manage_conferences(request, season_id) -> HttpResponse`** —
+GET+POST (else **405** via `HttpResponseNotAllowed(["GET", "POST"])`), `get_object_or_404(Season)`,
+writes `request.session["last_league_id"]`. **GET** renders the editable composer while
+`season.state == "draft"`, or a **read-only frozen partition** once active/completed (membership
+is snapshotted at Start Season, so the partition is locked). **POST** is **draft-only** — a
+non-draft POST returns **400** (`HttpResponseBadRequest`). On a draft POST it parses
+`conference_name` (a `getlist` of names, DOM order) + a per-team `team_<id>_conference` (the
+0-based index into the names, `""` = unassigned), validates via the pure helper, and on success
+**replaces** the Season's Conferences inside `@transaction.atomic` (delete all + recreate with
+ordinals `1..N` + `conf.teams.set(...)`), then redirects to `manage_conferences`. An **empty
+submission clears** all Conferences (flat Season). On validation failure it re-renders (200)
+with the submitted values + `errors` and **writes nothing**.
+
+**Pure validator `matches.league_views._validate_conference_partition(names, team_to_conf_idx,
+enrolled_team_ids) -> tuple[list[str], list[tuple[str, list[int]]] | None]`** — the locked
+partition rules: an empty `names` list is the valid **zero-Conference** (flat) case ⇒
+`([], [])`; otherwise every name must be non-empty, every enrolled Team must map to a valid
+Conference index (**full partition**), and each Conference must have **≥2 Teams**. Returns
+`(errors, None)` on failure or `([], [(name, sorted_team_ids), ...])` on success. Locked error
+strings: `"Conference names cannot be empty."` / `"Every team must be assigned to a
+conference."` / `"Each conference needs at least 2 teams."`. A shared
+`_manage_conferences_context(...)` builds the template context (GET + error re-render),
+pre-filling from the existing partition or the submitted values.
+
+**URL** `manage_conferences`, path `/seasons/<int:season_id>/conferences/`
+(`matches/season_urls.py`, inserted before `standings/`). **Template**
+`templates/seasons/manage_conferences.html` (extends `base.html` + the league sidebar) — a
+single-page **vanilla-JS composer** (the LG-02b precedent, no JS framework): a `+ Add
+conference` control plus a `<select>` per enrolled-Team row, with small JS that rebuilds the
+selects from the current Conference name inputs (preserving each choice by index, remapping on
+remove) so add / rename / remove stay in sync; one Save. DOM ids `manage-conferences-form` /
+`-add` / `-name-{i}` / `-team-{team_id}` / `-submit` / `-errors` / `-readonly` (the active-Season
+read-only block) / `-empty` (no enrolled Teams). **Entry point**: a draft-only
+`season-dashboard-manage-conferences-link` on `templates/seasons/dashboard.html`, gated
+`{% if season_mode == "draft" %}` (no `_build_dashboard_context` change — uses the existing
+`season_mode` + `season.id`) **and** the same draft-only link on the **league** dashboard
+(`templates/leagues/dashboard.html`, `league-dashboard-manage-conferences-link`, gated
+`season_mode == "draft" and displayed_season`), so it is discoverable from where the create
+flow lands.
+
+**Create-flow integration.** `CreateLeagueForm` gains a **`number_of_conferences`** dropdown
+(`None (single league)` / `2` / `3` / `4`, `TypedChoiceField → int`, default `0`, DOM id
+`league-create-number-of-conferences`); the form's `clean()` rejects too-few teams
+(`num_teams >= 2 * N`, error attached to `number_of_conferences`: `"{n} conferences need at
+least {2n} teams."`). When `N > 0`, `league_create` (after the existing create + baseline
+writes, inside its `@transaction.atomic`) **pre-creates `N` Conferences** named `"Conference
+1".."Conference N"` with the generated Teams **auto-split evenly** (round-robin
+`ordered_teams[i::N]`, so each gets `>= 2`) and **redirects to `manage_conferences`** instead
+of `season_standings` — so picking conferences on the create form drops the user straight into
+the composer (pre-filled, renamable/reassignable) before the dashboard. `N == 0` keeps the
+unchanged redirect to `season_standings`. The create form field rides
+`templates/leagues/create.html` (between `num_teams` and `schedule_format`).
+
+**Tests** `matches/tests/test_manage_conferences.py`: the pure validator (zero-Conference,
+full-partition happy path, single-Conference, unassigned / `<2`-per-Conference / empty-name /
+out-of-range rejections), the view (GET draft composer + DOM ids, GET active read-only, 404 /
+405, `last_league_id` write, POST create / replace / clear, validation-error re-render with no
+DB write, non-draft POST 400), and the draft-only dashboard-link gate. Schema-level assertions
+only. See [ADR-0034](../../docs/adr/0034-conference-partition.md) and the CONTEXT.md
+**Conference** term; PLAN.md **CONF-05**.
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)

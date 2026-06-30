@@ -475,9 +475,40 @@ shipped) and is most useful alongside **CAR-03** manager-mode career play.
   engine over the CONF-03 participant list, **crowning the Season champion** (resolving the
   CONF-01 NULL-champion-until-Worlds rule for multi-Conference Seasons).
 
-- **CONF-05 · [NOT STARTED] Create-League Conference composer UI.** The create-League
-  authoring surface for partitioning a Season's Teams into Conferences (CONF-01 ships
-  admin-only via `ConferenceAdmin`; this mirrors the Part2a → Part2b composer precedent).
+- **CONF-05 · [DONE] Shipped (2026-06-30) — draft-Season Manage Conferences page.**
+  An in-app authoring surface (not Django admin) for partitioning a draft Season's enrolled
+  Teams into Conferences before Start Season — replacing the original "create-League composer"
+  framing with a dedicated draft-Season page (the maintainer's Option B). A single-page
+  vanilla-JS composer (the LG-02b precedent) names Conferences and assigns each enrolled Team
+  via a per-team `<select>` kept in sync by small JS; one Save replaces the Season's Conference
+  rows atomically. The locked partition rule: Conferences are OPTIONAL (zero ⇒ flat Season),
+  and when present must form a **full disjoint partition** (every enrolled Team in exactly one
+  Conference) with **≥2 Teams per Conference**. Validated by the pure
+  `matches.league_views._validate_conference_partition(names, team_to_conf_idx,
+  enrolled_team_ids) -> (errors, normalized)` (error strings `"Conference names cannot be
+  empty."` / `"Every team must be assigned to a conference."` / `"Each conference needs at
+  least 2 teams."`). View `manage_conferences(request, season_id)` (GET+POST, else 405; 404 on
+  missing Season; writes `last_league_id`) renders the editable composer while `draft` and a
+  **read-only frozen partition** once active/completed (membership is snapshotted at Start
+  Season — a non-draft POST is **400**); an empty submission clears all Conferences. URL name
+  `manage_conferences`, path `/seasons/<int:season_id>/conferences/` (`matches/season_urls.py`,
+  before `standings/`). Template `templates/seasons/manage_conferences.html` (DOM ids
+  `manage-conferences-form` / `-add` / `-name-{i}` / `-team-{team_id}` / `-submit` / `-errors`
+  / `-readonly` / `-empty`); draft-only entry links `season-dashboard-manage-conferences-link`
+  + `league-dashboard-manage-conferences-link` on the season + league dashboards (gated
+  `season_mode == "draft"`). **Create-flow integration:** `CreateLeagueForm` gains a
+  `number_of_conferences` dropdown (`None`/`2`/`3`/`4`, DOM id
+  `league-create-number-of-conferences`) with a `num_teams >= 2 * N` guard; when `N > 0`,
+  `league_create` pre-creates `N` Conferences with the generated Teams auto-split evenly
+  (round-robin) and **redirects straight to `manage_conferences`** instead of `season_standings`,
+  so conference setup happens before the dashboard. **No model change,
+  no migration, no simulator touch, no Score Calibration re-baseline** — pure view + template
+  on top of the CONF-01 Conference model. Tests: `matches/tests/test_manage_conferences.py`
+  (pure validator + view GET/POST/405/404/read-only + the dashboard-link gate) +
+  `test_league_create.py` (the `number_of_conferences` form rule + create→pre-split→redirect).
+  See the
+  **CONF-05 manage conferences** subsection in
+  [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
 - **CONF-06 · [NOT STARTED] Per-Conference rotating map pools.** The original PLAN map
   lens: each Conference carries its own ordered `ArenaMap` pool, and a Round's map resolves

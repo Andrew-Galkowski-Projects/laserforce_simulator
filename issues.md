@@ -1,3 +1,35 @@
+# Web testing — CONF-05 (Manage Conferences page)
+
+Date: 2026-06-30
+Branch: `conf-05-manage-conferences`
+Scope: the new draft-Season **Manage Conferences** composer (`manage_conferences`
+view + `templates/seasons/manage_conferences.html`) and its draft-only dashboard
+entry link — the one surface carrying vanilla JS the unit tests don't exercise.
+
+## Summary — CONF-05
+| Area | Result |
+|---|---|
+| Create-League → draft Season (63) → dashboard shows `season-dashboard-manage-conferences-link` (draft-only) | ✅ |
+| `/seasons/63/conferences/` composer renders — 8 enrolled teams, per-team `<select>`, "+ Add conference", Save | ✅ |
+| JS: "+ Add conference" + naming ("West"/"East") rebuilds every team `<select>` with options `0:West` / `1:East` | ✅ |
+| Assign 4 West / 4 East → Save → 302 back to the composer; partition persisted | ✅ |
+| Reloaded composer pre-fills the saved partition (West/East, 4+4) from the DB | ✅ |
+| Create-League form shows the **Conferences** dropdown (None / 2 / 3 / 4) | ✅ |
+| Create with 8 teams + "2 conferences" → **auto-redirects to `/seasons/66/conferences/`** (composer, not standings) | ✅ |
+| Pre-split: "Conference 1" / "Conference 2", teams auto-split evenly 4 / 4 | ✅ |
+| **League** dashboard (`/leagues/56/`) shows `league-dashboard-manage-conferences-link` → the composer | ✅ |
+| Console clean (no messages) across the whole flow | ✅ |
+
+## Findings — CONF-05
+- **No bugs found.** The full in-app flow works end-to-end: dashboard link →
+  composer → vanilla-JS conference add/name/assign (selects stay in sync) → Save →
+  atomic partition persist → reload pre-fills. Zero console errors. (A demo draft
+  league "ChromeTest Conferences" / season 63 with West/East conferences was left
+  in the dev SQLite DB — ready to Start Season + play to see per-conference
+  standings; delete it via Delete League when done.)
+
+---
+
 # Web testing — CONF-01 (Conference foundation)
 
 Date: 2026-06-29
