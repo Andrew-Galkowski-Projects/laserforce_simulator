@@ -6485,6 +6485,190 @@ GEN-01 generates a round at one of three cumulative **Persistence fidelity** tie
 
 **Locked names.** `FIDELITY_CHOICES` / `FIDELITY_RANK` (`matches/models.py`); `GameRound.fidelity` / `roster_snapshot_json`; migration `0055_gameround_fidelity_roster_snapshot.py`; `persistence.build_roster_snapshot` / `_players_by_id` / `_write_player_states` / `_write_combat_events` / `_write_highlights` / `_write_movement_events` / `_write_cell_occupancy`; `BatchSimulator.ensure_fidelity`. The load-bearing invariant (pinned by an explicit equivalence test) is that a round simulated DIRECTLY at `full` and a round simulated at `scores` then `ensure_fidelity(…, "full")` produce byte-identical combat / movement / occupancy / highlight rows for the same seed + snapshot + map.
 
+## CONF-01 conference foundation
+
+The first slice of the **Conference** epic (the re-sliced SUB-01 piece 3, reframed
+from "Sub-league + map pools" to the ZenGM-**worlds** game type). A **Conference** is a
+named, Season-level partition of a Season's enrolled Teams into a **disjoint** competitive
+group; a Season has **zero** Conferences (the default — one implicit all-Teams group,
+**byte-identical to a flat single-table Season**) or **two or more**, each a disjoint subset.
+CONF-01 ships **only the foundation**: the `Conference` partition model, intra-Conference
+round-robin scheduling (one RR *per* Conference, played in **parallel** on the shared
+**Matchday** calendar), and per-Conference Standings. Conferences are **admin-created** this
+slice (the `ConferenceAdmin` mirrors the Part2a `SeasonPhase`-foundation precedent — the
+create-League composer is deferred to CONF-05). The load-bearing insight: because
+Conferences play **intra-Conference only**, every regular-season fixture is *always* within
+exactly one Conference, so the cross-pool map-resolution ambiguity that worried the original
+PLAN never arises and the Django-free `ScheduleFixture` dataclass stays **unchanged**.
+**No simulation mechanic changes — no Score Calibration re-baseline** (the only shifts are
+which `Match` a Round attaches to + a new discriminator FK; tournament/playoff paths
+untouched). See [ADR-0034](../../docs/adr/0034-conference-partition.md), the CONTEXT.md
+**Conference** glossary term (already written, retiring the reserved "Sub-league"), and the
+seam contract
+[`.claude/worktrees/conf-01-seam-contract.md`](../../.claude/worktrees/conf-01-seam-contract.md).
+
+**NEW `Conference` model (`matches/models.py`, declared after `Season`, before
+`SeasonPhase`).** Fields: `season` FK CASCADE `related_name="conferences"`; `name`
+(`CharField(max_length=100)`); `ordinal` (`PositiveSmallIntegerField`, 1-based display
+order); `teams` M2M to `teams.Team` `related_name="conferences"` (the disjoint subset); and
+`starting_team_ids_json` (`JSONField(null=True, blank=True, default=None)`) — the
+**activation snapshot** of this Conference's team ids (sorted asc), mirroring
+`Season.starting_team_ids_json`, `None` pre-activation and written by `start_season()`.
+`Meta.ordering = ["ordinal"]` (so `conferences.all()` is always ordinal order) plus the
+`UniqueConstraint(fields=["season", "ordinal"], name="uniq_season_conference_ordinal")`.
+`__str__` returns `f"{self.season} — {self.name}"` (em-dash U+2014).
+
+**CHANGED `Match` — discriminator FK (`matches/models.py`, after `Match.leg`).** A new
+`conference = models.ForeignKey("matches.Conference", null=True, blank=True,
+on_delete=models.SET_NULL, related_name="matches")`, the same nullable-discriminator pattern
+as `Match.season_phase` (Part2c-2) / `Match.leg` (Part2c-3a) — chosen over join-derived
+"both teams in this Conference" scoping (per-Conference Standings read
+`Match.objects.filter(conference=conf)`, and the FK future-proofs the deferred regional
+playoffs). Stamped on the **Round-1 `Match` create**, left **out of the find-or-create key**
+(a pairing is already unique within a phase — the two teams share one Conference and meet
+only there), so the key `(season, season_phase, frozenset(teams), leg)` is **unchanged**.
+
+**NEW `Season` helpers (`matches/models.py`).** `ordered_conferences(self) ->
+list[Conference]` returns `list(self.conferences.all())` (Meta.ordering guarantees ordinal
+order; `[]` when none). `_scheduled_conference_partitions(self) -> list[tuple[Conference |
+None, list[int]]]` is the per-Conference team-id partition feeding scheduling: **zero
+Conferences** ⇒ `[(None, self._scheduled_team_ids())]` (one implicit all-Teams partition —
+byte-identical to today); **>= 1 Conference** ⇒ one `(conf, ids)` per `ordered_conferences()`
+where `ids` is the **draft** Season → `sorted(conf.teams)` intersected with
+`_scheduled_team_ids()`, **active/completed** → `list(conf.starting_team_ids_json or [])`
+(mirrors `_scheduled_team_ids`'s draft-vs-snapshot rule, per-Conference).
+`conference_by_team_id(self) -> dict[int, Conference]` maps every team in every Conference to
+its Conference (draft live M2M / active snapshot, matching the partition rule; empty dict for
+a zero-Conference Season) — the play loop uses it to stamp `Match.conference`.
+
+**CHANGED `Season.scheduled_fixtures_by_phase()` — parallel overlay (return shape
+UNCHANGED).** Still returns `list[tuple[SeasonPhase, list[ScheduleFixture]]]`; internally, per
+`round_robin` phase it generates **one round-robin per partition** from
+`_scheduled_conference_partitions()` and overlays them on the shared matchday calendar. For
+each `(conf, conf_ids)` with `len >= 2`: `base = generate_schedule(conf_ids,
+phase.schedule_format or self.schedule_format)`, emit one offset `ScheduleFixture` per `f`
+(`matchday = f.matchday + offset`, round_number / team ids / leg unchanged); the phase's
+fixtures are the **concatenation** of all partitions' offset fixtures. The phase **span**
+added to the next phase's `offset` is the **max** over partitions of `max(f.matchday for f in
+base)` — the *parallel-overlay* rule (California Matchday 1 and Nevada Matchday 1 are the
+same calendar week; phase span = the largest Conference's span). A `< 2`-team partition
+contributes nothing and does not raise; an all-empty phase is skipped (existing behaviour).
+**`scheduled_fixtures()` / `_fixtures_for_phase()` / `_rr_phase_complete()` / `_is_finished()`
+are UNCHANGED** — they consume the per-phase union, so an RR phase completes only when
+**every** Conference's round-robin is played. Zero-Conference Season ⇒ one `(None, all ids)`
+partition ⇒ byte-identical output.
+
+**CHANGED `Season.start_season()` — Conference snapshot.** After the existing
+`starting_team_ids_json` / `starting_map_*` snapshots and inside the same
+`@transaction.atomic`, snapshot each Conference: `for conf in self.conferences.all():
+conf.starting_team_ids_json = sorted(t.id for t in conf.teams.all());
+conf.save(update_fields=["starting_team_ids_json"])` — so mid-cycle admin edits to a
+Conference's membership cannot drift the active schedule (the activation-snapshot pattern,
+per-Conference).
+
+**CHANGED `Season._stamp_champion_for_final_phase()` — multi-Conference NULL champion.** In
+the round-robin / implicit-fallback branch (the `else` after the `tournament` branch), if
+`self.conferences.count() >= 2` the Season **completes but leaves `champion_team` NULL** —
+there is no legitimate cross-Conference champion until the deferred Worlds slices (disjoint
+schedules make a cross-Conference record comparison meaningless; deciding it on the field is
+the whole point of Worlds). Concretely: a `>= 2`-Conference RR-final Season still flips
+`state="completed"` + saves, only the champion stamp is skipped; a **0/1-Conference** Season
+is unchanged (`champion_team = compute_standings(...)[0]`). The `tournament` branch is
+untouched. (Verify the state flip is not lost against `complete_if_finished`'s flow — the
+cursor / dashboard must read "completed".)
+
+**CHANGED `BatchSimulator.simulate_scheduled_round` (`matches/simulation/entrypoints.py`) —
+keyword-only `conference`.** A new `conference=None` keyword-only param **after `leg`, before
+`fidelity`**; default `None` ⇒ byte-identical to every existing caller. The find-or-create
+**key is UNCHANGED**; on the **Round-1 `Match.objects.create(...)` site only** it passes
+`conference=conference` (Round 2 finds the existing Match and does NOT re-stamp). A
+`conference` with `pk is None` coerces to `None` like the `season_phase` guard.
+
+**Play-loop stamp — three sites.** Each builds `conf_by_team =
+season.conference_by_team_id()` once (outside the per-fixture loop) and passes
+`conference=conf_by_team.get(fixture.team_a_id)` (== `team_b_id`'s Conference, since fixtures
+are intra-Conference) into `simulate_scheduled_round`: `matches/tasks.py::play_season_task`
+(the per-fixture loop, also carrying `play_two_months` / `play_until_end` which enqueue this
+task), `matches/league_views.py::play_week`, and `matches/league_views.py::play_week_live`
+(the **RR branch** call only — the playoff branch uses `play_specific_node`, untouched).
+Zero-Conference Season ⇒ `conf_by_team` empty ⇒ `conference=None` ⇒ byte-identical.
+
+**Per-Conference Standings (`matches/league_views.py::season_standings` +
+`templates/seasons/standings.html`).** The view renders **one independently ranked table per
+Conference**: for `>= 1` Conference, per Conference it scopes `completed_matches` to
+`Match.objects.filter(conference=conf, is_completed=True)` (keeping the existing member-night
+`.exclude`), takes `enrolled_teams` from that Conference's `starting_team_ids_json`
+(active/completed) or live M2M (draft preview), then `compute_standings(...)`; the context is
+a `standings_groups` list of `{"conference": Conference | None, "name": str | None,
+"rows_with_teams": [...]}` the template iterates (top-level `season` / `is_draft_preview` keys
+stay). The template renders one table per group with a name header. **Zero-Conference rule
+(LOCKED):** a Season with no Conference rows renders **exactly one table** with the existing
+id `season-standings-table` and **no** `season-standings-conference-*` ids — byte-identical to
+today (the `season-standings-empty` / `season-draft-preview-banner` / `season-state-badge`
+ids are also preserved). Only when Conferences exist do the **new** per-Conference ids appear:
+`season-standings-conference-{conference_id}` (wrapper around that Conference's table) and
+`season-standings-conference-name-{conference_id}` (its name header).
+
+**CHANGED `matches/league_views.py::_build_dashboard_context` — manager-Conference snippet.**
+The dashboard's top-3 standings snippet: when the displayed Season has `>= 2` Conferences,
+scope `compute_standings` to the **manager's** Conference — the Conference containing
+`displayed_season.league.current_team` (resolve via the team's membership; fall back to the
+first Conference, else empty). Otherwise (0/1 Conference) unchanged (overall top-3). Only the
+snippet's match corpus + enrolled-teams set change.
+
+**Admin (`matches/admin.py`).** `@admin.register(Conference)` →
+`ConferenceAdmin(filter_horizontal=("teams",), list_display=("season", "ordinal", "name"))`;
+no existing registration touched. This is the **sole** create surface this slice (composer
+deferred to CONF-05).
+
+**Migration `0057_conference_match_conference.py`** (dep `0056_season_play_job_cancel` + the
+latest `teams` migration, which `makemigrations` resolves for the M2M / FK cross-app dep):
+`CreateModel(Conference)` (with the M2M, `starting_team_ids_json`, `Meta.ordering` +
+`uniq_season_conference_ordinal`) → `AddField(Match.conference)`. **No `RunPython`, no
+`RunSQL`, no backfill** ([ADR-0004](../../docs/adr/0004-simulation-data-is-disposable.md) —
+existing Seasons have zero Conferences and stay byte-identical).
+
+**Invariants (the two load-bearing guarantees).** (1) **Byte-identical-when-zero-Conference**
+— every changed path falls back to the single `(None, all ids)` partition / `conference=None`
+/ single `season-standings-table` / unchanged champion, so a Season with no Conference rows is
+indistinguishable from today. (2) **No Score Calibration re-baseline** — CONF-01 changes no
+simulation mechanic and consumes no new RNG; only the `Match` a Round attaches to + a new
+discriminator change.
+
+**Locked names (quick index).**
+- **Model** `matches.models.Conference` — `season` FK CASCADE `related_name="conferences"`,
+  `name`, `ordinal` (`PositiveSmallIntegerField`), `teams` M2M `related_name="conferences"`,
+  `starting_team_ids_json` (`JSONField`); constraint `uniq_season_conference_ordinal`;
+  `Meta.ordering = ["ordinal"]`; `__str__ = "{season} — {name}"`.
+- **Match** `Match.conference` FK (`SET_NULL`, null/blank, `related_name="matches"`, after
+  `Match.leg`; stamped on Round-1 create, out of the find-or-create key).
+- **`Season`** NEW `ordered_conferences()` / `_scheduled_conference_partitions()` /
+  `conference_by_team_id()`; CHANGED `scheduled_fixtures_by_phase()` (parallel overlay, return
+  shape unchanged) / `start_season()` (per-Conference snapshot) /
+  `_stamp_champion_for_final_phase()` (NULL champion but `state="completed"` for `>= 2`
+  Conferences). UNCHANGED: `scheduled_fixtures` / `_fixtures_for_phase` / `_rr_phase_complete`
+  / `_is_finished`.
+- **Simulator** `BatchSimulator.simulate_scheduled_round(..., *, conference=None, ...)`
+  (keyword-only, after `leg`, before `fidelity`; key unchanged).
+- **Play sites** `tasks.play_season_task` / `league_views.play_week` /
+  `league_views.play_week_live` (RR branch) — `conf_by_team = conference_by_team_id()` +
+  `conference=conf_by_team.get(fixture.team_a_id)`.
+- **Views / template** `league_views.season_standings` (per-Conference `standings_groups`
+  groups) + `_build_dashboard_context` (manager-Conference snippet for `>= 2`);
+  `templates/seasons/standings.html` (DOM ids `season-standings-table` /
+  `season-standings-empty` preserved for zero-Conference; new
+  `season-standings-conference-{id}` / `season-standings-conference-name-{id}`).
+- **Admin** `matches.admin.ConferenceAdmin` (`filter_horizontal=("teams",)`,
+  `list_display=("season", "ordinal", "name")`).
+- **Migration** `matches/migrations/0057_conference_match_conference.py` (dep `0056`,
+  CreateModel → AddField, no `RunPython` / backfill).
+- **ADR / CONTEXT** — [ADR-0034](../../docs/adr/0034-conference-partition.md) + the CONTEXT.md
+  **Conference** term (already written, retiring "Sub-league"). Invariants:
+  byte-identical-when-zero-Conference; **no Score Calibration re-baseline**. **DEFERRED to
+  later CONF slices:** per-Conference regional playoffs (CONF-02), Worlds qualification
+  (CONF-03) + the Worlds Tournament (CONF-04), the create-League Conference composer (CONF-05),
+  per-Conference rotating map pools (CONF-06).
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)
