@@ -2,6 +2,7 @@ from django.contrib import admin
 
 from .models import (
     BracketNode,
+    Conference,
     League,
     Season,
     SeasonPhase,
@@ -54,6 +55,15 @@ class SeasonPhaseAdmin(admin.ModelAdmin):
         "lb_advancers",
         "swiss_rounds",
     )
+
+
+# CONF-01 — Conference admin.
+
+
+@admin.register(Conference)
+class ConferenceAdmin(admin.ModelAdmin):
+    filter_horizontal = ("teams",)
+    list_display = ("season", "ordinal", "name")
 
 
 # LG-02a — Tournament admin.

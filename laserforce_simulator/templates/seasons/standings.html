@@ -32,56 +32,65 @@
             No teams enrolled in this Season yet.
         </div>
     {% else %}
-        <div class="table-responsive">
-            <table id="season-standings-table" class="table table-striped table-hover">
-                <thead>
-                    <tr>
-                        {% for key, label in sort_keys %}
-                            <th id="season-standings-th-{{ key }}">
-                                {% if key == sort %}
-                                    {% if dir == "asc" %}
-                                        <a href="?{{ querystring_without_sort_dir }}{% if querystring_without_sort_dir %}&{% endif %}sort={{ key }}&dir=desc">{{ label }} ↑</a>
-                                    {% else %}
-                                        <a href="?{{ querystring_without_sort_dir }}{% if querystring_without_sort_dir %}&{% endif %}sort={{ key }}&dir=asc">{{ label }} ↓</a>
-                                    {% endif %}
-                                {% else %}
-                                    <a href="?{{ querystring_without_sort_dir }}{% if querystring_without_sort_dir %}&{% endif %}sort={{ key }}&dir=asc">{{ label }}</a>
-                                {% endif %}
-                            </th>
-                        {% endfor %}
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for row, team in rows_with_teams %}
+        {% for group in standings_groups %}
+            {% if group.conference %}
+                <div id="season-standings-conference-{{ group.conference.id }}" class="mb-4">
+                    <h2 id="season-standings-conference-name-{{ group.conference.id }}" class="h5 mb-2">{{ group.name }}</h2>
+            {% endif %}
+            <div class="table-responsive">
+                <table {% if not group.conference %}id="season-standings-table" {% endif %}class="table table-striped table-hover">
+                    <thead>
                         <tr>
-                            <td>{{ row.rank }}</td>
-                            <td>
-                                {% if team %}
-                                    <a href="{% url 'team_detail' team.id %}">{{ team.name }}</a>
-                                {% else %}
-                                    <span class="text-muted">(unknown)</span>
-                                {% endif %}
-                            </td>
-                            <td class="text-end">{{ row.matches_played }}</td>
-                            <td class="text-end">{{ row.wins }}</td>
-                            <td class="text-end">{{ row.losses }}</td>
-                            <td class="text-end">{{ row.ties }}</td>
-                            <td class="text-end">{{ row.league_points }}</td>
-                            <td class="text-end">{{ row.round_wins }}</td>
-                            <td class="text-end">{{ row.total_score }}</td>
-                            <td class="text-end">{% if row.match_streak.0 %}{{ row.match_streak.0 }}{{ row.match_streak.1 }}{% else %}—{% endif %}</td>
-                            <td class="text-end">{{ row.match_l5.0 }}-{{ row.match_l5.1 }}-{{ row.match_l5.2 }}</td>
-                            <td class="text-end">{% if row.round_streak.0 %}{{ row.round_streak.0 }}{{ row.round_streak.1 }}{% else %}—{% endif %}</td>
-                            <td class="text-end">{{ row.round_l5.0 }}-{{ row.round_l5.1 }}-{{ row.round_l5.2 }}</td>
-                            <td class="text-end">{{ row.red_wlt.0 }}-{{ row.red_wlt.1 }}-{{ row.red_wlt.2 }}</td>
-                            <td class="text-end">{{ row.blue_wlt.0 }}-{{ row.blue_wlt.1 }}-{{ row.blue_wlt.2 }}</td>
-                            <td class="text-end">{{ row.red_points_for }}</td>
-                            <td class="text-end">{{ row.blue_points_for }}</td>
+                            {% for key, label in sort_keys %}
+                                <th id="season-standings-th-{{ key }}">
+                                    {% if key == sort %}
+                                        {% if dir == "asc" %}
+                                            <a href="?{{ querystring_without_sort_dir }}{% if querystring_without_sort_dir %}&{% endif %}sort={{ key }}&dir=desc">{{ label }} ↑</a>
+                                        {% else %}
+                                            <a href="?{{ querystring_without_sort_dir }}{% if querystring_without_sort_dir %}&{% endif %}sort={{ key }}&dir=asc">{{ label }} ↓</a>
+                                        {% endif %}
+                                    {% else %}
+                                        <a href="?{{ querystring_without_sort_dir }}{% if querystring_without_sort_dir %}&{% endif %}sort={{ key }}&dir=asc">{{ label }}</a>
+                                    {% endif %}
+                                </th>
+                            {% endfor %}
                         </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+                    </thead>
+                    <tbody>
+                        {% for row, team in group.rows_with_teams %}
+                            <tr>
+                                <td>{{ row.rank }}</td>
+                                <td>
+                                    {% if team %}
+                                        <a href="{% url 'team_detail' team.id %}">{{ team.name }}</a>
+                                    {% else %}
+                                        <span class="text-muted">(unknown)</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">{{ row.matches_played }}</td>
+                                <td class="text-end">{{ row.wins }}</td>
+                                <td class="text-end">{{ row.losses }}</td>
+                                <td class="text-end">{{ row.ties }}</td>
+                                <td class="text-end">{{ row.league_points }}</td>
+                                <td class="text-end">{{ row.round_wins }}</td>
+                                <td class="text-end">{{ row.total_score }}</td>
+                                <td class="text-end">{% if row.match_streak.0 %}{{ row.match_streak.0 }}{{ row.match_streak.1 }}{% else %}—{% endif %}</td>
+                                <td class="text-end">{{ row.match_l5.0 }}-{{ row.match_l5.1 }}-{{ row.match_l5.2 }}</td>
+                                <td class="text-end">{% if row.round_streak.0 %}{{ row.round_streak.0 }}{{ row.round_streak.1 }}{% else %}—{% endif %}</td>
+                                <td class="text-end">{{ row.round_l5.0 }}-{{ row.round_l5.1 }}-{{ row.round_l5.2 }}</td>
+                                <td class="text-end">{{ row.red_wlt.0 }}-{{ row.red_wlt.1 }}-{{ row.red_wlt.2 }}</td>
+                                <td class="text-end">{{ row.blue_wlt.0 }}-{{ row.blue_wlt.1 }}-{{ row.blue_wlt.2 }}</td>
+                                <td class="text-end">{{ row.red_points_for }}</td>
+                                <td class="text-end">{{ row.blue_points_for }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if group.conference %}
+                </div>
+            {% endif %}
+        {% endfor %}
     {% endif %}
 
     {% if season.champion_team %}

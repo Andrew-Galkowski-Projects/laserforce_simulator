@@ -277,15 +277,29 @@ def season_standings(request, season_id: int) -> HttpResponse:
     request.session["last_league_id"] = season.league_id
 
     is_draft_preview = season.state == "draft"
-    rows: list = []
-    teams_by_id: dict[int, Team] = {}
 
-    if is_draft_preview:
-        teams = list(season.teams.all())
-        teams.sort(key=lambda t: (-_compute_team_overall(t), t.name))
+    # LG-06g — view-side sort params (shared across every Conference group).
+    # ``rank`` is left frozen (we never renumber it); a no-``?sort`` request
+    # resolves to ``("rank", "asc")`` so the page renders in standings order.
+    sort = _coerce_sort_key(request.GET.get("sort"), _STANDINGS_SORT_KEYS, "rank")
+    direction = _coerce_dir(request.GET.get("dir"))
+
+    qs_no_sort_dir = request.GET.copy()
+    qs_no_sort_dir.pop("sort", None)
+    qs_no_sort_dir.pop("dir", None)
+    querystring_without_sort_dir = qs_no_sort_dir.urlencode()
+
+    def _row_team_id(row) -> int:
+        if hasattr(row, "team_id"):
+            return row.team_id
+        return row["team_id"]
+
+    def _draft_group(teams_list):
+        teams = sorted(teams_list, key=lambda t: (-_compute_team_overall(t), t.name))
         teams_by_id = {t.id: t for t in teams}
+        group_rows: list = []
         for index, team in enumerate(teams):
-            rows.append(
+            group_rows.append(
                 {
                     "team_id": team.id,
                     "matches_played": 0,
@@ -307,14 +321,11 @@ def season_standings(request, season_id: int) -> HttpResponse:
                     "blue_points_for": 0,
                 }
             )
-    else:
-        # LG-07a — member-night Matches (season_phase.phase_type == "member_night")
-        # are social, never ranked — exclude them from the Standings query.
-        completed_qs = Match.objects.filter(season=season, is_completed=True).exclude(
-            season_phase__phase_type="member_night"
-        )
+        return group_rows, teams_by_id
+
+    def _live_group(team_ids, match_qs, rounds_qs):
         completed_matches: list[dict] = []
-        for match in completed_qs:
+        for match in match_qs:
             completed_matches.append(
                 {
                     "match_id": match.id,
@@ -328,11 +339,10 @@ def season_standings(request, season_id: int) -> HttpResponse:
                     "date_played": match.date_played,
                 }
             )
-
-        # LG-06g — every persisted Season Round (incl. Rounds of in-progress
-        # Matches) for the Round-grain form + per-physical-side split. The
-        # stored ``team_red_id`` / ``team_blue_id`` are the actual physical
-        # sides (SIM-08), so red/blue points map straight to each side.
+        # LG-06g — every persisted Round (incl. Rounds of in-progress Matches)
+        # for the Round-grain form + per-physical-side split. The stored
+        # ``team_red_id`` / ``team_blue_id`` are the actual physical sides
+        # (SIM-08), so red/blue points map straight to each side.
         season_rounds = [
             {
                 "round_id": r["id"],
@@ -342,9 +352,7 @@ def season_standings(request, season_id: int) -> HttpResponse:
                 "blue_points": r["blue_points"],
                 "date_played": r["date_played"],
             }
-            for r in GameRound.objects.filter(match__season=season)
-            .exclude(match__season_phase__phase_type="member_night")
-            .values(
+            for r in rounds_qs.values(
                 "id",
                 "team_red_id",
                 "team_blue_id",
@@ -353,43 +361,75 @@ def season_standings(request, season_id: int) -> HttpResponse:
                 "date_played",
             )
         ]
-
-        if season.starting_team_ids_json is not None:
-            team_ids = list(season.starting_team_ids_json)
-        else:
-            team_ids = sorted(t.id for t in season.teams.all())
-
         enrolled_teams = list(
             Team.objects.filter(id__in=team_ids).values_list("id", "name")
         )
-        rows = compute_standings(completed_matches, enrolled_teams, season_rounds)
+        group_rows = compute_standings(completed_matches, enrolled_teams, season_rounds)
         teams_by_id = {t.id: t for t in Team.objects.filter(id__in=team_ids)}
+        return group_rows, teams_by_id
 
-    def _row_team_id(row) -> int:
-        if hasattr(row, "team_id"):
-            return row.team_id
-        return row["team_id"]
+    def _sort_and_pair(group_rows, teams_by_id):
+        name_by_id = {tid: team.name for tid, team in teams_by_id.items()}
+        group_rows.sort(
+            key=lambda r: (
+                _standings_sort_value(r, name_by_id.get(_row_team_id(r), ""), sort),
+                _row_team_id(r),
+            ),
+            reverse=(direction == "desc"),
+        )
+        return [(row, teams_by_id.get(_row_team_id(row))) for row in group_rows]
 
-    # LG-06g — view-side sort over the materialised rows. ``rank`` is left
-    # frozen (we never renumber it); a no-``?sort`` request resolves to
-    # ``("rank", "asc")`` so the page renders in standings order unchanged.
-    sort = _coerce_sort_key(request.GET.get("sort"), _STANDINGS_SORT_KEYS, "rank")
-    direction = _coerce_dir(request.GET.get("dir"))
-    name_by_id = {tid: team.name for tid, team in teams_by_id.items()}
-    rows.sort(
-        key=lambda r: (
-            _standings_sort_value(r, name_by_id.get(_row_team_id(r), ""), sort),
-            _row_team_id(r),
-        ),
-        reverse=(direction == "desc"),
-    )
+    # CONF-01 — one standings group per Conference; a zero-Conference Season
+    # renders exactly one group (``conference=None``), byte-identical to today.
+    conferences = season.ordered_conferences()
+    standings_groups: list[dict] = []
+    rows: list = []
+    rows_with_teams: list = []
 
-    qs_no_sort_dir = request.GET.copy()
-    qs_no_sort_dir.pop("sort", None)
-    qs_no_sort_dir.pop("dir", None)
-    querystring_without_sort_dir = qs_no_sort_dir.urlencode()
-
-    rows_with_teams = [(row, teams_by_id.get(_row_team_id(row))) for row in rows]
+    if not conferences:
+        if is_draft_preview:
+            group_rows, group_teams = _draft_group(list(season.teams.all()))
+        else:
+            # LG-07a — member-night Matches are social, never ranked.
+            match_qs = Match.objects.filter(season=season, is_completed=True).exclude(
+                season_phase__phase_type="member_night"
+            )
+            rounds_qs = GameRound.objects.filter(match__season=season).exclude(
+                match__season_phase__phase_type="member_night"
+            )
+            if season.starting_team_ids_json is not None:
+                team_ids = list(season.starting_team_ids_json)
+            else:
+                team_ids = sorted(t.id for t in season.teams.all())
+            group_rows, group_teams = _live_group(team_ids, match_qs, rounds_qs)
+        rwt = _sort_and_pair(group_rows, group_teams)
+        standings_groups.append(
+            {"conference": None, "name": None, "rows_with_teams": rwt}
+        )
+        rows = group_rows
+        rows_with_teams = rwt
+    else:
+        for conf in conferences:
+            if is_draft_preview:
+                group_rows, group_teams = _draft_group(list(conf.teams.all()))
+            else:
+                match_qs = Match.objects.filter(
+                    season=season, conference=conf, is_completed=True
+                ).exclude(season_phase__phase_type="member_night")
+                rounds_qs = GameRound.objects.filter(
+                    match__season=season, match__conference=conf
+                ).exclude(match__season_phase__phase_type="member_night")
+                if conf.starting_team_ids_json is not None:
+                    team_ids = list(conf.starting_team_ids_json)
+                else:
+                    team_ids = sorted(t.id for t in conf.teams.all())
+                group_rows, group_teams = _live_group(team_ids, match_qs, rounds_qs)
+            rwt = _sort_and_pair(group_rows, group_teams)
+            standings_groups.append(
+                {"conference": conf, "name": conf.name, "rows_with_teams": rwt}
+            )
+            rows.extend(group_rows)
+            rows_with_teams.extend(rwt)
 
     league = season.league
     sidebar_displayed_season = (
@@ -404,6 +444,9 @@ def season_standings(request, season_id: int) -> HttpResponse:
         "season": season,
         "rows": rows,
         "rows_with_teams": rows_with_teams,
+        # CONF-01 — per-Conference standings groups (one group with
+        # conference=None for a zero-Conference Season).
+        "standings_groups": standings_groups,
         "is_draft_preview": is_draft_preview,
         "sidebar_active": "standings",
         "sidebar_links": sidebar_links,
@@ -1336,51 +1379,76 @@ def _build_dashboard_context(
             action_button_state = "start_next_season"
 
         # --- Standings snippet (real compute_standings, top 3) --------
-        # LG-07a — exclude social member-night Matches from the Standings query.
-        completed_qs = Match.objects.filter(
-            season=displayed_season, is_completed=True
-        ).exclude(season_phase__phase_type="member_night")
-        completed_matches: list[dict] = []
-        for match in completed_qs:
-            completed_matches.append(
-                {
-                    "match_id": match.id,
-                    "team_red_id": match.team_red_id,
-                    "team_blue_id": match.team_blue_id,
-                    "winner_team_id": match.winner_id,
-                    "red_rounds_won": match.red_rounds_won,
-                    "blue_rounds_won": match.blue_rounds_won,
-                    "red_total_points": match.red_total_points,
-                    "blue_total_points": match.blue_total_points,
-                }
-            )
+        # CONF-01 — when the displayed Season has >= 2 Conferences, scope the
+        # snippet to the MANAGER's Conference (the one containing
+        # league.current_team; fall back to the first Conference, else empty).
+        # 0/1 Conference is unchanged (overall top-3). Only the snippet's match
+        # corpus + enrolled-teams set change.
+        conf_count = displayed_season.conferences.count()
+        scope_conf = None
+        if conf_count >= 2:
+            conf_map = displayed_season.conference_by_team_id()
+            scope_conf = conf_map.get(displayed_season.league.current_team_id)
+            if scope_conf is None:
+                ordered_confs = displayed_season.ordered_conferences()
+                scope_conf = ordered_confs[0] if ordered_confs else None
 
-        if displayed_season.starting_team_ids_json is not None:
-            team_ids = list(displayed_season.starting_team_ids_json)
+        if conf_count >= 2 and scope_conf is None:
+            # >= 2 Conferences but none resolvable ⇒ empty snippet (locked).
+            standings_snippet = []
         else:
-            team_ids = sorted(t.id for t in displayed_season.teams.all())
+            # LG-07a — exclude social member-night Matches from the query.
+            completed_qs = Match.objects.filter(
+                season=displayed_season, is_completed=True
+            ).exclude(season_phase__phase_type="member_night")
+            if scope_conf is not None:
+                completed_qs = completed_qs.filter(conference=scope_conf)
+            completed_matches: list[dict] = []
+            for match in completed_qs:
+                completed_matches.append(
+                    {
+                        "match_id": match.id,
+                        "team_red_id": match.team_red_id,
+                        "team_blue_id": match.team_blue_id,
+                        "winner_team_id": match.winner_id,
+                        "red_rounds_won": match.red_rounds_won,
+                        "blue_rounds_won": match.blue_rounds_won,
+                        "red_total_points": match.red_total_points,
+                        "blue_total_points": match.blue_total_points,
+                    }
+                )
 
-        enrolled_teams = list(
-            Team.objects.filter(id__in=team_ids).values_list("id", "name")
-        )
-        rows = compute_standings(completed_matches, enrolled_teams)
-        teams_by_id = Team.objects.in_bulk(team_ids)
-        top_rows = rows[:3]
-        snippet_rows: list = []
-        for row in top_rows:
-            row_dict = {
-                "team_id": row.team_id,
-                "matches_played": row.matches_played,
-                "wins": row.wins,
-                "losses": row.losses,
-                "ties": row.ties,
-                "league_points": row.league_points,
-                "round_wins": row.round_wins,
-                "total_score": row.total_score,
-                "rank": row.rank,
-            }
-            snippet_rows.append((row_dict, teams_by_id.get(row.team_id)))
-        standings_snippet = snippet_rows
+            if scope_conf is not None:
+                if scope_conf.starting_team_ids_json is not None:
+                    team_ids = list(scope_conf.starting_team_ids_json)
+                else:
+                    team_ids = sorted(t.id for t in scope_conf.teams.all())
+            elif displayed_season.starting_team_ids_json is not None:
+                team_ids = list(displayed_season.starting_team_ids_json)
+            else:
+                team_ids = sorted(t.id for t in displayed_season.teams.all())
+
+            enrolled_teams = list(
+                Team.objects.filter(id__in=team_ids).values_list("id", "name")
+            )
+            rows = compute_standings(completed_matches, enrolled_teams)
+            teams_by_id = Team.objects.in_bulk(team_ids)
+            top_rows = rows[:3]
+            snippet_rows: list = []
+            for row in top_rows:
+                row_dict = {
+                    "team_id": row.team_id,
+                    "matches_played": row.matches_played,
+                    "wins": row.wins,
+                    "losses": row.losses,
+                    "ties": row.ties,
+                    "league_points": row.league_points,
+                    "round_wins": row.round_wins,
+                    "total_score": row.total_score,
+                    "rank": row.rank,
+                }
+                snippet_rows.append((row_dict, teams_by_id.get(row.team_id)))
+            standings_snippet = snippet_rows
 
         # --- Schedule + next fixture + round progress -----------------
         # LG-02-Part2a — route through the Season chokepoint (returns []
@@ -2754,6 +2822,8 @@ def play_week(request, season_id: int) -> HttpResponse:
                 (season.starting_map_pool_ids_json or [])
                 + (season.starting_map_rotation_ids_json or [])
             )
+            # CONF-01 — build the team→Conference map ONCE outside the loop.
+            conf_by_team = season.conference_by_team_id()
             for phase_id, fixture in to_play:
                 team_a = team_by_id[fixture.team_a_id]
                 team_b = team_by_id[fixture.team_b_id]
@@ -2770,6 +2840,7 @@ def play_week(request, season_id: int) -> HttpResponse:
                         arena_map=arena_map,
                         season_phase=phase_by_id.get(phase_id),
                         leg=fixture.leg,
+                        conference=conf_by_team.get(fixture.team_a_id),
                     )
                 finally:
                     restore_after_fixture(token)
@@ -3275,6 +3346,8 @@ def play_week_live(request, season_id: int) -> HttpResponse:
                 + (season.starting_map_rotation_ids_json or [])
             )
             arena_map = _resolve_fixture_map(season, cursor["fixture"], pool_by_id)
+            # CONF-01 — resolve the fixture's Conference for the Match stamp.
+            conf_by_team = season.conference_by_team_id()
             # FIN-04 — roll injuries / resolve rosters in memory before the
             # round sims, then restore the temporary roster afterwards.
             token = resolve_injuries_for_fixture(
@@ -3289,6 +3362,7 @@ def play_week_live(request, season_id: int) -> HttpResponse:
                     arena_map=arena_map,
                     season_phase=cursor["season_phase"],
                     leg=cursor["fixture"].leg,
+                    conference=conf_by_team.get(cursor["fixture"].team_a_id),
                     fidelity="full",
                 )
             finally:
