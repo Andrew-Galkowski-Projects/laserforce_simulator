@@ -393,56 +393,128 @@ only remaining Part2c follow-up (deferred):
 A single-user play mode where the user acts as a team manager navigating a league season. This phase
 sits between the League system (Phase 5) and full multiplayer (Phase 6).
 
-### SUB-01 · Sub-leagues + per-sub-league rotating map pools
+### SUB-01 · Conferences + per-Conference rotating map pools
 
 **Re-sliced (2026-06-17, user decision) into THREE sequenced pieces.** The
 original monolith — "first-class `SubLeague` model + per-sub-league rotating map
 pools" — was too coarse: the *deterministic-rotation map mode* LG-01j deferred
-does not actually require a `SubLeague` model, only a Season-level ordered map
+does not actually require a partition model, only a Season-level ordered map
 list. The pieces (mirroring how LG-02-Part2 was sliced):
 
 1. **[DONE] Season-level `rotate_by_matchday` arena-map mode** — shipped; full
-   impl note moved to [`PLAN-completed.md`](PLAN-completed.md). NO `SubLeague` model.
+   impl note moved to [`PLAN-completed.md`](PLAN-completed.md). NO partition model.
 2. **LG-07 · Member nights** — **[DONE] LG-07a core slice shipped** (its own PLAN
-   item in Phase 3 backlog; noted here for ordering — the third SUB-01 slice was
-   sequenced after it). Only the deferred **LG-07b** player-stat filter remains,
-   which does not block piece 3.
-3. **[NOT STARTED] Sub-league intra-pool scheduling** — the first-class
-   `SubLeague` concept + per-sub-league rotating pools, was sequenced **AFTER
-   LG-07** (now unblocked — LG-07a shipped; re-scoped below).
+   item in Phase 3 backlog; noted here for ordering — piece 3 was sequenced after
+   it). Only the deferred **LG-07b** player-stat filter remains, which did not block
+   piece 3.
+3. **Conference epic (was "Sub-league intra-pool scheduling")** — the first-class
+   partition concept + per-partition rotating pools. The CONF-01 grill
+   (2026-06-29) **reframed** this around the maintainer's actual target — the ZenGM
+   **worlds** game type (multiple regional leagues, each its own regular season; top
+   finishers feed a cross-region Worlds tournament) — and **renamed the canonical
+   term "Sub-league" → Conference** (term now retired; see ADR-0034 / CONTEXT.md).
+   It is a **multi-slice epic**, sequenced CONF-01..CONF-06 below.
 
 - **SUB-01 (piece 1) · [DONE] Season `rotate_by_matchday` arena-map mode.**
   Shipped — full implementation note moved to
   [`PLAN-completed.md`](PLAN-completed.md) (under **SUB-01 · piece 1**). A 4th
   `Season.map_mode` value driving a Season-level author-ordered ArenaMap rotation
   keyed on matchday; satisfies LG-01j's deferred "mode (c)" at the Season level
-  (the per-*sub-league* rotation remains the third slice). NO `SubLeague` model.
+  (the per-*Conference* rotation is CONF-06). NO partition model.
 
-- **SUB-01 (piece 3) · [NOT STARTED] First-class `SubLeague` + per-sub-league
-  rotating map pools — needs its own grill + an ADR.** Was sequenced **AFTER LG-07
-  member nights** (piece 2) — now unblocked, LG-07a shipped (only the deferred
-  LG-07b player-stat filter remains, which does not gate this piece). Introduce
-  **sub-leagues** as a first-class domain
-  concept: an optional partition of a `Season`'s enrolled Teams into named groups
-  (conferences / divisions / pools), modelled as a new `SubLeague` container under
-  `Season` with its own `teams` M2M and an ordered list of `ArenaMap`s. Each
-  Round's map would then resolve from the **sub-league's** pool by matchday
-  (`maps[matchday % len(maps)]`) — the per-sub-league analogue of the Season-level
-  rotation piece 1 already ships. The Season-level `rotate_by_matchday` mode does
-  **not** subsume this: it rotates one Season-wide list; this slice rotates a
-  *different* list per sub-league, which requires the sub-league partition to
-  resolve a fixture **unambiguously to one pool** — i.e. **intra-pool vs
-  cross-pool fixtures** must be a first-class scheduling concept (a fixture
-  between two sub-leagues has no single pool). That schedule-generation
-  interaction (intra/cross-pool fixture generation, a sequencing decision LG-02
-  also leans on) is the risky core to grill. Carved out of LG-01j on 2026-05-28
-  (no `SubLeague` model existed then; the user deferred the introduction until the
-  career-mode slice was in place). Depended on **LG-07** (sequenced after member
-  nights — now satisfied, LG-07a shipped) and on **CAR-03** (sub-league grouping is
-  most useful once manager-mode
-  career play is driving the Season). Adds the **SubLeague** term to CONTEXT.md
-  and ships an **ADR for the new model + the intra/cross-pool schedule-generation
-  interaction**.
+#### SUB-01 piece 3 → Conference epic (CONF-01..CONF-06)
+
+A **Conference** is an optional partition of a `Season`'s enrolled Teams into named,
+**disjoint** competitive groups (the worlds-style regional leagues — e.g. *California*,
+*Nevada*). A Season has **zero** Conferences (the default — one implicit all-Teams group,
+byte-identical to a flat Season) or **two or more**. The key insight that retired the
+original PLAN's "intra-pool vs cross-pool" risk: Conferences play **intra-Conference only**
+during the regular season, so every fixture is *always* within exactly one Conference and the
+cross-pool map-resolution ambiguity never arises. Depended on **LG-07** (satisfied — LG-07a
+shipped) and is most useful alongside **CAR-03** manager-mode career play.
+
+- **CONF-01 · Conference foundation. [DONE] Shipped (2026-06-29).** The epic's
+  foundation: a new `Conference` partition model (`season` FK CASCADE, `name`, `ordinal`,
+  `teams` M2M, an activation snapshot `starting_team_ids_json`, `Meta.ordering=["ordinal"]` +
+  `uniq_season_conference_ordinal`); a `Match.conference` nullable discriminator FK
+  (`SET_NULL`, stamped on the Round-1 create like `Match.season_phase` / `Match.leg`);
+  `Season.ordered_conferences()` / `_scheduled_conference_partitions()` /
+  `conference_by_team_id()`; `scheduled_fixtures_by_phase()` generating **one round-robin per
+  Conference** overlaid in **parallel** on the shared Matchday calendar (phase span = the
+  largest Conference's span); `start_season()` snapshotting each Conference's team ids;
+  `_stamp_champion_for_final_phase` leaving `champion_team` **NULL** (but still flipping
+  `state="completed"`) for a `>= 2`-Conference RR-final Season — no cross-Conference champion
+  until Worlds; a keyword-only `simulate_scheduled_round(..., conference=...)` stamp threaded
+  from the three play-loop sites via `conference_by_team_id()`; **per-Conference Standings**
+  (`season_standings` renders one ranked table per Conference, new DOM ids
+  `season-standings-conference-{id}` / `-conference-name-{id}`, the zero-Conference single
+  `season-standings-table` preserved byte-identically); a manager-Conference dashboard top-3
+  snippet; `ConferenceAdmin` (admin-created — composer deferred to CONF-05); and migration
+  `0057_conference_match_conference` (CreateModel → AddField, no `RunPython` / backfill).
+  Invariants: a **zero-Conference Season is byte-identical to today**, and **no Score
+  Calibration re-baseline** (no simulation-mechanic change — only which `Match` a Round
+  attaches to + a discriminator). See
+  [ADR-0034](docs/adr/0034-conference-partition.md), the seam contract
+  [`.claude/worktrees/conf-01-seam-contract.md`](.claude/worktrees/conf-01-seam-contract.md),
+  and the **CONF-01** subsection in
+  [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+
+- **CONF-02 · [NOT STARTED] Per-Conference regional playoffs.** After each
+  Conference's regular-season round-robin completes, seed **its own** playoff bracket from
+  that Conference's final Standings — one seeded `tournament` per Conference (reusing the
+  existing single/double-elim bracket engine), producing each Conference's regional
+  qualifiers. No cross-Conference play yet.
+
+- **CONF-03 · [NOT STARTED] Worlds qualification.** Top-N-per-Conference seeding: union
+  each Conference's regional qualifiers (from CONF-02) into a single cross-Conference Worlds
+  **participant list**, computing the cross-region seeding. This is the qualification/seeding
+  layer only — the bracket itself is CONF-04.
+
+- **CONF-04 · [NOT STARTED] The Worlds Tournament phase.** The cross-Conference Worlds
+  Tournament itself, reusing the existing `round_robin_double_elim` (or single-elim) bracket
+  engine over the CONF-03 participant list, **crowning the Season champion** (resolving the
+  CONF-01 NULL-champion-until-Worlds rule for multi-Conference Seasons).
+
+- **CONF-05 · [DONE] Shipped (2026-06-30) — draft-Season Manage Conferences page.**
+  An in-app authoring surface (not Django admin) for partitioning a draft Season's enrolled
+  Teams into Conferences before Start Season — replacing the original "create-League composer"
+  framing with a dedicated draft-Season page (the maintainer's Option B). A single-page
+  vanilla-JS composer (the LG-02b precedent) names Conferences and assigns each enrolled Team
+  via a per-team `<select>` kept in sync by small JS; one Save replaces the Season's Conference
+  rows atomically. The locked partition rule: Conferences are OPTIONAL (zero ⇒ flat Season),
+  and when present must form a **full disjoint partition** (every enrolled Team in exactly one
+  Conference) with **≥2 Teams per Conference**. Validated by the pure
+  `matches.league_views._validate_conference_partition(names, team_to_conf_idx,
+  enrolled_team_ids) -> (errors, normalized)` (error strings `"Conference names cannot be
+  empty."` / `"Every team must be assigned to a conference."` / `"Each conference needs at
+  least 2 teams."`). View `manage_conferences(request, season_id)` (GET+POST, else 405; 404 on
+  missing Season; writes `last_league_id`) renders the editable composer while `draft` and a
+  **read-only frozen partition** once active/completed (membership is snapshotted at Start
+  Season — a non-draft POST is **400**); an empty submission clears all Conferences. URL name
+  `manage_conferences`, path `/seasons/<int:season_id>/conferences/` (`matches/season_urls.py`,
+  before `standings/`). Template `templates/seasons/manage_conferences.html` (DOM ids
+  `manage-conferences-form` / `-add` / `-name-{i}` / `-team-{team_id}` / `-submit` / `-errors`
+  / `-readonly` / `-empty`); draft-only entry links `season-dashboard-manage-conferences-link`
+  + `league-dashboard-manage-conferences-link` on the season + league dashboards (gated
+  `season_mode == "draft"`). **Create-flow integration:** `CreateLeagueForm` gains a
+  `number_of_conferences` dropdown (`None`/`2`/`3`/`4`, DOM id
+  `league-create-number-of-conferences`) with a `num_teams >= 2 * N` guard; when `N > 0`,
+  `league_create` pre-creates `N` Conferences with the generated Teams auto-split evenly
+  (round-robin) and **redirects straight to `manage_conferences`** instead of `season_standings`,
+  so conference setup happens before the dashboard. **No model change,
+  no migration, no simulator touch, no Score Calibration re-baseline** — pure view + template
+  on top of the CONF-01 Conference model. Tests: `matches/tests/test_manage_conferences.py`
+  (pure validator + view GET/POST/405/404/read-only + the dashboard-link gate) +
+  `test_league_create.py` (the `number_of_conferences` form rule + create→pre-split→redirect).
+  See the
+  **CONF-05 manage conferences** subsection in
+  [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+
+- **CONF-06 · [NOT STARTED] Per-Conference rotating map pools.** The original PLAN map
+  lens: each Conference carries its own ordered `ArenaMap` pool, and a Round's map resolves
+  from the **Conference's** pool by matchday (`maps[matchday % len(maps)]`) — "Nevada games on
+  the Nevada map", with a per-fixture override option. The per-Conference analogue of the
+  Season-level `rotate_by_matchday` piece 1, unambiguous because fixtures are intra-Conference.
 
 ---
 

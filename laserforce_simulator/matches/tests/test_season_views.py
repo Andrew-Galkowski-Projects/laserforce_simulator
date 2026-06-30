@@ -643,3 +643,78 @@ class TestLg07aMemberNightStandingsExclusion(TestCase):
         r, _by = self._rows()
         self.assertNotContains(r, "MN Draw Excluded A")
         self.assertNotContains(r, "MN Draw Excluded B")
+
+
+# ---------------------------------------------------------------------------
+# CONF-01 — per-Conference Standings tables
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/conf-01-seam-contract.md`` (standings view
+# + template): a Season with ``>= 1`` Conference renders ONE table per
+# Conference with the new DOM ids ``season-standings-conference-{id}`` /
+# ``season-standings-conference-name-{id}``; a ZERO-Conference Season still
+# renders the single ``season-standings-table`` with NO
+# ``season-standings-conference-*`` ids (byte-identical to today). Appended as
+# a NEW class; the ``Conference`` import is lazy so the file still COLLECTS
+# before the Code agent lands the model.
+
+
+def _active_conf_standings_season(prefix: str, sizes: list[int]):
+    """An active Season with ``len(sizes)`` snapshotted Conferences (created
+    BEFORE ``start_season``). Returns ``(season, [conference, ...])``."""
+    from matches.models import Conference
+
+    league = League.objects.create(name=f"{prefix} League")
+    season = Season.objects.create(
+        league=league, name=f"{prefix} Season", start_date=date(2026, 1, 1)
+    )
+    confs = []
+    for ci, size in enumerate(sizes, start=1):
+        conf = Conference.objects.create(
+            season=season, name=f"{prefix} Conf {ci}", ordinal=ci
+        )
+        for ti in range(size):
+            team, _ = make_team_with_slots(f"{prefix}{ci}x{ti}")
+            season.teams.add(team)
+            conf.teams.add(team)
+        confs.append(conf)
+    season.start_season()
+    season.refresh_from_db()
+    for conf in confs:
+        conf.refresh_from_db()
+    return season, confs
+
+
+class TestConf01SeasonStandingsConferences(TestCase):
+    """CONF-01 — per-Conference Standings tables vs the zero-Conference
+    single-table case."""
+
+    def test_zero_conference_renders_single_table_only(self) -> None:
+        _league, season = _make_active_season("ConfZero")
+        r = self.client.get(reverse("season_standings", args=[season.id]))
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(b"season-standings-table", r.content)
+        # No per-Conference wrapper / name ids on a zero-Conference Season.
+        self.assertNotIn(b"season-standings-conference-", r.content)
+
+    def test_two_conferences_render_per_conference_tables(self) -> None:
+        season, confs = _active_conf_standings_season("ConfTwo", [2, 2])
+        r = self.client.get(reverse("season_standings", args=[season.id]))
+        self.assertEqual(r.status_code, 200)
+        for conf in confs:
+            self.assertContains(r, f'id="season-standings-conference-{conf.id}"')
+            self.assertContains(r, f'id="season-standings-conference-name-{conf.id}"')
+            # The Conference's name is rendered in its header.
+            self.assertContains(r, conf.name)
+
+    def test_two_conferences_each_lists_only_its_own_teams(self) -> None:
+        season, confs = _active_conf_standings_season("ConfTeams", [2, 2])
+        r = self.client.get(reverse("season_standings", args=[season.id]))
+        self.assertEqual(r.status_code, 200)
+        # Every enrolled Team appears somewhere on the per-Conference page.
+        for conf in confs:
+            for team_id in conf.starting_team_ids_json or []:
+                from teams.models import Team
+
+                team = Team.objects.get(pk=team_id)
+                self.assertContains(r, team.name)

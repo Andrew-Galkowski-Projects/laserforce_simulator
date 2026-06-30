@@ -78,6 +78,19 @@ class Match(models.Model):
     # pairing. single_round_robin, legacy, and tournament/playoff Matches stay
     # leg=1 (the default) ⇒ byte-identical.
     leg = models.PositiveSmallIntegerField(default=1)
+    # CONF-01: optional discriminator FK to the owning Conference. RR Matches of
+    # a Conference-partitioned Season gain it (stamped on the Round-1 create);
+    # zero-Conference Seasons, sandbox, and tournament/playoff Matches stay
+    # conference=NULL. SET_NULL — deleting a Conference must NOT cascade-delete
+    # its Matches. Left out of the find-or-create key (intra-Conference pairings
+    # are already unique within a phase).
+    conference = models.ForeignKey(
+        "matches.Conference",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="matches",
+    )
     is_completed = models.BooleanField(default=False)
 
     class Meta:
@@ -1057,6 +1070,12 @@ class Season(models.Model):
         # SUB-01 — snapshot the rotation list at activation, author order
         # PRESERVED (``list(...)``, NOT ``sorted(...)``). Empty/None ⇒ ``[]``.
         self.starting_map_rotation_ids_json = list(self.map_rotation_ids_json or [])
+        # CONF-01 — snapshot each Conference's team-id set at activation
+        # (sorted asc), mirroring ``starting_team_ids_json``. No-op for a
+        # zero-Conference Season.
+        for conf in self.conferences.all():
+            conf.starting_team_ids_json = sorted(t.id for t in conf.teams.all())
+            conf.save(update_fields=["starting_team_ids_json"])
         self.state = "active"
         self.save()
         # LG-02-Part2c-3c — a FIRST-phase mid-season tournament
@@ -1448,6 +1467,16 @@ class Season(models.Model):
             self.champion_team = champion
             self.save()
             return
+        # CONF-01 — a multi-Conference RR-final Season completes when every
+        # Conference's round-robin finishes, but leaves ``champion_team`` NULL:
+        # there is no legitimate cross-Conference champion until the (deferred)
+        # Worlds qualification/tournament slice. The Season still flips to
+        # ``completed`` so the cursor / dashboard read "completed". A
+        # 0/1-Conference Season is unchanged.
+        if self.conferences.count() >= 2:
+            self.state = "completed"
+            self.save()
+            return
         rows = self._final_standings_for_phase(final_phase)
         if not rows:
             return
@@ -1542,6 +1571,62 @@ class Season(models.Model):
             return sorted(t.id for t in self.teams.all())
         return list(self.starting_team_ids_json or [])
 
+    # ------------------------------------------------------------------
+    # CONF-01 — Conference partition helpers (read-only pure derivations)
+    # ------------------------------------------------------------------
+
+    def ordered_conferences(self) -> "list[Conference]":
+        """Return this Season's Conferences in ordinal order (``[]`` when none).
+
+        ``Conference.Meta.ordering = ["ordinal"]`` guarantees ordinal order.
+        """
+        return list(self.conferences.all())
+
+    def _scheduled_conference_partitions(
+        self,
+    ) -> "list[tuple[Conference | None, list[int]]]":
+        """The per-Conference team-id partitions used for scheduling.
+
+        CONF-01 — mirrors ``_scheduled_team_ids``'s draft-vs-snapshot rule, per
+        Conference:
+
+        * **Zero Conferences** ⇒ ``[(None, self._scheduled_team_ids())]`` (one
+          implicit all-Teams partition — byte-identical to a flat Season).
+        * **>= 1 Conference** ⇒ one ``(conf, ids)`` per ``ordered_conferences()``;
+          ``ids`` is, for a **draft** Season, ``sorted(t.id for t in
+          conf.teams.all())`` intersected with ``_scheduled_team_ids()``; for an
+          **active/completed** Season, ``list(conf.starting_team_ids_json or [])``.
+        """
+        confs = self.ordered_conferences()
+        if not confs:
+            return [(None, self._scheduled_team_ids())]
+
+        partitions: list[tuple["Conference | None", list[int]]] = []
+        if self.state == "draft":
+            scheduled = set(self._scheduled_team_ids())
+            for conf in confs:
+                ids = sorted(t.id for t in conf.teams.all() if t.id in scheduled)
+                partitions.append((conf, ids))
+        else:
+            for conf in confs:
+                partitions.append((conf, list(conf.starting_team_ids_json or [])))
+        return partitions
+
+    def conference_by_team_id(self) -> "dict[int, Conference]":
+        """Map ``{team_id: Conference}`` for every team in every Conference.
+
+        CONF-01 — draft live M2M / active snapshot, matching
+        ``_scheduled_conference_partitions``. Empty dict for a zero-Conference
+        Season. Used by the play loop to stamp ``Match.conference``.
+        """
+        result: dict[int, "Conference"] = {}
+        for conf, ids in self._scheduled_conference_partitions():
+            if conf is None:
+                continue
+            for team_id in ids:
+                result[team_id] = conf
+        return result
+
     def scheduled_fixtures_by_phase(
         self,
     ) -> "list[tuple[SeasonPhase, list[ScheduleFixture]]]":
@@ -1550,42 +1635,59 @@ class Season(models.Model):
         LG-02-Part2c-2 — one ``(phase, fixtures)`` tuple per ``round_robin``
         phase in ordinal order (tournament phases contribute NO fixtures —
         they are drained via the bracket, not ``generate_schedule``). Phase k's
-        fixtures are offset by the SUM of all prior RR phases' matchday counts
+        fixtures are offset by the SUM of all prior RR phases' matchday spans
         so the whole season is one monotonic 1..N matchday calendar. Each
         fixture is a NEW ``ScheduleFixture`` with
-        ``matchday = original_matchday + offset`` (round_number / team ids
-        unchanged). Returns ``[]`` when no RR phase has >= 2 teams.
+        ``matchday = original_matchday + offset`` (round_number / team ids /
+        leg unchanged).
+
+        CONF-01 — within each RR phase a SEPARATE round-robin is generated per
+        Conference partition (``_scheduled_conference_partitions``) and overlaid
+        on the SHARED matchday calendar (the **parallel-overlay** rule): every
+        Conference keeps its own ``1..span`` numbering on the same phase offset,
+        the phase's fixtures are the CONCATENATION of all partitions' offset
+        fixtures, and the phase span (added to the next phase's offset) is the
+        MAX over partitions of each partition's un-offset span. A partition with
+        ``< 2`` teams contributes nothing and does not raise. A zero-Conference
+        Season has one ``(None, all ids)`` partition ⇒ byte-identical output.
+        Returns ``[]`` when no RR phase produces any fixtures.
         """
         from .schedule_generator import ScheduleFixture, generate_schedule
 
-        team_ids = self._scheduled_team_ids()
-        if len(team_ids) < 2:
-            return []
+        partitions = self._scheduled_conference_partitions()
 
         result: list[tuple["SeasonPhase", list[ScheduleFixture]]] = []
         offset = 0
         for phase in self.ordered_phases():
             if phase.phase_type != "round_robin":
                 continue
-            base = generate_schedule(
-                team_ids, phase.schedule_format or self.schedule_format
-            )
-            if not base:
-                continue
-            offset_fixtures = [
-                ScheduleFixture(
-                    matchday=f.matchday + offset,
-                    round_number=f.round_number,
-                    team_a_id=f.team_a_id,
-                    team_b_id=f.team_b_id,
-                    # LG-02-Part2c-3a: carry leg through the offset re-construction
-                    # so leg-2 fixtures don't collapse to leg-1.
-                    leg=f.leg,
+            fmt = phase.schedule_format or self.schedule_format
+            phase_fixtures: list[ScheduleFixture] = []
+            phase_span = 0
+            for _conf, conf_ids in partitions:
+                if len(conf_ids) < 2:
+                    continue
+                base = generate_schedule(conf_ids, fmt)
+                if not base:
+                    continue
+                phase_fixtures.extend(
+                    ScheduleFixture(
+                        matchday=f.matchday + offset,
+                        round_number=f.round_number,
+                        team_a_id=f.team_a_id,
+                        team_b_id=f.team_b_id,
+                        # LG-02-Part2c-3a: carry leg through the offset
+                        # re-construction so leg-2 fixtures don't collapse to
+                        # leg-1.
+                        leg=f.leg,
+                    )
+                    for f in base
                 )
-                for f in base
-            ]
-            result.append((phase, offset_fixtures))
-            offset += max(f.matchday for f in base)
+                phase_span = max(phase_span, max(f.matchday for f in base))
+            if not phase_fixtures:
+                continue
+            result.append((phase, phase_fixtures))
+            offset += phase_span
         return result
 
     def scheduled_fixtures(self) -> list["ScheduleFixture"]:
@@ -1639,6 +1741,41 @@ class Season(models.Model):
         return [
             (phase, fixtures) for phase, fixtures in by_phase if phase.ordinal < barrier
         ]
+
+
+class Conference(models.Model):
+    """CONF-01 — a named Season-level partition of a Season's enrolled Teams
+    into a disjoint competitive group (ADR-0034).
+
+    A Season has ZERO Conferences (the default — one implicit all-Teams group,
+    byte-identical to a flat single-table Season) or TWO OR MORE (each a
+    disjoint subset). Conferences play **intra-Conference only** during the
+    regular season; the schedule generates one round-robin per Conference and
+    overlays them on the shared Matchday calendar.
+    """
+
+    season = models.ForeignKey(
+        "matches.Season", on_delete=models.CASCADE, related_name="conferences"
+    )
+    name = models.CharField(max_length=100)
+    ordinal = models.PositiveSmallIntegerField()  # 1-based display order
+    teams = models.ManyToManyField("teams.Team", related_name="conferences")
+    # Activation snapshot of this Conference's team ids (sorted asc), mirroring
+    # Season.starting_team_ids_json. None pre-activation; written by
+    # Season.start_season().
+    starting_team_ids_json = models.JSONField(null=True, blank=True, default=None)
+
+    class Meta:
+        ordering = ["ordinal"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["season", "ordinal"],
+                name="uniq_season_conference_ordinal",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.season} — {self.name}"  # em-dash U+2014
 
 
 class PlayerSeasonRating(models.Model):

@@ -294,3 +294,68 @@ class TestSimulateScheduledRoundAutoCompletion(TestCase):
             BatchSimulator().simulate_scheduled_round(season, teams[0], teams[1], 1)
         season.refresh_from_db()
         self.assertEqual(season.state, "active")
+
+
+# ---------------------------------------------------------------------------
+# CONF-01 — simulate_scheduled_round(conference=...) stamps Match.conference
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/conf-01-seam-contract.md`` (simulator
+# surface): the keyword-only ``conference`` (after ``leg``, before
+# ``fidelity``) is stamped on the Round-1 ``Match.objects.create`` ONLY; the
+# find-or-create key is UNCHANGED; default ``None`` is byte-identical to every
+# existing caller; Round 2 finds the existing Match and does NOT re-stamp.
+# Appended as a NEW class; no existing class is modified. The ``Conference``
+# import is lazy (inside each method) so this file still COLLECTS before the
+# Code agent lands the model — only these methods red, not the whole file.
+
+
+def _active_conf_two_team_season(prefix: str):
+    """An active Season whose two slotted Teams sit in one snapshotted
+    Conference (created BEFORE ``start_season`` so the snapshot is written)."""
+    from matches.models import Conference
+
+    league = League.objects.create(name=f"L{prefix}")
+    season = Season.objects.create(league=league, name="S1", start_date=date.today())
+    t1, _ = make_team_with_slots(f"{prefix}A")
+    t2, _ = make_team_with_slots(f"{prefix}B")
+    season.teams.add(t1, t2)
+    conf = Conference.objects.create(season=season, name="California", ordinal=1)
+    conf.teams.add(t1, t2)
+    season.start_season()
+    season.refresh_from_db()
+    conf.refresh_from_db()
+    return season, t1, t2, conf
+
+
+class TestSimulateScheduledRoundConference(TestCase):
+    """CONF-01 — Round-1 stamps ``Match.conference``; default ``None`` leaves
+    it null; Round 2 does not re-stamp."""
+
+    def test_round1_stamps_match_conference(self) -> None:
+        season, t1, t2, conf = _active_conf_two_team_season("ConfStamp")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            BatchSimulator().simulate_scheduled_round(
+                season, t1, t2, 1, conference=conf
+            )
+        match = Match.objects.get(season=season)
+        self.assertEqual(match.conference_id, conf.id)
+
+    def test_default_conference_leaves_match_conference_null(self) -> None:
+        season, t1, t2 = _active_season_two_teams("ConfNull")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            BatchSimulator().simulate_scheduled_round(season, t1, t2, 1)
+        match = Match.objects.get(season=season)
+        self.assertIsNone(match.conference_id)
+
+    def test_round2_does_not_restamp_conference(self) -> None:
+        season, t1, t2, conf = _active_conf_two_team_season("ConfR2")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            # Round 1 stamps the Conference; Round 2 (default conference=None)
+            # finds the existing Match and must NOT clear the stamp.
+            BatchSimulator().simulate_scheduled_round(
+                season, t1, t2, 1, conference=conf
+            )
+            BatchSimulator().simulate_scheduled_round(season, t1, t2, 2)
+        match = Match.objects.get(season=season)
+        self.assertEqual(match.conference_id, conf.id)

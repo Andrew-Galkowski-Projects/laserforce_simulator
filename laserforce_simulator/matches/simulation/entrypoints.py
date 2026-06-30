@@ -851,6 +851,7 @@ class BatchSimulator:
         arena_map=None,
         season_phase=None,
         leg: int = 1,
+        conference=None,
         fidelity: str = "scores",
     ) -> "GameRound":
         """Simulate one Round of a Season Match.
@@ -896,6 +897,12 @@ class BatchSimulator:
         if season_phase is not None and season_phase.pk is None:
             season_phase = None
 
+        # CONF-01: defensively coerce an unpersisted Conference to None (the
+        # find-or-create key is UNCHANGED — conference is stamped on the
+        # Round-1 create only). Conferences are always persisted at this point.
+        if conference is not None and conference.pk is None:
+            conference = None
+
         movement_ctx, zone_size = load_map_context(arena_map)
 
         # Side-agnostic Match lookup (the team that played red in one
@@ -922,6 +929,9 @@ class BatchSimulator:
                     season=season,
                     season_phase=season_phase,
                     leg=leg,
+                    # CONF-01: stamp the discriminator on the Round-1 create
+                    # only (Round 2 finds the existing Match, never re-stamps).
+                    conference=conference,
                     team_red=team_a,
                     team_blue=team_b,
                     is_completed=False,

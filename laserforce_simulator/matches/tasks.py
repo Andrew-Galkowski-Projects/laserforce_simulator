@@ -293,6 +293,11 @@ def play_season_task(
                 (season.starting_map_pool_ids_json or [])
                 + (season.starting_map_rotation_ids_json or [])
             )
+            # CONF-01 — build the team→Conference map ONCE; both teams of an
+            # intra-Conference fixture share one Conference, so keying on
+            # ``team_a_id`` is sufficient. Empty dict for a zero-Conference
+            # Season ⇒ ``conference=None`` ⇒ byte-identical.
+            conf_by_team = season.conference_by_team_id()
 
             for k, (phase_id, fixture) in enumerate(to_play):
                 # PLAY-01 — between-fixtures (running) cancel check, BEFORE
@@ -320,6 +325,7 @@ def play_season_task(
                         arena_map=arena_map,
                         season_phase=phase_by_id.get(phase_id),
                         leg=fixture.leg,
+                        conference=conf_by_team.get(fixture.team_a_id),
                     )
                 finally:
                     restore_after_fixture(token)
