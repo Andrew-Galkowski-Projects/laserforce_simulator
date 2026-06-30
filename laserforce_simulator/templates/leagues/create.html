@@ -45,6 +45,19 @@
             {{ form.num_teams.errors }}
         </div>
 
+        {# CONF-05 — optional Conference partition; >0 redirects to the composer. #}
+        <div class="mb-3">
+            <label for="league-create-number-of-conferences" class="form-label">Conferences</label>
+            {{ form.number_of_conferences }}
+            <div class="form-text">
+                Split the teams into separate regional leagues that each play their
+                own round-robin and standings. Pick a number to set them up after
+                creating (needs at least 2 teams per conference); leave "None" for a
+                single flat league.
+            </div>
+            {{ form.number_of_conferences.errors }}
+        </div>
+
         <div class="mb-3">
             <label for="league-create-schedule-format" class="form-label">Schedule format</label>
             {{ form.schedule_format }}

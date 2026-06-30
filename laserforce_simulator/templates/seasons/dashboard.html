@@ -32,6 +32,10 @@
 
     <div class="mb-3">
         <a id="season-dashboard-awards-link" class="btn btn-outline-secondary btn-sm" href="{% url 'season_awards' season.id %}">Awards</a>
+        {# CONF-05 — draft-only Conference composer entry. #}
+        {% if season_mode == "draft" %}
+            <a id="season-dashboard-manage-conferences-link" class="btn btn-outline-primary btn-sm" href="{% url 'manage_conferences' season.id %}">Manage Conferences</a>
+        {% endif %}
     </div>
 
     <div>

@@ -47,6 +47,13 @@
         {{ map_config_label }}
     </div>
 
+    {# CONF-05 — draft-only Conference composer entry (the displayed Season is draft). #}
+    {% if season_mode == "draft" and displayed_season %}
+        <div class="mb-3">
+            <a id="league-dashboard-manage-conferences-link" class="btn btn-outline-primary btn-sm" href="{% url 'manage_conferences' displayed_season.id %}">Manage Conferences</a>
+        </div>
+    {% endif %}
+
     {% if season_mode == "draft" or season_mode == "active" or season_mode == "completed" %}
         <div id="league-dashboard-standings-snippet" class="card mb-3">{% include "_partials/dashboard_standings_snippet.html" %}</div>
     {% endif %}

@@ -40,6 +40,7 @@ from . import development, finance, injury, member_night, owner_mood
 from .development import STAT_FIELDS
 from .forms import CreateLeagueForm
 from .models import (
+    Conference,
     GameRound,
     League,
     Match,
@@ -456,6 +457,161 @@ def season_standings(request, season_id: int) -> HttpResponse:
         "querystring_without_sort_dir": querystring_without_sort_dir,
     }
     return render(request, "seasons/standings.html", context)
+
+
+# ----------------------------------------------------------------------
+# CONF-05 — draft-Season Conference composer (Manage Conferences page).
+# Builds on the CONF-01 Conference model (ADR-0034); no model/migration.
+# ----------------------------------------------------------------------
+
+
+def _validate_conference_partition(
+    names: "list[str]",
+    team_to_conf_idx: "dict[int, int | None]",
+    enrolled_team_ids: "set[int]",
+) -> "tuple[list[str], list[tuple[str, list[int]]] | None]":
+    """Validate a submitted Conference partition of a draft Season's Teams.
+
+    ``names`` is the ordered list of submitted Conference names;
+    ``team_to_conf_idx`` maps each enrolled team id to the 0-based index into
+    ``names`` of its assigned Conference (``None`` = unassigned).
+
+    Returns ``(errors, normalized)`` where ``normalized`` is
+    ``[(name, sorted_team_ids), ...]`` on success (``None`` on error). An empty
+    submission (no Conference names) is the valid **zero-Conference** (flat
+    Season) case ⇒ ``([], [])``. The locked rules: every Conference name
+    non-empty; a **full partition** (every enrolled Team assigned to a valid
+    Conference); each Conference has **>= 2** Teams.
+    """
+    stripped = [n.strip() for n in names]
+    # Zero-Conference (flat Season) — no Conference names submitted.
+    if not stripped:
+        return [], []
+
+    errors: list[str] = []
+    if any(n == "" for n in stripped):
+        errors.append("Conference names cannot be empty.")
+
+    members: list[list[int]] = [[] for _ in stripped]
+    unassigned = False
+    for team_id in enrolled_team_ids:
+        idx = team_to_conf_idx.get(team_id)
+        if idx is None or not (0 <= idx < len(stripped)):
+            unassigned = True
+            continue
+        members[idx].append(team_id)
+    if unassigned:
+        errors.append("Every team must be assigned to a conference.")
+    if any(len(m) < 2 for m in members):
+        errors.append("Each conference needs at least 2 teams.")
+
+    if errors:
+        return errors, None
+    normalized = [(stripped[i], sorted(members[i])) for i in range(len(stripped))]
+    return [], normalized
+
+
+def _manage_conferences_context(
+    season: Season,
+    teams: "list",
+    is_editable: bool,
+    *,
+    submitted_names: "list[str] | None" = None,
+    submitted_assignments: "dict[int, int | None] | None" = None,
+    errors: "list[str] | None" = None,
+) -> dict:
+    """Build the Manage-Conferences template context (shared GET + error
+    re-render). Pre-fills the composer from the submitted values on a failed
+    POST, else from the Season's existing Conference partition."""
+    confs = season.ordered_conferences()
+    if submitted_names is not None:
+        conf_names = submitted_names
+        assignments = submitted_assignments or {}
+    else:
+        conf_names = [c.name for c in confs]
+        idx_by_team: dict[int, int] = {}
+        for i, conf in enumerate(confs):
+            for team in conf.teams.all():
+                idx_by_team[team.id] = i
+        assignments = {t.id: idx_by_team.get(t.id) for t in teams}
+
+    team_rows = [{"team": t, "selected": assignments.get(t.id)} for t in teams]
+    readonly_groups = [
+        {"conference": c, "teams": sorted(c.teams.all(), key=lambda t: t.name)}
+        for c in confs
+    ]
+    league = season.league
+    sidebar_displayed_season = (
+        league.active_season
+        or league.seasons.filter(state="completed").order_by("-id").first()
+    )
+    sidebar_links = _build_league_sidebar_links(league, sidebar_displayed_season, None)
+    return {
+        "season": season,
+        "teams": teams,
+        "team_rows": team_rows,
+        "conf_names": conf_names,
+        "readonly_groups": readonly_groups,
+        "is_editable": is_editable,
+        "errors": errors or [],
+        "sidebar_links": sidebar_links,
+        "sidebar_active": None,
+    }
+
+
+def manage_conferences(request: HttpRequest, season_id: int) -> HttpResponse:
+    """CONF-05 — the draft-Season Conference composer.
+
+    GET renders an editable composer while the Season is ``draft`` (name
+    Conferences + assign each enrolled Team) or a read-only frozen partition once
+    the Season is active/completed (membership is snapshotted at Start Season).
+    POST (draft only) validates + **replaces** the Season's Conferences;
+    Conferences are OPTIONAL — an empty submission clears them (flat Season). A
+    non-draft POST is rejected (the partition is frozen).
+    """
+    if request.method not in ("GET", "POST"):
+        return HttpResponseNotAllowed(["GET", "POST"])
+    season = get_object_or_404(Season, pk=season_id)
+    request.session["last_league_id"] = season.league_id
+
+    is_editable = season.state == "draft"
+    teams = sorted(season.teams.all(), key=lambda t: t.name)
+
+    if request.method == "POST":
+        if not is_editable:
+            return HttpResponseBadRequest(
+                "Conferences can only be edited while the Season is in draft."
+            )
+        names = request.POST.getlist("conference_name")
+        team_to_conf_idx: dict[int, int | None] = {}
+        for team in teams:
+            raw = request.POST.get(f"team_{team.id}_conference", "")
+            team_to_conf_idx[team.id] = int(raw) if raw.isdigit() else None
+        errors, normalized = _validate_conference_partition(
+            names, team_to_conf_idx, {t.id for t in teams}
+        )
+        if errors:
+            context = _manage_conferences_context(
+                season,
+                teams,
+                is_editable,
+                submitted_names=[n.strip() for n in names],
+                submitted_assignments=team_to_conf_idx,
+                errors=errors,
+            )
+            return render(request, "seasons/manage_conferences.html", context)
+        with transaction.atomic():
+            season.conferences.all().delete()
+            for ordinal, (name, team_ids) in enumerate(normalized, start=1):
+                conf = Conference.objects.create(
+                    season=season, name=name, ordinal=ordinal
+                )
+                conf.teams.set(team_ids)
+        messages.success(request, "Conferences saved.")
+        return redirect("manage_conferences", season_id=season.id)
+
+    context = _manage_conferences_context(season, teams, is_editable)
+    return render(request, "seasons/manage_conferences.html", context)
 
 
 def _member_night_game_dict(match: Match) -> dict:
@@ -1149,6 +1305,20 @@ def league_create(request) -> HttpResponse:
         _seed_team_budgets_by_strength(created_teams)
 
     _write_baseline_ratings(season, founding_players)
+
+    # CONF-05 — when the create form requested Conferences, pre-create them with
+    # the generated Teams auto-split evenly (round-robin, so each gets >= 2 — the
+    # form's ``2 * N`` team-count guard ensures this), then send the user straight
+    # to the Manage Conferences composer to rename / reassign before Start Season.
+    n_conf = cleaned.get("number_of_conferences") or 0
+    if n_conf > 0:
+        ordered_teams = sorted(created_teams, key=lambda t: t.name)
+        for i in range(n_conf):
+            conf = Conference.objects.create(
+                season=season, name=f"Conference {i + 1}", ordinal=i + 1
+            )
+            conf.teams.set([t.id for t in ordered_teams[i::n_conf]])
+        return redirect("manage_conferences", season_id=season.id)
 
     return redirect("season_standings", season_id=season.id)
 

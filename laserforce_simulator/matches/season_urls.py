@@ -94,6 +94,11 @@ urlpatterns = [
         name="play_member_night_live",
     ),
     path(
+        "<int:season_id>/conferences/",
+        league_views.manage_conferences,
+        name="manage_conferences",
+    ),
+    path(
         "<int:season_id>/standings/",
         league_views.season_standings,
         name="season_standings",

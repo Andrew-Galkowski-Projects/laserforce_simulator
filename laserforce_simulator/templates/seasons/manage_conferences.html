@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+
+{% block title %}{{ season.league.name }} — {{ season.name }} — Conferences{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+    {% include "_partials/league_sidebar.html" %}
+    <main class="flex-grow-1">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item">{{ season.league.name }}</li>
+                <li class="breadcrumb-item active">{{ season.name }}</li>
+            </ol>
+        </nav>
+        <h1 class="mb-3">Manage Conferences</h1>
+
+        <p class="text-muted">
+            Conferences partition this Season's teams into self-contained
+            regional leagues that each play their own round-robin and standings.
+            Leave it empty for a single flat league (the default).
+        </p>
+
+        {% if not teams %}
+            <div id="manage-conferences-empty" class="alert alert-info">
+                No teams are enrolled in this Season yet.
+            </div>
+        {% elif is_editable %}
+            {% if errors %}
+                <div id="manage-conferences-errors" class="alert alert-danger">
+                    <ul class="mb-0">
+                        {% for error in errors %}<li>{{ error }}</li>{% endfor %}
+                    </ul>
+                </div>
+            {% endif %}
+
+            <form id="manage-conferences-form" method="post">
+                {% csrf_token %}
+
+                <h2 class="h5">Conferences</h2>
+                <div id="manage-conferences-list" class="mb-2">
+                    {% for name in conf_names %}
+                        <div class="conference-row input-group mb-2" style="max-width: 30rem;">
+                            <input type="text" name="conference_name"
+                                   id="manage-conferences-name-{{ forloop.counter0 }}"
+                                   class="conference-name form-control"
+                                   placeholder="Conference name" value="{{ name }}">
+                            <button type="button" class="conference-remove btn btn-outline-danger">Remove</button>
+                        </div>
+                    {% endfor %}
+                </div>
+                <button type="button" id="manage-conferences-add" class="btn btn-outline-secondary btn-sm mb-4">+ Add conference</button>
+
+                <h2 class="h5">Team assignment</h2>
+                <table class="table table-sm" style="max-width: 36rem;">
+                    <thead><tr><th>Team</th><th>Conference</th></tr></thead>
+                    <tbody>
+                        {% for row in team_rows %}
+                            <tr>
+                                <td>{{ row.team.name }}</td>
+                                <td>
+                                    <select name="team_{{ row.team.id }}_conference"
+                                            id="manage-conferences-team-{{ row.team.id }}"
+                                            class="team-conference-select form-select form-select-sm">
+                                        <option value="">Unassigned</option>
+                                        {% for name in conf_names %}
+                                            <option value="{{ forloop.counter0 }}"
+                                                {% if row.selected == forloop.counter0 %}selected{% endif %}>{{ name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+
+                <button type="submit" id="manage-conferences-submit" class="btn btn-primary">Save Conferences</button>
+                <a href="{% url 'season_dashboard' season.id %}" class="btn btn-link">Cancel</a>
+            </form>
+
+            <script>
+            (function () {
+                const list = document.getElementById("manage-conferences-list");
+                const addBtn = document.getElementById("manage-conferences-add");
+
+                function escapeHtml(s) {
+                    const d = document.createElement("div");
+                    d.textContent = s;
+                    return d.innerHTML;
+                }
+                function names() {
+                    return Array.from(document.querySelectorAll(".conference-name")).map(i => i.value);
+                }
+                // Rebuild every team <select> from the current conference names,
+                // preserving each select's choice by index (with an optional
+                // remap when a conference at removedIdx is deleted).
+                function rebuildSelects(removedIdx) {
+                    const ns = names();
+                    document.querySelectorAll(".team-conference-select").forEach(sel => {
+                        let cur = sel.value === "" ? null : parseInt(sel.value, 10);
+                        if (removedIdx !== undefined && removedIdx !== null && cur !== null) {
+                            if (cur === removedIdx) cur = null;
+                            else if (cur > removedIdx) cur = cur - 1;
+                        }
+                        let html = '<option value="">Unassigned</option>';
+                        ns.forEach((n, i) => { html += '<option value="' + i + '">' + escapeHtml(n) + '</option>'; });
+                        sel.innerHTML = html;
+                        sel.value = (cur === null || cur >= ns.length) ? "" : String(cur);
+                    });
+                }
+                function wireRow(row) {
+                    row.querySelector(".conference-name").addEventListener("input", () => rebuildSelects());
+                    row.querySelector(".conference-remove").addEventListener("click", () => {
+                        const rows = Array.from(list.querySelectorAll(".conference-row"));
+                        const idx = rows.indexOf(row);
+                        row.remove();
+                        rebuildSelects(idx);
+                    });
+                }
+                list.querySelectorAll(".conference-row").forEach(wireRow);
+                addBtn.addEventListener("click", () => {
+                    const idx = list.querySelectorAll(".conference-row").length;
+                    const row = document.createElement("div");
+                    row.className = "conference-row input-group mb-2";
+                    row.style.maxWidth = "30rem";
+                    row.innerHTML =
+                        '<input type="text" name="conference_name" id="manage-conferences-name-' + idx + '"' +
+                        ' class="conference-name form-control" placeholder="Conference name">' +
+                        '<button type="button" class="conference-remove btn btn-outline-danger">Remove</button>';
+                    list.appendChild(row);
+                    wireRow(row);
+                    rebuildSelects();
+                });
+            })();
+            </script>
+        {% else %}
+            {# Read-only frozen partition (active / completed Season). #}
+            <div id="manage-conferences-readonly">
+                {% if readonly_groups %}
+                    {% for group in readonly_groups %}
+                        <div class="card mb-3" style="max-width: 30rem;">
+                            <div class="card-header">{{ group.conference.name }}</div>
+                            <ul class="list-group list-group-flush">
+                                {% for team in group.teams %}
+                                    <li class="list-group-item">{{ team.name }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="alert alert-secondary">
+                        This Season has no conferences (single flat league).
+                    </div>
+                {% endif %}
+                <p class="text-muted small">
+                    The conference partition is locked once the Season starts.
+                </p>
+            </div>
+        {% endif %}
+    </main>
+</div>
+{% endblock %}

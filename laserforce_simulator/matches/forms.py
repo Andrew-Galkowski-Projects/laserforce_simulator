@@ -243,6 +243,28 @@ class CreateLeagueForm(forms.Form):
         label="Fire on luxury tax",
         widget=forms.CheckboxInput(attrs={"id": "league-create-challenge-luxury-tax"}),
     )
+    # CONF-05 — optional Conference partition. When > 0 the create-League flow
+    # pre-creates that many Conferences (the generated Teams auto-split evenly)
+    # and redirects to the Manage Conferences composer; 0 = single flat league.
+    number_of_conferences = forms.TypedChoiceField(
+        choices=(
+            (0, "None (single league)"),
+            (2, "2"),
+            (3, "3"),
+            (4, "4"),
+        ),
+        coerce=int,
+        empty_value=0,
+        initial=0,
+        required=False,
+        widget=forms.Select(
+            attrs={
+                "id": "league-create-number-of-conferences",
+                "class": "form-select",
+            }
+        ),
+        label="Conferences",
+    )
     # LG-02-Part2b — hidden composer serialization. The create.html JS
     # serializes the ordered phase rows into this field as a comma-joined
     # list of phase-type tokens; ``clean()`` parses it into phase specs.
@@ -280,6 +302,17 @@ class CreateLeagueForm(forms.Form):
             self.add_error("phases", forms.ValidationError(str(exc)))
         else:
             cleaned_data["phase_specs"] = specs
+        # CONF-05 — a Conference partition needs >= 2 teams per Conference, so
+        # the team count must cover ``2 * N``. Error attaches to the dropdown.
+        n_conf = cleaned_data.get("number_of_conferences") or 0
+        num_teams = cleaned_data.get("num_teams")
+        if n_conf and num_teams is not None and num_teams < 2 * n_conf:
+            self.add_error(
+                "number_of_conferences",
+                forms.ValidationError(
+                    f"{n_conf} conferences need at least {2 * n_conf} teams."
+                ),
+            )
         mode = cleaned_data.get("map_mode")
         if mode is None:
             return cleaned_data
