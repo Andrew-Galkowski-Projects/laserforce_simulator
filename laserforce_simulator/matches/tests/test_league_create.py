@@ -19,7 +19,8 @@ from unittest.mock import patch
 from django.test import TestCase
 from django.urls import reverse
 
-from matches.models import League, Season
+from matches.forms import CreateLeagueForm
+from matches.models import Conference, League, Season
 from teams.models import Player, Team
 
 # ---------------------------------------------------------------------------
@@ -2076,3 +2077,53 @@ class TestLeagueCreateRotateByMatchdayValidationMatrix(TestCase):
         # The error attaches to map_rotation (the field carrying the bad id).
         self.assertIn("map_rotation", form.errors)
         self._assert_view_writes_nothing(payload)
+
+
+# ---------------------------------------------------------------------------
+# CONF-05 — create-League Conference partition (dropdown + auto-split redirect)
+# ---------------------------------------------------------------------------
+
+
+class TestConf05CreateLeagueConferences(TestCase):
+    """CONF-05 — the create form's ``number_of_conferences`` dropdown: when > 0
+    the view pre-creates that many Conferences (Teams auto-split evenly) and
+    redirects to the Manage Conferences composer; the form rejects too-few teams.
+    """
+
+    def test_form_rejects_too_few_teams(self):
+        form = CreateLeagueForm(
+            _valid_payload(num_teams="4", number_of_conferences="3")
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("number_of_conferences", form.errors)
+
+    def test_form_accepts_enough_teams(self):
+        form = CreateLeagueForm(
+            _valid_payload(num_teams="8", number_of_conferences="3")
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_create_with_conferences_presplits_and_redirects(self):
+        payload = _valid_payload(
+            num_teams="8", number_of_conferences="2", league_name="ConfCreate"
+        )
+        response = self.client.post(reverse("league_create"), payload)
+        season = Season.objects.get(league__name="ConfCreate")
+        self.assertRedirects(response, reverse("manage_conferences", args=[season.id]))
+        confs = list(season.conferences.order_by("ordinal"))
+        self.assertEqual([c.ordinal for c in confs], [1, 2])
+        self.assertEqual([c.name for c in confs], ["Conference 1", "Conference 2"])
+        # Even round-robin split of 8 teams -> 4 + 4, disjoint, full partition.
+        self.assertEqual(confs[0].teams.count(), 4)
+        self.assertEqual(confs[1].teams.count(), 4)
+        assigned = set(confs[0].teams.values_list("id", flat=True)) | set(
+            confs[1].teams.values_list("id", flat=True)
+        )
+        self.assertEqual(assigned, set(season.teams.values_list("id", flat=True)))
+
+    def test_create_without_conferences_redirects_to_standings(self):
+        payload = _valid_payload(league_name="FlatCreate")  # no conferences field
+        response = self.client.post(reverse("league_create"), payload)
+        season = Season.objects.get(league__name="FlatCreate")
+        self.assertRedirects(response, reverse("season_standings", args=[season.id]))
+        self.assertEqual(season.conferences.count(), 0)
