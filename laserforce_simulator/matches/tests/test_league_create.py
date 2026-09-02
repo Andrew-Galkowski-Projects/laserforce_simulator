@@ -20,6 +20,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from matches.forms import CreateLeagueForm
+from matches.league_views import _rank_teams_by_strength
 from matches.models import Conference, League, Season
 from teams.models import Player, Team
 
@@ -56,15 +57,15 @@ class TestLeagueCreateGet(TestCase):
     """LG-01b — GET ``/leagues/create/`` renders the create form."""
 
     def test_get_returns_200(self) -> None:
-        response = self.client.get(reverse("league_create"))
+        response = self.client.get(reverse("league_create_advanced"))
         self.assertEqual(response.status_code, 200)
 
     def test_template_used(self) -> None:
-        response = self.client.get(reverse("league_create"))
-        self.assertTemplateUsed(response, "leagues/create.html")
+        response = self.client.get(reverse("league_create_advanced"))
+        self.assertTemplateUsed(response, "leagues/create_advanced.html")
 
     def test_all_locked_dom_ids_present(self) -> None:
-        response = self.client.get(reverse("league_create"))
+        response = self.client.get(reverse("league_create_advanced"))
         body = response.content.decode()
         for dom_id in (
             "league-create-form",
@@ -80,7 +81,7 @@ class TestLeagueCreateGet(TestCase):
             self.assertIn(f'id="{dom_id}"', body, f"missing DOM id {dom_id!r}")
 
     def test_schedule_format_select_is_disabled(self) -> None:
-        response = self.client.get(reverse("league_create"))
+        response = self.client.get(reverse("league_create_advanced"))
         body = response.content.decode()
         # Locate the schedule-format element and confirm the `disabled`
         # attribute is present on the SAME element (within a short
@@ -100,7 +101,9 @@ class TestLeagueCreateGet(TestCase):
         )
 
     def test_reverse_resolves_to_create_path(self) -> None:
-        self.assertEqual(reverse("league_create"), "/leagues/create/")
+        # CRE-01 — the full form moved to the Advanced screen; ``create/``
+        # itself now serves the template chooser.
+        self.assertEqual(reverse("league_create_advanced"), "/leagues/create/advanced/")
 
 
 # ---------------------------------------------------------------------------
@@ -112,11 +115,11 @@ class TestLeagueCreatePost(TestCase):
     """LG-01b — POST ``/leagues/create/`` creates a League + Season + Teams."""
 
     def test_post_valid_returns_302(self) -> None:
-        response = self.client.post(reverse("league_create"), _valid_payload())
+        response = self.client.post(reverse("league_create_advanced"), _valid_payload())
         self.assertEqual(response.status_code, 302)
 
     def test_post_creates_league(self) -> None:
-        self.client.post(reverse("league_create"), _valid_payload())
+        self.client.post(reverse("league_create_advanced"), _valid_payload())
         leagues = League.objects.filter(name="Spring 2026")
         self.assertEqual(leagues.count(), 1)
         league = leagues.get()
@@ -124,7 +127,7 @@ class TestLeagueCreatePost(TestCase):
         self.assertEqual(league.state, "active")
 
     def test_post_creates_season_in_draft_state(self) -> None:
-        self.client.post(reverse("league_create"), _valid_payload())
+        self.client.post(reverse("league_create_advanced"), _valid_payload())
         seasons = Season.objects.filter(name="Season 1")
         self.assertEqual(seasons.count(), 1)
         season = seasons.get()
@@ -137,12 +140,12 @@ class TestLeagueCreatePost(TestCase):
         self.assertEqual(season.league_id, league.id)
 
     def test_post_creates_num_teams_teams_enrolled_in_season(self) -> None:
-        self.client.post(reverse("league_create"), _valid_payload())
+        self.client.post(reverse("league_create_advanced"), _valid_payload())
         season = Season.objects.get(name="Season 1")
         self.assertEqual(season.teams.count(), 4)
 
     def test_post_each_team_has_six_players(self) -> None:
-        self.client.post(reverse("league_create"), _valid_payload())
+        self.client.post(reverse("league_create_advanced"), _valid_payload())
         season = Season.objects.get(name="Season 1")
         for team in season.teams.all():
             # ``Player`` reverse accessor on Team is ``team.players`` (the
@@ -154,21 +157,21 @@ class TestLeagueCreatePost(TestCase):
             )
 
     def test_post_redirects_to_season_standings(self) -> None:
-        response = self.client.post(reverse("league_create"), _valid_payload())
+        response = self.client.post(reverse("league_create_advanced"), _valid_payload())
         season = Season.objects.get(name="Season 1")
         self.assertEqual(
             response["Location"], reverse("season_standings", args=[season.id])
         )
 
     def test_redirect_target_renders_200(self) -> None:
-        response = self.client.post(reverse("league_create"), _valid_payload())
+        response = self.client.post(reverse("league_create_advanced"), _valid_payload())
         # Follow the redirect manually.
         follow = self.client.get(response["Location"])
         self.assertEqual(follow.status_code, 200)
 
     def test_post_num_teams_16_creates_16_teams_96_players(self) -> None:
         payload = _valid_payload(num_teams="16", league_name="Big League")
-        self.client.post(reverse("league_create"), payload)
+        self.client.post(reverse("league_create_advanced"), payload)
         season = Season.objects.get(name="Season 1")
         self.assertEqual(season.teams.count(), 16)
         total_players = sum(t.players.count() for t in season.teams.all())
@@ -184,7 +187,7 @@ class TestLeagueCreateFreeAgents(TestCase):
     """Creating a League seeds its own 100–200 pool of free agents."""
 
     def test_post_creates_per_league_free_agent_pool(self) -> None:
-        self.client.post(reverse("league_create"), _valid_payload())
+        self.client.post(reverse("league_create_advanced"), _valid_payload())
         league = League.objects.get(name="Spring 2026")
         self.assertIsNotNone(league.free_agent_pool)
         count = league.free_agent_pool.players.count()
@@ -192,7 +195,7 @@ class TestLeagueCreateFreeAgents(TestCase):
         self.assertLessEqual(count, 200)
 
     def test_pool_not_enrolled_and_hidden_from_regular_teams(self) -> None:
-        self.client.post(reverse("league_create"), _valid_payload())
+        self.client.post(reverse("league_create_advanced"), _valid_payload())
         league = League.objects.get(name="Spring 2026")
         season = Season.objects.get(name="Season 1")
         pool = league.free_agent_pool
@@ -202,8 +205,12 @@ class TestLeagueCreateFreeAgents(TestCase):
         self.assertNotIn(pool.id, Team.objects.regular().values_list("id", flat=True))
 
     def test_each_league_gets_its_own_separate_pool(self) -> None:
-        self.client.post(reverse("league_create"), _valid_payload(league_name="L1"))
-        self.client.post(reverse("league_create"), _valid_payload(league_name="L2"))
+        self.client.post(
+            reverse("league_create_advanced"), _valid_payload(league_name="L1")
+        )
+        self.client.post(
+            reverse("league_create_advanced"), _valid_payload(league_name="L2")
+        )
         l1 = League.objects.get(name="L1")
         l2 = League.objects.get(name="L2")
         self.assertIsNotNone(l1.free_agent_pool)
@@ -227,7 +234,7 @@ class TestLeagueCreateFormValidation(TestCase):
         before_leagues = League.objects.count()
         before_seasons = Season.objects.count()
         before_teams = Team.objects.count()
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(League.objects.count(), before_leagues)
         self.assertEqual(Season.objects.count(), before_seasons)
@@ -237,7 +244,7 @@ class TestLeagueCreateFormValidation(TestCase):
         payload = _valid_payload()
         del payload["league_name"]
         before = League.objects.count()
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(League.objects.count(), before)
         # The form-field name should appear in the rendered error block.
@@ -271,7 +278,7 @@ class TestLeagueCreateFormValidation(TestCase):
         # regardless of what the client posts. The persisted Season should
         # have ``schedule_format="single_round_robin"``.
         payload = _valid_payload(schedule_format="double_round_robin")
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = Season.objects.get(name="Season 1")
         self.assertEqual(season.schedule_format, "single_round_robin")
@@ -289,7 +296,7 @@ class TestSeamWithGenerateTeams(TestCase):
         """All 6 slot FKs on each generated Team should be populated by
         ``_generate_teams`` (greedy preferred-role match plus leftover
         back-fill — see ``teams/views.py``)."""
-        self.client.post(reverse("league_create"), _valid_payload())
+        self.client.post(reverse("league_create_advanced"), _valid_payload())
         season = Season.objects.get(name="Season 1")
         for team in season.teams.all():
             slot_player_ids = {
@@ -314,7 +321,7 @@ class TestSeamWithGenerateTeams(TestCase):
     def test_player_stats_in_valid_range(self) -> None:
         """Generated Player stats clamp to ``[0, 100]`` per the LG-00
         ``draw_stats`` contract (``random.gauss`` clamped at write time)."""
-        self.client.post(reverse("league_create"), _valid_payload())
+        self.client.post(reverse("league_create_advanced"), _valid_payload())
         season = Season.objects.get(name="Season 1")
         team = season.teams.first()
         player = team.players.first()
@@ -342,7 +349,9 @@ class TestSeamWithGenerateTeams(TestCase):
                 side_effect=Exception("boom"),
             ):
                 with self.assertRaises(Exception):
-                    self.client.post(reverse("league_create"), _valid_payload())
+                    self.client.post(
+                        reverse("league_create_advanced"), _valid_payload()
+                    )
         except AttributeError:
             # ``matches.views`` may not re-export ``Season`` — patch the
             # model itself instead.
@@ -351,7 +360,9 @@ class TestSeamWithGenerateTeams(TestCase):
                 side_effect=Exception("boom"),
             ):
                 with self.assertRaises(Exception):
-                    self.client.post(reverse("league_create"), _valid_payload())
+                    self.client.post(
+                        reverse("league_create_advanced"), _valid_payload()
+                    )
 
         # All 5 upstream writes must be rolled back.
         self.assertEqual(League.objects.count(), before_leagues)
@@ -374,19 +385,21 @@ class TestLg01gCurrentTeamAutoSet(TestCase):
     failure rolls the auto-set back atomically.
     """
 
-    def test_league_create_populates_current_team_to_first_alphabetical_team(
+    def test_league_create_populates_current_team_to_difficulty_pick(
         self,
     ) -> None:
-        self.client.post(reverse("league_create"), _valid_payload())
+        # CRE-01 SUPERSEDES the LG-01g alphabetical-first auto-set: the
+        # auto-set still lands inside the same atomic body, but now picks by
+        # difficulty. ``difficulty`` omitted ⇒ Medium ⇒ rank ``N // 2``.
+        self.client.post(reverse("league_create_advanced"), _valid_payload())
         league = League.objects.get(name="Spring 2026")
         self.assertIsNotNone(league.current_team)
-        # The alphabetically-first Team in the Season's M2M.
         season = league.seasons.first()
-        first_alphabetical = sorted(t.name for t in season.teams.all())[0]
-        self.assertEqual(league.current_team.name, first_alphabetical)
+        ranked = _rank_teams_by_strength(list(season.teams.all()))
+        self.assertEqual(league.current_team_id, ranked[len(ranked) // 2].id)
 
     def test_league_create_current_team_is_in_created_teams(self) -> None:
-        self.client.post(reverse("league_create"), _valid_payload())
+        self.client.post(reverse("league_create_advanced"), _valid_payload())
         league = League.objects.get(name="Spring 2026")
         season = league.seasons.first()
         enrolled_team_ids = set(season.teams.values_list("id", flat=True))
@@ -604,7 +617,7 @@ class TestLeagueCreateMapPool(TestCase):
         payload = _valid_payload(map_mode="none")
         payload["map_pool"] = [str(m.id)]
         before = League.objects.count()
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         # 200 re-render, NOT 302.
         self.assertEqual(response.status_code, 200)
         self.assertEqual(League.objects.count(), before)
@@ -615,14 +628,14 @@ class TestLeagueCreateMapPool(TestCase):
         payload = _valid_payload(map_mode="single")
         payload["map_pool"] = [str(m1.id), str(m2.id)]
         before = League.objects.count()
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(League.objects.count(), before)
 
     def test_view_post_mode_random_empty_pool_rejected(self) -> None:
         payload = _valid_payload(map_mode="random_per_round")
         before = League.objects.count()
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(League.objects.count(), before)
 
@@ -630,7 +643,7 @@ class TestLeagueCreateMapPool(TestCase):
 
     def test_view_post_mode_none_empty_pool_creates_season_with_none(self) -> None:
         payload = _valid_payload(map_mode="none", league_name="NoneOK")
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         league = League.objects.get(name="NoneOK")
         season = league.seasons.first()
@@ -641,7 +654,7 @@ class TestLeagueCreateMapPool(TestCase):
         m = _lg01j_make_map_with_config("SingleOK")
         payload = _valid_payload(map_mode="single", league_name="SingleL")
         payload["map_pool"] = [str(m.id)]
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         league = League.objects.get(name="SingleL")
         season = league.seasons.first()
@@ -652,7 +665,7 @@ class TestLeagueCreateMapPool(TestCase):
         ms = [_lg01j_make_map_with_config(f"RandOK{i}") for i in range(3)]
         payload = _valid_payload(map_mode="random_per_round", league_name="RandL")
         payload["map_pool"] = [str(m.id) for m in ms]
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         league = League.objects.get(name="RandL")
         season = league.seasons.first()
@@ -668,7 +681,7 @@ class TestLeagueCreateMapPool(TestCase):
         payload["map_pool"] = [str(m.id)]
         before_leagues = League.objects.count()
         before_teams = Team.objects.count()
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(League.objects.count(), before_leagues)
         self.assertEqual(Team.objects.count(), before_teams)
@@ -695,7 +708,7 @@ class TestLg02Part2aSeasonPhaseOnCreate(TestCase):
     """LG-02-Part2a — ``league_create`` seeds one explicit RR SeasonPhase."""
 
     def test_post_creates_exactly_one_round_robin_phase(self) -> None:
-        self.client.post(reverse("league_create"), _valid_payload())
+        self.client.post(reverse("league_create_advanced"), _valid_payload())
         season = Season.objects.get(name="Season 1")
         phases = list(season.phases.all())
         self.assertEqual(len(phases), 1)
@@ -704,14 +717,14 @@ class TestLg02Part2aSeasonPhaseOnCreate(TestCase):
         self.assertEqual(phase.phase_type, "round_robin")
 
     def test_phase_linked_to_the_created_season(self) -> None:
-        self.client.post(reverse("league_create"), _valid_payload())
+        self.client.post(reverse("league_create_advanced"), _valid_payload())
         season = Season.objects.get(name="Season 1")
         phase = _Lg02SeasonPhase.objects.get(season=season)
         self.assertEqual(phase.season_id, season.id)
 
     def test_only_one_phase_row_total_for_a_single_create(self) -> None:
         before = _Lg02SeasonPhase.objects.count()
-        self.client.post(reverse("league_create"), _valid_payload())
+        self.client.post(reverse("league_create_advanced"), _valid_payload())
         self.assertEqual(_Lg02SeasonPhase.objects.count(), before + 1)
 
     # -- LG-02-Part2b empty-equivalence: omitting / blanking ``phases`` keeps
@@ -720,7 +733,7 @@ class TestLg02Part2aSeasonPhaseOnCreate(TestCase):
     def test_empty_phases_field_persists_single_round_robin(self) -> None:
         # ``phases`` absent from the POST ⇒ one round_robin phase (Part2a
         # equivalence). The RR row's schedule_format copies the Season format.
-        self.client.post(reverse("league_create"), _valid_payload())
+        self.client.post(reverse("league_create_advanced"), _valid_payload())
         season = Season.objects.get(name="Season 1")
         phases = list(season.phases.all())
         self.assertEqual(len(phases), 1)
@@ -731,7 +744,7 @@ class TestLg02Part2aSeasonPhaseOnCreate(TestCase):
     def test_blank_phases_field_persists_single_round_robin(self) -> None:
         payload = _valid_payload()
         payload["phases"] = ""
-        self.client.post(reverse("league_create"), payload)
+        self.client.post(reverse("league_create_advanced"), payload)
         season = Season.objects.get(name="Season 1")
         phases = list(season.phases.all())
         self.assertEqual(len(phases), 1)
@@ -763,7 +776,7 @@ class TestLg02Part2bComposerMultiPhase(TestCase):
     def test_composer_persists_three_ordered_phase_rows(self) -> None:
         payload = _valid_payload()
         payload["phases"] = "round_robin,tournament,round_robin"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = Season.objects.get(name="Season 1")
         phases = list(season.phases.all())  # Meta.ordering=["ordinal"]
@@ -777,7 +790,7 @@ class TestLg02Part2bComposerMultiPhase(TestCase):
     def test_composer_rr_rows_copy_single_round_robin_format(self) -> None:
         payload = _valid_payload()
         payload["phases"] = "round_robin,tournament,round_robin"
-        self.client.post(reverse("league_create"), payload)
+        self.client.post(reverse("league_create_advanced"), payload)
         season = Season.objects.get(name="Season 1")
         phases = list(season.phases.all())
         # Ordinals 1 and 3 are round_robin rows; both copy the Season format.
@@ -787,7 +800,7 @@ class TestLg02Part2bComposerMultiPhase(TestCase):
     def test_composer_tournament_row_schedule_format_is_none(self) -> None:
         payload = _valid_payload()
         payload["phases"] = "round_robin,tournament,round_robin"
-        self.client.post(reverse("league_create"), payload)
+        self.client.post(reverse("league_create_advanced"), payload)
         season = Season.objects.get(name="Season 1")
         phases = list(season.phases.all())
         self.assertEqual(phases[1].phase_type, "tournament")
@@ -797,7 +810,7 @@ class TestLg02Part2bComposerMultiPhase(TestCase):
         # Part2b: the tournament FK is ALWAYS NULL (the embed is Part2c).
         payload = _valid_payload()
         payload["phases"] = "round_robin,tournament,round_robin"
-        self.client.post(reverse("league_create"), payload)
+        self.client.post(reverse("league_create_advanced"), payload)
         season = Season.objects.get(name="Season 1")
         for phase in season.phases.all():
             self.assertIsNone(
@@ -813,7 +826,7 @@ class TestLg02Part2bComposerNoRoundRobinRejected(TestCase):
     def test_no_rr_composition_rerenders_form_200(self) -> None:
         payload = _valid_payload(league_name="NoRrL")
         payload["phases"] = "tournament"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         # Form invalid ⇒ re-render, NOT redirect.
         self.assertEqual(response.status_code, 200)
 
@@ -824,7 +837,7 @@ class TestLg02Part2bComposerNoRoundRobinRejected(TestCase):
 
         payload = _valid_payload(league_name="NoRrZero")
         payload["phases"] = "tournament"
-        self.client.post(reverse("league_create"), payload)
+        self.client.post(reverse("league_create_advanced"), payload)
 
         # The @transaction.atomic boundary + the form-layer rejection mean
         # nothing is written.
@@ -846,14 +859,18 @@ class TestLg02Part2bComposerNoRoundRobinRejected(TestCase):
                 side_effect=Exception("boom"),
             ):
                 with self.assertRaises(Exception):
-                    self.client.post(reverse("league_create"), _valid_payload())
+                    self.client.post(
+                        reverse("league_create_advanced"), _valid_payload()
+                    )
         except AttributeError:
             with patch(
                 "matches.models.Season.objects.create",
                 side_effect=Exception("boom"),
             ):
                 with self.assertRaises(Exception):
-                    self.client.post(reverse("league_create"), _valid_payload())
+                    self.client.post(
+                        reverse("league_create_advanced"), _valid_payload()
+                    )
 
         self.assertEqual(_Lg02SeasonPhase.objects.count(), before_phases)
 
@@ -882,7 +899,7 @@ class TestLg02Part2c3aComposerDoubleRoundRobin(TestCase):
     def test_double_rr_token_persists_double_round_robin_phase(self) -> None:
         payload = _valid_payload(league_name="DoubleRrL")
         payload["phases"] = "round_robin:double_round_robin"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="DoubleRrL").seasons.get()
         phases = list(season.phases.all())
@@ -894,7 +911,7 @@ class TestLg02Part2c3aComposerDoubleRoundRobin(TestCase):
     def test_double_rr_then_tournament_persists_both_rows(self) -> None:
         payload = _valid_payload(league_name="DoubleRrTourneyL")
         payload["phases"] = "round_robin:double_round_robin,tournament"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="DoubleRrTourneyL").seasons.get()
         phases = list(season.phases.all())
@@ -909,7 +926,7 @@ class TestLg02Part2c3aComposerDoubleRoundRobin(TestCase):
         # single_round_robin shape.
         payload = _valid_payload(league_name="BareRrL")
         payload["phases"] = "round_robin"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="BareRrL").seasons.get()
         phases = list(season.phases.all())
@@ -918,7 +935,7 @@ class TestLg02Part2c3aComposerDoubleRoundRobin(TestCase):
 
     def test_default_create_still_persists_single_round_robin(self) -> None:
         # Omitting the phases field entirely keeps the Part2a default.
-        self.client.post(reverse("league_create"), _valid_payload())
+        self.client.post(reverse("league_create_advanced"), _valid_payload())
         season = Season.objects.get(name="Season 1")
         phases = list(season.phases.all())
         self.assertEqual(len(phases), 1)
@@ -932,7 +949,7 @@ class TestLg02Part2c3aComposerUnknownFormatRejected(TestCase):
     def test_unknown_format_rerenders_form_200(self) -> None:
         payload = _valid_payload(league_name="BadFmtL")
         payload["phases"] = "round_robin:triple_round_robin"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 200)
 
     def test_unknown_format_creates_zero_rows(self) -> None:
@@ -942,7 +959,7 @@ class TestLg02Part2c3aComposerUnknownFormatRejected(TestCase):
 
         payload = _valid_payload(league_name="BadFmtZero")
         payload["phases"] = "round_robin:triple_round_robin"
-        self.client.post(reverse("league_create"), payload)
+        self.client.post(reverse("league_create_advanced"), payload)
 
         self.assertEqual(League.objects.count(), before_leagues)
         self.assertEqual(Season.objects.count(), before_seasons)
@@ -968,7 +985,7 @@ class TestLg02Part2c3bComposerTournamentMode(TestCase):
     def test_composed_tournament_phase_is_standings(self) -> None:
         payload = _valid_payload(league_name="ModeStdL")
         payload["phases"] = "round_robin,tournament"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="ModeStdL").seasons.get()
         phases = list(season.phases.all())
@@ -978,13 +995,13 @@ class TestLg02Part2c3bComposerTournamentMode(TestCase):
     def test_every_composed_phase_is_standings(self) -> None:
         payload = _valid_payload(league_name="ModeAllStdL")
         payload["phases"] = "round_robin,tournament,round_robin"
-        self.client.post(reverse("league_create"), payload)
+        self.client.post(reverse("league_create_advanced"), payload)
         season = League.objects.get(name="ModeAllStdL").seasons.get()
         for phase in season.phases.all():
             self.assertEqual(phase.tournament_mode, "standings")
 
     def test_default_create_phase_is_standings(self) -> None:
-        self.client.post(reverse("league_create"), _valid_payload())
+        self.client.post(reverse("league_create_advanced"), _valid_payload())
         season = Season.objects.get(name="Season 1")
         self.assertEqual(season.phases.get().tournament_mode, "standings")
 
@@ -1015,7 +1032,7 @@ class TestLg02Part2c3cComposerTournamentMode(TestCase):
         # trailing round_robin satisfies the >=1-RR rule.
         payload = _valid_payload(league_name="StrengthL")
         payload["phases"] = "tournament:strength,round_robin"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="StrengthL").seasons.get()
         phases = list(season.phases.all())  # Meta.ordering=["ordinal"]
@@ -1027,7 +1044,7 @@ class TestLg02Part2c3cComposerTournamentMode(TestCase):
     def test_unseeded_tournament_persists_unseeded_mode(self) -> None:
         payload = _valid_payload(league_name="UnseededL")
         payload["phases"] = "tournament:unseeded,round_robin"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="UnseededL").seasons.get()
         phases = list(season.phases.all())
@@ -1039,7 +1056,7 @@ class TestLg02Part2c3cComposerTournamentMode(TestCase):
         # has a preceding RR, so the guard never fires.
         payload = _valid_payload(league_name="MidStandingsL")
         payload["phases"] = "round_robin,tournament:standings,round_robin"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="MidStandingsL").seasons.get()
         phases = list(season.phases.all())
@@ -1052,7 +1069,7 @@ class TestLg02Part2c3cComposerTournamentMode(TestCase):
     def test_explicit_standings_tournament_after_rr(self) -> None:
         payload = _valid_payload(league_name="ExplicitStandingsL")
         payload["phases"] = "round_robin,tournament:standings"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="ExplicitStandingsL").seasons.get()
         phases = list(season.phases.all())
@@ -1067,7 +1084,7 @@ class TestLg02Part2c3cComposerRandomDrawRejected(TestCase):
     def test_random_draw_mode_rerenders_form_200(self) -> None:
         payload = _valid_payload(league_name="RandomDrawL")
         payload["phases"] = "round_robin,tournament:random_draw"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         # Form invalid ⇒ re-render, NOT redirect.
         self.assertEqual(response.status_code, 200)
 
@@ -1078,7 +1095,7 @@ class TestLg02Part2c3cComposerRandomDrawRejected(TestCase):
 
         payload = _valid_payload(league_name="RandomDrawZero")
         payload["phases"] = "round_robin,tournament:random_draw"
-        self.client.post(reverse("league_create"), payload)
+        self.client.post(reverse("league_create_advanced"), payload)
 
         self.assertEqual(League.objects.count(), before_leagues)
         self.assertEqual(Season.objects.count(), before_seasons)
@@ -1090,7 +1107,7 @@ class TestLg02Part2c3cComposerRandomDrawRejected(TestCase):
         before_phases = _Lg02SeasonPhase.objects.count()
         payload = _valid_payload(league_name="StandingsFirstL")
         payload["phases"] = "tournament:standings,round_robin"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(_Lg02SeasonPhase.objects.count(), before_phases)
         self.assertFalse(League.objects.filter(name="StandingsFirstL").exists())
@@ -1118,7 +1135,7 @@ class TestLg02Part2c3dComposerTournamentCut(TestCase):
     def test_standings_8_persists_cut_8(self) -> None:
         payload = _valid_payload(league_name="Cut8L")
         payload["phases"] = "round_robin,tournament:standings:8"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="Cut8L").seasons.get()
         phases = list(season.phases.all())
@@ -1129,7 +1146,7 @@ class TestLg02Part2c3dComposerTournamentCut(TestCase):
     def test_strength_4_persists_cut_4(self) -> None:
         payload = _valid_payload(league_name="Cut4L")
         payload["phases"] = "tournament:strength:4,round_robin"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="Cut4L").seasons.get()
         phases = list(season.phases.all())
@@ -1141,7 +1158,7 @@ class TestLg02Part2c3dComposerTournamentCut(TestCase):
         # No cut on the wire ⇒ tournament_cut 0 (no cut).
         payload = _valid_payload(league_name="Cut0L")
         payload["phases"] = "round_robin,tournament"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="Cut0L").seasons.get()
         phases = list(season.phases.all())
@@ -1150,7 +1167,7 @@ class TestLg02Part2c3dComposerTournamentCut(TestCase):
     def test_tournament_format_defaults_single_elimination(self) -> None:
         payload = _valid_payload(league_name="CutFmtL")
         payload["phases"] = "round_robin,tournament:standings:8"
-        self.client.post(reverse("league_create"), payload)
+        self.client.post(reverse("league_create_advanced"), payload)
         season = League.objects.get(name="CutFmtL").seasons.get()
         phases = list(season.phases.all())
         # tournament_format is not set from the form ⇒ column default.
@@ -1165,7 +1182,7 @@ class TestLg02Part2c3dComposerTournamentCut(TestCase):
         before_phases = _Lg02SeasonPhase.objects.count()
         payload = _valid_payload(league_name="CutFloorL")
         payload["phases"] = "round_robin,tournament:standings:2"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(League.objects.count(), before_leagues)
         self.assertEqual(_Lg02SeasonPhase.objects.count(), before_phases)
@@ -1194,7 +1211,7 @@ class TestLg02Part2c3eComposerFullSubConfig(TestCase):
         payload["phases"] = (
             "round_robin,tournament:standings:0:double_elimination:3:3:1:1:0:0:0"
         )
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="SubCfgDE").seasons.get()
         phases = list(season.phases.all())
@@ -1214,7 +1231,7 @@ class TestLg02Part2c3eComposerFullSubConfig(TestCase):
         payload["phases"] = (
             "round_robin,tournament:standings:0:round_robin_double_elim:1:1:1:1:8:4:0"
         )
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="SubCfgRRDE").seasons.get()
         t = list(season.phases.all())[1]
@@ -1225,7 +1242,7 @@ class TestLg02Part2c3eComposerFullSubConfig(TestCase):
     def test_swiss_rounds_persists(self) -> None:
         payload = _valid_payload(league_name="SubCfgSwiss")
         payload["phases"] = "round_robin,tournament:standings:0:swiss:1:1:1:1:0:0:6"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="SubCfgSwiss").seasons.get()
         t = list(season.phases.all())[1]
@@ -1235,7 +1252,7 @@ class TestLg02Part2c3eComposerFullSubConfig(TestCase):
     def test_bare_tournament_defaults_all_sub_config(self) -> None:
         payload = _valid_payload(league_name="SubCfgBare")
         payload["phases"] = "round_robin,tournament"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="SubCfgBare").seasons.get()
         t = list(season.phases.all())[1]
@@ -1257,7 +1274,7 @@ class TestLg02Part2c3eComposerFullSubConfig(TestCase):
         payload["phases"] = (
             "round_robin,tournament:standings:0:round_robin_double_elim:1:1:1:1:8:2:0"
         )
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(League.objects.count(), before_leagues)
         self.assertEqual(_Lg02SeasonPhase.objects.count(), before_phases)
@@ -1269,7 +1286,7 @@ class TestLg02Part2c3eComposerFullSubConfig(TestCase):
         payload["phases"] = (
             "round_robin,tournament:standings:0:single_elimination:2:1:1:1:0:0:0"
         )
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(League.objects.count(), before_leagues)
         self.assertFalse(League.objects.filter(name="SubCfgBadTier").exists())
@@ -1303,7 +1320,7 @@ class TestLg04BaselineRatings(TestCase):
         payload = _valid_payload(league_name=league_name)
         # Generate bench players too so the active-slots + bench set is exercised.
         payload["players_per_team"] = "8"
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         return League.objects.get(name=league_name)
 
@@ -1444,7 +1461,7 @@ class TestLg05BaselineRatingsPotential(TestCase):
     def _create_and_get_league(self, league_name: str = "Lg05BaselineL") -> League:
         payload = _valid_payload(league_name=league_name)
         payload["players_per_team"] = "8"  # exercise active-slots + bench
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         return League.objects.get(name=league_name)
 
@@ -1536,14 +1553,14 @@ class TestCar01ManagerTeamName(TestCase):
 
     def test_post_named_team_returns_302(self) -> None:
         response = self.client.post(
-            reverse("league_create"),
+            reverse("league_create_advanced"),
             _valid_payload(manager_team_name="Galkowski FC", num_teams="4"),
         )
         self.assertEqual(response.status_code, 302)
 
     def test_current_team_is_the_named_team(self) -> None:
         self.client.post(
-            reverse("league_create"),
+            reverse("league_create_advanced"),
             _valid_payload(manager_team_name="Galkowski FC", num_teams="4"),
         )
         league = League.objects.get(name="Spring 2026")
@@ -1552,7 +1569,7 @@ class TestCar01ManagerTeamName(TestCase):
 
     def test_named_team_is_enrolled_in_season(self) -> None:
         self.client.post(
-            reverse("league_create"),
+            reverse("league_create_advanced"),
             _valid_payload(manager_team_name="Galkowski FC", num_teams="4"),
         )
         league = League.objects.get(name="Spring 2026")
@@ -1564,7 +1581,7 @@ class TestCar01ManagerTeamName(TestCase):
         # league size == num_teams: the manager team is one of the N generated
         # teams, NOT an extra (N+1).
         self.client.post(
-            reverse("league_create"),
+            reverse("league_create_advanced"),
             _valid_payload(manager_team_name="Galkowski FC", num_teams="4"),
         )
         season = Season.objects.get(name="Season 1")
@@ -1572,7 +1589,7 @@ class TestCar01ManagerTeamName(TestCase):
 
     def test_named_team_name_is_stored(self) -> None:
         self.client.post(
-            reverse("league_create"),
+            reverse("league_create_advanced"),
             _valid_payload(manager_team_name="Galkowski FC", num_teams="4"),
         )
         league = League.objects.get(name="Spring 2026")
@@ -1580,35 +1597,45 @@ class TestCar01ManagerTeamName(TestCase):
 
     def test_whitespace_name_is_stripped(self) -> None:
         self.client.post(
-            reverse("league_create"),
+            reverse("league_create_advanced"),
             _valid_payload(manager_team_name="  X  ", num_teams="4"),
         )
         league = League.objects.get(name="Spring 2026")
         self.assertEqual(league.current_team.name, "X")
 
-    # ---- Blank-name fallback path (LG-01g behaviour unchanged) ----
+    # ---- Blank-name fallback path ----
+    #
+    # CRE-01 SUPERSEDES the LG-01g/CAR-01 alphabetical-first auto-pick: a blank
+    # ``manager_team_name`` now yields the DIFFICULTY-picked team. With
+    # ``difficulty`` omitted the form defaults to Medium ⇒ rank ``N // 2`` in
+    # ``_rank_teams_by_strength`` order (mean active-roster ``overall_rating``
+    # DESC, ``team_id`` ASC), NOT the alphabetically-first team.
 
-    def test_blank_name_falls_back_to_alphabetical_first(self) -> None:
+    def test_blank_name_falls_back_to_medium_difficulty_pick(self) -> None:
         # ``manager_team_name`` omitted entirely ⇒ current_team is the
-        # alphabetically-first enrolled team (LG-01g, byte-identical).
-        self.client.post(reverse("league_create"), _valid_payload(num_teams="4"))
+        # Medium-difficulty (middle-strength) enrolled team.
+        self.client.post(
+            reverse("league_create_advanced"), _valid_payload(num_teams="4")
+        )
         league = League.objects.get(name="Spring 2026")
         season = league.seasons.first()
-        first_alphabetical = sorted(t.name for t in season.teams.all())[0]
-        self.assertEqual(league.current_team.name, first_alphabetical)
+        ranked = _rank_teams_by_strength(list(season.teams.all()))
+        self.assertEqual(league.current_team_id, ranked[len(ranked) // 2].id)
 
-    def test_empty_string_name_falls_back_to_alphabetical_first(self) -> None:
+    def test_empty_string_name_falls_back_to_medium_difficulty_pick(self) -> None:
         self.client.post(
-            reverse("league_create"),
+            reverse("league_create_advanced"),
             _valid_payload(manager_team_name="", num_teams="4"),
         )
         league = League.objects.get(name="Spring 2026")
         season = league.seasons.first()
-        first_alphabetical = sorted(t.name for t in season.teams.all())[0]
-        self.assertEqual(league.current_team.name, first_alphabetical)
+        ranked = _rank_teams_by_strength(list(season.teams.all()))
+        self.assertEqual(league.current_team_id, ranked[len(ranked) // 2].id)
 
     def test_blank_name_creates_num_teams_teams(self) -> None:
-        self.client.post(reverse("league_create"), _valid_payload(num_teams="4"))
+        self.client.post(
+            reverse("league_create_advanced"), _valid_payload(num_teams="4")
+        )
         season = Season.objects.get(name="Season 1")
         self.assertEqual(season.teams.count(), 4)
 
@@ -1752,7 +1779,7 @@ class TestFin03CreateSeedsBudgets(TestCase):
 
     def test_finance_on_seeds_differentiated_budgets(self) -> None:
         payload = _fin03_payload(league_name="Fin03CreateDiff", num_teams="4")
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         league = League.objects.get(name="Fin03CreateDiff")
         season = league.seasons.get()
@@ -1769,7 +1796,7 @@ class TestFin03CreateSeedsBudgets(TestCase):
 
     def test_finance_on_all_three_fields_equal_per_team(self) -> None:
         payload = _fin03_payload(league_name="Fin03CreateEqual", num_teams="4")
-        self.client.post(reverse("league_create"), payload)
+        self.client.post(reverse("league_create_advanced"), payload)
         league = League.objects.get(name="Fin03CreateEqual")
         for team in league.seasons.get().teams.all():
             self.assertEqual(team.budget_scouting, team.budget_coaching)
@@ -1777,7 +1804,7 @@ class TestFin03CreateSeedsBudgets(TestCase):
 
     def test_finance_on_current_team_is_seeded_not_default(self) -> None:
         payload = _fin03_payload(league_name="Fin03CreateCurrent", num_teams="4")
-        self.client.post(reverse("league_create"), payload)
+        self.client.post(reverse("league_create_advanced"), payload)
         league = League.objects.get(name="Fin03CreateCurrent")
         league.refresh_from_db()
         current = league.current_team
@@ -1795,7 +1822,7 @@ class TestFin03CreateSeedsBudgets(TestCase):
     def test_finance_off_leaves_budgets_at_default_34(self) -> None:
         payload = _valid_payload(league_name="Fin03CreateOff", num_teams="4")
         # No finance_enabled key => toggle OFF.
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         league = League.objects.get(name="Fin03CreateOff")
         self.assertFalse(league.finance_enabled)
@@ -1848,7 +1875,7 @@ class TestCreateLeagueChallengeLuxuryTax(TestCase):
         self.assertTrue(form.cleaned_data["challenge_fired_luxury_tax"])
 
     def test_dom_id_rendered(self) -> None:
-        response = self.client.get(reverse("league_create"))
+        response = self.client.get(reverse("league_create_advanced"))
         self.assertEqual(response.status_code, 200)
         self.assertIn(
             'id="league-create-challenge-luxury-tax"',
@@ -1857,7 +1884,7 @@ class TestCreateLeagueChallengeLuxuryTax(TestCase):
 
     def test_checked_post_persists_true(self) -> None:
         response = self.client.post(
-            reverse("league_create"),
+            reverse("league_create_advanced"),
             data=_valid_payload(
                 league_name="ChalOnLeague", challenge_fired_luxury_tax="on"
             ),
@@ -1868,7 +1895,7 @@ class TestCreateLeagueChallengeLuxuryTax(TestCase):
 
     def test_unchecked_post_persists_false(self) -> None:
         response = self.client.post(
-            reverse("league_create"),
+            reverse("league_create_advanced"),
             data=_valid_payload(league_name="ChalOffLeague"),
         )
         self.assertEqual(response.status_code, 302)
@@ -1920,7 +1947,7 @@ class TestLeagueCreateRotateByMatchdayGet(TestCase):
     """SUB-01 — the rotate composer DOM ids render on GET."""
 
     def test_composer_dom_ids_present_on_get(self) -> None:
-        response = self.client.get(reverse("league_create"))
+        response = self.client.get(reverse("league_create_advanced"))
         self.assertEqual(response.status_code, 200)
         body = response.content.decode()
         for dom_id in (
@@ -1945,7 +1972,7 @@ class TestLeagueCreateRotateByMatchdayPersist(TestCase):
         author_order = [m_c.id, m_a.id, m_b.id]
         payload = _valid_payload(map_mode="rotate_by_matchday", league_name="RotateOK")
         payload["map_rotation"] = _rotation_wire(author_order)
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="RotateOK").seasons.first()
         self.assertEqual(season.map_mode, "rotate_by_matchday")
@@ -1960,7 +1987,7 @@ class TestLeagueCreateRotateByMatchdayPersist(TestCase):
             map_mode="rotate_by_matchday", league_name="RotateSolo"
         )
         payload["map_rotation"] = _rotation_wire([m.id])
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 302)
         season = League.objects.get(name="RotateSolo").seasons.first()
         self.assertEqual(season.map_rotation_ids_json, [m.id])
@@ -1984,7 +2011,7 @@ class TestLeagueCreateRotateByMatchdayValidationMatrix(TestCase):
 
     def _assert_view_writes_nothing(self, payload: dict) -> None:
         before = League.objects.count()
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(League.objects.count(), before)
 
@@ -2107,7 +2134,7 @@ class TestConf05CreateLeagueConferences(TestCase):
         payload = _valid_payload(
             num_teams="8", number_of_conferences="2", league_name="ConfCreate"
         )
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         season = Season.objects.get(league__name="ConfCreate")
         self.assertRedirects(response, reverse("manage_conferences", args=[season.id]))
         confs = list(season.conferences.order_by("ordinal"))
@@ -2123,7 +2150,7 @@ class TestConf05CreateLeagueConferences(TestCase):
 
     def test_create_without_conferences_redirects_to_standings(self):
         payload = _valid_payload(league_name="FlatCreate")  # no conferences field
-        response = self.client.post(reverse("league_create"), payload)
+        response = self.client.post(reverse("league_create_advanced"), payload)
         season = Season.objects.get(league__name="FlatCreate")
         self.assertRedirects(response, reverse("season_standings", args=[season.id]))
         self.assertEqual(season.conferences.count(), 0)
