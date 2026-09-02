@@ -90,6 +90,11 @@ class CreateLeagueForm(forms.Form):
         (16, "16"),
     )
     SCHEDULE_FORMAT_CHOICES = (("single_round_robin", "Single round-robin"),)
+    # CRE-01 — transient difficulty selector. Consumed at create time only to
+    # pick which of the N generated teams becomes the manager's current_team
+    # (easy → strongest, medium → middle, hard → weakest). No League field, no
+    # migration.
+    DIFFICULTY_CHOICES = (("easy", "Easy"), ("medium", "Medium"), ("hard", "Hard"))
 
     league_name = forms.CharField(
         max_length=100,
@@ -113,6 +118,19 @@ class CreateLeagueForm(forms.Form):
                 "autocomplete": "off",
             }
         ),
+    )
+    # CRE-01 — transient difficulty (consumed at create time only). Shared by
+    # both the chooser-assembled form and the Advanced form. ``required=False``
+    # so an Advanced POST that omits it stays valid (defaults Medium); the
+    # manager-team pick coerces a falsy value to "medium".
+    difficulty = forms.ChoiceField(
+        choices=DIFFICULTY_CHOICES,
+        initial="medium",
+        required=False,
+        widget=forms.Select(
+            attrs={"id": "league-create-difficulty", "class": "form-select"}
+        ),
+        label="Difficulty",
     )
     season_name = forms.CharField(
         max_length=100,

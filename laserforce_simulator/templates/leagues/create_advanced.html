@@ -1,0 +1,577 @@
+{% extends "base.html" %}
+
+{% block title %}Advanced — Create League{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Advanced — Create League</h1>
+    <p>
+        Full control over the new League: team count, stat distribution,
+        difficulty, season phases, map configuration, and finances.
+        <a id="league-create-use-template-link" href="{% url 'league_create' %}">Use a template instead</a>.
+    </p>
+
+    <form method="post" id="league-create-form" action="{% url 'league_create_advanced' %}">
+        {% csrf_token %}
+
+        <div class="mb-3">
+            <label for="league-create-league-name" class="form-label">League name</label>
+            {{ form.league_name }}
+            {{ form.league_name.errors }}
+        </div>
+
+        <div class="mb-3">
+            <label for="league-create-manager-team-name" class="form-label">Your team name</label>
+            {{ form.manager_team_name }}
+            {{ form.manager_team_name.errors }}
+            <div class="form-text">Optional. Name your own team — it becomes one of the generated teams and your career team. Leave blank to keep its generated name.</div>
+        </div>
+
+        <div class="mb-3">
+            <label for="league-create-difficulty" class="form-label">Difficulty</label>
+            {{ form.difficulty }}
+            <div class="form-text">
+                Picks which of the generated teams becomes your career team —
+                Easy gives you the strongest, Medium the middle, Hard the
+                weakest.
+            </div>
+            {{ form.difficulty.errors }}
+        </div>
+
+        <div class="mb-3">
+            <label for="league-create-season-name" class="form-label">Season name</label>
+            {{ form.season_name }}
+            {{ form.season_name.errors }}
+        </div>
+
+        <div class="mb-3">
+            <label for="league-create-start-date" class="form-label">Start date</label>
+            {{ form.start_date }}
+            {{ form.start_date.errors }}
+        </div>
+
+        <div class="mb-3">
+            <label for="league-create-num-teams" class="form-label">Number of teams</label>
+            {{ form.num_teams }}
+            {{ form.num_teams.errors }}
+        </div>
+
+        {# CONF-05 — optional Conference partition; >0 redirects to the composer. #}
+        <div class="mb-3">
+            <label for="league-create-number-of-conferences" class="form-label">Conferences</label>
+            {{ form.number_of_conferences }}
+            <div class="form-text">
+                Split the teams into separate regional leagues that each play their
+                own round-robin and standings. Pick a number to set them up after
+                creating (needs at least 2 teams per conference); leave "None" for a
+                single flat league.
+            </div>
+            {{ form.number_of_conferences.errors }}
+        </div>
+
+        <div class="mb-3">
+            <label for="league-create-schedule-format" class="form-label">Schedule format</label>
+            {{ form.schedule_format }}
+            <div class="form-text">
+                Only single round-robin is supported in this release.
+            </div>
+            {{ form.schedule_format.errors }}
+        </div>
+
+        <div class="row g-2 mb-3">
+            <div class="col-sm-3">
+                <label for="league-create-mean" class="form-label">Stat mean</label>
+                {{ form.mean }}
+                {{ form.mean.errors }}
+            </div>
+            <div class="col-sm-3">
+                <label for="league-create-std-dev" class="form-label">Stat standard deviation</label>
+                {{ form.std_dev }}
+                {{ form.std_dev.errors }}
+            </div>
+        </div>
+
+        {# LG-02-Part2b -- vanilla-JS phase composer. Writes the ordered #}
+        {# phase-type tokens into the hidden #league-create-phases field. #}
+        <div class="mb-3">
+            <label class="form-label">Season phases</label>
+            <div id="league-create-phases-composer"></div>
+            <button type="button" id="league-create-add-block"
+                    class="btn btn-outline-secondary btn-sm mt-2">+ Add block</button>
+            <div id="league-create-member-night-note" class="form-text">
+                Add a "Member night" block for a casual, per-Site social play
+                interlude (excluded from the Standings).
+            </div>
+            {{ form.phases }}
+            {{ form.phases.errors }}
+        </div>
+
+        <div class="mb-3">
+            <label for="league-create-map-mode" class="form-label">Map mode</label>
+            {{ form.map_mode }}
+            <div class="form-text">
+                Per-Season arena map configuration. Pick "3-zone fallback" to
+                play every Round on the legacy 3-zone model, "Single map" to
+                use one fixed map every Round, or "Random per Round" to
+                draw a map per Round from the pool below.
+            </div>
+            {{ form.map_mode.errors }}
+        </div>
+
+        <div class="mb-3">
+            <label for="league-create-map-pool" class="form-label">Map pool</label>
+            {{ form.map_pool }}
+            <div class="form-text">
+                Pool must be empty for "3-zone fallback", contain exactly 1
+                map for "Single map", or contain at least 1 map for
+                "Random per Round".
+            </div>
+            {{ form.map_pool.errors }}
+        </div>
+
+        {# SUB-01 -- vanilla-JS rotation composer. Writes the ordered map ids #}
+        {# into the hidden #league-create-map-rotation field (comma-joined). #}
+        <div class="mb-3">
+            <label class="form-label">Map rotation</label>
+            <div id="league-create-map-rotation-composer"></div>
+            <button type="button" id="league-create-add-map"
+                    class="btn btn-outline-secondary btn-sm mt-2">+ Add map</button>
+            <div class="form-text">
+                Author-ordered rotation, used when Map mode is
+                "Rotate by matchday". A Round's map is
+                <code>rotation[matchday % len(rotation)]</code> — keyed on the
+                matchday alone, fully deterministic.
+            </div>
+            {{ form.map_rotation }}
+            {{ form.map_rotation.errors }}
+        </div>
+        <script id="league-create-confirmed-maps" type="application/json">[
+            {% for m in form.map_pool.field.queryset %}
+                {"id": {{ m.id }}, "name": "{{ m.name|escapejs }}"}{% if not forloop.last %},{% endif %}
+            {% endfor %}
+        ]</script>
+
+        <div class="mb-3 form-check">
+            {{ form.finance_enabled }}
+            <label for="league-create-finance-enabled" class="form-check-label">Enable team finances</label>
+            <div class="form-text">
+                Turn on the per-team budget &amp; salary economy. Manager-set
+                scouting / coaching / facilities budgets, derived salaries, and
+                a season-level profit that feeds the owner's money mood.
+            </div>
+            {{ form.finance_enabled.errors }}
+        </div>
+
+        <div class="mb-3 form-check">
+            {{ form.challenge_fired_luxury_tax }}
+            <label for="league-create-challenge-luxury-tax" class="form-check-label">Fire on luxury tax</label>
+            <div class="form-text">
+                When on, the owner fires the manager outright any season the
+                team pays the luxury tax — independent of cumulative mood.
+                Only takes effect with team finances enabled.
+            </div>
+            {{ form.challenge_fired_luxury_tax.errors }}
+        </div>
+
+        {% if form.non_field_errors %}
+            <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+        {% endif %}
+
+        <button type="submit" id="league-create-submit" class="btn btn-primary">Create League</button>
+        <a href="/leagues/" class="btn btn-secondary">Cancel</a>
+    </form>
+</div>
+
+<script>
+(function () {
+    "use strict";
+
+    var composer = document.getElementById("league-create-phases-composer");
+    var addBtn = document.getElementById("league-create-add-block");
+    var hidden = document.getElementById("league-create-phases");
+    var form = document.getElementById("league-create-form");
+    if (!composer || !addBtn || !hidden || !form) {
+        return;
+    }
+
+    var rowSeq = 0;
+
+    function buildRow() {
+        var i = rowSeq++;
+
+        var row = document.createElement("div");
+        row.id = "league-create-phase-row-" + i;
+        row.className = "phase-row card card-body mb-2";
+
+        // Phase-type select: round_robin / tournament.
+        var typeSelect = document.createElement("select");
+        typeSelect.id = "league-create-phase-type-" + i;
+        typeSelect.className = "phase-type-select form-select mb-2";
+        typeSelect.setAttribute("aria-label", "Phase type");
+        var optRR = document.createElement("option");
+        optRR.value = "round_robin";
+        optRR.textContent = "Round-robin";
+        var optT = document.createElement("option");
+        optT.value = "tournament";
+        optT.textContent = "Tournament";
+        // LG-07a — member night (social play interlude, ADR-0033). A bare token
+        // with no sub-config; serialize() emits "member_night".
+        var optMN = document.createElement("option");
+        optMN.value = "member_night";
+        optMN.textContent = "Member night";
+        typeSelect.appendChild(optRR);
+        typeSelect.appendChild(optT);
+        typeSelect.appendChild(optMN);
+
+        // Schedule-format select (shown for round_robin rows only).
+        var formatSelect = document.createElement("select");
+        formatSelect.id = "league-create-phase-format-" + i;
+        formatSelect.className = "phase-format-select form-select mb-2";
+        formatSelect.setAttribute("aria-label", "Schedule format");
+        var optSRR = document.createElement("option");
+        optSRR.value = "single_round_robin";
+        optSRR.textContent = "Single round-robin";
+        formatSelect.appendChild(optSRR);
+        var optDRR = document.createElement("option");
+        optDRR.value = "double_round_robin";
+        optDRR.textContent = "Double round-robin";
+        formatSelect.appendChild(optDRR);
+
+        // LG-02-Part2c-3c — tournament mode select (shown for tournament rows
+        // only): standings / strength / unseeded selectable, random_draw a
+        // disabled "coming soon" option (mirrors the member_night deferral).
+        var modeSelect = document.createElement("select");
+        modeSelect.id = "league-create-phase-mode-" + i;
+        modeSelect.className = "phase-mode-select form-select mb-2";
+        modeSelect.setAttribute("aria-label", "Tournament mode");
+        var modeOpts = [
+            ["standings", "Season-ending (from standings)", false],
+            ["strength", "Mid-season (by team strength)", false],
+            ["unseeded", "Mid-season (random seed)", false],
+            ["random_draw", "Mid-season (drawn pool) — coming soon", true],
+        ];
+        for (var m = 0; m < modeOpts.length; m++) {
+            var optM = document.createElement("option");
+            optM.value = modeOpts[m][0];
+            optM.textContent = modeOpts[m][1];
+            optM.disabled = modeOpts[m][2];
+            modeSelect.appendChild(optM);
+        }
+
+        // LG-02-Part2c-3e — LIVE tournament-format select (shown for tournament
+        // rows only). Five formats; drives the per-format sub-config toggle.
+        var tFormatSelect = document.createElement("select");
+        tFormatSelect.id = "league-create-phase-tournament-format-" + i;
+        tFormatSelect.className = "phase-tournament-format-select form-select mb-2";
+        tFormatSelect.setAttribute("aria-label", "Tournament format");
+        var tFormatOpts = [
+            ["single_elimination", "Single elimination"],
+            ["double_elimination", "Double elimination"],
+            ["round_robin", "Round robin"],
+            ["round_robin_double_elim", "Round robin → Double elimination"],
+            ["swiss", "Swiss"],
+        ];
+        for (var f = 0; f < tFormatOpts.length; f++) {
+            var optTF = document.createElement("option");
+            optTF.value = tFormatOpts[f][0];
+            optTF.textContent = tFormatOpts[f][1];
+            tFormatSelect.appendChild(optTF);
+        }
+
+        // LG-02-Part2c-3d — top-N participant cut (shown for tournament rows
+        // only). Default 0 = no cut = all enrolled teams.
+        var cutInput = document.createElement("input");
+        cutInput.id = "league-create-phase-cut-" + i;
+        cutInput.className = "phase-cut-input form-control mb-2";
+        cutInput.type = "number";
+        cutInput.min = "0";
+        cutInput.value = "0";
+        cutInput.setAttribute("aria-label", "Tournament participant cut");
+
+        // LG-02-Part2c-3e — four best-of-N series-length selects (shown for
+        // SE / DE / RR->DE formats). Options 1 / 3 / 5.
+        function buildSeriesSelect(idSuffix, label) {
+            var sel = document.createElement("select");
+            sel.id = "league-create-phase-" + idSuffix + "-" + i;
+            sel.className = "phase-" + idSuffix + " form-select mb-2";
+            sel.setAttribute("aria-label", label);
+            var slOpts = ["1", "3", "5"];
+            for (var s = 0; s < slOpts.length; s++) {
+                var optSL = document.createElement("option");
+                optSL.value = slOpts[s];
+                optSL.textContent = "Best of " + slOpts[s];
+                sel.appendChild(optSL);
+            }
+            return sel;
+        }
+        var finalSlSelect = buildSeriesSelect("final-sl", "Final series length");
+        var semiSlSelect = buildSeriesSelect("semifinal-sl", "Semifinal series length");
+        var quarterSlSelect = buildSeriesSelect(
+            "quarterfinal-sl", "Quarterfinal series length");
+        var earlierSlSelect = buildSeriesSelect("earlier-sl", "Earlier series length");
+
+        // LG-02-Part2c-3e — wb/lb combo select (shown for round_robin_double_elim
+        // only). Six combos; serialize() splits the "wb/lb" value into wb + lb.
+        var comboSelect = document.createElement("select");
+        comboSelect.id = "league-create-phase-rrde-combo-" + i;
+        comboSelect.className = "phase-rrde-combo form-select mb-2";
+        comboSelect.setAttribute("aria-label", "Winners/Losers bracket advancers");
+        var comboOpts = ["4/0", "4/2", "8/0", "8/4", "16/0", "16/8"];
+        for (var c = 0; c < comboOpts.length; c++) {
+            var optC = document.createElement("option");
+            optC.value = comboOpts[c];
+            optC.textContent = comboOpts[c];
+            comboSelect.appendChild(optC);
+        }
+
+        // LG-02-Part2c-3e — swiss-rounds number input (shown for swiss only).
+        var swissInput = document.createElement("input");
+        swissInput.id = "league-create-phase-swiss-rounds-" + i;
+        swissInput.className = "phase-swiss-rounds form-control mb-2";
+        swissInput.type = "number";
+        swissInput.min = "0";
+        swissInput.value = "0";
+        swissInput.setAttribute("aria-label", "Swiss rounds");
+
+        // Per-tournament-block flag (retained as an inert marker).
+        var pending = document.createElement("div");
+        pending.className = "phase-tournament-pending form-text";
+        pending.textContent = "Tournament phase configuration.";
+        pending.style.display = "none";
+
+        var removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "phase-remove btn btn-outline-danger btn-sm";
+        removeBtn.textContent = "Remove";
+        removeBtn.addEventListener("click", function () {
+            composer.removeChild(row);
+            serialize();
+        });
+
+        // LG-02-Part2c-3e — show the right per-format sub-config: series-length
+        // selects for SE / DE / RR->DE; the wb/lb combo for RR->DE; the
+        // swiss-rounds input for Swiss.
+        function applyFormat() {
+            var fmt = tFormatSelect.value;
+            var showSeries =
+                fmt === "single_elimination" ||
+                fmt === "double_elimination" ||
+                fmt === "round_robin_double_elim";
+            var showCombo = fmt === "round_robin_double_elim";
+            var showSwiss = fmt === "swiss";
+            var seriesDisplay = showSeries ? "" : "none";
+            finalSlSelect.style.display = seriesDisplay;
+            semiSlSelect.style.display = seriesDisplay;
+            quarterSlSelect.style.display = seriesDisplay;
+            earlierSlSelect.style.display = seriesDisplay;
+            comboSelect.style.display = showCombo ? "" : "none";
+            swissInput.style.display = showSwiss ? "" : "none";
+        }
+
+        function applyType() {
+            // LG-07a — member_night rows show NEITHER the RR schedule-format
+            // select NOR any tournament sub-config (a bare token).
+            var type = typeSelect.value;
+            var isRR = type === "round_robin";
+            var isTournament = type === "tournament";
+            formatSelect.style.display = isRR ? "" : "none";
+            modeSelect.style.display = isTournament ? "" : "none";
+            tFormatSelect.style.display = isTournament ? "" : "none";
+            cutInput.style.display = isTournament ? "" : "none";
+            pending.style.display = isTournament ? "" : "none";
+            if (isTournament) {
+                applyFormat();
+            } else {
+                finalSlSelect.style.display = "none";
+                semiSlSelect.style.display = "none";
+                quarterSlSelect.style.display = "none";
+                earlierSlSelect.style.display = "none";
+                comboSelect.style.display = "none";
+                swissInput.style.display = "none";
+            }
+            serialize();
+        }
+        typeSelect.addEventListener("change", applyType);
+        modeSelect.addEventListener("change", serialize);
+        cutInput.addEventListener("change", serialize);
+        tFormatSelect.addEventListener("change", function () {
+            applyFormat();
+            serialize();
+        });
+        finalSlSelect.addEventListener("change", serialize);
+        semiSlSelect.addEventListener("change", serialize);
+        quarterSlSelect.addEventListener("change", serialize);
+        earlierSlSelect.addEventListener("change", serialize);
+        comboSelect.addEventListener("change", serialize);
+        swissInput.addEventListener("change", serialize);
+
+        row.appendChild(typeSelect);
+        row.appendChild(formatSelect);
+        row.appendChild(modeSelect);
+        row.appendChild(tFormatSelect);
+        row.appendChild(cutInput);
+        row.appendChild(finalSlSelect);
+        row.appendChild(semiSlSelect);
+        row.appendChild(quarterSlSelect);
+        row.appendChild(earlierSlSelect);
+        row.appendChild(comboSelect);
+        row.appendChild(swissInput);
+        row.appendChild(pending);
+        row.appendChild(removeBtn);
+        composer.appendChild(row);
+
+        applyType();
+        return row;
+    }
+
+    function serialize() {
+        // LG-02-Part2c-3a — emit per-token "round_robin:<format>" for each
+        // round_robin row.
+        // LG-02-Part2c-3c — emit "tournament:<mode>" for each tournament row.
+        var rows = composer.querySelectorAll(".phase-row");
+        var tokens = [];
+        for (var k = 0; k < rows.length; k++) {
+            var typeSelect = rows[k].querySelector(".phase-type-select");
+            if (!typeSelect) {
+                continue;
+            }
+            if (typeSelect.value === "round_robin") {
+                var formatSelect = rows[k].querySelector(".phase-format-select");
+                var fmt = formatSelect ? formatSelect.value : "single_round_robin";
+                tokens.push("round_robin:" + fmt);
+            } else if (typeSelect.value === "member_night") {
+                // LG-07a — bare token, no sub-config.
+                tokens.push("member_night");
+            } else {
+                // LG-02-Part2c-3e — emit the positional 11-field tournament
+                // token "tournament:mode:cut:format:fsl:ssl:qsl:esl:wb:lb:swiss".
+                var modeSelect = rows[k].querySelector(".phase-mode-select");
+                var mode = modeSelect ? modeSelect.value : "standings";
+                var cutInput = rows[k].querySelector(".phase-cut-input");
+                var cut = cutInput && cutInput.value !== "" ? cutInput.value : "0";
+                var fmtSel = rows[k].querySelector(".phase-tournament-format-select");
+                var fmt = fmtSel ? fmtSel.value : "single_elimination";
+                var fslSel = rows[k].querySelector(".phase-final-sl");
+                var fsl = fslSel ? fslSel.value : "1";
+                var sslSel = rows[k].querySelector(".phase-semifinal-sl");
+                var ssl = sslSel ? sslSel.value : "1";
+                var qslSel = rows[k].querySelector(".phase-quarterfinal-sl");
+                var qsl = qslSel ? qslSel.value : "1";
+                var eslSel = rows[k].querySelector(".phase-earlier-sl");
+                var esl = eslSel ? eslSel.value : "1";
+                var wb = "0";
+                var lb = "0";
+                if (fmt === "round_robin_double_elim") {
+                    var comboSel = rows[k].querySelector(".phase-rrde-combo");
+                    var combo = comboSel ? comboSel.value : "4/0";
+                    var parts = combo.split("/");
+                    wb = parts[0];
+                    lb = parts.length > 1 ? parts[1] : "0";
+                }
+                var swissSel = rows[k].querySelector(".phase-swiss-rounds");
+                var swiss = swissSel && swissSel.value !== "" ? swissSel.value : "0";
+                tokens.push(
+                    "tournament:" + mode + ":" + cut + ":" + fmt + ":" +
+                    fsl + ":" + ssl + ":" + qsl + ":" + esl + ":" +
+                    wb + ":" + lb + ":" + swiss
+                );
+            }
+        }
+        hidden.value = tokens.join(",");
+    }
+
+    addBtn.addEventListener("click", function () {
+        buildRow();
+        serialize();
+    });
+
+    form.addEventListener("submit", serialize);
+
+    // Seed one default round_robin row so an unmodified submit composes a
+    // single round-robin phase (the Part2a default).
+    buildRow();
+    serialize();
+})();
+
+// SUB-01 -- vanilla-JS map-rotation composer. Each "+ Add map" appends a row
+// with a map <select>; serialize() writes the ordered ids (row order) into the
+// hidden #league-create-map-rotation input as a comma-joined string.
+(function () {
+    "use strict";
+
+    var composer = document.getElementById("league-create-map-rotation-composer");
+    var addBtn = document.getElementById("league-create-add-map");
+    var hidden = document.getElementById("league-create-map-rotation");
+    var form = document.getElementById("league-create-form");
+    var dataEl = document.getElementById("league-create-confirmed-maps");
+    if (!composer || !addBtn || !hidden || !form || !dataEl) {
+        return;
+    }
+
+    var maps = [];
+    try {
+        maps = JSON.parse(dataEl.textContent);
+    } catch (e) {
+        maps = [];
+    }
+
+    var rowSeq = 0;
+
+    function buildRow() {
+        var i = rowSeq++;
+
+        var row = document.createElement("div");
+        row.id = "league-create-map-rotation-row-" + i;
+        row.className = "map-rotation-row card card-body mb-2";
+
+        var select = document.createElement("select");
+        select.id = "league-create-map-rotation-select-" + i;
+        select.className = "map-rotation-select form-select mb-2";
+        select.setAttribute("aria-label", "Rotation map");
+        for (var m = 0; m < maps.length; m++) {
+            var opt = document.createElement("option");
+            opt.value = maps[m].id;
+            opt.textContent = maps[m].name;
+            select.appendChild(opt);
+        }
+        select.addEventListener("change", serialize);
+
+        var removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "map-rotation-remove btn btn-outline-danger btn-sm";
+        removeBtn.textContent = "Remove";
+        removeBtn.addEventListener("click", function () {
+            composer.removeChild(row);
+            serialize();
+        });
+
+        row.appendChild(select);
+        row.appendChild(removeBtn);
+        composer.appendChild(row);
+        return row;
+    }
+
+    function serialize() {
+        var rows = composer.querySelectorAll(".map-rotation-row");
+        var ids = [];
+        for (var k = 0; k < rows.length; k++) {
+            var sel = rows[k].querySelector(".map-rotation-select");
+            if (sel && sel.value !== "") {
+                ids.push(sel.value);
+            }
+        }
+        hidden.value = ids.join(",");
+    }
+
+    addBtn.addEventListener("click", function () {
+        buildRow();
+        serialize();
+    });
+
+    form.addEventListener("submit", serialize);
+
+    // No default row -- the rotation list is empty unless the user adds maps.
+    serialize();
+})();
+</script>
+{% endblock %}
