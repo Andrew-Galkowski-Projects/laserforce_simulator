@@ -35,6 +35,7 @@ from django.utils import timezone
 
 from teams.constants import PLAYER_NAMES, TEAM_NAMES
 from teams.models import Player, Team
+from teams.player_generator import LEAGUE_SPREAD_DELTAS, compute_tier_means
 from teams.views import _coerce_dir, _generate_free_agents, _generate_teams
 
 from . import development, finance, injury, member_night, owner_mood
@@ -1236,6 +1237,8 @@ def _template_to_form_data(
         "league_name": league_name,
         "manager_team_name": "",
         "difficulty": difficulty,
+        # CRE-02 — the chooser has no spread selector; templates are always Even.
+        "league_spread": "even",
         "season_name": "Season 1",
         "start_date": timezone.localdate().isoformat(),
         "num_teams": str(template.num_teams),
@@ -1268,6 +1271,17 @@ def _create_league_and_season(form: CreateLeagueForm) -> Season:
     team_names_pool = list(TEAM_NAMES)
     player_names_pool = list(PLAYER_NAMES)
 
+    # CRE-02 — transient League spread -> per-team tier-mean vector. A falsy or
+    # unknown value coerces to "even" (delta = 0), and delta = 0 passes
+    # ``tier_means=None`` so Even generation is byte-identical to pre-CRE-02.
+    spread = cleaned.get("league_spread") or "even"
+    delta = LEAGUE_SPREAD_DELTAS.get(spread, 0.0)
+    tier_means = (
+        compute_tier_means(cleaned["num_teams"], cleaned["mean"], delta)
+        if delta
+        else None
+    )
+
     created_teams = _generate_teams(
         cleaned["num_teams"],
         6,
@@ -1276,6 +1290,7 @@ def _create_league_and_season(form: CreateLeagueForm) -> Season:
         std_dev=cleaned["std_dev"],
         team_names_pool=team_names_pool,
         player_names_pool=player_names_pool,
+        tier_means=tier_means,
     )
 
     league = League.objects.create(

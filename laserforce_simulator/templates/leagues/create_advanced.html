@@ -91,6 +91,19 @@
             </div>
         </div>
 
+        {# CRE-02 -- transient League spread; Advanced form only. #}
+        <div class="mb-3">
+            <label for="league-create-league-spread" class="form-label">League spread</label>
+            {{ form.league_spread }}
+            <div class="form-text">
+                How unequal the generated league is. Even draws every team from the
+                same stat distribution; Tiered and Steep ramp the teams from a
+                strong projected favourite down to a weak projected wooden spoon,
+                keeping the league's average talent the same.
+            </div>
+            {{ form.league_spread.errors }}
+        </div>
+
         {# LG-02-Part2b -- vanilla-JS phase composer. Writes the ordered #}
         {# phase-type tokens into the hidden #league-create-phases field. #}
         <div class="mb-3">

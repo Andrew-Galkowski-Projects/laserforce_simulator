@@ -403,15 +403,17 @@ blank-name "alphabetical-first" fallback tests are rewritten to assert the defau
 **Medium** strength pick (rank `N//2`). **Scope-out:** no model change, no migration,
 no simulator/RNG touch, no Score Calibration re-baseline. CRE-01 is the
 *selection-based* difficulty; the *generation-based* power-tiered complement is the
-deferred sibling **CRE-02** below. See the seam contract
+sibling **CRE-02** below (shipped 2026-09-02 as **League spread**). See the seam
+contract
 [`.claude/worktrees/cre-01-seam-contract.md`](.claude/worktrees/cre-01-seam-contract.md),
 the CONTEXT.md **League template** / **League difficulty** terms, and the **CRE-01
 league templates + difficulty** subsection in
 [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
-### CRE-02 · [NOT STARTED] Tiered expected-finish team generation
+### CRE-02 · [DONE] Tiered expected-finish team generation
 
-**Prio: Low (deferred — own grill).** The dramatic complement to CRE-01's
+**Prio: Low (was deferred for its own grill; that grill ran and it shipped — see the
+note below).** The dramatic complement to CRE-01's
 *selection-based* **League difficulty**. Today CRE-01 generates all N teams from
 one stat distribution and merely re-picks which equal team the manager gets, so
 Easy↔Hard differ only by the modest random spread among equally-generated teams.
@@ -424,7 +426,8 @@ the chosen difficulty (Easy → a top-projected team, Hard → a bottom-projecte
 team), making "hard mode" a genuinely weaker roster relative to the field rather
 than a coin-flip among equals.
 
-**Open questions for its own grill:** the gradient shape (linear mean ramp from
+**Open questions for its own grill (all resolved — see the shipped note below):** the
+gradient shape (linear mean ramp from
 `mean+Δ` to `mean−Δ`? geometric? a fixed tier table?) and Δ magnitude vs the
 existing `std_dev`; whether the gradient is a per-League-difficulty knob or a
 fixed league property; how it composes with the **`map_mode`** / finance /
@@ -435,6 +438,87 @@ point. Folds into the same create surface as CRE-01 (the template chooser + the
 Advanced form). Likely a real **`_generate_teams`** signature change (a per-team
 mean vector) — confirm during the grill whether that re-baselines any
 generation-dependent test fixtures.
+
+**[DONE] Shipped (2026-09-02).** The grill answered every open question above and the
+work shipped under the grilled **League spread** name (the CONTEXT.md **League
+spread** term, plus an amended **League difficulty** entry). **Gradient shape:**
+linear and **mean-preserving** — `tier_mean(i) = clamp(mean + Δ − 2Δ·i/(N−1), 0.0,
+100.0)` for 0-based `i` in generation order, index 0 the strongest tier and index N−1
+the weakest; not geometric, not a fixed tier table. **Δ is a fixed League property,
+not a per-difficulty knob** — a NEW **transient** `CreateLeagueForm.league_spread`
+`ChoiceField` (`LEAGUE_SPREAD_CHOICES = (("even","Even"),("tiered","Tiered"),
+("steep","Steep"))`, `initial="even"`, `required=False`, widget id
+`league-create-league-spread`, declared immediately after the CRE-01 `difficulty`
+field so the two transient create-time selectors sit together) resolving through the
+NEW `teams.player_generator.LEAGUE_SPREAD_DELTAS = {"even": 0.0, "tiered": 8.0,
+"steep": 16.0}`. **Δ sized against `std_dev`:** a Team's mean active-roster
+`overall_rating` averages 114 i.i.d. stat draws, so its own SD is only ≈1.4 even at
+`std_dev=15` — an 8-team League's expected best-to-worst gap is ~4 points at Even
+versus ~16 at Tiered and ~32 at Steep, which is what makes Easy↔Hard a genuinely
+different roster relative to the field instead of a coin-flip among equals.
+**Expected order is NOT surfaced — ONE ORDERING ONLY:** the tier a Team was drawn
+from is a *generation input*, never persisted, never queried, never rendered, so
+there is **no "projected finishing order" concept and no preseason power-ranking
+screen**; after generation the League still has exactly one ordering, the measured
+strength rank `_rank_teams_by_strength` (mean active-roster `overall_rating` DESC,
+`team_id` ASC), which `_pick_manager_team` keeps reading unchanged. **Threading:** the
+existing `_generate_teams` — **not** a new generator entry point — gains an
+**additive keyword-only** `tier_means: list[float] | None = None` appended last, so
+all three call sites stay source-compatible and only the league-create one is edited.
+`tier_means=None` (the default) is **byte-identical to pre-CRE-02** generation
+(identical RNG consumption; Even passes `None`, **not** an all-equal list); a list of
+length `num_teams` draws Team `i`'s players — bench players 7+ included — at
+`tier_means[i]`; a length mismatch raises `ValueError` **before any ORM write**. NEW
+pure `teams/player_generator.py::compute_tier_means(num_teams, mean, delta) ->
+list[float]` (no RNG / no I/O / no Django, so the LG-00 `TestNoDjangoImportsLeaked`
+guard still holds; degenerate `delta == 0` **or** `num_teams < 2` ⇒ `[float(mean)] *
+num_teams`, doubling as the `N−1` divide-by-zero guard); `_build_player_kwargs`'s
+`mean` type hint widens `int` → `float` (its only change — the body is untouched).
+**Composition with the other create fields:** none — the spread is orthogonal to
+`map_mode` / finance / phase composition and to the **League template** table, and it
+**re-baselines no generation-dependent fixture**: the ramp is symmetric about `mean`,
+so the League's average talent is unchanged at every spread (caveat: the clamp is
+applied *after* the ramp, so mean-preservation holds only where the ramp stays inside
+`[0, 100]` — at an extreme `mean` the clamped end flattens and the average is pulled
+toward the middle). **Create surface:** the CRE-01 sole creation path
+`_create_league_and_season` builds the vector immediately before the `_generate_teams`
+call — `spread = cleaned.get("league_spread") or "even"` → `delta =
+LEAGUE_SPREAD_DELTAS.get(spread, 0.0)` → `tier_means = compute_tier_means(
+cleaned["num_teams"], cleaned["mean"], delta) if delta else None` — two independent
+layers (`or "even"` for falsy, the dict `.get` default for unknown-but-truthy) making
+any bad value harmless, and the `if delta else None` step is what guarantees the
+byte-identical Even path. The selector lives on the **Advanced form ONLY**
+(`templates/leagues/create_advanced.html` gains one `<div class="mb-3">` block after
+the mean / std-dev row); the one-click template chooser always creates an **Even**
+League — `_template_to_form_data` gains the static key `"league_spread": "even"` with
+its **signature unchanged** (the chooser has no spread selector, so the value is a
+constant, not caller data) and `LeagueTemplate` gains **no** field.
+**Scope-out (locked).** **No model change, no migration, no ADR** — the tier is a
+generation input, never persisted, and a transient form field + a pure function + an
+additive kwarg is reversible. Competitive Teams only: `_generate_free_agents` is
+untouched and the League's free-agent pool is still drawn at the flat `mean`.
+Create-time only: `next_season` / `_develop_league_for_new_season` do **not** re-apply
+the spread — **LG-04 development** owns Team strength thereafter. `_pick_manager_team`
+/ `_rank_teams_by_strength` / `_seed_team_budgets_by_strength` and the LG-00
+`draw_stats` / `draw_preferred_roles` / `assign_slots` surface are all zero-diff. **No
+simulator / RNG-into-the-sim change and no Score Calibration re-baseline.**
+`templates/leagues/create.html` (the chooser) is not edited; nothing new is exposed on
+the REST API, serializers or admin. **Tests:** `TestComputeTierMeans` appended to
+`teams/tests/test_player_generator.py` (pure `unittest`), NEW
+`teams/tests/test_generate_teams_tiered.py` (`TestGenerateTeamsTierMeans`) and NEW
+`matches/tests/test_league_spread.py` (`TestCre02LeagueSpreadFormField` /
+`TestCre02AdvancedCreateWithSpread` / `TestCre02TemplateFormDataIsAlwaysEven`).
+`_create_league_and_season` builds an **unseeded** `random.Random()`, so **no
+view-layer test asserts anything about strength** — view tests cover form validity,
+HTTP status, object counts and DOM ids only, and every strength assertion lives at the
+`_generate_teams` layer with an injected `rng=random.Random(42)`, asserting a
+direction/magnitude gap rather than an exact point total. See the seam contract
+[`.claude/worktrees/cre-02-seam-contract.md`](.claude/worktrees/cre-02-seam-contract.md),
+the CONTEXT.md **League spread** term (and the amended **League difficulty** entry),
+the **CRE-02 tiered generation** subsection in
+[`laserforce_simulator/teams/CLAUDE.md`](laserforce_simulator/teams/CLAUDE.md), and the
+**CRE-02 league spread** subsection in
+[`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
 ---
 

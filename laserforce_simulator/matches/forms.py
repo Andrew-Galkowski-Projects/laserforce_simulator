@@ -95,6 +95,14 @@ class CreateLeagueForm(forms.Form):
     # (easy → strongest, medium → middle, hard → weakest). No League field, no
     # migration.
     DIFFICULTY_CHOICES = (("easy", "Easy"), ("medium", "Medium"), ("hard", "Hard"))
+    # CRE-02 — transient League spread selector. Consumed at create time only to
+    # build the per-team tier-mean vector handed to ``_generate_teams``. No League
+    # field, no migration. Advanced form only — the template chooser is always Even.
+    LEAGUE_SPREAD_CHOICES = (
+        ("even", "Even"),
+        ("tiered", "Tiered"),
+        ("steep", "Steep"),
+    )
 
     league_name = forms.CharField(
         max_length=100,
@@ -131,6 +139,18 @@ class CreateLeagueForm(forms.Form):
             attrs={"id": "league-create-difficulty", "class": "form-select"}
         ),
         label="Difficulty",
+    )
+    # CRE-02 — transient League spread (consumed at create time only).
+    # ``required=False`` so an Advanced POST that omits it stays valid (defaults
+    # Even); the tier-vector build coerces a falsy/unknown value to "even".
+    league_spread = forms.ChoiceField(
+        choices=LEAGUE_SPREAD_CHOICES,
+        initial="even",
+        required=False,
+        widget=forms.Select(
+            attrs={"id": "league-create-league-spread", "class": "form-select"}
+        ),
+        label="League spread",
     )
     season_name = forms.CharField(
         max_length=100,

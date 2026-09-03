@@ -763,7 +763,7 @@ def _resolve_count_marker(raw: str, marker: str, low: int, high: int) -> int:
     return int(raw)
 
 
-def _build_player_kwargs(rng: random.Random, mean: int, std_dev: int) -> dict:
+def _build_player_kwargs(rng: random.Random, mean: float, std_dev: int) -> dict:
     """Assemble the kwargs dict (profile + stats + preferred_roles) for one Player."""
     profile = _random_player_profile()
     profile.pop("name", None)  # caller supplies the name
@@ -808,6 +808,7 @@ def _generate_teams(
     std_dev: int,
     team_names_pool: list[str],
     player_names_pool: list[str],
+    tier_means: "list[float] | None" = None,
 ) -> list[Team]:
     """Create ``num_teams`` new Teams, each with ``players_per_team`` Players.
 
@@ -815,7 +816,20 @@ def _generate_teams(
     preferred-role matching (with leftover back-fill); players 7+ remain
     on the bench. Each Player is created with ``Player.objects.create``
     so PKs are available for slot FK assignment.
+
+    CRE-02 ``tier_means``: when ``None`` (the default) every Player of every
+    Team is drawn from the flat ``mean`` — identical RNG consumption and
+    identical output to pre-CRE-02 generation. When a list is supplied it must
+    have exactly ``num_teams`` entries (``ValueError`` otherwise, raised before
+    any DB write); the Team at 0-based creation index ``i`` then draws ALL its
+    players — bench included — from ``tier_means[i]``, and ``mean`` goes unused
+    for those draws.
     """
+    if tier_means is not None and len(tier_means) != num_teams:
+        raise ValueError(
+            f"tier_means has {len(tier_means)} entries but num_teams is {num_teams}"
+        )
+
     team_fallback = TEAM_NAMES[-1] if TEAM_NAMES else "Team"
     player_fallback = PLAYER_NAMES[-1] if PLAYER_NAMES else "Player"
     created_teams: list[Team] = []
@@ -824,6 +838,9 @@ def _generate_teams(
         team_name = _pop_unique_name(team_names_pool, team_fallback, _team_name_exists)
         team = Team.objects.create(name=team_name)
         team_name_exists = _player_name_exists_on_team(team)
+        # CRE-02 — this Team's tier mean, or the flat league mean when no
+        # spread was requested.
+        team_mean = mean if tier_means is None else tier_means[_team_idx]
 
         created_players: list[Player] = []
         for _player_idx in range(players_per_team):
@@ -833,7 +850,7 @@ def _generate_teams(
             player = Player.objects.create(
                 team=team,
                 name=player_name,
-                **_build_player_kwargs(rng, mean, std_dev),
+                **_build_player_kwargs(rng, team_mean, std_dev),
             )
             created_players.append(player)
 

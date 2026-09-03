@@ -10,6 +10,7 @@ Public surface (frozen by the LG-00 seam contract):
 - ``draw_stats(rng, mean, std_dev) -> dict[str, int]``
 - ``draw_preferred_roles(rng) -> list[str]``
 - ``assign_slots(preferred_roles_per_player) -> dict[str, int | None]``
+- ``compute_tier_means(num_teams, mean, delta) -> list[float]`` (CRE-02)
 
 Module-level tuples:
 
@@ -17,6 +18,7 @@ Module-level tuples:
 - ``_ROLE_NAMES`` — the 5 role strings (lowercase) used by
   ``Player.preferred_roles`` and ``PlayerRoundState.role``.
 - ``_SLOT_KEYS`` — the 6 ``Team.slot_*`` FK names (Scout has two).
+- ``LEAGUE_SPREAD_DELTAS`` — CRE-02 league-spread token -> ramp delta.
 
 The 5-tuple of role names and the 19-tuple of stat fields are hand-rolled
 locally rather than imported so this module stays Django-free. The Tests agent
@@ -72,6 +74,17 @@ _STAT_FIELDS: tuple[str, ...] = (
     "survival",
     "special_usage",
 )
+
+# CRE-02 league-spread tokens -> the tier-ramp delta handed to
+# ``compute_tier_means``. The keys are the same tokens the create-League
+# form's ``league_spread`` ChoiceField accepts, so a ``cleaned_data`` value
+# indexes this dict directly. "even" (delta 0) is the default and leaves
+# generation identical to a flat single-mean league.
+LEAGUE_SPREAD_DELTAS: dict[str, float] = {
+    "even": 0.0,
+    "tiered": 8.0,
+    "steep": 16.0,
+}
 
 
 def draw_stats(rng: random.Random, mean: float, std_dev: float) -> dict[str, int]:
@@ -164,3 +177,25 @@ def assign_slots(
         result[slot_key] = picked
 
     return result
+
+
+def compute_tier_means(num_teams: int, mean: float, delta: float) -> list[float]:
+    """CRE-02 — the linear, mean-preserving tier ramp.
+
+    Returns a list of length ``num_teams``; entry ``i`` is the stat mean the
+    ``i``-th generated Team's players are drawn from. Index 0 is the strongest
+    tier, index ``num_teams - 1`` the weakest.
+
+        tier_mean(i) = clamp(mean + delta - 2 * delta * i / (num_teams - 1), 0.0, 100.0)
+
+    Degenerate cases — ``delta == 0`` or ``num_teams < 2`` — return
+    ``[float(mean)] * num_teams`` (this is also the ``n - 1`` divide-by-zero
+    guard).
+
+    PURE: no RNG, no I/O, no Django. Deterministic given its three arguments.
+    """
+    if delta == 0 or num_teams < 2:
+        return [float(mean)] * num_teams
+
+    span = 2.0 * delta / (num_teams - 1)
+    return [max(0.0, min(100.0, mean + delta - span * i)) for i in range(num_teams)]
