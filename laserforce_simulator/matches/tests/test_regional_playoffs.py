@@ -1104,3 +1104,59 @@ class TestRegionalPlayoffTeamHistory(TestCase):
         self.assertEqual(self.season.state, "completed")
         self.assertIsNone(self.season.champion_team_id)
         self.assertEqual(self._record().championships, 0)
+
+
+# ===========================================================================
+# CONF-02 review fix - a Conference too small to field a bracket.
+#
+# Found by manual browser testing: a 4-team / 2-Conference Season with a
+# tournament phase split into two 2-team brackets. `lock_and_build` raised
+# "A tournament requires at least 4 participants." out of the ATOMIC
+# `activate_pending_tournament_phase`, rolling back the whole play-week that
+# triggered it - so the Season could never finish its round-robin (every
+# retry re-simulated and re-failed, losing the work each time).
+#
+# Pre-CONF-02 this shape built ONE Season-wide 4-team bracket and played
+# fine, so the split is what made it degenerate. The build now SKIPS a
+# Conference whose seed order is under the engine floor instead of raising.
+# ===========================================================================
+
+
+class TestRegionalBuildSkipsTooSmallConference(TestCase):
+    """A Conference under `MIN_BRACKET_PARTICIPANTS` yields no bracket."""
+
+    def test_two_team_conferences_build_no_brackets_and_do_not_raise(self) -> None:
+        season, conferences, groups, rr_phase, phase = _conf_season("TinyConf", [2, 2])
+        _hand_play_rr(season, rr_phase, [t.id for g in groups for t in g])
+        season.refresh_from_db()
+
+        # The regression: this used to raise ValidationError out of the
+        # atomic build and roll the caller's transaction back.
+        season.activate_pending_tournament_phase()
+
+        phase.refresh_from_db()
+        self.assertEqual(phase.regional_tournaments.count(), 0)
+        self.assertIsNone(phase.tournament_id)
+        self.assertEqual(season.tournaments_for_phase(phase), [])
+
+    def test_rr_phase_still_completes_when_no_bracket_can_build(self) -> None:
+        season, conferences, groups, rr_phase, phase = _conf_season("TinyRR", [2, 2])
+        _hand_play_rr(season, rr_phase, [t.id for g in groups for t in g])
+        season.refresh_from_db()
+        season.activate_pending_tournament_phase()
+
+        # The round-robin's own completion is unaffected - the work survives.
+        self.assertTrue(season._phase_complete(rr_phase))
+
+    def test_mixed_sizes_build_only_the_viable_conference(self) -> None:
+        """A 4-team Conference still gets its bracket; a 2-team one is skipped."""
+        season, conferences, groups, rr_phase, phase = _conf_season("MixedConf", [4, 2])
+        _hand_play_rr(season, rr_phase, [t.id for g in groups for t in g])
+        season.refresh_from_db()
+        season.activate_pending_tournament_phase()
+
+        phase.refresh_from_db()
+        built = season.tournaments_for_phase(phase)
+        self.assertEqual(len(built), 1)
+        self.assertEqual(built[0].conference_id, conferences[0].id)
+        self.assertEqual(built[0].participants.count(), 4)

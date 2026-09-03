@@ -275,3 +275,38 @@ class TestManageConferencesLeagueDashboardLink(TestCase):
         self.assertNotIn(
             'id="league-dashboard-manage-conferences-link"', resp.content.decode()
         )
+
+
+class TestConf02PartitionBracketFloor(TestCase):
+    """CONF-02 review fix - ``min_per_conference`` raises the floor to 4 when
+    the Season composes a tournament phase (each Conference must field its own
+    Regional playoff bracket)."""
+
+    def test_two_per_conference_rejected_when_floor_is_four(self):
+        errors, normalized = _validate_conference_partition(
+            ["West", "East"],
+            {1: 0, 2: 0, 3: 1, 4: 1},
+            {1, 2, 3, 4},
+            min_per_conference=4,
+        )
+        self.assertIsNone(normalized)
+        self.assertTrue(any("at least 4 teams" in e for e in errors))
+
+    def test_two_per_conference_allowed_at_the_default_floor(self):
+        errors, normalized = _validate_conference_partition(
+            ["West", "East"],
+            {1: 0, 2: 0, 3: 1, 4: 1},
+            {1, 2, 3, 4},
+        )
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(normalized)
+
+    def test_four_per_conference_allowed_when_floor_is_four(self):
+        errors, normalized = _validate_conference_partition(
+            ["West", "East"],
+            {1: 0, 2: 0, 3: 0, 4: 0, 5: 1, 6: 1, 7: 1, 8: 1},
+            set(range(1, 9)),
+            min_per_conference=4,
+        )
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(normalized)

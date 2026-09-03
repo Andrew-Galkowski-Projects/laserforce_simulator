@@ -10,6 +10,13 @@ from matches.sim_helpers.time_constants import (
     TICKS_PER_ROUND,
 )
 
+# The participant floor every shipped bracket format needs — the engine raises
+# "A tournament requires at least 4 participants." below it (``bracket.py``
+# build paths + ``Tournament.lock_and_build``). Named here so the CONF-02
+# regional-build guard and the Conference-partition authoring rules cite one
+# number instead of repeating a literal 4.
+MIN_BRACKET_PARTICIPANTS = 4
+
 
 class Match(models.Model):
     MATCH_TYPES = [
@@ -1437,6 +1444,19 @@ class Season(models.Model):
         if phase.tournament_cut:
             order = order[: phase.tournament_cut]
         if not order:
+            return None
+        if conference is not None and len(order) < MIN_BRACKET_PARTICIPANTS:
+            # CONF-02 defensive guard — a Conference too small to field a bracket
+            # is SKIPPED rather than allowed to raise out of ``lock_and_build``.
+            # Without this, the ValidationError propagates out of the
+            # ``@transaction.atomic`` activation and rolls back the whole
+            # play-week that triggered it, so the Season can never finish the
+            # round-robin: every retry re-simulates and re-fails. The authoring
+            # surfaces (the create form's ``4 * N`` guard and the
+            # manage-conferences partition rule) stop this being reachable for
+            # new Seasons; this keeps an already-partitioned or admin-edited one
+            # from bricking. The Season-wide (``conference is None``) path is
+            # deliberately left strict — byte-identical to pre-CONF-02.
             return None
         if conference is not None:
             if phase.tournament_mode == "standings":

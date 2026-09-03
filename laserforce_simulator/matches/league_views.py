@@ -46,6 +46,7 @@ from .league_templates import (
     LeagueTemplate,
 )
 from .models import (
+    MIN_BRACKET_PARTICIPANTS,
     Conference,
     GameRound,
     League,
@@ -475,6 +476,8 @@ def _validate_conference_partition(
     names: "list[str]",
     team_to_conf_idx: "dict[int, int | None]",
     enrolled_team_ids: "set[int]",
+    *,
+    min_per_conference: int = 2,
 ) -> "tuple[list[str], list[tuple[str, list[int]]] | None]":
     """Validate a submitted Conference partition of a draft Season's Teams.
 
@@ -488,6 +491,12 @@ def _validate_conference_partition(
     Season) case ⇒ ``([], [])``. The locked rules: every Conference name
     non-empty; a **full partition** (every enrolled Team assigned to a valid
     Conference); each Conference has **>= 2** Teams.
+
+    CONF-02 — ``min_per_conference`` raises that floor to
+    ``MIN_BRACKET_PARTICIPANTS`` when the Season carries a ``tournament``
+    phase, because each Conference then has to field its own **Regional
+    playoff** bracket and the engine cannot build one from fewer than 4 Teams.
+    Left at the CONF-05 default of 2 for a Season with no tournament phase.
     """
     stripped = [n.strip() for n in names]
     # Zero-Conference (flat Season) — no Conference names submitted.
@@ -508,8 +517,14 @@ def _validate_conference_partition(
         members[idx].append(team_id)
     if unassigned:
         errors.append("Every team must be assigned to a conference.")
-    if any(len(m) < 2 for m in members):
-        errors.append("Each conference needs at least 2 teams.")
+    if any(len(m) < min_per_conference for m in members):
+        if min_per_conference > 2:
+            errors.append(
+                f"Each conference needs at least {min_per_conference} teams "
+                "to hold its own playoff bracket."
+            )
+        else:
+            errors.append("Each conference needs at least 2 teams.")
 
     if errors:
         return errors, None
@@ -593,8 +608,17 @@ def manage_conferences(request: HttpRequest, season_id: int) -> HttpResponse:
         for team in teams:
             raw = request.POST.get(f"team_{team.id}_conference", "")
             team_to_conf_idx[team.id] = int(raw) if raw.isdigit() else None
+        # CONF-02 — when the Season composes a ``tournament`` phase, each
+        # Conference fields its own Regional playoff, so the per-Conference
+        # floor rises to the bracket engine's participant minimum.
+        has_tournament_phase = season.phases.filter(phase_type="tournament").exists()
         errors, normalized = _validate_conference_partition(
-            names, team_to_conf_idx, {t.id for t in teams}
+            names,
+            team_to_conf_idx,
+            {t.id for t in teams},
+            min_per_conference=(
+                MIN_BRACKET_PARTICIPANTS if has_tournament_phase else 2
+            ),
         )
         if errors:
             context = _manage_conferences_context(

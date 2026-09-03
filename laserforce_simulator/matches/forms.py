@@ -1,7 +1,7 @@
 from django import forms
 from django.utils import timezone
 from teams.models import Team
-from .models import Match, Season
+from .models import MIN_BRACKET_PARTICIPANTS, Match, Season
 from .phase_composer import parse_phase_composition
 from core.models import ArenaMap
 
@@ -322,15 +322,31 @@ class CreateLeagueForm(forms.Form):
             cleaned_data["phase_specs"] = specs
         # CONF-05 — a Conference partition needs >= 2 teams per Conference, so
         # the team count must cover ``2 * N``. Error attaches to the dropdown.
+        #
+        # CONF-02 — when the composition also carries a ``tournament`` phase,
+        # every Conference fields its OWN Regional playoff bracket, so the floor
+        # rises to the bracket engine's participant minimum: ``4 * N``. Without
+        # this, e.g. 4 teams across 2 Conferences yields two 2-team brackets,
+        # and the build raises out of the atomic activation and rolls back the
+        # play-week that triggered it, leaving the Season permanently unable to
+        # finish its round-robin.
         n_conf = cleaned_data.get("number_of_conferences") or 0
         num_teams = cleaned_data.get("num_teams")
-        if n_conf and num_teams is not None and num_teams < 2 * n_conf:
-            self.add_error(
-                "number_of_conferences",
-                forms.ValidationError(
-                    f"{n_conf} conferences need at least {2 * n_conf} teams."
-                ),
-            )
+        specs = cleaned_data.get("phase_specs") or []
+        has_tournament_phase = any(
+            getattr(spec, "phase_type", None) == "tournament" for spec in specs
+        )
+        min_per_conf = MIN_BRACKET_PARTICIPANTS if has_tournament_phase else 2
+        if n_conf and num_teams is not None and num_teams < min_per_conf * n_conf:
+            if has_tournament_phase:
+                message = (
+                    f"{n_conf} conferences with a tournament phase need at least "
+                    f"{min_per_conf * n_conf} teams "
+                    f"({min_per_conf} per conference to field a playoff bracket)."
+                )
+            else:
+                message = f"{n_conf} conferences need at least {2 * n_conf} teams."
+            self.add_error("number_of_conferences", forms.ValidationError(message))
         mode = cleaned_data.get("map_mode")
         if mode is None:
             return cleaned_data
