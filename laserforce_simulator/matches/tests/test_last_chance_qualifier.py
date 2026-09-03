@@ -244,14 +244,18 @@ class TestOnlyTheFinalTournamentPhaseQualifies(TestCase):
             self.groups,
             self.rr_phase,
             self.mid_phase,
-        ) = _conf_season("LcMid", [9, 4])
-        self.final_phase = SeasonPhase.objects.create(
-            season=self.season,
-            ordinal=3,
-            phase_type="tournament",
-            tournament_mode="standings",
-            tournament_format="single_elimination",
-            tournament_cut=0,
+        ) = _conf_season("LcMid", [9, 4], extra_tournament_phases=1)
+        # CONF-04 — the final tournament phase is composed by the helper BEFORE
+        # activation (a post-activation create would collide with the derived
+        # Worlds phase on ``uniq_season_phase_ordinal``). Fetch it by query, and
+        # EXCLUDE the ``worlds`` phase: ``_final_tournament_phase()`` means "the
+        # final NON-Worlds tournament phase" since ADR-0037, and that is the
+        # phase this class is about.
+        self.final_phase = (
+            self.season.phases.filter(phase_type="tournament")
+            .exclude(tournament_mode="worlds")
+            .order_by("ordinal")
+            .last()
         )
         _hand_play_rr(
             self.season,
@@ -405,16 +409,28 @@ class TestPhaseGateBlocksOnLastChanceBracket(TestCase):
         self.assertEqual(self.season.current_phase().id, self.phase.id)
 
     def test_crowning_the_last_chance_bracket_releases_the_gate(self) -> None:
+        # CONF-04 — the gate this class is about still releases: the tournament
+        # phase is complete once every Regional playoff AND every Last-chance
+        # bracket has drained. What CHANGED is what the cursor advances TO.
+        # Under CONF-03 this phase was final, so the Season completed here;
+        # since ADR-0037 a derived Worlds phase sits after it, so the cursor
+        # moves onto Worlds and the Season stays active until Worlds drains.
         self.season.seed_pending_last_chance_brackets(self.phase)
         last_chance = _last_chance_row(self.phase, self.conferences[0])
         _stamp_bracket_completed(last_chance, self.groups[0][2])
         self.season.complete_if_finished()
         self.season.refresh_from_db()
-        self.assertEqual(self.season.state, "completed")
-        self.assertIsNone(self.season.current_phase())
+
+        self.assertTrue(self.season._phase_complete(self.phase))
+        cursor = self.season.current_phase()
+        self.assertIsNotNone(cursor)
+        self.assertEqual(cursor.tournament_mode, "worlds")
+        self.assertEqual(self.season.state, "active")
 
     def test_the_season_champion_stays_null_when_the_gate_releases(self) -> None:
-        # Invariant 4 — this slice crowns NOTHING.
+        # CONF-04 — champion_team is still NULL at this instant, but for a
+        # DIFFERENT reason than under CONF-03: not "this slice crowns nothing"
+        # but "Worlds has not been played yet". Worlds is what crowns it.
         self.season.seed_pending_last_chance_brackets(self.phase)
         _stamp_bracket_completed(
             _last_chance_row(self.phase, self.conferences[0]), self.groups[0][2]
@@ -474,7 +490,11 @@ class TestPlayPlayoffsTaskSeedsAndDrainsInOneCall(TestCase):
         last_chance = _last_chance_row(self.phase, self.conferences[0])
         self.assertIn(last_chance.champion_id, _ids(self.groups[0]))
 
-    def test_one_call_completes_the_season_with_a_null_champion(self) -> None:
+    def test_one_call_drains_qualification_and_worlds_to_a_champion(self) -> None:
+        # CONF-04 — one invocation now seeds the Last-chance brackets, drains
+        # them, BUILDS the Worlds bracket at the phase boundary and drains that
+        # too, crowning the Season champion (ADR-0037). Under CONF-03 the same
+        # call ended with the Season completed and championless.
         from matches.tasks import play_playoffs_task
 
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
@@ -482,7 +502,12 @@ class TestPlayPlayoffsTaskSeedsAndDrainsInOneCall(TestCase):
 
         self.season.refresh_from_db()
         self.assertEqual(self.season.state, "completed")
-        self.assertIsNone(self.season.champion_team_id)
+        self.assertIsNotNone(self.season.champion_team_id)
+        # The champion is a Worlds qualifier, not merely an enrolled Team.
+        self.assertIn(
+            self.season.champion_team_id,
+            [q.team_id for q in self.season.worlds_qualifiers()],
+        )
 
     def test_the_worlds_field_is_ready_after_the_single_call(self) -> None:
         from matches.tasks import play_playoffs_task
@@ -696,7 +721,11 @@ class TestPlaySingleRoundIsNeverADeadClick(TestCase):
 
         self.season.refresh_from_db()
         self.assertEqual(self.season.state, "completed")
-        self.assertIsNone(self.season.champion_team_id)
+        # CONF-04 — the click chain no longer stops at a championless Season:
+        # it carries on through the derived Worlds phase and crowns a champion
+        # (ADR-0037). ``play_single_round`` builds the Worlds bracket before its
+        # redirect, which is what stops the boundary click being dead.
+        self.assertIsNotNone(self.season.champion_team_id)
 
     def test_no_click_is_wasted_once_seeding_has_happened(self) -> None:
         # Drive to the transition, then assert the NEXT click resolves a node

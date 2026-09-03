@@ -3027,3 +3027,208 @@ class TestBracketRankSwiss(SimpleTestCase):
         from matches.bracket import _BRACKET_RANK
 
         self.assertEqual(_BRACKET_RANK.get("swiss", 0), 4)
+
+
+# ---------------------------------------------------------------------------
+# CONF-04 - the keyword-only ``minimum`` participant floor
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/conf-04-seam-contract.md`` §7.1 / §11.4;
+# rationale in
+# [ADR-0037](../../docs/adr/0037-worlds-is-a-derived-season-phase.md).
+#
+# The ``len(participants) < 4`` guard becomes a keyword-only ``minimum``
+# defaulting to 4. The maths below four was already correct - it was the
+# inherited sandbox-form policy that forbade it - so ``minimum=2`` simply lets
+# a two-Team Worlds field build its single final node.
+#
+# THREE invariants are pinned here (contract §12 item 3):
+#   1. the DEFAULT is unchanged: ``n = 3`` still raises, with the message text
+#      byte-identical (deliberately NOT f-stringified with ``minimum``);
+#   2. ``minimum`` is KEYWORD-ONLY, so no positional call site can drift;
+#   3. ``build_double_elim_bracket`` FORWARDS ``minimum`` into its internal
+#      ``build_bracket`` call - forgetting the forward makes a sub-4 DE build
+#      raise from the INNER call, which is invisible from the outer guard.
+#
+# ``Tournament.lock_and_build(minimum=...)`` needs a DB and therefore lives in
+# ``test_worlds_tournament.py``, not here (this file is ``SimpleTestCase``).
+#
+# Appended as a NEW class; no existing class above is modified.
+
+
+_MINIMUM_MESSAGE = "A tournament requires at least 4 participants."
+
+
+class TestBuilderMinimumFloor(SimpleTestCase):
+    """CONF-04 - ``build_bracket`` / ``build_double_elim_bracket``'s
+    keyword-only ``minimum`` floor. Pure, no DB."""
+
+    # -- 1. the default is byte-identical ---------------------------------
+
+    def test_default_still_rejects_three_participants(self) -> None:
+        with self.assertRaises(ValueError):
+            build_bracket(_participants(3))
+
+    def test_default_rejection_message_is_unchanged(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            build_bracket(_participants(3))
+        self.assertEqual(str(ctx.exception), _MINIMUM_MESSAGE)
+
+    def test_default_still_accepts_four_participants(self) -> None:
+        specs = build_bracket(_participants(4))
+        self.assertEqual(max(spec.bracket_round for spec in specs), 2)
+
+    def test_message_text_is_unchanged_even_when_minimum_is_not_four(self) -> None:
+        # Deliberately NOT f-stringified: the literal is pinned by callers and
+        # by this assertion (contract §7.1).
+        with self.assertRaises(ValueError) as ctx:
+            build_bracket(_participants(1), minimum=2)
+        self.assertEqual(str(ctx.exception), _MINIMUM_MESSAGE)
+
+    # -- 2. keyword-only ---------------------------------------------------
+
+    def test_minimum_is_keyword_only_on_build_bracket(self) -> None:
+        with self.assertRaises(TypeError):
+            build_bracket(_participants(3), 2)  # type: ignore[misc]
+
+    def test_minimum_is_keyword_only_on_build_double_elim_bracket(self) -> None:
+        from matches.bracket import build_double_elim_bracket
+
+        with self.assertRaises(TypeError):
+            build_double_elim_bracket(_participants(3), 2)  # type: ignore[misc]
+
+    # -- 3. minimum=2 accepts n = 2: ONE node, ONE round -------------------
+
+    def test_minimum_two_accepts_two_participants(self) -> None:
+        specs = build_bracket(_participants(2), minimum=2)
+        self.assertEqual(len(specs), 1, "n = 2 is a size-2 bracket: a single node")
+        self.assertEqual(max(spec.bracket_round for spec in specs), 1)
+
+    def test_the_single_node_of_a_two_participant_bracket_is_the_final(self) -> None:
+        (node,) = build_bracket(_participants(2), minimum=2)
+        self.assertEqual((node.bracket_round, node.position), (1, 0))
+        self.assertIsNone(node.advances_to, "the final advances nowhere")
+        self.assertFalse(node.is_bye)
+        self.assertIsNone(node.winner_id, "the final is unresolved at build time")
+        self.assertEqual({node.team_a_id, node.team_b_id}, {101, 102})
+
+    def test_two_participant_bracket_has_no_byes(self) -> None:
+        specs = build_bracket(_participants(2), minimum=2)
+        self.assertEqual(sum(1 for spec in specs if spec.is_bye), 0)
+
+    # -- 4. minimum=2 accepts n = 3: size 4, top seed byes into the final ---
+
+    def test_minimum_two_accepts_three_participants_as_a_size_four_bracket(
+        self,
+    ) -> None:
+        specs = build_bracket(_participants(3), minimum=2)
+        self.assertEqual(len(specs), 3, "size-4 tree: 2 round-1 nodes + the final")
+        self.assertEqual(max(spec.bracket_round for spec in specs), 2)
+
+    def test_three_participant_bracket_gives_the_top_seed_a_single_bye(self) -> None:
+        specs = build_bracket(_participants(3), minimum=2)
+        byes = [spec for spec in specs if spec.is_bye]
+        self.assertEqual(len(byes), 1, "size - n == 1 bye")
+        # The top seed's team id is 101 by ``_participants``' construction.
+        self.assertEqual(byes[0].team_a_id, 101)
+        self.assertEqual(
+            byes[0].winner_id, 101, "a bye node is pre-resolved at build time"
+        )
+
+    def test_three_participant_bye_is_a_round_one_node(self) -> None:
+        specs = build_bracket(_participants(3), minimum=2)
+        (bye,) = [spec for spec in specs if spec.is_bye]
+        self.assertEqual(bye.bracket_round, 1)
+
+    # -- 5. minimum=2 leaves n >= 4 untouched ------------------------------
+
+    def test_minimum_two_does_not_change_a_four_participant_bracket(self) -> None:
+        default_specs = build_bracket(_participants(4))
+        floored_specs = build_bracket(_participants(4), minimum=2)
+        self.assertEqual(default_specs, floored_specs)
+
+    def test_minimum_two_does_not_change_a_five_participant_bracket(self) -> None:
+        self.assertEqual(
+            build_bracket(_participants(5)),
+            build_bracket(_participants(5), minimum=2),
+        )
+
+    # -- 6. the DE forward -------------------------------------------------
+
+    def test_double_elim_default_still_rejects_three_participants(self) -> None:
+        from matches.bracket import build_double_elim_bracket
+
+        with self.assertRaises(ValueError) as ctx:
+            build_double_elim_bracket(_participants(3))
+        self.assertEqual(str(ctx.exception), _MINIMUM_MESSAGE)
+
+    def test_double_elim_forwards_minimum_into_its_inner_build_bracket(self) -> None:
+        """The load-bearing forward (contract §7.1). Without
+        ``build_bracket(participants, minimum=minimum)`` the outer guard passes
+        and the INNER call raises - a failure the outer guard cannot show."""
+        from matches.bracket import build_double_elim_bracket
+
+        specs = build_double_elim_bracket(_participants(3), minimum=2)
+        self.assertTrue(specs, "a sub-4 DE build must not raise from the inner call")
+        self.assertIn("winners", {spec.bracket_type for spec in specs})
+
+    def test_double_elim_at_three_builds_all_three_bracket_types(self) -> None:
+        from matches.bracket import build_double_elim_bracket
+
+        specs = build_double_elim_bracket(_participants(3), minimum=2)
+        self.assertEqual(
+            {spec.bracket_type for spec in specs},
+            {"winners", "losers", "grand_final"},
+        )
+
+    def test_double_elim_winners_tree_matches_the_forwarded_single_elim_tree(
+        self,
+    ) -> None:
+        from matches.bracket import build_double_elim_bracket
+
+        de_winners = [
+            (spec.bracket_round, spec.position, spec.team_a_id, spec.team_b_id)
+            for spec in build_double_elim_bracket(_participants(3), minimum=2)
+            if spec.bracket_type == "winners"
+        ]
+        se = [
+            (spec.bracket_round, spec.position, spec.team_a_id, spec.team_b_id)
+            for spec in build_bracket(_participants(3), minimum=2)
+        ]
+        self.assertEqual(sorted(de_winners), sorted(se))
+
+    def test_double_elim_minimum_two_does_not_change_a_four_participant_build(
+        self,
+    ) -> None:
+        from matches.bracket import build_double_elim_bracket
+
+        self.assertEqual(
+            build_double_elim_bracket(_de_participants(4)),
+            build_double_elim_bracket(_de_participants(4), minimum=2),
+        )
+
+    # -- 7. minimum still guards below itself ------------------------------
+
+    def test_minimum_two_still_rejects_a_single_participant(self) -> None:
+        with self.assertRaises(ValueError):
+            build_bracket(_participants(1), minimum=2)
+
+    def test_minimum_two_still_rejects_an_empty_field(self) -> None:
+        with self.assertRaises(ValueError):
+            build_bracket([], minimum=2)
+
+    def test_duplicate_seeds_still_raise_under_a_lowered_minimum(self) -> None:
+        dup = [
+            ParticipantSpec(team_id=101, seed=1),
+            ParticipantSpec(team_id=102, seed=1),
+        ]
+        with self.assertRaises(ValueError):
+            build_bracket(dup, minimum=2)
+
+    def test_duplicate_team_ids_still_raise_under_a_lowered_minimum(self) -> None:
+        dup = [
+            ParticipantSpec(team_id=101, seed=1),
+            ParticipantSpec(team_id=101, seed=2),
+        ]
+        with self.assertRaises(ValueError):
+            build_bracket(dup, minimum=2)

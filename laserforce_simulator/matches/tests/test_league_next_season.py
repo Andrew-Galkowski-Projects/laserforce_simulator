@@ -2570,3 +2570,176 @@ class TestFin03NextSeasonThreadsBandViaHelper(TestCase):
         sd_hi = _Fin03Development.POTENTIAL_MAX_SD * (1 - hi_band / 100)
         sd_lo = _Fin03Development.POTENTIAL_MAX_SD * (1 - lo_band / 100)
         self.assertLess(sd_hi, sd_lo)
+
+
+# ---------------------------------------------------------------------------
+# CONF-04 - the rollover does NOT carry the derived Worlds phase forward
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/conf-04-seam-contract.md`` §6.G + §11.5
+# item 15; rationale in
+# [ADR-0037](../../docs/adr/0037-worlds-is-a-derived-season-phase.md).
+#
+# ``_run_season_rollover`` otherwise copies every phase forward verbatim. The
+# Worlds phase must be SKIPPED because the rollover carries NO Conferences: a
+# copied Worlds phase would land on a flat Season whose ``worlds_qualifiers()``
+# returns ``[]`` forever, stranding it at ``active``. The new Season grows its
+# OWN Worlds phase at ``start_season`` if it is ever partitioned.
+#
+# Because the Worlds phase always holds the HIGHEST ordinal (contract §5.1),
+# skipping it leaves the copied ordinals contiguous from 1 - no renumbering is
+# needed and none may be added. Every other line of the copy (including the
+# verbatim ``tournament_mode=src.tournament_mode`` carry) is unchanged, which
+# is why the non-``worlds`` modes below must still reproduce exactly.
+#
+# Appended as a NEW class; no existing class above is modified.
+
+
+class TestConf04NextSeasonSkipsTheWorldsPhase(TestCase):
+    """CONF-04 §6.G - the derived Worlds phase is not carried forward."""
+
+    def _completed_with_worlds(self, prefix: str) -> League:
+        """A completed Season composed RR(1) -> tournament(2) -> worlds(3),
+        written directly (the rollover reads persisted phase rows, so the
+        composition is hand-built rather than derived)."""
+        league = _make_league(f"{prefix}L")
+        teams = _make_teams(prefix, 2)
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=1,
+            phase_type="round_robin",
+            schedule_format="single_round_robin",
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=2,
+            phase_type="tournament",
+            schedule_format=None,
+            tournament_mode="standings",
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=3,
+            phase_type="tournament",
+            schedule_format=None,
+            tournament_mode="worlds",
+        )
+        return league
+
+    def _roll(self, league: League) -> Season:
+        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        return league.seasons.order_by("-id").first()
+
+    def test_fixture_precondition_the_source_has_three_phases(self) -> None:
+        league = self._completed_with_worlds("Conf04RollPre")
+        prev = league.seasons.order_by("id").first()
+        self.assertEqual(prev.phases.count(), 3)
+        self.assertEqual(prev.phases.filter(tournament_mode="worlds").count(), 1)
+
+    def test_the_new_season_has_no_worlds_phase(self) -> None:
+        league = self._completed_with_worlds("Conf04RollSkip")
+        new_season = self._roll(league)
+        self.assertEqual(new_season.phases.filter(tournament_mode="worlds").count(), 0)
+
+    def test_the_new_season_copies_only_the_two_authored_phases(self) -> None:
+        league = self._completed_with_worlds("Conf04RollCount")
+        new_season = self._roll(league)
+        self.assertEqual(new_season.phases.count(), 2)
+
+    def test_the_copied_ordinals_stay_contiguous_from_one(self) -> None:
+        # The Worlds phase always holds the HIGHEST ordinal, so skipping it
+        # needs no renumbering (§6.G).
+        league = self._completed_with_worlds("Conf04RollOrdinals")
+        new_season = self._roll(league)
+        self.assertEqual([phase.ordinal for phase in new_season.phases.all()], [1, 2])
+
+    def test_the_copied_phase_types_are_unchanged(self) -> None:
+        league = self._completed_with_worlds("Conf04RollTypes")
+        new_season = self._roll(league)
+        self.assertEqual(
+            [phase.phase_type for phase in new_season.phases.all()],
+            ["round_robin", "tournament"],
+        )
+
+    def test_the_surviving_tournament_mode_is_carried_verbatim(self) -> None:
+        # The skip must not disturb the LG-02-Part2c-3b carry-forward.
+        league = self._completed_with_worlds("Conf04RollMode")
+        new_season = self._roll(league)
+        phases = list(new_season.phases.all())
+        self.assertEqual(phases[0].tournament_mode, "standings")  # RR row default
+        self.assertEqual(phases[1].tournament_mode, "standings")  # carried verbatim
+
+    def test_the_copied_tournament_embed_is_reset_to_null(self) -> None:
+        league = self._completed_with_worlds("Conf04RollEmbed")
+        new_season = self._roll(league)
+        for phase in new_season.phases.all():
+            self.assertIsNone(phase.tournament_id)
+
+    def test_a_season_with_no_worlds_phase_rolls_over_unchanged(self) -> None:
+        """The byte-identity pin: a composition with no ``worlds`` phase is
+        copied exactly as it was before CONF-04."""
+        league = _make_league("Conf04RollFlatL")
+        teams = _make_teams("Conf04RollFlat", 2)
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=1,
+            phase_type="round_robin",
+            schedule_format="single_round_robin",
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=2,
+            phase_type="tournament",
+            schedule_format=None,
+            tournament_mode="standings",
+        )
+        new_season = self._roll(league)
+        self.assertEqual(new_season.phases.count(), 2)
+        self.assertEqual([phase.ordinal for phase in new_season.phases.all()], [1, 2])
+        self.assertEqual(
+            [phase.phase_type for phase in new_season.phases.all()],
+            ["round_robin", "tournament"],
+        )
+
+    def test_a_worlds_only_tail_still_copies_the_round_robin(self) -> None:
+        """Degenerate shape - RR(1) -> worlds(2). The RR phase survives; the
+        Worlds phase does not."""
+        league = _make_league("Conf04RollTailL")
+        teams = _make_teams("Conf04RollTail", 2)
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=1,
+            phase_type="round_robin",
+            schedule_format="single_round_robin",
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=2,
+            phase_type="tournament",
+            schedule_format=None,
+            tournament_mode="worlds",
+        )
+        new_season = self._roll(league)
+        self.assertEqual(new_season.phases.count(), 1)
+        phase = new_season.phases.get()
+        self.assertEqual(phase.ordinal, 1)
+        self.assertEqual(phase.phase_type, "round_robin")
+        self.assertNotEqual(phase.tournament_mode, "worlds")

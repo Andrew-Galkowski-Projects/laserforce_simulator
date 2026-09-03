@@ -666,11 +666,18 @@ class TestSeasonPhaseTournamentModeField(TestCase):
         phase = SeasonPhase.objects.create(season=season, ordinal=1)
         self.assertEqual(phase.tournament_mode, "standings")
 
-    def test_tournament_mode_choices_declare_all_four_values(self) -> None:
+    def test_tournament_mode_choices_declare_all_five_values(self) -> None:
+        # CONF-04 widened this from four to five: ``worlds`` is the DERIVED
+        # Worlds-phase flavour (ADR-0037). The other four are unchanged.
         values = {value for value, _label in SeasonPhase.TOURNAMENT_MODE_CHOICES}
-        self.assertEqual(values, {"standings", "strength", "unseeded", "random_draw"})
+        self.assertEqual(
+            values, {"standings", "strength", "unseeded", "random_draw", "worlds"}
+        )
 
     def test_tournament_mode_choices_pairs_exact(self) -> None:
+        # CONF-04 — ``("worlds", "Worlds")`` is APPENDED fifth; the four
+        # pre-existing pairs keep their order and their exact label strings, so
+        # this still pins every pre-CONF-04 value byte-for-byte.
         self.assertEqual(
             tuple(SeasonPhase.TOURNAMENT_MODE_CHOICES),
             (
@@ -678,6 +685,7 @@ class TestSeasonPhaseTournamentModeField(TestCase):
                 ("strength", "Mid-season: by team strength"),
                 ("unseeded", "Mid-season: random seed"),
                 ("random_draw", "Mid-season: drawn pool -> RR->DE"),
+                ("worlds", "Worlds"),
             ),
         )
 
@@ -685,10 +693,10 @@ class TestSeasonPhaseTournamentModeField(TestCase):
         field = SeasonPhase._meta.get_field("tournament_mode")
         self.assertEqual(field.max_length, 16)
 
-    def test_all_four_tournament_mode_values_persist(self) -> None:
-        season = _draft_season("ModeAllFour")
+    def test_all_five_tournament_mode_values_persist(self) -> None:
+        season = _draft_season("ModeAllFive")
         for ordinal, value in enumerate(
-            ("standings", "strength", "unseeded", "random_draw"), start=1
+            ("standings", "strength", "unseeded", "random_draw", "worlds"), start=1
         ):
             phase = SeasonPhase.objects.create(
                 season=season,
