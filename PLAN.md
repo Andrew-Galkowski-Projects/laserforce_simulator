@@ -287,6 +287,155 @@ See [ADR-0032](docs/adr/0032-delete-league-full-teardown.md), the CONTEXT.md
 and the **DEL-01 delete league** subsection in
 [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
+### CRE-01 · [DONE] League template chooser + Advanced screen + Difficulty
+
+**Prio: Medium.** The create-League surface
+(`matches.league_views.league_create` / `CreateLeagueForm` / `templates/leagues/create.html`)
+is a single long form exposing every knob — league/season/manager names, team
+count, the phase composer (RR / double-RR / tournament / member-night, with
+per-tournament mode / cut / format / series / wb-lb / swiss sub-config), map
+mode + pool + rotation, the finance + luxury-tax toggles, and stat mean/std-dev.
+This is the right surface for power users but overwhelming as the default
+entry point. Add a **preset chooser** as the new default and **relocate the
+current full form to an "Advanced" screen**.
+
+**Routing (locked, user decision).** `/leagues/create/` becomes the **preset
+chooser** (the new landing the `league-create-link` nav target keeps pointing
+at, no nav edit); the current full form moves to **`/leagues/create/advanced/`**
+(new URL name e.g. `league_create_advanced`), reachable via an "Advanced setup"
+link on the chooser. The existing `league_create` view + `CreateLeagueForm` +
+`templates/leagues/create.html` are **renamed/relocated, not rewritten** — the
+advanced screen is today's form verbatim at the new URL.
+
+**Preset model (locked, user decision).** A **dropdown of 4–5 named presets**
+modelled on ZenGM's `lol.zengm.com/new_league` **"game type"** dropdown: pick a
+preset → its baked-in config populates → one **Create League** button. Each
+preset is a **server-side named config** (a hardcoded constants table for the
+first slice — NOT user-savable) that resolves to the **same field bundle +
+phase-composer wire tokens** the advanced `CreateLeagueForm` already consumes, so
+preset creation reuses the **existing `league_create` creation path verbatim**
+(generate teams → League + draft Season → enrol → `SeasonPhase` rows →
+baseline ratings/finance) with **no new creation logic**. Open question for its
+own grill: whether the chosen preset creates immediately in one click vs lands
+on the Advanced form **pre-filled** for review — the ZenGM "game type" pattern is
+one-click-from-dropdown, so default to **one-click create** with the Advanced
+screen available for full control.
+
+**First-slice preset set (candidate — pin during grill).** Spanning both the
+team-count axis (4 / 8 / 16) and the ruleset axis the user picked (Quick Play /
+Classic / Career / Double-RR):
+
+1. **4-Team Quick** — 4 teams, single round-robin + single-elim playoff, no
+   finance. Fastest casual season.
+2. **8-Team Classic** — 8 teams, single round-robin + single-elim playoff, no
+   finance.
+3. **8-Team Career** — 8 teams, `finance_enabled` on, name-your-team
+   (`current_team` / CAR-01), RR + playoffs, owner firing (CAR-02) in play.
+4. **8-Team Double-RR** — 8 teams, `double_round_robin` regular season +
+   single-elim playoff, no finance.
+5. **8-Team Member Nights** — 8 teams, RR with an interleaved `member_night`
+   phase (LG-07a) + playoff.
+
+**Deferred preset — 16-Team Conferences.** A 16-team preset partitioned into
+**conferences** depends on the first-class **`SubLeague`** concept +
+intra/cross-pool scheduling, which is **SUB-01 piece 3 (NOT STARTED, deferred)**.
+Until SUB-01 lands, either omit this preset or ship a flat 16-team variant (no
+conferences). Pin during the CRE-01 grill; do **not** build conferences here.
+
+**Implementation surface.** New `league_create_presets` view + `/leagues/create/`
+template (the dropdown + Create button); a `LEAGUE_PRESETS` constants table
+mapping each preset name → the `CreateLeagueForm` field values + the
+`phase_composer` token string (`round_robin:<fmt>` / `tournament:<...>` /
+`member_night`) + map-mode/finance flags; rename the current view/URL/template
+to the `*_advanced` names; an "Advanced setup" link on the chooser and a "Use a
+preset" link back. **No model change, no migration, no simulator touch, no Score
+Calibration re-baseline** — pure view/template + a presets config table reusing
+the shipped creation path. Reuses `phase_composer.parse_phase_composition`
+(presets feed it the same wire grammar). Adds tests for the chooser routing, each
+preset's resolved League/Season/phase shape end-to-end (no `_generate_teams`
+mock), and that the relocated advanced form still creates as before.
+
+**[DONE] Shipped (2026-06-30).** The first-slice "preset" framing shipped under
+the grilled **League template** name (the CONTEXT.md **League template** /
+**League difficulty** terms). **Routing:** `/leagues/create/` now serves the
+**template chooser** (view `matches.league_views.league_create`, URL name
+`league_create` **unchanged** — so the raw `league-create-link` nav target needs
+no edit) and today's full form relocates **verbatim** to
+`/leagues/create/advanced/` (NEW view `league_create_advanced`, NEW URL name
+`league_create_advanced`, inserted between the `create/` and `<int:league_id>/`
+patterns). **Templates table:** NEW module `matches/league_templates.py` ships a
+frozen `LeagueTemplate(key, label, num_teams, phases, finance_enabled=False,
+challenge_fired_luxury_tax=False, mean=50, std_dev=15, map_mode="none")` dataclass
++ a **5-row** `LEAGUE_TEMPLATES` tuple (`LEAGUE_TEMPLATES_BY_KEY` lookup) — server
+constants, NOT persisted / NOT user-savable / NO `League` back-reference: `4_team_quick`
+(4, `"round_robin,tournament"`), `8_team_classic` (8, `"round_robin,tournament"`),
+`8_team_career` (8, `"round_robin,tournament"`, `finance_enabled=True`),
+`8_team_double_rr` (8, `"round_robin:double_round_robin,tournament"`), and
+`8_team_member_nights` (8, `"round_robin,member_night,tournament"`) — the 16-Team
+Conferences preset stays deferred behind SUB-01 piece 3. **Difficulty:** a NEW
+**transient** `CreateLeagueForm.difficulty` `ChoiceField` (`DIFFICULTY_CHOICES =
+(("easy","Easy"),("medium","Medium"),("hard","Hard"))`, `initial="medium"`,
+`required=False`, widget id `league-create-difficulty`, inserted after
+`manager_team_name` / before `season_name`), shared by both the chooser-assembled
+form and the Advanced form and consumed only at create time — **NO `League.difficulty`
+field, NO migration**. **Selection rule:** difficulty picks WHICH generated team
+becomes the manager's `current_team` by strength rank — the new
+`_rank_teams_by_strength(teams)` (mean active-roster `overall_rating` DESC, `team_id`
+ASC, the **same** ranking `_seed_team_budgets_by_strength` now calls after being
+refactored to reuse it) indexed `{easy: 0 (strongest), medium: N//2, hard: N-1
+(weakest)}` via `_pick_manager_team(created_teams, difficulty)` (falsy ⇒ `"medium"`).
+This **supersedes the CAR-01 alphabetical-first auto-pick** (`sorted(..., key=name)[0]`
+is gone); a non-blank `manager_team_name` still **renames** whichever team difficulty
+picked (the two compose). **Shared creation path:** today's `league_create` body is
+extracted **verbatim** (only the manager pick swapped) into ONE
+`@transaction.atomic _create_league_and_season(form) -> Season` helper that BOTH the
+chooser POST and the Advanced POST call — no duplicated/new creation logic; the
+chooser POST resolves the chosen `LeagueTemplate` and assembles form data via
+`_template_to_form_data(template, *, league_name, difficulty)` so it reuses the
+Advanced validation + `phase_composer.parse_phase_composition` verbatim. **Templates:**
+the old `templates/leagues/create.html` content moves to `create_advanced.html`
+(action/back-link/heading + a `{{ form.difficulty }}` row adjusted); `create.html`
+becomes the new chooser (`league-create-template` / `-league-name` / `-difficulty`
+/ `-submit` / `-advanced-link`). **Test migration:** existing full-field-set POSTs
+that exercised the form move to `reverse("league_create_advanced")` (the chooser POST
+no longer accepts the raw full field set), and `TestCar01ManagerTeamName`'s two
+blank-name "alphabetical-first" fallback tests are rewritten to assert the default
+**Medium** strength pick (rank `N//2`). **Scope-out:** no model change, no migration,
+no simulator/RNG touch, no Score Calibration re-baseline. CRE-01 is the
+*selection-based* difficulty; the *generation-based* power-tiered complement is the
+deferred sibling **CRE-02** below. See the seam contract
+[`.claude/worktrees/cre-01-seam-contract.md`](.claude/worktrees/cre-01-seam-contract.md),
+the CONTEXT.md **League template** / **League difficulty** terms, and the **CRE-01
+league templates + difficulty** subsection in
+[`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+
+### CRE-02 · [NOT STARTED] Tiered expected-finish team generation
+
+**Prio: Low (deferred — own grill).** The dramatic complement to CRE-01's
+*selection-based* **League difficulty**. Today CRE-01 generates all N teams from
+one stat distribution and merely re-picks which equal team the manager gets, so
+Easy↔Hard differ only by the modest random spread among equally-generated teams.
+CRE-02 makes the **league itself power-tiered**: generate the N teams from
+**different starting stat distributions keyed to an expected finishing order** —
+a projected #1 seed generated from a stronger mean, the projected wooden-spoon
+team from a weaker mean, a monotonic gradient between — so the league has a real
+preseason favourite/underdog structure. The manager is then assigned a team by
+the chosen difficulty (Easy → a top-projected team, Hard → a bottom-projected
+team), making "hard mode" a genuinely weaker roster relative to the field rather
+than a coin-flip among equals.
+
+**Open questions for its own grill:** the gradient shape (linear mean ramp from
+`mean+Δ` to `mean−Δ`? geometric? a fixed tier table?) and Δ magnitude vs the
+existing `std_dev`; whether the gradient is a per-League-difficulty knob or a
+fixed league property; how it composes with the **`map_mode`** / finance /
+phase-composition template fields; whether the expected order is surfaced anywhere
+(a preseason power-ranking) or stays implicit; and whether it threads through the
+existing `_generate_teams` (a per-team mean override) or a new generator entry
+point. Folds into the same create surface as CRE-01 (the template chooser + the
+Advanced form). Likely a real **`_generate_teams`** signature change (a per-team
+mean vector) — confirm during the grill whether that re-baselines any
+generation-dependent test fixtures.
+
 ---
 
 ## Phase 5 — Infrastructure & League System

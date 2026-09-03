@@ -1462,6 +1462,161 @@ with keys `seasons`/`matches`/`tournaments`/`teams`/`players`); entry-point DOM 
 [ADR-0032](../../docs/adr/0032-delete-league-full-teardown.md). Seam contract:
 [`.claude/worktrees/del-01-seam-contract.md`](../../.claude/worktrees/del-01-seam-contract.md).
 
+## CRE-01 league templates + difficulty
+
+Turns the single long create-League form into a **template chooser** (the new
+default at `/leagues/create/`), relocates today's full form **verbatim** to an
+**Advanced** screen at `/leagues/create/advanced/`, and adds a transient
+**Difficulty** dropdown shared by both. Creation logic is extracted into ONE shared
+helper so there is no duplicated/new creation path. The CONTEXT.md **League template**
+(a server-side named config bundle that resolves to `CreateLeagueForm` field values
++ phase-composer wire tokens; NOT persisted, NOT user-savable) and **League
+difficulty** (the Easy/Medium/Hard knob selecting WHICH generated team the manager
+gets) terms are the domain language. **No model change, no migration, no simulator /
+RNG touch, no Score Calibration re-baseline, no ADR** (a view/template + a constants
+table + a transient form field over the shipped creation path). Seam contract:
+[`.claude/worktrees/cre-01-seam-contract.md`](../../.claude/worktrees/cre-01-seam-contract.md).
+
+**Routing — `matches/league_urls.py`.** `path("create/", league_views.league_create,
+name="league_create")` is **unchanged in name** but the view now renders the
+**chooser**; a NEW `path("create/advanced/", league_views.league_create_advanced,
+name="league_create_advanced")` is inserted immediately after `create/` and before
+`<int:league_id>/` (both `create/*` paths are literal and non-overlapping; both MUST
+precede `<int:league_id>/`). `reverse("league_create") == "/leagues/create/"`;
+`reverse("league_create_advanced") == "/leagues/create/advanced/"`. The
+`templates/leagues/list.html` `league-create-link` is a **raw** `/leagues/create/`
+string (not a `{% url %}`) and keeps hitting the chooser with **no nav edit**.
+
+**Templates module — NEW `matches/league_templates.py`.** A server-side constants
+bundle, NOT user-savable, NOT persisted, NO `League` back-reference. Frozen dataclass
+`LeagueTemplate(key: str, label: str, num_teams: int, phases: str,
+finance_enabled: bool = False, challenge_fired_luxury_tax: bool = False,
+mean: int = 50, std_dev: int = 15, map_mode: str = "none")` (`phases` is a
+`phase_composer` wire string; `map_mode="none"` is the 3-zone fallback). The **5-row**
+`LEAGUE_TEMPLATES: tuple[LeagueTemplate, ...]` (order-preserving for the chooser
+`<option>` render) + `LEAGUE_TEMPLATES_BY_KEY: dict[str, LeagueTemplate]` lookup:
+`4_team_quick` ("4-Team Quick", 4, `"round_robin,tournament"`); `8_team_classic`
+("8-Team Classic", 8, `"round_robin,tournament"`); `8_team_career` ("8-Team Career",
+8, `"round_robin,tournament"`, `finance_enabled=True`); `8_team_double_rr` ("8-Team
+Double-RR", 8, `"round_robin:double_round_robin,tournament"`); `8_team_member_nights`
+("8-Team Member Nights", 8, `"round_robin,member_night,tournament"`). All 5 wire
+strings parse against the real grammar — bare `tournament` ⇒ mode `standings` (the
+preceding-RR guard satisfied), `round_robin:double_round_robin` sets the RR phase
+schedule format, bare `member_night` is a valid token that may sit anywhere. The
+16-Team Conferences preset stays **deferred** behind SUB-01 piece 3. The chooser GET
+iterates `LEAGUE_TEMPLATES`; the chooser POST resolves `LEAGUE_TEMPLATES_BY_KEY[key]`
+(unknown/missing key ⇒ re-render the chooser with an error, no creation).
+
+**Form field — `matches/forms.py`.** A NEW **transient** `CreateLeagueForm.difficulty
+= forms.ChoiceField(choices=DIFFICULTY_CHOICES, initial="medium", required=False,
+widget=forms.Select(attrs={"id": "league-create-difficulty", "class": "form-select"}),
+label="Difficulty")` with `DIFFICULTY_CHOICES = (("easy","Easy"),("medium","Medium"),
+("hard","Hard"))`, inserted **after `manager_team_name` / before `season_name`** in
+the pinned field order. **Real, shared** (consumed by BOTH the chooser-assembled form
+and the Advanced form), **transient** (consumed at create time only) — **NO
+`League.difficulty` field, NO migration**. `required=False` is locked so existing
+Advanced POSTs that omit `difficulty` stay valid (default Medium); the pick helper
+coerces a falsy/unknown value to `"medium"`. **No `clean()` change** beyond the field
+declaration (the phase parsing is untouched).
+
+**Shared creation + ranking/pick helpers — `matches/league_views.py`.** Today's
+`league_create` creation body is extracted **verbatim** (only the manager pick swapped)
+into ONE `@transaction.atomic _create_league_and_season(form: CreateLeagueForm) ->
+Season` — the **sole** creation path, called by BOTH the chooser POST and the Advanced
+POST (neither view re-implements creation). Step order is preserved: `_generate_teams`
+→ `League.objects.create` → **manager pick + rename + `current_team`** → free-agent
+pool + free agents → `Season.objects.create` → `season.teams.add(*created_teams)` →
+`season.map_pool.set` → `SeasonPhase` create loop over `cleaned_data["phase_specs"]` →
+`_write_baseline_ratings` → `_seed_team_budgets_by_strength` (finance ON only). The
+manager pick (superseding **CAR-01**'s alphabetical `sorted(created_teams,
+key=name)[0]`, which is **removed**) is `_pick_manager_team(created_teams, difficulty)
+-> Team`: it ranks via `_rank_teams_by_strength(teams) -> list[Team]` (mean active-roster
+`overall_rating` DESC, `team_id` ASC tiebreak — via `_compute_team_overall`) then
+indexes `{easy: 0 (strongest), medium: N//2, hard: N-1 (weakest)}` (`N = num_teams`,
+falsy/unknown difficulty ⇒ `"medium"`). `_seed_team_budgets_by_strength` is **refactored
+to call `_rank_teams_by_strength`** instead of inlining the `sorted(...)` (one ranking,
+one place; behaviour unchanged — it is the **same** ranking FIN-03 already used).
+Difficulty PICKS the team; a non-blank `manager_team_name` RENAMES that picked team —
+**they compose**. The chooser POST assembles form data via `_template_to_form_data(
+template, *, league_name, difficulty) -> dict` (merges the template row ∪ `league_name`
+∪ `difficulty` ∪ static defaults — `manager_team_name=""`, `season_name="Season 1"`,
+`start_date=localdate`, `schedule_format="single_round_robin"`, `map_pool` omitted,
+booleans pass python `True`/`False`) so it reuses the Advanced validation +
+`phase_composer.parse_phase_composition` verbatim.
+
+**Views.** `league_create(request) -> HttpResponse` is now the **chooser** (GET renders
+the template `<select>`; POST resolves the chosen `LeagueTemplate`, builds
+`CreateLeagueForm(data=_template_to_form_data(...))`, validates, and on valid calls
+`_create_league_and_season(form)` → `redirect("season_standings", season_id=season.id)`;
+invalid / bad template key ⇒ re-render the chooser). `league_create_advanced(request)
+-> HttpResponse` is today's full-form `league_create` **verbatim** (form + template +
+flow, only action/back-link/heading + the difficulty row adjusted); GET renders the
+full form, POST validates `CreateLeagueForm(request.POST)` and on valid calls the same
+`_create_league_and_season(form)` → same redirect.
+
+**Templates.** The old `templates/leagues/create.html` content moves to
+**`templates/leagues/create_advanced.html`** (rendered by `league_create_advanced`) —
+all existing create.html DOM ids preserved (`league-create-form` / `-league-name` /
+`-manager-team-name` / `-season-name` / `-start-date` / `-num-teams` / `-schedule-format`
+/ `-mean` / `-std-dev` / `-phases-composer` / `-add-block` / `-member-night-note` /
+`-map-mode` / `-map-pool` / `-finance-enabled` / `-challenge-luxury-tax` / `-submit`)
+plus NEW `league-create-difficulty` (the `{{ form.difficulty }}` row) and NEW
+`league-create-use-template-link` (back to the chooser). The NEW
+**`templates/leagues/create.html`** is the chooser (rendered by `league_create`) with
+DOM ids `league-create-template` (the template `<select>`, `name="template"`, options
+keyed on `LeagueTemplate.key` / text `label`), `league-create-league-name`,
+`league-create-difficulty` (the shared `{{ form.difficulty }}` widget),
+`league-create-submit`, and `league-create-advanced-link` (→ `league_create_advanced`).
+`league-create-league-name` / `-difficulty` / `-submit` appear on BOTH pages by design
+(separate pages; tests fetch one at a time).
+
+**Tests.** Every `LEAGUE_TEMPLATES` row fed through `_template_to_form_data(...)`
+produces a `CreateLeagueForm` that `is_valid()` and a `phases` string that parses (5
+distinct compositions); a chooser POST per template key creates the League + draft
+Season with the right `num_teams` / `SeasonPhase` shape / `finance_enabled` (row 3 ON,
+others OFF) / `member_night` phase — **NO `_generate_teams` mock** (real generator, so
+signature drift surfaces). Difficulty pick verified with deterministic injected per-team
+stats on BOTH the chooser and Advanced paths (`easy` ⇒ strongest, `medium` ⇒ `N//2`-th,
+`hard` ⇒ weakest by `_rank_teams_by_strength`); difficulty + rename compose;
+`league_create_advanced` GET → 200 + full-form ids and POST creates exactly as the
+pre-CRE-01 `league_create` did. **Test migration:** existing full-field-set POSTs that
+exercised the full form move to `reverse("league_create_advanced")` (the chooser POST
+no longer accepts the raw full field set); `TestCar01ManagerTeamName`'s two blank-name
+`*_falls_back_to_alphabetical_first` tests are **rewritten** to assert the default
+**Medium** strength pick (rank `N//2`), while the named-team tests still pass (rename
+applies to whichever team difficulty picked). `_valid_payload` may add `difficulty` for
+new tests but does NOT need it for the migrated Advanced POSTs (`required=False`,
+defaults Medium).
+
+**Scope-out (locked).** **No model change, no migration** — `difficulty` is transient,
+there is NO `League.difficulty` field and the created League carries no template /
+difficulty back-reference. **No simulator touch, no RNG-into-the-sim change, no Score
+Calibration re-baseline. No Score Calibration interaction of any kind. No nav edit**
+(raw `league-create-link` keeps hitting the chooser). Templates are not persisted, not
+user-savable. The Advanced form + template + flow are relocated **verbatim** (only
+action/back-link/heading/difficulty-row adjusted). The *generation-based* power-tiered
+complement is the deferred sibling **CRE-02** (tiered expected-finish team generation).
+
+**Locked names (quick index).** URL names `league_create` (→ `create/`, now the chooser)
++ `league_create_advanced` (→ `create/advanced/`, NEW); views
+`matches.league_views.league_create` (chooser) + `matches.league_views.league_create_advanced`;
+helpers `matches.league_views._create_league_and_season(form) -> Season`
+(`@transaction.atomic`, sole creation path) + `_rank_teams_by_strength(teams) ->
+list[Team]` + `_pick_manager_team(created_teams, difficulty) -> Team` +
+`_template_to_form_data(template, *, league_name, difficulty) -> dict`; refactored
+`_seed_team_budgets_by_strength` (now calls `_rank_teams_by_strength`); NEW module
+`matches/league_templates.py` with dataclass `LeagueTemplate(key, label, num_teams,
+phases, finance_enabled=False, challenge_fired_luxury_tax=False, mean=50, std_dev=15,
+map_mode="none")` + `LEAGUE_TEMPLATES` (5 rows) + `LEAGUE_TEMPLATES_BY_KEY`; form field
+`CreateLeagueForm.difficulty` (`ChoiceField`, `initial="medium"`, `required=False`,
+widget id `league-create-difficulty`) + const `DIFFICULTY_CHOICES = (("easy","Easy"),
+("medium","Medium"),("hard","Hard"))`; pick map `{easy:0, medium:N//2, hard:N-1}`;
+templates `templates/leagues/create.html` (chooser DOM ids `league-create-template` /
+`-league-name` / `-difficulty` / `-submit` / `-advanced-link`) +
+`templates/leagues/create_advanced.html` (all existing create.html ids +
+`league-create-difficulty` + `league-create-use-template-link`). Seam contract:
+[`.claude/worktrees/cre-01-seam-contract.md`](../../.claude/worktrees/cre-01-seam-contract.md).
+
 ## Tests
 
 `matches/tests/` package:

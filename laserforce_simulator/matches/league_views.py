@@ -31,6 +31,7 @@ from django.http import (
 )
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 
 from teams.constants import PLAYER_NAMES, TEAM_NAMES
 from teams.models import Player, Team
@@ -39,6 +40,11 @@ from teams.views import _coerce_dir, _generate_free_agents, _generate_teams
 from . import development, finance, injury, member_night, owner_mood
 from .development import STAT_FIELDS
 from .forms import CreateLeagueForm
+from .league_templates import (
+    LEAGUE_TEMPLATES,
+    LEAGUE_TEMPLATES_BY_KEY,
+    LeagueTemplate,
+)
 from .models import (
     Conference,
     GameRound,
@@ -864,6 +870,32 @@ def _developing_players(league: League) -> "list[Player]":
     return players
 
 
+def _rank_teams_by_strength(teams: "Iterable[Team]") -> "list[Team]":
+    """CRE-01 — teams sorted strongest → weakest.
+
+    Mean active-roster ``overall_rating`` DESC, ``team_id`` ASC tiebreak — the
+    single ranking source for both the FIN-03 budget seeding
+    (``_seed_team_budgets_by_strength``) and the CRE-01 difficulty manager pick
+    (``_pick_manager_team``).
+    """
+    return sorted(teams, key=lambda t: (-_compute_team_overall(t), t.id))
+
+
+def _pick_manager_team(created_teams: "list[Team]", difficulty: str) -> Team:
+    """CRE-01 — pick the manager's ``current_team`` by difficulty.
+
+    Rank the teams by strength (``_rank_teams_by_strength``), then index:
+    ``easy`` → 0 (strongest), ``medium`` → ``N // 2``, ``hard`` → ``N - 1``
+    (weakest). A falsy/unknown difficulty defaults to ``"medium"``.
+    """
+    ranked = _rank_teams_by_strength(created_teams)
+    n = len(ranked)
+    idx = {"easy": 0, "medium": n // 2, "hard": n - 1}.get(
+        difficulty or "medium", n // 2
+    )
+    return ranked[idx]
+
+
 def _seed_team_budgets_by_strength(teams: "Iterable[Team]") -> None:
     """FIN-03 — seed every enrolled Team's three budget levels by roster strength.
 
@@ -880,7 +912,7 @@ def _seed_team_budgets_by_strength(teams: "Iterable[Team]") -> None:
     if not teams:
         return
 
-    ranked = sorted(teams, key=lambda t: (-_compute_team_overall(t), t.id))
+    ranked = _rank_teams_by_strength(teams)
     n = len(ranked)
     for rank, team in enumerate(ranked):
         if n == 1:
@@ -1164,26 +1196,49 @@ def _develop_league_for_new_season(
     PlayerSeasonRating.objects.bulk_create(rating_rows)
 
 
-@transaction.atomic
-def league_create(request) -> HttpResponse:
-    """LG-01b — Create-League flow.
+def _template_to_form_data(
+    template: LeagueTemplate, *, league_name: str, difficulty: str
+) -> "dict[str, object]":
+    """CRE-01 — merge a template row ∪ league_name ∪ difficulty ∪ static
+    defaults into a ``dict`` ``CreateLeagueForm(data=...)`` accepts.
 
-    GET renders the empty form; POST validates the form, generates
-    ``num_teams`` Teams (each with 6 Players) via the LG-00 generator,
-    creates the League + draft Season, enrols the new Teams, and
-    redirects to the Season standings view.
+    Lets the chooser reuse the Advanced validation + phase-composer parse
+    verbatim. ``map_pool`` is omitted (empty multi-select); ``schedule_format``
+    is disabled (Django serves its initial regardless); the two boolean keys
+    pass python ``True``/``False`` (``CheckboxInput.value_from_datadict``
+    accepts bools).
     """
-    if request.method != "POST":
-        return render(
-            request,
-            "leagues/create.html",
-            {"form": CreateLeagueForm()},
-        )
+    return {
+        "league_name": league_name,
+        "manager_team_name": "",
+        "difficulty": difficulty,
+        "season_name": "Season 1",
+        "start_date": timezone.localdate().isoformat(),
+        "num_teams": str(template.num_teams),
+        "schedule_format": "single_round_robin",
+        "mean": str(template.mean),
+        "std_dev": str(template.std_dev),
+        "map_mode": template.map_mode,  # "none"
+        "map_rotation": "",
+        "phases": template.phases,
+        "finance_enabled": template.finance_enabled,
+        "challenge_fired_luxury_tax": template.challenge_fired_luxury_tax,
+    }
 
-    form = CreateLeagueForm(request.POST)
-    if not form.is_valid():
-        return render(request, "leagues/create.html", {"form": form})
 
+@transaction.atomic
+def _create_league_and_season(form: CreateLeagueForm) -> Season:
+    """CRE-01 — the single League + Season creation body.
+
+    The SOLE writer, shared by the chooser POST (``league_create``) and the
+    Advanced POST (``league_create_advanced``). Generates teams, creates the
+    League + draft Season, picks + renames the manager's ``current_team`` by
+    difficulty, seeds the free-agent pool, materialises ``map_pool``, runs the
+    ``SeasonPhase`` create loop over ``cleaned_data["phase_specs"]``, writes
+    baseline ratings, and (finance ON) seeds FIN budgets — preserving the
+    pre-CRE-01 step order. Returns the created draft Season; callers redirect to
+    ``season_standings``.
+    """
     cleaned = form.cleaned_data
     rng = random.Random()
     team_names_pool = list(TEAM_NAMES)
@@ -1213,11 +1268,13 @@ def league_create(request) -> HttpResponse:
     # never appears in competitive team lists.
     pool_team = Team.objects.create(name=f"{cleaned['league_name']} Free Agents")
     league.free_agent_pool = pool_team
-    # LG-01g / CAR-01: auto-set the manager's current_team to the
-    # alphabetically-first generated Team. When the manager named their own
-    # team at create-time, rename that Team to the chosen name first; otherwise
-    # it keeps its generated name (the byte-identical LG-01g auto-pick).
-    manager_team = sorted(created_teams, key=lambda t: t.name)[0]
+    # CRE-01: pick the manager's current_team by difficulty (easy → strongest,
+    # medium → middle, hard → weakest), superseding the CAR-01 alphabetical
+    # auto-pick. Difficulty selects WHICH of the N teams is the manager's; a
+    # non-blank manager_team_name then renames that chosen team.
+    manager_team = _pick_manager_team(
+        created_teams, cleaned.get("difficulty") or "medium"
+    )
     manager_name = (cleaned.get("manager_team_name") or "").strip()
     if manager_name:
         manager_team.name = manager_name
@@ -1318,9 +1375,91 @@ def league_create(request) -> HttpResponse:
                 season=season, name=f"Conference {i + 1}", ordinal=i + 1
             )
             conf.teams.set([t.id for t in ordered_teams[i::n_conf]])
-        return redirect("manage_conferences", season_id=season.id)
 
+    return season
+
+
+def _redirect_after_create(form: CreateLeagueForm, season: Season) -> HttpResponse:
+    """CRE-01 + CONF-05 — the shared post-create redirect for both create views.
+
+    CONF-05: when the form requested Conferences, ``_create_league_and_season``
+    has already pre-created them, so send the user to the Manage Conferences
+    composer to rename / reassign before Start Season. Otherwise fall through to
+    the CRE-01 default, the Season standings page.
+    """
+    if form.cleaned_data.get("number_of_conferences") or 0:
+        return redirect("manage_conferences", season_id=season.id)
     return redirect("season_standings", season_id=season.id)
+
+
+def league_create(request) -> HttpResponse:
+    """CRE-01 — League template chooser (the new default at ``create/``).
+
+    GET renders the template chooser. POST resolves the chosen
+    ``LeagueTemplate``, builds ``CreateLeagueForm(data=_template_to_form_data(
+    ...))``, validates, and on valid calls ``_create_league_and_season(form)``
+    → redirect ``season_standings``. An unknown template key or an invalid form
+    re-renders the chooser.
+    """
+    if request.method == "POST":
+        template = LEAGUE_TEMPLATES_BY_KEY.get(request.POST.get("template", ""))
+        if template is None:
+            return render(
+                request,
+                "leagues/create.html",
+                {
+                    "form": CreateLeagueForm(),
+                    "templates": LEAGUE_TEMPLATES,
+                    "error": "Please choose a valid league template.",
+                },
+            )
+        form = CreateLeagueForm(
+            data=_template_to_form_data(
+                template,
+                league_name=request.POST.get("league_name", ""),
+                difficulty=request.POST.get("difficulty", "medium"),
+            )
+        )
+        if form.is_valid():
+            season = _create_league_and_season(form)
+            return _redirect_after_create(form, season)
+        return render(
+            request,
+            "leagues/create.html",
+            {
+                "form": form,
+                "templates": LEAGUE_TEMPLATES,
+                "error": "Could not create the league. Please check your inputs.",
+            },
+        )
+
+    return render(
+        request,
+        "leagues/create.html",
+        {"form": CreateLeagueForm(), "templates": LEAGUE_TEMPLATES},
+    )
+
+
+def league_create_advanced(request) -> HttpResponse:
+    """CRE-01 — Advanced create-League screen (the relocated full form).
+
+    GET renders the full form; POST validates ``CreateLeagueForm(request.POST)``
+    and on valid calls ``_create_league_and_season(form)`` → redirect
+    ``season_standings``; invalid re-renders the full form.
+    """
+    if request.method != "POST":
+        return render(
+            request,
+            "leagues/create_advanced.html",
+            {"form": CreateLeagueForm()},
+        )
+
+    form = CreateLeagueForm(request.POST)
+    if not form.is_valid():
+        return render(request, "leagues/create_advanced.html", {"form": form})
+
+    season = _create_league_and_season(form)
+    return _redirect_after_create(form, season)
 
 
 # ---------------------------------------------------------------------------

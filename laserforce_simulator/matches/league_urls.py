@@ -12,6 +12,13 @@ from . import league_screens, league_views, views
 
 urlpatterns = [
     path("create/", league_views.league_create, name="league_create"),
+    # CRE-01 — the relocated full form. Both ``create/*`` paths are literal and
+    # non-overlapping, but both MUST precede ``<int:league_id>/``.
+    path(
+        "create/advanced/",
+        league_views.league_create_advanced,
+        name="league_create_advanced",
+    ),
     path("<int:league_id>/", league_views.league_dashboard, name="league_dashboard"),
     path(
         "<int:league_id>/next-season/",

@@ -74,7 +74,7 @@ class TestCreateLeagueFinanceDomId(TestCase):
     """The create page renders the ``league-create-finance-enabled`` DOM id."""
 
     def test_finance_enabled_dom_id_rendered(self) -> None:
-        response = self.client.get(reverse("league_create"))
+        response = self.client.get(reverse("league_create_advanced"))
         self.assertEqual(response.status_code, 200)
         self.assertIn('id="league-create-finance-enabled"', response.content.decode())
 
@@ -90,7 +90,7 @@ class TestCreateLeaguePersistsFinanceEnabled(TestCase):
 
     def test_checked_post_persists_true(self) -> None:
         response = self.client.post(
-            reverse("league_create"),
+            reverse("league_create_advanced"),
             data=_valid_payload(league_name="FinOnLeague", finance_enabled="on"),
         )
         self.assertEqual(response.status_code, 302)
@@ -99,7 +99,7 @@ class TestCreateLeaguePersistsFinanceEnabled(TestCase):
 
     def test_unchecked_post_persists_false(self) -> None:
         response = self.client.post(
-            reverse("league_create"),
+            reverse("league_create_advanced"),
             data=_valid_payload(league_name="FinOffLeague"),
         )
         self.assertEqual(response.status_code, 302)
