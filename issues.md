@@ -377,3 +377,32 @@ through the synchronous `play-week` endpoint.
   this slice (it reproduces for any Season); the synchronous `play-week` /
   `play-single-round` paths — which are the ones CONF-04 changed — were exercised
   instead and are green.
+
+### DEL-01 teardown leaves bracket-only Matches, Tournaments and Teams behind
+
+**[Open · low · pre-existing, NOT CONF-04]** Found while cleaning up CONF-04
+browser-test data. Deleting three Leagues through the real Delete League flow
+(`POST /leagues/<id>/delete/`) removed the Leagues, Seasons and round-robin
+Matches, but left behind:
+
+- the per-Conference **playoff `Tournament` rows** (5 of them),
+- their **bracket Matches** (15) and `GameRound`s (30),
+- and the **20 Teams** those brackets referenced, including both manager Teams.
+
+Cause is structural: a bracket Match carries `season=NULL` and
+`season_phase=NULL` (the LG-02-Part2c-1 decision), so a teardown scoped by
+`season` never sees it; and `SeasonPhase.tournament` is `on_delete=SET_NULL`,
+so deleting the phase detaches the Tournament rather than removing it. The
+orphaned Teams then survive the "delete if orphaned" check because they are
+still referenced by those bracket Matches.
+
+Reproduce: create a League with a `tournament` phase, play it to completion,
+delete the League, then check `Tournament.objects.count()` and
+`Team.objects.filter(...)` for the generated Teams. Nothing user-facing breaks —
+the rows are unreachable from the UI — but a dev database accumulates orphans.
+
+**Fix sketch:** in the DEL-01 teardown, before dropping the Season, walk
+`SeasonPhase -> tournament` and `phase.regional_tournaments` and delete those
+Tournaments (which cascades `BracketNode` / `SeriesMatch`), then delete Matches
+reachable through `match__series_match__node__tournament`, then run the existing
+orphan-Team sweep.
