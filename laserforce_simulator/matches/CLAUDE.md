@@ -1595,7 +1595,8 @@ Calibration re-baseline. No Score Calibration interaction of any kind. No nav ed
 (raw `league-create-link` keeps hitting the chooser). Templates are not persisted, not
 user-savable. The Advanced form + template + flow are relocated **verbatim** (only
 action/back-link/heading/difficulty-row adjusted). The *generation-based* power-tiered
-complement is the deferred sibling **CRE-02** (tiered expected-finish team generation).
+complement is the sibling **CRE-02** (tiered expected-finish team generation), shipped
+as **League spread** — see the next subsection.
 
 **Locked names (quick index).** URL names `league_create` (→ `create/`, now the chooser)
 + `league_create_advanced` (→ `create/advanced/`, NEW); views
@@ -1616,6 +1617,139 @@ templates `templates/leagues/create.html` (chooser DOM ids `league-create-templa
 `templates/leagues/create_advanced.html` (all existing create.html ids +
 `league-create-difficulty` + `league-create-use-template-link`). Seam contract:
 [`.claude/worktrees/cre-01-seam-contract.md`](../../.claude/worktrees/cre-01-seam-contract.md).
+
+## CRE-02 league spread
+
+The *generation-based* complement to CRE-01's *selection-based* **League difficulty**.
+CRE-01 draws all N competitive Teams from one stat distribution and difficulty merely
+re-picks which of the N (equal) Teams becomes the manager's `current_team` — because a
+Team's mean active-roster `overall_rating` averages 114 i.i.d. stat draws, its own SD
+is only ≈1.4 even at `std_dev=15`, so an 8-team League's best-to-worst gap is ~4 points
+and Easy↔Hard is close to a coin-flip among equals. CRE-02 adds a create-time
+**League spread** choice — **Even** / **Tiered** / **Steep**, Δ = 0 / 8 / 16 — that
+draws each Team from **its own tier mean** on a linear, mean-preserving ramp, giving
+the League a real preseason favourite / wooden-spoon structure (~16-point gap at
+Tiered, ~32 at Steep) while its **average** talent stays unchanged at every spread. The
+CONTEXT.md **League spread** term (and the amended **League difficulty** entry) is the
+domain language; the ramp arithmetic and the generation call live in the teams app —
+see the **CRE-02 tiered generation** subsection in
+[`../teams/CLAUDE.md`](../teams/CLAUDE.md). **No model change, no migration, no
+simulator / RNG-into-the-sim touch, no Score Calibration re-baseline, no ADR** (a
+transient form field + a pure function + an additive kwarg over the shipped CRE-01
+creation path — reversible). Seam contract:
+[`.claude/worktrees/cre-02-seam-contract.md`](../../.claude/worktrees/cre-02-seam-contract.md).
+
+**ONE ORDERING ONLY (the load-bearing decision).** The tier a Team was drawn from is a
+**generation input**: it is never persisted, never queried, never surfaced. After
+generation the League still has exactly one ordering — the measured strength rank
+computed by `_rank_teams_by_strength` (mean active-roster `overall_rating` DESC,
+`team_id` ASC). There is **no** "projected finishing order" concept, **no** preseason
+power-ranking screen, **no** new model field and **no** migration. `_pick_manager_team`
+is therefore untouched and still reads that same measured rank; the spread simply makes
+the Easy / Medium / Hard pick a genuinely different roster relative to the field. RNG
+means the measured rank legitimately disagrees with the tier order for some Teams —
+that is expected, and nothing in the code or the tests may infer a Team's tier.
+
+**Form field — `matches/forms.py`.** A NEW **transient**
+`CreateLeagueForm.league_spread = forms.ChoiceField(choices=LEAGUE_SPREAD_CHOICES,
+initial="even", required=False, widget=forms.Select(attrs={"id":
+"league-create-league-spread", "class": "form-select"}), label="League spread")` with
+`LEAGUE_SPREAD_CHOICES = (("even","Even"),("tiered","Tiered"),("steep","Steep"))`. The
+constant is declared adjacent to CRE-01's `DIFFICULTY_CHOICES` and the field
+immediately **after** the `difficulty` field, so the two transient create-time
+selectors sit together. The three value tokens are exactly the
+`teams.player_generator.LEAGUE_SPREAD_DELTAS` keys, so a `cleaned_data` value indexes
+that dict directly. `required=False` is locked (the CRE-01 `difficulty` precedent): an
+Advanced POST that omits the field stays valid and yields `cleaned_data
+["league_spread"] == ""`, which the create writer coerces to `"even"`. **NO
+`League.league_spread` field, NO migration.** No `clean()` change beyond the field
+declaration.
+
+**Create writer — `matches/league_views.py::_create_league_and_season`.** A new import
+`from teams.player_generator import LEAGUE_SPREAD_DELTAS, compute_tier_means` (both
+names from the **pure** module, not re-exported through `teams.views`), and one block
+immediately before the existing `_generate_teams(...)` call:
+
+```python
+spread = cleaned.get("league_spread") or "even"
+delta = LEAGUE_SPREAD_DELTAS.get(spread, 0.0)
+tier_means = (
+    compute_tier_means(cleaned["num_teams"], cleaned["mean"], delta) if delta else None
+)
+created_teams = _generate_teams(..., tier_means=tier_means)
+```
+
+Two independent layers make a bad value harmless: `or "even"` handles falsy (the field
+omitted, or `""`), and `LEAGUE_SPREAD_DELTAS.get(spread, 0.0)` handles
+unknown-but-truthy. The `if delta else None` step is what guarantees the
+**byte-identical Even path** — Even passes `tier_means=None` and never constructs a
+list at all, so pre-CRE-02 generation is reproduced exactly rather than approximated by
+an all-equal vector. Everything else in the writer is unchanged: `rng = random.Random()`
+stays **unseeded**, `_generate_free_agents(...)` still passes the flat
+`mean=cleaned["mean"]` (the spread reaches the N competitive Teams only),
+`_pick_manager_team` / the manager rename / League + draft Season creation /
+`season.teams.add` / `map_pool.set` / the `SeasonPhase` loop / `_write_baseline_ratings`
+/ `_seed_team_budgets_by_strength` all keep their current order and behaviour.
+
+**Chooser stays Even — `_template_to_form_data`.** The returned dict gains **exactly
+one** new key adjacent to `"difficulty"`: `"league_spread": "even"`. The **signature is
+unchanged** (`(template, *, league_name, difficulty)`) — the chooser surface has no
+spread selector at all, so the value is a static constant rather than caller data;
+threading a parameter through would imply the chooser can vary it. `LeagueTemplate` and
+`LEAGUE_TEMPLATES` gain **no** field and **no** row.
+
+**Template.** `templates/leagues/create_advanced.html` is the **only** template CRE-02
+touches — one new sibling `<div class="mb-3">` block inserted after the `Stat mean` /
+`Stat standard deviation` row and before the LG-02-Part2b phase-composer comment,
+carrying a `<label for="league-create-league-spread">`, `{{ form.league_spread }}`, a
+`form-text` help note explaining that Even draws every team from the same distribution
+while Tiered and Steep ramp from a strong projected favourite down to a weak projected
+wooden spoon at the same league-average talent, and `{{ form.league_spread.errors }}`.
+`templates/leagues/create.html` (the chooser) is **not** edited.
+
+**Tests.** NEW `matches/tests/test_league_spread.py` (kept off the large shared
+`test_league_create.py` / `test_league_templates.py` files):
+`TestCre02LeagueSpreadFormField` (the field exists, is `required=False` with
+`initial="even"`, its choices are exactly the three tuples, each token validates, an
+omitted field validates to `""`, and the Advanced GET renders the DOM id
+`league-create-league-spread`); `TestCre02AdvancedCreateWithSpread` (Advanced POSTs
+with `tiered` / `steep` / the field omitted each redirect and create one League, one
+draft Season and `num_teams` enrolled Teams); `TestCre02TemplateFormDataIsAlwaysEven`
+(`_template_to_form_data(...)["league_spread"] == "even"` for **every**
+`LEAGUE_TEMPLATES` row, each resulting dict still yields a valid `CreateLeagueForm`, and
+a chooser POST still creates a League + draft Season). **The view-layer flakiness rule
+is mandatory:** `_create_league_and_season` builds an **unseeded** `random.Random()`, so
+**no view-layer test may assert anything about team strength, tier ordering, or the
+strong-vs-weak gap** — view tests cover form validity, HTTP status, object counts and
+DOM ids only. Every strength assertion lives at the `_generate_teams` layer with an
+injected fixed seed (see the teams app guide).
+
+**Scope-out (locked).** No model change, no migration, no ADR. `_pick_manager_team` /
+`_rank_teams_by_strength` / `_seed_team_budgets_by_strength` are zero-diff (all three
+read the one measured ranking, which the tier ramp is invisible to). `LeagueTemplate` /
+`LEAGUE_TEMPLATES` and `templates/leagues/create.html` are zero-diff — the one-click
+chooser always creates an Even League. `next_season` / `_develop_league_for_new_season`
+do **not** re-apply the spread: it is create-time only, and **LG-04 development** owns
+Team strength thereafter. No simulator, `BatchSimulator` or sim-RNG touch, and because
+the ramp is symmetric about `mean` the League's average talent is unchanged, so there is
+**no Score Calibration re-baseline obligation**. Nothing new is exposed on the REST API,
+serializers or admin. CONTEXT.md's **League spread** term and its amendment to **League
+difficulty** were written during the grill that produced the seam contract.
+
+**Locked names (quick index).** Form constant
+`matches.forms.CreateLeagueForm.LEAGUE_SPREAD_CHOICES = (("even","Even"),
+("tiered","Tiered"),("steep","Steep"))` + field `CreateLeagueForm.league_spread`
+(`ChoiceField`, `initial="even"`, `required=False`, label `"League spread"`, widget DOM
+id `league-create-league-spread`, widget class `form-select`); import in
+`matches/league_views.py` of `LEAGUE_SPREAD_DELTAS` + `compute_tier_means` from
+`teams.player_generator`; `_template_to_form_data(template, *, league_name, difficulty)
+-> dict` **signature unchanged**, returned dict gains `"league_spread": "even"`;
+`_create_league_and_season` passes `tier_means=` to `_generate_teams`; template
+`templates/leagues/create_advanced.html` (one added block); test file
+`matches/tests/test_league_spread.py` with `TestCre02LeagueSpreadFormField` /
+`TestCre02AdvancedCreateWithSpread` / `TestCre02TemplateFormDataIsAlwaysEven`. Seam
+contract:
+[`.claude/worktrees/cre-02-seam-contract.md`](../../.claude/worktrees/cre-02-seam-contract.md).
 
 ## Tests
 
