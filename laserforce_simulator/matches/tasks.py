@@ -350,26 +350,46 @@ def play_season_task(
         from matches.tournament_engine import play_next_bracket_round
 
         phase = season.current_phase()
-        if (
-            phase is not None
-            and phase.phase_type == "tournament"
-            and phase.tournament_id is not None
-        ):
-            tournament = phase.tournament
+        # CONF-02 — the tail drains EVERY bracket of the phase (ADR-0035): one
+        # Season-wide bracket as before, or the N regional ones of a
+        # >= 2-Conference Season. ``tournaments_for_phase`` is the single seam.
+        #
+        # Resolved ONCE and cached: the loop below only calls
+        # ``play_next_bracket_round`` and ``_stage_counts``, both of which
+        # re-query the nodes, so the stale ``.state`` on these cached instances
+        # is never read. Do NOT add an in-loop ``t.state`` check without
+        # re-resolving — it would read the pre-drain value forever.
+        tournaments = season.tournaments_for_phase(phase) if phase is not None else []
+        if phase is not None and phase.phase_type == "tournament" and bool(tournaments):
 
             def _stage_counts() -> tuple[int, int]:
-                flat = [
-                    _node_to_dict(node)
-                    for node in tournament.nodes.select_related(
-                        "advances_to", "tournament"
-                    ).prefetch_related("series_matches")
-                ]
-                return stage_progress(flat)
+                # Aggregate element-wise across all N brackets; for N == 1 this
+                # is exactly the pre-CONF-02 tuple.
+                total_completed = 0
+                total_stages = 0
+                for tournament in tournaments:
+                    flat = [
+                        _node_to_dict(node)
+                        for node in tournament.nodes.select_related(
+                            "advances_to", "tournament"
+                        ).prefetch_related("series_matches")
+                    ]
+                    done, stages = stage_progress(flat)
+                    total_completed += done
+                    total_stages += stages
+                return total_completed, total_stages
+
+            def _drain_one_stage() -> int:
+                # CONF-02 — ONE budget unit = one stage across ALL N brackets
+                # (the parallel-overlay pacing rule). ``sum`` over a generator
+                # evaluates every term; do NOT rewrite as a short-circuiting
+                # ``any(...)``.
+                return sum(play_next_bracket_round(t) for t in tournaments)
 
             rr_weeks_played = len({fixture.matchday for _pid, fixture in to_play})
 
             if max_matchdays is None:
-                while play_next_bracket_round(tournament) > 0:
+                while _drain_one_stage() > 0:
                     completed, total = _stage_counts()
                     self.update_state(
                         state="PROGRESS",
@@ -378,7 +398,7 @@ def play_season_task(
             else:
                 bracket_budget = max(0, max_matchdays - rr_weeks_played)
                 for _ in range(bracket_budget):
-                    if play_next_bracket_round(tournament) == 0:
+                    if _drain_one_stage() == 0:
                         break
                     completed, total = _stage_counts()
                     self.update_state(
@@ -415,6 +435,12 @@ def play_playoffs_task(self, season_id: int) -> dict:
     is already per-node atomic; ADR-0016). Inactive / unbuilt guard returns
     ``{"completed": 0, "total": 0}``.
 
+    CONF-02 — the phase may hold N regional brackets instead of one (ADR-0035).
+    The loop round-robins ``play_next_node`` across every Tournament of
+    ``season.tournaments_for_phase(phase)`` and stops only when NO bracket
+    progressed, so all N drain together; the returned STAGE counts are the
+    element-wise sums across them.
+
     Returns:
         ``{"completed": int, "total": int}`` (STAGE counts, NOT node counts).
     """
@@ -432,22 +458,30 @@ def play_playoffs_task(self, season_id: int) -> dict:
             return {"completed": 0, "total": 0, "cancelled": True}
 
         phase = season.current_phase()
-        if (
-            phase is None
-            or phase.phase_type != "tournament"
-            or phase.tournament_id is None
-        ):
+        # CONF-02 — drain EVERY bracket of the phase (ADR-0035): the one
+        # Season-wide bracket as before, or the N regional ones of a
+        # >= 2-Conference Season. ``not tournaments`` subsumes the old
+        # ``phase.tournament_id is None`` clause.
+        tournaments = season.tournaments_for_phase(phase) if phase is not None else []
+        if phase is None or phase.phase_type != "tournament" or not tournaments:
             return {"completed": 0, "total": 0}
-        tournament = phase.tournament
 
         def _stage_counts() -> tuple[int, int]:
-            flat = [
-                _node_to_dict(n)
-                for n in tournament.nodes.select_related(
-                    "advances_to", "tournament"
-                ).prefetch_related("series_matches")
-            ]
-            return stage_progress(flat)
+            # Aggregate element-wise across all N brackets; for N == 1 this is
+            # exactly the pre-CONF-02 tuple.
+            total_completed = 0
+            total_stages = 0
+            for tournament in tournaments:
+                flat = [
+                    _node_to_dict(n)
+                    for n in tournament.nodes.select_related(
+                        "advances_to", "tournament"
+                    ).prefetch_related("series_matches")
+                ]
+                done, stages = stage_progress(flat)
+                total_completed += done
+                total_stages += stages
+            return total_completed, total_stages
 
         while True:
             # PLAY-01 — between-stage (running) cancel check, BEFORE draining
@@ -457,7 +491,11 @@ def play_playoffs_task(self, season_id: int) -> dict:
                 completed, total = _stage_counts()
                 return {"completed": completed, "total": total, "cancelled": True}
 
-            if play_next_node(tournament) is None:
+            progressed = False
+            for tournament in tournaments:
+                if play_next_node(tournament) is not None:
+                    progressed = True
+            if not progressed:
                 break
             completed, total = _stage_counts()
             self.update_state(

@@ -2037,23 +2037,30 @@ def _playoff_cursor_keys(
             following_tournament_is_final = (
                 min(following_tournament_ordinals) == last_ordinal
             )
-        if current.phase_type == "tournament" and current.tournament_id is not None:
-            playoff_tournament_id = current.tournament_id
-            if current.tournament.state == "active":
-                playoff_phase_active = True
-            elif current.tournament.state == "completed":
-                playoff_completed = True
+        if current.phase_type == "tournament":
+            # CONF-02 — read through the ``tournaments_for_phase`` seam so a
+            # >= 2-Conference regional phase (whose ``tournament_id`` is NULL —
+            # its N brackets hang off ``phase.regional_tournaments``) drives the
+            # same controls. For a 0/1-Conference Season the list is exactly
+            # ``[phase.tournament]``, so every value below is byte-identical.
+            tournaments = displayed_season.tournaments_for_phase(current)
+            if tournaments:
+                playoff_tournament_id = tournaments[0].id
+                if any(t.state == "active" for t in tournaments):
+                    playoff_phase_active = True
+                elif all(t.state == "completed" for t in tournaments):
+                    playoff_completed = True
     else:
         # Season finished — inspect the final phase for a completed
         # tournament (the tournament-completed sub-state).
         final_phase = phases[-1]
-        if (
-            final_phase.phase_type == "tournament"
-            and final_phase.tournament_id is not None
-        ):
-            playoff_tournament_id = final_phase.tournament_id
-            if final_phase.tournament.state == "completed":
-                playoff_completed = True
+        if final_phase.phase_type == "tournament":
+            # CONF-02 — same seam as the active-cursor branch above.
+            tournaments = displayed_season.tournaments_for_phase(final_phase)
+            if tournaments:
+                playoff_tournament_id = tournaments[0].id
+                if all(t.state == "completed" for t in tournaments):
+                    playoff_completed = True
 
     return (
         playoff_phase_active,
@@ -3072,15 +3079,19 @@ def play_week(request, season_id: int) -> HttpResponse:
     # the RR matchday path below runs unchanged. play_next_bracket_round
     # carries its own per-Match atomicity, so the playoff branch needs no
     # transaction.atomic wrapper.
+    #
+    # CONF-02 — "One Week" advances EVERY bracket of the phase by one stage
+    # (ADR-0035): California and Nevada play their semifinals in the same week,
+    # not one after the other. ``tournaments_for_phase`` returns the single
+    # Season-wide bracket for a 0/1-Conference Season, so that path is
+    # unchanged.
     phase = season.current_phase()
-    if (
-        phase is not None
-        and phase.phase_type == "tournament"
-        and phase.tournament_id is not None
-    ):
+    tournaments = season.tournaments_for_phase(phase) if phase is not None else []
+    if phase is not None and phase.phase_type == "tournament" and bool(tournaments):
         from matches.tournament_engine import play_next_bracket_round
 
-        play_next_bracket_round(phase.tournament)
+        for tournament in tournaments:
+            play_next_bracket_round(tournament)
         season.complete_if_finished()
         return redirect("season_dashboard", season_id=season.id)
 
@@ -3226,14 +3237,26 @@ def play_single_round(request, season_id: int) -> HttpResponse:
     request.session["last_league_id"] = season.league_id
 
     phase = season.current_phase()
-    if phase is None or phase.phase_type != "tournament" or phase.tournament_id is None:
+    tournaments = (
+        season.tournaments_for_phase(phase)
+        if phase is not None and phase.phase_type == "tournament"
+        else []
+    )
+    if not tournaments:
         return _render_season_dashboard_error(
             request, season, "No active playoff bracket to play."
         )
 
     from matches.tournament_engine import play_next_node
 
-    play_next_node(phase.tournament)
+    # CONF-02 — play ONE node, from the first bracket that still has a playable
+    # one. For a 0/1-Conference Season ``tournaments`` is ``[phase.tournament]``
+    # so this is byte-identical to the single ``play_next_node`` call it
+    # replaces; for a regional phase it walks the Conferences in ordinal order,
+    # keeping "Play Single Round" a single-node step across the whole phase.
+    for tournament in tournaments:
+        if play_next_node(tournament) is not None:
+            break
     season.complete_if_finished()
     return redirect("season_dashboard", season_id=season.id)
 
@@ -3253,7 +3276,16 @@ def play_playoffs(request, season_id: int) -> JsonResponse:
     request.session["last_league_id"] = season.league_id
 
     phase = season.current_phase()
-    if phase is None or phase.phase_type != "tournament" or phase.tournament_id is None:
+    # CONF-02 — guard through the ``tournaments_for_phase`` seam. A regional
+    # phase carries a NULL ``tournament_id`` (its N brackets hang off
+    # ``regional_tournaments``), so the old ``tournament_id is None`` guard
+    # returned 409 and made the already-generalised ``play_playoffs_task``
+    # unreachable for a >= 2-Conference Season. Byte-identical for 0/1.
+    if (
+        phase is None
+        or phase.phase_type != "tournament"
+        or not season.tournaments_for_phase(phase)
+    ):
         return JsonResponse({"error": "No active playoff bracket to play."}, status=409)
 
     result = play_playoffs_task.delay(season.id)

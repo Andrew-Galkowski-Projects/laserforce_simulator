@@ -1,3 +1,98 @@
+# Web testing — CONF-02 (per-Conference regional playoffs)
+
+Date: 2026-09-02
+Branch: `conf-02-regional-playoffs`
+Scope: the Playoffs screen (`/leagues/<id>/playoffs/`) for a >= 2-Conference Season,
+which now renders one bracket per Conference. Server on port **8010**. The
+2-Conference fixture was built through the test helpers via `manage.py shell` rather
+than by simulating a full regular season (24 rounds, ~5+ minutes of real simulation);
+the rendering, DOM ids and console are what the browser pass is actually testing.
+
+## Summary — CONF-02
+| Area | Result |
+|---|---|
+| Regional Season renders TWO bracket sections under one tournament phase | ✅ |
+| DOM ids distinct — `league-playoffs-phase-2-1` / `-2-2`, no collision | ✅ |
+| Each section headed by its Conference name (`league-playoffs-conference-2-1` / `-2-2`) | ✅ |
+| **No cross-Conference pairing** — section `-2-1` holds only Conference-1 teams, `-2-2` only Conference-2 | ✅ |
+| Seeds restart at 1 per bracket (`[1]` v `[4]`, `[2]` v `[3]` in each) | ✅ |
+| Flat (0-Conference) league keeps un-suffixed ids `league-playoffs-phase-2` / `-4` and emits NO `conference-` ids | ✅ |
+| `phase.tournament_id` NULL on the regional phase; `regional_tournaments` count 2 | ✅ |
+| Console clean (zero messages); no horizontal overflow | ✅ |
+
+**Overall:** the CONF-02 rendering surface is correct and the byte-identical
+guarantee for 0/1-Conference Seasons holds on real data. One real defect was found
+during the slice and **fixed in-slice** (C-1); one deliberate scope limit is recorded
+for follow-up (C-2).
+
+## Findings — CONF-02
+
+### 🟠 C-1 — [FIXED in-slice] Regional brackets were unreachable from the UI
+The seam contract enumerated only three drain callers. It missed the view-layer entry
+points, which each guarded on `phase.tournament_id is None` — **always true for a
+regional phase**, whose N brackets hang off `regional_tournaments`:
+
+- `matches/league_views.py::play_playoffs` returned **409** on a >= 2-Conference
+  Season, so the already-generalised `play_playoffs_task` was unreachable from the
+  Play Playoffs button.
+- `matches/league_views.py::play_single_round` rendered "No active playoff bracket
+  to play."
+- `matches/league_views.py::_playoff_cursor_keys` reported the phase inactive, so the
+  NAV-01 topnav playoff controls did not render.
+
+All three now resolve through the `Season.tournaments_for_phase(phase)` seam and are
+byte-identical for a 0/1-Conference Season. Covered by
+`TestRegionalUiEntryPointsReachTheBrackets` +
+`TestZeroConferenceUiEntryPointsUnchanged` in
+`matches/tests/test_regional_playoffs_drain.py`; the `play_playoffs` test is a true
+regression guard (it asserts 202 where the old guard produced 409).
+
+### 🟡 C-2 — [DEFERRED, agreed] Three secondary readers still assume one bracket
+Scoped out of CONF-02 deliberately. These still read `phase.tournament` /
+`phase.tournament_id` directly and so treat a >= 2-Conference Season as having no
+playoff:
+
+1. `_resolve_live_cursor` (`league_views.py` ~1571) — no LG-01i live playoff
+   watch for a regional Season.
+2. `_finals_mvp_for_season` (~2662) — LG-03 Finals MVP not computed.
+3. The CAR-02 playoff-result classifier (~4033) — owner-mood playoff scoring
+   treats a regional Season as having missed the playoffs.
+
+None blocks playing or viewing a regional playoff. All three are quality gaps in
+surfaces CONF-03 / CONF-04 (Worlds) will revisit, and each has the same one-line
+`tournaments_for_phase` shape as the C-1 fixes.
+
+### 🟡 C-4 — `changed_files.py` is blind to untracked files
+**Tooling, out of CONF-02 scope.**
+`.claude/skills/verify/scripts/changed_files.py --base main --mode branch` buckets only
+files git already tracks. On this branch it reported `"migrations": []` even though
+`matches/migrations/0058_tournament_regional_linkage.py` exists (untracked), and its
+`python` list omitted both new test files. It under-reported the same way on the
+CRE-02 branch earlier the same day.
+
+Impact: `/verify` and `/code-review` both consume this helper as the authoritative
+change set, so on exactly the branches that ADD a migration or a new test file, those
+are the files it cannot see. A workflow trusting the `migrations` bucket to decide
+whether to run a migration check would skip it precisely when it matters.
+
+Fix idea: union the tracked diff with `git ls-files --others --exclude-standard` before
+bucketing, so newly added files are classified like any other change.
+
+### 🟡 C-3 — Team History does not distinguish regional from Worlds rounds
+Not a defect today, recorded so it is not lost: CONF-02 widened
+`league_screens/team_history.py` so regional playoff rounds count toward the Overall
+tab and `playoff_appearances`. Once CONF-04 lands the Worlds bracket, that screen will
+count regional and Worlds appearances identically. Whether they should be
+distinguished is a CONF-04 question.
+
+### ✅ Dev-DB note
+Migration `0058_tournament_regional_linkage` had to be applied to the dev SQLite DB
+before the shell fixture would build (`no such column:
+matches_tournament.season_phase_id`) — the exact staleness CLAUDE.md's
+"check for unapplied migrations first" rule warns about.
+
+---
+
 # Web testing — CONF-05 (Manage Conferences page)
 
 Date: 2026-06-30
