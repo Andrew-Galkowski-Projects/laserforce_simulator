@@ -2049,8 +2049,11 @@ def _playoff_cursor_keys(
       ``tournament`` phase at an ordinal AFTER the current phase.
     * ``following_tournament_is_final`` — LG-02-Part2c-3c terminal-label
       split: the next tournament phase (at an ordinal > the current phase's)
-      is the FINAL phase (its ordinal == the last phase's ordinal). Drives the
-      "Until Playoffs" (final) vs "Until Tournament" (mid-season) relabel.
+      ends the Season — CONF-04 generalises this from "its ordinal == the last
+      phase's ordinal" to "nothing but tournament phases follows it", so the
+      derived Worlds phase does not demote a season-ending playoff (ADR-0037).
+      Drives the "Until Playoffs" (final) vs "Until Tournament" (mid-season)
+      relabel.
     """
     if displayed_season is None:
         return (False, None, False, False, False)
@@ -2072,9 +2075,19 @@ def _playoff_cursor_keys(
         ]
         has_following_tournament_phase = bool(following_tournament_ordinals)
         if has_following_tournament_phase:
-            last_ordinal = phases[-1].ordinal
-            following_tournament_is_final = (
-                min(following_tournament_ordinals) == last_ordinal
+            # CONF-04 — generalised from "the next tournament phase IS the last
+            # phase" to "nothing but tournament phases follows it" (ADR-0037).
+            # Appending the Worlds phase after the Regional-playoff phase would
+            # otherwise flip a season-ending playoff back to the mid-season
+            # "Until Tournament" label. Reproduces today's result on both
+            # pre-CONF-04 shapes: RR(1)->t(2) is vacuously True (no phase has a
+            # higher ordinal), and RR(1)->t(2)->RR(3)->t(4) is False (phase 3 is
+            # round_robin).
+            next_tournament_ordinal = min(following_tournament_ordinals)
+            following_tournament_is_final = all(
+                p.phase_type == "tournament"
+                for p in phases
+                if p.ordinal > next_tournament_ordinal
             )
         if current.phase_type == "tournament":
             # CONF-02 — read through the ``tournaments_for_phase`` seam so a
@@ -3124,6 +3137,16 @@ def play_week(request, season_id: int) -> HttpResponse:
     # not one after the other. ``tournaments_for_phase`` returns the single
     # Season-wide bracket for a 0/1-Conference Season, so that path is
     # unchanged.
+    # CONF-04 — build the Worlds bracket BEFORE the cursor read (ADR-0037).
+    # The playoff branch below is guarded on ``bool(tournaments)``, and the
+    # cursor sitting on an unbuilt Worlds phase resolves to ``[]`` — so without
+    # this the click falls through to the round-robin path, finds no unplayed
+    # fixture and redirects having done nothing. That is the same DEAD CLICK
+    # CONF-03 closed for ``play_single_round``, one phase later. Idempotent:
+    # returns False and does nothing when the field is not ready or the bracket
+    # already exists.
+    season.build_pending_worlds_bracket()
+
     phase = season.current_phase()
     tournaments = season.tournaments_for_phase(phase) if phase is not None else []
     if phase is not None and phase.phase_type == "tournament" and bool(tournaments):
@@ -3313,6 +3336,17 @@ def play_single_round(request, season_id: int) -> HttpResponse:
         for tournament in tournaments:
             if play_next_node(tournament) is not None:
                 break
+    # CONF-04 — build the Worlds bracket if the click just finished the last
+    # Regional playoff (ADR-0037). Without this the regionals-finishing click
+    # would leave the cursor on an unbuilt Worlds phase, whose
+    # ``tournaments_for_phase`` is ``[]`` — so the NEXT click would 400 with
+    # "No active playoff bracket to play." and the user could never start Worlds.
+    # The return value is discarded and this click deliberately does NOT play a
+    # Worlds node: it already played its regional node, and the next click finds
+    # ``current_phase()`` on a built Worlds phase and drains it normally. The
+    # ``phase`` / ``tournaments`` locals above are stale afterwards; nothing
+    # below re-reads them, so do NOT re-resolve.
+    season.build_pending_worlds_bracket()
     season.complete_if_finished()
     return redirect("season_dashboard", season_id=season.id)
 
@@ -3330,6 +3364,17 @@ def play_playoffs(request, season_id: int) -> JsonResponse:
 
     season = get_object_or_404(Season, pk=season_id)
     request.session["last_league_id"] = season.league_id
+
+    # CONF-04 — build BEFORE the cursor read (ADR-0037). The cursor may already
+    # be parked on an unbuilt Worlds phase, whose ``tournaments_for_phase`` is
+    # ``[]`` — the guard below would 409 "No active playoff bracket to play." and
+    # the drain could never be started. The call MUST precede the
+    # ``current_phase()`` read, not merely the ``if``:
+    # ``build_pending_worlds_bracket`` writes ``phase.tournament`` on its OWN
+    # freshly-loaded ``SeasonPhase`` instance, so a ``phase`` object read before
+    # the build carries a stale ``tournament_id is None`` — and
+    # ``tournaments_for_phase`` reads exactly that attribute.
+    season.build_pending_worlds_bracket()
 
     phase = season.current_phase()
     # CONF-02 — guard through the ``tournaments_for_phase`` seam. A regional
@@ -4111,7 +4156,86 @@ def _classify_playoffs_for_team(season: Season, team_id: int) -> tuple[str, int,
       distinct ``bracket_round``s in which the team won a node
       (``BracketNode.winner_id == team_id``);
     - a participant cut / never in the bracket ⇒ ``("missed", 0, num_rounds)``.
+
+    CONF-04 — a Season with **two or more** Conferences classifies TWO-TIER
+    instead (ADR-0037): ``num_rounds`` is the Team's whole possible path — the
+    rounds of its own Conference's Regional playoff PLUS the rounds of the
+    Worlds bracket — and ``rounds_won`` counts the distinct bracket rounds it
+    won across both. ``matches/owner_mood.py`` is NOT touched: its ``"seeded"``
+    branch is already depth-proportional, so feeding it the longer path yields
+    the intended ladder (Worlds champion > Worlds finalist > Conference champion
+    > regional finalist > first-round exit) with no new result values and no new
+    constants. The 0/1-Conference branch below is verbatim, and is deliberately
+    NOT routed through ``_worlds_phase()`` — a flat Season never grows one, so
+    its ``tournament_id is not None`` scan can never pick one up.
     """
+    if len(season.ordered_conferences()) >= 2:
+        conference = season.conference_by_team_id().get(team_id)
+        if conference is None:
+            # A Team in NO Conference within a partitioned Season is broken
+            # data. Returning "none" (the neutral 0.0 delta) rather than
+            # "missed" (the -0.2 penalty) is a pinned defensive choice: broken
+            # data must not fire a Manager.
+            return ("none", 0, 0)
+        # Post-narrowing this is the REGIONAL-playoff phase, never the Worlds
+        # phase (ADR-0037).
+        regional_phase = season._final_tournament_phase()
+        regional = None
+        if regional_phase is not None:
+            # CONF-03's read rule: a Regional playoff is any Conference-scoped
+            # row that is NOT ``last_chance``, so an un-backfilled CONF-02 row
+            # with ``qualifier_stage == ""`` still resolves here. The Last-chance
+            # bracket is excluded from BOTH the numerator and the denominator,
+            # so a Team cannot ride it past the maximum path its Conference
+            # offers.
+            regional = (
+                regional_phase.regional_tournaments.filter(conference=conference)
+                .exclude(qualifier_stage="last_chance")
+                .first()
+            )
+        worlds_phase = season._worlds_phase()
+        worlds = worlds_phase.tournament if worlds_phase is not None else None
+        if regional is None and worlds is None:
+            # No bracket at all — the phase never built, or the Conference was
+            # too small for a Regional playoff AND Worlds is unbuilt. This row
+            # and the "missed" row below are what keep the pre-CONF-04 accident
+            # from returning: adding the Worlds phase (which DOES set
+            # ``tournament_id``) would otherwise have switched this axis on and
+            # charged every non-qualifier the full penalty regardless of how far
+            # it went in its own region.
+            return ("none", 0, 0)
+
+        regional_nodes = list(regional.nodes.all()) if regional is not None else []
+        worlds_nodes = list(worlds.nodes.all()) if worlds is not None else []
+        # Count PER BRACKET, then ADD — never union the raw ``bracket_round``
+        # integers. The two brackets number their rounds independently from 1,
+        # so a Team that won round 1 of its region and round 1 of Worlds has won
+        # TWO rounds; a set union would collapse them to one. ``num_rounds`` is
+        # the same maximum path for every Team in that Conference, so the
+        # denominator is fair within a region even when Conferences differ in
+        # size.
+        num_rounds = max((n.bracket_round for n in regional_nodes), default=0) + max(
+            (n.bracket_round for n in worlds_nodes), default=0
+        )
+
+        if worlds is not None and worlds.champion_id == team_id:
+            return ("champion", 0, num_rounds)
+
+        in_regional = (
+            regional is not None
+            and regional.participants.filter(team_id=team_id).exists()
+        )
+        in_worlds = (
+            worlds is not None and worlds.participants.filter(team_id=team_id).exists()
+        )
+        if not (in_regional or in_worlds):
+            return ("missed", 0, num_rounds)
+
+        rounds_won = len(
+            {n.bracket_round for n in regional_nodes if n.winner_id == team_id}
+        ) + len({n.bracket_round for n in worlds_nodes if n.winner_id == team_id})
+        return ("seeded", rounds_won, num_rounds)
+
     tournament = None
     for phase in season.ordered_phases():
         if phase.phase_type == "tournament" and phase.tournament_id is not None:
@@ -4766,6 +4890,15 @@ def _run_season_rollover(league: League, latest_completed: Season) -> Season:
     # LG-02-Part2c-3b — also carry ``tournament_mode`` verbatim so a future
     # non-``standings`` mode (Part2c-3c) reproduces across seasons.
     for src in latest_completed.phases.all():
+        # CONF-04 — do NOT carry the derived Worlds phase forward (ADR-0037).
+        # The rollover carries no Conferences, so a copied Worlds phase would
+        # land on a flat Season whose ``worlds_qualifiers()`` returns ``[]``
+        # forever, stranding it at ``active``. The new Season grows its own
+        # Worlds phase at ``start_season`` if it is ever partitioned. Because the
+        # Worlds phase always holds the HIGHEST ordinal, skipping it leaves the
+        # copied ordinals contiguous from 1 — no renumbering is needed.
+        if src.tournament_mode == "worlds":
+            continue
         SeasonPhase.objects.create(
             season=new_season,
             ordinal=src.ordinal,

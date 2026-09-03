@@ -1085,6 +1085,14 @@ class Season(models.Model):
             conf.save(update_fields=["starting_team_ids_json"])
         self.state = "active"
         self.save()
+        # CONF-04 — Start Season is the EARLIEST moment at which every input is
+        # frozen: the Conference partition (snapshotted just above) and the phase
+        # composition (authored at create). Appending the Worlds phase here, and
+        # not lazily when qualification first resolves, is what stops
+        # ``complete_if_finished`` from flipping the Season to ``completed`` with
+        # a NULL champion at the instant the regional phase finishes (ADR-0037).
+        # A no-op for a 0/1-Conference Season, so the flat path is unchanged.
+        self._ensure_worlds_phase()
         # LG-02-Part2c-3c — a FIRST-phase mid-season tournament
         # (strength / unseeded, no preceding RR) builds the instant the Season
         # activates. The method is idempotent and no-ops for a standings first
@@ -1383,7 +1391,26 @@ class Season(models.Model):
         Season-wide bracket on ``phase.tournament`` exactly as before. The whole
         method is atomic, so a failure part-way through the N regional builds
         rolls all N back and the next activation retries cleanly.
+
+        CONF-04 — the two leading calls are the Worlds RECOVERY hooks
+        (ADR-0037). This method runs after every scheduled Round, so a Season
+        already ACTIVE when that slice shipped gains its Worlds phase here
+        rather than through a data migration. Their ORDER is load-bearing: the
+        build resolves the phase the ensure just created.
         """
+        # Placing the build BEFORE the ``current_phase()`` read also closes a
+        # structural hazard: were the cursor ever to reach the Worlds phase with
+        # this method running, the ``len(conferences) >= 2`` branch below would
+        # fan regional brackets out onto it. Building first sets
+        # ``phase.tournament_id``, so the existing ``tournament_id is not None``
+        # guard fires and the fan-out is unreachable. Do NOT add a
+        # ``tournament_mode`` guard to that branch — the ordering IS the guard.
+        # The return value short-circuits the build: no Worlds phase means
+        # there is nothing to build, and it saves re-resolving the phase (and,
+        # for a flat Season, every query behind it) on a method that runs after
+        # EVERY simulated Round.
+        if self._ensure_worlds_phase() is not None:
+            self.build_pending_worlds_bracket()
         phase = self.current_phase()
         if phase is None:
             return
@@ -1842,7 +1869,7 @@ class Season(models.Model):
         return [phase.tournament] if phase.tournament_id is not None else []
 
     def _final_tournament_phase(self) -> "SeasonPhase | None":
-        """CONF-03 — the HIGHEST-ordinal ``tournament`` phase, or ``None``.
+        """CONF-03 — the highest-ordinal NON-``worlds`` ``tournament`` phase.
 
         Only this phase drives Worlds qualification and gets Last-chance
         brackets (ADR-0036); a mid-season ``tournament`` phase still builds its
@@ -1850,14 +1877,195 @@ class Season(models.Model):
         ordinal order (``SeasonPhase.Meta.ordering``), so the last match wins.
         A non-persisted implicit fallback phase is never returned — it is
         always ``round_robin``.
+
+        CONF-04 — post-narrowing this means "the final NON-Worlds tournament
+        phase", i.e. the Regional-playoff phase (ADR-0037). Both callers
+        (``worlds_qualifiers`` and the Last-chance build gate in
+        ``activate_pending_tournament_phase``) want exactly that. Use
+        ``_worlds_phase()`` to reach the Worlds phase, and
+        ``ordered_phases()[-1]`` where "the last phase" is meant —
+        ``complete_if_finished`` does the latter and is deliberately unchanged.
         """
         final = None
         for phase in self.ordered_phases():
             if phase.pk is None:
                 continue
+            # CONF-04 — the Worlds phase is a tournament phase, but it is NOT the
+            # phase qualification reads from (ADR-0037). Without this skip,
+            # ``worlds_qualifiers()`` would read the Worlds phase's OWN bracket —
+            # empty before the build, and self-referential after it.
+            if phase.tournament_mode == "worlds":
+                continue
             if phase.phase_type == "tournament":
                 final = phase
         return final
+
+    def _worlds_phase(self) -> "SeasonPhase | None":
+        """CONF-04 — this Season's derived Worlds phase, or ``None`` (ADR-0037).
+
+        The ONE resolver. ``_ensure_worlds_phase``, ``build_pending_worlds_bracket``
+        and the owner-mood classifier all go through it, so nobody re-implements
+        the ``tournament_mode == "worlds"`` scan. A non-persisted implicit
+        fallback phase is never returned — it is always ``round_robin``.
+
+        At most one Worlds phase can exist per Season (``_ensure_worlds_phase``
+        is idempotent and the next-Season rollover skips the row), so the first
+        match is the only match.
+        """
+        for phase in self.ordered_phases():
+            if phase.pk is not None and phase.tournament_mode == "worlds":
+                return phase
+        return None
+
+    def _ensure_worlds_phase(self) -> "SeasonPhase | None":
+        """CONF-04 — derive this Season's Worlds phase, idempotently (ADR-0037).
+
+        Returns the Worlds phase — the row created on THIS call or the
+        pre-existing one — and ``None`` when the Season is not eligible for one.
+        ``activate_pending_tournament_phase`` uses that return to skip the build
+        entirely (it runs after every simulated Round, so the saved queries
+        matter); ``start_season`` discards it.
+
+        Creates nothing unless ALL THREE hold:
+
+        1. the Season has >= 2 Conferences;
+        2. at least one PERSISTED ``tournament`` phase that is not itself
+           ``worlds`` exists (the Regional-playoff phase Worlds follows);
+        3. no Worlds phase exists yet.
+
+        The phase is DERIVED, NEVER AUTHORED: there is no composer wire token
+        and no UI control for it. Every input it reads is frozen at activation
+        (the Conference snapshots and the phase composition), which is what lets
+        ``activate_pending_tournament_phase`` call it as a RECOVERY hook and
+        produce the identical row for a Season that was already active when this
+        slice shipped — no ``RunPython``, no backfill (ADR-0004).
+
+        Every column is passed EXPLICITLY so the row cannot drift if a model
+        default later changes.
+        """
+        if len(self.ordered_conferences()) < 2:
+            return None
+        # ONE evaluation of the phase rows, reused by both the gate and the
+        # ordinal below (it was two round-trips).
+        persisted_phases = list(self.phases.all())
+        if not any(
+            phase.phase_type == "tournament" and phase.tournament_mode != "worlds"
+            for phase in persisted_phases
+        ):
+            return None
+        existing = self._worlds_phase()
+        if existing is not None:
+            return existing
+        # The gate above guarantees at least one persisted row, so ``max`` never
+        # sees an empty sequence, and ``max + 1`` always respects the
+        # ``uniq_season_phase_ordinal`` UniqueConstraint.
+        ordinal = max(phase.ordinal for phase in persisted_phases) + 1
+        return SeasonPhase.objects.create(
+            season=self,
+            ordinal=ordinal,
+            # NOT a new phase_type — every ``phase_type == "tournament"`` site
+            # (completion, activation, both drain loops, the Playoffs screen and
+            # the dashboard helper) carries the Worlds phase for free.
+            phase_type="tournament",
+            schedule_format=None,  # a tournament phase contributes no fixtures
+            tournament=None,  # the forward embed, filled by the build seam
+            tournament_mode="worlds",
+            tournament_format="single_elimination",
+            tournament_cut=0,  # never cut the Worlds field
+            final_series_length=1,
+            semifinal_series_length=1,
+            quarterfinal_series_length=1,
+            earlier_series_length=1,
+            wb_advancers=0,
+            lb_advancers=0,
+            swiss_rounds=0,
+        )
+
+    @transaction.atomic
+    def build_pending_worlds_bracket(self) -> bool:
+        """CONF-04 — build the Worlds bracket when it is ready (ADR-0037).
+
+        The public build seam, called from FIVE hook sites with the same
+        do-it-if-ready semantics CONF-03 gave ``seed_pending_last_chance_brackets``:
+        ``play_playoffs_task``, ``play_season_task``'s ``_drain_one_stage``,
+        ``league_views.play_single_round``, ``league_views.play_playoffs`` and
+        ``activate_pending_tournament_phase`` (the recovery hook).
+
+        Returns ``True`` IFF it built the bracket on THIS call; ``False`` in
+        every other case — no Worlds phase, already built, the Regional-playoff
+        phase not yet complete, or qualification not yet resolved. IDEMPOTENT:
+        the second call always returns ``False``. (Note the return type differs
+        from ``seed_pending_last_chance_brackets``, which returns an ``int``;
+        the two are deliberately NOT harmonised.)
+
+        The row it creates is structurally identical to the closing playoff of a
+        flat 0/1-Conference Season — both CONF-02 linkage columns NULL and
+        ``qualifier_stage`` at its ``""`` default — which is precisely what makes
+        ``tournaments_for_phase``, ``_tournament_phase_complete`` and
+        ``_stamp_champion_for_final_phase`` crown the Season champion with NO
+        edit to any of them.
+
+        The whole method is atomic (a savepoint when nested inside an
+        already-atomic caller), so a failure part-way through leaves NO partial
+        Worlds bracket and the next hook-site call retries cleanly.
+        """
+        phase = self._worlds_phase()
+        if phase is None:
+            return False
+        if phase.tournament_id is not None:
+            return False  # already built
+        prior = self._preceding_phase(phase)
+        if prior is None or not self._phase_complete(prior):
+            return False
+        qualifiers = self.worlds_qualifiers()
+        if len(qualifiers) < 2:
+            # The ``>= 2`` half of this guard is DEFENSIVE, not a live branch: a
+            # legitimate >= 2-Conference Season always sends at least one
+            # qualifier per Conference (CONF-03 — no Conference is ever
+            # unrepresented), so M >= 2 by construction. It exists so
+            # admin-mangled data — a Conference snapshot emptied after
+            # activation, say — cannot reach ``lock_and_build`` with a
+            # one-participant field. Do not delete it because it "cannot happen".
+            return False
+        tournament = Tournament.objects.create(
+            # No em-dash and no Conference qualifier — mirrors the flat
+            # ``f"{self.name} Playoffs"`` shape.
+            name=f"{self.name} Worlds",
+            format="single_elimination",
+            team_assembly="preset",
+            state="setup",
+            final_series_length=phase.final_series_length,
+            semifinal_series_length=phase.semifinal_series_length,
+            quarterfinal_series_length=phase.quarterfinal_series_length,
+            earlier_series_length=phase.earlier_series_length,
+            wb_advancers=phase.wb_advancers,
+            lb_advancers=phase.lb_advancers,
+            swiss_rounds=phase.swiss_rounds,
+            # ``season_phase``, ``conference`` and ``qualifier_stage`` are
+            # DELIBERATELY NOT PASSED: the Worlds row is Season-wide, not a
+            # regional one, so it must never appear in any
+            # ``phase.regional_tournaments`` queryset, and CONF-03's read rule
+            # (every read tests only ``== "last_chance"``) stays intact.
+        )
+        for qualifier in qualifiers:
+            # ``seed=qualifier.seed``, NOT ``position + 1``:
+            # ``worlds_qualifiers()`` returns the field already ordered and
+            # already stamped 1..M by ``order_worlds_qualifiers``. The enumerate
+            # index would silently agree today and break the instant anything
+            # filters or re-orders the list.
+            TournamentParticipant.objects.create(
+                tournament=tournament,
+                team_id=qualifier.team_id,
+                seed=qualifier.seed,
+            )
+        # ``minimum=2`` is the ONLY non-default use of the CONF-04 bracket floor
+        # (ADR-0037): two Conferences of 2-4 Teams send one qualifier apiece, and
+        # an 8-Team, 2-Conference League is exactly what the create form produces
+        # by default. The pure builder is already correct below four.
+        tournament.lock_and_build(minimum=2)
+        phase.tournament = tournament
+        phase.save(update_fields=["tournament"])
+        return True
 
     def _seed_order_for_phase(self, phase, conference=None) -> list[int]:
         """LG-02-Part2c-3c — the seeded team-id order for a tournament phase.
@@ -2513,6 +2721,13 @@ class SeasonPhase(models.Model):
         ("strength", "Mid-season: by team strength"),
         ("unseeded", "Mid-season: random seed"),
         ("random_draw", "Mid-season: drawn pool -> RR->DE"),
+        # CONF-04 — the DERIVED Worlds phase (ADR-0037). Never authored: there is
+        # no composer wire token and no UI control for it; ``_ensure_worlds_phase``
+        # appends it for a >= 2-Conference Season and the next-Season rollover
+        # skips it. ``tournament_mode`` (the PHASE flavour) is the ONLY
+        # discriminator — there is deliberately no
+        # ``Tournament.qualifier_stage == "worlds"``.
+        ("worlds", "Worlds"),
     )
 
     # LG-02-Part2c-3d — the per-phase tournament FORMAT field. DORMANT this
@@ -2763,14 +2978,24 @@ class Tournament(models.Model):
         return self.state != "setup"
 
     @transaction.atomic
-    def lock_and_build(self) -> None:
+    def lock_and_build(self, *, minimum: int = 4) -> None:
         """setup -> active.
 
-        Validates participant count (>= 4), builds the BracketNode tree from
-        the current Seeding via ``matches.bracket.build_bracket``, persists
-        every node, flips state='active'. Raises
-        ``django.core.exceptions.ValidationError`` on count < 4 or
+        Validates participant count (>= ``minimum``), builds the BracketNode
+        tree from the current Seeding via ``matches.bracket.build_bracket``,
+        persists every node, flips state='active'. Raises
+        ``django.core.exceptions.ValidationError`` on count < ``minimum`` or
         state != 'setup'.
+
+        CONF-04 — ``minimum`` is the KEYWORD-ONLY participant floor (ADR-0037),
+        forwarded to the elimination builders only. Every existing caller keeps
+        the default of 4; ``Season.build_pending_worlds_bracket`` alone passes
+        ``minimum=2``. Note this is NOT wired to ``MIN_BRACKET_PARTICIPANTS``:
+        ``matches/bracket.py`` is a pure module that must not import from this
+        one, so the builders' default is the literal 4, and
+        ``MIN_BRACKET_PARTICIPANTS`` keeps guarding
+        ``_build_tournament_for_phase`` and ``seed_pending_last_chance_brackets``
+        independently.
         """
         from .bracket import (
             build_bracket,
@@ -2784,7 +3009,9 @@ class Tournament(models.Model):
         if self.state != "setup":
             raise ValidationError("Tournament can only be locked from setup state.")
         participants = list(self.participants.all())
-        if len(participants) < 4:
+        if len(participants) < minimum:
+            # Message text unchanged even when ``minimum != 4`` (CONF-04) —
+            # existing callers and tests pin this exact string.
             raise ValidationError("A tournament requires at least 4 participants.")
 
         # LG-02c — round-robin (incl. the RR seeding stage of RR->DE): a flat set
@@ -2887,9 +3114,9 @@ class Tournament(models.Model):
         ]
         is_de = self.format == "double_elimination"
         if is_de:
-            specs = build_double_elim_bracket(part_specs)
+            specs = build_double_elim_bracket(part_specs, minimum=minimum)
         else:
-            specs = build_bracket(part_specs)
+            specs = build_bracket(part_specs, minimum=minimum)
 
         # LG-02b-2 — depth-from-final escalation. Single-elim resolves N from
         # depth-from-the-final (max bracket_round); DE specs carry an explicit

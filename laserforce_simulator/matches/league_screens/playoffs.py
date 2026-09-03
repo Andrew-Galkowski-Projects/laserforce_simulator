@@ -63,6 +63,12 @@ def playoffs(request: HttpRequest, league_id: int) -> HttpResponse:
     renders the pending alert rather than an empty bracket div. The screen also
     carries the derived ``worlds_qualifiers`` field, which renders as a
     read-only panel below the brackets once qualification is complete.
+
+    CONF-04 — a >= 2-Conference Season also renders the Season-wide Worlds
+    bracket (ADR-0037), keyed with a ``-worlds`` suffix and badged
+    ``"Worlds"``. Its section id ``league-playoffs-phase-<ord>-worlds`` is
+    distinct from CONF-03's qualification table at ``league-playoffs-worlds``;
+    the two coexist on the same page and must never be conflated.
     """
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
@@ -100,18 +106,38 @@ def playoffs(request: HttpRequest, league_id: int) -> HttpResponse:
             if not tournaments:
                 # Phase exists but its bracket has not been built yet (the RR
                 # phase is still in progress). Surface a pending stub.
+                #
+                # CONF-04 — the stub gets the same Worlds treatment as the built
+                # entry below (ADR-0037), so a phase's DOM id is stable across
+                # the unbuilt -> built transition. A >= 2-Conference Season
+                # therefore shows a "Worlds" pending section from the moment the
+                # Season starts: the phase is derived at ``start_season``, and
+                # the panel tells the user Worlds is coming.
+                is_worlds = phase.tournament_mode == "worlds"
                 brackets.append(
                     {
                         "phase": phase,
                         "tournament": None,
-                        "name": "Playoffs",
+                        # CONF-04 — a bare "Worlds" here rendered the word TWICE
+                        # (card heading + the ``stage_label`` badge beside it).
+                        # Mirror the BUILT card's heading instead, which is the
+                        # Tournament's own name (``"<season> Worlds"``), so the
+                        # heading is stable across the unbuilt -> built
+                        # transition and the badge reads as a label, not an echo.
+                        "name": (
+                            f"{view_season.name} Worlds" if is_worlds else "Playoffs"
+                        ),
                         "rounds": [],
                         "champion": None,
                         "pending": True,
                         "conference": None,
-                        "key": str(phase.ordinal),
-                        "stage": "",
-                        "stage_label": "",
+                        "key": (
+                            f"{phase.ordinal}-worlds"
+                            if is_worlds
+                            else str(phase.ordinal)
+                        ),
+                        "stage": "worlds" if is_worlds else "",
+                        "stage_label": "Worlds" if is_worlds else "",
                     }
                 )
                 continue
@@ -129,8 +155,20 @@ def playoffs(request: HttpRequest, league_id: int) -> HttpResponse:
                 # (ADR-0036). Every CONF-02 regional key and every
                 # 0/1-Conference key is therefore byte-identical, and so is
                 # every DOM id built from them.
+                #
+                # CONF-04 — the ``-worlds`` suffix is the Worlds discriminator
+                # (ADR-0037), and its branch is evaluated FIRST because the
+                # Worlds ``Tournament``'s ``conference`` is ``None`` and would
+                # otherwise fall into the Season-wide branch. Note the two axes
+                # differ: ``is_worlds`` asks the PHASE flavour, ``is_last_chance``
+                # asks the BRACKET stage — there is deliberately no
+                # ``qualifier_stage == "worlds"``.
+                is_worlds = phase.tournament_mode == "worlds"
                 is_last_chance = tournament.qualifier_stage == "last_chance"
-                if conference is None:
+                if is_worlds:
+                    key = f"{phase.ordinal}-worlds"
+                    stage = "worlds"
+                elif conference is None:
                     key = str(phase.ordinal)
                     stage = ""
                 elif is_last_chance:
@@ -139,9 +177,14 @@ def playoffs(request: HttpRequest, league_id: int) -> HttpResponse:
                 else:
                     key = f"{phase.ordinal}-{conference.ordinal}"
                     stage = "regional_playoff"
-                # Deliberately EMPTY for a regional bracket, so no new element
-                # renders on a CONF-02 Season.
-                stage_label = "Last Chance Qualifier" if is_last_chance else ""
+                # Deliberately EMPTY for a Season-wide and a regional bracket, so
+                # no new element renders on a CONF-02 Season.
+                if is_worlds:
+                    stage_label = "Worlds"
+                elif is_last_chance:
+                    stage_label = "Last Chance Qualifier"
+                else:
+                    stage_label = ""
                 brackets.append(
                     {
                         "phase": phase,
