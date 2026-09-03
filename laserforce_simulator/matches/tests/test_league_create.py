@@ -2154,3 +2154,59 @@ class TestConf05CreateLeagueConferences(TestCase):
         season = Season.objects.get(league__name="FlatCreate")
         self.assertRedirects(response, reverse("season_standings", args=[season.id]))
         self.assertEqual(season.conferences.count(), 0)
+
+
+class TestConf02ConferenceTournamentTeamFloor(TestCase):
+    """CONF-02 review fix - a tournament phase raises the per-Conference floor.
+
+    Found by manual browser testing: 4 teams across 2 Conferences with a
+    trailing tournament phase produced two 2-team brackets, and the build
+    raised out of the atomic activation, rolling back the play-week that
+    triggered it. CONF-05's rule only required 2 teams per Conference, which
+    is below the bracket engine's 4-participant floor.
+    """
+
+    def test_rejects_four_teams_across_two_conferences_with_a_tournament(self):
+        form = CreateLeagueForm(
+            data=_valid_payload(
+                num_teams="4",
+                number_of_conferences="2",
+                phases="round_robin,tournament",
+            )
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("number_of_conferences", form.errors)
+        self.assertIn("8 teams", str(form.errors["number_of_conferences"]))
+
+    def test_allows_four_teams_across_two_conferences_without_a_tournament(self):
+        """No bracket to field, so CONF-05's 2-per-Conference floor still applies."""
+        form = CreateLeagueForm(
+            data=_valid_payload(
+                num_teams="4",
+                number_of_conferences="2",
+                phases="round_robin",
+            )
+        )
+        self.assertTrue(form.is_valid(), form.errors.as_json())
+
+    def test_allows_eight_teams_across_two_conferences_with_a_tournament(self):
+        form = CreateLeagueForm(
+            data=_valid_payload(
+                num_teams="8",
+                number_of_conferences="2",
+                phases="round_robin,tournament",
+            )
+        )
+        self.assertTrue(form.is_valid(), form.errors.as_json())
+
+    def test_rejects_eight_teams_across_three_conferences_with_a_tournament(self):
+        """8 / 3 would leave 2-3 per Conference - under the engine floor."""
+        form = CreateLeagueForm(
+            data=_valid_payload(
+                num_teams="8",
+                number_of_conferences="3",
+                phases="round_robin,tournament",
+            )
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("number_of_conferences", form.errors)

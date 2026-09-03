@@ -51,6 +51,11 @@ def playoffs(request: HttpRequest, league_id: int) -> HttpResponse:
     phase that exists but has not yet been seeded (the regular season is still
     in progress) renders a "not yet seeded" stub. A Season with no tournament
     phase — or no Season at all — renders the empty-state notice.
+
+    CONF-02 — a >= 2-Conference Season's tournament phase renders ONE section
+    per regional bracket, headed by its Conference name (ADR-0035). The new
+    ``key`` entry keeps their DOM ids distinct while leaving a 0/1-Conference
+    Season's ids byte-identical.
     """
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
@@ -81,8 +86,11 @@ def playoffs(request: HttpRequest, league_id: int) -> HttpResponse:
             .order_by("ordinal")
         )
         for phase in phases:
-            tournament = phase.tournament
-            if tournament is None:
+            # CONF-02 — a phase may hold N regional brackets, one per Conference
+            # (ADR-0035), so one phase can append N entries. A 0/1-Conference
+            # Season yields the single Season-wide bracket exactly as before.
+            tournaments = view_season.tournaments_for_phase(phase)
+            if not tournaments:
                 # Phase exists but its bracket has not been built yet (the RR
                 # phase is still in progress). Surface a pending stub.
                 brackets.append(
@@ -93,22 +101,37 @@ def playoffs(request: HttpRequest, league_id: int) -> HttpResponse:
                         "rounds": [],
                         "champion": None,
                         "pending": True,
+                        "conference": None,
+                        "key": str(phase.ordinal),
                     }
                 )
                 continue
-            # Embedded season tournaments are single-elimination, so the whole
-            # tree lives in the "winners" slice.
-            rounds = _build_rounds(tournament)["winners"]
-            brackets.append(
-                {
-                    "phase": phase,
-                    "tournament": tournament,
-                    "name": tournament.name,
-                    "rounds": rounds,
-                    "champion": tournament.champion,
-                    "pending": False,
-                }
-            )
+            for tournament in tournaments:
+                # Embedded season tournaments are single-elimination, so the
+                # whole tree lives in the "winners" slice.
+                rounds = _build_rounds(tournament)["winners"]
+                conference = tournament.conference
+                # ``key`` is the DOM-id discriminator that stops the N regional
+                # brackets of one phase from colliding on ``phase.ordinal``. It
+                # IS ``str(phase.ordinal)`` for a Season-wide bracket, so every
+                # existing DOM id on a 0/1-Conference Season is unchanged.
+                key = (
+                    str(phase.ordinal)
+                    if conference is None
+                    else f"{phase.ordinal}-{conference.ordinal}"
+                )
+                brackets.append(
+                    {
+                        "phase": phase,
+                        "tournament": tournament,
+                        "name": tournament.name,
+                        "rounds": rounds,
+                        "champion": tournament.champion,
+                        "pending": False,
+                        "conference": conference,
+                        "key": key,
+                    }
+                )
 
     context = {
         "league": league,

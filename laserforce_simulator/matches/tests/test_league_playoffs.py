@@ -185,3 +185,147 @@ class TestLeaguePlayoffsSeasonSelector(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["selected_season_id"], season.id)
+
+
+# ===========================================================================
+# CONF-02 — the Playoffs screen renders N labelled regional brackets
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/conf-02-seam-contract.md`` §5 + §9.4 items
+# 15-16; rationale in
+# [ADR-0035](../../docs/adr/0035-regional-playoffs-one-tournament-per-conference.md).
+#
+# A ``>= 2``-Conference tournament phase appends ONE ``brackets`` entry per
+# regional Tournament instead of one per phase, each carrying its
+# ``conference`` and a ``key`` DOM-id discriminator ``"<phase.ordinal>-<
+# conference.ordinal>"`` so the N brackets of one phase cannot collide on
+# ``phase.ordinal``. A 0-Conference Season keeps ``key == str(phase.ordinal)``,
+# so every DOM id it renders is byte-identical to today — that regression pin
+# is what proves the change is additive.
+#
+# Fixtures are shared with ``test_regional_playoffs.py`` (same slice, same
+# ownership lane) and are hand-built: the round-robin is a deterministic set of
+# completed Match + GameRound rows, so NO simulation runs here (contract §9.1)
+# and the screen renders in milliseconds. Appended as NEW classes; no existing
+# class above is modified.
+
+
+from matches.tests.test_regional_playoffs import (  # noqa: E402
+    _built_regional_season as _conf02_built_regional_season,
+    _flat_season as _conf02_flat_season,
+    _hand_play_rr as _conf02_hand_play_rr,
+    _ids as _conf02_ids,
+)
+
+
+def _conf02_built_flat_season(prefix: str):
+    """The 0-Conference regression shape with its single bracket built."""
+    season, teams, rr_phase, phase = _conf02_flat_season(prefix)
+    _conf02_hand_play_rr(season, rr_phase, _conf02_ids(teams))
+    season.refresh_from_db()
+    season.activate_pending_tournament_phase()
+    phase.refresh_from_db()
+    return season, teams, phase
+
+
+class TestLeaguePlayoffsRegionalBrackets(TestCase):
+    """A 2-Conference Season renders TWO labelled brackets under one phase."""
+
+    def setUp(self) -> None:
+        (
+            self.season,
+            self.conferences,
+            self.groups,
+            self.rr_phase,
+            self.phase,
+        ) = _conf02_built_regional_season("Screen")
+        self.league = self.season.league
+        self.response = self.client.get(
+            reverse("league_playoffs", kwargs={"league_id": self.league.id})
+        )
+
+    def test_two_bracket_entries_for_one_phase(self) -> None:
+        self.assertEqual(self.response.status_code, 200)
+        self.assertEqual(len(self.response.context["brackets"]), 2)
+
+    def test_entries_are_in_conference_ordinal_order(self) -> None:
+        brackets = self.response.context["brackets"]
+        self.assertEqual(
+            [entry["conference"].id for entry in brackets],
+            [self.conferences[0].id, self.conferences[1].id],
+        )
+
+    def test_each_entry_carries_the_right_conference(self) -> None:
+        for entry, conference in zip(
+            self.response.context["brackets"], self.conferences
+        ):
+            self.assertEqual(entry["conference"].id, conference.id)
+            self.assertEqual(entry["tournament"].conference_id, conference.id)
+
+    def test_keys_are_phase_ordinal_dash_conference_ordinal(self) -> None:
+        brackets = self.response.context["brackets"]
+        self.assertEqual(
+            [entry["key"] for entry in brackets],
+            [
+                f"{self.phase.ordinal}-{self.conferences[0].ordinal}",
+                f"{self.phase.ordinal}-{self.conferences[1].ordinal}",
+            ],
+        )
+
+    def test_keys_do_not_collide(self) -> None:
+        keys = [entry["key"] for entry in self.response.context["brackets"]]
+        self.assertEqual(len(set(keys)), 2)
+
+    def test_neither_entry_is_pending(self) -> None:
+        for entry in self.response.context["brackets"]:
+            self.assertFalse(entry["pending"])
+            self.assertTrue(entry["rounds"])
+
+    def test_rendered_html_carries_both_conference_labels(self) -> None:
+        self.assertContains(self.response, 'id="league-playoffs-conference-2-1"')
+        self.assertContains(self.response, 'id="league-playoffs-conference-2-2"')
+        for conference in self.conferences:
+            self.assertContains(self.response, conference.name)
+
+    def test_rendered_html_carries_both_bracket_sections(self) -> None:
+        self.assertContains(self.response, 'id="league-playoffs-phase-2-1"')
+        self.assertContains(self.response, 'id="league-playoffs-phase-2-2"')
+        self.assertContains(self.response, 'id="league-playoffs-bracket-2-1"')
+        self.assertContains(self.response, 'id="league-playoffs-bracket-2-2"')
+
+    def test_bare_phase_ordinal_ids_are_not_rendered(self) -> None:
+        # The regional keys REPLACE the bare ordinal on this Season; a bare
+        # ``-2"`` id would mean two brackets collided on one DOM id.
+        self.assertNotContains(self.response, 'id="league-playoffs-phase-2"')
+        self.assertNotContains(self.response, 'id="league-playoffs-bracket-2"')
+
+
+class TestLeaguePlayoffsZeroConferenceRegressionPin(TestCase):
+    """The 0-Conference Season renders ONE unlabelled bracket with exactly the
+    DOM ids the existing tests already assert — the additive proof."""
+
+    def setUp(self) -> None:
+        self.season, self.teams, self.phase = _conf02_built_flat_season("ScreenZero")
+        self.league = self.season.league
+        self.response = self.client.get(
+            reverse("league_playoffs", kwargs={"league_id": self.league.id})
+        )
+
+    def test_single_bracket_entry(self) -> None:
+        self.assertEqual(self.response.status_code, 200)
+        self.assertEqual(len(self.response.context["brackets"]), 1)
+
+    def test_entry_conference_is_none(self) -> None:
+        self.assertIsNone(self.response.context["brackets"][0]["conference"])
+
+    def test_key_is_the_bare_phase_ordinal(self) -> None:
+        self.assertEqual(
+            self.response.context["brackets"][0]["key"], str(self.phase.ordinal)
+        )
+
+    def test_rendered_dom_ids_are_unchanged(self) -> None:
+        self.assertContains(self.response, 'id="league-playoffs-phase-2"')
+        self.assertContains(self.response, 'id="league-playoffs-bracket-2"')
+
+    def test_no_conference_heading_rendered(self) -> None:
+        self.assertNotContains(self.response, "league-playoffs-conference-")

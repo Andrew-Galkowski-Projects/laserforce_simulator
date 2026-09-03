@@ -692,21 +692,93 @@ shipped) and is most useful alongside **CAR-03** manager-mode career play.
   and the **CONF-01** subsection in
   [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
-- **CONF-02 · [NOT STARTED] Per-Conference regional playoffs.** After each
-  Conference's regular-season round-robin completes, seed **its own** playoff bracket from
-  that Conference's final Standings — one seeded `tournament` per Conference (reusing the
-  existing single/double-elim bracket engine), producing each Conference's regional
-  qualifiers. No cross-Conference play yet.
+- **CONF-02 · Per-Conference regional playoffs. [DONE] Shipped (2026-09-02).** After each
+  Conference's regular season completes, that Conference gets **its own** seeded playoff
+  bracket — a **Regional playoff**. The grill established that this slice is also a **live bug
+  fix**, which is the single most important thing to know about it:
+  `Season._final_standings_for_phase` computed Standings over the whole Season with **no
+  Conference scoping** and `activate_pending_tournament_phase` carried **no Conference guard**,
+  so a `>= 2`-Conference Season with a trailing `tournament` phase built **one cross-Conference
+  playoff** — a direct contradiction of the intra-Conference invariant ADR-0034 established.
+  CONF-02 corrects that as well as adding the feature. **The shape:** one `tournament`
+  `SeasonPhase` now builds **N first-class `Tournament` rows, one per Conference**, each seeded
+  from its own Conference's final Standings (Match corpus scoped by the CONF-01
+  `Match.conference` discriminator FK), each drained through the **verbatim-unchanged** bracket
+  engine (`lock_and_build`, `play_next_bracket_round`, `play_next_node`, all five formats), each
+  crowning one **Conference champion**. **Linkage — two additive nullable FKs on `Tournament`**:
+  `season_phase` (→ `SeasonPhase`, `SET_NULL`, `related_name="regional_tournaments"`, so a phase
+  can enumerate its own brackets) and `conference` (→ `Conference`, `SET_NULL`), migration
+  `0058_tournament_regional_linkage` (exactly two `AddField`s, **no `RunPython` / no backfill**
+  per [ADR-0004](docs/adr/0004-simulation-data-is-disposable.md)). **`SeasonPhase.tournament` is
+  UNCHANGED** and still holds the single Season-wide bracket of a 0/1-Conference Season, so the
+  two storage paths never both hold a row for one phase and a non-empty `regional_tournaments`
+  *is* the "this phase went regional" discriminator. **Seeding:**
+  `_final_standings_for_phase` / `_seed_order_for_phase` each gain an **additive
+  `conference=None` parameter** (`None` = today's Season-wide behaviour, byte-identical — a
+  parameter, not a duplicate sibling method, so the two paths cannot drift); `strength` /
+  `unseeded` take their team ids from `Conference.starting_team_ids_json`. **All three
+  `tournament_mode` values split** in a `>= 2`-Conference Season — no exception clause to the
+  intra-Conference invariant. **New `Season` seam:** `_build_tournament_for_phase(phase,
+  conference=None)` (builds exactly one bracket; `tournament_cut` applies **per Conference**,
+  seeds restart at 1 in each bracket, an empty order builds nothing), the **public**
+  `tournaments_for_phase(phase)` (regional rows in Conference-ordinal order, else the single
+  embed, else `[]`) that every drain caller and the Playoffs screen goes through so nobody
+  re-implements the fallback, and `_tournament_phase_complete(phase)` — **the phase does not
+  advance until every regional bracket has drained**. **`Season.champion_team` stays NULL** for
+  a `>= 2`-Conference Season (CONF-01's rule, unchanged, now through the playoff phase as well):
+  a Conference champion is **not** a Season champion, and no top-N placement ranking is invented
+  (that is CONF-03's job). **Drain:** the engine is untouched and its three callers
+  (`tasks.play_playoffs_task`, `play_season_task`'s tournament tail, `league_views.play_week`)
+  loop over `tournaments_for_phase(phase)`, so **one week / one budget unit advances every
+  Conference's bracket by one stage in parallel** — the same shared-Matchday overlay rule
+  CONF-01 gave the round-robins (California and Nevada play their semifinals the same week).
+  Progress counts aggregate across the N brackets; return shapes are unchanged. **Playoffs
+  screen** (`league_screens/playoffs.py` + `templates/leagues/playoffs.html`) renders **one entry
+  per regional Tournament** headed by its Conference name (`league-playoffs-conference-{key}`),
+  with two new context keys — `conference` and a `key` DOM-id discriminator (`"<ordinal>"`
+  unscoped / `"<ordinal>-<conf ordinal>"` regional) — replacing `bracket.phase.ordinal` in the
+  five template ids, so **every existing 0/1-Conference id stays byte-identical**. **Team History
+  fixed too** (a post-approval amendment that pulled the gap into scope rather than deferring
+  it): `league_screens/team_history.py::_build_overall_context` gains a third `Q` term on the
+  Round corpus and a two-term `Q` OR on `playoff_appearances`, both keyed on the new
+  `season_phase` FK **alongside** the untouched `season_phases` chain, so a regional playoff is
+  no longer misfiled as standalone-sandbox play; `championships` is deliberately **not** touched
+  (a Conference champion is not a Season champion) and the load-bearing `.distinct()` survives on
+  both. **Naming hazard worth carrying forward:** `Tournament.season_phase` (the new forward FK)
+  vs `Tournament.season_phases` (the pre-existing reverse manager of `SeasonPhase.tournament`) —
+  one character apart, opposite directions. Invariants: **a 0/1-Conference Season is
+  byte-identical** in rows, reads, champion stamping and rendered DOM ids (the `>= 2` predicate
+  is what gates every new path), and **no Score Calibration re-baseline** — no simulation
+  mechanic changes, only how many `Tournament` rows a tournament phase produces and which Match
+  corpus seeds them. Tests: `matches/tests/test_regional_playoffs.py` +
+  `matches/tests/test_regional_playoffs_drain.py` (new) and an appended class in
+  `matches/tests/test_league_playoffs.py`. **Scope-out:** no CONF-03 top-N Worlds qualification,
+  no CONF-04 Worlds bracket, no CONF-06 per-Conference map pools, no placement /
+  elimination-depth / ranking API on `Tournament`, no create-League Conference-composer change,
+  and **no refactor of the CONF-01 `season_standings` view** onto the model-side derivation (the
+  two Conference-scoped queries coexist for now; consolidating them is a follow-up rather than a
+  widening of this slice's blast radius). See
+  [ADR-0035](docs/adr/0035-regional-playoffs-one-tournament-per-conference.md), the seam contract
+  [`.claude/worktrees/conf-02-seam-contract.md`](.claude/worktrees/conf-02-seam-contract.md), the
+  CONTEXT.md **Regional playoff** / **Conference champion** terms, and the **CONF-02** subsection
+  in [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
-- **CONF-03 · [NOT STARTED] Worlds qualification.** Top-N-per-Conference seeding: union
-  each Conference's regional qualifiers (from CONF-02) into a single cross-Conference Worlds
-  **participant list**, computing the cross-region seeding. This is the qualification/seeding
-  layer only — the bracket itself is CONF-04.
+- **CONF-03 · [NOT STARTED] Worlds qualification.** Top-N-per-Conference seeding: union each
+  Conference's qualifying Teams into a single cross-Conference Worlds **participant list**,
+  computing the cross-region seeding. CONF-02 (shipped) hands over exactly one **Conference
+  champion** per Conference — that Conference's Tournament `champion`, reachable off the phase's
+  `regional_tournaments` — and deliberately invents no placement ranking beyond it, since a
+  single-elimination bracket cannot meaningfully rank its losers; ADR-0035 retired the plural
+  "regional qualifiers" wording accordingly. Defining what "top N" means for `N > 1`, and
+  sourcing it, is therefore **this** slice's question. This is the qualification/seeding layer
+  only — the bracket itself is CONF-04.
 
 - **CONF-04 · [NOT STARTED] The Worlds Tournament phase.** The cross-Conference Worlds
   Tournament itself, reusing the existing `round_robin_double_elim` (or single-elim) bracket
   engine over the CONF-03 participant list, **crowning the Season champion** (resolving the
-  CONF-01 NULL-champion-until-Worlds rule for multi-Conference Seasons).
+  CONF-01 / CONF-02 NULL-champion-until-Worlds rule for multi-Conference Seasons, which since
+  CONF-02 holds through the regional playoff phase as well as the round-robin phase — so every
+  surface rendering a Season champion must keep tolerating NULL until this slice lands).
 
 - **CONF-05 · [DONE] Shipped (2026-06-30) — draft-Season Manage Conferences page.**
   An in-app authoring surface (not Django admin) for partitioning a draft Season's enrolled

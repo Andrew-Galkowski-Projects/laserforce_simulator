@@ -10,6 +10,13 @@ from matches.sim_helpers.time_constants import (
     TICKS_PER_ROUND,
 )
 
+# The participant floor every shipped bracket format needs — the engine raises
+# "A tournament requires at least 4 participants." below it (``bracket.py``
+# build paths + ``Tournament.lock_and_build``). Named here so the CONF-02
+# regional-build guard and the Conference-partition authoring rules cite one
+# number instead of repeating a literal 4.
+MIN_BRACKET_PARTICIPANTS = 4
+
 
 class Match(models.Model):
     MATCH_TYPES = [
@@ -1135,8 +1142,10 @@ class Season(models.Model):
         * ``round_robin`` ⇒ ``_is_finished()`` (the existing
           all-fixtures-played check; byte-identical to today for the
           one-RR-phase case).
-        * ``tournament`` ⇒ built (``tournament_id is not None``) AND
-          ``tournament.state == "completed"``.
+        * ``tournament`` ⇒ ``_tournament_phase_complete`` (built AND drained;
+          CONF-02 — for a >= 2-Conference Season that means EVERY regional
+          bracket has drained, and it reduces to the old single-bracket check
+          when there are none).
         * any other (inert this slice) ⇒ ``False`` (the cursor parks on
           it; the compose guard forbids composing one, so unreachable).
         """
@@ -1147,13 +1156,27 @@ class Season(models.Model):
                 return self._is_finished()
             return self._rr_phase_complete(phase)
         if phase.phase_type == "tournament":
-            return (
-                phase.tournament_id is not None
-                and phase.tournament.state == "completed"
-            )
+            return self._tournament_phase_complete(phase)
         if phase.phase_type == "member_night":
             return self._member_night_phase_complete(phase)
         return False
+
+    def _tournament_phase_complete(self, phase) -> bool:
+        """CONF-02 — a tournament phase is complete IFF EVERY bracket drained.
+
+        Sibling of ``_rr_phase_complete`` / ``_member_night_phase_complete``.
+        For a >= 2-Conference Season this is the completion gate of ADR-0035:
+        the phase does not advance until every one of its N regional brackets
+        has crowned its Conference champion.
+
+        Byte-identical for a 0/1-Conference Season by inspection: with no
+        regional rows ``tournaments_for_phase`` returns ``[phase.tournament]``
+        exactly when ``phase.tournament_id is not None`` and ``[]`` otherwise,
+        so this reduces to the old ``tournament_id is not None and
+        tournament.state == "completed"``.
+        """
+        tournaments = self.tournaments_for_phase(phase)
+        return bool(tournaments) and all(t.state == "completed" for t in tournaments)
 
     def _member_night_phase_complete(self, phase) -> bool:
         """LG-07a — DERIVED member_night completion (no stored state; ADR-0033).
@@ -1277,7 +1300,9 @@ class Season(models.Model):
             prior = candidate
         return None
 
-    def _final_standings_for_phase(self, phase) -> "list[StandingsRow]":
+    def _final_standings_for_phase(
+        self, phase, conference=None
+    ) -> "list[StandingsRow]":
         """Assemble the exact ``compute_standings`` inputs ``_stamp_champion``
         used, so the playoff seeding rank == the single-RR-phase champion
         order.
@@ -1289,13 +1314,25 @@ class Season(models.Model):
         scoping is deferred); all season Matches are RR Matches this slice
         (tournament Matches stay ``season=NULL``), so they never pollute
         the query.
+
+        CONF-02 — the additive ``conference`` parameter scopes the derivation to
+        one Conference (ADR-0035): the team corpus becomes that Conference's own
+        snapshot and the Match corpus gains the ``Match.conference``
+        discriminator CONF-01 stamps. ``conference is None`` is byte-identical
+        to the pre-CONF-02 Season-wide query.
         """
         from .standings import compute_standings
 
-        team_ids = self.starting_team_ids_json or []
-        matches_qs = Match.objects.filter(season=self, is_completed=True).exclude(
-            season_phase__phase_type="member_night"
-        )
+        if conference is not None:
+            team_ids = list(conference.starting_team_ids_json or [])
+            matches_qs = Match.objects.filter(
+                season=self, conference=conference, is_completed=True
+            ).exclude(season_phase__phase_type="member_night")
+        else:
+            team_ids = self.starting_team_ids_json or []
+            matches_qs = Match.objects.filter(season=self, is_completed=True).exclude(
+                season_phase__phase_type="member_night"
+            )
         completed_matches: list[dict] = []
         for match in matches_qs:
             completed_matches.append(
@@ -1338,6 +1375,14 @@ class Season(models.Model):
         byte-identical to today's standings ``seed = row.rank``), wires it onto
         the phase, then ``lock_and_build()``s the bracket so matchups are
         visible immediately.
+
+        CONF-02 — in a Season with **two or more** Conferences the build fans
+        out to one regional ``Tournament`` per Conference (ADR-0035), linked by
+        ``Tournament.season_phase`` / ``Tournament.conference`` and left OFF
+        ``SeasonPhase.tournament``. A 0/1-Conference Season keeps the single
+        Season-wide bracket on ``phase.tournament`` exactly as before. The whole
+        method is atomic, so a failure part-way through the N regional builds
+        rolls all N back and the next activation retries cleanly.
         """
         phase = self.current_phase()
         if phase is None:
@@ -1357,12 +1402,68 @@ class Season(models.Model):
             # exists it must still be complete.
             if prior is not None and not self._phase_complete(prior):
                 return
-        order = self._seed_order_for_phase(phase)
+        conferences = self.ordered_conferences()
+        if len(conferences) >= 2:
+            # CONF-02 — regional playoffs: one Tournament per Conference
+            # (ADR-0035). ``SeasonPhase.tournament`` deliberately stays NULL;
+            # the N brackets are reached through ``phase.regional_tournaments``.
+            if phase.regional_tournaments.exists():
+                return  # idempotence guard for the regional path
+            for conference in conferences:
+                self._build_tournament_for_phase(phase, conference=conference)
+            return
+
+        tournament = self._build_tournament_for_phase(phase)
+        if tournament is None:
+            return
+        phase.tournament = tournament
+        phase.save(update_fields=["tournament"])
+
+    def _build_tournament_for_phase(
+        self, phase, conference=None
+    ) -> "Tournament | None":
+        """CONF-02 — build EXACTLY ONE bracket for ``phase`` (ADR-0035).
+
+        The extraction of the old inline build body, parameterised by
+        Conference. ``conference is None`` reproduces the pre-CONF-02
+        Season-wide bracket byte-for-byte (both new linkage columns left NULL,
+        Season-wide seeding, the old ``"<season> Playoffs"`` /
+        ``"<season> Tournament"`` naming). ``conference is not None`` builds a
+        regional bracket: Conference-scoped seeding, a Conference-qualified
+        name, and both linkage columns written.
+
+        ``phase.tournament_cut`` applies PER Conference, so a cut of 4 in a
+        2-Conference Season yields two 4-team brackets. An empty seed order is a
+        no-op: no ``Tournament`` row is created and ``None`` is returned.
+
+        Does NOT write ``phase.tournament`` — wiring the single-bracket embed
+        pointer is the caller's job, which is what keeps the two storage paths
+        from ever both firing for one phase.
+        """
+        order = self._seed_order_for_phase(phase, conference=conference)
         if phase.tournament_cut:
             order = order[: phase.tournament_cut]
         if not order:
-            return
-        if phase.tournament_mode == "standings":
+            return None
+        if conference is not None and len(order) < MIN_BRACKET_PARTICIPANTS:
+            # CONF-02 defensive guard — a Conference too small to field a bracket
+            # is SKIPPED rather than allowed to raise out of ``lock_and_build``.
+            # Without this, the ValidationError propagates out of the
+            # ``@transaction.atomic`` activation and rolls back the whole
+            # play-week that triggered it, so the Season can never finish the
+            # round-robin: every retry re-simulates and re-fails. The authoring
+            # surfaces (the create form's ``4 * N`` guard and the
+            # manage-conferences partition rule) stop this being reachable for
+            # new Seasons; this keeps an already-partitioned or admin-edited one
+            # from bricking. The Season-wide (``conference is None``) path is
+            # deliberately left strict — byte-identical to pre-CONF-02.
+            return None
+        if conference is not None:
+            if phase.tournament_mode == "standings":
+                name = f"{self.name} — {conference.name} Playoffs"
+            else:
+                name = f"{self.name} — {conference.name} Tournament"
+        elif phase.tournament_mode == "standings":
             name = f"{self.name} Playoffs"
         else:
             name = f"{self.name} Tournament"
@@ -1378,6 +1479,11 @@ class Season(models.Model):
             wb_advancers=phase.wb_advancers,
             lb_advancers=phase.lb_advancers,
             swiss_rounds=phase.swiss_rounds,
+            **(
+                {"season_phase": phase, "conference": conference}
+                if conference is not None
+                else {}
+            ),
         )
         for position, team_id in enumerate(order):
             TournamentParticipant.objects.create(
@@ -1385,11 +1491,39 @@ class Season(models.Model):
                 team_id=team_id,
                 seed=position + 1,
             )
-        phase.tournament = tournament
-        phase.save(update_fields=["tournament"])
         tournament.lock_and_build()
+        return tournament
 
-    def _seed_order_for_phase(self, phase) -> list[int]:
+    def tournaments_for_phase(self, phase) -> "list[Tournament]":
+        """CONF-02 — the Tournament(s) of ``phase``: the ONE caller seam.
+
+        Every drain caller and the Playoffs screen goes through here; nobody
+        re-implements the "regional else single" fallback.
+
+        * a non-persisted (implicit fallback) or non-``tournament`` phase ⇒ ``[]``
+        * regional first — ``phase.regional_tournaments`` in Conference-ordinal
+          order (``id`` the deterministic tiebreak), so the N brackets always
+          present, drain and render in the Conferences' declared display order
+        * else the Season-wide embed ``[phase.tournament]``, or ``[]`` when the
+          phase has not been built yet.
+
+        Returns a plain ``list`` (not a queryset) so callers can iterate it
+        repeatedly without re-querying.
+        """
+        if phase.pk is None:
+            return []
+        if phase.phase_type != "tournament":
+            return []
+        regional = list(
+            phase.regional_tournaments.select_related("conference").order_by(
+                "conference__ordinal", "id"
+            )
+        )
+        if regional:
+            return regional
+        return [phase.tournament] if phase.tournament_id is not None else []
+
+    def _seed_order_for_phase(self, phase, conference=None) -> list[int]:
         """LG-02-Part2c-3c — the seeded team-id order for a tournament phase.
 
         Branches on ``phase.tournament_mode``:
@@ -1402,13 +1536,23 @@ class Season(models.Model):
           ASC tiebreak). Mean of an empty active-players list ⇒ ``0.0``.
         * ``unseeded`` — a fresh ``random.Random()`` shuffle of the snapshot
           team ids (NON-deterministic; NOT the SIM-07 seed chain).
+
+        CONF-02 — the additive ``conference`` parameter scopes ALL THREE modes
+        to one Conference (ADR-0035): ``standings`` seeds from that Conference's
+        Standings, ``strength`` ranks that Conference's snapshot teams, and
+        ``unseeded`` shuffles them. ``conference is None`` is byte-identical to
+        the pre-CONF-02 Season-wide order. ``prior`` is Conference-agnostic —
+        phases are a Season-level axis, Conferences are orthogonal.
         """
         if phase.tournament_mode == "standings":
             prior = self._preceding_phase(phase)
-            rows = self._final_standings_for_phase(prior)
+            rows = self._final_standings_for_phase(prior, conference=conference)
             return [row.team_id for row in rows]
 
-        team_ids = self.starting_team_ids_json or []
+        if conference is not None:
+            team_ids = list(conference.starting_team_ids_json or [])
+        else:
+            team_ids = self.starting_team_ids_json or []
 
         if phase.tournament_mode == "strength":
             from .bracket import default_seed_order
@@ -1460,6 +1604,20 @@ class Season(models.Model):
         same logic the old ``_stamp_champion`` carried.
         """
         if final_phase.phase_type == "tournament":
+            regional = list(final_phase.regional_tournaments.all())
+            if regional:
+                # CONF-02 — a Regional playoff crowns a Conference champion, NOT
+                # a Season champion (ADR-0035). ``champion_team`` stays NULL
+                # until Worlds, exactly as CONF-01 already leaves it for a
+                # multi-Conference RR-final Season. The ``champion_id is None``
+                # guard mirrors the single-bracket guard below and never blocks
+                # in practice (the engine stamps ``champion`` together with
+                # ``state="completed"``).
+                if any(t.champion_id is None for t in regional):
+                    return
+                self.state = "completed"
+                self.save()
+                return
             champion = final_phase.tournament.champion
             if champion is None:
                 return
@@ -2152,6 +2310,32 @@ class Tournament(models.Model):
         blank=True,
         on_delete=models.SET_NULL,
         related_name="tournaments_won",
+    )
+    # CONF-02 — regional-playoff linkage (ADR-0035). Both NULL for a sandbox
+    # Tournament AND for the Season-wide bracket of a 0/1-Conference Season
+    # (that one is still reached through SeasonPhase.tournament). Non-NULL ONLY
+    # on a regional Tournament: one per Conference of a >= 2-Conference Season's
+    # tournament phase.
+    #
+    # NAMING HAZARD: ``season_phase`` (here, the forward FK, reverse-accessed as
+    # ``phase.regional_tournaments``) is NOT ``season_phases`` (the pre-existing
+    # reverse manager of ``SeasonPhase.tournament``). One character apart,
+    # opposite directions. A regional Tournament has ``season_phase_id`` set and
+    # an EMPTY ``season_phases``; a Season-wide embedded Tournament is the
+    # reverse.
+    season_phase = models.ForeignKey(
+        "matches.SeasonPhase",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="regional_tournaments",
+    )
+    conference = models.ForeignKey(
+        "matches.Conference",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="tournaments",
     )
     # LG-02b-2 — per-Bracket-round best-of-N Series escalation. The resolved N
     # for each Bracket node is anchored to its depth from the final (depth 0 =

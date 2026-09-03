@@ -179,7 +179,11 @@ def _build_overall_context(team: Team) -> dict:
     rounds = (
         GameRound.objects.filter(
             Q(match__season__isnull=False)
-            | Q(match__series_match__node__tournament__season_phases__isnull=False),
+            | Q(match__series_match__node__tournament__season_phases__isnull=False)
+            # CONF-02 — a REGIONAL playoff Tournament is linked by the forward FK
+            # Tournament.season_phase (ADR-0035), not by the season_phases reverse
+            # manager, so it needs its own term. Note the one-character difference.
+            | Q(match__series_match__node__tournament__season_phase__isnull=False),
             match__is_completed=True,
         )
         .filter(Q(team_red=team) | Q(team_blue=team))
@@ -197,8 +201,15 @@ def _build_overall_context(team: Team) -> dict:
 
     # Count of DISTINCT season-embedded playoff Tournaments the team was seeded
     # into (made the bracket), team-global across all leagues.
+    # CONF-02 — the two terms OR: ``season_phases`` finds a Season-wide embedded
+    # playoff, ``season_phase`` a REGIONAL one (ADR-0035). A standalone sandbox
+    # Tournament has neither, so it still counts 0. The positional Q objects MUST
+    # precede the keyword argument.
     playoff_appearances = (
-        Tournament.objects.filter(season_phases__isnull=False, participants__team=team)
+        Tournament.objects.filter(
+            Q(season_phases__isnull=False) | Q(season_phase__isnull=False),
+            participants__team=team,
+        )
         .distinct()
         .count()
     )

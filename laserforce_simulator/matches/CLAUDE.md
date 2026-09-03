@@ -6958,6 +6958,229 @@ discriminator change.
   (CONF-03) + the Worlds Tournament (CONF-04), the create-League Conference composer (CONF-05),
   per-Conference rotating map pools (CONF-06).
 
+## CONF-02 per-conference regional playoffs
+
+The second slice of the **Conference** epic, and the one that makes a Conference a full
+competitive unit: after a Conference's regular season completes, that Conference runs **its own**
+seeded playoff bracket — a **Regional playoff** — crowning one **Conference champion**.
+
+**Read this first: CONF-02 is also a bug fix.** Before this slice,
+`Season._final_standings_for_phase` computed Standings over the **whole Season** with no
+Conference scoping, and `Season.activate_pending_tournament_phase` carried **no Conference
+guard**. A `>= 2`-Conference Season with a trailing `tournament` phase therefore built **one
+cross-Conference playoff** — teams from different Conferences meeting in a bracket, a direct
+contradiction of the intra-Conference invariant [ADR-0034](../../docs/adr/0034-conference-partition.md)
+established and CONF-01 shipped. CONF-02 does not merely add regional playoffs; it corrects that.
+See [ADR-0035](../../docs/adr/0035-regional-playoffs-one-tournament-per-conference.md), the
+CONTEXT.md **Regional playoff** / **Conference champion** terms, and the seam contract
+[`.claude/worktrees/conf-02-seam-contract.md`](../../.claude/worktrees/conf-02-seam-contract.md).
+
+The shape: **one `tournament` `SeasonPhase` builds N first-class `Tournament` rows, one per
+Conference.** Each is a real Tournament with its own participants, seeding, bracket nodes and
+champion, so the bracket engine is reused **verbatim** — `lock_and_build`,
+`play_next_bracket_round`, `play_next_node`, `find_next_node`, `stage_progress`,
+`_collapse_drop_byes`, `series_length_for_round` and **all five formats are unchanged**. Every
+generalisation lives in the callers. **A 0/1-Conference Season is byte-identical** in rows,
+reads, champion stamping and rendered DOM ids; **no Score Calibration re-baseline** (no
+simulation mechanic changes — the only shifts are how many `Tournament` rows a tournament phase
+produces and which Match corpus seeds them).
+
+**CHANGED `Tournament` — two additive nullable FKs (`matches/models.py`, after `champion`,
+before the `final_series_length` block).** `season_phase = FK("matches.SeasonPhase", null=True,
+blank=True, on_delete=SET_NULL, related_name="regional_tournaments")` and `conference =
+FK("matches.Conference", null=True, blank=True, on_delete=SET_NULL, related_name="tournaments")`
+— the same nullable-discriminator-FK precedent as `Match.season_phase` / `Match.conference` /
+`SeasonPhase.tournament`, chosen over deriving the relationship from a join so a phase can
+**enumerate its own brackets** (which is what makes "all N drained" a clean query). `SET_NULL`
+on both: deleting a Season must not cascade a Tournament's history away. Both are **NULL on a
+sandbox Tournament and on the Season-wide bracket of a 0/1-Conference Season**; non-NULL **only**
+on a regional Tournament. `Tournament` still has **no `class Meta`** and none was added — no
+`unique_together` on `(season_phase, conference)`; the build path is guarded by an idempotence
+check, not a DB constraint.
+
+> **Naming hazard — the single most confusable pair in this app.** `Tournament` now carries
+> **both** `tournament.season_phase` (the **new forward FK** added here — the regional link,
+> reverse-accessed as `phase.regional_tournaments`) and `tournament.season_phases` (the
+> **pre-existing reverse manager** of `SeasonPhase.tournament`, i.e. "the phases whose single
+> embed pointer targets me"). They differ by one character and mean **opposite directions**.
+> A regional Tournament has `season_phase_id` set and an **empty** `season_phases`; a Season-wide
+> embedded Tournament has `season_phase_id is None` and a **non-empty** `season_phases`. Never
+> substitute one for the other.
+
+**NOT changed: `SeasonPhase.tournament`.** It keeps its exact meaning, type, kwargs and
+`related_name="season_phases"`. It is **not** widened to an M2M, not deprecated, and **never
+written on a regional build**. The two storage paths are mutually exclusive per phase:
+
+| Season shape | `phase.tournament_id` | `phase.regional_tournaments` |
+| --- | --- | --- |
+| 0 or 1 Conference, tournament phase built | the one Tournament's id | empty |
+| `>= 2` Conferences, tournament phase built | **stays NULL** | N rows, one per Conference |
+| any shape, not yet built | NULL | empty |
+
+So a **non-empty `regional_tournaments` *is* the "this phase went regional" discriminator**.
+
+**Conference-scoped seeding — additive `conference=None` parameters, not sibling methods.**
+`Season._final_standings_for_phase(self, phase, conference=None)` and
+`Season._seed_order_for_phase(self, phase, conference=None)` each gained one keyword parameter.
+With `conference is None` both are **byte-identical to before** — not one character of the
+resulting query changes — so every existing call site keeps working unedited. With a Conference:
+`_final_standings_for_phase` takes `team_ids` from `conference.starting_team_ids_json` and adds
+`conference=conference` to the Match `filter(...)` (the member-night `.exclude` and the
+`compute_standings(completed_matches, enrolled_teams)` call downstream are untouched);
+`_seed_order_for_phase` sources its `team_ids` from the Conference snapshot for the `strength`
+and `unseeded` branches and passes `conference=` through on the `standings` branch. A parameter
+rather than a `_regional_seed_order_for_phase` twin, deliberately — a second method would
+duplicate all three mode branches and give the two paths room to drift. **All three
+`tournament_mode` values split** in a `>= 2`-Conference Season (`standings` from that
+Conference's Standings, `strength` by that Conference's mean ratings, `unseeded` shuffling that
+Conference's teams) — there is no cross-Conference fixture of any kind before Worlds, so the
+intra-Conference invariant needs no exception clause.
+
+**NEW `Season._build_tournament_for_phase(self, phase, conference=None) -> Tournament | None`**
+(declared after `activate_pending_tournament_phase`, before `_seed_order_for_phase`) — the
+extraction of the old inline build body, parameterised by Conference, building **exactly one**
+bracket. `tournament_cut` applies **per Conference** (a cut of 4 in a 2-Conference Season yields
+two 4-team brackets, not one); an **empty seed order returns `None` and creates no row at all**;
+seeds restart at **1** in each bracket; every `Tournament` field is copied off the phase exactly
+as before, plus `season_phase=phase` + `conference=conference` **only** when scoped. Names are
+`f"{season.name} — {conference.name} Playoffs"` / `" … Tournament"` (em-dash U+2014, matching
+`Conference.__str__`), and **byte-identical to before** when unscoped. The helper does **not**
+write `phase.tournament` — wiring the single-bracket embed pointer stays the caller's job, which
+is what keeps the two storage paths from both firing.
+
+**CHANGED `Season.activate_pending_tournament_phase()` — branches on Conference count**
+(signature and every pre-existing gate unchanged: the `current_phase()` lookup, the phase-type
+guard, the `phase.tournament_id is not None` early return, `_preceding_phase`, and the
+`standings`-needs-a-complete-prior mode gate). After those gates: `len(self.ordered_conferences())
+>= 2` takes the regional path — return early if `phase.regional_tournaments.exists()` (the
+idempotence guard, deliberately **inside** the `>= 2` branch so the 0/1-Conference path runs the
+same query count it always did), then `_build_tournament_for_phase(phase, conference=c)` per
+Conference. Otherwise the single Season-wide build, followed by
+`phase.save(update_fields=["tournament"])` as before. The method is already
+`@transaction.atomic`, so the N-build loop is **all-or-nothing** and a partial failure retries
+cleanly. A Conference with an empty seed order simply contributes no bracket. **The three
+activation call sites (`Season.start_season`, `simulation/entrypoints.py` ×2) are unchanged** —
+the generalisation is entirely inside the method.
+
+**NEW `Season.tournaments_for_phase(self, phase) -> list[Tournament]` — the one caller seam.**
+**Public**, because `tasks.py`, `league_views.py` and `league_screens/playoffs.py` all call it and
+**nobody else re-implements the "regional else single" fallback**. Returns `[]` for a `pk is
+None` (implicit fallback) phase or a non-`tournament` phase; else the regional rows
+`select_related("conference").order_by("conference__ordinal", "id")` if any (so the N brackets
+always build, drain and render in declared Conference order, with `id` as the deterministic
+tiebreak); else `[phase.tournament]` when the embed pointer is set. A plain `list`, not a
+queryset, so callers can iterate repeatedly without re-querying.
+
+**NEW `Season._tournament_phase_complete(self, phase) -> bool` — the completion gate** (beside
+its siblings `_rr_phase_complete` / `_member_night_phase_complete`, whose naming it mirrors):
+`bool(tournaments) and all(t.state == "completed" for t in tournaments)` over
+`tournaments_for_phase(phase)`. **The phase does not advance until every one of its N regional
+brackets has drained** — mirroring how an RR phase completes only when every Conference's
+round-robin is done. `Season._phase_complete`'s `tournament` arm now just delegates to it, which
+reduces to the exact old expression for a 0/1-Conference Season.
+
+**CHANGED `Season._stamp_champion_for_final_phase()` — `champion_team` stays NULL.** Only the
+`tournament` arm changed: if `final_phase.regional_tournaments` is non-empty, the Season flips
+`state="completed"` and **returns without ever assigning `champion_team`** (guarded by a
+defensive `any(t.champion_id is None ...)` mirroring the existing single-bracket guard). **A
+Conference champion is not a Season champion** — CONF-01's NULL-champion rule now holds through
+the playoff phase as well as the round-robin phase, and only Worlds (CONF-04) crowns a Season
+champion. The round-robin / implicit-fallback arm, including CONF-01's
+`self.conferences.count() >= 2` block, is untouched, as is `complete_if_finished`.
+
+**Drain — the callers generalise, the engine does not.** The pacing rule follows CONF-01's
+parallel overlay: **one stage-step advances every regional bracket by one stage** (California and
+Nevada play their semifinals the same week, not one after the other). Three callers, each
+wrapping its per-tournament call in a loop over `season.tournaments_for_phase(phase)`:
+`tasks.play_playoffs_task` (its guard becomes `not tournaments`; `_stage_counts()` **aggregates**
+`stage_progress` element-wise across all N; the node-granular drain loop round-robins across the
+tournaments and keeps both PLAY-01 cancel checks and its `{"completed", "total", "cancelled"}`
+return shape verbatim), `tasks.play_season_task`'s tournament tail (a local `_drain_one_stage() ->
+int` returning `sum(play_next_bracket_round(t) for t in tournaments)` — `sum` over a generator
+evaluates **every** term, so do not rewrite it as a short-circuiting `any(...)`; **one budget unit
+= one stage across all N brackets**), and `league_views.play_week`'s playoff branch (so "Play One
+Week" advances every Conference's bracket by one stage). For `N == 1` every one of these returns
+exactly what it returned before.
+
+**Playoffs screen (`matches/league_screens/playoffs.py` + `templates/leagues/playoffs.html`).**
+The `brackets` list now appends **one entry per regional Tournament** instead of one per
+tournament phase; `_build_rounds(tournament)["winners"]` is called per Tournament, unchanged. Two
+new context keys join `phase` / `tournament` / `name` / `rounds` / `champion` / `pending`:
+`conference` (the `Conference`, or `None`) and **`key`**, the DOM-id discriminator that stops the
+N regional brackets of one phase colliding on `phase.ordinal` — `str(phase.ordinal)` when
+unscoped, `f"{phase.ordinal}-{conference.ordinal}"` when regional. The template swaps
+`bracket.phase.ordinal` for `bracket.key` in all five id positions (`league-playoffs-phase-` /
+`-champion-` / `-bracket-` / `-round-` / `-node-` + `-node-score-`) and adds a Conference
+sub-heading `league-playoffs-conference-{key}` rendered **only** when `bracket.conference` is set.
+Because `key == str(phase.ordinal)` whenever there is no Conference, **no existing rendered id or
+markup changes** for a 0/1-Conference Season.
+
+**Team History now counts regional playoffs (`matches/league_screens/team_history.py`).** This
+was a post-approval amendment — the gap was originally scoped out and then pulled in.
+`_build_overall_context` identified a season-embedded playoff purely through
+`tournament.season_phases`, the reverse manager; a regional Tournament is linked the **other**
+way, so without a fix its Rounds would be misfiled as standalone-sandbox play and its brackets
+would not count toward `playoff_appearances`. Both queries gained a term keyed on the new forward
+FK, **alongside** the untouched `season_phases` term (purely additional, never a replacement):
+the Round corpus gains a third `Q(match__series_match__node__tournament__season_phase__isnull=False)`,
+and `playoff_appearances` becomes `Q(season_phases__isnull=False) | Q(season_phase__isnull=False)`
+passed **positionally before** the `participants__team=team` kwarg. The existing `.distinct()` is
+**load-bearing on both** — the added term introduces another to-many join and would otherwise
+duplicate rows. **`championships` is deliberately NOT touched**: it counts
+`Season.objects.filter(champion_team=team)`, and a Conference champion is not a Season champion.
+Standalone sandbox Tournaments still have both `season_phase_id IS NULL` and an empty
+`season_phases`, so they stay excluded by both terms.
+
+**Migration `0058_tournament_regional_linkage.py`** (dep `0057_conference_match_conference`):
+exactly two `AddField`s. **No `RunPython`, no backfill, no data migration** — both columns are
+nullable and NULL is the correct terminal state for every existing row
+([ADR-0004](../../docs/adr/0004-simulation-data-is-disposable.md)).
+
+**Explicitly NOT changed.** The bracket engine and `Tournament.lock_and_build` (reused verbatim,
+all five formats); `SeasonPhase.tournament`; `Match.conference` **stamping** (CONF-02 only
+**reads** the discriminator); `compute_standings`; the simulator; `Season.complete_if_finished` /
+`_preceding_phase` / `_rr_phase_complete` / `_member_night_phase_complete` / `scheduled_fixtures*`
+/ `ordered_conferences` / `start_season`; the `Conference` model; and — a deliberate call — **the
+CONF-01 `season_standings` view**, which keeps its own per-Conference `standings_groups` block
+rather than being refactored onto `_final_standings_for_phase`. The two Conference-scoped queries
+coexist for now; ADR-0035 records consolidation as a follow-up rather than widening this slice
+into the CONF-01 standings surface. The sandbox `tournament_views` list is unfiltered, so regional
+Tournaments appear there alongside Season-embedded ones — existing behaviour, not a regression.
+
+**Locked names (quick index).**
+- **`Tournament`** NEW `season_phase` FK (`SET_NULL`, `related_name="regional_tournaments"`) +
+  `conference` FK (`SET_NULL`, `related_name="tournaments"`); no `Meta`. Beware
+  `season_phase` (forward) vs `season_phases` (reverse) — opposite directions.
+- **`Season`** CHANGED `_final_standings_for_phase(phase, conference=None)` /
+  `_seed_order_for_phase(phase, conference=None)` (both additive) /
+  `activate_pending_tournament_phase()` (branches on `>= 2` Conferences) / `_phase_complete()`
+  (tournament arm delegates) / `_stamp_champion_for_final_phase()` (regional arm leaves
+  `champion_team` NULL). NEW `_build_tournament_for_phase(phase, conference=None) -> Tournament |
+  None`, **public** `tournaments_for_phase(phase) -> list[Tournament]`,
+  `_tournament_phase_complete(phase) -> bool`.
+- **Drain callers** `tasks.play_playoffs_task` / `tasks.play_season_task` (tournament tail,
+  `_drain_one_stage()`) / `league_views.play_week` (playoff branch) — all loop over
+  `tournaments_for_phase(phase)`; `tournament_engine` itself unchanged.
+- **Screens** `league_screens/playoffs.py` (new `conference` + `key` bracket keys) +
+  `templates/leagues/playoffs.html` (ids keyed on `bracket.key`, new
+  `league-playoffs-conference-{key}`); `league_screens/team_history.py` (the two OR'd queries).
+- **Migration** `matches/migrations/0058_tournament_regional_linkage.py` (dep `0057`, two
+  `AddField`s, no `RunPython` / backfill).
+- **Tests** `matches/tests/test_regional_playoffs.py` (build, per-Conference participants and
+  seeds, all three modes splitting, per-Conference cut, idempotence, the completion gate, the
+  0-/1-Conference byte-identity pins, the additive-signature pin, and the Team-History class) +
+  `matches/tests/test_regional_playoffs_drain.py` (the three callers) + an appended class in
+  `matches/tests/test_league_playoffs.py` (N labelled brackets and the 0-Conference id pin).
+  House rule: brackets are drained by **driving the engine or stamping node winners**, never by
+  running the simulator, and never by patching the seam under test.
+- **ADR / CONTEXT** —
+  [ADR-0035](../../docs/adr/0035-regional-playoffs-one-tournament-per-conference.md) + the
+  CONTEXT.md **Regional playoff** / **Conference champion** terms. Invariants:
+  byte-identical-for-0/1-Conference; **no Score Calibration re-baseline**. **DEFERRED to later
+  CONF slices:** Worlds qualification / top-N-per-Conference (CONF-03), the Worlds Tournament and
+  the Season champion it finally crowns (CONF-04), per-Conference rotating map pools (CONF-06),
+  and any placement / elimination-depth ranking API on `Tournament`.
+
 ## CONF-05 manage conferences
 
 The in-app **draft-Season Conference composer** (the user-facing surface CONF-01 deferred,
