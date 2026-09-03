@@ -317,3 +317,63 @@ zero-Conference regression path on real data (completed league 42 / season 58).
   `-conference-name-{id}` DOM ids) is covered by the passing `test_season_views.py`
   view tests, which render the real template through the Django test client with
   Conferences present. No browser-only gap remains for the foundation slice.
+
+## Findings — CONF-04 (Worlds Tournament phase)
+- **[Open · cosmetic] Reported STAGE counts shrink when a play run crosses the
+  regional -> Worlds phase boundary.** `play_season_task` and `play_playoffs_task`
+  resolve `tournaments_for_phase` once and cache it; when the Worlds bracket is
+  built mid-run the loops deliberately re-resolve that list (ADR-0037), and
+  `_stage_counts()` closes over the same name. The `{"completed", "total"}`
+  payload therefore describes the **Worlds bracket alone** rather than the whole
+  run, so a "Play Playoffs" click that drains four regional stages plus the
+  Worlds final reports `1 / 1` instead of `5 / 5`. The numbers are internally
+  consistent (they describe the phase the run ended on) and `completed == total`
+  still holds, so nothing is *wrong* on screen — it just under-reports the work
+  done. Pinned as intended in the CONF-04 seam contract (section 6.B) and
+  asserted that way in `test_regional_playoffs_drain.py`. **Fix, if wanted:**
+  carry a running `(completed, total)` accumulator across the re-resolution in
+  both tasks and add it to `_stage_counts()`; ~6 lines each, but it also changes
+  the mid-run PROGRESS meta, so it wants its own slice rather than riding along
+  with the feature.
+
+### Browser pass — CONF-04 (2026-09-03, Chrome DevTools MCP, port 8001)
+
+Season 77 / league 67 ("ChromeTest CONF04 Worlds"): 8 teams, 2 Conferences of 4
+(Nevada / California), phases `round_robin,tournament:standings`. Four Teams per
+Conference means one qualifier each, so **M = 2** — the small-field case that
+required the new `minimum=2` bracket floor. Driven end-to-end over real HTTP
+through the synchronous `play-week` endpoint.
+
+| Check | Result |
+| --- | --- |
+| Worlds phase derived at Start Season (ordinal 3, `tournament_mode="worlds"`) | ✅ |
+| `worlds_qualifiers()` empty pre-qualification; phase parks the cursor | ✅ |
+| Playoffs screen pre-play: `league-playoffs-phase-2` + `-phase-3-worlds` + `-stage-3-worlds` | ✅ |
+| Cursor walk RR (6 clicks) -> regionals (2) -> Worlds (1) | ✅ |
+| **Boundary click builds AND drains Worlds** (dead-click fix) | ✅ |
+| `Season.champion_team` crowned and rendered ("Champion: Lumen Legion #7") | ✅ |
+| Play-control label reads "Play Until Playoffs" (not "…Tournament") | ✅ |
+| CONF-02 regional DOM ids unchanged (`-phase-2-1`, `-phase-2-2`, nodes, scores) | ✅ |
+| CONF-03 panel `league-playoffs-worlds` coexists with card `league-playoffs-phase-3-worlds` | ✅ |
+| Console clean (0 messages) on the Playoffs screen, before and after play | ✅ |
+| Network all 2xx; standings / dashboard / playoffs / history all 200 | ✅ |
+| Wide (1280x900) and narrow layouts render without horizontal overflow | ✅ |
+
+- **[Fixed in-slice] Worlds pending stub rendered the word "Worlds" twice** — the
+  card heading was the bare string `"Worlds"` and the CONF-04 `stage_label` badge
+  beside it also read "Worlds". `league_screens/playoffs.py` now uses
+  `f"{view_season.name} Worlds"`, mirroring the built card's heading (the
+  Tournament's own name), so the heading is stable across the unbuilt -> built
+  transition and the badge reads as a label rather than an echo. Test pin updated.
+- **[Open · cosmetic, pre-existing CONF-03 placement] The "Worlds qualification"
+  table renders BELOW the Worlds bracket**, so a reader sees the result before the
+  field that produced it. CONF-03 placed that panel after the bracket loop and
+  CONF-04 did not move it. Reordering is a template-only change, deliberately left
+  out of this slice's scope.
+- **[Environment, not a CONF-04 defect] The async play endpoints 500 locally.**
+  `play-until-end`, `play-two-months` and `play-playoffs` enqueue Celery tasks and
+  raise `RuntimeError: Retry limit exceeded while trying to reconnect to the Celery
+  result store backend` because Redis is not running on this machine. Unrelated to
+  this slice (it reproduces for any Season); the synchronous `play-week` /
+  `play-single-round` paths — which are the ones CONF-04 changed — were exercised
+  instead and are green.

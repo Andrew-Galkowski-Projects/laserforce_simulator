@@ -884,22 +884,192 @@ shipped) and is most useful alongside **CAR-03** manager-mode career play.
   subsection in
   [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
-- **CONF-04 · [NOT STARTED] The Worlds Tournament phase.** The cross-Conference Worlds
-  Tournament itself, reusing the existing `round_robin_double_elim` (or single-elim) bracket
-  engine, **crowning the Season champion** (resolving the CONF-01 / CONF-02 / CONF-03
-  NULL-champion-until-Worlds rule for multi-Conference Seasons, which since CONF-02 holds through
-  the regional playoff phase as well as the round-robin phase and since CONF-03 holds through the
-  Last-chance qualifier too — so every surface rendering a Season champion must keep tolerating NULL
-  until this slice lands). **The seam CONF-03 hands over is `Season.worlds_qualifiers() ->
-  list[WorldsQualifier]`** (`matches/worlds.py`): derived on demand and never persisted, already
-  ordered tier-first then by regular-season rate, with `seed` stamped **1..M**, and **all-or-`[]`** —
-  an empty list means "not ready", never a partial field, so CONF-04's build gate is exactly
-  `if not qualifiers: return`. **The consequence to design for: `M` is the sum of the per-Conference
-  qualifier counts (1, 2 or 3 each) and is routinely NOT a power of two** — 5, 7, 9 and so on — so
-  this slice must decide and implement **byes or a play-in round** rather than assuming a clean
-  bracket size; that handling was explicitly scoped out of CONF-03. It also owns the Worlds
-  `SeasonPhase` / `Tournament` row itself (CONF-03 added none) and the ordinal placement that puts it
-  after the final per-Conference `tournament` phase.
+- **CONF-04 · The Worlds Tournament phase. [DONE] Shipped (2026-09-03).** The slice that closes
+  the epic competitively: a Season with **two or more** Conferences grows a **derived,
+  never-authored fifth-mode `SeasonPhase`** — Worlds — carrying a **single Season-wide bracket**
+  built straight off CONF-03's `Season.worlds_qualifiers()`, drained through the **untouched**
+  bracket engine, and finally **crowning the Season champion** that CONF-01, CONF-02 and CONF-03
+  each deliberately left NULL. **Worlds is a phase, not a third bracket on the regional phase.**
+  The grill rejected hanging a third `Tournament` off the *existing* final tournament phase
+  (discriminated by a new `qualifier_stage="worlds"`) on two counts: it lands inside
+  `phase.regional_tournaments`, which `tournaments_for_phase` orders by `conference__ordinal`, and
+  the Worlds row's `conference` is NULL — which sorts **first on SQLite and last on PostgreSQL**,
+  making the bracket's drain and render position **backend-dependent** in a project whose two
+  supported backends are exactly those ([ADR-0025](docs/adr/0025-postgresql-canonical-sqlite-dev-only.md));
+  and it forces a rewrite of `_stamp_champion_for_final_phase`, whose `if regional: … return` is the
+  very line encoding "a Conference champion is not a Season champion". A fourth
+  `SeasonPhase.phase_type` value was rejected as too broad — every site keyed on
+  `phase_type == "tournament"` would need a parallel branch, and each is a place for the two kinds
+  of tournament phase to drift apart; `tournament_mode` already **is** the "what flavour of
+  tournament phase is this?" axis. **State: exactly one choices-only value.**
+  `SeasonPhase.TOURNAMENT_MODE_CHOICES` gains a fifth entry `("worlds", "Worlds")`, migration
+  `0060_alter_seasonphase_tournament_mode` — **one `AlterField`, choices-only, no `RunPython`, no
+  backfill, no second migration** (it has no database-level effect on either backend), per
+  [ADR-0004](docs/adr/0004-simulation-data-is-disposable.md). **No `Tournament` column is added**
+  and **there is deliberately NO `qualifier_stage == "worlds"`**: CONF-03's locked read rule — every
+  read tests `== "last_chance"` and nothing else — survives untouched, because the Worlds bracket is
+  identified from **`phase.tournament_mode`** (the PHASE flavour), never from anything on the
+  Tournament row. **The phase is DERIVED, never authored** — no composer wire token, no create-form
+  control, no admin surface. New private `Season._ensure_worlds_phase() -> SeasonPhase | None`
+  (idempotent; creates nothing unless `>= 2` Conferences **and** at least one persisted non-`worlds`
+  `tournament` phase exists **and** no Worlds phase does; ordinal is `max + 1`, every column written
+  explicitly and exhaustively so the row cannot drift on a default change) and
+  `_worlds_phase() -> SeasonPhase | None`, **the one resolver** that `_ensure_worlds_phase`, the
+  build seam and the owner-mood classifier all go through so nobody re-implements the
+  `tournament_mode == "worlds"` scan. **Two creation hooks:** `start_season()` appends it — the
+  **earliest moment at which every input is frozen** (the Conference partition, snapshotted just
+  above; the phase composition, authored at create) — and creating it *lazily* when qualification
+  first resolves was rejected for a race, since `complete_if_finished()` gates on
+  `ordered_phases()[-1]` and would flip the Season to `completed` with a NULL champion at the very
+  instant the regional phase finished; `activate_pending_tournament_phase()` calls it **again** as
+  the first of its two new statements, the same **recovery-hook** role CONF-03 gave that method, so
+  a Season **already active** when this shipped gains its Worlds phase on its next scheduled Round
+  with an identical row rather than through a data migration (an already-**completed** Season stays
+  completed and championless). `_run_season_rollover` **skips** it (one `continue`, the first
+  statement of the phase-copy loop): the rollover carries no Conferences forward, so a copied Worlds
+  phase would land on a flat Season whose `worlds_qualifiers()` returns `[]` forever and strand it
+  at `active` — and because the Worlds phase always holds the **highest** ordinal, skipping it
+  leaves the copied ordinals contiguous from 1, so **no renumbering is needed and none may be
+  added**. **`Season._final_tournament_phase()` is narrowed to skip `worlds`-mode phases** — one
+  `continue`, and after this slice the method means **"the final NON-Worlds tournament phase"**,
+  i.e. the Regional-playoff phase, which is exactly what both callers want; without it, appending
+  Worlds silently redirects qualification at the **Worlds phase's own bracket**, empty before the
+  build and self-referential after it. `complete_if_finished` does **not** call it (it uses
+  `ordered_phases()[-1]`), so champion stamping is unaffected. **New public
+  `Season.build_pending_worlds_bracket() -> bool`** (`@transaction.atomic`) — the idempotent build
+  seam, `True` **iff** it built on that call and `False` in every other case (no Worlds phase;
+  already built; prior phase incomplete; qualification not ready), gating in exactly that order and
+  then creating the `Tournament`, one `TournamentParticipant` per qualifier at **`seed=q.seed`**
+  (the stamped 1..M value, **not** `position + 1` — the enumerate index would silently work today
+  and break the instant anything re-orders the list), `lock_and_build(minimum=2)`, and the
+  `phase.tournament` wire; the whole thing is atomic, so a failure leaves **no** partial bracket and
+  the next hook-site call retries cleanly. Its `>= 2` qualifier guard is **defensive, not a live
+  branch** — a legitimate `>= 2`-Conference Season always yields at least one qualifier per
+  Conference — and exists only so admin-mangled data cannot reach `lock_and_build` with a
+  one-participant field. **The Worlds `Tournament` row is deliberately FLAT, and that is what makes
+  champion stamping work unedited:** named `f"{season.name} Worlds"` (**no em-dash**, mirroring the
+  flat `"… Playoffs"` shape rather than CONF-02's `"… — <Conference> Playoffs"`), format the literal
+  `"single_elimination"`, and **both CONF-02 linkage columns LEFT UNSET** (`season_phase` and
+  `conference` NULL, `qualifier_stage` at its `""` default) — structurally identical to the closing
+  playoff of a flat 0-Conference Season. Three existing behaviours therefore carry it with **no
+  change at all**: `tournaments_for_phase` returns `[phase.tournament]` (or `[]` while unbuilt);
+  `_tournament_phase_complete` requires that single bracket be `"completed"` and `bool([])` is
+  `False`, so **the Season parks on an unbuilt Worlds phase instead of completing championless**;
+  and `_stamp_champion_for_final_phase` sees an empty `regional` list, **skips** the CONF-02
+  early return and runs its existing single-bracket branch. **Neither `complete_if_finished` nor
+  `_stamp_champion_for_final_phase` is edited.** **The bracket floor becomes a keyword-only
+  `minimum`, and only Worlds passes 2:** `build_bracket`, `build_double_elim_bracket` (which
+  **forwards** it to its inner `build_bracket`) and `Tournament.lock_and_build` each swap their
+  hard-coded `len(participants) < 4` for `< minimum`, keyword-only so no positional call site can
+  drift, with the `ValueError` / `ValidationError` text left **literally** `"A tournament requires
+  at least 4 participants."` even when `minimum != 4` (existing tests and callers pin the string,
+  and the only non-4 caller's own guard makes it unreachable). `build_rr_de_finals_bracket` and
+  every other caller keep the default and are byte-identical. **PLAN.md's open "byes or a play-in
+  round" question was already answered:** `build_bracket` has handled arbitrary `N >= 4` since LG-02a
+  by rounding up to the next power of two and giving the top `size − N` seeds pre-resolved bye
+  nodes, so 5, 7 and 9 need no new mechanism and a play-in round would have been a second, redundant
+  one. What PLAN.md did **not** anticipate is a field **below** four: two Conferences of 2-4 Teams
+  send one qualifier each, so `M = 2`, and an 8-Team 2-Conference League is exactly what CONF-05's
+  create form produces by default — skipping Worlds there would mean **the most common Conference
+  setup a user can create silently never crowns anyone**, and a bracket-less walkover would invent a
+  second champion-stamping path and play no Worlds Match at all. `n = 2` yields one node, which *is*
+  the Worlds final; `n = 3` yields a size-4 bracket with seed 1 byeing into it. **Five hook sites,
+  and the ONE deliberate phase-boundary crossing:** making Worlds its own phase puts it behind a
+  boundary the drain loops do not cross (both tasks resolve `current_phase()` and cache
+  `tournaments_for_phase(phase)` **once**, and bracket Matches bypass `simulate_scheduled_round`, so
+  the activation hook goes quiet the moment the regular season ends — left alone, "Play whole
+  season" would stop with the regionals drained and Worlds unbuilt). Following CONF-03's
+  seed-then-continue precedent rather than restructuring the loops (an outer per-phase loop would
+  re-thread PLAY-01's cancel checks and the stage-budget arithmetic through a new level of nesting,
+  for a generality nothing yet needs): `play_playoffs_task` builds in its stall branch and, on
+  `True`, **re-resolves `phase` and `tournaments`** and `continue`s; `play_season_task`'s
+  `_drain_one_stage()` does the same behind a `nonlocal` and retries the stage once — because it
+  fires only when nothing else progressed, **one budget unit is still one stage** and both loop
+  bodies stay untouched; `league_views.play_single_round` builds before `complete_if_finished()`,
+  which is what stops the regionals-finishing click leaving the cursor on an unbuilt Worlds phase
+  whose `tournaments_for_phase` is `[]` (the next click would 400 and the user could never start
+  Worlds); `play_playoffs` builds **before `phase = season.current_phase()`** and not merely before
+  the guard, because the build writes `phase.tournament` on its **own** freshly-loaded instance and
+  a `phase` read earlier carries a stale `tournament_id is None` — a build-after-read would still
+  409; and `activate_pending_tournament_phase` runs ensure-then-build as its **first two
+  statements**, which also closes a structural hazard (building first sets `phase.tournament_id`, so
+  the existing idempotence guard fires and the `>= 2`-Conference branch can never fan regional
+  brackets out onto the Worlds phase — **the ordering is the guard**, no `tournament_mode` check was
+  added). Known and intended consequence: `_stage_counts()` closes over the same `tournaments` name,
+  so the reported `{"completed", "total"}` **shrinks** at the phase boundary — the counts describe
+  the **current** phase, matching CONF-02's contract, so tests assert the final return and the
+  terminal DB state and **never** PROGRESS monotonicity. **Owner mood is classified TWO-TIER, and
+  `matches/owner_mood.py` is NOT touched.** `_classify_playoffs_for_team` picks the first
+  `tournament` phase whose `tournament_id` is set; a regional phase leaves that NULL, so a
+  `>= 2`-Conference career League has always scored `("none", 0, 0)` on the playoff axis — and the
+  Worlds phase, which **does** set it, would have switched that axis on **by accident**, charging
+  every non-qualifier the full `"missed"` penalty regardless of how far it got in its own region.
+  The entire fix lives in the classifier, whose signature, return triple and four result strings are
+  unchanged: one additive `>= 2`-Conference branch (the `else` arm is today's body **verbatim**),
+  `num_rounds` becoming the Team's whole possible path — the rounds of its own Conference's Regional
+  playoff **plus** the rounds of the Worlds bracket — and `rounds_won` the distinct rounds it won
+  across both. **Count per bracket, then ADD — never union the raw `bracket_round` integers**, since
+  the two brackets number independently from 1 and a set union would collapse two wins into one.
+  Winning Worlds still returns `"champion"`; being cut from the regional bracket still returns
+  `"missed"`; a Team in **no** Conference returns the neutral `"none"` rather than the `-0.2`
+  `"missed"` penalty, a **pinned defensive choice** because broken data must not fire a Manager; and
+  **the Last-chance bracket is excluded from both the numerator and the denominator** so a Team
+  cannot ride it past the maximum path its Conference offers. `compute_playoffs_delta` is consumed
+  verbatim — its `"seeded"` branch is already depth-proportional, so the longer path yields the
+  intended ladder (Worlds champion > Worlds finalist > Conference champion > regional finalist >
+  first-round exit) **for free**; per-tier constants were rejected because CAR-02's values are
+  faithful to ZenGM's `updateOwnerMood` and a new ladder would have no such source, and summing two
+  independent per-bracket deltas was rejected because it doubles the axis range against a
+  `FIRE_THRESHOLD` tuned for one bracket. **Playoffs screen, with `templates/leagues/playoffs.html`
+  NOT edited:** both derivations gain a Worlds branch evaluated **first** (the Worlds Tournament's
+  `conference` is `None` and would otherwise fall into the Season-wide branch), giving `key`
+  `"<ord>-worlds"`, `stage` `"worlds"` and `stage_label` `"Worlds"` — and the pending stub gets the
+  same treatment plus `name` `"Worlds"`, so a phase's DOM id is **stable across the unbuilt → built
+  transition** and a `>= 2`-Conference Season shows a "Worlds" pending section from the moment the
+  Season starts. Every id falls out of the existing `{{ bracket.key }}` interpolations and the
+  existing `{% if bracket.stage_label %}` badge block renders the Worlds badge for free
+  (`league-playoffs-phase-<ord>-worlds` and friends); the Worlds stub deliberately reaches the
+  existing pending alert's `{% else %}` text rather than getting a branch of its own. **DOM-id
+  hazard:** `id="league-playoffs-worlds"` is **already taken** by CONF-03's Worlds *qualification*
+  table — the CONF-04 bracket **section** is `league-playoffs-phase-<ord>-worlds`, and the two
+  coexist on the same page. Finally `_playoff_cursor_keys`'s `following_tournament_is_final` is
+  **generalised** from "the next tournament phase *is* the last phase" to "**nothing but tournament
+  phases follows it**", verified to reproduce today's result on both pre-CONF-04 phase shapes;
+  without it, appending Worlds would flip a season-ending playoff back to the mid-season "Until
+  Tournament" label. **Naming hazards worth carrying forward:** `tournament_mode == "worlds"` (the
+  PHASE flavour) vs `qualifier_stage` (the BRACKET stage) — different models, different questions,
+  and there is no `"worlds"` stage; `_final_tournament_phase()` now meaning "the final **non**-Worlds
+  tournament phase" and **no longer** being `ordered_phases()[-1]` for a `>= 2`-Conference Season;
+  the builder kwarg `minimum` (default `4`) vs `MIN_BRACKET_PARTICIPANTS` (`models.py:18`, value
+  `4`) which are **not** wired together because `bracket.py` is a pure module that must not import
+  `models.py`; the Worlds Tournament having `season_phase_id is None` **and** a non-empty
+  `season_phases`; and `build_pending_worlds_bracket` (returns `bool`) vs
+  `seed_pending_last_chance_brackets` (returns `int`) sitting side by side at four of the same hook
+  sites — both are correct as written and must not be "harmonised". Invariants: a **0/1-Conference
+  Season is byte-identical** in rows, reads, champion stamping and rendered DOM ids (no Worlds
+  phase, no Worlds `Tournament`, no `-worlds` substring anywhere on the screen); **every CONF-02 /
+  CONF-03 DOM id is unchanged**; every existing `build_bracket` / `build_double_elim_bracket` /
+  `lock_and_build` caller **keeps `minimum=4`** with unchanged error strings; **`owner_mood.py`, the
+  bracket engine, `matches/worlds.py`, `complete_if_finished`, `_stamp_champion_for_final_phase` and
+  the Playoffs template are all untouched**; and **no Score Calibration re-baseline** (the only
+  shifts are one choices-only `AlterField`, one derived `SeasonPhase` row and one `Tournament` row
+  per `>= 2`-Conference Season). Tests: `matches/tests/test_worlds_tournament.py` (new — phase
+  derivation and its three gates, the recovery hook, the build seam's idempotence, `seed=q.seed`
+  asserted against a field where the enumerate index would differ, the `M = 2` one-node and `M = 3`
+  bye paths end to end, the champion, the flat-row shape, the `play_playoffs` 202 and
+  `play_single_round` non-dead-click pins, `lock_and_build(minimum=…)`, both byte-identity pins, and
+  the narrowing asserted **only** through `worlds_qualifiers()`) plus one appended class each in
+  `matches/tests/test_regional_playoffs_drain.py` (both task hook sites), `test_season_playoffs.py`
+  (parks unbuilt, crowns on completion), `test_owner_evaluations_writer.py` (the decision table
+  through the writer), `test_league_next_season.py` (the rollover skip) and `test_bracket.py` (the
+  `minimum=` kwarg, keyword-only, DE forwarding, unchanged message). **Scope-out:** no per-Conference
+  map pools (CONF-06), no placement / elimination-depth ranking API on `Tournament`, no persisted
+  qualifier or Worlds-standings table, no composer wire token or authoring UI for the Worlds phase,
+  no template edit, and **no data migration or `RunPython` backfill of any kind**. See
+  [ADR-0037](docs/adr/0037-worlds-is-a-derived-season-phase.md), the seam contract
+  [`.claude/worktrees/conf-04-seam-contract.md`](.claude/worktrees/conf-04-seam-contract.md), the
+  CONTEXT.md **Worlds** / **Worlds phase** / **Season phase** terms, and the **CONF-04** subsection
+  in [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
 - **CONF-05 · [DONE] Shipped (2026-06-30) — draft-Season Manage Conferences page.**
   An in-app authoring surface (not Django admin) for partitioning a draft Season's enrolled

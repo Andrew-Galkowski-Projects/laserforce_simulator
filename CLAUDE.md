@@ -37,6 +37,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - When piping into `manage.py shell`, write a UTF-8 temp file and invoke
   `manage.py shell -c "$(Get-Content tmp.py -Raw)"` (or pass the path via
   `--command`) to avoid BOM and interactive-shell issues.
+- **Do not push large content through a shell heredoc.** Past roughly a few tens
+  of KB the call fails with `ENAMETOOLONG: name too long, uv_spawn`, because the
+  whole command arrives as one process argument. This bites when adding a long
+  CLAUDE.md / PLAN.md section. Write the block to a file with the Write tool,
+  then splice it in — `head -N target > tmp && cat block >> tmp && tail -n +M
+  target >> tmp && cp tmp target` — which also preserves the surrounding file's
+  CRLF line endings.
 
 ## Commands
 
