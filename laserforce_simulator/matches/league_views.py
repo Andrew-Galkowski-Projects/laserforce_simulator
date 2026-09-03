@@ -3293,9 +3293,26 @@ def play_single_round(request, season_id: int) -> HttpResponse:
     # so this is byte-identical to the single ``play_next_node`` call it
     # replaces; for a regional phase it walks the Conferences in ordinal order,
     # keeping "Play Single Round" a single-node step across the whole phase.
+    progressed = False
     for tournament in tournaments:
         if play_next_node(tournament) is not None:
+            progressed = True
             break
+    # CONF-03 — seed UNCONDITIONALLY after the click (idempotent, returns 0 when
+    # nothing is ready). This is what stops "Play Single Round" from becoming a
+    # DEAD CLICK: the click that resolves a Regional playoff's final node leaves
+    # that bracket ``completed`` and its Last-chance sibling ``setup``, so the
+    # dashboard would read neither "active" nor "completed" and hide the control.
+    # Seeding here flips the sibling to ``active`` before the redirect renders.
+    seeded = season.seed_pending_last_chance_brackets(phase)
+    if not progressed and seeded:
+        # Nothing was playable this click, but seeding just made something
+        # playable — play one node so the click is never wasted. ``tournaments``
+        # was resolved BEFORE the seed and already contains the eager row, so it
+        # sees the newly-seeded bracket; do not re-resolve.
+        for tournament in tournaments:
+            if play_next_node(tournament) is not None:
+                break
     season.complete_if_finished()
     return redirect("season_dashboard", season_id=season.id)
 

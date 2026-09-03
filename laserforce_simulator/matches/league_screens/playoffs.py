@@ -56,6 +56,13 @@ def playoffs(request: HttpRequest, league_id: int) -> HttpResponse:
     per regional bracket, headed by its Conference name (ADR-0035). The new
     ``key`` entry keeps their DOM ids distinct while leaving a 0/1-Conference
     Season's ids byte-identical.
+
+    CONF-03 — a Conference of 9+ Teams on the FINAL tournament phase adds one
+    more section for its Last-chance qualifier bracket (ADR-0036), keyed with a
+    ``-lc`` suffix and badged by ``stage_label``; while it is unseeded it
+    renders the pending alert rather than an empty bracket div. The screen also
+    carries the derived ``worlds_qualifiers`` field, which renders as a
+    read-only panel below the brackets once qualification is complete.
     """
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
@@ -103,6 +110,8 @@ def playoffs(request: HttpRequest, league_id: int) -> HttpResponse:
                         "pending": True,
                         "conference": None,
                         "key": str(phase.ordinal),
+                        "stage": "",
+                        "stage_label": "",
                     }
                 )
                 continue
@@ -115,11 +124,24 @@ def playoffs(request: HttpRequest, league_id: int) -> HttpResponse:
                 # brackets of one phase from colliding on ``phase.ordinal``. It
                 # IS ``str(phase.ordinal)`` for a Season-wide bracket, so every
                 # existing DOM id on a 0/1-Conference Season is unchanged.
-                key = (
-                    str(phase.ordinal)
-                    if conference is None
-                    else f"{phase.ordinal}-{conference.ordinal}"
-                )
+                #
+                # CONF-03 — the ``-lc`` suffix is the Last-chance discriminator
+                # (ADR-0036). Every CONF-02 regional key and every
+                # 0/1-Conference key is therefore byte-identical, and so is
+                # every DOM id built from them.
+                is_last_chance = tournament.qualifier_stage == "last_chance"
+                if conference is None:
+                    key = str(phase.ordinal)
+                    stage = ""
+                elif is_last_chance:
+                    key = f"{phase.ordinal}-{conference.ordinal}-lc"
+                    stage = "last_chance"
+                else:
+                    key = f"{phase.ordinal}-{conference.ordinal}"
+                    stage = "regional_playoff"
+                # Deliberately EMPTY for a regional bracket, so no new element
+                # renders on a CONF-02 Season.
+                stage_label = "Last Chance Qualifier" if is_last_chance else ""
                 brackets.append(
                     {
                         "phase": phase,
@@ -127,9 +149,16 @@ def playoffs(request: HttpRequest, league_id: int) -> HttpResponse:
                         "name": tournament.name,
                         "rounds": rounds,
                         "champion": tournament.champion,
-                        "pending": False,
+                        # An unseeded Last-chance bracket is the ONLY row that
+                        # can still be in ``setup`` when it renders —
+                        # ``_build_tournament_for_phase`` always calls
+                        # ``lock_and_build()``, so every pre-CONF-03 bracket is
+                        # ``active`` or later and this stays literally False.
+                        "pending": tournament.state == "setup",
                         "conference": conference,
                         "key": key,
+                        "stage": stage,
+                        "stage_label": stage_label,
                     }
                 )
 
@@ -142,5 +171,13 @@ def playoffs(request: HttpRequest, league_id: int) -> HttpResponse:
         "view_season": view_season,
         "selected_season_id": view_season.id if view_season is not None else None,
         "brackets": brackets,
+        # CONF-03 — the raw ``list[WorldsQualifier]`` (ADR-0036), seeded 1..M or
+        # empty. ``{% if worlds_qualifiers %}`` IS the readiness test: the
+        # derivation is all-or-nothing, so there is no separate ``worlds_ready``
+        # flag and no partial field to guard against. ``[]`` for a
+        # 0/1-Conference Season, so the panel is absent entirely there.
+        "worlds_qualifiers": (
+            view_season.worlds_qualifiers() if view_season is not None else []
+        ),
     }
     return render(request, "leagues/playoffs.html", context)
