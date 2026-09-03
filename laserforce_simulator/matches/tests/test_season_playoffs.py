@@ -973,3 +973,315 @@ class TestBuildFormatWithCutInterplay(TestCase):
         )
         self.assertEqual(len(participants), 4)
         self.assertEqual([p.seed for p in participants], [1, 2, 3, 4])
+
+
+# ---------------------------------------------------------------------------
+# CONF-04 - the Playoffs screen's Worlds bracket section
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/conf-04-seam-contract.md`` §9 + §11.4;
+# rationale in
+# [ADR-0037](../../docs/adr/0037-worlds-is-a-derived-season-phase.md).
+#
+# ``templates/leagues/playoffs.html`` is NOT EDITED this slice - every Worlds
+# DOM id falls out of the existing ``{{ bracket.key }}`` interpolations, and the
+# existing ``{% if bracket.stage_label %}`` badge block renders the Worlds badge
+# for free. The whole change is in
+# ``matches/league_screens/playoffs.py``: BOTH derivations (the built entry and
+# the unbuilt pending stub) gain a Worlds branch evaluated FIRST, because the
+# Worlds ``Tournament``'s ``conference`` is ``None`` and would otherwise fall
+# into the Season-wide branch. ``is_worlds`` reads the PHASE flavour
+# (``phase.tournament_mode == "worlds"``), NEVER anything on the Tournament row
+# - there is deliberately no ``qualifier_stage == "worlds"`` (§13 hazard 2).
+#
+# DOM-ID HAZARD (contract §9.4). ``id="league-playoffs-worlds"`` is ALREADY
+# TAKEN by CONF-03's Worlds QUALIFICATION table (the seed / team / conference /
+# provenance panel below the brackets). The CONF-04 bracket SECTION is
+# ``league-playoffs-phase-<ord>-worlds``. They coexist on the same page for a
+# fully-resolved Season and must never be conflated in an assertion - the class
+# below pins both, separately.
+#
+# Appended as a NEW class; no existing class above is modified.
+
+
+from django.urls import reverse as _conf04_reverse  # noqa: E402
+
+from matches.tests.test_regional_playoffs import (  # noqa: E402
+    _built_regional_season as _conf04_built_regional_season,
+    _conf_season as _conf04_conf_season,
+)
+from matches.tests.test_worlds_tournament import (  # noqa: E402
+    _drain_bracket as _conf04_drain_bracket,
+    _regionals_drained_season as _conf04_regionals_drained_season,
+    _worlds_built_season as _conf04_worlds_built_season,
+    _worlds_phase_row as _conf04_worlds_phase_row,
+)
+
+
+def _conf04_bracket_by_key(response, key: str) -> "dict | None":
+    """The rendered ``brackets`` entry whose ``key`` is ``key``."""
+    for bracket in response.context["brackets"]:
+        if bracket["key"] == key:
+            return bracket
+    return None
+
+
+def _conf04_playoffs_get(client, season):
+    return client.get(
+        _conf04_reverse("league_playoffs", kwargs={"league_id": season.league_id})
+    )
+
+
+class TestConf04WorldsPlayoffsScreen(TestCase):
+    """CONF-04 §9 - the Worlds bracket section, the pending stub, and the
+    byte-identity of every CONF-02 / CONF-03 key and DOM id."""
+
+    # -- §9.3 the pending stub ---------------------------------------------
+
+    def test_an_unstarted_two_conference_season_shows_a_worlds_pending_stub(
+        self,
+    ) -> None:
+        """A >= 2-Conference Season shows a "Worlds" pending section from the
+        moment the Season starts - the phase is derived at ``start_season`` and
+        the panel tells the user Worlds is coming (§9.3)."""
+        season, _conferences, _groups, _rr, _phase = _conf04_conf_season(
+            "Conf04Stub", [4, 4]
+        )
+        worlds_phase = _conf04_worlds_phase_row(season)
+        response = _conf04_playoffs_get(self.client, season)
+        self.assertEqual(response.status_code, 200)
+
+        stub = _conf04_bracket_by_key(response, f"{worlds_phase.ordinal}-worlds")
+        self.assertIsNotNone(stub, "the unbuilt Worlds phase renders a stub")
+        # CONF-04 - the stub heading mirrors the BUILT card's heading
+        # ("<season> Worlds"), so the badge beside it reads as a label
+        # rather than echoing the same word twice.
+        self.assertEqual(stub["name"], f"{season.name} Worlds")
+        self.assertEqual(stub["stage"], "worlds")
+        self.assertEqual(stub["stage_label"], "Worlds")
+        self.assertTrue(stub["pending"])
+        self.assertIsNone(stub["tournament"])
+        self.assertIsNone(stub["conference"])
+        self.assertEqual(stub["rounds"], [])
+        self.assertIsNone(stub["champion"])
+
+    def test_the_pending_stub_renders_the_worlds_section_dom_id(self) -> None:
+        season, _conferences, _groups, _rr, _phase = _conf04_conf_season(
+            "Conf04StubDom", [4, 4]
+        )
+        ordinal = _conf04_worlds_phase_row(season).ordinal
+        response = _conf04_playoffs_get(self.client, season)
+        self.assertContains(response, f'id="league-playoffs-phase-{ordinal}-worlds"')
+        self.assertContains(response, f'id="league-playoffs-stage-{ordinal}-worlds"')
+
+    def test_the_pending_stub_key_matches_the_built_key(self) -> None:
+        """A phase's DOM id is stable across the unbuilt -> built transition
+        (§9.3), so the stub's key equals the built entry's key."""
+        season, _conferences, _groups, _rr, phase = _conf04_regionals_drained_season(
+            "Conf04StubStable", [4, 4]
+        )
+        ordinal = _conf04_worlds_phase_row(season).ordinal
+        before = _conf04_bracket_by_key(
+            _conf04_playoffs_get(self.client, season), f"{ordinal}-worlds"
+        )
+        self.assertIsNotNone(before)
+        self.assertTrue(before["pending"])
+
+        self.assertTrue(season.build_pending_worlds_bracket())
+        after = _conf04_bracket_by_key(
+            _conf04_playoffs_get(self.client, season), f"{ordinal}-worlds"
+        )
+        self.assertIsNotNone(after)
+        self.assertFalse(after["pending"])
+        self.assertEqual(before["key"], after["key"])
+
+    # -- §9.2 the built Worlds bracket dict --------------------------------
+
+    def test_the_built_worlds_bracket_dict_is_the_contracted_shape(self) -> None:
+        (
+            season,
+            _conferences,
+            _groups,
+            _phase,
+            worlds_phase,
+            worlds,
+        ) = _conf04_worlds_built_season("Conf04Built", [4, 4])
+        response = _conf04_playoffs_get(self.client, season)
+        entry = _conf04_bracket_by_key(response, f"{worlds_phase.ordinal}-worlds")
+
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["stage"], "worlds")
+        self.assertEqual(entry["stage_label"], "Worlds")
+        self.assertIsNone(entry["conference"], "Worlds is Season-wide, not scoped")
+        self.assertEqual(entry["tournament"].id, worlds.id)
+        self.assertIn("Worlds", entry["name"])
+        self.assertFalse(entry["pending"], "lock_and_build flipped it to active")
+
+    def test_the_built_worlds_bracket_renders_its_dom_ids(self) -> None:
+        (
+            season,
+            _conferences,
+            _groups,
+            _phase,
+            worlds_phase,
+            _worlds,
+        ) = _conf04_worlds_built_season("Conf04BuiltDom", [4, 4])
+        ordinal = worlds_phase.ordinal
+        response = _conf04_playoffs_get(self.client, season)
+
+        for dom_id in (
+            f'id="league-playoffs-phase-{ordinal}-worlds"',
+            f'id="league-playoffs-stage-{ordinal}-worlds"',
+            f'id="league-playoffs-bracket-{ordinal}-worlds"',
+            f'id="league-playoffs-round-{ordinal}-worlds-1"',
+            f'id="league-playoffs-node-{ordinal}-worlds-1-0"',
+        ):
+            self.assertContains(response, dom_id)
+
+    def test_the_worlds_section_has_no_conference_sub_heading(self) -> None:
+        # ``bracket.conference`` is None, so the CONF-02 sub-heading is absent.
+        (
+            season,
+            _conferences,
+            _groups,
+            _phase,
+            worlds_phase,
+            _worlds,
+        ) = _conf04_worlds_built_season("Conf04NoConf", [4, 4])
+        response = _conf04_playoffs_get(self.client, season)
+        self.assertNotContains(
+            response,
+            f'id="league-playoffs-conference-{worlds_phase.ordinal}-worlds"',
+        )
+
+    def test_the_worlds_champion_alert_renders_after_the_drain(self) -> None:
+        (
+            season,
+            _conferences,
+            _groups,
+            _phase,
+            worlds_phase,
+            worlds,
+        ) = _conf04_worlds_built_season("Conf04Champ", [4, 4])
+        _conf04_drain_bracket(worlds)
+        season.complete_if_finished()
+
+        response = _conf04_playoffs_get(self.client, season)
+        entry = _conf04_bracket_by_key(response, f"{worlds_phase.ordinal}-worlds")
+        self.assertIsNotNone(entry["champion"], "the Worlds champion IS the Season's")
+        self.assertContains(
+            response,
+            f'id="league-playoffs-champion-{worlds_phase.ordinal}-worlds"',
+        )
+
+    # -- §12 invariant 2: CONF-02 keys + DOM ids byte-unchanged ------------
+
+    def test_every_conf02_regional_key_is_unchanged(self) -> None:
+        (
+            season,
+            conferences,
+            _groups,
+            phase,
+            _worlds_phase,
+            _worlds,
+        ) = _conf04_worlds_built_season("Conf04Conf02Keys", [4, 4])
+        response = _conf04_playoffs_get(self.client, season)
+        keys = {bracket["key"] for bracket in response.context["brackets"]}
+
+        for conference in conferences:
+            self.assertIn(f"{phase.ordinal}-{conference.ordinal}", keys)
+
+    def test_every_conf02_regional_dom_id_is_unchanged(self) -> None:
+        (
+            season,
+            conferences,
+            _groups,
+            phase,
+            _worlds_phase,
+            _worlds,
+        ) = _conf04_worlds_built_season("Conf04Conf02Dom", [4, 4])
+        response = _conf04_playoffs_get(self.client, season)
+        for conference in conferences:
+            key = f"{phase.ordinal}-{conference.ordinal}"
+            self.assertContains(response, f'id="league-playoffs-phase-{key}"')
+            self.assertContains(response, f'id="league-playoffs-conference-{key}"')
+
+    def test_a_regional_bracket_still_carries_an_empty_stage_label(self) -> None:
+        # stage_label stays "" for a regional bracket, so no new element
+        # renders on a CONF-02 Season (§12 invariant 2).
+        (
+            season,
+            conferences,
+            _groups,
+            phase,
+            _worlds_phase,
+            _worlds,
+        ) = _conf04_worlds_built_season("Conf04Conf02Label", [4, 4])
+        response = _conf04_playoffs_get(self.client, season)
+        entry = _conf04_bracket_by_key(
+            response, f"{phase.ordinal}-{conferences[0].ordinal}"
+        )
+        self.assertEqual(entry["stage"], "regional_playoff")
+        self.assertEqual(entry["stage_label"], "")
+
+    # -- §12 invariant 2: CONF-03 -lc keys byte-unchanged ------------------
+
+    def test_every_conf03_last_chance_key_is_unchanged(self) -> None:
+        season, conferences, groups, _rr, phase = _conf04_built_regional_season(
+            "Conf04Conf03Keys", [9, 4], cut=4
+        )
+        response = _conf04_playoffs_get(self.client, season)
+        keys = {bracket["key"] for bracket in response.context["brackets"]}
+        self.assertIn(f"{phase.ordinal}-{conferences[0].ordinal}-lc", keys)
+
+    def test_the_last_chance_stage_label_is_unchanged(self) -> None:
+        season, conferences, _groups, _rr, phase = _conf04_built_regional_season(
+            "Conf04Conf03Label", [9, 4], cut=4
+        )
+        response = _conf04_playoffs_get(self.client, season)
+        entry = _conf04_bracket_by_key(
+            response, f"{phase.ordinal}-{conferences[0].ordinal}-lc"
+        )
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["stage"], "last_chance")
+        self.assertEqual(entry["stage_label"], "Last Chance Qualifier")
+
+    # -- the DOM-id hazard: the two "worlds" ids coexist -------------------
+
+    def test_the_qualification_table_and_the_bracket_section_coexist(self) -> None:
+        """§9.4's pinned hazard. ``id="league-playoffs-worlds"`` is CONF-03's
+        qualification TABLE; ``league-playoffs-phase-<ord>-worlds`` is CONF-04's
+        bracket SECTION. Both render on a fully-resolved Season."""
+        (
+            season,
+            _conferences,
+            _groups,
+            _phase,
+            worlds_phase,
+            _worlds,
+        ) = _conf04_worlds_built_season("Conf04Hazard", [4, 4])
+        response = _conf04_playoffs_get(self.client, season)
+
+        self.assertContains(response, 'id="league-playoffs-worlds"')
+        self.assertContains(
+            response,
+            f'id="league-playoffs-phase-{worlds_phase.ordinal}-worlds"',
+        )
+        self.assertTrue(response.context["worlds_qualifiers"])
+
+    def test_only_the_worlds_entry_carries_the_worlds_suffix(self) -> None:
+        (
+            season,
+            _conferences,
+            _groups,
+            _phase,
+            worlds_phase,
+            _worlds,
+        ) = _conf04_worlds_built_season("Conf04Suffix", [4, 4])
+        response = _conf04_playoffs_get(self.client, season)
+        worlds_keys = [
+            bracket["key"]
+            for bracket in response.context["brackets"]
+            if bracket["key"].endswith("-worlds")
+        ]
+        self.assertEqual(worlds_keys, [f"{worlds_phase.ordinal}-worlds"])

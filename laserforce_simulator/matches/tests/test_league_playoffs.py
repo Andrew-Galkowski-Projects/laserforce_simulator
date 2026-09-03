@@ -228,6 +228,28 @@ def _conf02_built_flat_season(prefix: str):
     return season, teams, phase
 
 
+def _entries_for_phase(response, phase) -> list:
+    """CONF-04 — the Playoffs-screen bracket entries of ONE phase.
+
+    Since ADR-0037 the screen also renders the DERIVED Worlds phase's entry, so
+    a bare ``context["brackets"]`` is no longer the same list as the
+    qualification phase's brackets. Filtering by phase keeps the CONF-02 /
+    CONF-03 assertions below pinned to exactly what they were written to pin
+    — it narrows the scope of each guard rather than weakening it.
+    """
+    return [
+        entry for entry in response.context["brackets"] if entry["phase"].pk == phase.pk
+    ]
+
+
+def _worlds_entry(response):
+    """CONF-04 — the single Worlds bracket entry, or ``None``."""
+    for entry in response.context["brackets"]:
+        if entry["phase"].tournament_mode == "worlds":
+            return entry
+    return None
+
+
 class TestLeaguePlayoffsRegionalBrackets(TestCase):
     """A 2-Conference Season renders TWO labelled brackets under one phase."""
 
@@ -246,10 +268,16 @@ class TestLeaguePlayoffsRegionalBrackets(TestCase):
 
     def test_two_bracket_entries_for_one_phase(self) -> None:
         self.assertEqual(self.response.status_code, 200)
-        self.assertEqual(len(self.response.context["brackets"]), 2)
+        self.assertEqual(len(_entries_for_phase(self.response, self.phase)), 2)
+
+    def test_the_worlds_phase_adds_exactly_one_further_entry(self) -> None:
+        # CONF-04 — the derived Worlds phase renders its own (pending) entry,
+        # so the screen now carries 2 + 1. Nothing else is added.
+        self.assertEqual(len(self.response.context["brackets"]), 3)
+        self.assertIsNotNone(_worlds_entry(self.response))
 
     def test_entries_are_in_conference_ordinal_order(self) -> None:
-        brackets = self.response.context["brackets"]
+        brackets = _entries_for_phase(self.response, self.phase)
         self.assertEqual(
             [entry["conference"].id for entry in brackets],
             [self.conferences[0].id, self.conferences[1].id],
@@ -263,7 +291,7 @@ class TestLeaguePlayoffsRegionalBrackets(TestCase):
             self.assertEqual(entry["tournament"].conference_id, conference.id)
 
     def test_keys_are_phase_ordinal_dash_conference_ordinal(self) -> None:
-        brackets = self.response.context["brackets"]
+        brackets = _entries_for_phase(self.response, self.phase)
         self.assertEqual(
             [entry["key"] for entry in brackets],
             [
@@ -273,13 +301,24 @@ class TestLeaguePlayoffsRegionalBrackets(TestCase):
         )
 
     def test_keys_do_not_collide(self) -> None:
-        keys = [entry["key"] for entry in self.response.context["brackets"]]
+        keys = [entry["key"] for entry in _entries_for_phase(self.response, self.phase)]
         self.assertEqual(len(set(keys)), 2)
 
     def test_neither_entry_is_pending(self) -> None:
-        for entry in self.response.context["brackets"]:
+        # CONF-04 — scoped to this phase. The derived Worlds phase's entry IS
+        # pending here (its bracket only builds once qualification completes),
+        # which is asserted separately below.
+        for entry in _entries_for_phase(self.response, self.phase):
             self.assertFalse(entry["pending"])
             self.assertTrue(entry["rounds"])
+
+    def test_the_worlds_entry_is_pending_while_qualification_is_unfinished(
+        self,
+    ) -> None:
+        entry = _worlds_entry(self.response)
+        self.assertIsNotNone(entry)
+        self.assertTrue(entry["pending"])
+        self.assertEqual(entry["rounds"], [])
 
     def test_rendered_html_carries_both_conference_labels(self) -> None:
         self.assertContains(self.response, 'id="league-playoffs-conference-2-1"')
@@ -419,10 +458,10 @@ class TestLeaguePlayoffsLastChanceSection(TestCase):
 
     def test_three_bracket_entries_for_one_phase(self) -> None:
         self.assertEqual(self.response.status_code, 200)
-        self.assertEqual(len(self.response.context["brackets"]), 3)
+        self.assertEqual(len(_entries_for_phase(self.response, self.phase)), 3)
 
     def test_the_last_chance_entry_sorts_after_its_regional_sibling(self) -> None:
-        keys = [entry["key"] for entry in self.response.context["brackets"]]
+        keys = [entry["key"] for entry in _entries_for_phase(self.response, self.phase)]
         self.assertEqual(
             keys,
             [
@@ -470,7 +509,7 @@ class TestLeaguePlayoffsLastChanceSection(TestCase):
         self.assertContains(self.response, f'id="league-playoffs-phase-{self.lc_key}"')
 
     def test_the_keys_do_not_collide(self) -> None:
-        keys = [entry["key"] for entry in self.response.context["brackets"]]
+        keys = [entry["key"] for entry in _entries_for_phase(self.response, self.phase)]
         self.assertEqual(len(set(keys)), 3)
 
     # -- 32. the unseeded Last-chance section renders the pending alert -----
@@ -534,11 +573,11 @@ class TestLeaguePlayoffsConf02DomIdsUnchanged(TestCase):
         )
 
     def test_two_entries_only(self) -> None:
-        self.assertEqual(len(self.response.context["brackets"]), 2)
+        self.assertEqual(len(_entries_for_phase(self.response, self.phase)), 2)
 
     def test_keys_are_exactly_phase_ordinal_dash_conference_ordinal(self) -> None:
         self.assertEqual(
-            [entry["key"] for entry in self.response.context["brackets"]],
+            [entry["key"] for entry in _entries_for_phase(self.response, self.phase)],
             [
                 f"{self.phase.ordinal}-{self.conferences[0].ordinal}",
                 f"{self.phase.ordinal}-{self.conferences[1].ordinal}",
@@ -549,10 +588,18 @@ class TestLeaguePlayoffsConf02DomIdsUnchanged(TestCase):
         self.assertNotContains(self.response, "-lc")
 
     def test_no_stage_element_is_present(self) -> None:
-        self.assertNotContains(self.response, "league-playoffs-stage-")
+        # CONF-04 — narrowed from "no stage element anywhere" to "no stage
+        # element on a CONF-02 REGIONAL key". The invariant this pins is that a
+        # regional bracket still renders no badge; the derived Worlds entry has
+        # its own badge on its own key, which cannot collide with these.
+        for conference in self.conferences:
+            key = f"{self.phase.ordinal}-{conference.ordinal}"
+            self.assertNotContains(self.response, f'id="league-playoffs-stage-{key}"')
 
     def test_every_stage_label_is_empty(self) -> None:
-        for entry in self.response.context["brackets"]:
+        # CONF-04 — scoped to this phase's entries; the Worlds entry carries
+        # "Worlds" by design (ADR-0037).
+        for entry in _entries_for_phase(self.response, self.phase):
             self.assertEqual(entry["stage_label"], "")
 
     def test_the_conf02_section_and_bracket_ids_still_render(self) -> None:
@@ -730,5 +777,7 @@ class TestLeaguePlayoffsWorldsPanelPresent(TestCase):
 
     def test_the_panel_renders_alongside_the_bracket_sections(self) -> None:
         # The panel lives INSIDE the ``{% else %}`` of the no-brackets guard.
-        self.assertEqual(len(self.response.context["brackets"]), 3)
+        # CONF-04 — 3 qualification brackets + the derived Worlds entry.
+        self.assertEqual(len(_entries_for_phase(self.response, self.phase)), 3)
+        self.assertEqual(len(self.response.context["brackets"]), 4)
         self.assertNotContains(self.response, 'id="league-playoffs-empty-notice"')

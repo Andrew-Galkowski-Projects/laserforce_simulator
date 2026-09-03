@@ -85,6 +85,7 @@ def _conf_season(
     mode: str = "standings",
     cut: int = 0,
     fmt: str = "single_elimination",
+    extra_tournament_phases: int = 0,
 ):
     """An active Season: RR phase (ordinal 1) + tournament phase (ordinal 2).
 
@@ -129,6 +130,22 @@ def _conf_season(
         tournament_format=fmt,
         tournament_cut=cut,
     )
+    # CONF-04 — any ADDITIONAL tournament phase must be composed BEFORE
+    # ``start_season()``. Activation derives the Worlds phase at
+    # ``max(ordinal) + 1`` (ADR-0037), so a phase created afterwards would
+    # collide with it on ``uniq_season_phase_ordinal``. Production only ever
+    # authors phases on a DRAFT Season (``league_create`` /
+    # ``_run_season_rollover``), so this mirrors the real ordering. Callers
+    # fetch the extras by query -- the return arity is deliberately unchanged.
+    for extra_ordinal in range(3, 3 + extra_tournament_phases):
+        SeasonPhase.objects.create(
+            season=season,
+            ordinal=extra_ordinal,
+            phase_type="tournament",
+            tournament_mode=mode,
+            tournament_format=fmt,
+            tournament_cut=cut,
+        )
     season.start_season()
     season.refresh_from_db()
     for conference in conferences:
@@ -666,16 +683,25 @@ class TestRegionalCompletionGate(TestCase):
         self.assertIsNotNone(self.season.current_phase())
         self.assertEqual(self.season.current_phase().id, self.phase.id)
 
-    def test_both_drained_completes_the_season(self) -> None:
+    def test_both_drained_completes_the_regional_phase(self) -> None:
+        # CONF-04 — draining every Regional playoff still completes THE PHASE
+        # (the CONF-02 gate this class pins), but no longer the SEASON: since
+        # ADR-0037 a derived Worlds phase sits after it, so the cursor advances
+        # onto Worlds instead of falling off the end.
         _stamp_bracket_completed(self.first, self.groups[0][0])
         _stamp_bracket_completed(self.second, self.groups[1][1])
         self.season.complete_if_finished()
         self.season.refresh_from_db()
-        self.assertEqual(self.season.state, "completed")
-        self.assertIsNone(self.season.current_phase())
+
+        self.assertTrue(self.season._phase_complete(self.phase))
+        cursor = self.season.current_phase()
+        self.assertIsNotNone(cursor)
+        self.assertEqual(cursor.tournament_mode, "worlds")
+        self.assertEqual(self.season.state, "active")
 
     def test_both_drained_leaves_champion_team_null(self) -> None:
         # A Conference champion is NOT a Season champion (ADR-0035 / CONF-01).
+        # CONF-04 — still NULL here, now because Worlds has not been played.
         _stamp_bracket_completed(self.first, self.groups[0][0])
         _stamp_bracket_completed(self.second, self.groups[1][1])
         self.season.complete_if_finished()
@@ -1099,9 +1125,12 @@ class TestRegionalPlayoffTeamHistory(TestCase):
         self.season.complete_if_finished()
         self.season.refresh_from_db()
 
-        # The Season completed, this team is a Conference champion — and
-        # ``championships`` (Season.champion_team) is still 0.
-        self.assertEqual(self.season.state, "completed")
+        # CONF-04 — winning a Regional playoff still leaves ``championships``
+        # at 0: a Conference champion is not a Season champion. The Season is
+        # now ACTIVE rather than completed at this point, because the cursor has
+        # advanced to the derived Worlds phase (ADR-0037) — which is precisely
+        # why ``champion_team`` is still NULL.
+        self.assertEqual(self.season.state, "active")
         self.assertIsNone(self.season.champion_team_id)
         self.assertEqual(self._record().championships, 0)
 

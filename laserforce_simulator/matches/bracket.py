@@ -84,7 +84,9 @@ def _seed_pairing(size: int) -> list[int]:
     return seeds
 
 
-def build_bracket(participants: list[ParticipantSpec]) -> list[BracketNodeSpec]:
+def build_bracket(
+    participants: list[ParticipantSpec], *, minimum: int = 4
+) -> list[BracketNodeSpec]:
     """Build the full single-elimination bracket node-spec list for N >= 4
     participants (arbitrary N, byes for non-powers-of-2).
 
@@ -95,9 +97,21 @@ def build_bracket(participants: list[ParticipantSpec]) -> list[BracketNodeSpec]:
     parent; the final node has advances_to=None.
 
     Returns BracketNodeSpec list ordered by (bracket_round, position). Raises
-    ValueError on len(participants) < 4 or duplicate seeds/team_ids.
+    ValueError on len(participants) < ``minimum`` or duplicate seeds/team_ids.
+
+    CONF-04 — ``minimum`` is the KEYWORD-ONLY participant floor (ADR-0037).
+    The default of 4 is the inherited sandbox-form policy, NOT a property of
+    the maths: n = 2 yields a size-2 bracket whose single node IS the final,
+    and n = 3 yields size 4 with seed 1 pre-resolved into it. Every existing
+    caller keeps the default; ``Season.build_pending_worlds_bracket`` alone
+    passes ``minimum=2``, because a 2-Conference Season of small Conferences
+    legitimately sends a field of two to Worlds. Keyword-only so no positional
+    call site can ever drift into it.
     """
-    if len(participants) < 4:
+    if len(participants) < minimum:
+        # The message text is deliberately NOT f-stringified with ``minimum``:
+        # callers and tests pin this exact string, and the only non-default
+        # caller guards its field at >= 2 before it gets here.
         raise ValueError("A tournament requires at least 4 participants.")
 
     seeds = [p.seed for p in participants]
@@ -193,7 +207,7 @@ def build_bracket(participants: list[ParticipantSpec]) -> list[BracketNodeSpec]:
 
 
 def build_double_elim_bracket(
-    participants: list[ParticipantSpec],
+    participants: list[ParticipantSpec], *, minimum: int = 4
 ) -> list[BracketNodeSpec]:
     """Build the full two-tree (Winners + Losers + Grand final) node-spec list
     for arbitrary N >= 4 with byes.
@@ -214,10 +228,15 @@ def build_double_elim_bracket(
       or None), ``loser_advances_to_slot``, and ``depth`` (distance to GF1:
       GF1/GF2 depth 0, WB-final & LB-final depth 1, ...).
 
-    Returns BracketNodeSpec list. Raises ValueError on len < 4 or duplicate
-    seeds/team_ids (mirrors ``build_bracket``).
+    Returns BracketNodeSpec list. Raises ValueError on len < ``minimum`` or
+    duplicate seeds/team_ids (mirrors ``build_bracket``).
+
+    CONF-04 — ``minimum`` mirrors ``build_bracket``'s keyword-only floor
+    (ADR-0037) and is FORWARDED into the internal ``build_bracket`` call below;
+    without that forward a sub-4 DE build would still raise from the inner call.
     """
-    if len(participants) < 4:
+    if len(participants) < minimum:
+        # Message text unchanged even when ``minimum != 4`` — see build_bracket.
         raise ValueError("A tournament requires at least 4 participants.")
     seeds = [p.seed for p in participants]
     team_ids = [p.team_id for p in participants]
@@ -231,7 +250,7 @@ def build_double_elim_bracket(
     total_rounds = int(math.log2(size))  # W = number of WB rounds
 
     # --- Winners bracket: the single-elim tree, re-tagged "winners". ---
-    wb_specs = build_bracket(participants)
+    wb_specs = build_bracket(participants, minimum=minimum)
 
     # GF coordinates. The grand-final bracket_round numbers are placed ABOVE the
     # LB max round (lb_last = 2W-2; GF1 = 2W-1, GF2 = 2W) so the 2-tuple

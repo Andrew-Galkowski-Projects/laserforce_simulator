@@ -349,6 +349,19 @@ def play_season_task(
         from matches.models import _node_to_dict
         from matches.tournament_engine import play_next_bracket_round
 
+        # CONF-04 — build the Worlds bracket BEFORE the cursor read, not only
+        # from the in-loop stall branch (ADR-0037). The tail below is guarded on
+        # ``bool(tournaments)``, so a FRESH invocation that finds the cursor
+        # already parked on an unbuilt Worlds phase would resolve ``[]``, skip
+        # the tail entirely and never reach the stall hook inside
+        # ``_drain_one_stage``. That is reachable whenever a previous budgeted
+        # run ended exactly at the regional -> Worlds boundary: every
+        # ``play_season_task`` entry point (play_week / play_two_months /
+        # play_until_end) enqueues the task without building first, unlike
+        # ``play_playoffs`` which builds in the view. Idempotent — returns False
+        # and does nothing whenever the field is not ready or already built.
+        season.build_pending_worlds_bracket()
+
         phase = season.current_phase()
         # CONF-02 — the tail drains EVERY bracket of the phase (ADR-0035): one
         # Season-wide bracket as before, or the N regional ones of a
@@ -380,6 +393,9 @@ def play_season_task(
                 return total_completed, total_stages
 
             def _drain_one_stage() -> int:
+                # CONF-04 — ``nonlocal`` because the Worlds retry below rebinds
+                # the two cached locals of the enclosing ``play_season_task``.
+                nonlocal phase, tournaments
                 # CONF-02 — ONE budget unit = one stage across ALL N brackets
                 # (the parallel-overlay pacing rule). ``sum`` over a generator
                 # evaluates every term; do NOT rewrite as a short-circuiting
@@ -393,6 +409,29 @@ def play_season_task(
                     # still exactly one stage — which is why the retry lives
                     # here rather than in either loop body.
                     if season.seed_pending_last_chance_brackets(phase) > 0:
+                        clinched = sum(play_next_bracket_round(t) for t in tournaments)
+                if clinched == 0:
+                    # CONF-04 — the regionals have drained, so the Worlds bracket
+                    # may now be buildable (ADR-0037). Unlike the Last-chance row
+                    # it lives on a DIFFERENT phase, so this is the ONE place the
+                    # drain deliberately crosses the phase boundary: re-resolve
+                    # the cursor and its bracket list, then retry. Still one
+                    # budget unit == one stage, because this fires only when
+                    # nothing else progressed — which is why the retry lives here
+                    # rather than in either loop body.
+                    #
+                    # CONSEQUENCE: ``_stage_counts()`` closes over the same
+                    # ``tournaments`` name, so after this re-resolution it
+                    # aggregates the Worlds bracket ALONE and the reported
+                    # counts SHRINK at the boundary. That is intended — the
+                    # counts describe the CURRENT phase (the CONF-02 contract).
+                    if season.build_pending_worlds_bracket():
+                        phase = season.current_phase()
+                        tournaments = (
+                            season.tournaments_for_phase(phase)
+                            if phase is not None
+                            else []
+                        )
                         clinched = sum(play_next_bracket_round(t) for t in tournaments)
                 return clinched
 
@@ -467,6 +506,15 @@ def play_playoffs_task(self, season_id: int) -> dict:
         if _play_cancel_requested(season_id):
             return {"completed": 0, "total": 0, "cancelled": True}
 
+        # CONF-04 — build the Worlds bracket BEFORE the cursor read (ADR-0037),
+        # mirroring the ``play_season_task`` tail. The guard below returns early
+        # on an empty ``tournaments``, so a task enqueued while the cursor is
+        # already parked on an unbuilt Worlds phase would never reach the stall
+        # hook inside the loop. ``play_playoffs`` (the view) already builds
+        # before enqueueing, so this is belt-and-braces there — but it is what
+        # makes the task correct for ANY caller. Idempotent.
+        season.build_pending_worlds_bracket()
+
         phase = season.current_phase()
         # CONF-02 — drain EVERY bracket of the phase (ADR-0035): the one
         # Season-wide bracket as before, or the N regional ones of a
@@ -514,6 +562,20 @@ def play_playoffs_task(self, season_id: int) -> dict:
                 # re-queried every call. The ``continue`` re-enters the loop, so
                 # the PLAY-01 between-stage cancel check runs before the retry.
                 if season.seed_pending_last_chance_brackets(phase) > 0:
+                    continue
+                # CONF-04 — the regionals have drained, so the Worlds bracket may
+                # now be buildable (ADR-0037). Unlike the Last-chance row it
+                # lives on a DIFFERENT phase, so this is the ONE place the loop
+                # deliberately crosses the phase boundary: re-resolve the cursor
+                # and its bracket list, then retry. ``phase`` and ``tournaments``
+                # are plain locals of this function (not a closure), so no
+                # ``nonlocal`` is needed. The ``continue`` re-enters the loop, so
+                # the PLAY-01 between-stage cancel check runs before the retry.
+                if season.build_pending_worlds_bracket():
+                    phase = season.current_phase()
+                    tournaments = (
+                        season.tournaments_for_phase(phase) if phase is not None else []
+                    )
                     continue
                 break
             completed, total = _stage_counts()

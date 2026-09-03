@@ -831,3 +831,584 @@ class TestFin05NonCareerInert(TestCase):
         _fin05_stamp_luxury_tax(team, latest, amount=50_000.0)
         _fin05_ensure(league, latest)
         self.assertEqual(OwnerEvaluation.objects.count(), 0)
+
+
+# ---------------------------------------------------------------------------
+# CONF-04 - the two-tier owner-mood playoff classification
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/conf-04-seam-contract.md`` §8 + §11.4;
+# rationale in
+# [ADR-0037](../../docs/adr/0037-worlds-is-a-derived-season-phase.md).
+#
+# ``matches/owner_mood.py`` is NOT TOUCHED - no new constant, no new branch, no
+# new result string. Its ``"seeded"`` branch is already depth-proportional
+# (``(PLAYOFF_ADVANCE_SCALE / num_rounds) * rounds_won``), so feeding it the
+# longer two-bracket path yields the intended ladder for free.
+#
+# The whole change lives in ``_classify_playoffs_for_team``, which keeps its
+# signature, its return triple and its four result strings. For a
+# >= 2-Conference Season ``num_rounds`` becomes the Team's WHOLE possible path
+# (its own Conference's Regional playoff + the Worlds bracket) and
+# ``rounds_won`` counts the distinct rounds it won across BOTH.
+#
+# The accident this prevents: a >= 2-Conference career League previously scored
+# ("none", 0, 0) forever, because a regional phase leaves ``tournament_id``
+# NULL. The Worlds phase DOES set it, so without §8.1's branch the axis would
+# have switched on and charged every non-qualifier the full ``"missed"``
+# penalty regardless of how far it went in its own region.
+#
+# Every fixture below is hand-built - no simulation, no activation. Assertions
+# are the returned triple and the row the writer produces; ``owner_mood``
+# internals are NOT asserted (contract §11.3).
+#
+# Appended as a NEW class; no existing class above is modified.
+
+
+from matches.models import Conference as _Conf04Conference  # noqa: E402
+
+
+def _conf04_partitioned_season(prefix: str, *, sizes=(2, 2)):
+    """A COMPLETED >= 2-Conference Season composed RR(1) -> regional(2) ->
+    worlds(3), with every row written directly.
+
+    The Conference snapshots are stamped explicitly because
+    ``conference_by_team_id()`` reads ``starting_team_ids_json`` for a
+    non-draft Season. Returns
+    ``(league, season, conferences, groups, regional_phase, worlds_phase)``.
+    """
+    groups: list[list] = []
+    for ci, size in enumerate(sizes, start=1):
+        groups.append([_make_team(f"{prefix}{ci}x{ti}") for ti in range(size)])
+    all_teams = [team for group in groups for team in group]
+
+    league = _make_league(f"{prefix}L", current_team=all_teams[0])
+    season = _make_completed_season(
+        league,
+        name="S1",
+        start_date=date(2025, 1, 1),
+        team_ids=[team.id for team in all_teams],
+    )
+    conferences = []
+    for ci, group in enumerate(groups, start=1):
+        conference = _Conf04Conference.objects.create(
+            season=season,
+            name=f"{prefix}Conf{ci}",
+            ordinal=ci,
+            starting_team_ids_json=sorted(team.id for team in group),
+        )
+        conference.teams.add(*group)
+        conferences.append(conference)
+
+    SeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")
+    regional_phase = SeasonPhase.objects.create(
+        season=season, ordinal=2, phase_type="tournament", tournament_mode="standings"
+    )
+    worlds_phase = SeasonPhase.objects.create(
+        season=season, ordinal=3, phase_type="tournament", tournament_mode="worlds"
+    )
+    return league, season, conferences, groups, regional_phase, worlds_phase
+
+
+def _conf04_regional_bracket(
+    prefix: str, phase, conference, teams, *, stage: str = "regional_playoff"
+):
+    """A Conference-scoped bracket on ``phase`` with ``teams`` seeded 1..n."""
+    tournament = Tournament.objects.create(
+        name=f"{prefix} {conference.name}",
+        season_phase=phase,
+        conference=conference,
+        qualifier_stage=stage,
+    )
+    for seed, team in enumerate(teams, start=1):
+        TournamentParticipant.objects.create(
+            tournament=tournament, team=team, seed=seed
+        )
+    return tournament
+
+
+def _conf04_worlds_bracket(prefix: str, phase, teams):
+    """The Season-wide Worlds bracket on the forward embed. Both CONF-02
+    linkage columns are left NULL and ``qualifier_stage`` at ``""`` (§5.2)."""
+    tournament = Tournament.objects.create(name=f"{prefix} Worlds")
+    for seed, team in enumerate(teams, start=1):
+        TournamentParticipant.objects.create(
+            tournament=tournament, team=team, seed=seed
+        )
+    phase.tournament = tournament
+    phase.save(update_fields=["tournament"])
+    return tournament
+
+
+def _conf04_node(tournament, bracket_round: int, position: int, winner=None):
+    return BracketNode.objects.create(
+        tournament=tournament,
+        bracket_round=bracket_round,
+        position=position,
+        winner=winner,
+    )
+
+
+class TestConf04ClassifyPlayoffsTwoTier(TestCase):
+    """CONF-04 §8.4 - the five-row decision table, the two-bracket arithmetic,
+    and the byte-identical 0/1-Conference path."""
+
+    def setUp(self) -> None:
+        (
+            self.league,
+            self.season,
+            self.conferences,
+            self.groups,
+            self.regional_phase,
+            self.worlds_phase,
+        ) = _conf04_partitioned_season("Conf04Cls", sizes=(2, 2))
+        # Conference 1's Regional playoff: a 2-round bracket. groups[0][0] wins
+        # both rounds and takes the Conference crown.
+        self.regional = _conf04_regional_bracket(
+            "Conf04Cls", self.regional_phase, self.conferences[0], self.groups[0]
+        )
+        _conf04_node(self.regional, 1, 0, winner=self.groups[0][0])
+        _conf04_node(self.regional, 2, 0, winner=self.groups[0][0])
+        self.regional.champion = self.groups[0][0]
+        self.regional.save(update_fields=["champion"])
+        # Conference 2's Regional playoff, so its Teams have a bracket too.
+        self.regional_two = _conf04_regional_bracket(
+            "Conf04Cls2", self.regional_phase, self.conferences[1], self.groups[1]
+        )
+        _conf04_node(self.regional_two, 1, 0, winner=self.groups[1][0])
+        _conf04_node(self.regional_two, 2, 0, winner=self.groups[1][0])
+        self.regional_two.champion = self.groups[1][0]
+        self.regional_two.save(update_fields=["champion"])
+        # Worlds: a 2-round bracket between the two Conference champions.
+        # groups[0][0] wins round 1; groups[1][0] wins the final and Worlds.
+        self.worlds = _conf04_worlds_bracket(
+            "Conf04Cls",
+            self.worlds_phase,
+            [self.groups[0][0], self.groups[1][0]],
+        )
+        _conf04_node(self.worlds, 1, 0, winner=self.groups[0][0])
+        _conf04_node(self.worlds, 2, 0, winner=self.groups[1][0])
+        self.worlds.champion = self.groups[1][0]
+        self.worlds.save(update_fields=["champion"])
+
+    # -- row 3: the Worlds champion ---------------------------------------
+
+    def test_the_worlds_champion_is_classified_champion(self) -> None:
+        result, rounds_won, num_rounds = _classify_playoffs_for_team(
+            self.season, self.groups[1][0].id
+        )
+        self.assertEqual(result, "champion")
+        self.assertEqual(rounds_won, 0, "the champion row carries rounds_won 0")
+
+    def test_the_champion_num_rounds_is_the_whole_two_bracket_path(self) -> None:
+        _result, _rounds_won, num_rounds = _classify_playoffs_for_team(
+            self.season, self.groups[1][0].id
+        )
+        # 2 regional rounds + 2 Worlds rounds.
+        self.assertEqual(num_rounds, 4)
+
+    def test_only_the_worlds_bracket_can_crown_champion(self) -> None:
+        # groups[0][0] IS a Conference champion and is NOT classified champion.
+        result, _rounds_won, _num_rounds = _classify_playoffs_for_team(
+            self.season, self.groups[0][0].id
+        )
+        self.assertNotEqual(result, "champion")
+
+    # -- row 4: seeded, counted PER BRACKET then ADDED ---------------------
+
+    def test_a_worlds_finalist_counts_rounds_from_both_brackets(self) -> None:
+        # groups[0][0] won regional rounds 1 and 2, plus Worlds round 1.
+        self.assertEqual(
+            _classify_playoffs_for_team(self.season, self.groups[0][0].id),
+            ("seeded", 3, 4),
+        )
+
+    def test_the_two_brackets_are_never_unioned_on_bracket_round(self) -> None:
+        """The load-bearing arithmetic pin (§8.3). A Team that won round 1 of
+        its region and round 1 of Worlds has won TWO rounds; a set union of the
+        raw ``bracket_round`` integers would collapse them to ONE."""
+        (
+            _league,
+            season,
+            conferences,
+            groups,
+            regional_phase,
+            worlds_phase,
+        ) = _conf04_partitioned_season("Conf04Union", sizes=(2, 2))
+        regional = _conf04_regional_bracket(
+            "Conf04Union", regional_phase, conferences[0], groups[0]
+        )
+        # A ONE-round region: the Team wins bracket_round 1 here...
+        _conf04_node(regional, 1, 0, winner=groups[0][0])
+        regional.champion = groups[0][0]
+        regional.save(update_fields=["champion"])
+        worlds = _conf04_worlds_bracket(
+            "Conf04Union", worlds_phase, [groups[0][0], groups[1][0]]
+        )
+        # ...and bracket_round 1 again here. Distinct rounds => 2, not 1.
+        _conf04_node(worlds, 1, 0, winner=groups[0][0])
+        _conf04_node(worlds, 2, 0, winner=groups[1][0])
+        worlds.champion = groups[1][0]
+        worlds.save(update_fields=["champion"])
+
+        self.assertEqual(
+            _classify_playoffs_for_team(season, groups[0][0].id),
+            ("seeded", 2, 3),
+        )
+
+    def test_a_first_round_regional_exit_is_seeded_with_zero_rounds_won(self) -> None:
+        self.assertEqual(
+            _classify_playoffs_for_team(self.season, self.groups[0][1].id),
+            ("seeded", 0, 4),
+        )
+
+    def test_being_a_participant_of_worlds_alone_is_enough_for_seeded(self) -> None:
+        (
+            _league,
+            season,
+            conferences,
+            groups,
+            regional_phase,
+            worlds_phase,
+        ) = _conf04_partitioned_season("Conf04WOnly", sizes=(2, 2))
+        # Conference 1 is too small for a Regional playoff - it has none - but
+        # its Standings leader still reached Worlds (the CONF-03 §2.3 fallback).
+        worlds = _conf04_worlds_bracket(
+            "Conf04WOnly", worlds_phase, [groups[0][0], groups[1][0]]
+        )
+        _conf04_node(worlds, 1, 0, winner=groups[1][0])
+        worlds.champion = groups[1][0]
+        worlds.save(update_fields=["champion"])
+        self.assertEqual(
+            _classify_playoffs_for_team(season, groups[0][0].id),
+            ("seeded", 0, 1),
+        )
+
+    def test_the_denominator_is_the_same_for_every_team_of_a_conference(self) -> None:
+        # ``num_rounds`` is the Conference's maximum path, not a per-Team value.
+        _r1, _w1, first = _classify_playoffs_for_team(self.season, self.groups[0][0].id)
+        _r2, _w2, second = _classify_playoffs_for_team(
+            self.season, self.groups[0][1].id
+        )
+        self.assertEqual(first, second)
+
+    # -- row 5: participant of neither -------------------------------------
+
+    def test_a_team_in_neither_bracket_is_missed(self) -> None:
+        (
+            _league,
+            season,
+            conferences,
+            groups,
+            regional_phase,
+            worlds_phase,
+        ) = _conf04_partitioned_season("Conf04Miss", sizes=(3, 2))
+        # Conference 1's Regional playoff seats only its top TWO Teams; the
+        # third was cut.
+        regional = _conf04_regional_bracket(
+            "Conf04Miss", regional_phase, conferences[0], groups[0][:2]
+        )
+        _conf04_node(regional, 1, 0, winner=groups[0][0])
+        regional.champion = groups[0][0]
+        regional.save(update_fields=["champion"])
+        worlds = _conf04_worlds_bracket(
+            "Conf04Miss", worlds_phase, [groups[0][0], groups[1][0]]
+        )
+        _conf04_node(worlds, 1, 0, winner=groups[0][0])
+        worlds.champion = groups[0][0]
+        worlds.save(update_fields=["champion"])
+
+        self.assertEqual(
+            _classify_playoffs_for_team(season, groups[0][2].id),
+            ("missed", 0, 2),
+        )
+
+    # -- row 1: a Team in no Conference at all -----------------------------
+
+    def test_an_unpartitioned_team_is_none_not_missed(self) -> None:
+        """A pinned defensive choice (§8.4 row 1): an unpartitioned Team in a
+        partitioned Season is BROKEN DATA, and broken data must not fire a
+        Manager. ``"none"`` is the neutral 0.0 delta; ``"missed"`` is -0.2."""
+        stray = _make_team("Conf04Stray")
+        self.season.teams.add(stray)
+        self.assertEqual(
+            _classify_playoffs_for_team(self.season, stray.id), ("none", 0, 0)
+        )
+
+    # -- row 2: no bracket at all ------------------------------------------
+
+    def test_no_bracket_anywhere_is_none(self) -> None:
+        (
+            _league,
+            season,
+            _conferences,
+            groups,
+            _regional_phase,
+            _worlds_phase,
+        ) = _conf04_partitioned_season("Conf04NoBr", sizes=(2, 2))
+        # Neither phase ever built: this is the pre-CONF-04 accident's shape,
+        # and it must stay NEUTRAL rather than flipping the axis on.
+        self.assertEqual(
+            _classify_playoffs_for_team(season, groups[0][0].id), ("none", 0, 0)
+        )
+
+    def test_an_unbuilt_worlds_phase_alone_does_not_switch_the_axis_on(self) -> None:
+        (
+            _league,
+            season,
+            conferences,
+            groups,
+            regional_phase,
+            _worlds_phase,
+        ) = _conf04_partitioned_season("Conf04Unbuilt", sizes=(2, 2))
+        # Only Conference 2 fielded a bracket; Conference 1's Team has neither a
+        # region nor a built Worlds bracket.
+        _conf04_regional_bracket(
+            "Conf04Unbuilt", regional_phase, conferences[1], groups[1]
+        )
+        self.assertEqual(
+            _classify_playoffs_for_team(season, groups[0][0].id), ("none", 0, 0)
+        )
+
+    # -- the Last-chance bracket is excluded from BOTH sides ---------------
+
+    def test_the_last_chance_bracket_is_outside_the_denominator(self) -> None:
+        last_chance = _conf04_regional_bracket(
+            "Conf04Lc",
+            self.regional_phase,
+            self.conferences[0],
+            self.groups[0],
+            stage="last_chance",
+        )
+        _conf04_node(last_chance, 1, 0, winner=self.groups[0][1])
+        _conf04_node(last_chance, 2, 0, winner=self.groups[0][1])
+        _conf04_node(last_chance, 3, 0, winner=self.groups[0][1])
+        # Still 2 regional rounds + 2 Worlds rounds - the 3-round Last-chance
+        # bracket contributes nothing.
+        _result, _rounds_won, num_rounds = _classify_playoffs_for_team(
+            self.season, self.groups[0][0].id
+        )
+        self.assertEqual(num_rounds, 4)
+
+    def test_the_last_chance_bracket_is_outside_the_numerator(self) -> None:
+        last_chance = _conf04_regional_bracket(
+            "Conf04LcNum",
+            self.regional_phase,
+            self.conferences[0],
+            self.groups[0],
+            stage="last_chance",
+        )
+        _conf04_node(last_chance, 1, 0, winner=self.groups[0][1])
+        # groups[0][1] won a Last-chance node and STILL has 0 rounds won: a Team
+        # cannot ride the Last-chance bracket past its Conference's max path.
+        self.assertEqual(
+            _classify_playoffs_for_team(self.season, self.groups[0][1].id),
+            ("seeded", 0, 4),
+        )
+
+    # -- the signature and result vocabulary are unchanged -----------------
+
+    def test_the_return_is_always_the_flat_triple(self) -> None:
+        for team in [self.groups[0][0], self.groups[0][1], self.groups[1][0]]:
+            triple = _classify_playoffs_for_team(self.season, team.id)
+            self.assertIsInstance(triple, tuple)
+            self.assertEqual(len(triple), 3)
+            self.assertIn(triple[0], {"champion", "seeded", "missed", "none"})
+            self.assertIsInstance(triple[1], int)
+            self.assertIsInstance(triple[2], int)
+
+    def test_no_new_playoff_result_string_is_emitted(self) -> None:
+        results = {
+            _classify_playoffs_for_team(self.season, team.id)[0]
+            for group in self.groups
+            for team in group
+        }
+        self.assertTrue(results <= {"champion", "seeded", "missed", "none"})
+
+
+class TestConf04ClassifyFlatPathIsByteIdentical(TestCase):
+    """CONF-04 §8.2 / §12 invariant 4 - the 0/1-Conference branch is verbatim.
+    These reproduce ``TestClassifyPlayoffsForTeam``'s triples exactly."""
+
+    def _season_with_tournament(self, prefix: str, teams: list):
+        league = _make_league(f"{prefix}L", current_team=teams[0])
+        season = _make_completed_season(
+            league,
+            name="S1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        SeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")
+        tournament = Tournament.objects.create(name=f"{prefix} Playoffs")
+        SeasonPhase.objects.create(
+            season=season, ordinal=2, phase_type="tournament", tournament=tournament
+        )
+        return season, tournament
+
+    def test_zero_conference_champion_triple_is_unchanged(self) -> None:
+        teams = [_make_team(f"Conf04FlatCh{i}") for i in range(2)]
+        season, tournament = self._season_with_tournament("Conf04FlatCh", teams)
+        for i, team in enumerate(teams):
+            TournamentParticipant.objects.create(
+                tournament=tournament, team=team, seed=i + 1
+            )
+        BracketNode.objects.create(
+            tournament=tournament, bracket_round=1, position=0, winner=teams[0]
+        )
+        tournament.champion = teams[0]
+        tournament.save(update_fields=["champion"])
+        self.assertEqual(
+            _classify_playoffs_for_team(season, teams[0].id), ("champion", 0, 1)
+        )
+
+    def test_zero_conference_seeded_triple_is_unchanged(self) -> None:
+        teams = [_make_team(f"Conf04FlatSe{i}") for i in range(4)]
+        season, tournament = self._season_with_tournament("Conf04FlatSe", teams)
+        for i, team in enumerate(teams):
+            TournamentParticipant.objects.create(
+                tournament=tournament, team=team, seed=i + 1
+            )
+        BracketNode.objects.create(
+            tournament=tournament, bracket_round=1, position=0, winner=teams[1]
+        )
+        BracketNode.objects.create(
+            tournament=tournament, bracket_round=2, position=0, winner=teams[0]
+        )
+        tournament.champion = teams[0]
+        tournament.save(update_fields=["champion"])
+        self.assertEqual(
+            _classify_playoffs_for_team(season, teams[1].id), ("seeded", 1, 2)
+        )
+
+    def test_zero_conference_missed_triple_is_unchanged(self) -> None:
+        teams = [_make_team(f"Conf04FlatMi{i}") for i in range(2)]
+        season, tournament = self._season_with_tournament("Conf04FlatMi", teams)
+        TournamentParticipant.objects.create(
+            tournament=tournament, team=teams[0], seed=1
+        )
+        BracketNode.objects.create(
+            tournament=tournament, bracket_round=1, position=0, winner=teams[0]
+        )
+        tournament.champion = teams[0]
+        tournament.save(update_fields=["champion"])
+        outsider = _make_team("Conf04FlatOut")
+        self.assertEqual(
+            _classify_playoffs_for_team(season, outsider.id), ("missed", 0, 1)
+        )
+
+    def test_zero_conference_none_triple_is_unchanged(self) -> None:
+        team = _make_team("Conf04FlatNone")
+        league = _make_league("Conf04FlatNoneL", current_team=team)
+        season = _make_completed_season(
+            league, name="S1", start_date=date(2025, 1, 1), team_ids=[team.id]
+        )
+        self.assertEqual(_classify_playoffs_for_team(season, team.id), ("none", 0, 0))
+
+    def test_a_one_conference_season_still_takes_the_flat_branch(self) -> None:
+        # ``len(ordered_conferences()) >= 2`` is the branch predicate, so ONE
+        # Conference keeps the verbatim scan.
+        teams = [_make_team(f"Conf04One{i}") for i in range(2)]
+        season, tournament = self._season_with_tournament("Conf04One", teams)
+        _Conf04Conference.objects.create(
+            season=season,
+            name="Conf04OneConf",
+            ordinal=1,
+            starting_team_ids_json=sorted(t.id for t in teams),
+        )
+        for i, team in enumerate(teams):
+            TournamentParticipant.objects.create(
+                tournament=tournament, team=team, seed=i + 1
+            )
+        BracketNode.objects.create(
+            tournament=tournament, bracket_round=1, position=0, winner=teams[0]
+        )
+        tournament.champion = teams[0]
+        tournament.save(update_fields=["champion"])
+        self.assertEqual(
+            _classify_playoffs_for_team(season, teams[0].id), ("champion", 0, 1)
+        )
+
+
+class TestConf04PlayoffsDeltaThroughTheWriter(TestCase):
+    """CONF-04 §11.2 - the owner-evaluation rows the writer produces. The
+    ladder falls out of ``compute_playoffs_delta``'s existing depth-proportional
+    ``"seeded"`` branch; ``owner_mood.py`` gains nothing (§12 invariant 4)."""
+
+    def _evaluation_for(self, league, season):
+        _ensure_owner_evaluations(league, season)
+        return league.owner_evaluations.get(season=season)
+
+    def test_the_worlds_champion_earns_the_title_delta(self) -> None:
+        (
+            league,
+            season,
+            conferences,
+            groups,
+            regional_phase,
+            worlds_phase,
+        ) = _conf04_partitioned_season("Conf04WrCh", sizes=(2, 2))
+        league.current_team = groups[0][0]
+        league.save(update_fields=["current_team"])
+        regional = _conf04_regional_bracket(
+            "Conf04WrCh", regional_phase, conferences[0], groups[0]
+        )
+        _conf04_node(regional, 1, 0, winner=groups[0][0])
+        regional.champion = groups[0][0]
+        regional.save(update_fields=["champion"])
+        worlds = _conf04_worlds_bracket(
+            "Conf04WrCh", worlds_phase, [groups[0][0], groups[1][0]]
+        )
+        _conf04_node(worlds, 1, 0, winner=groups[0][0])
+        worlds.champion = groups[0][0]
+        worlds.save(update_fields=["champion"])
+
+        row = self._evaluation_for(league, season)
+        self.assertGreater(row.playoffs_delta, 0.0)
+
+    def test_a_non_qualifier_is_not_charged_the_full_miss_penalty(self) -> None:
+        """The pre-CONF-04 accident's regression guard. A Team that reached its
+        own Regional playoff but not Worlds is ``"seeded"``, never
+        ``"missed"``."""
+        (
+            league,
+            season,
+            conferences,
+            groups,
+            regional_phase,
+            worlds_phase,
+        ) = _conf04_partitioned_season("Conf04WrSe", sizes=(2, 2))
+        league.current_team = groups[0][1]
+        league.save(update_fields=["current_team"])
+        regional = _conf04_regional_bracket(
+            "Conf04WrSe", regional_phase, conferences[0], groups[0]
+        )
+        _conf04_node(regional, 1, 0, winner=groups[0][0])
+        regional.champion = groups[0][0]
+        regional.save(update_fields=["champion"])
+        worlds = _conf04_worlds_bracket(
+            "Conf04WrSe", worlds_phase, [groups[0][0], groups[1][0]]
+        )
+        _conf04_node(worlds, 1, 0, winner=groups[0][0])
+        worlds.champion = groups[0][0]
+        worlds.save(update_fields=["champion"])
+
+        self.assertEqual(
+            _classify_playoffs_for_team(season, groups[0][1].id)[0], "seeded"
+        )
+        row = self._evaluation_for(league, season)
+        self.assertEqual(row.playoffs_delta, 0.0, "seeded with 0 rounds won gives 0.0")
+
+    def test_the_verdict_column_is_still_written(self) -> None:
+        (
+            league,
+            season,
+            conferences,
+            groups,
+            regional_phase,
+            worlds_phase,
+        ) = _conf04_partitioned_season("Conf04WrV", sizes=(2, 2))
+        league.current_team = groups[0][0]
+        league.save(update_fields=["current_team"])
+        _conf04_worlds_bracket("Conf04WrV", worlds_phase, [groups[0][0], groups[1][0]])
+        row = self._evaluation_for(league, season)
+        self.assertIn(row.verdict, {"retained", "hot_seat", "fired"})

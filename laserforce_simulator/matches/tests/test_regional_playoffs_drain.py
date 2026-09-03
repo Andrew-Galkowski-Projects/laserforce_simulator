@@ -139,9 +139,16 @@ class TestPlayPlayoffsTaskRegional(TestCase):
         self.assertIn("total", payload)
         self.assertIsInstance(payload["completed"], int)
         self.assertIsInstance(payload["total"], int)
-        # Two 4-team single-elim brackets = 2 stages each ⇒ 4 stages summed.
-        self.assertEqual(payload["total"], 4)
+        # CONF-04 — the returned STAGE counts describe the phase the run
+        # ENDED on. Crossing the regional -> Worlds boundary re-resolves the
+        # cached ``tournaments`` list (ADR-0037), so ``_stage_counts()`` then
+        # aggregates the Worlds bracket alone rather than the whole run. The
+        # load-bearing guard — every qualification bracket actually drained
+        # — is asserted directly below instead of through the total.
         self.assertEqual(payload["completed"], payload["total"])
+        for tournament in _phase.regional_tournaments.all():
+            self.assertEqual(tournament.state, "completed")
+            self.assertIsNotNone(tournament.champion_id)
 
     def test_completes_the_season_with_a_null_champion(self) -> None:
         from matches.tasks import play_playoffs_task
@@ -152,8 +159,10 @@ class TestPlayPlayoffsTaskRegional(TestCase):
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
             play_playoffs_task.apply(args=(season.id,))
         season.refresh_from_db()
+        # CONF-04 — one invocation now carries through the derived Worlds
+        # phase and crowns the Season champion (ADR-0037).
         self.assertEqual(season.state, "completed")
-        self.assertIsNone(season.champion_team_id)
+        self.assertIsNotNone(season.champion_team_id)
 
     def test_guard_returns_zero_counts_when_the_phase_has_no_brackets(self) -> None:
         from matches.tasks import play_playoffs_task
@@ -216,7 +225,10 @@ class TestPlayWeekRegional(TestCase):
 
     def test_repeated_posts_drain_both_brackets_to_champions(self) -> None:
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            for _ in range(6):
+            # CONF-04 — the click chain is longer now: after both regionals
+            # drain the cursor advances to the derived Worlds phase, which
+            # must be built and drained before the Season completes.
+            for _ in range(14):
                 self.season.refresh_from_db()
                 if self.season.state == "completed":
                     break
@@ -227,7 +239,7 @@ class TestPlayWeekRegional(TestCase):
             self.assertEqual(tournament.state, "completed")
             self.assertIsNotNone(tournament.champion_id)
         self.assertEqual(self.season.state, "completed")
-        self.assertIsNone(self.season.champion_team_id)
+        self.assertIsNotNone(self.season.champion_team_id)
 
 
 # ===========================================================================
@@ -291,11 +303,16 @@ class TestPlaySeasonTaskRegionalTail(TestCase):
 
         self.season.refresh_from_db()
         self.assertEqual(self.season.state, "completed")
-        self.assertIsNone(self.season.champion_team_id)
+        # CONF-04 — the unbounded tail runs on through Worlds and crowns.
+        self.assertIsNotNone(self.season.champion_team_id)
 
         payload = result.get()
-        # STAGE counts aggregated across both brackets (2 stages each).
-        self.assertEqual(payload["total"], 4)
+        # CONF-04 — the returned STAGE counts describe the phase the run
+        # ENDED on. Crossing the regional -> Worlds boundary re-resolves the
+        # cached ``tournaments`` list (ADR-0037), so ``_stage_counts()`` then
+        # aggregates the Worlds bracket alone rather than the whole run. The
+        # load-bearing guard — every qualification bracket actually drained
+        # — is asserted directly below instead of through the total.
         self.assertEqual(payload["completed"], payload["total"])
 
 
@@ -556,15 +573,17 @@ class TestLastChanceDrainHooks(TestCase):
         for tournament in tournaments:
             self.assertEqual(tournament.state, "completed")
 
-    def test_unbounded_tail_completes_the_season_with_a_null_champion(self) -> None:
+    def test_unbounded_tail_completes_the_season_with_a_champion(self) -> None:
         from matches.tasks import play_season_task
 
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
             play_season_task.delay(self.season.id, max_matchdays=None)
 
         self.season.refresh_from_db()
+        # CONF-04 — an unbounded run drains qualification AND Worlds, so the
+        # Season now ends crowned rather than championless (ADR-0037).
         self.assertEqual(self.season.state, "completed")
-        self.assertIsNone(self.season.champion_team_id)
+        self.assertIsNotNone(self.season.champion_team_id)
 
     # -- 28. The budgeted branch: one budget unit is still ONE stage --------
 
@@ -623,11 +642,28 @@ class TestLastChanceDrainHooks(TestCase):
             for _ in range(4):
                 play_season_task.delay(self.season.id, max_matchdays=1)
 
+        # The 4 budget units finish QUALIFICATION: every Regional playoff
+        # and the Last-chance bracket has a champion.
         last_chance = _conf03_last_chance(self.phase, self.big)
         self.assertEqual(last_chance.state, "completed")
         self.assertIsNotNone(last_chance.champion_id)
         self.season.refresh_from_db()
+        # CONF-04 — the Season is NOT finished here: the cursor has advanced
+        # to the derived Worlds phase (ADR-0037). Further budget units build
+        # and drain that bracket, and only then is a champion crowned.
+        self.assertEqual(self.season.state, "active")
+        self.assertEqual(self.season.current_phase().tournament_mode, "worlds")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(6):
+                self.season.refresh_from_db()
+                if self.season.state == "completed":
+                    break
+                play_season_task.delay(self.season.id, max_matchdays=1)
+
+        self.season.refresh_from_db()
         self.assertEqual(self.season.state, "completed")
+        self.assertIsNotNone(self.season.champion_team_id)
 
     # -- 29. play_playoffs_task's aggregated counts + the cancel contract ---
 
@@ -638,10 +674,18 @@ class TestLastChanceDrainHooks(TestCase):
             result = play_playoffs_task.apply(args=(self.season.id,))
         payload = result.get()
 
-        # Three 4-team brackets = 2 stages each => 6 stages summed. Before the
-        # Last-chance bracket was seeded it contributed (0, 0).
-        self.assertEqual(payload["total"], 6)
+        # CONF-04 — the returned STAGE counts describe the phase the run
+        # ENDED on. Crossing the regional -> Worlds boundary re-resolves the
+        # cached ``tournaments`` list (ADR-0037), so ``_stage_counts()`` then
+        # aggregates the Worlds bracket alone rather than the whole run. The
+        # load-bearing guard — every qualification bracket actually drained
+        # — is asserted directly below instead of through the total.
         self.assertEqual(payload["completed"], payload["total"])
+        self.assertEqual(_conf03_last_chance(self.phase, self.big).state, "completed")
+        for conference in self.conferences:
+            self.assertEqual(
+                _conf03_regional(self.phase, conference).state, "completed"
+            )
 
     def test_play_playoffs_task_return_shape_is_unchanged(self) -> None:
         from matches.tasks import play_playoffs_task
@@ -707,8 +751,15 @@ class TestSmallConferenceDrainIsUnchanged(TestCase):
             result = play_playoffs_task.apply(args=(season.id,))
         payload = result.get()
 
-        self.assertEqual(payload["total"], 4)
+        # CONF-04 — the returned STAGE counts describe the phase the run
+        # ENDED on. Crossing the regional -> Worlds boundary re-resolves the
+        # cached ``tournaments`` list (ADR-0037), so ``_stage_counts()`` then
+        # aggregates the Worlds bracket alone rather than the whole run. The
+        # load-bearing guard — every qualification bracket actually drained
+        # — is asserted directly below instead of through the total.
         self.assertEqual(payload["completed"], payload["total"])
+        for tournament in _phase.regional_tournaments.all():
+            self.assertEqual(tournament.state, "completed")
         self.assertEqual(
             Tournament.objects.filter(qualifier_stage="last_chance").count(), 0
         )
@@ -725,4 +776,453 @@ class TestSmallConferenceDrainIsUnchanged(TestCase):
         self.assertEqual(phase.regional_tournaments.count(), 2)
         season.refresh_from_db()
         self.assertEqual(season.state, "completed")
-        self.assertIsNone(season.champion_team_id)
+        # CONF-04 — still no Last-chance row for 8-or-fewer Conferences (the
+        # CONF-03 pin), but the Season is now crowned via Worlds (ADR-0037).
+        self.assertIsNotNone(season.champion_team_id)
+
+
+# ===========================================================================
+# CONF-04 - the ONE deliberate phase-boundary crossing
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/conf-04-seam-contract.md`` §6.A-§6.D +
+# §11.4; rationale in
+# [ADR-0037](../../docs/adr/0037-worlds-is-a-derived-season-phase.md).
+#
+# Making Worlds its own ``SeasonPhase`` puts it behind a boundary the drain
+# loops do not cross: both tasks resolve ``season.current_phase()`` and cache
+# ``tournaments_for_phase(phase)`` ONCE, and bracket Matches run through
+# ``tournament_engine``, not ``simulate_scheduled_round`` - so the
+# ``activate_pending_tournament_phase`` hook goes quiet the moment the regular
+# season ends. Left alone, a "Play whole season" run would stop with the
+# regionals drained and Worlds unbuilt.
+#
+# The fix follows CONF-03's seed-then-continue precedent: when
+# ``build_pending_worlds_bracket()`` returns True inside the existing STALL
+# branch, the loop RE-RESOLVES ``phase`` and ``tournaments`` and retries. Four
+# call sites are pinned here:
+#
+#   §6.A ``play_playoffs_task``       - re-resolve + ``continue``
+#   §6.B ``play_season_task``          - ``nonlocal`` re-resolve inside
+#                                        ``_drain_one_stage``, so ONE budget
+#                                        unit is still ONE stage
+#   §6.C ``play_single_round``         - the click that finishes the last
+#                                        regional node is never a dead click
+#   §6.D ``play_playoffs``             - a cursor parked on an UNBUILT Worlds
+#                                        phase must return 202, not 409
+#
+# CONSEQUENCE PINNED BELOW (contract §6.B / §11.3). ``_stage_counts()`` closes
+# over the same ``tournaments`` name, so after the deliberate re-resolution it
+# aggregates the WORLDS bracket ALONE and the reported {"completed", "total"}
+# SHRINKS at the phase boundary. That is intended - the counts describe the
+# CURRENT phase, matching CONF-02's "stage counts of the phase being drained"
+# contract. These tests assert the FINAL return and the terminal DB state, and
+# deliberately NEVER assert that the PROGRESS counts increase monotonically
+# across a run.
+#
+# Appended as a NEW class; no existing class above is modified.
+
+
+def _conf04_worlds_phase(season):
+    """The Season's Worlds phase, read off the PUBLIC ``tournament_mode``
+    discriminator (contract §11.2) - never through the private resolver."""
+    return season.phases.filter(tournament_mode="worlds").first()
+
+
+def _conf04_worlds_tournament(season):
+    phase = _conf04_worlds_phase(season)
+    if phase is None:
+        return None
+    phase.refresh_from_db()
+    return phase.tournament
+
+
+def _conf04_stamp_regionals_completed(phase, conferences, groups) -> None:
+    """Crown every Regional playoff by STAMPING the persisted rows (§11.1
+    technique 2) - used only to REACH the boundary, never to cross it."""
+    from matches.tests.test_regional_playoffs import _stamp_bracket_completed
+
+    for conference, group in zip(conferences, groups):
+        regional = _conf03_regional(phase, conference)
+        if regional is not None:
+            _stamp_bracket_completed(regional, group[0])
+
+
+class TestWorldsDrainCrossesThePhaseBoundary(TestCase):
+    """CONF-04 §6.A-§6.D - one invocation of either task drains the regionals,
+    builds Worlds, drains it, and crowns the Season champion."""
+
+    def setUp(self) -> None:
+        (
+            self.season,
+            self.conferences,
+            self.groups,
+            self.phase,
+            self.tournaments,
+        ) = _built_two_conference_season("Conf04Boundary")
+
+    def test_fixture_precondition_a_worlds_phase_exists_and_is_unbuilt(self) -> None:
+        worlds_phase = _conf04_worlds_phase(self.season)
+        self.assertIsNotNone(worlds_phase)
+        self.assertIsNone(worlds_phase.tournament_id)
+        self.assertEqual(worlds_phase.ordinal, 3)
+
+    # -- §6.A play_playoffs_task -------------------------------------------
+
+    def test_play_playoffs_task_builds_and_drains_worlds_in_one_run(self) -> None:
+        from matches.tasks import play_playoffs_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_playoffs_task.apply(args=(self.season.id,))
+
+        worlds = _conf04_worlds_tournament(self.season)
+        self.assertIsNotNone(worlds, "the task must cross the phase boundary")
+        self.assertEqual(worlds.state, "completed")
+        self.assertIsNotNone(worlds.champion_id)
+
+    def test_play_playoffs_task_crowns_the_season_champion(self) -> None:
+        from matches.tasks import play_playoffs_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_playoffs_task.apply(args=(self.season.id,))
+
+        worlds = _conf04_worlds_tournament(self.season)
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "completed")
+        self.assertEqual(self.season.champion_team_id, worlds.champion_id)
+
+    def test_play_playoffs_task_still_drains_every_regional_bracket(self) -> None:
+        from matches.tasks import play_playoffs_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_playoffs_task.apply(args=(self.season.id,))
+
+        for conference, group in zip(self.conferences, self.groups):
+            regional = _conf03_regional(self.phase, conference)
+            self.assertEqual(regional.state, "completed")
+            self.assertIn(regional.champion_id, _ids(group))
+
+    def test_play_playoffs_task_return_shape_is_unchanged(self) -> None:
+        from matches.tasks import play_playoffs_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_playoffs_task.apply(args=(self.season.id,))
+        payload = result.get()
+
+        self.assertEqual(set(payload), {"completed", "total"})
+        self.assertIsInstance(payload["completed"], int)
+        self.assertIsInstance(payload["total"], int)
+
+    def test_the_final_counts_describe_the_worlds_phase_alone(self) -> None:
+        """Contract §6.B's documented consequence. ``_stage_counts()`` closes
+        over the re-resolved ``tournaments``, so the terminal counts cover the
+        WORLDS bracket only - the four regional stages drop out. Assert the
+        FINAL return, never the monotonicity of the PROGRESS emissions."""
+        from matches.tasks import play_playoffs_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_playoffs_task.apply(args=(self.season.id,))
+        payload = result.get()
+
+        worlds = _conf04_worlds_tournament(self.season)
+        self.assertGreater(payload["total"], 0)
+        self.assertEqual(payload["completed"], payload["total"])
+        # Two 4-Team regionals alone would have summed to 4 stages; the counts
+        # now describe the M = 2 Worlds bracket's single stage.
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(worlds.nodes.count(), 1)
+
+    # -- §6.B play_season_task ---------------------------------------------
+
+    def test_unbounded_season_tail_builds_and_drains_worlds(self) -> None:
+        from matches.tasks import play_season_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(self.season.id, max_matchdays=None)
+
+        worlds = _conf04_worlds_tournament(self.season)
+        self.assertIsNotNone(worlds)
+        self.assertEqual(worlds.state, "completed")
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "completed")
+        self.assertEqual(self.season.champion_team_id, worlds.champion_id)
+
+    def test_the_budgeted_tail_does_not_cross_the_boundary_early(self) -> None:
+        """One budget unit is still ONE stage: the boundary crossing fires only
+        when NOTHING else progressed, so the first units buy regional stages."""
+        from matches.tasks import play_season_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(self.season.id, max_matchdays=1)
+
+        for conference in self.conferences:
+            self.assertEqual(
+                _resolved_node_count(_conf03_regional(self.phase, conference)),
+                2,
+                "one budget unit == stage 1 of EVERY regional bracket",
+            )
+        self.assertIsNone(
+            _conf04_worlds_phase(self.season).tournament_id,
+            "Worlds must not build while the regionals are still progressing",
+        )
+
+    def test_the_stalled_budget_unit_builds_and_plays_one_worlds_stage(self) -> None:
+        """Contract §6.B - the boundary crossing lives INSIDE
+        ``_drain_one_stage``, so it is reachable only while the run's cached
+        cursor is still the regional phase. A 3-unit budget therefore spends
+        units 1-2 on the two regional stages and unit 3 on the stall, which
+        builds Worlds, re-resolves, and plays its ONE stage (the whole final at
+        M = 2)."""
+        from matches.tasks import play_season_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(self.season.id, max_matchdays=3)
+
+        for conference in self.conferences:
+            self.assertEqual(
+                _conf03_regional(self.phase, conference).state, "completed"
+            )
+        worlds = _conf04_worlds_tournament(self.season)
+        self.assertIsNotNone(worlds)
+        self.assertEqual(_resolved_node_count(worlds), 1)
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "completed")
+
+    def test_a_two_unit_budget_stops_before_the_boundary(self) -> None:
+        """One budget unit is still ONE stage: two units buy exactly the two
+        regional stages and leave Worlds unbuilt."""
+        from matches.tasks import play_season_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(self.season.id, max_matchdays=2)
+
+        for conference in self.conferences:
+            self.assertEqual(
+                _conf03_regional(self.phase, conference).state, "completed"
+            )
+        self.assertIsNone(_conf04_worlds_phase(self.season).tournament_id)
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "active")
+
+    def test_a_cancel_before_the_boundary_builds_no_worlds_bracket(self) -> None:
+        from matches.tasks import play_playoffs_task
+
+        self.season.play_cancel_requested = True
+        self.season.save(update_fields=["play_cancel_requested"])
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_playoffs_task.apply(args=(self.season.id,))
+
+        self.assertTrue(result.get().get("cancelled"))
+        self.assertIsNone(_conf04_worlds_phase(self.season).tournament_id)
+        self.season.refresh_from_db()
+        self.assertNotEqual(self.season.state, "completed")
+
+    # -- §6.D play_playoffs is not a 409 trap ------------------------------
+
+    def test_play_playoffs_returns_202_on_an_unbuilt_worlds_cursor(self) -> None:
+        """The regression this hook exists for (§11.5 item 10). With the cursor
+        parked on an unbuilt Worlds phase, ``tournaments_for_phase`` is ``[]``,
+        so the guard would 409 "No active playoff bracket to play." and the
+        drain could never be STARTED. The build MUST precede the cursor read."""
+        _conf04_stamp_regionals_completed(self.phase, self.conferences, self.groups)
+        self.assertEqual(
+            self.season.current_phase().pk, _conf04_worlds_phase(self.season).pk
+        )
+        self.assertIsNone(_conf04_worlds_phase(self.season).tournament_id)
+
+        with patch("matches.league_views.play_playoffs_task.delay") as delay:
+            delay.return_value.id = "job-conf04-worlds"
+            response = self.client.post(reverse("play_playoffs", args=[self.season.id]))
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["season_id"], self.season.id)
+
+    def test_the_409_post_leaves_a_built_and_active_worlds_bracket(self) -> None:
+        _conf04_stamp_regionals_completed(self.phase, self.conferences, self.groups)
+        with patch("matches.league_views.play_playoffs_task.delay") as delay:
+            delay.return_value.id = "job-conf04-worlds-2"
+            self.client.post(reverse("play_playoffs", args=[self.season.id]))
+
+        worlds = _conf04_worlds_tournament(self.season)
+        self.assertIsNotNone(worlds)
+        self.assertEqual(worlds.state, "active")
+
+    def test_play_playoffs_still_409s_when_there_is_no_bracket_at_all(self) -> None:
+        """The guard still guards: an unbuilt REGIONAL phase (the regular season
+        is still running) is still a 409."""
+        season, _conferences, _groups, _rr, phase = _conf_season(
+            "Conf04Unbuilt", [4, 4]
+        )
+        self.assertFalse(phase.regional_tournaments.exists())
+        response = self.client.post(reverse("play_playoffs", args=[season.id]))
+        self.assertEqual(response.status_code, 409)
+
+    # -- §6.C play_single_round is never a dead click ----------------------
+
+    def test_the_click_that_finishes_the_regionals_builds_worlds(self) -> None:
+        """§11.5 item 11. Two 4-Team brackets hold 3 nodes each and
+        ``play_single_round`` resolves exactly ONE node per click, so click 6
+        resolves the last regional node - and must leave the Worlds bracket
+        BUILT and ``active`` rather than a cursor on an empty phase."""
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(6):
+                response = self.client.post(
+                    reverse("play_single_round", args=[self.season.id])
+                )
+                self.assertEqual(response.status_code, 302)
+
+        for conference in self.conferences:
+            self.assertEqual(
+                _conf03_regional(self.phase, conference).state, "completed"
+            )
+        worlds = _conf04_worlds_tournament(self.season)
+        self.assertIsNotNone(worlds, "the regionals-finishing click must build Worlds")
+        self.assertEqual(worlds.state, "active")
+        self.assertEqual(worlds.nodes.count(), 1)
+
+    def test_that_click_does_not_itself_play_a_worlds_node(self) -> None:
+        # §6.C - the click already played its regional node; the NEXT click
+        # finds the cursor on a built Worlds phase and drains it normally.
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(6):
+                self.client.post(reverse("play_single_round", args=[self.season.id]))
+        worlds = _conf04_worlds_tournament(self.season)
+        self.assertEqual(_resolved_node_count(worlds), 0)
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "active")
+
+    def test_the_next_click_plays_a_worlds_node_and_crowns_the_season(self) -> None:
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(7):
+                response = self.client.post(
+                    reverse("play_single_round", args=[self.season.id])
+                )
+                self.assertEqual(response.status_code, 302)
+
+        worlds = _conf04_worlds_tournament(self.season)
+        self.assertEqual(_resolved_node_count(worlds), 1)
+        self.assertEqual(worlds.state, "completed")
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "completed")
+        self.assertEqual(self.season.champion_team_id, worlds.champion_id)
+
+    def test_no_click_in_the_run_ever_returns_the_no_bracket_error(self) -> None:
+        # A 400 here would be the "cursor parked on an unbuilt Worlds phase"
+        # failure mode: ``_render_season_dashboard_error`` renders with 400.
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(7):
+                response = self.client.post(
+                    reverse("play_single_round", args=[self.season.id])
+                )
+                self.assertNotEqual(response.status_code, 400)
+
+
+class TestWorldsDrainWithALastChanceBracket(TestCase):
+    """CONF-04 - the full chain in ONE task run: regional playoffs, then the
+    CONF-03 Last-chance seed-then-retry, then the CONF-04 phase-boundary
+    crossing into Worlds. The two stall-branch hooks sit side by side and must
+    not shadow one another (naming hazard §13.8: one returns ``int``, the other
+    ``bool``)."""
+
+    def setUp(self) -> None:
+        (
+            self.season,
+            self.conferences,
+            self.groups,
+            self.phase,
+        ) = _conf03_lc_season("Conf04Lc")
+        self.big = self.conferences[0]
+
+    def test_one_unbounded_run_drains_regionals_last_chance_and_worlds(self) -> None:
+        from matches.tasks import play_season_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(self.season.id, max_matchdays=None)
+
+        last_chance = _conf03_last_chance(self.phase, self.big)
+        self.assertEqual(last_chance.state, "completed")
+        self.assertIsNotNone(last_chance.champion_id)
+
+        worlds = _conf04_worlds_tournament(self.season)
+        self.assertIsNotNone(worlds)
+        self.assertEqual(worlds.state, "completed")
+
+    def test_the_nine_team_conference_sends_three_qualifiers(self) -> None:
+        from matches.tasks import play_season_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(self.season.id, max_matchdays=None)
+
+        worlds = _conf04_worlds_tournament(self.season)
+        # 3 from the 9-Team Conference + 1 from the 4-Team one.
+        self.assertEqual(worlds.participants.count(), 4)
+
+    def test_the_season_completes_with_the_worlds_champion(self) -> None:
+        from matches.tasks import play_season_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(self.season.id, max_matchdays=None)
+
+        worlds = _conf04_worlds_tournament(self.season)
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "completed")
+        self.assertEqual(self.season.champion_team_id, worlds.champion_id)
+
+    def test_play_playoffs_task_reaches_worlds_through_both_stall_hooks(self) -> None:
+        from matches.tasks import play_playoffs_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_playoffs_task.apply(args=(self.season.id,))
+        payload = result.get()
+
+        self.assertEqual(_conf03_last_chance(self.phase, self.big).state, "completed")
+        worlds = _conf04_worlds_tournament(self.season)
+        self.assertEqual(worlds.state, "completed")
+        # Terminal counts only, and only their internal consistency - the
+        # counts describe the CURRENT (Worlds) phase (§6.B).
+        self.assertGreater(payload["total"], 0)
+        self.assertEqual(payload["completed"], payload["total"])
+
+
+class TestZeroConferenceDrainStillHasNoWorldsPhase(TestCase):
+    """CONF-04 §12 invariant 1 - the 0-Conference drain path is byte-identical:
+    no Worlds phase is ever created, so no stall branch ever crosses a
+    boundary, and the single Season-wide bracket still crowns the champion."""
+
+    def setUp(self) -> None:
+        self.season, self.teams, self.phase = _built_flat_season("Conf04Flat")
+
+    def test_the_season_has_no_worlds_phase(self) -> None:
+        self.assertIsNone(_conf04_worlds_phase(self.season))
+        self.assertEqual(self.season.phases.count(), 2)
+
+    def test_play_playoffs_task_counts_are_the_pre_conf04_shape(self) -> None:
+        from matches.tasks import play_playoffs_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_playoffs_task.apply(args=(self.season.id,))
+        payload = result.get()
+
+        # One 4-team bracket = 2 stages - unchanged from CONF-02.
+        self.assertEqual(payload["total"], 2)
+        self.assertEqual(payload["completed"], payload["total"])
+
+    def test_play_playoffs_task_still_crowns_from_the_single_bracket(self) -> None:
+        from matches.tasks import play_playoffs_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_playoffs_task.apply(args=(self.season.id,))
+
+        self.phase.refresh_from_db()
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "completed")
+        self.assertEqual(
+            self.season.champion_team_id, self.phase.tournament.champion_id
+        )
+
+    def test_no_extra_tournament_row_is_created(self) -> None:
+        from matches.tasks import play_playoffs_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_playoffs_task.apply(args=(self.season.id,))
+        self.assertEqual(Tournament.objects.count(), 1)
