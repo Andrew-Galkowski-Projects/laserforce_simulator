@@ -462,3 +462,267 @@ class TestZeroConferenceUiEntryPointsUnchanged(TestCase):
         self.assertIsNone(phase.tournament_id)
         response = self.client.post(reverse("play_playoffs", args=[season.id]))
         self.assertEqual(response.status_code, 409)
+
+
+# ===========================================================================
+# CONF-03 — the drain hooks that seed a Last-chance qualifier mid-drain
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/conf-03-seam-contract.md`` §6 + §9.4 items
+# 27-29; rationale in
+# [ADR-0036](../../docs/adr/0036-worlds-qualification-size-tiered-with-last-chance-bracket.md).
+#
+# A Conference of 9+ Teams carries a SECOND, deliberately UNSEEDED bracket from
+# phase activation. The engine is unchanged: a node-less bracket already makes
+# ``play_next_node`` return ``None`` and ``play_next_bracket_round`` return
+# ``0``, so both drain loops skip it harmlessly. The only change is in the
+# callers' no-progress branch, which SEEDS and then retries once —
+# "seed-then-continue".
+#
+# The hazard this pins: neither task may re-resolve ``tournaments_for_phase``
+# inside its loop. The eager row is already in the cached list, and the cached
+# instances re-query ``tournament.nodes`` on every call, so a bracket that was
+# node-less on iteration 1 is played correctly by the SAME cached instance on
+# iteration 4. These tests would fail if the loops exited on the first
+# zero-progress pass (the pre-CONF-03 shape).
+#
+# Fixtures reuse ``test_regional_playoffs.py`` and set ``tournament_cut=4`` so
+# the 9-Team Conference's REGIONAL bracket is a fast 4-team tree while its
+# activation-snapshot size stays 9 — which is what arms the tier-3 slot
+# (contract §2.1: size is NOT affected by ``tournament_cut``). Appended as NEW
+# classes; no existing class above is modified.
+
+
+def _conf03_lc_season(prefix: str, sizes=(9, 4)):
+    """A built Season whose final tournament phase holds two 4-team Regional
+    playoffs and ONE unseeded Last-chance bracket."""
+    season, conferences, groups, _rr_phase, phase = _built_regional_season(
+        prefix, list(sizes), cut=4
+    )
+    return season, conferences, groups, phase
+
+
+def _conf03_regional(phase, conference):
+    """The Regional playoff of ``conference`` — via the §3.2 read rule, NOT a
+    positive test on ``"regional_playoff"``."""
+    return (
+        phase.regional_tournaments.filter(conference=conference)
+        .exclude(qualifier_stage="last_chance")
+        .first()
+    )
+
+
+def _conf03_last_chance(phase, conference=None):
+    rows = phase.regional_tournaments.filter(qualifier_stage="last_chance")
+    if conference is not None:
+        rows = rows.filter(conference=conference)
+    return rows.first()
+
+
+class TestLastChanceDrainHooks(TestCase):
+    """CONF-03 — ``play_season_task`` / ``play_playoffs_task`` seed the
+    Last-chance bracket mid-drain instead of exiting on no progress."""
+
+    def setUp(self) -> None:
+        (
+            self.season,
+            self.conferences,
+            self.groups,
+            self.phase,
+        ) = _conf03_lc_season("Conf03Drain")
+        self.big = self.conferences[0]
+
+    # -- 27. play_season_task's unbounded tournament tail -------------------
+
+    def test_unbounded_tail_seeds_and_drains_the_last_chance_bracket(self) -> None:
+        from matches.tasks import play_season_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(self.season.id, max_matchdays=None)
+
+        last_chance = _conf03_last_chance(self.phase, self.big)
+        self.assertEqual(last_chance.participants.count(), 4)
+        self.assertEqual(last_chance.state, "completed")
+        self.assertIsNotNone(last_chance.champion_id)
+
+    def test_unbounded_tail_completes_every_bracket_of_the_phase(self) -> None:
+        from matches.tasks import play_season_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(self.season.id, max_matchdays=None)
+
+        tournaments = list(self.phase.regional_tournaments.all())
+        self.assertEqual(len(tournaments), 3)
+        for tournament in tournaments:
+            self.assertEqual(tournament.state, "completed")
+
+    def test_unbounded_tail_completes_the_season_with_a_null_champion(self) -> None:
+        from matches.tasks import play_season_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(self.season.id, max_matchdays=None)
+
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "completed")
+        self.assertIsNone(self.season.champion_team_id)
+
+    # -- 28. The budgeted branch: one budget unit is still ONE stage --------
+
+    def test_one_budget_unit_buys_exactly_one_stage_of_the_regionals(self) -> None:
+        from matches.tasks import play_season_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(self.season.id, max_matchdays=1)
+
+        # Two 4-team regionals: stage 1 is 2 nodes each.
+        for conference in self.conferences:
+            self.assertEqual(
+                _resolved_node_count(_conf03_regional(self.phase, conference)), 2
+            )
+        # The Last-chance bracket is untouched and still unseeded.
+        last_chance = _conf03_last_chance(self.phase, self.big)
+        self.assertEqual(last_chance.state, "setup")
+        self.assertEqual(last_chance.nodes.count(), 0)
+
+    def test_the_seed_then_retry_unit_buys_one_last_chance_stage_only(self) -> None:
+        """The load-bearing pacing assertion: the zero-progress unit seeds and
+        retries ONCE, so it resolves the Last-chance bracket's FIRST stage —
+        not the whole bracket."""
+        from matches.tasks import play_season_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            # Units 1-2 drain both 4-team regionals (2 stages each).
+            play_season_task.delay(self.season.id, max_matchdays=1)
+            play_season_task.delay(self.season.id, max_matchdays=1)
+
+        for conference in self.conferences:
+            self.assertEqual(
+                _conf03_regional(self.phase, conference).state, "completed"
+            )
+        self.assertEqual(_conf03_last_chance(self.phase, self.big).state, "setup")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            # Unit 3: nothing progresses, so it seeds and retries the stage.
+            play_season_task.delay(self.season.id, max_matchdays=1)
+
+        last_chance = _conf03_last_chance(self.phase, self.big)
+        self.assertEqual(last_chance.participants.count(), 4)
+        self.assertEqual(
+            _resolved_node_count(last_chance),
+            2,
+            "one budget unit must buy ONE stage, not the whole bracket",
+        )
+        self.assertNotEqual(last_chance.state, "completed")
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "active")
+
+    def test_the_next_budget_unit_finishes_the_last_chance_bracket(self) -> None:
+        from matches.tasks import play_season_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(4):
+                play_season_task.delay(self.season.id, max_matchdays=1)
+
+        last_chance = _conf03_last_chance(self.phase, self.big)
+        self.assertEqual(last_chance.state, "completed")
+        self.assertIsNotNone(last_chance.champion_id)
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "completed")
+
+    # -- 29. play_playoffs_task's aggregated counts + the cancel contract ---
+
+    def test_play_playoffs_task_counts_include_the_last_chance_stages(self) -> None:
+        from matches.tasks import play_playoffs_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_playoffs_task.apply(args=(self.season.id,))
+        payload = result.get()
+
+        # Three 4-team brackets = 2 stages each => 6 stages summed. Before the
+        # Last-chance bracket was seeded it contributed (0, 0).
+        self.assertEqual(payload["total"], 6)
+        self.assertEqual(payload["completed"], payload["total"])
+
+    def test_play_playoffs_task_return_shape_is_unchanged(self) -> None:
+        from matches.tasks import play_playoffs_task
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_playoffs_task.apply(args=(self.season.id,))
+        payload = result.get()
+
+        self.assertEqual(set(payload), {"completed", "total"})
+        self.assertIsInstance(payload["completed"], int)
+        self.assertIsInstance(payload["total"], int)
+
+    def test_a_cancel_mid_drain_returns_cancelled_and_commits_resolved_stages(
+        self,
+    ) -> None:
+        from matches.tasks import play_playoffs_task
+        from matches.tournament_engine import play_next_bracket_round
+
+        # Resolve one stage of each Regional playoff OUTSIDE the task, then
+        # cancel: the resolved nodes must survive the cancelled run.
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for conference in self.conferences:
+                play_next_bracket_round(_conf03_regional(self.phase, conference))
+        before = {
+            conference.id: _resolved_node_count(
+                _conf03_regional(self.phase, conference)
+            )
+            for conference in self.conferences
+        }
+        self.assertEqual(set(before.values()), {2})
+
+        self.season.play_cancel_requested = True
+        self.season.save(update_fields=["play_cancel_requested"])
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_playoffs_task.apply(args=(self.season.id,))
+        payload = result.get()
+
+        self.assertTrue(payload.get("cancelled"))
+        for conference in self.conferences:
+            self.assertEqual(
+                _resolved_node_count(_conf03_regional(self.phase, conference)),
+                before[conference.id],
+            )
+        # The cancelled run seeded nothing and completed nothing.
+        self.assertEqual(_conf03_last_chance(self.phase, self.big).state, "setup")
+        self.season.refresh_from_db()
+        self.assertNotEqual(self.season.state, "completed")
+
+
+class TestSmallConferenceDrainIsUnchanged(TestCase):
+    """CONF-03 byte-identity pin — a Season whose Conferences are all 8 Teams
+    or fewer drains exactly as CONF-02 did: no Last-chance row is ever created,
+    so no drain loop ever seeds one."""
+
+    def test_play_playoffs_task_counts_are_the_conf02_shape(self) -> None:
+        from matches.tasks import play_playoffs_task
+
+        season, _conferences, _groups, _phase, _tournaments = (
+            _built_two_conference_season("Conf03Small")
+        )
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_playoffs_task.apply(args=(season.id,))
+        payload = result.get()
+
+        self.assertEqual(payload["total"], 4)
+        self.assertEqual(payload["completed"], payload["total"])
+        self.assertEqual(
+            Tournament.objects.filter(qualifier_stage="last_chance").count(), 0
+        )
+
+    def test_play_season_task_tail_is_the_conf02_shape(self) -> None:
+        from matches.tasks import play_season_task
+
+        season, _conferences, _groups, phase, _tournaments = (
+            _built_two_conference_season("Conf03SmallTail")
+        )
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(season.id, max_matchdays=None)
+
+        self.assertEqual(phase.regional_tournaments.count(), 2)
+        season.refresh_from_db()
+        self.assertEqual(season.state, "completed")
+        self.assertIsNone(season.champion_team_id)
