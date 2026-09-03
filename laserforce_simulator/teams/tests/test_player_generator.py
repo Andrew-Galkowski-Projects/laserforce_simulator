@@ -22,7 +22,9 @@ import random
 import unittest
 
 from teams.player_generator import (
+    LEAGUE_SPREAD_DELTAS,
     assign_slots,
+    compute_tier_means,
     draw_preferred_roles,
     draw_stats,
 )
@@ -367,6 +369,281 @@ class TestNoDjangoImportsLeaked(unittest.TestCase):
             f"django modules leaked into teams.player_generator: {leaked!r}\n"
             f"stderr: {proc.stderr!r}",
         )
+
+
+# ---------------------------------------------------------------------------
+# CRE-02 — compute_tier_means + LEAGUE_SPREAD_DELTAS (seam contract §3)
+# ---------------------------------------------------------------------------
+#
+# Contract: `.claude/worktrees/cre-02-seam-contract.md`.
+#
+# The expected vectors below are HARD-CODED contract pins copied from §3.3 of
+# that document — deliberately NOT recomputed from the production formula,
+# which would be tautological (same precedent as `_EXPECTED_STAT_FIELDS`
+# above). Compared with `assertAlmostEqual(places=6)`; the contract forbids
+# pinning the exact float repr.
+#
+# MEAN-PRESERVATION CAVEAT (contract §3.2): the clamp to [0, 100] is applied
+# AFTER the ramp, so it breaks mean preservation at the extremes. Mean
+# preservation is therefore asserted ONLY on un-clamped parameter sets
+# (mean=50). The mean=95 / mean=5 cases assert bounds + monotonicity only.
+
+_EXPECTED_LEAGUE_SPREAD_DELTAS: dict[str, float] = {
+    "even": 0.0,
+    "tiered": 8.0,
+    "steep": 16.0,
+}
+
+# compute_tier_means(8, 50, 8) — "Tiered". List mean 50.0, head-tail gap 16.0.
+_EXPECTED_TIERED_8_50: tuple[float, ...] = (
+    58.000000,
+    55.714286,
+    53.428571,
+    51.142857,
+    48.857143,
+    46.571429,
+    44.285714,
+    42.000000,
+)
+
+# compute_tier_means(8, 50, 16) — "Steep". List mean 50.0, head-tail gap 32.0.
+_EXPECTED_STEEP_8_50: tuple[float, ...] = (
+    66.000000,
+    61.428571,
+    56.857143,
+    52.285714,
+    47.714286,
+    43.142857,
+    38.571429,
+    34.000000,
+)
+
+# compute_tier_means(8, 95, 16) — head clamps at 100.0. NO mean assertion.
+_EXPECTED_CLAMPED_HIGH_8_95: tuple[float, ...] = (
+    100.000000,
+    100.000000,
+    100.000000,
+    97.285714,
+    92.714286,
+    88.142857,
+    83.571429,
+    79.000000,
+)
+
+# compute_tier_means(8, 5, 16) — tail clamps at 0.0. NO mean assertion.
+_EXPECTED_CLAMPED_LOW_8_5: tuple[float, ...] = (
+    21.000000,
+    16.428571,
+    11.857143,
+    7.285714,
+    2.714286,
+    0.000000,
+    0.000000,
+    0.000000,
+)
+
+
+class TestComputeTierMeans(unittest.TestCase):
+    """CRE-02 — the linear, mean-preserving tier ramp (pure: no DB, no RNG)."""
+
+    # -- LEAGUE_SPREAD_DELTAS ----------------------------------------------
+
+    def test_league_spread_deltas_has_exactly_three_keys(self) -> None:
+        self.assertEqual(set(LEAGUE_SPREAD_DELTAS), set(_EXPECTED_LEAGUE_SPREAD_DELTAS))
+        self.assertEqual(len(LEAGUE_SPREAD_DELTAS), 3)
+
+    def test_league_spread_deltas_values_are_0_8_16(self) -> None:
+        for key, expected in _EXPECTED_LEAGUE_SPREAD_DELTAS.items():
+            with self.subTest(spread=key):
+                self.assertAlmostEqual(LEAGUE_SPREAD_DELTAS[key], expected, places=6)
+
+    def test_league_spread_delta_values_are_floats(self) -> None:
+        for key, value in LEAGUE_SPREAD_DELTAS.items():
+            with self.subTest(spread=key):
+                self.assertIsInstance(value, float)
+
+    # -- shape --------------------------------------------------------------
+
+    def test_returns_list_of_length_num_teams_for_every_spread(self) -> None:
+        for num_teams in (2, 4, 8, 16):
+            for spread, delta in _EXPECTED_LEAGUE_SPREAD_DELTAS.items():
+                with self.subTest(num_teams=num_teams, spread=spread):
+                    result = compute_tier_means(num_teams, 50, delta)
+                    self.assertIsInstance(result, list)
+                    self.assertEqual(len(result), num_teams)
+
+    def test_every_entry_is_a_float(self) -> None:
+        for delta in (0.0, 8.0, 16.0):
+            with self.subTest(delta=delta):
+                for value in compute_tier_means(8, 50, delta):
+                    self.assertIsInstance(value, float)
+
+    # -- worked examples (contract §3.3) ------------------------------------
+
+    def test_tiered_worked_example_matches_index_by_index(self) -> None:
+        result = compute_tier_means(8, 50, 8)
+        self.assertEqual(len(result), len(_EXPECTED_TIERED_8_50))
+        for i, expected in enumerate(_EXPECTED_TIERED_8_50):
+            with self.subTest(i=i):
+                self.assertAlmostEqual(result[i], expected, places=6)
+
+    def test_steep_worked_example_matches_index_by_index(self) -> None:
+        result = compute_tier_means(8, 50, 16)
+        self.assertEqual(len(result), len(_EXPECTED_STEEP_8_50))
+        for i, expected in enumerate(_EXPECTED_STEEP_8_50):
+            with self.subTest(i=i):
+                self.assertAlmostEqual(result[i], expected, places=6)
+
+    def test_head_minus_tail_gap_is_two_delta(self) -> None:
+        for delta, expected_gap in ((8, 16.0), (16, 32.0)):
+            with self.subTest(delta=delta):
+                result = compute_tier_means(8, 50, delta)
+                self.assertAlmostEqual(result[0] - result[-1], expected_gap, places=6)
+
+    # -- monotonicity -------------------------------------------------------
+
+    def test_monotonically_non_increasing_for_tiered_and_steep(self) -> None:
+        for delta in (8, 16):
+            for num_teams in (2, 4, 8, 16):
+                with self.subTest(delta=delta, num_teams=num_teams):
+                    result = compute_tier_means(num_teams, 50, delta)
+                    for i in range(len(result) - 1):
+                        self.assertGreaterEqual(
+                            result[i],
+                            result[i + 1],
+                            f"index {i} < index {i + 1}: {result}",
+                        )
+
+    def test_strictly_decreasing_when_unclamped(self) -> None:
+        result = compute_tier_means(8, 50, 16)
+        for i in range(len(result) - 1):
+            with self.subTest(i=i):
+                self.assertGreater(result[i], result[i + 1])
+
+    # -- mean preservation (UN-CLAMPED parameter sets ONLY) -----------------
+
+    def test_mean_preserved_at_mean_50_for_nonzero_deltas(self) -> None:
+        for delta in (8, 16):
+            for num_teams in (2, 4, 8, 16):
+                with self.subTest(delta=delta, num_teams=num_teams):
+                    result = compute_tier_means(num_teams, 50, delta)
+                    self.assertAlmostEqual(sum(result) / len(result), 50.0, places=6)
+
+    def test_mean_preserved_for_every_spread_delta_at_mean_50(self) -> None:
+        for spread, delta in _EXPECTED_LEAGUE_SPREAD_DELTAS.items():
+            with self.subTest(spread=spread):
+                result = compute_tier_means(8, 50, delta)
+                self.assertAlmostEqual(sum(result) / len(result), 50.0, places=6)
+
+    # -- clamping (bounds + monotonicity ONLY, never mean preservation) -----
+
+    def test_clamping_at_high_mean_never_exceeds_100(self) -> None:
+        result = compute_tier_means(8, 95, 16)
+        for i, value in enumerate(result):
+            with self.subTest(i=i):
+                self.assertLessEqual(value, 100.0)
+                self.assertGreaterEqual(value, 0.0)
+
+    def test_clamping_at_high_mean_head_entries_are_exactly_100(self) -> None:
+        result = compute_tier_means(8, 95, 16)
+        for i in (0, 1, 2):
+            with self.subTest(i=i):
+                self.assertAlmostEqual(result[i], 100.0, places=6)
+
+    def test_clamping_at_high_mean_matches_reference_vector(self) -> None:
+        result = compute_tier_means(8, 95, 16)
+        self.assertEqual(len(result), len(_EXPECTED_CLAMPED_HIGH_8_95))
+        for i, expected in enumerate(_EXPECTED_CLAMPED_HIGH_8_95):
+            with self.subTest(i=i):
+                self.assertAlmostEqual(result[i], expected, places=6)
+
+    def test_clamping_at_high_mean_still_non_increasing(self) -> None:
+        result = compute_tier_means(8, 95, 16)
+        for i in range(len(result) - 1):
+            with self.subTest(i=i):
+                self.assertGreaterEqual(result[i], result[i + 1])
+
+    def test_clamping_at_low_mean_never_drops_below_0(self) -> None:
+        result = compute_tier_means(8, 5, 16)
+        for i, value in enumerate(result):
+            with self.subTest(i=i):
+                self.assertGreaterEqual(value, 0.0)
+                self.assertLessEqual(value, 100.0)
+
+    def test_clamping_at_low_mean_tail_entries_are_exactly_0(self) -> None:
+        result = compute_tier_means(8, 5, 16)
+        for i in (5, 6, 7):
+            with self.subTest(i=i):
+                self.assertAlmostEqual(result[i], 0.0, places=6)
+
+    def test_clamping_at_low_mean_matches_reference_vector(self) -> None:
+        result = compute_tier_means(8, 5, 16)
+        self.assertEqual(len(result), len(_EXPECTED_CLAMPED_LOW_8_5))
+        for i, expected in enumerate(_EXPECTED_CLAMPED_LOW_8_5):
+            with self.subTest(i=i):
+                self.assertAlmostEqual(result[i], expected, places=6)
+
+    def test_clamping_at_low_mean_still_non_increasing(self) -> None:
+        result = compute_tier_means(8, 5, 16)
+        for i in range(len(result) - 1):
+            with self.subTest(i=i):
+                self.assertGreaterEqual(result[i], result[i + 1])
+
+    def test_bounds_hold_across_a_parameter_grid(self) -> None:
+        for mean in (0, 5, 50, 95, 100):
+            for delta in (0, 8, 16):
+                for num_teams in (1, 2, 4, 8, 16):
+                    with self.subTest(mean=mean, delta=delta, num_teams=num_teams):
+                        for value in compute_tier_means(num_teams, mean, delta):
+                            self.assertGreaterEqual(value, 0.0)
+                            self.assertLessEqual(value, 100.0)
+
+    # -- degenerate branches ------------------------------------------------
+
+    def test_num_teams_one_returns_single_entry_at_mean(self) -> None:
+        for delta in (0, 8, 16):
+            with self.subTest(delta=delta):
+                result = compute_tier_means(1, 50, delta)
+                self.assertEqual(len(result), 1)
+                self.assertAlmostEqual(result[0], 50.0, places=6)
+
+    def test_num_teams_zero_returns_empty_list(self) -> None:
+        for delta in (0, 8, 16):
+            with self.subTest(delta=delta):
+                self.assertEqual(compute_tier_means(0, 50, delta), [])
+
+    def test_delta_zero_returns_flat_vector(self) -> None:
+        for num_teams in (1, 8):
+            with self.subTest(num_teams=num_teams):
+                result = compute_tier_means(num_teams, 50, 0)
+                self.assertEqual(len(result), num_teams)
+                for value in result:
+                    self.assertAlmostEqual(value, 50.0, places=6)
+
+    def test_delta_zero_is_flat_at_a_non_50_mean(self) -> None:
+        for value in compute_tier_means(8, 73, 0):
+            self.assertAlmostEqual(value, 73.0, places=6)
+
+    def test_delta_zero_does_not_clamp_a_valid_mean(self) -> None:
+        # Degenerate branch returns ``[float(mean)] * n`` — no ramp, so an
+        # extreme-but-legal mean survives untouched at both ends.
+        self.assertEqual(compute_tier_means(4, 100, 0), [100.0] * 4)
+        self.assertEqual(compute_tier_means(4, 0, 0), [0.0] * 4)
+
+    def test_two_teams_is_mean_plus_minus_delta(self) -> None:
+        result = compute_tier_means(2, 50, 16)
+        self.assertAlmostEqual(result[0], 66.0, places=6)
+        self.assertAlmostEqual(result[1], 34.0, places=6)
+
+    # -- purity -------------------------------------------------------------
+
+    def test_repeated_calls_are_identical(self) -> None:
+        self.assertEqual(compute_tier_means(8, 50, 16), compute_tier_means(8, 50, 16))
+
+    def test_accepts_a_float_mean(self) -> None:
+        result = compute_tier_means(4, 50.5, 8)
+        self.assertEqual(len(result), 4)
+        self.assertAlmostEqual(sum(result) / len(result), 50.5, places=6)
 
 
 if __name__ == "__main__":
