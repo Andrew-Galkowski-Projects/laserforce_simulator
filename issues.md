@@ -26,7 +26,7 @@ run on port **8010** (see E-1 below).
 **Overall:** no bugs found in the CRE-02 surface. The Even-vs-Steep contrast measured
 in-browser (**3.67** vs **34.68** overall-rating range across 8 teams) is the feature
 working exactly as designed, and matches the arithmetic locked in the seam contract.
-One pre-existing **environment/tooling** issue was hit and is logged below.
+One pre-existing **environment/tooling** issue was hit; it is logged below and has since been **fixed**.
 
 ## Findings — CRE-02
 
@@ -41,8 +41,8 @@ predicted ramp 66.0 / 61.4 / 56.9 / 52.3 / 47.7 / 43.1 / 38.6 / 34.0. Manager te
 pre-CRE-02 noise-only spread, confirming `_template_to_form_data`'s static
 `"league_spread": "even"` and the `tier_means=None` Even path.
 
-### 🟡 E-1 — `start_test_server.ps1` can report `SERVER_READY` for the wrong server
-**Pre-existing, out of CRE-02 scope; environment/tooling only.** Two defects compound:
+### ✅ ~~E-1 — `start_test_server.ps1` can report `SERVER_READY` for the wrong server~~ — FIXED (2026-09-02)
+**~~Pre-existing, out of CRE-02 scope; environment/tooling only.~~ FIXED in the user-level skill `~/.claude/skills/chrome-web-testing/` — outside this repo, so no code change lands on this branch.** Originally two defects compounded (a third and fourth surfaced while fixing them):
 
 1. The helper launches the server with `Start-Process -FilePath python`, which resolves
    against the *system* PATH rather than the repo `.venv`. On this machine that is
@@ -54,14 +54,24 @@ pre-CRE-02 noise-only spread, confirming `_template_to_form_data`'s static
    printed `SERVER_READY pid=<already-exited pid>`. The first test pass then drove a
    foreign app and reported the new form control missing.
 
-Repro: occupy port 8000 with any other HTTP server, run the helper, observe
+3. `manage.py` sits under a path containing a space (`Andrew Galkowski`) and was NOT
+   quoted inside `Start-Process -ArgumentList`, so python read `C:\Users\Andrew` as the
+   script path — a second, independent cause of the same silent early exit.
+4. Port 8000 turned out to be **permanently** occupied by a separate project of the
+   maintainer's, so the collision was not incidental — the default port itself was wrong.
+
+Repro (pre-fix): occupy port 8000 with any other HTTP server, run the helper, observe
 `SERVER_READY` naming a PID that has already exited.
-Workaround used here: `python laserforce_simulator/manage.py runserver 8010 --noreload`
-launched directly (the Bash tool's `python` resolves to the repo venv).
-Fix idea: resolve `.venv\Scripts\python.exe` relative to `$RepoRoot` and launch with
-that; fail fast when the port is already listening before starting; and assert a known
-app marker (e.g. the `⚡ Laserforce Manager` navbar brand) in the readiness response
-body rather than accepting any 200.
+
+**Resolution — all four fixed and verified.** The default `-Port` is now **8001**; the
+launcher resolves `.venv\Scripts\python.exe` relative to `$RepoRoot` (falling back to
+`python`) for BOTH `migrate` and `runserver`; the `manage.py` argument is quoted; a
+pre-flight `Get-NetTCPConnection` check fails fast naming the occupying pid; and
+readiness now asserts the `Laserforce Manager` navbar marker in the response body
+instead of accepting any HTTP answer. Failures additionally surface the launch stderr.
+Verified live — port occupied ⇒ `exit 1 SERVER_FAILED reason=port-8001-already-in-use-by-pid:…`;
+port free ⇒ `exit 0 SERVER_READY pid=… url=http://127.0.0.1:8001/` serving this app.
+`REFERENCE.md` updated to document 8001 as the default and why.
 
 ---
 
