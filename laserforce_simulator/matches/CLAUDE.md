@@ -7181,6 +7181,333 @@ Tournaments appear there alongside Season-embedded ones — existing behaviour, 
   the Season champion it finally crowns (CONF-04), per-Conference rotating map pools (CONF-06),
   and any placement / elimination-depth ranking API on `Tournament`.
 
+## CONF-03 worlds qualification + the last-chance qualifier
+
+The third slice of the **Conference** epic, and the one that settles **who goes to Worlds**. In a
+Season with **two or more** Conferences, the **final** (highest-ordinal) `tournament` `SeasonPhase`
+now decides qualification: each Conference sends **1, 2 or 3 Worlds qualifiers** as a function of its
+**size**, and the third slot — where it exists — is decided by a *second* per-Conference bracket, the
+**Last-chance qualifier**, created eagerly and **unseeded** at phase activation and seeded only once
+that Conference's Regional playoff has crowned a champion. The unioned field is ordered tier-first,
+then by regular-season **rate**, and is **derived on demand and never persisted**. See
+[ADR-0036](../../docs/adr/0036-worlds-qualification-size-tiered-with-last-chance-bracket.md), the
+CONTEXT.md **Worlds** / **Worlds qualifier** / **Last-chance qualifier** terms, and the seam contract
+[`.claude/worktrees/conf-03-seam-contract.md`](../../.claude/worktrees/conf-03-seam-contract.md).
+**`Season.champion_team` still stays NULL** for a `>= 2`-Conference Season — this slice decides who
+plays for it, CONF-04 crowns it — and there is **no Score Calibration re-baseline** (no simulation
+mechanic changes; the only shifts are one new discriminator column, one extra `Tournament` row per
+large Conference, and a pure derivation module).
+
+**Qualifier count is a function of Conference SIZE.** Size is `len(conference.starting_team_ids_json
+or [])` — the **activation snapshot** written by `Season.start_season()`. It is **not** read from the
+Regional playoff's participant count and it is **not** affected by `SeasonPhase.tournament_cut`, so a
+top-N cut can shrink a region's bracket without changing how many Teams that region sends to Worlds.
+
+| Conference size (activation snapshot) | Qualifiers | Slot provenances, in tier order |
+| --- | --- | --- |
+| 0 or 1 | 0 | degenerate; CONF-01/CONF-05 forbid composing one |
+| 2-4 | 1 | Conference champion |
+| 5-8 | 2 | Conference champion; best regular-season finisher not already qualified |
+| 9 or more | 3 | the above two; plus the Last-chance qualifier bracket's winner |
+
+The three provenances are fixed: **tier 1** is that Conference's Regional playoff
+`Tournament.champion`; **tier 2** is the Conference's best **Standings** finisher not already
+qualified (rank 1, or rank 2 when rank 1 also won the bracket, so the same Team never occupies two
+slots); **tier 3** is the `champion` of that Conference's Last-chance qualifier.
+
+**The no-Regional-playoff fallback, and its TWO causes.** A Conference of the final tournament phase
+can legitimately end up with **no Regional playoff `Tournament` row** in two different ways, and both
+land on the same fallback: (1) the Conference has **2-3 Teams**, fewer than `MIN_BRACKET_PARTICIPANTS`
+(= 4), so its seed order is too short and `_build_tournament_for_phase`'s regional guard returns
+`None`; or (2) the phase's **`tournament_cut` is set below 4** (a cut of 2, say), truncating even a
+**large** Conference's seed order below the floor — the same guard, applied *after* the
+`order = order[: phase.tournament_cut]` slice. In both cases the Conference still sends **exactly
+one** qualifier: its Standings **rank 1**, recorded with `provenance = PROVENANCE_REGULAR_SEASON`
+(it is a regular-season placing, not a bracket result) but seeded at `tier =
+QUALIFIER_TIER_CHAMPION`, so it sorts among the champions. **No Conference is ever unrepresented at
+Worlds.**
+
+> **The fallback is NOT `regional is None` — this is the slice's sharpest trap.** A bare
+> `regional is None` is *also* true when the tournament phase **has not been built at all**: the
+> regular season is still running and `phase.regional_tournaments` is empty for *every* Conference.
+> Firing the fallback there would emit a complete, plausible-looking Worlds field
+> **mid-regular-season, before a single playoff Match had been played**, and the Worlds panel would
+> render it. The fallback therefore fires **only** when this Conference has no regional row **AND**
+> `phase.regional_tournaments.exists()` is `True`, which is why tier 1 is a **three-branch**
+> decision — `regional is not None`; else not built (`return []`); else the genuine fallback.
+> `exists()` is the right predicate rather than re-deriving size against `MIN_BRACKET_PARTICIPANTS`,
+> because one read covers **both** causes above, including the `tournament_cut` case where size alone
+> would wrongly predict a bracket. The bug bites hardest on a `>= 2`-Conference Season whose
+> Conferences are **all 8 Teams or fewer**: such a Season never reaches a tier-3 slot, so nothing
+> else in the derivation would ever return `[]`.
+
+**Cross-region seeding — tier first, then RATE.** The unioned field sorts by `tier` ASC (1 champion,
+2 regular-season, 3 last-chance), then within a tier by `league_points / matches_played` DESC, then
+`round_wins / matches_played` DESC, then `total_score / matches_played` DESC, then `team_id` ASC —
+every input taken off that Team's **Conference-scoped** `StandingsRow`. **Rate rather than raw
+totals** because Conferences differ in size and therefore play different numbers of games: a 12-team
+Conference's 11-game points total is not comparable to a 5-team Conference's 4-game total. Locked
+degenerate rule: when `matches_played <= 0` **all three rates are `0.0`** — no division is attempted,
+no `None`, no sentinel, no exception — so such a Team sorts below every positive-rate Team in its
+tier and ties with other zero-rate Teams, falling through to the `team_id` tiebreak.
+
+**CHANGED `Tournament` — ONE new discriminator column (`matches/models.py`, after the CONF-02
+`conference` FK, before the `final_series_length` block).** `qualifier_stage =
+models.CharField(max_length=16, choices=QUALIFIER_STAGE_CHOICES, blank=True, default="")`, with the
+choices tuple declared as a class attribute immediately above it (the house precedent of
+`SeasonPhase.TOURNAMENT_MODE_CHOICES` / `Tournament.TEAM_ASSEMBLY_CHOICES` /
+`Tournament.ROLE_ASSIGNMENT_CHOICES`): `("", "Not a qualifier bracket")`, `("regional_playoff",
+"Regional playoff")`, `("last_chance", "Last-chance qualifier")`. `max_length=16` is **exact** —
+`"regional_playoff"` is 16 characters. `Tournament` still has **no `class Meta`** and none was added:
+no index, no `unique_together` on `(season_phase, conference, qualifier_stage)`; the build path is
+guarded by idempotence checks, not by the database.
+
+> **LOCKED read rule — no backfill.** Migration `0059` has **no `RunPython`**, so an existing CONF-02
+> regional row keeps `qualifier_stage == ""` forever. Every read in production code, tests and
+> templates therefore tests **only** `tournament.qualifier_stage == "last_chance"`. Everything else
+> — including that un-backfilled `""` — is a **Regional playoff** when `conference_id` is set, and
+> not a qualifier bracket at all when it is NULL. **Forbidden:** `== "regional_playoff"` as a
+> *positive* test for "is this a regional playoff", `!= ""` as a test for "is this a qualifier
+> bracket", any `.exclude(qualifier_stage="")`, and any migration that would make those safe. A
+> regional playoff is `conference_id is not None and qualifier_stage != "last_chance"`.
+
+| Row | `conference_id` | `qualifier_stage` | Classify as |
+| --- | --- | --- | --- |
+| Sandbox `Tournament` | NULL | `""` | not a qualifier bracket |
+| Season-wide embed (0/1-Conference Season) | NULL | `""` | not a qualifier bracket |
+| CONF-02 regional row, created **before** 0059 | set | `""` | **Regional playoff** |
+| Regional row, created **after** 0059 | set | `"regional_playoff"` | **Regional playoff** |
+| Last-chance row | set | `"last_chance"` | **Last-chance qualifier** |
+
+**Migration `0059_tournament_qualifier_stage.py`** (dep `0058_tournament_regional_linkage`): exactly
+**one `AddField`**, no `RunPython`, no backfill, no data migration, no follow-up migration — per
+[ADR-0004](../../docs/adr/0004-simulation-data-is-disposable.md)'s disposable-data posture, and
+because the read rule above makes the un-backfilled `""` classify correctly on its own.
+
+**NEW pure module `matches/worlds.py`.** Follows the `matches/standings.py` / `matches/bracket.py`
+precedent — **no Django imports, no ORM, plain values in and out, unit-testable with zero DB**, with
+a frozen import allowlist of `dataclasses` + `typing` pinned by a `TestNoDjangoImportsLeaked`
+subprocess class. Exports the tier constants `QUALIFIER_TIER_CHAMPION` (1) /
+`QUALIFIER_TIER_REGULAR_SEASON` (2) / `QUALIFIER_TIER_LAST_CHANCE` (3); the provenance constants
+`PROVENANCE_CHAMPION` (`"conference_champion"`) / `PROVENANCE_REGULAR_SEASON` (`"regular_season"`) /
+`PROVENANCE_LAST_CHANCE` (`"last_chance"`) with their `PROVENANCE_LABELS` map; `LAST_CHANCE_FIELD_SIZE
+= 4`; the frozen dataclass **`WorldsQualifier`** (`team_id`, `team_name`, `conference_id`,
+`conference_name`, `tier`, `provenance`, `matches_played`, `league_points`, `round_wins`,
+`total_score`, `seed = 0`, plus a `provenance_label` property returning `""` for an unknown value);
+and four pure functions — `qualifier_count_for_size(team_count) -> int` (the size table above; a
+negative input returns `0`), `first_unqualified(ranked_team_ids, qualified_team_ids) -> int | None`
+(the tier-2 rule *and* the fallback's rank-1 rule in one function),
+`last_chance_field(ranked_team_ids, qualified_team_ids) -> list` (**up to** `LAST_CHANCE_FIELD_SIZE`
+ids in rank order — never pads, never raises), and `order_worlds_qualifiers(qualifiers) -> list`
+(the sort above, returning a **new** list with `seed` stamped 1..M via `dataclasses.replace`, exactly
+as `compute_standings` / `rerank_round_robin` stamp `rank`). The rate helper `_rate(numerator,
+matches_played)` is module-private. The four regular-season integers on `WorldsQualifier` are the
+rate *inputs*, taken verbatim off the Conference-scoped `StandingsRow`; **no rate is stored**.
+
+> **Naming hazards — three, and all three have real bite.**
+> - `Tournament.season_phase` (the CONF-02 **forward FK**, reverse-accessed as
+>   `phase.regional_tournaments`) vs `Tournament.season_phases` (the **pre-existing reverse manager**
+>   of `SeasonPhase.tournament`). One character apart, **opposite directions**. CONF-03 reads the
+>   forward one everywhere.
+> - **`PROVENANCE_LAST_CHANCE` and `Tournament.qualifier_stage`'s `"last_chance"` share a string
+>   value while being different axes** — one is a *qualifier's provenance*, the other a *bracket's
+>   stage*. Neither may be used in place of the other, and the coincidence must never become an
+>   import.
+> - **`matches/worlds.py` must never import from `matches/models.py`.** Tier and provenance are
+>   deliberately **separate axes** for the same reason: the 2-3-Team fallback is exactly the case
+>   where they disagree (`QUALIFIER_TIER_CHAMPION` with `PROVENANCE_REGULAR_SEASON`), so never derive
+>   one from the other.
+
+**NEW `Season._final_tournament_phase(self) -> SeasonPhase | None`** (after `tournaments_for_phase`,
+private) — walks `ordered_phases()` and returns the **last** `phase_type == "tournament"` phase, or
+`None`. A non-persisted implicit fallback phase (`pk is None`) is never returned. **Only the final
+tournament phase qualifies for Worlds and only it gets Last-chance brackets**; a mid-season
+`tournament` phase still builds its regional brackets exactly as CONF-02 does — no `last_chance` row,
+no qualification read, no new DOM id.
+
+**NEW `Season._build_last_chance_tournament(self, phase, conference) -> Tournament | None`** (after
+`_build_tournament_for_phase`, private; `conference` is **required**) — returns `None` when
+`qualifier_count_for_size(size) < 3` (so a Conference of 8 or fewer gets **no row at all**), returns
+`None` when a `last_chance` row for that Conference already exists (idempotence), and otherwise
+creates the row and **returns it immediately** — copying every per-format field off the phase exactly
+as the regional builder does, plus `season_phase=phase`, `conference=conference`,
+`qualifier_stage="last_chance"`, named `f"{season.name} — {conference.name} Last Chance Qualifier"`
+(em-dash U+2014, matching `Conference.__str__` and CONF-02's regional naming; the label is the
+three-word proper-noun bracket name, distinct from CONTEXT.md's prose term *Last-chance qualifier*).
+`_build_tournament_for_phase` itself changes by exactly **one kwarg** — its conditional
+`season_phase` / `conference` block gains `"qualifier_stage": "regional_playoff"` — and takes **no
+new parameter**; a regional build is always a Regional playoff.
+
+> **UNSEEDED is load-bearing, not a bug — do not "fix" it.** The Last-chance row exists with
+> `state="setup"`, **zero** `TournamentParticipant` rows, **zero** `BracketNode` rows and
+> `lock_and_build()` not yet called. Two existing behaviours make that safe with **no engine change**:
+> `_tournament_phase_complete` requires `all(t.state == "completed")` and `"setup" != "completed"`,
+> so **the phase already refuses to advance** while a Last-chance bracket is unseeded (no new gate);
+> and `Tournament.find_next_playable_node()` delegates to `bracket.find_next_node` over `self.nodes`,
+> which is empty, so it returns `None` — `play_next_node` returns `None` and `play_next_bracket_round`
+> returns `0`, and **both drain loops already skip an unseeded bracket harmlessly**. Do not add a
+> `state="pending_seed"`, do not create placeholder participants, do not call `lock_and_build()`
+> early, and do not filter unseeded rows out of `tournaments_for_phase`. The row is created
+> **eagerly** precisely because both drain loops resolve `tournaments_for_phase(phase)` **once and
+> cache the list**: a row created lazily mid-drain would be invisible to the loop that must play it,
+> and `_tournament_phase_complete` would report the phase complete before the bracket existed.
+
+**NEW public `Season.seed_pending_last_chance_brackets(self, phase) -> int`** (after
+`_build_last_chance_tournament`; `@transaction.atomic`) — **the seeding seam**, returning the number
+of brackets it seeded on that call and **idempotent** (`0` before a Regional playoff has a champion,
+a positive count on the call that seeds, `0` forever after). It filters
+`phase.regional_tournaments.filter(qualifier_stage="last_chance", state="setup")` — the *one*
+permitted positive test of the discriminator — and for each candidate in `conference__ordinal, id`
+order finds that Conference's regional sibling (`.exclude(qualifier_stage="last_chance").first()`),
+skips it when the sibling is missing or has no `champion_id`, and otherwise computes the Conference's
+Standings order via `_final_standings_for_phase(self._preceding_phase(phase), conference=...)`, builds
+`qualified = {champion} | {first_unqualified(...)}`, takes `last_chance_field(ranked, qualified)`,
+creates one `TournamentParticipant` per entry with `seed = position + 1`, and calls
+`lock_and_build()`. A field shorter than `MIN_BRACKET_PARTICIPANTS` **deletes the row** rather than
+deadlocking the phase on a bracket that can never be built — unreachable for a Conference of 9+
+(at least `9 - 2 = 7` Teams are always unqualified) and present only so admin-mangled data cannot
+brick a Season. Deleting a candidate mid-drain is safe: a deleted instance left in a cached
+`tournaments_for_phase` list re-queries `nodes` to empty, so `stage_progress([])` is `(0, 0)` and
+`find_next_playable_node()` is `None`.
+
+**Four hook sites, seed-then-continue semantics — the engine is NOT changed.** `play_next_node`,
+`play_specific_node`, `play_next_bracket_round`, `find_next_playable_node`, `find_next_node`,
+`stage_progress` and `lock_and_build` are reused **verbatim**; every change is in the callers.
+(1) `tasks.play_playoffs_task` — only its no-progress exit changes: when a full pass plays nothing it
+calls `seed_pending_last_chance_brackets(phase)` and, if that returns `> 0`, **`continue`s** the
+`while True:` loop (so the PLAY-01 between-stage cancel check runs again) instead of breaking.
+(2) `tasks.play_season_task`'s tournament tail — the retry lives **inside** the local
+`_drain_one_stage()`, which re-runs `sum(play_next_bracket_round(t) for t in tournaments)` once after
+seeding when the first pass clinched `0`; because it fires only on a zero-progress stage, **one budget
+unit is still exactly one stage**, and both loop bodies stay untouched. (3)
+`league_views.play_single_round` — seeds **unconditionally** after the click (idempotent, `0` when
+nothing is ready) and then plays one node if seeding just made something playable. This is what stops
+"Play Single Round" becoming a **dead click**: the click that resolves a Regional playoff's final node
+leaves that bracket `completed` and its Last-chance sibling `setup`, which the dashboard's
+playoff-controls helper reads as *neither* `active` nor `completed` and so hides the control; seeding
+before the redirect flips the sibling to `active`. (4)
+`Season.activate_pending_tournament_phase` — the `>= 2`-Conference branch calls
+`seed_pending_last_chance_brackets(phase)` **inside and before** the CONF-02 idempotence guard's
+`return`, turning re-activation into a **recovery hook** (it runs after every scheduled Round, so a
+Season can never be stranded with a permanently unseeded bracket); after the regional build loop it
+runs a second loop of `_build_last_chance_tournament(phase, conference)`, gated on
+`_final_tournament_phase()` being this phase. **In all four the cached `tournaments_for_phase` list is
+deliberately NOT re-resolved**, no in-loop `t.state` check is added and no cached instance is
+`refresh_from_db()`-ed — the eager row is already in the list and `tournament.nodes` is re-queried on
+every call, so the very same cached instance that was node-less on iteration 1 plays correctly on
+iteration 4.
+
+> **The Season dashboard is deliberately NOT changed.** Its helper still sets
+> `playoff_phase_active` from `any(t.state == "active")` and `playoff_completed` from
+> `all(t.state == "completed")`. The one transient it cannot describe — all regionals `completed`
+> while a Last-chance bracket is still `setup` — is closed by the four hook sites on every path that
+> can leave a user looking at the dashboard. **Do not "fix" it by treating `setup` as active**: that
+> would change 0/1-Conference behaviour and break the byte-identity invariant.
+
+**NEW public `Season.worlds_qualifiers(self) -> list[WorldsQualifier]`** (after
+`seed_pending_last_chance_brackets`) — the derivation seam, computed on demand with **nothing
+persisted**. Returns `[]` immediately for a `< 2`-Conference Season (a 0/1-Conference Season has no
+Worlds — its season-ending playoff crowns the Season champion directly) or when there is no
+tournament phase. Otherwise it resolves `prior = self._preceding_phase(phase)` and — **once, before
+the per-Conference loop, never per Conference** — `phase_built = phase.regional_tournaments.exists()`,
+then walks Conferences in ordinal order gathering tier 1 (the three-branch decision above), tier 2
+when `count >= 2` and tier 3 when `count >= 3`, resolving Team names through a single tolerant
+`Team.objects.filter(id__in=...).in_bulk()` and the four regular-season integers off that
+Conference's `StandingsRow` (defaulting to `0`), and finally returns `order_worlds_qualifiers(...)`.
+
+> **LOCKED readiness rule — "empty list = not ready", never a partial list.** `worlds_qualifiers()`
+> returns `[]` the moment **any** required bracket of the final tournament phase is missing its
+> `champion`, or any Conference that should have a Last-chance row has none. It never returns a
+> partially-filled field. Reason: CONF-04 will build the Worlds bracket straight off this list, and a
+> partial list is **indistinguishable from a complete one at the call site** — a 5-of-7 field would
+> silently build a wrong-size bracket. It also gives the UI exactly one branch ("render the panel, or
+> don't") instead of two. A legacy Season predating 0059 has no Last-chance rows and so returns `[]`
+> forever; accepted under ADR-0004.
+
+**Playoffs screen (`matches/league_screens/playoffs.py` + `templates/leagues/playoffs.html`).** The
+`brackets` entry shape gains two keys — **`stage`** (`""` / `"regional_playoff"` / `"last_chance"`)
+and **`stage_label`** (`"Last Chance Qualifier"` for a Last-chance entry, `""` for everything else, so
+**no new element renders** on a CONF-02 Season) — and changes one: `pending` becomes
+`tournament.state == "setup"` instead of the literal `False`, which is byte-identical for every
+pre-CONF-03 row because `_build_tournament_for_phase` always calls `lock_and_build()` and flips
+`state` to `"active"` before the row is ever rendered. **The CONF-02 `key` discriminator gains a
+`-lc` suffix on the Last-chance entry only** (`f"{phase.ordinal}-{conference.ordinal}-lc"`), so every
+regional `key` (`"<ord>-<conf ord>"`) and every 0/1-Conference `key` (`str(phase.ordinal)`) — and
+therefore every DOM id built from them — stays **byte-identical**. The template gains exactly three
+things: a stage badge `id="league-playoffs-stage-{{ bracket.key }}"` rendered only when
+`stage_label` is set; a Last-chance branch in the existing `{% if bracket.pending %}` alert (the
+`{% else %}` keeps the old text **verbatim**, so every existing rendered stub is unchanged); and the
+**Worlds panel**, one new context key `worlds_qualifiers` (the raw
+`view_season.worlds_qualifiers()`, or `[]`) rendered under `{% if worlds_qualifiers %}` — which *is*
+the readiness test, so there is deliberately **no `worlds_ready` boolean** and the list is **not**
+re-mapped into dicts. Locked ids: `league-playoffs-worlds`, `league-playoffs-worlds-table`,
+`league-playoffs-worlds-row-<seed>`, `league-playoffs-worlds-team-<seed>`,
+`league-playoffs-worlds-conference-<seed>`, `league-playoffs-worlds-provenance-<seed>`. The panel is
+**read-only** and, for a 0/1-Conference Season, **absent entirely** — no section, no heading, no
+empty-state text, no new DOM id.
+
+**Explicitly NOT changed.** The bracket engine and `Tournament.lock_and_build` (whose `>= 4`
+participant check is exactly the field size we seed); `Tournament.find_next_playable_node` (no
+`state` guard added); `Season.tournaments_for_phase` (same signature, body and
+`("conference__ordinal", "id")` ordering — it simply returns **up to two rows per Conference** now,
+and because activation builds all regional rows in loop 1 and all Last-chance rows in loop 2, every
+regional `id` is lower than every Last-chance `id`, so **within a Conference the Regional playoff
+always sorts before its Last-chance sibling**); `_tournament_phase_complete` / `_phase_complete`
+(already the right gate); `_stamp_champion_for_final_phase` (its `regional` list now simply includes
+the Last-chance rows, so `any(t.champion_id is None ...)` blocks completion until they too have
+crowned a winner, and it still never assigns `champion_team`); `_final_standings_for_phase` /
+`_seed_order_for_phase` / `start_season` / `ordered_conferences`; `compute_standings`; `SeasonPhase`
+and `Conference` (no new field, no `Meta` change — size is read off the existing
+`starting_team_ids_json`); `Match.conference` **stamping** (CONF-03 only reads it);
+`league_views.play_week` / `play_playoffs` / `season_standings` and the dashboard helper
+(`play_single_round` is the only function in that file this slice edits);
+`league_screens/team_history.py` (CONF-02's two-term `Q` chain already picks up any Tournament with
+`season_phase__isnull=False`, Last-chance brackets included, and CONF-03 asserts nothing about it in
+either direction); `matches/tournament_views.py` (an unseeded Last-chance row appearing in the
+`/tournaments/` list in `setup` state is **accepted**, per ADR-0036's Consequences); and the
+simulator.
+
+**Locked names (quick index).**
+- **`matches/worlds.py`** (new, Django-free) — `WorldsQualifier` (+ `provenance_label`),
+  `QUALIFIER_TIER_CHAMPION` / `_REGULAR_SEASON` / `_LAST_CHANCE`, `PROVENANCE_CHAMPION` /
+  `_REGULAR_SEASON` / `_LAST_CHANCE`, `PROVENANCE_LABELS`, `LAST_CHANCE_FIELD_SIZE`,
+  `qualifier_count_for_size`, `first_unqualified`, `last_chance_field`, `order_worlds_qualifiers`
+  (private `_rate`). **Never imports `matches/models.py`.**
+- **`Tournament`** NEW `qualifier_stage` (`CharField(max_length=16, blank=True, default="")` +
+  `QUALIFIER_STAGE_CHOICES`); no `Meta`. Read rule: test **only** `== "last_chance"`.
+- **`Season`** NEW `_final_tournament_phase()`, `_build_last_chance_tournament(phase, conference)`,
+  **public** `seed_pending_last_chance_brackets(phase) -> int` and `worlds_qualifiers() ->
+  list[WorldsQualifier]`; CHANGED `_build_tournament_for_phase` (one kwarg) and
+  `activate_pending_tournament_phase` (branch body only).
+- **Hook sites** `tasks.play_playoffs_task` (seed-then-`continue`), `tasks.play_season_task`'s
+  `_drain_one_stage()` (seed-then-retry inside the helper), `league_views.play_single_round`
+  (unconditional seed before the redirect), `Season.activate_pending_tournament_phase` (build +
+  recovery).
+- **Screens** `league_screens/playoffs.py` (new `stage` / `stage_label` bracket keys, `-lc` `key`
+  suffix, `pending = state == "setup"`, new `worlds_qualifiers` context key) +
+  `templates/leagues/playoffs.html` (`league-playoffs-stage-{key}`, the Last-chance pending message,
+  the `league-playoffs-worlds*` panel).
+- **Migration** `matches/migrations/0059_tournament_qualifier_stage.py` (dep `0058`, one `AddField`,
+  no `RunPython` / backfill).
+- **Tests** `matches/tests/test_worlds_qualification.py` (the pure module + `worlds_qualifiers()`,
+  including the **premature-field regression guard**: an all-`5-8`-Team `>= 2`-Conference Season with
+  the tournament phase unbuilt must return `[]`) + `matches/tests/test_last_chance_qualifier.py` (the
+  build/seed/gate cycle, idempotence, the `tournaments_for_phase` order, the dead-click pin and both
+  byte-identity pins) + appended classes in `matches/tests/test_regional_playoffs_drain.py` and
+  `matches/tests/test_league_playoffs.py`. House rule unchanged: brackets are drained by **driving
+  the engine or stamping node winners**, never by running the simulator, and never by patching the
+  seam under test.
+- **ADR / CONTEXT** —
+  [ADR-0036](../../docs/adr/0036-worlds-qualification-size-tiered-with-last-chance-bracket.md) + the
+  CONTEXT.md **Worlds** / **Worlds qualifier** / **Last-chance qualifier** terms. Invariants: a
+  **0/1-Conference Season is byte-identical**; a **Conference of 8 or fewer Teams is byte-identical
+  to CONF-02** in rows and DOM ids (no Last-chance row at all); **every CONF-02 DOM id is unchanged**;
+  **`Season.champion_team` stays NULL**; the phase never advances early; the Worlds field is
+  **all-or-`[]`**; no Conference is unrepresented; and **no Score Calibration re-baseline**.
+  **DEFERRED to CONF-04 and later:** the cross-Conference Worlds `Tournament` row and phase, any
+  bye / play-in handling for a non-power-of-two field, any placement / elimination-depth ranking API
+  on `Tournament`, per-Conference map pools (CONF-06), and a persisted qualifier table.
+
 ## CONF-05 manage conferences
 
 The in-app **draft-Season Conference composer** (the user-facing surface CONF-01 deferred,

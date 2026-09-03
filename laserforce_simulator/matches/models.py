@@ -1408,9 +1408,25 @@ class Season(models.Model):
             # (ADR-0035). ``SeasonPhase.tournament`` deliberately stays NULL;
             # the N brackets are reached through ``phase.regional_tournaments``.
             if phase.regional_tournaments.exists():
+                # CONF-03 — the brackets are already built, so the only work left
+                # is to seed any Last-chance bracket whose Regional playoff has
+                # since crowned its champion. This makes activation a RECOVERY
+                # hook: it is called after every scheduled Round
+                # (entrypoints.py:955, :984), so a Season can never be stranded
+                # with a permanently unseeded bracket.
+                self.seed_pending_last_chance_brackets(phase)
                 return  # idempotence guard for the regional path
             for conference in conferences:
                 self._build_tournament_for_phase(phase, conference=conference)
+            # CONF-03 — only the FINAL tournament phase qualifies for Worlds, and
+            # only it gets Last-chance brackets (ADR-0036). Created EAGERLY and
+            # UNSEEDED so the cached ``tournaments_for_phase`` lists in the drain
+            # loops already contain them. On this first activation no Regional
+            # playoff has a champion yet, so seeding is deliberately NOT called.
+            final_phase = self._final_tournament_phase()
+            if final_phase is not None and final_phase.pk == phase.pk:
+                for conference in conferences:
+                    self._build_last_chance_tournament(phase, conference)
             return
 
         tournament = self._build_tournament_for_phase(phase)
@@ -1480,7 +1496,16 @@ class Season(models.Model):
             lb_advancers=phase.lb_advancers,
             swiss_rounds=phase.swiss_rounds,
             **(
-                {"season_phase": phase, "conference": conference}
+                {
+                    "season_phase": phase,
+                    "conference": conference,
+                    # CONF-03 — a regional build is always a Regional playoff
+                    # (ADR-0036); the Last-chance bracket has its own builder
+                    # because it must be created UNSEEDED. ``conference is
+                    # None`` leaves ``qualifier_stage`` at its "" default, so
+                    # the Season-wide path stays byte-identical.
+                    "qualifier_stage": "regional_playoff",
+                }
                 if conference is not None
                 else {}
             ),
@@ -1493,6 +1518,299 @@ class Season(models.Model):
             )
         tournament.lock_and_build()
         return tournament
+
+    def _build_last_chance_tournament(self, phase, conference) -> "Tournament | None":
+        """CONF-03 — build ``conference``'s Last-chance qualifier bracket (ADR-0036).
+
+        Created EAGERLY at phase activation but UNSEEDED: the row exists with
+        ``state="setup"``, ZERO ``TournamentParticipant`` rows, ZERO
+        ``BracketNode`` rows and ``lock_and_build()`` NOT yet called. That is
+        load-bearing, not an oversight — the field cannot be computed until the
+        Conference's Regional playoff has crowned its champion (the bracket is
+        strictly sequential), and creating the row up-front is what lets the
+        drain loops cache ``tournaments_for_phase`` once and still pick the
+        bracket up when it is seeded mid-drain.
+
+        Two existing behaviours make the unseeded row safe with no engine
+        change: ``_tournament_phase_complete`` requires every Tournament be
+        ``"completed"``, and ``"setup" != "completed"``, so the phase already
+        refuses to advance; and ``find_next_playable_node()`` returns ``None``
+        on a node-less bracket, so both drain loops skip it harmlessly.
+
+        Returns ``None`` — creating no row at all — for a Conference that sends
+        fewer than 3 qualifiers (8 Teams or fewer), and for a Conference that
+        already has its Last-chance row (idempotence).
+        """
+        from .worlds import LAST_CHANCE_FIELD_SIZE, qualifier_count_for_size
+
+        size = len(conference.starting_team_ids_json or [])
+        if qualifier_count_for_size(size) < 3:
+            return None
+        if phase.regional_tournaments.filter(
+            conference=conference, qualifier_stage="last_chance"
+        ).exists():
+            return None
+        # CONF-03 — the Last-chance field is ALWAYS exactly
+        # ``LAST_CHANCE_FIELD_SIZE`` (4) Teams, so a phase format whose advancer
+        # counts need more participants than that cannot be honoured. Only
+        # ``round_robin_double_elim`` can express such a shape: five of its six
+        # valid combos (4/2, 8/0, 8/4, 16/0, 16/8) exceed a 4-Team field, and
+        # ``lock_and_build`` would raise ``ValidationError("wb_advancers
+        # exceeds participant count.")`` at SEEDING time — inside the atomic
+        # ``seed_pending_last_chance_brackets``, uncaught at all four hook
+        # sites, and re-raised on every retry, so the phase could never
+        # complete. Fall back to a plain single-elimination knockout, which is
+        # always valid for exactly 4 Teams. Every other format (single- and
+        # double-elimination, round_robin, swiss — 4 is even) fits a 4-Team
+        # field as-is and is copied through unchanged.
+        fmt = phase.tournament_format
+        wb = phase.wb_advancers
+        lb = phase.lb_advancers
+        if fmt == "round_robin_double_elim" and (
+            wb > LAST_CHANCE_FIELD_SIZE or wb + lb > LAST_CHANCE_FIELD_SIZE
+        ):
+            fmt = "single_elimination"
+            wb = 0
+            lb = 0
+        return Tournament.objects.create(
+            name=f"{self.name} — {conference.name} Last Chance Qualifier",
+            format=fmt,
+            team_assembly="preset",
+            state="setup",
+            final_series_length=phase.final_series_length,
+            semifinal_series_length=phase.semifinal_series_length,
+            quarterfinal_series_length=phase.quarterfinal_series_length,
+            earlier_series_length=phase.earlier_series_length,
+            wb_advancers=wb,
+            lb_advancers=lb,
+            swiss_rounds=phase.swiss_rounds,
+            season_phase=phase,
+            conference=conference,
+            qualifier_stage="last_chance",
+        )
+
+    @transaction.atomic
+    def seed_pending_last_chance_brackets(self, phase) -> int:
+        """CONF-03 — seed every Last-chance bracket of ``phase`` that is ready.
+
+        The public seeding seam (ADR-0036). A Last-chance bracket becomes
+        seedable the moment its Conference's Regional playoff has a
+        ``champion``: its field is the 4 highest-ranked Teams of that
+        Conference's regular-season Standings that are NOT already qualified —
+        excluding both the Conference champion and the tier-2 regular-season
+        qualifier.
+
+        Called from FOUR sites, all with seed-then-continue semantics:
+        ``play_playoffs_task``, ``play_season_task``'s ``_drain_one_stage``,
+        ``league_views.play_single_round`` and
+        ``activate_pending_tournament_phase`` (the recovery hook).
+
+        IDEMPOTENT: returns the number of brackets seeded THIS call, ``0`` when
+        none were ready, and ``0`` on every call after everything is seeded.
+        """
+        from .worlds import first_unqualified, last_chance_field
+
+        if phase is None or phase.pk is None or phase.phase_type != "tournament":
+            return 0
+        candidates = (
+            phase.regional_tournaments.filter(
+                qualifier_stage="last_chance", state="setup"
+            )
+            .select_related("conference")
+            .order_by("conference__ordinal", "id")
+        )
+        seeded = 0
+        for candidate in candidates:
+            conference = candidate.conference
+            # §3.2 read rule — a Regional playoff is any Conference-scoped row
+            # that is NOT ``last_chance``, so an un-backfilled CONF-02 row with
+            # ``qualifier_stage == ""`` still resolves here.
+            regional = (
+                phase.regional_tournaments.filter(conference=conference)
+                .exclude(qualifier_stage="last_chance")
+                .first()
+            )
+            if regional is None or regional.champion_id is None:
+                continue  # not ready yet — leave it unseeded
+            rows = self._final_standings_for_phase(
+                self._preceding_phase(phase), conference=conference
+            )
+            ranked = [row.team_id for row in rows]
+            qualified = {regional.champion_id}
+            regular_season_qualifier = first_unqualified(ranked, qualified)
+            if regular_season_qualifier is not None:
+                qualified.add(regular_season_qualifier)
+            field = last_chance_field(ranked, qualified)
+            if len(field) < MIN_BRACKET_PARTICIPANTS:
+                # UNREACHABLE for a Conference of 9+ (at least 9 - 2 = 7 Teams
+                # are always unqualified). It exists only so admin-mangled data
+                # cannot brick a Season: the row has no participants and no
+                # nodes, so the delete is clean, and removing it lets the phase
+                # finish instead of deadlocking on a bracket that can never be
+                # built. A deleted instance left in a caller's cached
+                # ``tournaments_for_phase`` list is harmless — ``nodes``
+                # re-queries and returns empty.
+                candidate.delete()
+                continue
+            for position, team_id in enumerate(field):
+                TournamentParticipant.objects.create(
+                    tournament=candidate,
+                    team_id=team_id,
+                    seed=position + 1,
+                )
+            candidate.lock_and_build()
+            seeded += 1
+        return seeded
+
+    def worlds_qualifiers(self) -> "list[WorldsQualifier]":
+        """CONF-03 — the Worlds field of this Season, derived on demand.
+
+        ADR-0036. Each Conference of the FINAL ``tournament`` phase sends 1, 2
+        or 3 qualifiers as a function of its ACTIVATION-SNAPSHOT size
+        (``starting_team_ids_json`` — never the bracket's participant count,
+        never affected by ``tournament_cut``). Slot provenance, in tier order:
+        the Conference champion; the best regular-season Standings finisher not
+        already qualified; the Last-chance qualifier bracket's winner.
+
+        The union is ordered TIER FIRST, then by regular-season RATE within the
+        tier (``order_worlds_qualifiers``). **Nothing is persisted** — not the
+        field, not the seeds, and ``Season.champion_team`` stays NULL for a
+        >= 2-Conference Season. This slice crowns nothing.
+
+        READINESS — "empty list = not ready", never a partial list. Returns
+        ``[]`` the moment ANY required bracket of the final tournament phase is
+        missing its ``champion``, when the phase has not been built at all, and
+        for a Season with 0 or 1 Conference (whose season-ending playoff crowns
+        the Season champion directly, with no Worlds). CONF-04 builds the Worlds
+        bracket straight off this list, and a partial list is
+        indistinguishable from a complete one at the call site.
+        """
+        from .worlds import (
+            PROVENANCE_CHAMPION,
+            PROVENANCE_LAST_CHANCE,
+            PROVENANCE_REGULAR_SEASON,
+            QUALIFIER_TIER_CHAMPION,
+            QUALIFIER_TIER_LAST_CHANCE,
+            QUALIFIER_TIER_REGULAR_SEASON,
+            WorldsQualifier,
+            first_unqualified,
+            order_worlds_qualifiers,
+            qualifier_count_for_size,
+        )
+
+        conferences = self.ordered_conferences()
+        if len(conferences) < 2:
+            return []
+        phase = self._final_tournament_phase()
+        if phase is None:
+            return []
+        prior = self._preceding_phase(phase)
+        # Computed ONCE, before the loop — never per Conference. This is the
+        # discriminator between "this Conference is too small for a bracket"
+        # and "the tournament phase has not been built at all".
+        phase_built = phase.regional_tournaments.exists()
+
+        # (team_id, conference, tier, provenance, StandingsRow | None)
+        slots: list[tuple] = []
+        for conference in conferences:
+            rows = self._final_standings_for_phase(prior, conference=conference)
+            row_by_team = {row.team_id: row for row in rows}
+            ranked = [row.team_id for row in rows]
+            count = qualifier_count_for_size(
+                len(conference.starting_team_ids_json or [])
+            )
+            if count == 0:
+                continue
+            # §3.2 read rule — everything Conference-scoped that is not
+            # ``last_chance`` is the Regional playoff, including an
+            # un-backfilled CONF-02 row.
+            regional = (
+                phase.regional_tournaments.filter(conference=conference)
+                .exclude(qualifier_stage="last_chance")
+                .first()
+            )
+            qualified: set[int] = set()
+            conference_slots: list[tuple[int, int, str]] = []
+            # Tier 1 — THREE branches, in exactly this order. A bare
+            # ``regional is None`` is NOT the fallback predicate: it is also
+            # true mid-regular-season, before the phase has been built, and
+            # firing the fallback there would emit a complete, plausible-looking
+            # Worlds field before a single playoff Match had been played.
+            if regional is not None:
+                if regional.champion_id is None:
+                    return []  # not ready
+                conference_slots.append(
+                    (regional.champion_id, QUALIFIER_TIER_CHAMPION, PROVENANCE_CHAMPION)
+                )
+                qualified.add(regional.champion_id)
+            elif not phase_built:
+                # Qualification has not merely stalled — it has not STARTED.
+                return []
+            else:
+                # The genuine no-Regional-playoff fallback: a Conference below
+                # MIN_BRACKET_PARTICIPANTS, or one truncated below it by
+                # ``tournament_cut``. It still sends exactly one qualifier —
+                # its Standings rank 1 — as a REGULAR-SEASON provenance that
+                # nonetheless seeds in the CHAMPION tier. No Conference is ever
+                # unrepresented at Worlds.
+                if not ranked:
+                    continue
+                conference_slots.append(
+                    (ranked[0], QUALIFIER_TIER_CHAMPION, PROVENANCE_REGULAR_SEASON)
+                )
+                qualified.add(ranked[0])
+            if count >= 2:
+                regular_season_qualifier = first_unqualified(ranked, qualified)
+                if regular_season_qualifier is not None:
+                    conference_slots.append(
+                        (
+                            regular_season_qualifier,
+                            QUALIFIER_TIER_REGULAR_SEASON,
+                            PROVENANCE_REGULAR_SEASON,
+                        )
+                    )
+                    qualified.add(regular_season_qualifier)
+            if count >= 3:
+                last_chance = phase.regional_tournaments.filter(
+                    conference=conference, qualifier_stage="last_chance"
+                ).first()
+                if last_chance is None or last_chance.champion_id is None:
+                    return []  # not ready
+                conference_slots.append(
+                    (
+                        last_chance.champion_id,
+                        QUALIFIER_TIER_LAST_CHANCE,
+                        PROVENANCE_LAST_CHANCE,
+                    )
+                )
+            for team_id, tier, provenance in conference_slots:
+                slots.append(
+                    (team_id, conference, tier, provenance, row_by_team.get(team_id))
+                )
+
+        # One bulk name fetch for the whole field. Tolerant ``id__in``, mirroring
+        # ``_final_standings_for_phase``: a deleted Team id simply drops out.
+        teams_by_id = Team.objects.filter(id__in=[slot[0] for slot in slots]).in_bulk()
+        collected = []
+        for team_id, conference, tier, provenance, row in slots:
+            team = teams_by_id.get(team_id)
+            if team is None:
+                continue
+            collected.append(
+                WorldsQualifier(
+                    team_id=team_id,
+                    team_name=team.name,
+                    conference_id=conference.id,
+                    conference_name=conference.name,
+                    tier=tier,
+                    provenance=provenance,
+                    matches_played=row.matches_played if row is not None else 0,
+                    league_points=row.league_points if row is not None else 0,
+                    round_wins=row.round_wins if row is not None else 0,
+                    total_score=row.total_score if row is not None else 0,
+                )
+            )
+        return order_worlds_qualifiers(collected)
 
     def tournaments_for_phase(self, phase) -> "list[Tournament]":
         """CONF-02 — the Tournament(s) of ``phase``: the ONE caller seam.
@@ -1522,6 +1840,24 @@ class Season(models.Model):
         if regional:
             return regional
         return [phase.tournament] if phase.tournament_id is not None else []
+
+    def _final_tournament_phase(self) -> "SeasonPhase | None":
+        """CONF-03 — the HIGHEST-ordinal ``tournament`` phase, or ``None``.
+
+        Only this phase drives Worlds qualification and gets Last-chance
+        brackets (ADR-0036); a mid-season ``tournament`` phase still builds its
+        regional brackets exactly as CONF-02 does. ``ordered_phases()`` is in
+        ordinal order (``SeasonPhase.Meta.ordering``), so the last match wins.
+        A non-persisted implicit fallback phase is never returned — it is
+        always ``round_robin``.
+        """
+        final = None
+        for phase in self.ordered_phases():
+            if phase.pk is None:
+                continue
+            if phase.phase_type == "tournament":
+                final = phase
+        return final
 
     def _seed_order_for_phase(self, phase, conference=None) -> list[int]:
         """LG-02-Part2c-3c — the seeded team-id order for a tournament phase.
@@ -2336,6 +2672,27 @@ class Tournament(models.Model):
         blank=True,
         on_delete=models.SET_NULL,
         related_name="tournaments",
+    )
+    # CONF-03 — which qualification stage this bracket IS (ADR-0036). Blank for a
+    # sandbox Tournament AND for the Season-wide embedded bracket of a
+    # 0/1-Conference Season. ``regional_playoff`` = a Conference's Regional
+    # playoff; ``last_chance`` = its Last-chance qualifier bracket.
+    #
+    # READ RULE (no backfill — ADR-0004): every read tests ONLY
+    # ``qualifier_stage == "last_chance"``. Everything else — including the
+    # un-backfilled "" on a CONF-02 regional row created before migration 0059 —
+    # is a Regional playoff when ``conference_id`` is set, and not a qualifier
+    # bracket at all when it is NULL.
+    QUALIFIER_STAGE_CHOICES = (
+        ("", "Not a qualifier bracket"),
+        ("regional_playoff", "Regional playoff"),
+        ("last_chance", "Last-chance qualifier"),
+    )
+    qualifier_stage = models.CharField(
+        max_length=16,
+        choices=QUALIFIER_STAGE_CHOICES,
+        blank=True,
+        default="",
     )
     # LG-02b-2 — per-Bracket-round best-of-N Series escalation. The resolved N
     # for each Bracket node is anchored to its depth from the final (depth 0 =

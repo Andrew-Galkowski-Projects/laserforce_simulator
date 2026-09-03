@@ -1,3 +1,81 @@
+# Web testing — CONF-03 (Worlds qualification + last-chance qualifier)
+
+Date: 2026-09-03
+Branch: `conf-03-worlds-qualification`
+Scope: the Playoffs screen (`/leagues/<id>/playoffs/`) for a >= 2-Conference Season —
+the new **Last Chance Qualifier** bracket section and the read-only **Worlds
+qualification** panel — plus the `play_single_round` dead-click transition. Server on
+port **8001**. The fixture was built through the CONF-02 test helpers via
+`manage.py shell` (`_built_regional_season("ChromeTest", sizes=[9, 5], cut=4)`) rather
+than by simulating a full regular season; the bracket drains DID run the real engine.
+Conference 1 has **9** Teams (3 qualifiers, gets a last-chance bracket), Conference 2
+has **5** (2 qualifiers, gets none) — so both the last-chance and the no-last-chance
+paths are exercised in one Season.
+
+## Summary — CONF-03
+| Area | Result |
+|---|---|
+| 9-Team Conference gets an eager **unseeded** last-chance row (`state=setup`, 0 participants) at phase activation | ✅ |
+| 5-Team Conference gets **no** last-chance row | ✅ |
+| `tournaments_for_phase` order — regional playoff sorts before its last-chance sibling | ✅ |
+| Last-chance section renders with the `-lc` DOM suffix (`league-playoffs-phase-2-1-lc`, `-conference-2-1-lc`, `-stage-2-1-lc`) | ✅ |
+| CONF-02 ids unchanged — Conf1 `-2-1`, Conf2 `-2-2`, no `-lc` on the 5-Team Conference | ✅ |
+| Worlds panel **absent** while qualification incomplete | ✅ |
+| Worlds panel **absent** entirely on a 0-Conference Season, which emits no `-lc` / `-stage-` / `-conference-` ids at all | ✅ |
+| **Dead-click hazard**: the click resolving the phase's LAST regional node leaves the playoff controls present and enabled | ✅ |
+| That same click seeds the last-chance bracket `setup` -> `active` with 4 participants | ✅ |
+| Last-chance field excludes **both** already-qualified Teams | ✅ |
+| Phase refuses to advance while the last-chance bracket is undrained (`_phase_complete` False) | ✅ |
+| `worlds_qualifiers()` is all-or-`[]` — empty until every bracket has a champion | ✅ |
+| `Season.champion_team` stays **NULL** after full qualification | ✅ |
+| Tier-first + rate ordering correct across Conferences of unequal size | ✅ |
+| Console clean (zero messages); all requests 2xx; no horizontal overflow at 720px | ✅ |
+
+**Overall:** the CONF-03 surface is correct on real data. The dead-click hazard the
+seam contract predicted was reproduced as a genuine transition and confirmed fixed.
+No functional defect found. One cosmetic nit (C3-1).
+
+### Worlds field as rendered (the live fixture)
+Conference 1's regional playoff was won by its **4-seed** (`ChromeTest1x3`), not its
+rank-1 Team — so the tier-2 slot correctly fell to rank-1 `ChromeTest1x0`, and the
+last-chance field became ranks 2, 3, 5, 6 (`1x1`, `1x2`, `1x4`, `1x5`), excluding both
+qualified Teams. That is the champion-is-not-rank-1 branch exercised by accident, which
+is the most valuable thing this pass covered.
+
+| Seed | Team | Conference | Provenance |
+|---|---|---|---|
+| 1 | ChromeTest1x3 | ChromeTestConf1 | Conference champion |
+| 2 | ChromeTest2x3 | ChromeTestConf2 | Conference champion |
+| 3 | ChromeTest1x0 | ChromeTestConf1 | Regular season |
+| 4 | ChromeTest2x0 | ChromeTestConf2 | Regular season |
+| 5 | ChromeTest1x2 | ChromeTestConf1 | Last-chance qualifier |
+
+Seed 1 vs 2 demonstrates the **rate** rule doing real work: `1x3` took 15 league points
+from 8 matches (1.875/match) and `2x3` took 3 from 4 (0.75/match). Under the rejected
+raw-total ordering the 9-Team Conference would still have led, but the two Conferences'
+totals were never comparable — 8 games versus 4.
+
+Field size **M = 5**, which is *not* a power of two. This is the CONF-04 hazard the
+PLAN entry flags: the Worlds bracket must handle byes or a play-in.
+
+## Findings — CONF-03
+
+### 🔵 C3-1 — [COSMETIC, not fixed] "Last Chance Qualifier" is rendered twice in the same section header
+`laserforce_simulator/templates/leagues/playoffs.html` — the last-chance section's
+heading already ends in the stage name (`2027 — ChromeTestConf1 Last Chance
+Qualifier`, built from the Tournament's own `name`), and the template then renders the
+`stage_label` badge (`league-playoffs-stage-2-1-lc`) immediately below it reading
+**"Last Chance Qualifier"** again. The Conference name is likewise shown twice (in the
+heading and in the `-conference-` subtitle), but that duplication is pre-existing
+CONF-02 behaviour and is consistent across all three sections.
+
+Not a defect — the badge is the machine-readable stage discriminator the seam contract
+specifies, and it is what keeps a 0/1-Conference Season from rendering any new element
+at all. Logged only so a future styling pass can decide whether the badge or the
+heading suffix should carry the label. **Out of scope for CONF-03.**
+
+---
+
 # Web testing — CONF-02 (per-Conference regional playoffs)
 
 Date: 2026-09-02

@@ -36,6 +36,9 @@
                 {% if bracket.conference %}
                 <div class="text-muted small mb-2" id="league-playoffs-conference-{{ bracket.key }}">{{ bracket.conference.name }}</div>
                 {% endif %}
+                {% if bracket.stage_label %}
+                <div class="badge bg-secondary mb-2" id="league-playoffs-stage-{{ bracket.key }}">{{ bracket.stage_label }}</div>
+                {% endif %}
 
                 {% if bracket.champion %}
                 <div id="league-playoffs-champion-{{ bracket.key }}" class="alert alert-success">
@@ -45,8 +48,13 @@
 
                 {% if bracket.pending %}
                     <div class="alert alert-secondary">
+                        {% if bracket.stage == "last_chance" %}
+                        The field is not set yet — this Conference's Regional playoff must crown its
+                        champion first.
+                        {% else %}
                         The bracket is not seeded yet — the regular season is still
                         in progress.
+                        {% endif %}
                     </div>
                 {% else %}
                     <div class="d-flex" id="league-playoffs-bracket-{{ bracket.key }}">
@@ -94,6 +102,27 @@
                 {% endif %}
             </section>
             {% endfor %}
+
+            {% if worlds_qualifiers %}
+            <section id="league-playoffs-worlds" class="mt-4">
+                <h2 class="h4">Worlds qualification</h2>
+                <table id="league-playoffs-worlds-table" class="table table-sm">
+                    <thead>
+                        <tr><th>Seed</th><th>Team</th><th>Conference</th><th>Provenance</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for q in worlds_qualifiers %}
+                        <tr id="league-playoffs-worlds-row-{{ q.seed }}">
+                            <td>{{ q.seed }}</td>
+                            <td id="league-playoffs-worlds-team-{{ q.seed }}"><a href="{% url 'team_match_history' q.team_id %}">{{ q.team_name }}</a></td>
+                            <td id="league-playoffs-worlds-conference-{{ q.seed }}">{{ q.conference_name }}</td>
+                            <td id="league-playoffs-worlds-provenance-{{ q.seed }}">{{ q.provenance_label }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </section>
+            {% endif %}
         {% endif %}
     </main>
 </div>

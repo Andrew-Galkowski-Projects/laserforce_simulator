@@ -329,3 +329,406 @@ class TestLeaguePlayoffsZeroConferenceRegressionPin(TestCase):
 
     def test_no_conference_heading_rendered(self) -> None:
         self.assertNotContains(self.response, "league-playoffs-conference-")
+
+
+# ===========================================================================
+# CONF-03 — the Last-chance bracket section and the Worlds qualification panel
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/conf-03-seam-contract.md`` §7 + §9.4 items
+# 30-33; rationale in
+# [ADR-0036](../../docs/adr/0036-worlds-qualification-size-tiered-with-last-chance-bracket.md).
+#
+# A Conference of 9+ Teams appends a SECOND ``brackets`` entry for its
+# Last-chance qualifier, discriminated by the locked ``-lc`` key suffix and
+# labelled by the new ``stage`` / ``stage_label`` keys. Every CONF-02 key
+# (``"<phase ordinal>-<conference ordinal>"``) and every 0/1-Conference key
+# (``str(phase.ordinal)``) is therefore byte-identical, and ``stage_label`` is
+# empty for every non-Last-chance bracket so NO new element renders on a
+# CONF-02 Season — the two regression pins below are what prove that.
+#
+# The Worlds panel is a read-only table driven by the single new context key
+# ``worlds_qualifiers``. ``{% if worlds_qualifiers %}`` IS the readiness test:
+# ``[]`` means the panel is absent entirely — no section, no heading, no
+# empty-state text, no new DOM id.
+#
+# Fixtures are hand-built (no simulation, contract §9.1): the round-robin is a
+# deterministic set of completed Match + GameRound rows and brackets are
+# drained by STAMPING the persisted rows. Appended as NEW classes; no existing
+# class above is modified.
+
+
+from matches.tests.test_regional_playoffs import (  # noqa: E402
+    _conf_season as _conf03_conf_season,
+    _stamp_bracket_completed as _conf03_stamp_bracket_completed,
+)
+
+
+def _conf03_built_season(prefix: str, sizes, **kwargs):
+    """``_built_regional_season`` under a CONF-03-local alias."""
+    return _conf02_built_regional_season(prefix, list(sizes), **kwargs)
+
+
+def _conf03_last_chance_row(phase, conference=None):
+    rows = phase.regional_tournaments.filter(qualifier_stage="last_chance")
+    if conference is not None:
+        rows = rows.filter(conference=conference)
+    return rows.first()
+
+
+def _conf03_regional_row(phase, conference):
+    """The §3.2 read rule — a Regional playoff is Conference-scoped and NOT a
+    Last-chance row (never a positive test on ``"regional_playoff"``)."""
+    return (
+        phase.regional_tournaments.filter(conference=conference)
+        .exclude(qualifier_stage="last_chance")
+        .first()
+    )
+
+
+def _conf03_entry_by_key(response, key: str):
+    for entry in response.context["brackets"]:
+        if entry["key"] == key:
+            return entry
+    return None
+
+
+# ---------------------------------------------------------------------------
+# 30 + 32. The N+1 labelled sections and the unseeded pending alert
+# ---------------------------------------------------------------------------
+
+
+class TestLeaguePlayoffsLastChanceSection(TestCase):
+    """A 9-Team Conference + a 4-Team one yields THREE bracket entries: two
+    Regional playoffs and one Last-chance qualifier."""
+
+    def setUp(self) -> None:
+        (
+            self.season,
+            self.conferences,
+            self.groups,
+            self.rr_phase,
+            self.phase,
+        ) = _conf03_built_season("LcScreen", (9, 4))
+        self.big, self.small = self.conferences
+        self.league = self.season.league
+        self.response = self.client.get(
+            reverse("league_playoffs", kwargs={"league_id": self.league.id})
+        )
+        self.lc_key = f"{self.phase.ordinal}-{self.big.ordinal}-lc"
+
+    def test_three_bracket_entries_for_one_phase(self) -> None:
+        self.assertEqual(self.response.status_code, 200)
+        self.assertEqual(len(self.response.context["brackets"]), 3)
+
+    def test_the_last_chance_entry_sorts_after_its_regional_sibling(self) -> None:
+        keys = [entry["key"] for entry in self.response.context["brackets"]]
+        self.assertEqual(
+            keys,
+            [
+                f"{self.phase.ordinal}-{self.big.ordinal}",
+                self.lc_key,
+                f"{self.phase.ordinal}-{self.small.ordinal}",
+            ],
+        )
+
+    def test_the_last_chance_entry_carries_its_conference(self) -> None:
+        entry = _conf03_entry_by_key(self.response, self.lc_key)
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["conference"].id, self.big.id)
+        self.assertEqual(entry["tournament"].conference_id, self.big.id)
+
+    def test_the_last_chance_entry_carries_stage_and_stage_label(self) -> None:
+        entry = _conf03_entry_by_key(self.response, self.lc_key)
+        self.assertEqual(entry["stage"], "last_chance")
+        self.assertEqual(entry["stage_label"], "Last Chance Qualifier")
+
+    def test_regional_entries_carry_the_regional_stage_and_no_label(self) -> None:
+        for conference in self.conferences:
+            key = f"{self.phase.ordinal}-{conference.ordinal}"
+            entry = _conf03_entry_by_key(self.response, key)
+            self.assertEqual(entry["stage"], "regional_playoff")
+            self.assertEqual(
+                entry["stage_label"],
+                "",
+                "an empty stage_label is what keeps CONF-02 markup unchanged",
+            )
+
+    def test_the_stage_badge_renders_for_the_last_chance_bracket(self) -> None:
+        self.assertContains(self.response, f'id="league-playoffs-stage-{self.lc_key}"')
+        self.assertContains(self.response, "Last Chance Qualifier")
+
+    def test_no_stage_badge_renders_for_a_regional_bracket(self) -> None:
+        for conference in self.conferences:
+            self.assertNotContains(
+                self.response,
+                f'id="league-playoffs-stage-{self.phase.ordinal}-'
+                f'{conference.ordinal}"',
+            )
+
+    def test_the_last_chance_section_has_its_own_dom_id(self) -> None:
+        self.assertContains(self.response, f'id="league-playoffs-phase-{self.lc_key}"')
+
+    def test_the_keys_do_not_collide(self) -> None:
+        keys = [entry["key"] for entry in self.response.context["brackets"]]
+        self.assertEqual(len(set(keys)), 3)
+
+    # -- 32. the unseeded Last-chance section renders the pending alert -----
+
+    def test_the_unseeded_entry_is_pending_with_no_rounds(self) -> None:
+        entry = _conf03_entry_by_key(self.response, self.lc_key)
+        self.assertIs(entry["pending"], True)
+        self.assertEqual(entry["rounds"], [])
+        self.assertIsNone(entry["champion"])
+
+    def test_no_empty_bracket_grid_is_rendered_for_the_unseeded_entry(self) -> None:
+        self.assertNotContains(
+            self.response, f'id="league-playoffs-bracket-{self.lc_key}"'
+        )
+
+    def test_the_pending_alert_carries_the_last_chance_message(self) -> None:
+        self.assertContains(self.response, "The field is not set yet")
+
+    def test_the_built_regional_entries_are_not_pending(self) -> None:
+        for conference in self.conferences:
+            key = f"{self.phase.ordinal}-{conference.ordinal}"
+            entry = _conf03_entry_by_key(self.response, key)
+            self.assertIs(entry["pending"], False)
+            self.assertTrue(entry["rounds"])
+
+    def test_a_seeded_last_chance_bracket_stops_being_pending(self) -> None:
+        _conf03_stamp_bracket_completed(
+            _conf03_regional_row(self.phase, self.big), self.groups[0][0]
+        )
+        self.assertEqual(self.season.seed_pending_last_chance_brackets(self.phase), 1)
+        response = self.client.get(
+            reverse("league_playoffs", kwargs={"league_id": self.league.id})
+        )
+        entry = _conf03_entry_by_key(response, self.lc_key)
+        self.assertIs(entry["pending"], False)
+        self.assertTrue(entry["rounds"])
+        self.assertContains(response, f'id="league-playoffs-bracket-{self.lc_key}"')
+        # The badge stays put once the bracket is playable.
+        self.assertContains(response, f'id="league-playoffs-stage-{self.lc_key}"')
+
+
+# ---------------------------------------------------------------------------
+# 31. CONF-02 DOM ids are byte-identical
+# ---------------------------------------------------------------------------
+
+
+class TestLeaguePlayoffsConf02DomIdsUnchanged(TestCase):
+    """Invariants 2 + 3 — a 2-Conference Season with no 9+-Team Conference
+    renders exactly the CONF-02 markup: no ``-lc`` key, no stage element."""
+
+    def setUp(self) -> None:
+        (
+            self.season,
+            self.conferences,
+            self.groups,
+            self.rr_phase,
+            self.phase,
+        ) = _conf03_built_season("LcNoLc", (5, 8))
+        self.response = self.client.get(
+            reverse("league_playoffs", kwargs={"league_id": self.season.league_id})
+        )
+
+    def test_two_entries_only(self) -> None:
+        self.assertEqual(len(self.response.context["brackets"]), 2)
+
+    def test_keys_are_exactly_phase_ordinal_dash_conference_ordinal(self) -> None:
+        self.assertEqual(
+            [entry["key"] for entry in self.response.context["brackets"]],
+            [
+                f"{self.phase.ordinal}-{self.conferences[0].ordinal}",
+                f"{self.phase.ordinal}-{self.conferences[1].ordinal}",
+            ],
+        )
+
+    def test_no_lc_substring_anywhere_in_the_response(self) -> None:
+        self.assertNotContains(self.response, "-lc")
+
+    def test_no_stage_element_is_present(self) -> None:
+        self.assertNotContains(self.response, "league-playoffs-stage-")
+
+    def test_every_stage_label_is_empty(self) -> None:
+        for entry in self.response.context["brackets"]:
+            self.assertEqual(entry["stage_label"], "")
+
+    def test_the_conf02_section_and_bracket_ids_still_render(self) -> None:
+        for conference in self.conferences:
+            key = f"{self.phase.ordinal}-{conference.ordinal}"
+            self.assertContains(self.response, f'id="league-playoffs-phase-{key}"')
+            self.assertContains(self.response, f'id="league-playoffs-bracket-{key}"')
+            self.assertContains(self.response, f'id="league-playoffs-conference-{key}"')
+
+    def test_the_existing_pending_message_is_verbatim_on_an_unbuilt_phase(
+        self,
+    ) -> None:
+        season, _conferences, _groups, _rr, phase = _conf03_conf_season(
+            "LcPendMsg", [5, 5]
+        )
+        response = self.client.get(
+            reverse("league_playoffs", kwargs={"league_id": season.league_id})
+        )
+        self.assertContains(response, "The bracket is not seeded yet")
+        self.assertNotContains(response, "The field is not set yet")
+        self.assertEqual(response.context["brackets"][0]["stage"], "")
+        self.assertEqual(response.context["brackets"][0]["stage_label"], "")
+
+
+class TestLeaguePlayoffsZeroConferenceStageKeysUnchanged(TestCase):
+    """Invariant 1 — the 0-Conference Season keeps the bare-ordinal key and
+    gains only the two empty new keys."""
+
+    def setUp(self) -> None:
+        self.season, self.teams, self.phase = _conf02_built_flat_season("LcFlat")
+        self.response = self.client.get(
+            reverse("league_playoffs", kwargs={"league_id": self.season.league_id})
+        )
+
+    def test_key_is_the_bare_phase_ordinal(self) -> None:
+        entry = self.response.context["brackets"][0]
+        self.assertEqual(entry["key"], str(self.phase.ordinal))
+
+    def test_stage_and_stage_label_are_empty(self) -> None:
+        entry = self.response.context["brackets"][0]
+        self.assertEqual(entry["stage"], "")
+        self.assertEqual(entry["stage_label"], "")
+
+    def test_no_stage_element_and_no_lc_suffix(self) -> None:
+        self.assertNotContains(self.response, "league-playoffs-stage-")
+        self.assertNotContains(self.response, "-lc")
+
+
+# ---------------------------------------------------------------------------
+# 33. The Worlds qualification panel
+# ---------------------------------------------------------------------------
+
+
+class TestLeaguePlayoffsWorldsPanelAbsent(TestCase):
+    """``{% if worlds_qualifiers %}`` is the readiness test — an empty list
+    renders NO section, NO heading and NO empty-state text."""
+
+    def test_absent_for_a_zero_conference_season(self) -> None:
+        season, _teams, _phase = _conf02_built_flat_season("LcWorldsFlat")
+        response = self.client.get(
+            reverse("league_playoffs", kwargs={"league_id": season.league_id})
+        )
+        self.assertEqual(response.context["worlds_qualifiers"], [])
+        self.assertNotContains(response, 'id="league-playoffs-worlds"')
+        self.assertNotContains(response, "Worlds qualification")
+
+    def test_absent_for_a_one_conference_season(self) -> None:
+        season, _conferences, groups, rr_phase, phase = _conf03_conf_season(
+            "LcWorldsOne", [9]
+        )
+        _conf02_hand_play_rr(season, rr_phase, _conf02_ids(groups[0]))
+        season.refresh_from_db()
+        season.activate_pending_tournament_phase()
+        response = self.client.get(
+            reverse("league_playoffs", kwargs={"league_id": season.league_id})
+        )
+        self.assertEqual(response.context["worlds_qualifiers"], [])
+        self.assertNotContains(response, 'id="league-playoffs-worlds"')
+
+    def test_absent_for_an_incomplete_multi_conference_season(self) -> None:
+        season, _conferences, _groups, _rr, _phase = _conf03_built_season(
+            "LcWorldsMid", (9, 4)
+        )
+        response = self.client.get(
+            reverse("league_playoffs", kwargs={"league_id": season.league_id})
+        )
+        self.assertEqual(response.context["worlds_qualifiers"], [])
+        self.assertNotContains(response, 'id="league-playoffs-worlds"')
+        self.assertNotContains(response, 'id="league-playoffs-worlds-table"')
+
+
+class TestLeaguePlayoffsWorldsPanelPresent(TestCase):
+    """Once every bracket of the final tournament phase has a champion the
+    panel renders exactly M rows with the locked DOM ids of §7.3."""
+
+    def setUp(self) -> None:
+        (
+            self.season,
+            self.conferences,
+            self.groups,
+            self.rr_phase,
+            self.phase,
+        ) = _conf03_built_season("LcWorldsDone", (9, 4), cut=4)
+        self.big, self.small = self.conferences
+        # Rank 1 wins each Regional playoff, so the tier-2 slots are rank 2 and
+        # the Last-chance field starts at rank 3.
+        for conference, group in zip(self.conferences, self.groups):
+            _conf03_stamp_bracket_completed(
+                _conf03_regional_row(self.phase, conference), group[0]
+            )
+        self.season.seed_pending_last_chance_brackets(self.phase)
+        _conf03_stamp_bracket_completed(
+            _conf03_last_chance_row(self.phase, self.big), self.groups[0][2]
+        )
+        self.response = self.client.get(
+            reverse("league_playoffs", kwargs={"league_id": self.season.league_id})
+        )
+        self.field = self.response.context["worlds_qualifiers"]
+
+    def test_the_context_key_holds_the_ordered_field(self) -> None:
+        # 3 from the 9-Team Conference + 1 from the 4-Team one.
+        self.assertEqual(len(self.field), 4)
+        self.assertEqual([q.seed for q in self.field], [1, 2, 3, 4])
+
+    def test_the_panel_and_table_render(self) -> None:
+        self.assertContains(self.response, 'id="league-playoffs-worlds"')
+        self.assertContains(self.response, 'id="league-playoffs-worlds-table"')
+        self.assertContains(self.response, "Worlds qualification")
+
+    def test_one_row_per_qualifier_with_the_locked_ids(self) -> None:
+        for seed in range(1, len(self.field) + 1):
+            self.assertContains(
+                self.response, f'id="league-playoffs-worlds-row-{seed}"'
+            )
+            self.assertContains(
+                self.response, f'id="league-playoffs-worlds-team-{seed}"'
+            )
+            self.assertContains(
+                self.response, f'id="league-playoffs-worlds-conference-{seed}"'
+            )
+            self.assertContains(
+                self.response, f'id="league-playoffs-worlds-provenance-{seed}"'
+            )
+
+    def test_no_extra_row_beyond_the_field_size(self) -> None:
+        self.assertNotContains(
+            self.response,
+            f'id="league-playoffs-worlds-row-{len(self.field) + 1}"',
+        )
+
+    def test_every_team_name_is_rendered(self) -> None:
+        for qualifier in self.field:
+            self.assertContains(self.response, qualifier.team_name)
+
+    def test_every_conference_name_is_rendered(self) -> None:
+        for conference in self.conferences:
+            self.assertContains(self.response, conference.name)
+
+    def test_every_provenance_label_is_rendered(self) -> None:
+        for qualifier in self.field:
+            self.assertNotEqual(qualifier.provenance_label, "")
+            self.assertContains(self.response, qualifier.provenance_label)
+
+    def test_the_three_provenances_are_all_present(self) -> None:
+        labels = {q.provenance_label for q in self.field}
+        self.assertEqual(
+            labels,
+            {"Conference champion", "Regular season", "Last-chance qualifier"},
+        )
+
+    def test_the_last_chance_winner_is_the_last_seed(self) -> None:
+        last = self.field[-1]
+        self.assertEqual(last.team_id, self.groups[0][2].id)
+        self.assertEqual(last.provenance_label, "Last-chance qualifier")
+
+    def test_the_panel_renders_alongside_the_bracket_sections(self) -> None:
+        # The panel lives INSIDE the ``{% else %}`` of the no-brackets guard.
+        self.assertEqual(len(self.response.context["brackets"]), 3)
+        self.assertNotContains(self.response, 'id="league-playoffs-empty-notice"')

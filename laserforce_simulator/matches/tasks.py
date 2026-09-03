@@ -384,7 +384,17 @@ def play_season_task(
                 # (the parallel-overlay pacing rule). ``sum`` over a generator
                 # evaluates every term; do NOT rewrite as a short-circuiting
                 # ``any(...)``.
-                return sum(play_next_bracket_round(t) for t in tournaments)
+                clinched = sum(play_next_bracket_round(t) for t in tournaments)
+                if clinched == 0:
+                    # CONF-03 — seed-then-continue: no bracket progressed, so a
+                    # Last-chance bracket may have just become seedable
+                    # (ADR-0036). Seed, then retry the stage ONCE. Because this
+                    # fires only when nothing progressed, one budget unit is
+                    # still exactly one stage — which is why the retry lives
+                    # here rather than in either loop body.
+                    if season.seed_pending_last_chance_brackets(phase) > 0:
+                        clinched = sum(play_next_bracket_round(t) for t in tournaments)
+                return clinched
 
             rr_weeks_played = len({fixture.matchday for _pid, fixture in to_play})
 
@@ -496,6 +506,15 @@ def play_playoffs_task(self, season_id: int) -> dict:
                 if play_next_node(tournament) is not None:
                     progressed = True
             if not progressed:
+                # CONF-03 — nothing was playable: a Regional playoff may have
+                # JUST crowned its champion, making this Conference's Last-chance
+                # bracket seedable (ADR-0036). Seed, then RETRY the loop once
+                # more rather than exiting. ``tournaments`` is deliberately NOT
+                # re-resolved — the eager row is already in it and its nodes are
+                # re-queried every call. The ``continue`` re-enters the loop, so
+                # the PLAY-01 between-stage cancel check runs before the retry.
+                if season.seed_pending_last_chance_brackets(phase) > 0:
+                    continue
                 break
             completed, total = _stage_counts()
             self.update_state(
