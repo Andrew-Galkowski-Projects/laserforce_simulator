@@ -2,7 +2,7 @@
 
 Read-only, GET-only screen rendering a sortable per-team statistics table
 for the League's ``displayed_season``. Follows the LG-01z shared view
-contract (§2): GET-guard → ``get_object_or_404`` → session write →
+contract (§2): GET-guard → ``get_owned_or_404`` → session write →
 ``displayed_season`` pick → sidebar links → screen aggregation → render.
 
 Heavy aggregation lives in the pure module ``matches/team_stats_logic.py``;
@@ -17,8 +17,9 @@ from __future__ import annotations
 from collections import defaultdict
 
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import render
 
+from accounts.permissions import get_owned_or_404
 from matches.league_views import (
     _build_league_sidebar_links,
     _resolve_season_scope,
@@ -61,7 +62,7 @@ def team_stats(request: HttpRequest, league_id: int) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    league = get_object_or_404(League, pk=league_id)
+    league = get_owned_or_404(League, request, pk=league_id)
     request.session["last_league_id"] = league.id
 
     displayed_season = (

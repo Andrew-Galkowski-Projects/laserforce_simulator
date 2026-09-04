@@ -12,7 +12,7 @@ from collections import defaultdict
 from dataclasses import replace
 from datetime import date, timedelta
 from math import ceil
-from typing import Iterable, Optional
+from typing import TYPE_CHECKING, Iterable, Optional
 
 from celery.result import AsyncResult
 from django.contrib import messages
@@ -29,10 +29,11 @@ from django.http import (
     HttpResponseNotFound,
     JsonResponse,
 )
-from django.shortcuts import get_object_or_404, redirect, render
+from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
 
+from accounts.permissions import get_owned_or_404, manager_or_none, owned_queryset
 from teams.constants import PLAYER_NAMES, TEAM_NAMES
 from teams.models import Player, Team
 from teams.player_generator import LEAGUE_SPREAD_DELTAS, compute_tier_means
@@ -78,6 +79,9 @@ from .simulation import BatchSimulator
 from .standings import StandingsRow, compute_standings
 from .tasks import play_member_night_task, play_playoffs_task, play_season_task
 from .views import _celery_state_to_job_status
+
+if TYPE_CHECKING:
+    from django.contrib.auth.base_user import AbstractBaseUser
 
 # Abbreviated column headers for the wide rating tables (Player Ratings,
 # Free Agents). Each entry is ``(key, abbr, full)``: ``key`` matches the
@@ -235,7 +239,7 @@ def season_awards(request, season_id: int) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     league = season.league
@@ -282,7 +286,7 @@ def season_standings(request, season_id: int) -> HttpResponse:
     Active / completed: aggregates the Season's completed Matches via
     ``compute_standings``.
     """
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     is_draft_preview = season.state == "draft"
@@ -654,7 +658,7 @@ def manage_conferences(request: HttpRequest, season_id: int) -> HttpResponse:
     """
     if request.method not in ("GET", "POST"):
         return HttpResponseNotAllowed(["GET", "POST"])
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     is_editable = season.state == "draft"
@@ -815,7 +819,7 @@ def season_schedule(request, season_id: int) -> HttpResponse:
     matchday; the display date for matchday ``n`` is
     ``season.start_date + (n - 1) * 7 days``.
     """
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     league = season.league
@@ -933,8 +937,16 @@ def season_schedule(request, season_id: int) -> HttpResponse:
 
 def league_list(request) -> HttpResponse:
     """LG-01a — flat list of all Leagues (active + archived sections)."""
-    active_leagues = list(League.objects.filter(state="active").order_by("-id"))
-    archived_leagues = list(League.objects.filter(state="archived").order_by("-id"))
+    active_leagues = list(
+        owned_queryset(League.objects.filter(state="active"), request.user).order_by(
+            "-id"
+        )
+    )
+    archived_leagues = list(
+        owned_queryset(League.objects.filter(state="archived"), request.user).order_by(
+            "-id"
+        )
+    )
     return render(
         request,
         "leagues/list.html",
@@ -1331,6 +1343,7 @@ def _template_to_form_data(
         "start_date": timezone.localdate().isoformat(),
         "num_teams": str(template.num_teams),
         "schedule_format": "single_round_robin",
+        "visibility": "closed",
         "mean": str(template.mean),
         "std_dev": str(template.std_dev),
         "map_mode": template.map_mode,  # "none"
@@ -1342,7 +1355,9 @@ def _template_to_form_data(
 
 
 @transaction.atomic
-def _create_league_and_season(form: CreateLeagueForm) -> Season:
+def _create_league_and_season(
+    form: CreateLeagueForm, *, manager: "AbstractBaseUser | None" = None
+) -> Season:
     """CRE-01 — the single League + Season creation body.
 
     The SOLE writer, shared by the chooser POST (``league_create``) and the
@@ -1379,6 +1394,7 @@ def _create_league_and_season(form: CreateLeagueForm) -> Season:
         team_names_pool=team_names_pool,
         player_names_pool=player_names_pool,
         tier_means=tier_means,
+        manager=manager,
     )
 
     league = League.objects.create(
@@ -1389,11 +1405,16 @@ def _create_league_and_season(form: CreateLeagueForm) -> Season:
         finance_enabled=cleaned["finance_enabled"],
         # FIN-05 — luxury-tax challenge-mode firing toggle.
         challenge_fired_luxury_tax=cleaned["challenge_fired_luxury_tax"],
+        # UX-01 — the **Manager**, and the dormant visibility marker.
+        manager=manager,
+        visibility=cleaned.get("visibility") or "closed",
     )
     # This League's dedicated free-agent pool Team. Hidden from
     # ``Team.objects.regular()`` via the ``free_agent_pool`` FK, so it
     # never appears in competitive team lists.
-    pool_team = Team.objects.create(name=f"{cleaned['league_name']} Free Agents")
+    pool_team = Team.objects.create(
+        name=f"{cleaned['league_name']} Free Agents", manager=manager
+    )
     league.free_agent_pool = pool_team
     # CRE-01: pick the manager's current_team by difficulty (easy → strongest,
     # medium → middle, hard → weakest), superseding the CAR-01 alphabetical
@@ -1548,7 +1569,7 @@ def league_create(request) -> HttpResponse:
             )
         )
         if form.is_valid():
-            season = _create_league_and_season(form)
+            season = _create_league_and_season(form, manager=manager_or_none(request))
             return _redirect_after_create(form, season)
         return render(
             request,
@@ -1585,7 +1606,7 @@ def league_create_advanced(request) -> HttpResponse:
     if not form.is_valid():
         return render(request, "leagues/create_advanced.html", {"form": form})
 
-    season = _create_league_and_season(form)
+    season = _create_league_and_season(form, manager=manager_or_none(request))
     return _redirect_after_create(form, season)
 
 
@@ -3028,7 +3049,7 @@ def league_history(request: HttpRequest, league_id: int) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    league = get_object_or_404(League, pk=league_id)
+    league = get_owned_or_404(League, request, pk=league_id)
 
     seasons_qs = (
         league.seasons.select_related("champion_team")
@@ -3112,7 +3133,7 @@ def league_dashboard(request, league_id: int) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    league = get_object_or_404(League, pk=league_id)
+    league = get_owned_or_404(League, request, pk=league_id)
     request.session["last_league_id"] = league.id
 
     displayed_season = _pick_displayed_season(league)
@@ -3148,7 +3169,7 @@ def season_dashboard(request, season_id: int) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
     displayed_season = season
     season_mode = season.state
@@ -3206,7 +3227,7 @@ def start_season(request, season_id: int) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     try:
@@ -3233,7 +3254,7 @@ def play_week(request, season_id: int) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     if season.state != "active":
@@ -3364,7 +3385,7 @@ def play_two_months(request, season_id: int) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     if season.state != "active":
@@ -3386,7 +3407,7 @@ def play_until_end(request, season_id: int) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     if season.state != "active":
@@ -3417,7 +3438,7 @@ def play_single_round(request, season_id: int) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     phase = season.current_phase()
@@ -3484,7 +3505,7 @@ def play_playoffs(request, season_id: int) -> JsonResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     # CONF-04 — build BEFORE the cursor read (ADR-0037). The cursor may already
@@ -3530,7 +3551,7 @@ def play_cancel(request, season_id: int) -> JsonResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     season.play_cancel_requested = True
@@ -3553,7 +3574,7 @@ def member_night_setup(request, season_id: int) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     phase = season.current_phase()
@@ -3574,11 +3595,19 @@ def member_night_setup(request, season_id: int) -> HttpResponse:
         games = member_night.draw_member_night_games(pool_by_site, random.Random())
         for game in games:
             base_name = f"MN {game.site} G{game.game_index + 1}"
-            team_a = Team.objects.create(name=f"{base_name} A", is_draw_team=True)
+            team_a = Team.objects.create(
+                name=f"{base_name} A",
+                is_draw_team=True,
+                manager=manager_or_none(request),
+            )
             for suffix, player_id in game.team_a.items():
                 setattr(team_a, f"slot_{suffix}_id", player_id)
             team_a.save()
-            team_b = Team.objects.create(name=f"{base_name} B", is_draw_team=True)
+            team_b = Team.objects.create(
+                name=f"{base_name} B",
+                is_draw_team=True,
+                manager=manager_or_none(request),
+            )
             for suffix, player_id in game.team_b.items():
                 setattr(team_b, f"slot_{suffix}_id", player_id)
             team_b.save()
@@ -3606,7 +3635,7 @@ def play_member_night(request, season_id: int) -> JsonResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     phase = season.current_phase()
@@ -3649,7 +3678,7 @@ def play_member_night_single(request, season_id: int) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     resolved = _next_member_night_shell(season)
@@ -3681,7 +3710,7 @@ def play_member_night_live(request, season_id: int) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     resolved = _next_member_night_shell(season)
@@ -3840,7 +3869,7 @@ def play_status(request, season_id: int, job_id: str) -> JsonResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     # Only write when the value actually changes. play_status is polled every
     # ~0.5s for the whole "Play …" run; an unconditional assignment marks the
     # session modified on every poll, forcing a django_session write that
@@ -3874,7 +3903,7 @@ def play_week_live(request, season_id: int) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     if season.state != "active":
@@ -3987,7 +4016,7 @@ def play_week_live_watch(request, season_id: int) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     watch = request.session.get("live_watch")
@@ -4207,8 +4236,8 @@ def team_schedule(request: HttpRequest, league_id: int, team_id: int) -> HttpRes
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    league = get_object_or_404(League, pk=league_id)
-    team = get_object_or_404(Team, pk=team_id)
+    league = get_owned_or_404(League, request, pk=league_id)
+    team = get_owned_or_404(Team, request, pk=team_id)
 
     displayed_season = (
         league.active_season
@@ -4486,7 +4515,7 @@ def league_delete(request: HttpRequest, league_id: int) -> HttpResponse:
     performs the teardown and redirects to the league list. Career-mode only.
     Mirrors the ``teams.views.player_delete`` GET-confirm / POST-act precedent
     (no 405 guard — GET legitimately renders the confirm page)."""
-    league = get_object_or_404(League, pk=league_id)
+    league = get_owned_or_404(League, request, pk=league_id)
 
     if not _is_career_league(league):
         return HttpResponseBadRequest(
@@ -5086,7 +5115,7 @@ def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    league = get_object_or_404(League, pk=league_id)
+    league = get_owned_or_404(League, request, pk=league_id)
     request.session["last_league_id"] = league.id
 
     if league.active_season is not None:
@@ -5125,7 +5154,7 @@ def owner_evaluation(request: HttpRequest, season_id: int) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    season = get_object_or_404(Season, pk=season_id)
+    season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
     league = season.league
@@ -5203,7 +5232,7 @@ def new_team_picker(request: HttpRequest, league_id: int) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    league = get_object_or_404(League, pk=league_id)
+    league = get_owned_or_404(League, request, pk=league_id)
     if not _is_career_league(league):
         return HttpResponseBadRequest(
             "Manager firing applies only in single-player career mode."
@@ -5247,7 +5276,7 @@ def reassign_team(request: HttpRequest, league_id: int) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    league = get_object_or_404(League, pk=league_id)
+    league = get_owned_or_404(League, request, pk=league_id)
     if not _is_career_league(league):
         return HttpResponseBadRequest(
             "Manager firing applies only in single-player career mode."
@@ -5270,7 +5299,7 @@ def reassign_team(request: HttpRequest, league_id: int) -> HttpResponse:
     if team_id not in eligible_ids:
         return HttpResponseBadRequest("team_id is not an eligible team.")
 
-    picked = Team.objects.get(pk=team_id)
+    picked = get_owned_or_404(Team, request, pk=team_id)
     league.current_team = picked
     league.save(update_fields=["current_team"])
 

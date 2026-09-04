@@ -1,10 +1,13 @@
 from celery.result import AsyncResult
+from django.contrib.auth.decorators import login_not_required
+from django.utils.decorators import method_decorator
 from rest_framework import serializers, status, views
 from rest_framework.decorators import action
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.viewsets import ReadOnlyModelViewSet
 
+from accounts.permissions import owned_game_round_q, owned_match_q
 from matches.models import GameRound, Match
 from matches.serializers import (
     GameEventSerializer,
@@ -25,22 +28,41 @@ class SimulateBatchRequestSerializer(serializers.Serializer):
     master_seed = serializers.IntegerField(required=False, allow_null=True)
 
 
+# UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
+# DRF's 403 JSON rather than an HTML 302 to the login page; the settings-level
+# `IsAuthenticated` is what actually gates it.
+@method_decorator(login_not_required, name="dispatch")
 class MatchViewSet(ReadOnlyModelViewSet):
+    # Class-level queryset required by the DRF router for model introspection.
+    # get_queryset() overrides this at request time.
     queryset = Match.objects.select_related("team_red", "team_blue", "winner").order_by(
         "-date_played"
     )
     serializer_class = MatchSerializer
 
+    def get_queryset(self):
+        return (
+            Match.objects.filter(owned_match_q(self.request.user))
+            .select_related("team_red", "team_blue", "winner")
+            .order_by("-date_played")
+        )
 
+
+# UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
+# DRF's 403 JSON rather than an HTML 302 to the login page; the settings-level
+# `IsAuthenticated` is what actually gates it.
+@method_decorator(login_not_required, name="dispatch")
 class GameRoundViewSet(ReadOnlyModelViewSet):
     # Class-level queryset required by the DRF router for model introspection.
     # get_queryset() overrides this at request time.
     queryset = GameRound.objects.all()
 
     def get_queryset(self):
-        qs = GameRound.objects.select_related(
-            "match", "team_red", "team_blue", "winner"
-        ).order_by("-date_played")
+        qs = (
+            GameRound.objects.filter(owned_game_round_q(self.request.user))
+            .select_related("match", "team_red", "team_blue", "winner")
+            .order_by("-date_played")
+        )
         if self.action == "retrieve":
             return qs.prefetch_related("player_states")
         return qs
@@ -62,6 +84,10 @@ class GameRoundViewSet(ReadOnlyModelViewSet):
         return Response(serializer.data)
 
 
+# UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
+# DRF's 403 JSON rather than an HTML 302 to the login page; the settings-level
+# `IsAuthenticated` is what actually gates it.
+@method_decorator(login_not_required, name="dispatch")
 class SimulateBatchAPIView(views.APIView):
     """POST /api/simulate-batch/ → enqueue a batch-sim Celery task.
 
@@ -132,6 +158,10 @@ class SimulateBatchAPIView(views.APIView):
         )
 
 
+# UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
+# DRF's 403 JSON rather than an HTML 302 to the login page; the settings-level
+# `IsAuthenticated` is what actually gates it.
+@method_decorator(login_not_required, name="dispatch")
 class SimulateBatchStatusAPIView(views.APIView):
     """GET /api/simulate-batch/<job_id>/ → polling JSON.
 

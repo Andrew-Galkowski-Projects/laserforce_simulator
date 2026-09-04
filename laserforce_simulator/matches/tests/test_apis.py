@@ -3,6 +3,7 @@ from rest_framework.test import APIClient
 
 from matches.models import GameEvent, GameRound, Match, PlayerRoundState
 from matches.tests.conftest import make_team_with_slots
+from conftest import get_shared_manager
 
 
 @pytest.mark.django_db
@@ -11,6 +12,7 @@ class TestMatchAPI:
 
     def setup_method(self):
         self.client = APIClient()
+        self.client.force_login(get_shared_manager())
         self.red, _ = make_team_with_slots("Red")
         self.blue, _ = make_team_with_slots("Blue")
         self.match = Match.objects.create(
@@ -61,6 +63,7 @@ class TestGameRoundAPI:
 
     def setup_method(self):
         self.client = APIClient()
+        self.client.force_login(get_shared_manager())
         self.red, self.players = make_team_with_slots("Red")
         self.blue, _ = make_team_with_slots("Blue")
         self.game_round = GameRound.objects.create(

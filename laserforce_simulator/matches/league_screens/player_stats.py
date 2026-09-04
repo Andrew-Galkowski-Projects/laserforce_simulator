@@ -7,7 +7,7 @@ separate Player Ratings screen, LG-01z-n). Each player links to their
 career / player page (``player_career_stats`` — ``/players/<id>/stats/``).
 
 Follows the shared LG-01z view contract (§2 of the seam contract):
-GET-guard → ``get_object_or_404(League)`` → session write →
+GET-guard → ``get_owned_or_404(League)`` → session write →
 displayed-Season pick → sidebar links with ``sidebar_active="player_stats"``
 → screen aggregation → render ``leagues/player_stats.html``. Empty-state
 notice when the League has no Season.
@@ -32,8 +32,9 @@ from __future__ import annotations
 
 from django.core.paginator import Paginator
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import render
 
+from accounts.permissions import get_owned_or_404
 from matches.league_views import (
     _build_league_sidebar_links,
     _coerce_page,
@@ -166,7 +167,7 @@ def player_stats(request: HttpRequest, league_id: int) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    league = get_object_or_404(League, pk=league_id)
+    league = get_owned_or_404(League, request, pk=league_id)
     request.session["last_league_id"] = league.id
 
     displayed_season = (

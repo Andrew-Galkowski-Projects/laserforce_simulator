@@ -7,8 +7,9 @@ Team filter. See ``.claude/worktrees/lg-01z-seam-contract.md`` §2 / §4-l.
 
 from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import render
 
+from accounts.permissions import get_owned_or_404
 from matches.league_views import (
     _build_league_sidebar_links,
     _coerce_sort_key,
@@ -65,7 +66,7 @@ def game_log(request: HttpRequest, league_id: int) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    league = get_object_or_404(League, pk=league_id)
+    league = get_owned_or_404(League, request, pk=league_id)
     request.session["last_league_id"] = league.id
 
     displayed_season = (

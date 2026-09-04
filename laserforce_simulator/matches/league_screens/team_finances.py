@@ -13,7 +13,7 @@ the bare URL (the LG-01z ``watch_list_toggle`` POST-then-redirect precedent);
 finance OFF ⇒ the edit form is hidden/inert.
 
 Follows the shared LG-01z view contract: 405 GET-guard on non-GET/POST,
-``get_object_or_404(League)``, session write, displayed-Season pick, sidebar
+``get_owned_or_404(League)``, session write, displayed-Season pick, sidebar
 links with ``sidebar_active="finances_team"``, render
 ``leagues/team_finances.html``. Finance-disabled League ⇒ a "Finances are
 disabled for this League" notice in place of the body.
@@ -26,8 +26,9 @@ from django.http import (
     HttpResponse,
     HttpResponseNotAllowed,
 )
-from django.shortcuts import get_object_or_404, redirect, render
+from django.shortcuts import redirect, render
 
+from accounts.permissions import get_owned_or_404
 from matches import finance
 from matches.league_views import (
     _build_league_sidebar_links,
@@ -90,7 +91,7 @@ def team_finances(request: HttpRequest, league_id: int) -> HttpResponse:
     if request.method not in ("GET", "POST"):
         return HttpResponseNotAllowed(["GET", "POST"])
 
-    league = get_object_or_404(League, pk=league_id)
+    league = get_owned_or_404(League, request, pk=league_id)
     request.session["last_league_id"] = league.id
 
     displayed_season = (

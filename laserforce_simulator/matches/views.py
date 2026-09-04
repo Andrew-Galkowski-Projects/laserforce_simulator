@@ -2,7 +2,7 @@ from collections import defaultdict
 from datetime import date, datetime
 
 from celery.result import AsyncResult
-from django.shortcuts import render, get_object_or_404, redirect
+from django.shortcuts import render, redirect
 from django.contrib import messages
 from django.db.models import Q, QuerySet
 from django.http import (
@@ -14,6 +14,12 @@ from django.http import (
 )
 from django.urls import reverse
 from django.utils.text import slugify
+from accounts.permissions import (
+    get_owned_or_404,
+    owned_game_round_q,
+    owned_match_q,
+    stamp_manager,
+)
 from teams.models import Team, Player
 from . import (
     h2h_stats,
@@ -214,8 +220,8 @@ def compare_rounds(request) -> HttpResponse:
     except (TypeError, ValueError):
         raise Http404("Invalid round id")
 
-    round_a = get_object_or_404(GameRound, id=id_a)
-    round_b = get_object_or_404(GameRound, id=id_b)
+    round_a = get_owned_or_404(GameRound, request, id=id_a)
+    round_b = get_owned_or_404(GameRound, request, id=id_b)
     context["round_a"] = round_a
     context["round_b"] = round_b
 
@@ -234,7 +240,7 @@ def compare_rounds(request) -> HttpResponse:
 
     points_series = []
     for team_id in team_ids:
-        team = Team.objects.get(id=team_id)
+        team = get_owned_or_404(Team, request, id=team_id)
         points_series.append(
             {
                 "team_id": team_id,
@@ -265,12 +271,13 @@ def compare_rounds(request) -> HttpResponse:
 def match_list(request):
     """Display all matches and standalone game rounds."""
     matches = (
-        Match.objects.all()
+        Match.objects.filter(owned_match_q(request.user))
         .select_related("team_red", "team_blue", "winner")
         .order_by("-date_played")
     )
     detailed_rounds = (
         GameRound.objects.filter(match__isnull=True)
+        .filter(owned_game_round_q(request.user))
         .select_related("team_red", "team_blue", "winner")
         .order_by("-date_played")
     )
@@ -287,7 +294,7 @@ def match_list(request):
 
 def match_detail(request, match_id):
     """Display detailed match results with player stats"""
-    match = get_object_or_404(Match, id=match_id)
+    match = get_owned_or_404(Match, request, id=match_id)
 
     # Get detailed round data if available
     game_rounds = match.game_rounds.all().prefetch_related("player_states__player")
@@ -317,7 +324,7 @@ def game_round_detail(request, round_id):
     ``export_round_report`` PDF consumes (CONTEXT.md, ``Round scoreboard``)
     so the HTML scoreboard and the PDF scoreboard cannot drift.
     """
-    game_round = get_object_or_404(GameRound, id=round_id)
+    game_round = get_owned_or_404(GameRound, request, id=round_id)
 
     red_states = (
         # LG-07: group by the physical Side (team_color), NOT player__team — a
@@ -407,6 +414,10 @@ def create_match(request):
                     "matches/enhanced_match_setup.html",
                     {"form": form, "title": "Create Tournament Match"},
                 )
+            # UX-01 — post-hoc stamp: the simulator persists the Match, so the
+            # **Manager** is set on the returned row rather than threaded
+            # through BatchSimulator.
+            stamp_manager(match, request.user)
 
             messages.success(
                 request,
@@ -478,6 +489,8 @@ def create_single_round(request):
                     "matches/enhanced_single_round_setup.html",
                     {"form": form, "title": "Create Single Round"},
                 )
+            # UX-01 — post-hoc stamp; see create_match above.
+            stamp_manager(game_round, request.user)
             messages.success(
                 request,
                 f"Round complete! {game_round.winner.name if game_round.winner else 'Tie'} won!",
@@ -495,7 +508,7 @@ def create_single_round(request):
 
 def team_match_history(request, team_id):
     """Display match history for a specific team"""
-    team = get_object_or_404(Team, id=team_id)
+    team = get_owned_or_404(Team, request, id=team_id)
 
     all_matches = list(
         Match.objects.filter(Q(team_red=team) | Q(team_blue=team))
@@ -1022,7 +1035,7 @@ def game_round_events(request, round_id):
     they are read directly by ``game_round_events.html``; the shape is
     pinned by ``TestM1EventLogWindowing``.
     """
-    game_round = get_object_or_404(GameRound, id=round_id)
+    game_round = get_owned_or_404(GameRound, request, id=round_id)
     # GEN-01: this surface needs the full event log + movement + cell
     # occupancy. Lazily upgrade the round to ``full`` (no-op if already
     # there); the first click pays the re-sim + backfill once.
@@ -1061,7 +1074,7 @@ def missile_log(request, round_id):
     fired / hit / efficiency summary plus flat display rows (no ORM ref
     leaks through to the template). Friendly-fire hits count as hits.
     """
-    game_round = get_object_or_404(GameRound, id=round_id)
+    game_round = get_owned_or_404(GameRound, request, id=round_id)
     # GEN-01: the missile log needs the combat event rows. Lazily upgrade
     # to ``combat`` (no-op if already at combat/full).
     BatchSimulator().ensure_fidelity(game_round, "combat")
@@ -1100,7 +1113,7 @@ def movement_heatmap(request, round_id: int):
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    game_round = get_object_or_404(GameRound, pk=round_id)
+    game_round = get_owned_or_404(GameRound, request, pk=round_id)
     # GEN-01: the heatmap reads cell_occupancy_json + movement. Lazily
     # upgrade to ``full`` (no-op if already there).
     BatchSimulator().ensure_fidelity(game_round, "full")
@@ -1204,7 +1217,7 @@ def export_round_report(request, round_id: int):
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    game_round = get_object_or_404(GameRound, pk=round_id)
+    game_round = get_owned_or_404(GameRound, request, pk=round_id)
 
     red_states = (
         # LG-07: group by the physical Side (team_color), NOT player__team — a
@@ -1577,8 +1590,8 @@ def head_to_head(request) -> HttpResponse:
     except (TypeError, ValueError):
         raise Http404("Invalid team id")
 
-    team_a = get_object_or_404(Team, id=team_a_id)
-    team_b = get_object_or_404(Team, id=team_b_id)
+    team_a = get_owned_or_404(Team, request, id=team_a_id)
+    team_b = get_owned_or_404(Team, request, id=team_b_id)
     context["team_a"] = team_a
     context["team_b"] = team_b
 
@@ -1899,8 +1912,8 @@ def player_head_to_head(request) -> HttpResponse:
     except (TypeError, ValueError):
         raise Http404("Invalid player id")
 
-    player_a = get_object_or_404(Player, id=player_a_id)
-    player_b = get_object_or_404(Player, id=player_b_id)
+    player_a = get_owned_or_404(Player, request, id=player_a_id)
+    player_b = get_owned_or_404(Player, request, id=player_b_id)
     context["player_a"] = player_a
     context["player_b"] = player_b
 
@@ -2108,7 +2121,7 @@ def coming_soon(
     from .league_views import _build_league_sidebar_links
 
     if league_id is not None:
-        league = get_object_or_404(League, pk=league_id)
+        league = get_owned_or_404(League, request, pk=league_id)
     else:
         league = None
 
