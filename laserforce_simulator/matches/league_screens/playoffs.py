@@ -6,7 +6,7 @@ standalone ``/tournaments/<id>/`` detail page. Covers both **mid-season
 tournaments** and the **end-of-season playoff** — every ``phase_type ==
 "tournament"`` phase of the viewed Season whose bracket has been built — laid
 out zengm-style (one column per Bracket round). Read-only, GET-only; follows
-the LG-01z shared view contract (§2): GET-guard → ``get_object_or_404`` →
+the LG-01z shared view contract (§2): GET-guard → ``get_owned_or_404`` →
 session write → ``displayed_season`` pick → sidebar links → screen aggregation
 → render.
 """
@@ -14,8 +14,9 @@ session write → ``displayed_season`` pick → sidebar links → screen aggrega
 from __future__ import annotations
 
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import render
 
+from accounts.permissions import get_owned_or_404
 from matches.league_views import _build_league_sidebar_links
 from matches.models import League
 
@@ -73,7 +74,7 @@ def playoffs(request: HttpRequest, league_id: int) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    league = get_object_or_404(League, pk=league_id)
+    league = get_owned_or_404(League, request, pk=league_id)
     request.session["last_league_id"] = league.id
 
     displayed_season = (

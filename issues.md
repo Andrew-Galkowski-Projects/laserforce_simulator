@@ -1,3 +1,166 @@
+# Web testing — UX-01 follow-up: register / login / League / full Season
+
+Date: 2026-09-04
+Branch: `ux-01-user-accounts` (PR #166)
+Scope: a scoped pass, not the full sweep — register a fresh Account, sign out and back
+in, create a League from a template, and play a Season end to end (regular season +
+playoffs) under the UX-01 login gate. Server on port **8001**. Account
+`seasontest@example.com` (id 5); League 3 `ChromeTest Season League` (4-Team Quick),
+Season 3, Tournament 1 `Season 1 Playoffs`.
+
+## Summary
+| Area | Result |
+|---|---|
+| Anonymous `/` -> 302 `/accounts/login/?next=/` | OK |
+| Register (email + 2x password) creates the Account, auto-logs-in, lands on `/` | OK |
+| Explicit sign-out (POST) -> login page; sign back in -> `/`, nav shows the email | OK |
+| League create from the `4-Team Quick` template | OK |
+| Stamping — League 3, all 4 generated Teams and the per-League free-agent pool carry `manager_id=5` | OK |
+| Season Matches carry `manager IS NULL` (they derive via `season -> league`) | OK — per contract |
+| Embedded Tournament 1 inherits `manager=5` from its League (ADR-0038 s2.3) | OK |
+| Regular season: 6 Matches / 12 Rounds via **Play One Week** x6 | OK |
+| Standings internally consistent (MP 3 each, wins sum to 6 Matches, round wins sum to 12) | OK |
+| Playoffs: 3 bracket nodes resolved via **Play Single Round** x3; Season -> `completed` | OK |
+| Champion crowned (Ember Enforcers, the #1 seed) | OK |
+| Console clean, all requests 2xx on the Season dashboard | OK |
+| Cross-Account League detail returns **404** | OK |
+| **Landing page listed other Accounts' Leagues** | **DEFECT — fixed, see U2-1** |
+| Global `Free Agents` singleton was captured by an Account and now 404s | **DEFECT — see U2-2** |
+
+### ~~U2-1 — Landing page leaked every other Account's active League~~ — FIXED (2026-09-04)
+`core/views.py::landing` listed `League.objects.filter(state="active")` with **no ownership
+scoping**, so any signed-in Account saw every other Account's active League name and Season
+status on the home page. Reproduced live: brand-new Account 5 saw Leagues 1 and 2, owned by
+Accounts 1 and 4.
+
+The League **detail** page correctly returned 404, so this was a listing leak, not an access
+break — but it still contradicts ADR-0038 ("another Account's row is neither listed nor
+readable").
+
+Root cause: the UX-01 seam contract scoped the `core` app out on the grounds that `ArenaMap`
+has no ownership axis. `landing` lives in `core/views.py` but renders **League** rows, so it
+fell through the gap — `core/views.py` was never touched by the branch.
+
+**FIXED** — `landing` now routes through `owned_queryset(...)`, so an Account sees its own
+active Leagues plus every **Unmanaged** one. Four regression tests in
+`core/tests.py::LandingInProgressLeagueScopingTests` cover own / Unmanaged / other-Account /
+absent-from-HTML. Verified in-browser after the fix: only `ChromeTest Season League` renders.
+
+### U2-2 — The global `Free Agents` singleton can be captured by an Account
+`get_free_agents_team()` (`teams/models.py:270`) resolves the global sandbox pool by
+`get_or_create(name="Free Agents")`, but **nothing reserves that name at create time**.
+`_generate_free_agents` is careful never to stamp the singleton, and `claim_unmanaged`
+excludes it — but the ordinary team-create path stamps whatever name is submitted.
+
+Observed in the dev database: Team 3 `Free Agents` carries `manager_id=2`, and
+`GET /teams/3/` returns **404** for Account 5. The shared sandbox pool is now unreachable
+for every Account except 2.
+
+Worse ordering: if the singleton already exists and a second Team named `Free Agents` is
+created, `get_or_create` raises `MultipleObjectsReturned`.
+
+Fix (not applied — out of scope for the UX-01 slice, needs a decision): reserve
+`FREE_AGENTS_TEAM_NAME` in team-create validation, or resolve the singleton by a dedicated
+flag rather than by name.
+
+### U2-3 — [ENVIRONMENT] The async play paths need a Celery worker
+`Play Two Months`, `Play Until Playoffs`, `Play Playoffs` and the member-night `Play All`
+are intercepted by `templates/_partials/topnav_play_script.html` and POST to views that call
+`play_season_task.delay(...)`, returning `202 {job_id}` for the page to poll.
+
+The browser-testing setup starts only `runserver`, no Celery worker, so those buttons appear
+to do nothing: the POST returns 202, the season never advances, and the poll never resolves.
+Not a product defect and not UX-01-related. The **sync** paths (`Play One Week`,
+`Play Single Round`, `Start Season`) work and are what this pass used.
+
+
+---
+# Web testing — UX-01 (user accounts and Manager ownership)
+
+Date: 2026-09-03
+Branch: `ux-01-user-accounts`
+Scope: the global `LoginRequiredMiddleware` gate, the new email-first `accounts` app
+(login / register / logout / password-change), the top-nav auth control, the `manager`
+FK on the five **Ownership roots**, the `get_owned_or_404` traversal, cross-Account
+isolation, the DRF `IsAuthenticated` + manager-scoped querysets, the dormant
+`League.visibility` control, and the deliberate **non**-ownership of `ArenaMap`.
+Server on port **8001**. The local `db.sqlite3` was reset for this pass (the
+`AUTH_USER_MODEL` swap breaks existing migration history — see ADR-0038 Consequences);
+the old file is preserved at `laserforce_simulator/db.sqlite3.pre-ux01.bak`.
+Fixture built live through the UI: Account `chrometest@example.com` (user A) +
+`userb@example.com` (user B, isolated browser context) + an anonymous context;
+League 1 `ChromeTest League` (4 generated Teams + pool Team), Season 1 started and
+one week played (2 Matches, 2 Rounds); ArenaMap 3 `ChromeTest Shared Arena`.
+
+## Summary — UX-01
+| Area | Result |
+|---|---|
+| Anonymous hit on any gated page → 302 to `/accounts/login/?next=<path>`, `next` preserved | ✅ |
+| Register (email + password + confirm) creates the Account, auto-logs-in, redirects to landing | ✅ |
+| All 5 locked `login-*` ids present; all 6 `register-*`; all 5 `password-change-*`; both `password-change-done-*` | ✅ |
+| All 7 locked top-nav `account-*` ids present, correct branch — anonymous sees `account-sign-in-link` / `account-register-link`, and **zero** authenticated-only ids leak to anonymous | ✅ |
+| Sign-out is POST-only — `GET /accounts/logout/` → **405**; POST → `/accounts/login/`; a gated page then bounces to login with `next` | ✅ |
+| Password change round-trips → `/accounts/password-change/done/`; still gated while anonymous (Django's `LoginRequiredMixin`, which no middleware exemption can lift) | ✅ |
+| Stamping — all 4 generated Teams (incl. the 3 AI ones), the free-agent pool Team and the League carry `manager_id`; **zero** unmanaged rows after League create | ✅ |
+| Season Matches correctly carry `manager_id = NULL` — they *derive* via `season → league`, exactly as seam contract §6.5 specifies | ✅ |
+| **Cross-Account isolation** — user B gets **404 (not 403)** on user A's `/leagues/1/`, `/seasons/1/`, `/teams/1/`, `/matches/1/`, `/matches/game-round/1/` and every league screen | ✅ |
+| Derived-row traversal `GameRound → Match → Season → League` blocks user B end-to-end | ✅ |
+| List pages render 200 for user B with **zero** trace of user A's data (no `ChromeTest`, no `Ember Enforcers`) | ✅ |
+| DRF — user A `/api/teams/` sees 5, user B sees **0**, user B `/api/players/` sees **0** | ✅ |
+| DRF anonymous → **403 JSON** (`content-type: application/json`, `{"detail":"Authentication credentials were not provided."}`), **not** an HTML 302 | ✅ |
+| `ArenaMap` shared as designed — user B, who did not create map 3, sees it in `/maps/` **and** opens `/maps/3/editor/` (200); `ArenaMap` has no `manager` field | ✅ |
+| `league-create-visibility` renders on the Advanced screen, defaults `Closed`, options `Closed`/`Open`, help text states it has no effect yet | ✅ |
+| All 24 League sidebar screens (the 15 converted `league_screens` modules) return 200 with no traceback | ✅ |
+| Core pages 200: `/teams/ /players/ /matches/ /maps/ /tournaments/ /leagues/ /matches/simulate-batch/` and all four create screens | ✅ |
+| Play loop under the gate — `start-season` then `play-week` simulated 2 Matches / 2 Rounds; standings render round-level results | ✅ |
+| Console clean (zero errors/warnings) and all requests 2xx on the League dashboard | ✅ |
+| Responsive — navbar collapses to a hamburger at 720px with the account control inside; no horizontal overflow at 720px or 1280px | ✅ |
+
+**Overall:** no in-slice defects found. The UX-01 surface behaves exactly as
+ADR-0038 and the seam contract specify, including the two decisions most at risk of
+being got wrong (404-not-403 on cross-Account access, and `ArenaMap` staying shared).
+Four observations are logged below: one low-severity in-slice UX nit (U1-1), one
+in-slice doc-drift nit (U1-2), and two pre-existing issues left out of scope
+(U1-3, U1-4).
+
+### 🟡 U1-1 — Anonymous top-nav advertises links that only bounce to the login page
+On `/accounts/login/` and `/accounts/register/` the anonymous navbar still renders the
+full app menu — `Teams`, `Players`, `Matches`, `Batch Sim`, `Create Team`, `Maps`,
+`Tournaments` — every one of which now 302s straight back to the login page. It is not
+a functional break (the gate does the right thing), but it invites a dead click on the
+two pages a brand-new visitor sees first.
+
+Source: `laserforce_simulator/templates/base.html` — the section-item includes render
+before the `{% if user.is_authenticated %}` branch in
+`templates/_partials/topnav_auth.html`, so only the auth control itself is branched.
+
+Fix (deferred — cosmetic, and outside the approved UX-01 scope): wrap the
+sandbox/league section items in `{% if user.is_authenticated %}`, leaving the brand,
+Tools, Help and the auth control visible to anonymous visitors.
+
+### ✅ ~~U1-2 — Stale `get_object_or_404` references in eight `league_screens` docstrings~~ — FIXED (2026-09-04)
+Eight modules under `laserforce_simulator/matches/league_screens/` still describe their
+lookup as `get_object_or_404(League, ...)` in the module docstring, though the call was
+converted to `get_owned_or_404` in this slice. Prose only — no behavioural effect. The
+seam contract enumerated call sites and required everything else stay byte-identical,
+so the Code agent correctly left them. **FIXED** — the seven affected module
+docstrings now read `get_owned_or_404(League)`, matching the call each one makes.
+
+### ⚪ U1-3 — [PRE-EXISTING, out of scope] `/tools/` and `/help/` return 404
+Neither `laserforce_simulator/core/tools_urls.py` nor `core/help_urls.py` declares a
+bare `""` index route — both are dropdown menus whose children are real routes, so the
+mount points were never valid URLs. Confirmed unrelated to UX-01: `git diff` shows
+neither file was touched on this branch. Only worth fixing if a landing page for either
+menu is ever wanted.
+
+### ⚪ U1-4 — [PRE-EXISTING, out of scope] Root `CLAUDE.md` names the wrong homepage view
+The Architecture section still reads "The root URL serves the `teams` app as the
+homepage", stale since LG-01a moved `/` to `core.views.landing`. The UX-01 Docs pass
+corrected only the app count on that line, deliberately leaving the unrelated drift.
+
+
+---
+
 # Web testing — CONF-06 (per-Conference rotating map pools)
 
 Date: 2026-09-03

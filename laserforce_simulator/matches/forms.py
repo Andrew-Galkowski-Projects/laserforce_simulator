@@ -1,7 +1,7 @@
 from django import forms
 from django.utils import timezone
 from teams.models import Team
-from .models import MIN_BRACKET_PARTICIPANTS, Match, Season
+from .models import MIN_BRACKET_PARTICIPANTS, League, Match, Season
 from .phase_composer import parse_phase_composition
 from core.models import ArenaMap
 
@@ -333,6 +333,19 @@ class CreateLeagueForm(forms.Form):
             }
         ),
         label="Conferences",
+    )
+    # UX-01 — DORMANT: authored at create time, read by nothing this slice.
+    # The forward-compatible marker for who may join a League once League
+    # membership exists (ADR-0038). ``required=False`` so a POST that omits it
+    # stays valid; the create path coerces a falsy value to "closed".
+    visibility = forms.ChoiceField(
+        choices=League.VISIBILITY_CHOICES,
+        initial="closed",
+        required=False,
+        widget=forms.Select(
+            attrs={"id": "league-create-visibility", "class": "form-select"}
+        ),
+        label="League visibility",
     )
     # LG-02-Part2b — hidden composer serialization. The create.html JS
     # serializes the ordered phase rows into this field as a comma-joined

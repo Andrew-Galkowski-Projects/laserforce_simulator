@@ -22,6 +22,7 @@ from core.models import (
 )
 from matches.models import GameEvent, GameRound, PlayerRoundState
 from matches.tests.conftest import make_team_with_slots
+from conftest import get_shared_manager
 from matches.views import _build_playback_map
 
 
@@ -221,7 +222,9 @@ class TestEventsScreenOverlay(TestCase):
         _move(gr, commander, 4, (0, 0), (0, 2))
 
         url = reverse("game_round_events", kwargs={"round_id": gr.id})
-        body = Client().get(url).content.decode("utf-8")
+        client = Client()
+        client.force_login(get_shared_manager())
+        body = client.get(url).content.decode("utf-8")
         self.assertIn('id="pb-map-canvas"', body)
         self.assertIn('id="pb-map-bg"', body)
         self.assertIn('id="pb-map-data"', body)
@@ -233,7 +236,9 @@ class TestEventsScreenOverlay(TestCase):
     def test_map_less_round_shows_notice_no_canvas(self) -> None:
         gr, _r, _b = _round(None, None, prefix="PbViewNoMap")
         url = reverse("game_round_events", kwargs={"round_id": gr.id})
-        body = Client().get(url).content.decode("utf-8")
+        client = Client()
+        client.force_login(get_shared_manager())
+        body = client.get(url).content.decode("utf-8")
         self.assertIn('id="pb-no-map-notice"', body)
         self.assertNotIn('id="pb-map-canvas"', body)
         # The live feed is still present for map-less rounds.

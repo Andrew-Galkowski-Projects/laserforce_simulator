@@ -10,7 +10,7 @@ against the displayed Season's enrolment) and defaults to
 ``_resolve_current_team_for_sidebar``).
 
 Follows the shared LG-01z view contract (§2 of the seam contract):
-GET-only, ``get_object_or_404(League)``, session write, displayed-Season
+GET-only, ``get_owned_or_404(League)``, session write, displayed-Season
 pick, sidebar links with ``sidebar_active="roster"``, render
 ``leagues/team_roster.html``. Empty-state when the League has no Season
 or no Team is resolvable.
@@ -19,8 +19,9 @@ or no Team is resolvable.
 from __future__ import annotations
 
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import render
 
+from accounts.permissions import get_owned_or_404
 from matches.league_views import (
     _build_league_sidebar_links,
     _resolve_current_team_for_sidebar,
@@ -34,7 +35,7 @@ def team_roster(request: HttpRequest, league_id: int) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    league = get_object_or_404(League, pk=league_id)
+    league = get_owned_or_404(League, request, pk=league_id)
     request.session["last_league_id"] = league.id
 
     displayed_season = (

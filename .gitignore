@@ -16,6 +16,9 @@ __pycache__/
 # WAL journal-mode sidecar files (not matched by *.sqlite3)
 *.sqlite3-wal
 *.sqlite3-shm
+# Pre-migration database backups (e.g. db.sqlite3.pre-ux01.bak, kept when the
+# UX-01 AUTH_USER_MODEL swap forced a fresh DB) -- *.sqlite3 misses a suffixed name.
+*.sqlite3*.bak
 media/
 
 # VSCode settings

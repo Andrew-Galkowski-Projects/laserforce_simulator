@@ -69,6 +69,17 @@
             {{ form.number_of_conferences.errors }}
         </div>
 
+        {# UX-01 -- dormant visibility marker; nothing reads it yet. #}
+        <div class="mb-3">
+            <label for="league-create-visibility" class="form-label">League visibility</label>
+            {{ form.visibility }}
+            <div class="form-text">
+                Closed leagues are yours alone. Open is reserved for a future
+                release where other managers can join — it has no effect yet.
+            </div>
+            {{ form.visibility.errors }}
+        </div>
+
         <div class="mb-3">
             <label for="league-create-schedule-format" class="form-label">Schedule format</label>
             {{ form.schedule_format }}

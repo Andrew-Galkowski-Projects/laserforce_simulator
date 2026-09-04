@@ -76,6 +76,8 @@ class TestLeagueCreateGet(TestCase):
             "league-create-schedule-format",
             "league-create-mean",
             "league-create-std-dev",
+            # UX-01 -- the dormant League-visibility control (contract 13).
+            "league-create-visibility",
             "league-create-submit",
         ):
             self.assertIn(f'id="{dom_id}"', body, f"missing DOM id {dom_id!r}")

@@ -806,9 +806,18 @@ def landing(request) -> HttpResponse:
     Lazy-imports ``League`` inside the function body to mirror the
     ``map_heatmap_data`` precedent and avoid an apps-loading cycle.
     """
+    from accounts.permissions import owned_queryset
     from matches.models import League
 
-    in_progress_leagues = list(League.objects.filter(state="active").order_by("-id"))
+    # UX-01 — Manager-scoped: this Account's active Leagues plus every
+    # **Unmanaged** one. Without this the card list leaked another Account's
+    # League name and Season status, even though `/leagues/<id>/` itself
+    # correctly 404s (ADR-0038).
+    in_progress_leagues = list(
+        owned_queryset(
+            League.objects.filter(state="active"), getattr(request, "user", None)
+        ).order_by("-id")
+    )
     return render(
         request,
         "core/landing.html",

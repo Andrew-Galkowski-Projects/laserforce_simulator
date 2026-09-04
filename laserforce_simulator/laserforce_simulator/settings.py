@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "accounts.apps.AccountsConfig",
     "teams.apps.TeamsConfig",
     "matches.apps.MatchesConfig",
     "core.apps.CoreConfig",
@@ -52,6 +53,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.auth.middleware.LoginRequiredMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -125,6 +127,19 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 
+# --- UX-01: Accounts (ADR-0038) ---
+# The **Account** is `accounts.User`: email-first, `username` dropped. Swapped
+# in before any user FK existed, so no data migration is needed on a fresh
+# database (see README for the existing-database recovery path).
+AUTH_USER_MODEL = "accounts.User"
+# `LoginRequiredMiddleware` (above) gates every view; only the auth surfaces
+# and the DRF API carry `@login_not_required`. URL names, not paths, so a
+# mount change cannot break the redirects.
+LOGIN_URL = "login"
+LOGIN_REDIRECT_URL = "landing"
+LOGOUT_REDIRECT_URL = "login"
+
+
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
@@ -156,8 +171,11 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.SessionAuthentication",
     ],
+    # UX-01 — the API viewsets are exempt from `LoginRequiredMiddleware` so an
+    # anonymous request gets DRF's 403 JSON rather than an HTML 302 to the
+    # login page; `IsAuthenticated` is what actually gates them.
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.AllowAny",
+        "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,

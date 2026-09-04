@@ -27,8 +27,9 @@ See ``.claude/worktrees/lg-06h-seam-contract.md`` for the locked seam.
 from __future__ import annotations
 
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import render
 
+from accounts.permissions import get_owned_or_404
 from matches.league_screens.player_stats import (
     _build_round_dicts,
     _PLAYER_STATS_COLUMNS,
@@ -76,8 +77,8 @@ def player_detail(request: HttpRequest, league_id: int, player_id: int) -> HttpR
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    league = get_object_or_404(League, pk=league_id)
-    player = get_object_or_404(Player, pk=player_id)
+    league = get_owned_or_404(League, request, pk=league_id)
+    player = get_owned_or_404(Player, request, pk=player_id)
 
     # LG-01f session-write contract (int) — after the 404 guards, before render.
     request.session["last_league_id"] = league.id

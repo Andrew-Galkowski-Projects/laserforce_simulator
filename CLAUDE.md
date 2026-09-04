@@ -76,6 +76,14 @@ python manage.py score_averages --rounds 100 --team-red "Team A" --team-blue "Te
 
 # Analyse events from a completed DB round
 python manage.py game_analysis --round <id>
+
+# UX-01: stamp every Unmanaged row (manager IS NULL) on all five Ownership
+# roots to one Account. Idempotent; a second run reports 0 for every model.
+python manage.py claim_unmanaged --user <email>
+
+# UX-01: password reset is NOT implemented (no mail provider) -- this is the
+# only account-recovery path.
+python manage.py changepassword <email>
 ```
 
 CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci.yml`). Python version is 3.11.
@@ -85,6 +93,7 @@ CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci
 - **PostgreSQL is canonical** (production, CI, Fly.io deploy); **SQLite is a guarded dev-only convenience**, used automatically when `DATABASE_URL` is unset. See [ADR-0025](docs/adr/0025-postgresql-canonical-sqlite-dev-only.md).
 - **Local Postgres:** `docker compose up` (the `postgres:16` service in `docker-compose.yml` sets `DATABASE_URL` to it). **Zero-setup dev:** leave `DATABASE_URL` unset to fall back to `db.sqlite3`.
 - `dbshell` and the management commands above run against whichever backend `DATABASE_URL` selects.
+- **⚠ `AUTH_USER_MODEL` deployment hazard (UX-01).** UX-01 set `AUTH_USER_MODEL = "accounts.User"` *after* the `auth` / `admin` migrations had already been applied against `auth.User`, so **any database created before UX-01** raises `InconsistentMigrationHistory: Migration admin.0001_initial is applied before its dependency accounts.0001_initial` on the next `migrate`. **CI and the test suite are unaffected** — the test database is built fresh every run, so `pytest` goes green while the dev `db.sqlite3` and the Fly.io Postgres both break; do not read a green suite as proof the deploy is healthy. The approved recovery is a **fresh database** ([ADR-0004](docs/adr/0004-simulation-data-is-disposable.md) — simulation data is disposable): delete `db.sqlite3` locally / re-provision the Fly.io Postgres, then `migrate` and `createsuperuser`. It is explicitly **not** a data migration, a migration-history rewrite, or a `--fake` shim. See [ADR-0038](docs/adr/0038-accounts-and-uniform-manager-ownership.md) and `README.md`.
 
 ## Git Workflow
 
@@ -148,7 +157,7 @@ This project follows TDD. Before implementing any new feature or fixing a bug:
 
 ## Architecture
 
-Django 5.2 app that simulates competitive laser tag (Laserforce) matches. The root URL serves the `teams` app as the homepage. Three Django apps: `teams`, `matches`, and `core`.
+Django 5.2 app that simulates competitive laser tag (Laserforce) matches. The root URL serves the `teams` app as the homepage. Four Django apps: `accounts`, `teams`, `matches`, and `core`.
 
 ### Data Model Hierarchy
 
@@ -161,6 +170,7 @@ Match (2 rounds, winner by rounds then points)
 
 ### App Guides
 
+- [`laserforce_simulator/accounts/CLAUDE.md`](laserforce_simulator/accounts/CLAUDE.md) — the `accounts` app (UX-01): the custom `User` (the **Account**), the `manager` ownership seam in `accounts/permissions.py`, the `/accounts/` auth URLs, and `claim_unmanaged`
 - [`laserforce_simulator/teams/CLAUDE.md`](laserforce_simulator/teams/CLAUDE.md) — Team/Player models, roster rules, `/teams/` URLs
 - [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) — Match/GameRound models, simulation engine, role mechanics, `/matches/` URLs
 - [`laserforce_simulator/core/CLAUDE.md`](laserforce_simulator/core/CLAUDE.md) — Map editor, zone/LOS processing, `/maps/` URLs

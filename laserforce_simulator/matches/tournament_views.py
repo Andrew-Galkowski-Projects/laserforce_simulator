@@ -19,8 +19,9 @@ from django.http import (
     HttpResponseNotAllowed,
     JsonResponse,
 )
-from django.shortcuts import get_object_or_404, redirect, render
+from django.shortcuts import redirect, render
 
+from accounts.permissions import get_owned_or_404, manager_or_none, owned_queryset
 from teams.constants import PLAYER_NAMES, TEAM_NAMES
 from teams.forms import RosterImportForm
 from teams.models import Player, Team, get_free_agents_team
@@ -104,7 +105,7 @@ def _team_mean_rating(team: Team) -> float:
 
 def tournament_list(request: HttpRequest) -> HttpResponse:
     """List all Tournaments newest-first."""
-    tournaments = Tournament.objects.order_by("-id")
+    tournaments = owned_queryset(Tournament.objects.all(), request.user).order_by("-id")
     return render(
         request,
         "matches/tournament_list.html",
@@ -206,6 +207,7 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
                 std_dev=15,
                 team_names_pool=team_names_pool,
                 player_names_pool=player_names_pool,
+                manager=manager_or_none(request),
             )
             teams.extend(generated)
 
@@ -283,6 +285,8 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
         swiss_rounds=swiss_rounds,
         team_assembly=team_assembly,
         role_assignment_mode=role_assignment_mode,
+        # UX-01 — the **Manager**: the Account this Tournament belongs to.
+        manager=manager_or_none(request),
     )
 
     # Default Seeding via mean active-player overall_rating. For random_draw the
@@ -710,7 +714,7 @@ def tournament_detail(request: HttpRequest, tournament_id: int) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
     return render(
         request, "matches/tournament_detail.html", _detail_context(tournament)
     )
@@ -722,7 +726,7 @@ def tournament_reseed(request: HttpRequest, tournament_id: int) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
     if tournament.is_locked:
         messages.error(request, "Seeding cannot be edited once the bracket is locked.")
         return redirect("tournament_detail", tournament_id=tournament.id)
@@ -763,7 +767,7 @@ def tournament_lock(request: HttpRequest, tournament_id: int) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
     try:
         tournament.lock_and_build()
     except ValidationError as exc:
@@ -778,7 +782,7 @@ def tournament_play_next(request: HttpRequest, tournament_id: int) -> HttpRespon
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
     if tournament.state != "active":
         messages.error(request, "The tournament is not active.")
         return redirect("tournament_detail", tournament_id=tournament.id)
@@ -804,7 +808,7 @@ def tournament_import_participants(
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
     if tournament.is_locked:
         messages.error(request, "Participants can only be imported during setup.")
         return redirect("tournament_detail", tournament_id=tournament.id)
@@ -865,7 +869,7 @@ def tournament_play_all(request: HttpRequest, tournament_id: int) -> JsonRespons
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
     if tournament.state != "active":
         return JsonResponse({"error": "Tournament is not active."}, status=409)
 
@@ -934,7 +938,7 @@ def tournament_play_status(
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    get_object_or_404(Tournament, pk=tournament_id)
+    get_owned_or_404(Tournament, request, pk=tournament_id)
     async_result = AsyncResult(job_id)
     return JsonResponse(
         _build_tournament_play_status_response(
@@ -968,7 +972,7 @@ def tournament_pool_add_existing(
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
     blocked = _pool_setup_guard(request, tournament)
     if blocked is not None:
         return blocked
@@ -992,7 +996,7 @@ def tournament_pool_generate(request: HttpRequest, tournament_id: int) -> HttpRe
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
     blocked = _pool_setup_guard(request, tournament)
     if blocked is not None:
         return blocked
@@ -1052,7 +1056,7 @@ def tournament_pool_import(request: HttpRequest, tournament_id: int) -> HttpResp
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
     blocked = _pool_setup_guard(request, tournament)
     if blocked is not None:
         return blocked
@@ -1103,7 +1107,7 @@ def tournament_pool_remove(request: HttpRequest, tournament_id: int) -> HttpResp
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
     blocked = _pool_setup_guard(request, tournament)
     if blocked is not None:
         return blocked
@@ -1124,7 +1128,7 @@ def tournament_draw(request: HttpRequest, tournament_id: int) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
     blocked = _pool_setup_guard(request, tournament)
     if blocked is not None:
         return blocked
@@ -1158,7 +1162,9 @@ def tournament_draw(request: HttpRequest, tournament_id: int) -> HttpResponse:
     entry_by_player = {e.player_id: e for e in entries}
     for plan in plans:
         team = Team.objects.create(
-            name=f"Draw Team {plan.team_index + 1}", is_draw_team=True
+            name=f"Draw Team {plan.team_index + 1}",
+            is_draw_team=True,
+            manager=manager_or_none(request),
         )
         # Initial valid assignment: tier order -> ROLE_SLOTS order (any valid
         # no-duplicate assignment satisfies the relaxed roster_errors).
@@ -1185,7 +1191,7 @@ def tournament_draw_edit(request: HttpRequest, tournament_id: int) -> HttpRespon
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    tournament = get_object_or_404(Tournament, pk=tournament_id)
+    tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
     blocked = _pool_setup_guard(request, tournament)
     if blocked is not None:
         return blocked

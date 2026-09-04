@@ -22,6 +22,7 @@ from rest_framework.test import APIClient
 
 from matches.simulation import BatchSimulator
 from matches.tests.conftest import make_team_with_slots
+from conftest import get_shared_manager
 
 # ---------------------------------------------------------------------------
 # Local fixture: minimal ArenaMap — mirrors views_tests.py's helper so the
@@ -123,6 +124,7 @@ class TestSimulateBatchPostUIReturnsJobId:
         red, _ = make_team_with_slots("Api03UIPostR")
         blue, _ = make_team_with_slots("Api03UIPostB")
         client = Client()
+        client.force_login(get_shared_manager())
 
         with patch.object(BatchSimulator, "ROUND_TICKS", 40):
             response = client.post(
@@ -168,6 +170,7 @@ class TestBatchSimulateStatusEager:
         blue, _ = make_team_with_slots("Api03StatEagerB")
         arena_map = _make_minimal_arena_map("Api03StatEagerMap")
         client = Client()
+        client.force_login(get_shared_manager())
 
         with patch.object(BatchSimulator, "ROUND_TICKS", 40):
             post_resp = client.post(
@@ -227,6 +230,7 @@ class TestBatchSimulateStatusError:
         red, _ = make_team_with_slots("Api03ErrR")
         blue, _ = make_team_with_slots("Api03ErrB")
         client = Client()
+        client.force_login(get_shared_manager())
 
         # Patch BatchSimulator.run_incremental to raise a generator-shaped
         # exception that fires on first consumption — surfaces as task
@@ -276,6 +280,7 @@ class TestBatchSimulateStatusUnknownJobId:
 
     def test_unknown_job_id_returns_running_with_zeros(self) -> None:
         client = Client()
+        client.force_login(get_shared_manager())
         # Query params not supplied — view echoes None for each.
         resp = client.get(
             reverse(
@@ -341,6 +346,7 @@ class TestSaveBatchGamesPost:
         blue, _ = make_team_with_slots("Api03SaveUIPostB")
         arena_map = _make_minimal_arena_map("Api03SaveUIPostMap")
         client = Client()
+        client.force_login(get_shared_manager())
 
         # Stash a batch_seeds session entry the view will consume.
         self._populate_session_batch_seeds(
@@ -407,6 +413,7 @@ class TestSaveBatchGamesPost:
 
     def test_empty_session_returns_400(self) -> None:
         client = Client()
+        client.force_login(get_shared_manager())
         # No session["batch_seeds"] populated.
         response = client.post(
             reverse("save_batch_games"),
@@ -420,6 +427,7 @@ class TestSaveBatchGamesPost:
         red, _ = make_team_with_slots("Api03SaveEmptySeedsR")
         blue, _ = make_team_with_slots("Api03SaveEmptySeedsB")
         client = Client()
+        client.force_login(get_shared_manager())
         # Populate session but with empty avg_seeds list.
         self._populate_session_batch_seeds(
             client,
@@ -473,6 +481,7 @@ class TestSaveBatchStatusEager:
         red, _ = make_team_with_slots("Api03SaveStatR")
         blue, _ = make_team_with_slots("Api03SaveStatB")
         client = Client()
+        client.force_login(get_shared_manager())
 
         job_id = self._stash_session_and_save(client, red, blue)
 
@@ -512,6 +521,7 @@ class TestSimulateBatchAPIPost:
         red, _ = make_team_with_slots("Api03APIPostR")
         blue, _ = make_team_with_slots("Api03APIPostB")
         client = APIClient()
+        client.force_login(get_shared_manager())
 
         with patch.object(BatchSimulator, "ROUND_TICKS", 40):
             response = client.post(
@@ -537,6 +547,7 @@ class TestSimulateBatchAPIPost:
     def test_same_team_returns_400(self) -> None:
         red, _ = make_team_with_slots("Api03APISameTeamR")
         client = APIClient()
+        client.force_login(get_shared_manager())
 
         response = client.post(
             "/api/simulate-batch/",
@@ -550,6 +561,7 @@ class TestSimulateBatchAPIPost:
 
     def test_invalid_field_returns_400(self) -> None:
         client = APIClient()
+        client.force_login(get_shared_manager())
         # Missing required field `team_blue` → serializer validation 400.
         response = client.post(
             "/api/simulate-batch/",
@@ -575,6 +587,7 @@ class TestSimulateBatchAPIStatusEager:
         red, _ = make_team_with_slots("Api03APIStatR")
         blue, _ = make_team_with_slots("Api03APIStatB")
         client = APIClient()
+        client.force_login(get_shared_manager())
 
         with patch.object(BatchSimulator, "ROUND_TICKS", 40):
             post_resp = client.post(
@@ -613,6 +626,7 @@ class TestSimulateBatchAPIStatusUnknownJobId:
 
     def test_unknown_job_id_returns_200_running(self) -> None:
         client = APIClient()
+        client.force_login(get_shared_manager())
         response = client.get(
             "/api/simulate-batch/00000000-0000-0000-0000-000000000000/"
         )
@@ -676,6 +690,7 @@ class TestSessionHandoverPreservedOnComplete:
         red, _ = make_team_with_slots("Api03HandoverR")
         blue, _ = make_team_with_slots("Api03HandoverB")
         client = Client()
+        client.force_login(get_shared_manager())
 
         with patch.object(BatchSimulator, "ROUND_TICKS", 40):
             post_resp = client.post(
@@ -754,6 +769,7 @@ class TestAPIInheritsAllowAnyPermissions:
         blue, _ = make_team_with_slots("Api03AuthB")
         # Fresh APIClient with NO force_authenticate call.
         client = APIClient()
+        client.force_login(get_shared_manager())
 
         with patch.object(BatchSimulator, "ROUND_TICKS", 40):
             response = client.post(

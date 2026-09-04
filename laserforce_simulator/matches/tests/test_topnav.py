@@ -44,6 +44,26 @@ HELP_CHILD_IDS = (
     "help-zen-gm-forums-topbar-link",
 )
 
+# ---------------------------------------------------------------------------
+# UX-01 -- locked top-nav auth-control ids (seam contract section 9.6).
+#
+# ``_partials/topnav_auth.html`` is included from ``base.html`` ONCE, after the
+# ``app_mode`` branch block, so it must render in ALL THREE nav modes.
+# ---------------------------------------------------------------------------
+
+AUTH_CONTROL_AUTHENTICATED_IDS = (
+    "account-nav-link",
+    "account-signed-in-as",
+    "account-password-change-link",
+    "account-sign-out-form",
+    "account-sign-out-button",
+)
+
+AUTH_CONTROL_ANONYMOUS_IDS = (
+    "account-sign-in-link",
+    "account-register-link",
+)
+
 
 # ---------------------------------------------------------------------------
 # TestLg01kStartModeTopbar
@@ -494,3 +514,96 @@ class TestAppModeContextProcessor(TestCase):
         request = type("R", (), {})()
         result = self.app_mode(request)
         self.assertEqual(result, {"app_mode": "sandbox"})
+
+
+# ---------------------------------------------------------------------------
+# UX-01 -- the top-nav auth control across all three nav modes
+# ---------------------------------------------------------------------------
+
+
+class TestUx01TopnavAuthControl(TestCase):
+    """UX-01 (contract section 9.6) -- ``_partials/topnav_auth.html``.
+
+    ``base.html`` includes the partial once, *after* the ``app_mode`` branch
+    block and *before* the closing ``</div>`` of ``navbar-nav ms-auto``, so the
+    control renders in start, sandbox AND league mode, at the far right.
+
+    The project's autouse ``force_login_shared_manager`` fixture logs this
+    ``TestCase`` in, so the authenticated branch is the default; the anonymous
+    branch is reached by an explicit ``self.client.logout()``.
+    """
+
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.league = League.objects.create(
+            name="Ux01AuthControl", mode="league", state="active"
+        )
+        cls.season = Season.objects.create(
+            league=cls.league,
+            name="S1",
+            start_date=date(2025, 1, 1),
+            state="active",
+            schedule_format="single_round_robin",
+            starting_team_ids_json=[],
+        )
+
+    def _mode_urls(self) -> dict[str, str]:
+        return {
+            "start": "/",
+            "sandbox": reverse("team_list"),
+            "league": f"/leagues/{self.league.id}/",
+        }
+
+    def test_authenticated_control_renders_in_all_three_modes(self) -> None:
+        for mode, url in self._mode_urls().items():
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200, mode)
+            for dom_id in AUTH_CONTROL_AUTHENTICATED_IDS:
+                with self.subTest(mode=mode, dom_id=dom_id):
+                    self.assertContains(response, f'id="{dom_id}"')
+
+    def test_anonymous_ids_absent_while_signed_in(self) -> None:
+        for mode, url in self._mode_urls().items():
+            response = self.client.get(url)
+            for dom_id in AUTH_CONTROL_ANONYMOUS_IDS:
+                with self.subTest(mode=mode, dom_id=dom_id):
+                    self.assertNotContains(response, f'id="{dom_id}"')
+
+    def test_sign_out_is_a_post_form_not_an_anchor(self) -> None:
+        """Locked: Django 5.x ``LogoutView`` rejects GET, so a link would 405."""
+        body = self.client.get("/").content.decode()
+        self.assertIn('id="account-sign-out-form"', body)
+        self.assertIn('method="post"', body)
+        self.assertNotIn(f'<a href="{reverse("logout")}"', body)
+
+    def test_sign_out_form_posts_to_the_logout_url(self) -> None:
+        body = self.client.get("/").content.decode()
+        self.assertIn(f'action="{reverse("logout")}"', body)
+
+    def test_password_change_link_targets_the_password_change_url(self) -> None:
+        body = self.client.get("/").content.decode()
+        self.assertIn(f'href="{reverse("password_change")}"', body)
+
+    def test_anonymous_branch_renders_on_an_exempt_page(self) -> None:
+        self.client.logout()
+        response = self.client.get(reverse("login"))
+        self.assertEqual(response.status_code, 200)
+        for dom_id in AUTH_CONTROL_ANONYMOUS_IDS:
+            with self.subTest(dom_id=dom_id):
+                self.assertContains(response, f'id="{dom_id}"')
+
+    def test_authenticated_ids_absent_while_signed_out(self) -> None:
+        self.client.logout()
+        response = self.client.get(reverse("login"))
+        for dom_id in AUTH_CONTROL_AUTHENTICATED_IDS:
+            with self.subTest(dom_id=dom_id):
+                self.assertNotContains(response, f'id="{dom_id}"')
+
+    def test_auth_control_does_not_disturb_the_tools_and_help_toggles(self) -> None:
+        """Regression guard: the partial is appended, not substituted."""
+        response = self.client.get("/")
+        self.assertContains(response, 'id="tools-nav-link"')
+        self.assertContains(response, 'id="help-nav-link"')
+        for dom_id in TOOLS_CHILD_IDS + HELP_CHILD_IDS:
+            with self.subTest(dom_id=dom_id):
+                self.assertContains(response, f'id="{dom_id}"')

@@ -1,15 +1,17 @@
 import csv
 import io
 import random
+from typing import TYPE_CHECKING
 
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.db import transaction
 from django.db.models import F
 from django.http import HttpResponse
-from django.shortcuts import render, get_object_or_404, redirect
+from django.shortcuts import render, redirect
 from django.views.decorators.http import require_GET
 from django.contrib import messages
 from django.core.exceptions import ValidationError
+from accounts.permissions import get_owned_or_404, manager_or_none, owned_queryset
 from matches.models import PlayerRoundState
 from matches.sim_helpers.score_calculator import calculate_mvp
 from .career_stats import points_trend, summarize, summarize_by_role
@@ -50,6 +52,9 @@ from .role_benchmarks import (
 )
 from .role_benchmarks_cache import get_all_benchmark_data
 
+if TYPE_CHECKING:
+    from django.contrib.auth.base_user import AbstractBaseUser
+
 
 def team_list(request):
     """Display all teams with their roster status.
@@ -57,13 +62,15 @@ def team_list(request):
     LG-00: excludes the reserved Free Agents Team via the new
     ``Team.objects.regular()`` manager method.
     """
-    teams = Team.objects.regular().prefetch_related("players")
+    teams = owned_queryset(
+        Team.objects.regular().prefetch_related("players"), request.user
+    )
     return render(request, "teams/team_list.html", {"teams": teams})
 
 
 def team_detail(request, team_id):
     """Display team details and roster"""
-    team = get_object_or_404(Team, id=team_id)
+    team = get_owned_or_404(Team, request, id=team_id)
     players = team.players.all().order_by("name")
 
     context = {
@@ -84,7 +91,10 @@ def team_create(request):
     if request.method == "POST":
         form = TeamForm(request.POST)
         if form.is_valid():
-            team = form.save()
+            # UX-01 — stamp the **Manager** at creation from request.user.
+            team = form.save(commit=False)
+            team.manager = manager_or_none(request)
+            team.save()
             messages.success(request, f'Team "{team.name}" created successfully!')
             return redirect("team_detail", team_id=team.id)
     else:
@@ -97,7 +107,7 @@ def team_create(request):
 
 def team_edit(request, team_id):
     """Edit an existing team"""
-    team = get_object_or_404(Team, id=team_id)
+    team = get_owned_or_404(Team, request, id=team_id)
 
     if request.method == "POST":
         form = TeamForm(request.POST, instance=team)
@@ -117,7 +127,7 @@ def team_edit(request, team_id):
 
 def team_slots_edit(request, team_id):
     """Assign players to role slots on a team."""
-    team = get_object_or_404(Team, id=team_id)
+    team = get_owned_or_404(Team, request, id=team_id)
 
     if request.method == "POST":
         form = TeamSlotForm(request.POST, instance=team)
@@ -187,8 +197,8 @@ _STAT_GROUPS = [
 
 
 def player_detail(request, team_id: int, player_id: int):
-    team = get_object_or_404(Team, id=team_id)
-    player = get_object_or_404(Player, id=player_id, team=team)
+    team = get_owned_or_404(Team, request, id=team_id)
+    player = get_owned_or_404(Player, request, id=player_id, team=team)
     stat_groups = [
         (group_name, [(label, getattr(player, field)) for field, label in fields])
         for group_name, fields in _STAT_GROUPS
@@ -202,7 +212,7 @@ def player_detail(request, team_id: int, player_id: int):
 
 def player_add(request, team_id):
     """Add a player to a team"""
-    team = get_object_or_404(Team, id=team_id)
+    team = get_owned_or_404(Team, request, id=team_id)
 
     if request.method == "POST":
         form = PlayerForm(request.POST)
@@ -231,8 +241,8 @@ def player_add(request, team_id):
 
 def player_edit(request, team_id, player_id):
     """Edit a player"""
-    team = get_object_or_404(Team, id=team_id)
-    player = get_object_or_404(Player, id=player_id, team=team)
+    team = get_owned_or_404(Team, request, id=team_id)
+    player = get_owned_or_404(Player, request, id=player_id, team=team)
 
     if request.method == "POST":
         form = PlayerForm(request.POST, instance=player)
@@ -258,8 +268,8 @@ def player_edit(request, team_id, player_id):
 
 def player_delete(request, team_id, player_id):
     """Delete a player"""
-    team = get_object_or_404(Team, id=team_id)
-    player = get_object_or_404(Player, id=player_id, team=team)
+    team = get_owned_or_404(Team, request, id=team_id)
+    player = get_owned_or_404(Player, request, id=player_id, team=team)
 
     if request.method == "POST":
         player_name = player.name
@@ -602,7 +612,7 @@ def player_career_stats(request, player_id: int):
     benchmarks fetched from the cache helper. The view owns the
     round-dict assembly so the pure modules never see a Django object.
     """
-    player = get_object_or_404(Player, pk=player_id)
+    player = get_owned_or_404(Player, request, pk=player_id)
 
     states = (
         PlayerRoundState.objects.filter(player=player)
@@ -809,6 +819,7 @@ def _generate_teams(
     team_names_pool: list[str],
     player_names_pool: list[str],
     tier_means: "list[float] | None" = None,
+    manager: "AbstractBaseUser | None" = None,
 ) -> list[Team]:
     """Create ``num_teams`` new Teams, each with ``players_per_team`` Players.
 
@@ -836,7 +847,7 @@ def _generate_teams(
 
     for _team_idx in range(num_teams):
         team_name = _pop_unique_name(team_names_pool, team_fallback, _team_name_exists)
-        team = Team.objects.create(name=team_name)
+        team = Team.objects.create(name=team_name, manager=manager)
         team_name_exists = _player_name_exists_on_team(team)
         # CRE-02 — this Team's tier mean, or the flat league mean when no
         # spread was requested.
@@ -953,6 +964,7 @@ def generate_players(request):
             std_dev=std_dev,
             team_names_pool=team_names_pool,
             player_names_pool=player_names_pool,
+            manager=manager_or_none(request),
         )
         free_agent_count = 0
     else:
@@ -1251,7 +1263,9 @@ def player_list(request):
     direction = _coerce_dir(request.GET.get("dir"))
     per_page = _coerce_per_page(request.GET.get("per_page"))
 
-    qs = Player.objects.select_related("team").annotate(
+    qs = owned_queryset(
+        Player.objects.select_related("team"), request.user, path="team"
+    ).annotate(
         overall_rating_db=(
             F("player_awareness")
             + F("game_awareness")

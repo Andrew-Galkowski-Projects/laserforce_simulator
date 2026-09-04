@@ -95,6 +95,46 @@ LG-05 potential (FIN-03), **health** shortens injuries (FIN-04). Details in
 **FIN-04 health budget + injury/availability** and
 [ADR-0027](../../docs/adr/0027-team-finance-subsystem.md) / [ADR-0028](../../docs/adr/0028-health-budget-injury-availability.md).
 
+### Team.manager (UX-01) — and the naming hazard
+
+`Team.manager` (**UX-01**, migration `0015_team_manager.py`) is the **Account** a Team belongs to:
+`ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+related_name="teams")`. `Team` is one of the five **Ownership roots** — it has no parent FK, so it is
+*always* a root and carries the FK directly; its `Player`s are derived rows and have **no `manager`
+column** (one FK per aggregate — `Player` resolves its Manager by traversing `player.team`).
+
+`manager IS NULL` is an **Unmanaged row**: readable **and** writable by any authenticated Account,
+and listed to all of them. `SET_NULL` means deleting an Account in Admin **demotes** its Teams to
+Unmanaged rather than cascading their Matches and events away. `_generate_teams` gained a
+keyword-only `manager=None` parameter (appended last, so existing callers are source-compatible), and
+`team_create` stamps `manager_or_none(request)` via `form.save(commit=False)`. `team_list` and
+`player_list` are filtered through `accounts.permissions.owned_queryset` (`path="team"` for Players),
+and every `get_object_or_404` in `teams/views.py` became `get_owned_or_404(..., request, ...)`.
+
+The global `"Free Agents"` singleton (`get_free_agents_team()`) is **deliberately never stamped** — it
+is a cross-Account shared pool, and stamping it would let the first Account to run `generate_players`
+with `num_teams == 0` capture it permanently and 404 it for everyone else. `_generate_free_agents`
+and `get_free_agents_team()` keep their signatures verbatim.
+
+> ### ⚠️ Naming hazard: `Team.manager` is NOT `Team.managed_in_leagues`
+>
+> | Name | What it is | Direction |
+> |---|---|---|
+> | `Team.manager` | **NEW (UX-01).** The FK above — the **Account** that owns this Team. | Team → Account |
+> | `Team.managed_in_leagues` | **PRE-EXISTING.** The reverse accessor of `League.current_team` — the Leagues in which this Team is the manager's **career seat**. | Team → Leagues |
+>
+> Near-homographs pointing in **opposite directions** at unrelated concepts. `Team.manager` is set on
+> **every** generated AI Team, so it is emphatically *not* the career seat; the career seat is
+> `League.current_team` (and its reverse, `managed_in_leagues`).
+>
+> Second hazard: the **Manager** (this Account FK) is **not** the **Owner** — that is the fictional
+> boss of [ADR-0026](../../docs/adr/0026-manager-firing-owner-mood.md) (`OwnerEvaluation`,
+> `owner_mood.py`), never a login and deliberately unrenamed. Do not introduce the word "owner" for
+> an Account.
+
+See [`../accounts/CLAUDE.md`](../accounts/CLAUDE.md) for the permission seam and the traversal table,
+and [ADR-0038](../../docs/adr/0038-accounts-and-uniform-manager-ownership.md).
+
 ## Constants (`teams/constants.py`)
 
 Static name pools used by `_random_player_profile()`:

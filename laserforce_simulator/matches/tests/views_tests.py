@@ -8,6 +8,7 @@ from django.urls import reverse, NoReverseMatch
 from matches.models import GameEvent, GameRound, Match, PlayerRoundState
 from matches.simulation import BatchSimulator
 from matches.tests.conftest import make_team_with_slots
+from conftest import get_shared_manager
 
 
 @pytest.mark.django_db
@@ -22,6 +23,7 @@ class TestSingleRoundRemoval:
         red, _ = make_team_with_slots("Red")
         blue, _ = make_team_with_slots("Blue")
         client = Client()
+        client.force_login(get_shared_manager())
         before = GameRound.objects.count()
         # SIM-09: view now drives BatchSimulator (was RBS); ROUND_TICKS=40
         # keeps the integration test fast.
@@ -37,6 +39,7 @@ class TestSingleRoundRemoval:
         """Submitting the same team for both sides must return the form (200), no GameRound."""
         team, _ = make_team_with_slots("SameTeam")
         client = Client()
+        client.force_login(get_shared_manager())
         before = GameRound.objects.count()
         response = client.post(
             reverse("create_single_round"),
@@ -48,6 +51,7 @@ class TestSingleRoundRemoval:
     def test_match_list_has_no_single_rounds_context(self):
         """match_list view must not pass single_rounds to the template context."""
         client = Client()
+        client.force_login(get_shared_manager())
         response = client.get(reverse("match_list"))
         assert response.status_code == 200
         assert "single_rounds" not in response.context
@@ -56,6 +60,7 @@ class TestSingleRoundRemoval:
         """team_match_history view must not pass single_rounds to the template context."""
         team, _ = make_team_with_slots("History")
         client = Client()
+        client.force_login(get_shared_manager())
         response = client.get(
             reverse("team_match_history", kwargs={"team_id": team.id})
         )
@@ -101,6 +106,7 @@ class TestTeamMatchHistoryRoster:
         )
 
         client = Client()
+        client.force_login(get_shared_manager())
         response = client.get(
             reverse("team_match_history", kwargs={"team_id": draw_team.id})
         )
@@ -139,6 +145,7 @@ class TestTeamMatchHistoryRoster:
         _make_state(gr, ringer, team_color="blue", role="commander", points_scored=999)
 
         client = Client()
+        client.force_login(get_shared_manager())
         response = client.get(
             reverse("team_match_history", kwargs={"team_id": team.id})
         )
@@ -168,7 +175,9 @@ class TestTeamMatchHistoryScopeFilter:
 
     def test_default_shows_all_scopes_selected(self):
         team, freeform_match, tourney_match, tourney = self._setup()
-        response = Client().get(
+        client = Client()
+        client.force_login(get_shared_manager())
+        response = client.get(
             reverse("team_match_history", kwargs={"team_id": team.id})
         )
         assert response.status_code == 200
@@ -181,7 +190,9 @@ class TestTeamMatchHistoryScopeFilter:
 
     def test_freeform_scope_excludes_tournament_match(self):
         team, freeform_match, tourney_match, tourney = self._setup()
-        response = Client().get(
+        client = Client()
+        client.force_login(get_shared_manager())
+        response = client.get(
             reverse("team_match_history", kwargs={"team_id": team.id}),
             {"applied": "1", "scope": "freeform"},
         )
@@ -191,7 +202,9 @@ class TestTeamMatchHistoryScopeFilter:
 
     def test_single_tournament_scope_excludes_freeform(self):
         team, freeform_match, tourney_match, tourney = self._setup()
-        response = Client().get(
+        client = Client()
+        client.force_login(get_shared_manager())
+        response = client.get(
             reverse("team_match_history", kwargs={"team_id": team.id}),
             {"applied": "1", "scope": f"t{tourney.id}"},
         )
@@ -200,7 +213,9 @@ class TestTeamMatchHistoryScopeFilter:
 
     def test_all_off_shows_nothing(self):
         team, freeform_match, tourney_match, tourney = self._setup()
-        response = Client().get(
+        client = Client()
+        client.force_login(get_shared_manager())
+        response = client.get(
             reverse("team_match_history", kwargs={"team_id": team.id}),
             {"applied": "1"},
         )
@@ -215,7 +230,9 @@ class TestTeamMatchHistoryScopeFilter:
         from teams.models import Team
 
         team = Team.objects.create(name="Brand New")
-        response = Client().get(
+        client = Client()
+        client.force_login(get_shared_manager())
+        response = client.get(
             reverse("team_match_history", kwargs={"team_id": team.id})
         )
         assert response.context["has_any_games"] is False
@@ -230,7 +247,9 @@ class TestTeamMatchHistoryScopeFilter:
         team = Team.objects.create(name="Lonely")
         opp = Team.objects.create(name="Foe2")
         Match.objects.create(team_red=team, team_blue=opp, winner=team)
-        response = Client().get(
+        client = Client()
+        client.force_login(get_shared_manager())
+        response = client.get(
             reverse("team_match_history", kwargs={"team_id": team.id})
         )
         assert response.context["show_scope_filter"] is False
@@ -242,6 +261,7 @@ class TestCreateMatchView:
         """Submitting the same team for both sides must return the form (200), no Match created."""
         team, _ = make_team_with_slots("SameMatch")
         client = Client()
+        client.force_login(get_shared_manager())
         before = Match.objects.count()
         response = client.post(
             reverse("create_match"),
@@ -270,6 +290,7 @@ class TestSim08BatchSideAdvantageView:
         red, _ = make_team_with_slots("Sim08ViewRed")
         blue, _ = make_team_with_slots("Sim08ViewBlue")
         client = Client()
+        client.force_login(get_shared_manager())
 
         with patch.object(BatchSimulator, "ROUND_TICKS", 40):
             post_resp = client.post(
@@ -360,6 +381,7 @@ class TestM1EventLogWindowing:
         assert gr.events.count() > 0, "fixture round produced no events"
 
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("game_round_events", kwargs={"round_id": gr.id}))
         assert resp.status_code == 200
 
@@ -377,6 +399,7 @@ class TestM1EventLogWindowing:
     def test_events_data_matches_db_and_has_full_shape(self):
         gr = self._round_with_events()
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("game_round_events", kwargs={"round_id": gr.id}))
         events_data = resp.context["events_data"]
         assert len(events_data) == gr.events.count()
@@ -394,6 +417,7 @@ class TestM1EventLogWindowing:
     def test_players_data_matches_round_states(self):
         gr = self._round_with_events()
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("game_round_events", kwargs={"round_id": gr.id}))
         players_data = resp.context["players_data"]
         assert len(players_data) == gr.player_states.count()
@@ -406,6 +430,7 @@ class TestM1EventLogWindowing:
         (coalesced from the round's persisted field)."""
         gr = self._round_with_events()
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("game_round_events", kwargs={"round_id": gr.id}))
         assert resp.status_code == 200
         assert isinstance(resp.context["highlights_json"], list)
@@ -414,6 +439,7 @@ class TestM1EventLogWindowing:
         """RV-02: the Highlights tab + json_script block + DOM ids render."""
         gr = self._round_with_events()
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("game_round_events", kwargs={"round_id": gr.id}))
         body = resp.content.decode()
         assert 'id="highlights-data"' in body, "highlights JSON script block missing"
@@ -427,6 +453,7 @@ class TestM1EventLogWindowing:
         gr = self._round_with_events()
         gr.events.all().delete()
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("game_round_events", kwargs={"round_id": gr.id}))
         assert resp.status_code == 200
         assert resp.context["events_data"] == []
@@ -476,6 +503,7 @@ class TestM1EventLogWindowing:
         """
         gr = self._round_with_events()
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("game_round_events", kwargs={"round_id": gr.id}))
         assert resp.status_code == 200
         events_data = resp.context["events_data"]
@@ -636,6 +664,7 @@ class TestBs1BatchFormLabels:
 
     def test_batch_form_labels_have_for_attribute(self):
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("simulate_batch"))
         assert resp.status_code == 200
         html = resp.content.decode()
@@ -659,6 +688,7 @@ class TestRd1RoundDetailMissileLink:
         game_round = _make_round(red, blue)
 
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(
             reverse("game_round_detail", kwargs={"round_id": game_round.id})
         )
@@ -692,6 +722,7 @@ class TestRv01CompareRounds:
         _make_state(round_b, players_a["commander"], team_color="red", role="commander")
 
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(
             reverse("compare_rounds"),
             {"round_a": round_a.id, "round_b": round_b.id},
@@ -706,6 +737,7 @@ class TestRv01CompareRounds:
     def test_match_list_links_to_compare_page(self):
         # The match list is the entry point to the compare page.
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("match_list"))
         assert resp.status_code == 200
         assert reverse("compare_rounds") in resp.content.decode()
@@ -715,6 +747,7 @@ class TestRv01CompareRounds:
     # ------------------------------------------------------------------ #
     def test_picker_mode_no_params_renders_selects(self):
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("compare_rounds"))
         assert resp.status_code == 200
         body = resp.content.decode()
@@ -730,6 +763,7 @@ class TestRv01CompareRounds:
         round_a = _make_round(red, blue)
 
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("compare_rounds"), {"round_a": round_a.id})
         assert resp.status_code == 200
         body = resp.content.decode()
@@ -747,6 +781,7 @@ class TestRv01CompareRounds:
         _make_state(round_b, players["commander"], team_color="red", role="commander")
 
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(
             reverse("compare_rounds"),
             {"round_a": 9_999_999, "round_b": round_b.id},
@@ -762,6 +797,7 @@ class TestRv01CompareRounds:
         _make_state(round_b, players["commander"], team_color="red", role="commander")
 
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(
             reverse("compare_rounds"),
             {"round_a": "abc", "round_b": round_b.id},
@@ -778,6 +814,7 @@ class TestRv01CompareRounds:
         _make_state(round_a, players["commander"], team_color="red", role="commander")
 
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(
             reverse("compare_rounds"),
             {"round_a": round_a.id, "round_b": round_a.id},
@@ -806,6 +843,7 @@ class TestRv01CompareRounds:
         _make_state(round_b, players_b["commander"], team_color="red", role="commander")
 
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(
             reverse("compare_rounds"),
             {"round_a": round_a.id, "round_b": round_b.id},
@@ -844,6 +882,7 @@ class TestRv01CompareRounds:
         )
 
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(
             reverse("compare_rounds"),
             {"round_a": round_a.id, "round_b": round_b.id},
@@ -1130,6 +1169,7 @@ class TestBs2BatchChartReuse:
 
     def test_batch_template_destroys_existing_chart_before_reuse(self):
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("simulate_batch"))
         assert resp.status_code == 200
         html = resp.content.decode()
@@ -1219,6 +1259,7 @@ class TestRv03ExportRoundReport:
     def test_get_returns_pdf_attachment(self):
         game_round = self._saved_round_with_players("Rv03Get")
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("export_round_report", args=[game_round.id]))
 
         assert resp.status_code == 200
@@ -1239,12 +1280,14 @@ class TestRv03ExportRoundReport:
 
     def test_missing_round_id_returns_404(self):
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("export_round_report", args=[999999]))
         assert resp.status_code == 404
 
     def test_post_returns_405(self):
         game_round = self._saved_round_with_players("Rv03Post")
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.post(reverse("export_round_report", args=[game_round.id]))
         assert resp.status_code == 405
 
@@ -1252,6 +1295,7 @@ class TestRv03ExportRoundReport:
         """is_simulated=True (watermark branch) -> 200 + PDF."""
         game_round = self._saved_round_with_players("Rv03Sim", is_simulated=True)
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("export_round_report", args=[game_round.id]))
         assert resp.status_code == 200
         assert resp["Content-Type"] == "application/pdf"
@@ -1261,6 +1305,7 @@ class TestRv03ExportRoundReport:
         """is_simulated=False (no-watermark branch) -> 200 + PDF."""
         game_round = self._saved_round_with_players("Rv03Real", is_simulated=False)
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("export_round_report", args=[game_round.id]))
         assert resp.status_code == 200
         assert resp["Content-Type"] == "application/pdf"
@@ -4218,6 +4263,7 @@ class TestGen01ViewUpgrades:
     def test_game_round_events_upgrades_scores_to_full(self):
         gr = self._scores_round("Gen01EvtsUp")
         client = Client()
+        client.force_login(get_shared_manager())
         with patch.object(BatchSimulator, "ROUND_TICKS", 400):
             resp = client.get(reverse("game_round_events", kwargs={"round_id": gr.id}))
         assert resp.status_code == 200
@@ -4230,6 +4276,7 @@ class TestGen01ViewUpgrades:
         arena_map = self._make_arena_map("Gen01HeatmapMap")
         gr = self._scores_round("Gen01HeatmapUp", arena_map=arena_map)
         client = Client()
+        client.force_login(get_shared_manager())
         with patch.object(BatchSimulator, "ROUND_TICKS", 400):
             resp = client.get(reverse("movement_heatmap", kwargs={"round_id": gr.id}))
         assert resp.status_code == 200
@@ -4241,6 +4288,7 @@ class TestGen01ViewUpgrades:
     def test_missile_log_upgrades_scores_to_combat(self):
         gr = self._scores_round("Gen01MissileUp")
         client = Client()
+        client.force_login(get_shared_manager())
         with patch.object(BatchSimulator, "ROUND_TICKS", 400):
             resp = client.get(reverse("missile_log", kwargs={"round_id": gr.id}))
         assert resp.status_code == 200
@@ -4252,6 +4300,7 @@ class TestGen01ViewUpgrades:
     def test_game_round_detail_leaves_scores_unchanged(self):
         gr = self._scores_round("Gen01DetailNoUp")
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(reverse("game_round_detail", kwargs={"round_id": gr.id}))
         assert resp.status_code == 200
         gr.refresh_from_db()

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}Sign in{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Sign in</h1>
+
+    <form method="post" id="login-form">
+        {% csrf_token %}
+
+        {% if form.non_field_errors %}
+            <div class="alert alert-danger" id="login-errors">
+                {{ form.non_field_errors }}
+            </div>
+        {% endif %}
+
+        <div class="mb-3">
+            <label for="login-email" class="form-label">Email</label>
+            {{ form.username }}
+            {{ form.username.errors }}
+        </div>
+
+        <div class="mb-3">
+            <label for="login-password" class="form-label">Password</label>
+            {{ form.password }}
+            {{ form.password.errors }}
+        </div>
+
+        <button type="submit" id="login-submit" class="btn btn-primary">Sign in</button>
+    </form>
+
+    <p class="mt-3">
+        <a id="login-register-link" href="{% url 'register' %}">Create an account</a>
+    </p>
+</div>
+{% endblock %}

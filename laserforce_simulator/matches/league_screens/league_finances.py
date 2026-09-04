@@ -5,7 +5,7 @@ profit / cash / payroll per enrolled Team, sourced from the
 ``TeamSeasonFinance`` rows of the displayed Season.
 
 Follows the shared LG-01z view contract: 405 GET-guard first line,
-``get_object_or_404(League)``, session write, displayed-Season pick, sidebar
+``get_owned_or_404(League)``, session write, displayed-Season pick, sidebar
 links with ``sidebar_active="finances"``, render ``leagues/league_finances.html``,
 empty-state notice when there is no Season. Finance-disabled League ⇒ a
 "Finances are disabled for this League" notice in place of the body.
@@ -14,8 +14,9 @@ empty-state notice when there is no Season. Finance-disabled League ⇒ a
 from __future__ import annotations
 
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import render
 
+from accounts.permissions import get_owned_or_404
 from matches.league_views import _build_league_sidebar_links
 from matches.models import League, TeamSeasonFinance
 
@@ -25,7 +26,7 @@ def league_finances(request: HttpRequest, league_id: int) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    league = get_object_or_404(League, pk=league_id)
+    league = get_owned_or_404(League, request, pk=league_id)
     request.session["last_league_id"] = league.id
 
     displayed_season = (

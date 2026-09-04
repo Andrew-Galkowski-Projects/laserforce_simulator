@@ -2,6 +2,7 @@ import pytest
 from rest_framework.test import APIClient
 
 from teams.models import Player, Team
+from conftest import get_shared_manager
 
 
 @pytest.mark.django_db
@@ -10,6 +11,7 @@ class TestTeamAPI:
 
     def setup_method(self):
         self.client = APIClient()
+        self.client.force_login(get_shared_manager())
         self.team = Team.objects.create(name="API Test Team", wins=3, losses=1)
         self.player = Player.objects.create(team=self.team, name="API Player")
 
@@ -59,6 +61,7 @@ class TestPlayerAPI:
 
     def setup_method(self):
         self.client = APIClient()
+        self.client.force_login(get_shared_manager())
         self.team = Team.objects.create(name="Player API Team")
         self.player = Player.objects.create(
             team=self.team, name="Player Alpha", accuracy=70

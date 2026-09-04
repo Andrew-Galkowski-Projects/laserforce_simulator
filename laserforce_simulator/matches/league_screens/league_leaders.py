@@ -3,7 +3,7 @@
 Read-only, GET-only screen rendering four top-10 leaderboards over every
 player who appeared in the League's ``displayed_season``'s completed Rounds.
 Follows the LG-01z shared view contract (§2): GET-guard →
-``get_object_or_404`` → session write → ``displayed_season`` pick → sidebar
+``get_owned_or_404`` → session write → ``displayed_season`` pick → sidebar
 links → screen aggregation → render. Heavy aggregation lives in the pure
 module ``matches/league_leaders_logic.py``.
 """
@@ -11,8 +11,9 @@ module ``matches/league_leaders_logic.py``.
 from __future__ import annotations
 
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import render
 
+from accounts.permissions import get_owned_or_404
 from matches.league_leaders_logic import compute_leaderboards
 from matches.league_views import (
     _build_league_sidebar_links,
@@ -76,7 +77,7 @@ def league_leaders(request: HttpRequest, league_id: int) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    league = get_object_or_404(League, pk=league_id)
+    league = get_owned_or_404(League, request, pk=league_id)
     request.session["last_league_id"] = league.id
 
     displayed_season = (

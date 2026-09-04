@@ -24,8 +24,9 @@ from django.http import (
     HttpResponseNotAllowed,
     JsonResponse,
 )
-from django.shortcuts import get_object_or_404, redirect, render
+from django.shortcuts import redirect, render
 
+from accounts.permissions import get_owned_or_404
 from matches.league_screens.player_stats import (
     _PLAYER_STATS_COLUMNS,
     _RATE_OPTIONS,
@@ -63,7 +64,7 @@ def watch_list_toggle(request: HttpRequest, league_id: int) -> JsonResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    league = get_object_or_404(League, pk=league_id)
+    league = get_owned_or_404(League, request, pk=league_id)
 
     raw_player_id = request.POST.get("player_id")
     try:
@@ -112,7 +113,7 @@ def watch_list(request: HttpRequest, league_id: int) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    league = get_object_or_404(League, pk=league_id)
+    league = get_owned_or_404(League, request, pk=league_id)
 
     # Retained ``?action=clear`` GET branch — clears this League's watch list.
     if request.GET.get("action") == "clear":
