@@ -1,3 +1,80 @@
+# Web testing — UX-01 follow-up: register / login / League / full Season
+
+Date: 2026-09-04
+Branch: `ux-01-user-accounts` (PR #166)
+Scope: a scoped pass, not the full sweep — register a fresh Account, sign out and back
+in, create a League from a template, and play a Season end to end (regular season +
+playoffs) under the UX-01 login gate. Server on port **8001**. Account
+`seasontest@example.com` (id 5); League 3 `ChromeTest Season League` (4-Team Quick),
+Season 3, Tournament 1 `Season 1 Playoffs`.
+
+## Summary
+| Area | Result |
+|---|---|
+| Anonymous `/` -> 302 `/accounts/login/?next=/` | OK |
+| Register (email + 2x password) creates the Account, auto-logs-in, lands on `/` | OK |
+| Explicit sign-out (POST) -> login page; sign back in -> `/`, nav shows the email | OK |
+| League create from the `4-Team Quick` template | OK |
+| Stamping — League 3, all 4 generated Teams and the per-League free-agent pool carry `manager_id=5` | OK |
+| Season Matches carry `manager IS NULL` (they derive via `season -> league`) | OK — per contract |
+| Embedded Tournament 1 inherits `manager=5` from its League (ADR-0038 s2.3) | OK |
+| Regular season: 6 Matches / 12 Rounds via **Play One Week** x6 | OK |
+| Standings internally consistent (MP 3 each, wins sum to 6 Matches, round wins sum to 12) | OK |
+| Playoffs: 3 bracket nodes resolved via **Play Single Round** x3; Season -> `completed` | OK |
+| Champion crowned (Ember Enforcers, the #1 seed) | OK |
+| Console clean, all requests 2xx on the Season dashboard | OK |
+| Cross-Account League detail returns **404** | OK |
+| **Landing page listed other Accounts' Leagues** | **DEFECT — fixed, see U2-1** |
+| Global `Free Agents` singleton was captured by an Account and now 404s | **DEFECT — see U2-2** |
+
+### ~~U2-1 — Landing page leaked every other Account's active League~~ — FIXED (2026-09-04)
+`core/views.py::landing` listed `League.objects.filter(state="active")` with **no ownership
+scoping**, so any signed-in Account saw every other Account's active League name and Season
+status on the home page. Reproduced live: brand-new Account 5 saw Leagues 1 and 2, owned by
+Accounts 1 and 4.
+
+The League **detail** page correctly returned 404, so this was a listing leak, not an access
+break — but it still contradicts ADR-0038 ("another Account's row is neither listed nor
+readable").
+
+Root cause: the UX-01 seam contract scoped the `core` app out on the grounds that `ArenaMap`
+has no ownership axis. `landing` lives in `core/views.py` but renders **League** rows, so it
+fell through the gap — `core/views.py` was never touched by the branch.
+
+**FIXED** — `landing` now routes through `owned_queryset(...)`, so an Account sees its own
+active Leagues plus every **Unmanaged** one. Four regression tests in
+`core/tests.py::LandingInProgressLeagueScopingTests` cover own / Unmanaged / other-Account /
+absent-from-HTML. Verified in-browser after the fix: only `ChromeTest Season League` renders.
+
+### U2-2 — The global `Free Agents` singleton can be captured by an Account
+`get_free_agents_team()` (`teams/models.py:270`) resolves the global sandbox pool by
+`get_or_create(name="Free Agents")`, but **nothing reserves that name at create time**.
+`_generate_free_agents` is careful never to stamp the singleton, and `claim_unmanaged`
+excludes it — but the ordinary team-create path stamps whatever name is submitted.
+
+Observed in the dev database: Team 3 `Free Agents` carries `manager_id=2`, and
+`GET /teams/3/` returns **404** for Account 5. The shared sandbox pool is now unreachable
+for every Account except 2.
+
+Worse ordering: if the singleton already exists and a second Team named `Free Agents` is
+created, `get_or_create` raises `MultipleObjectsReturned`.
+
+Fix (not applied — out of scope for the UX-01 slice, needs a decision): reserve
+`FREE_AGENTS_TEAM_NAME` in team-create validation, or resolve the singleton by a dedicated
+flag rather than by name.
+
+### U2-3 — [ENVIRONMENT] The async play paths need a Celery worker
+`Play Two Months`, `Play Until Playoffs`, `Play Playoffs` and the member-night `Play All`
+are intercepted by `templates/_partials/topnav_play_script.html` and POST to views that call
+`play_season_task.delay(...)`, returning `202 {job_id}` for the page to poll.
+
+The browser-testing setup starts only `runserver`, no Celery worker, so those buttons appear
+to do nothing: the POST returns 202, the season never advances, and the poll never resolves.
+Not a product defect and not UX-01-related. The **sync** paths (`Play One Week`,
+`Play Single Round`, `Start Season`) work and are what this pass used.
+
+
+---
 # Web testing — UX-01 (user accounts and Manager ownership)
 
 Date: 2026-09-03
