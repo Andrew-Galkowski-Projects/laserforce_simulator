@@ -24,6 +24,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - **Live multi-game runs + Stop** — While a multi-game advance is running (Two Months / Until End of Season / Play Playoffs), the standings and leader boards update live as each fixture commits, and the Play control becomes a **Stop** button that cooperatively halts the run between games — already-played games stay committed and the run resumes on the next Play; progress survives navigating away or reloading the page
 - **Member nights** — A Season's phase flow can include a **member night**: a casual/social play interlude run per Site (a venue's home-site grouping of players) between competitive fixtures. From the `Play ▾` topnav you pick a Site (or "All Sites present") and the system gathers whoever's available (enrolled-team players plus free agents), draws 5–9 ad-hoc games — each splitting 12 players into two attempt-balanced 6-player teams with randomized roles — then drains them in the background with live progress and a Stop button. Member-night games are recorded as part of the Season and show in raw match listings, but never count toward the competitive Standings or power rankings
 - **Manager firing (owner mood)** — In a single-player career League, the team owner evaluates you once per completed season on a ZenGM-style cumulative owner-mood model — *wins* (regular-season record vs a .500 baseline) plus *playoffs* (missed / advanced / champion of the season's tournament), each capped so you can't coast on one factor. After a two-season grace period, an overall mood at or below the firing threshold gets you fired; the owner-evaluation screen (`/seasons/<id>/owner-evaluation/`) shows the verdict, a hot-seat warning if you're trending toward the axe, and the per-factor breakdown, and is browsable for past seasons. A fired manager picks a fresh team from the five worst-performing clubs (your old team excluded) on a New Team screen, starting a new tenure and grace period. With team finances enabled, the *money* factor (season profit) joins the mood model, and an optional per-League "fire on luxury tax" rule — set at League creation — fires you outright (independent of mood, but still after the grace period) any season your team pays the luxury tax; the owner-evaluation screen names which trigger fired you.
+- **User accounts & ownership** — Email + password sign-in with open self-registration. Every Team, League, Tournament, sandbox Match and standalone Round belongs to the account that created it, and the whole site sits behind a login. Rows created before you had an account (or by a management command) are *unmanaged* and stay open to any signed-in account until claimed
 - **Team history** — Win/loss records across all matches
 - **Read-only REST API** — JSON endpoints for teams, players, matches, rounds, and events at `/api/` (paginated, 20 per page)
 
@@ -41,6 +42,42 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - Docker (multi-stage `python:3.11-slim`); `docker-compose.yml` for local dev with PostgreSQL; deployed to Fly.io via CI on push to `main`
 
 ## Getting Started
+
+> ### ⚠️ Upgrading a database created before user accounts (UX-01)
+>
+> UX-01 introduced a custom user model (`AUTH_USER_MODEL = "accounts.User"`) **after**
+> Django's `auth` / `admin` migrations had already been applied against the built-in
+> `auth.User`. On **any database created before UX-01**, the next `migrate` therefore
+> fails with:
+>
+> ```
+> django.db.migrations.exceptions.InconsistentMigrationHistory:
+> Migration admin.0001_initial is applied before its dependency accounts.0001_initial
+> ```
+>
+> **CI and the test suite are unaffected, and that is the trap.** `pytest` builds a
+> fresh test database every run, so the suite goes **green** while the local
+> `db.sqlite3` and the Fly.io Postgres are both broken. Never read a passing suite as
+> proof the deployment is healthy.
+>
+> **The approved fix is a fresh database, not a data migration.** Simulation data is
+> disposable by design
+> ([ADR-0004](docs/adr/0004-simulation-data-is-disposable.md)), so:
+>
+> ```bash
+> # Local (SQLite)
+> rm laserforce_simulator/db.sqlite3
+> python laserforce_simulator/manage.py migrate
+> python laserforce_simulator/manage.py createsuperuser
+>
+> # Fly.io: destroy and re-provision the Postgres app, then run the same
+> # migrate + createsuperuser against it.
+> ```
+>
+> Do **not** attempt a migration-history rewrite, a `RunPython` copy of the old
+> `auth_user` rows, or a `--fake` shim. See
+> [ADR-0038](docs/adr/0038-accounts-and-uniform-manager-ownership.md).
+> A **new** checkout is unaffected — just follow the steps below.
 
 ### Option A — local Python
 
@@ -65,6 +102,9 @@ cp laserforce_simulator/.env.example laserforce_simulator/.env
 cd laserforce_simulator
 python manage.py migrate
 
+# Create your first account (email + password; this one can also reach /admin/)
+python manage.py createsuperuser
+
 # Start the dev server
 python manage.py runserver
 ```
@@ -85,6 +125,34 @@ docker compose up
 ```
 
 Then open http://localhost:8000/ in your browser.
+
+## Accounts & Ownership
+
+**The whole site is behind a login.** Every page except sign-in, registration and password-change redirects an anonymous visitor to `/accounts/login/`; the JSON API answers an anonymous request with a `403`.
+
+| URL | What it is |
+|-----|------------|
+| `/accounts/login/` | Sign in with **email + password** (there are no usernames) |
+| `/accounts/register/` | **Open self-registration** — anyone can create an account |
+| `/accounts/logout/` | Sign out (the top-nav control posts here) |
+| `/accounts/password-change/` | Change your password while signed in |
+| `/admin/` | Django Admin — where an administrator **removes** an account |
+
+Every Team, League, Tournament, sandbox Match and standalone Round records the account that created it. You see your own rows and nothing of anybody else's — another account's row returns **404**, exactly as a nonexistent one would. Arena maps are the deliberate exception: they are shared reference data, visible to every signed-in account, because map pools and rotations reference maps across league boundaries.
+
+**Unmanaged rows.** Anything created before you had an account — or by a management command such as `score_averages`, which runs outside any request — has no owner. Such rows stay **readable, writable and listed for every signed-in account** until somebody claims them. To take ownership of all of them at once:
+
+```bash
+# Stamp every unowned Team / League / Tournament / Match / Round to one account.
+# Safe to re-run: a second pass finds nothing and reports 0 for every model.
+python laserforce_simulator/manage.py claim_unmanaged --user you@example.com
+```
+
+**There is no password reset.** The "forgot my password" flow needs an outbound mail provider the deployment does not have, so it is deferred along with Google/OAuth sign-in. Recovery is an operator command:
+
+```bash
+python laserforce_simulator/manage.py changepassword you@example.com
+```
 
 ## Running Tests
 
@@ -150,6 +218,9 @@ Action weights live in `matches/sim_helpers/weights.py` and shift dynamically ba
 
 | URL | Description |
 |-----|-------------|
+| `/accounts/login/` | Sign in (email + password) |
+| `/accounts/register/` | Create an account (open self-registration) |
+| `/accounts/password-change/` | Change your password (no reset flow — use `manage.py changepassword`) |
 | `/` | Mode-picker landing (Sandbox / Single-player League / Multiplayer — Coming soon) + in-progress Leagues |
 | `/teams/` | Team & player management |
 | `/leagues/` | Single-player League list (active + archived) |

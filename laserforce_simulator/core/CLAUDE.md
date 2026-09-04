@@ -123,3 +123,35 @@ Mode-picker landing page at `GET /` (replaces the previous `path("", include("te
 
 **Locked names.** URL `GET /` (URL name `landing`); view `core.views.landing`; template `templates/core/landing.html`; DOM ids `mode-picker` / `mode-card-sandbox` / `mode-card-league` / `mode-card-multiplayer` / `in-progress-leagues` / `in-progress-league-card-{league.id}` / `leagues-nav-link`; context key `in_progress_leagues`. Seam contract: [`.claude/worktrees/lg-01a-seam-contract.md`](../../.claude/worktrees/lg-01a-seam-contract.md).
 - `TestMap09ResolvesElevationFromZoneData` (DB) — `_resolve_map_data` returns correct elevation array; returns None when key absent
+
+## UX-01 ownership — `ArenaMap` is deliberately NOT an Ownership root
+
+**`core` is the one app UX-01 did not touch.** `ArenaMap` and **all six** map-config models
+(`MapZoneConfig`, `MapBaseConfig`, `SightLineConfig`, `BaseSightLineConfig`, `MapCellRankingConfig`,
+`HeavyStrongSpotsConfig`) carry **no `manager` column**, appear in **no** `_PARENT_FIELD` entry, and
+resolve to `None` from `accounts.permissions.ownership_root` — they have **no ownership axis** at
+all, which `is_owned_by` treats as *always allowed* (shared reference data).
+
+Concretely, and verified as part of the slice:
+
+- **No migration.** `core` stays at `0004_map05_cell_ranking_and_strong_spots`.
+- **No filtering.** `map_list` is **not** wrapped in `owned_queryset`; every `/maps/` route returns
+  the same maps to every Account.
+- **No conversions.** All **14** `get_object_or_404(ArenaMap, ...)` sites in `core/views.py` are left
+  **byte-for-byte unchanged** — they are the 14 of the project's 97 sites that were *not* converted to
+  `get_owned_or_404` (the other 83 were).
+- `/maps/` is still behind the **global login gate** (`LoginRequiredMiddleware`) with **no**
+  `@login_not_required` exemption: authenticated, but unfiltered.
+
+**Why** ([ADR-0038](../../docs/adr/0038-accounts-and-uniform-manager-ownership.md)): maps are
+referenced **across League boundaries** by `ArenaMap.is_default`, `Season.map_mode`, the CONF-06
+per-Conference **Map pools** and SUB-01's `rotate_by_matchday` / CONF-06's `rotate_by_conference`
+rotations. A privately-owned map would therefore silently break *another* Manager's season rotation —
+`_resolve_fixture_map` would quietly return `None` for every fixture rather than raise. A per-map
+`is_public` flag is the correct end state and was **deferred** rather than invented here (PLAN.md
+**Deferred Items**), because the cross-League referencing rules have to be settled first: what a
+running rotation does when a map it references goes private.
+
+> Adding a `manager` FK to `ArenaMap` or any map-config model, filtering a `/maps/` queryset, or
+> converting one of those 14 lookups **breaks the UX-01 contract**. See
+> [`../accounts/CLAUDE.md`](../accounts/CLAUDE.md) and seam contract §2.4.

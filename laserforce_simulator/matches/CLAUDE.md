@@ -8219,6 +8219,148 @@ with and without a `conf_by_team` argument. Seam contract:
 CONTEXT.md **Map mode** / **Map pool** / **Per-fixture map resolution** / **Conference** terms;
 PLAN.md **CONF-06**.
 
+## UX-01 accounts + the `manager` ownership FK
+
+**UX-01** gives every row an owner. The `matches` app carries **four of the five Ownership roots**
+(`teams.Team` is the fifth), the dormant `League.visibility` column, and 72 of the 83 converted
+permission call sites. The **Account** model, the permission seam and the auth surfaces live in the
+new fourth app — see [`../accounts/CLAUDE.md`](../accounts/CLAUDE.md) and
+[ADR-0038](../../docs/adr/0038-accounts-and-uniform-manager-ownership.md).
+
+> ### ⚠️ The **Manager** is not the **Owner**
+>
+> `manager` (the new Account FK) and `OwnerEvaluation` / `owner_mood.py` / **Owner mood** / **Owner
+> evaluation** (the ADR-0026 career fiction) are **unrelated concepts that happen to sit in the same
+> app**. The **Owner** is the fictional boss who judges and fires the **Manager**; it is **never a
+> login** and was **deliberately not renamed** — churning ADR-0026, the `OwnerEvaluation` model,
+> `owner_mood.py`, CONTEXT.md and the career-screen DOM ids to free up the word "owner" was rejected
+> as buying a word we did not need. So: nothing containing `owner` / `Owner` is renamed;
+> `OwnerEvaluation` gets **no** `manager` column (it derives its Manager via `league`); and the word
+> "owner" is never used for an Account in code, comments, templates, DOM ids or docs.
+
+**Four roots in this app, under one rule: *a row is a root exactly when its parent FK is null*.**
+Each carries the byte-identical field
+`ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+related_name=...)`, appended as the last field of its model:
+
+| Model | `related_name` | Root when | Otherwise derives via |
+|---|---|---|---|
+| `League` | `leagues` | **always** (no parent FK) | — |
+| `Tournament` | `tournaments` | **always** — even when `season_phase` is set | — |
+| `Match` | `matches` | `season_id IS NULL` (a **sandbox** Match) | `season → league` |
+| `GameRound` | `game_rounds` | `match_id IS NULL` (a **standalone** Round) | `match` (→ `season → league`) |
+
+Everything else in the app is a **derived row** with no `manager` column — `Season`, `Conference`,
+`SeasonPhase`, `PlayerSeasonRating`, `OwnerEvaluation`, `TeamSeasonFinance` (→ League);
+`PlayerRoundState`, `GameEvent` (→ GameRound); `TournamentParticipant`, `BracketNode`,
+`TournamentPlayerEntry`, `SeriesMatch` (→ Tournament). Two traps in that table:
+`TeamSeasonFinance.team` and `OwnerEvaluation.team_managed` are `SET_NULL` and are **not** the
+ownership parent (`season` / `league` is), and `PlayerSeasonRating.player` is **not** the parent
+either (`season` is — a rating is League data). `matches.standings.StandingsRow` is a **frozen
+dataclass, not a model**: never persisted, no `manager`, no ownership axis.
+
+**`Tournament` stays its own root even when embedded.** A CONF-02 regional or CONF-04 Worlds bracket
+has a non-null `season_phase`, but that FK is **not** treated as an ownership parent — otherwise the
+sandbox Tournament and the embedded Tournament would need two different resolution rules. The
+invariant *an embedded Tournament's Manager equals its League's Manager* is instead held by
+**propagation at creation**: `Season._build_tournament_for_phase`,
+`Season._build_last_chance_tournament` and `Season.build_pending_worlds_bracket` each pass
+`manager=self.league.manager` (`self` is a `Season`, and `Season.league` is non-null). Because of
+that, the flat predicate and a hypothetical traversal would agree — the flat one is simply cheaper.
+
+**`SET_NULL`, and what NULL means.** Deleting an Account in Admin **demotes** its rows to **Unmanaged**
+(`manager IS NULL`) rather than cascading a League's whole Season / Match / GameEvent history out of
+existence — the same posture as `League.current_team`, `Tournament.champion`, `Match.season` and the
+`*.winner` FKs. An **Unmanaged row is readable AND writable by any authenticated Account, and listed
+to all of them** — NULL means *open*, not *frozen* and not *hidden*. That is what keeps request-less
+writers working: `BatchSimulator.simulate_match` / `simulate_scheduled_round` (worker processes) and
+`persistence.flush_to_db` create Matches and GameRounds with **no `manager`** by design, and
+`manager` is deliberately **not** threaded through `matches/simulation/*`. Note also that
+`Match.season` is `SET_NULL`, so deleting a Season silently demotes its Matches to Unmanaged sandbox
+roots — accepted behaviour, not a bug.
+
+**The permission seam in this app.** Every read path goes through `accounts.permissions`:
+
+- **72 `get_object_or_404` → `get_owned_or_404(Model, request, **lookup)`** conversions —
+  `league_views.py` ×28, `league_screens/*.py` ×17 across 15 modules, `views.py` ×14,
+  `tournament_views.py` ×13 — plus two adjacent `.objects.get(` sites converted for the same reason
+  (`views.py::compare_rounds`, `league_views.py::reassign_team`). `request` is inserted as the
+  **second positional** argument; everything else on the line is unchanged. Cross-Account access
+  raises **`Http404`, never 403**, so another Account's row is indistinguishable from a nonexistent
+  one.
+- **`api_views.py:SimulateBatchAPIView.post`'s `Team.objects.get(id=tid)` is deliberately left
+  alone** — it is wrapped in `try/except Team.DoesNotExist → 400` and must keep returning **400, not
+  404**. The viewset-level `IsAuthenticated` is the gate there.
+- **List scoping:** `league_list` wraps both its `state="active"` / `"archived"` querysets in
+  `owned_queryset`; `tournament_list` likewise. `match_list` uses the two longhand `Q` builders —
+  `Match.objects.filter(owned_match_q(request.user))` and, for the standalone-round list,
+  `GameRound.objects.filter(match__isnull=True).filter(owned_game_round_q(request.user))` — because
+  those two roots are **conditional** and `owned_queryset` is not valid for them.
+- **DRF:** `MatchViewSet` / `GameRoundViewSet` gain `@method_decorator(login_not_required,
+  name="dispatch")` and a manager-scoped `get_queryset()` built on the same two `Q` builders, while
+  **keeping** their class-level `queryset` attribute (the router needs it for basename
+  introspection). `GameRoundViewSet` keeps its `self.action == "retrieve"` prefetch branch and its
+  `@action(url_path="events")` method unchanged; only the base queryset is wrapped. Router
+  registration and every API URL name are untouched. `SimulateBatchAPIView` /
+  `SimulateBatchStatusAPIView` take the same decorator. The middleware exemption is what makes DRF's
+  `IsAuthenticated` return a **403 JSON** body instead of an HTML **302** to the login page.
+
+**Stamping sites in this app (8 of the 13).** `_create_league_and_season` gained a keyword-only
+`manager: AbstractBaseUser | None = None` parameter (appended last; the helper takes no `request`, so
+the parameter *is* how the Account reaches it) and stamps both the `League` and the League's
+free-agent pool `Team`; `member_night_setup` stamps its two `is_draw_team=True` Teams;
+`tournament_create` stamps the `Tournament` (and passes `manager=` into `_generate_teams`);
+`tournament_draw` stamps its drawn Team; `views.create_match` and `views.create_single_round` call
+`stamp_manager(obj, request.user)` **post-hoc** on the `Match` / `GameRound` returned by the
+simulator, because those views never construct the row themselves; and the three `Season._build_*`
+sites propagate the League's Manager as above. Creation sites that intentionally stay Unmanaged:
+every `Season`, `SeasonPhase`, `Conference` and `SeriesMatch` (all derived rows),
+`member_night_setup`'s `Match` (it has `season=season`, so it is derived, not a root), and everything
+`matches/simulation/*` writes.
+
+**`League.visibility` — a dormant column (3 touch points, and no more).** `CharField(max_length=16,
+choices=VISIBILITY_CHOICES, default="closed")` where `VISIBILITY_CHOICES = (("closed", "Closed"),
+("open", "Open"))` is a class-level constant on `League` alongside the existing `MODE_CHOICES` /
+`STATE_CHOICES`; a `required=False` `CreateLeagueForm.visibility` `ChoiceField` (widget id
+`league-create-visibility`, declared last in the class body) rendered on
+`templates/leagues/create_advanced.html` **only** (not `create.html`), between the
+`league-create-number-of-conferences` and `league-create-schedule-format` blocks; and
+`_create_league_and_season` passing `visibility=cleaned.get("visibility") or "closed"` (with
+`_template_to_form_data` supplying `"visibility": "closed"`). **Nothing reads it this slice** — no
+branch, no filter, no context key, no sidebar entry, no admin column; outside the model, the
+migration, the form field, the template block and the tests the string `visibility` occurs **zero**
+times. It is the forward-compatible marker for who may join a League once **League membership**
+exists, which — along with invitations and joining — is **deferred** (PLAN.md **Deferred Items**).
+The precedent is LG-02-Part2b's `schedule_format` / LG-02-Part2c-3b's `SeasonPhase.tournament_mode`
+dormant column.
+
+**Migration.** `matches/migrations/0062_manager_ownership_and_league_visibility.py` (deps
+`migrations.swappable_dependency(settings.AUTH_USER_MODEL)` + `0061_conference_map_rotation`) — **one**
+file, five `AddField`s in order: `league.manager`, `tournament.manager`, `match.manager`,
+`gameround.manager`, `league.visibility`. **NO `RunPython` / NO backfill**
+([ADR-0004](../../docs/adr/0004-simulation-data-is-disposable.md)): existing rows stay
+`manager=NULL`, i.e. Unmanaged, until `manage.py claim_unmanaged --user <email>`. ADR-0038 rejects a
+superuser backfill as *vacuous* — a custom user model means an empty user table on every existing
+database, so it would stamp nothing. ⚠️ The `AUTH_USER_MODEL` swap itself raises
+`InconsistentMigrationHistory` on any **pre-UX-01 database** while leaving **CI and the test suite
+green** (a fresh test DB each run); the recovery is a fresh database, not a data migration — see
+`README.md` and [`../accounts/CLAUDE.md`](../accounts/CLAUDE.md).
+
+**Determinism / scope-out.** No RNG, no ordering, no parallelism and no simulator edit —
+`matches/simulation/*`, `tournament_engine.py`, `owner_mood.py` and `standings.py` are **untouched** —
+so there is **no Score Calibration re-baseline** and every seeded outcome stays byte-identical; no
+serial-vs-parallel determinism test was required. Also out of scope: League membership / invitations /
+joining / any *read* of `visibility`, cross-Account sharing, per-object permissions or Groups, and
+renaming anything Owner-flavoured. Tests: new `matches/tests/test_ownership.py`, plus the
+`league-create-visibility` id added to `test_league_create.py`'s locked-id tuple, the topnav auth ids
+added to `test_topnav.py`, and `force_login` calls added to the locally-instantiated clients in
+`views_tests.py` (42), `test_batch_views.py` (15), `test_heatmap.py` (10), `test_missile_log.py` (4),
+`test_playback_map.py` (2) and `test_apis.py` (the `setUp` `APIClient`) — the root `conftest.py`
+autouse login fixture cannot reach those. Seam contract:
+[`.claude/worktrees/ux-01-seam-contract.md`](../../.claude/worktrees/ux-01-seam-contract.md);
+CONTEXT.md **Account** / **Ownership root** / **Unmanaged row** / **League visibility** terms and the
+rewritten **Manager** entry; PLAN.md **UX-01**.
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)
