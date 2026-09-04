@@ -450,10 +450,11 @@ class TestSeasonMapModeField(TestCase):
         field = Season._meta.get_field("map_mode")
         self.assertEqual(field.default, "none")
 
-    def test_field_choices_are_the_four_locked_tuples(self) -> None:
+    def test_field_choices_are_the_five_locked_tuples(self) -> None:
         field = Season._meta.get_field("map_mode")
         # SUB-01 widened the LG-01j 3-tuple to 4 by adding the
-        # ``rotate_by_matchday`` Season-level rotation mode.
+        # ``rotate_by_matchday`` Season-level rotation mode; CONF-06
+        # appends ``rotate_by_conference`` as the FIFTH and LAST tuple.
         self.assertEqual(
             list(field.choices),
             [
@@ -461,6 +462,7 @@ class TestSeasonMapModeField(TestCase):
                 ("single", "Single map"),
                 ("random_per_round", "Random per Round"),
                 ("rotate_by_matchday", "Rotate by matchday"),
+                ("rotate_by_conference", "Rotate by Conference"),
             ],
         )
 
@@ -853,7 +855,7 @@ class TestSeasonMapModeRotateChoice(TestCase):
         field = Season._meta.get_field("map_mode")
         self.assertIn(("rotate_by_matchday", "Rotate by matchday"), list(field.choices))
 
-    def test_choices_are_the_four_locked_tuples(self) -> None:
+    def test_choices_are_the_five_locked_tuples(self) -> None:
         field = Season._meta.get_field("map_mode")
         self.assertEqual(
             list(field.choices),
@@ -862,6 +864,7 @@ class TestSeasonMapModeRotateChoice(TestCase):
                 ("single", "Single map"),
                 ("random_per_round", "Random per Round"),
                 ("rotate_by_matchday", "Rotate by matchday"),
+                ("rotate_by_conference", "Rotate by Conference"),
             ],
         )
 
@@ -987,3 +990,609 @@ class TestSeasonStartSeasonSnapshotsMapRotation(TestCase):
         self.assertEqual(
             season.starting_map_rotation_ids_json, [m_c.id, m_a.id, m_b.id]
         )
+
+
+# ===========================================================================
+# CONF-06 — per-Conference rotating map pools
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/conf-06-seam-contract.md`` (APPROVED,
+# locked names):
+#   - ``Season.MAP_MODE_CHOICES`` gains a FIFTH tuple
+#     ``("rotate_by_conference", "Rotate by Conference")``.
+#   - ``_resolve_fixture_map`` gains a fourth keyword-with-default argument
+#     ``conf_by_team: "dict[int, Conference] | None" = None``; every existing
+#     3-argument call site keeps working UNCHANGED.
+#   - New branch (contract SS3.2), placed after ``rotate_by_matchday``:
+#         conf = (conf_by_team or {}).get(fixture.team_a_id)
+#         ids = (conf and conf.starting_map_rotation_ids_json) or []
+#         if not ids: return None
+#         return pool_by_id.get(ids[fixture.matchday % len(ids)])
+#   - New pure helper ``_fixture_map_ids(season, conf_by_team=None)``.
+#   - New pure helper ``matches.forms.parse_rotation_ids(raw, valid_map_ids)``.
+#
+# These WILL fail until the Code agent lands the production code — the
+# expected TDD red state. ``_fixture_map_ids`` / ``parse_rotation_ids`` are
+# imported INSIDE each test so a pre-landing ``ImportError`` fails only the
+# CONF-06 tests instead of collection of this whole module.
+
+
+@dataclass
+class _ConferenceStub:
+    """Minimal Conference duck-type — the resolver reads only the frozen
+    ``starting_map_rotation_ids_json`` snapshot; ``id`` is what
+    ``_fixture_map_ids`` dedupes on; ``map_rotation_ids_json`` (the LIVE
+    list) is carried so a test can prove the resolver ignores it."""
+
+    id: int
+    starting_map_rotation_ids_json: list | None = None
+    map_rotation_ids_json: list | None = None
+
+
+@dataclass
+class _ConfSeasonStub:
+    """Season duck-type carrying all four attributes the resolver and
+    ``_fixture_map_ids`` read between them."""
+
+    id: int = 1
+    map_mode: str = "rotate_by_conference"
+    starting_map_pool_ids_json: list | None = None
+    starting_map_rotation_ids_json: list | None = None
+
+
+def _conf_season(
+    *,
+    id: int = 1,
+    map_mode: str = "rotate_by_conference",
+    starting_map_pool_ids_json: list | None = None,
+    starting_map_rotation_ids_json: list | None = None,
+) -> _ConfSeasonStub:
+    return _ConfSeasonStub(
+        id=id,
+        map_mode=map_mode,
+        starting_map_pool_ids_json=starting_map_pool_ids_json,
+        starting_map_rotation_ids_json=starting_map_rotation_ids_json,
+    )
+
+
+def _conf_pool(ids: list[int]) -> dict:
+    return {i: _MapStub(id=i, name=f"M{i}") for i in ids}
+
+
+class TestResolveFixtureMapRotateByConference(unittest.TestCase):
+    """``mode == "rotate_by_conference"`` — the fixture resolves its map from
+    ITS OWN Conference's author-ordered snapshot, indexed
+    ``ids[matchday % len(ids)]``. No RNG."""
+
+    def test_one_based_matchday_modulo_is_applied_directly(self) -> None:
+        """LOCKED, and deliberately NOT an off-by-one bug (contract SS3.2
+        note B).
+
+        ``fixture.matchday`` is 1-BASED and the modulo is applied to that
+        1-based value UNCHANGED, byte-mirroring the shipped
+        ``rotate_by_matchday`` formula. With a 2-map rotation ``[A, B]``:
+
+            matchday 1 -> ids[1 % 2] -> ids[1] -> B
+            matchday 2 -> ids[2 % 2] -> ids[0] -> A
+            matchday 3 -> ids[3 % 2] -> ids[1] -> B
+
+        A future reader: do NOT "fix" this to ``(matchday - 1) % len(ids)``.
+        The contract locks the shipped shape; changing it silently re-maps
+        every already-played Season.
+        """
+        ids = [10, 20]  # A = 10, B = 20
+        conf = _ConferenceStub(id=1, starting_map_rotation_ids_json=ids)
+        season = _conf_season()
+        pool = _conf_pool(ids)
+        expected = {1: 20, 2: 10, 3: 20, 4: 10}
+        for matchday, expected_id in expected.items():
+            result = _resolve_fixture_map(
+                season,
+                _fixture(matchday=matchday, team_a_id=7),
+                pool,
+                conf_by_team={7: conf},
+            )
+            self.assertIsNotNone(result, f"matchday={matchday}")
+            self.assertEqual(
+                result.id,
+                expected_id,
+                f"matchday={matchday} => ids[{matchday} % 2] should be "
+                f"{expected_id} (1-based modulo, locked)",
+            )
+
+    def test_three_map_rotation_indexing_across_matchdays(self) -> None:
+        ids = [10, 20, 30]
+        conf = _ConferenceStub(id=1, starting_map_rotation_ids_json=ids)
+        season = _conf_season()
+        pool = _conf_pool(ids)
+        for matchday, expected_id in [(1, 20), (2, 30), (3, 10), (4, 20), (5, 30)]:
+            result = _resolve_fixture_map(
+                season,
+                _fixture(matchday=matchday, team_a_id=7),
+                pool,
+                conf_by_team={7: conf},
+            )
+            self.assertEqual(result.id, expected_id, f"matchday={matchday}")
+
+    def test_two_conferences_same_matchday_resolve_different_maps(self) -> None:
+        """THE feature: "Nevada games on the Nevada maps." On ONE matchday a
+        fixture inside Conference A resolves an A-rotation map while a fixture
+        inside Conference B resolves a B-rotation map."""
+        a_ids = [11, 12]
+        b_ids = [21, 22]
+        conf_a = _ConferenceStub(id=1, starting_map_rotation_ids_json=a_ids)
+        conf_b = _ConferenceStub(id=2, starting_map_rotation_ids_json=b_ids)
+        # Teams 1/2 are in Conference A; teams 3/4 are in Conference B.
+        conf_by_team = {1: conf_a, 2: conf_a, 3: conf_b, 4: conf_b}
+        season = _conf_season()
+        pool = _conf_pool(a_ids + b_ids)
+        in_a = _resolve_fixture_map(
+            season,
+            _fixture(matchday=1, team_a_id=1, team_b_id=2),
+            pool,
+            conf_by_team=conf_by_team,
+        )
+        in_b = _resolve_fixture_map(
+            season,
+            _fixture(matchday=1, team_a_id=3, team_b_id=4),
+            pool,
+            conf_by_team=conf_by_team,
+        )
+        self.assertEqual(in_a.id, 12)  # a_ids[1 % 2]
+        self.assertEqual(in_b.id, 22)  # b_ids[1 % 2]
+        self.assertNotEqual(in_a.id, in_b.id)
+
+    def test_keyed_on_team_a_id_not_team_b_id(self) -> None:
+        """The Conference lookup uses ``fixture.team_a_id``. Both teams of an
+        intra-Conference fixture share a Conference, so this only shows up as
+        a drift guard — pin it."""
+        conf_a = _ConferenceStub(id=1, starting_map_rotation_ids_json=[11, 12])
+        conf_b = _ConferenceStub(id=2, starting_map_rotation_ids_json=[21, 22])
+        season = _conf_season()
+        pool = _conf_pool([11, 12, 21, 22])
+        result = _resolve_fixture_map(
+            season,
+            _fixture(matchday=1, team_a_id=1, team_b_id=3),
+            pool,
+            conf_by_team={1: conf_a, 3: conf_b},
+        )
+        self.assertEqual(result.id, 12)  # conf_a's rotation, not conf_b's
+
+    def test_reads_the_snapshot_not_the_live_rotation(self) -> None:
+        """Post-activation admin drift on ``map_rotation_ids_json`` must not
+        move the map — the resolver reads the frozen snapshot only."""
+        conf = _ConferenceStub(
+            id=1,
+            starting_map_rotation_ids_json=[10, 20],
+            map_rotation_ids_json=[90, 91],
+        )
+        season = _conf_season()
+        pool = _conf_pool([10, 20, 90, 91])
+        result = _resolve_fixture_map(
+            season, _fixture(matchday=1, team_a_id=7), pool, conf_by_team={7: conf}
+        )
+        self.assertEqual(result.id, 20)
+
+    def test_single_id_rotation_always_returns_that_map(self) -> None:
+        conf = _ConferenceStub(id=1, starting_map_rotation_ids_json=[42])
+        season = _conf_season()
+        pool = _conf_pool([42])
+        for matchday in range(1, 7):
+            result = _resolve_fixture_map(
+                season,
+                _fixture(matchday=matchday, team_a_id=7),
+                pool,
+                conf_by_team={7: conf},
+            )
+            self.assertEqual(result.id, 42, f"matchday={matchday}")
+
+    def test_independent_of_round_number(self) -> None:
+        conf = _ConferenceStub(id=1, starting_map_rotation_ids_json=[10, 20, 30])
+        season = _conf_season()
+        pool = _conf_pool([10, 20, 30])
+        a = _resolve_fixture_map(
+            season,
+            _fixture(matchday=4, round_number=1, team_a_id=7),
+            pool,
+            conf_by_team={7: conf},
+        )
+        b = _resolve_fixture_map(
+            season,
+            _fixture(matchday=4, round_number=2, team_a_id=7),
+            pool,
+            conf_by_team={7: conf},
+        )
+        self.assertEqual(a.id, b.id)
+        self.assertEqual(a.id, 20)  # ids[4 % 3]
+
+    def test_no_rng_consumed_does_not_perturb_global_seed(self) -> None:
+        """Contract SS3.2 note A — the branch never touches ``random``, so it
+        cannot perturb the SIM-07 seed chain."""
+        conf = _ConferenceStub(id=1, starting_map_rotation_ids_json=[10, 20, 30])
+        season = _conf_season()
+        pool = _conf_pool([10, 20, 30])
+        random.seed(42)
+        before = random.random()
+        random.seed(42)
+        for matchday in range(1, 6):
+            _resolve_fixture_map(
+                season,
+                _fixture(matchday=matchday, team_a_id=7),
+                pool,
+                conf_by_team={7: conf},
+            )
+        after = random.random()
+        self.assertEqual(
+            before,
+            after,
+            "rotate_by_conference must consume NO RNG",
+        )
+
+
+class TestResolveFixtureMapRotateByConferenceDefensiveNone(unittest.TestCase):
+    """Every defensive path on the new branch returns ``None`` — never
+    raises (contract SS3.2 "Defensive ``None`` returns")."""
+
+    def test_conf_by_team_argument_omitted_entirely(self) -> None:
+        season = _conf_season()
+        self.assertIsNone(
+            _resolve_fixture_map(season, _fixture(matchday=1, team_a_id=7), {})
+        )
+
+    def test_conf_by_team_is_none(self) -> None:
+        season = _conf_season()
+        self.assertIsNone(
+            _resolve_fixture_map(
+                season, _fixture(matchday=1, team_a_id=7), {}, conf_by_team=None
+            )
+        )
+
+    def test_conf_by_team_is_empty_dict(self) -> None:
+        season = _conf_season()
+        self.assertIsNone(
+            _resolve_fixture_map(
+                season, _fixture(matchday=1, team_a_id=7), {}, conf_by_team={}
+            )
+        )
+
+    def test_team_a_id_absent_from_conf_by_team(self) -> None:
+        """A Season with SOME Conferences but an unassigned home team."""
+        conf = _ConferenceStub(id=1, starting_map_rotation_ids_json=[10, 20])
+        season = _conf_season()
+        self.assertIsNone(
+            _resolve_fixture_map(
+                season,
+                _fixture(matchday=1, team_a_id=999),
+                _conf_pool([10, 20]),
+                conf_by_team={7: conf},
+            )
+        )
+
+    def test_conference_snapshot_is_none(self) -> None:
+        conf = _ConferenceStub(id=1, starting_map_rotation_ids_json=None)
+        season = _conf_season()
+        self.assertIsNone(
+            _resolve_fixture_map(
+                season, _fixture(matchday=1, team_a_id=7), {}, conf_by_team={7: conf}
+            )
+        )
+
+    def test_conference_snapshot_is_empty_list(self) -> None:
+        conf = _ConferenceStub(id=1, starting_map_rotation_ids_json=[])
+        season = _conf_season()
+        self.assertIsNone(
+            _resolve_fixture_map(
+                season, _fixture(matchday=1, team_a_id=7), {}, conf_by_team={7: conf}
+            )
+        )
+
+    def test_resolved_id_deleted_from_arena_map(self) -> None:
+        """The snapshot names id 20 but the row was deleted after activation,
+        so ``pool_by_id`` misses it ⇒ ``None`` via ``.get``, not a KeyError."""
+        conf = _ConferenceStub(id=1, starting_map_rotation_ids_json=[10, 20])
+        season = _conf_season()
+        pool = {10: _MapStub(id=10)}  # id 20 gone
+        self.assertIsNone(
+            _resolve_fixture_map(
+                season, _fixture(matchday=1, team_a_id=7), pool, conf_by_team={7: conf}
+            )
+        )
+        # ... while the surviving id still resolves on the next matchday.
+        self.assertEqual(
+            _resolve_fixture_map(
+                season, _fixture(matchday=2, team_a_id=7), pool, conf_by_team={7: conf}
+            ).id,
+            10,
+        )
+
+    def test_defensive_paths_never_raise(self) -> None:
+        season = _conf_season()
+        for conf_by_team in (
+            None,
+            {},
+            {7: _ConferenceStub(id=1, starting_map_rotation_ids_json=None)},
+            {7: _ConferenceStub(id=1, starting_map_rotation_ids_json=[])},
+            {8: _ConferenceStub(id=1, starting_map_rotation_ids_json=[10])},
+        ):
+            try:
+                result = _resolve_fixture_map(
+                    season,
+                    _fixture(matchday=1, team_a_id=7),
+                    {},
+                    conf_by_team=conf_by_team,
+                )
+            except Exception as exc:  # pragma: no cover - the assert reports it
+                self.fail(f"conf_by_team={conf_by_team!r} raised {exc!r}")
+            self.assertIsNone(result, f"conf_by_team={conf_by_team!r}")
+
+
+class TestResolveFixtureMapConfArgBackwardsCompatible(unittest.TestCase):
+    """Regression guard — the four PRE-EXISTING modes resolve byte-identical
+    maps with and without the new ``conf_by_team`` argument, and every
+    existing 3-argument call still runs."""
+
+    def _conf_by_team(self) -> dict:
+        return {
+            1: _ConferenceStub(id=1, starting_map_rotation_ids_json=[777, 888]),
+            2: _ConferenceStub(id=2, starting_map_rotation_ids_json=[999]),
+        }
+
+    def test_mode_none_identical_with_and_without_conf_arg(self) -> None:
+        season = _conf_season(map_mode="none", starting_map_pool_ids_json=[10, 20])
+        pool = _conf_pool([10, 20, 777, 888, 999])
+        fixture = _fixture(matchday=1, team_a_id=1, team_b_id=2)
+        self.assertIsNone(_resolve_fixture_map(season, fixture, pool))
+        self.assertIsNone(
+            _resolve_fixture_map(
+                season, fixture, pool, conf_by_team=self._conf_by_team()
+            )
+        )
+
+    def test_mode_single_identical_with_and_without_conf_arg(self) -> None:
+        season = _conf_season(map_mode="single", starting_map_pool_ids_json=[10, 20])
+        pool = _conf_pool([10, 20, 777, 888, 999])
+        fixture = _fixture(matchday=1, team_a_id=1, team_b_id=2)
+        without = _resolve_fixture_map(season, fixture, pool)
+        with_arg = _resolve_fixture_map(
+            season, fixture, pool, conf_by_team=self._conf_by_team()
+        )
+        self.assertIs(without, with_arg)
+        self.assertEqual(without.id, 10)
+
+    def test_mode_random_per_round_identical_with_and_without_conf_arg(self) -> None:
+        pool_ids = [10, 20, 30, 40, 50]
+        season = _conf_season(
+            id=7, map_mode="random_per_round", starting_map_pool_ids_json=pool_ids
+        )
+        pool = _conf_pool(pool_ids + [777, 888, 999])
+        conf_by_team = self._conf_by_team()
+        for matchday in range(1, 6):
+            fixture = _fixture(matchday=matchday, team_a_id=1, team_b_id=2)
+            self.assertIs(
+                _resolve_fixture_map(season, fixture, pool),
+                _resolve_fixture_map(season, fixture, pool, conf_by_team=conf_by_team),
+                f"matchday={matchday}",
+            )
+
+    def test_mode_rotate_by_matchday_identical_with_and_without_conf_arg(self) -> None:
+        rot = [30, 10, 20]
+        season = _conf_season(
+            map_mode="rotate_by_matchday", starting_map_rotation_ids_json=rot
+        )
+        pool = _conf_pool(rot + [777, 888, 999])
+        conf_by_team = self._conf_by_team()
+        for matchday in range(1, 7):
+            fixture = _fixture(matchday=matchday, team_a_id=1, team_b_id=2)
+            self.assertIs(
+                _resolve_fixture_map(season, fixture, pool),
+                _resolve_fixture_map(season, fixture, pool, conf_by_team=conf_by_team),
+                f"matchday={matchday}",
+            )
+
+    def test_unknown_mode_still_raises_with_the_conf_arg(self) -> None:
+        season = _conf_season(map_mode="bogus")
+        with self.assertRaises(ValueError) as cm:
+            _resolve_fixture_map(
+                season, _fixture(), {}, conf_by_team=self._conf_by_team()
+            )
+        self.assertIn("Unknown map_mode:", str(cm.exception))
+        self.assertIn("'bogus'", str(cm.exception))
+
+
+class TestFixtureMapIds(unittest.TestCase):
+    """``_fixture_map_ids(season, conf_by_team=None)`` — the single argument
+    to the play loops' one ``ArenaMap.objects.in_bulk``."""
+
+    def _fn(self):
+        from matches.tasks import _fixture_map_ids
+
+        return _fixture_map_ids
+
+    def test_no_conferences_equals_the_old_expression(self) -> None:
+        """Locked equivalence: with no Conferences the helper reduces to the
+        pre-CONF-06 ``(pool or []) + (rotation or [])`` expression exactly."""
+        for pool, rotation in [
+            (None, None),
+            ([], []),
+            ([10, 20], None),
+            (None, [30, 10]),
+            ([10, 20], [30, 10]),
+        ]:
+            season = _conf_season(
+                map_mode="none",
+                starting_map_pool_ids_json=pool,
+                starting_map_rotation_ids_json=rotation,
+            )
+            expected = (pool or []) + (rotation or [])
+            self.assertEqual(self._fn()(season), expected, f"{pool!r}/{rotation!r}")
+            self.assertEqual(
+                self._fn()(season, None), expected, f"{pool!r}/{rotation!r}"
+            )
+            self.assertEqual(self._fn()(season, {}), expected, f"{pool!r}/{rotation!r}")
+
+    def test_returns_a_flat_list_of_ints(self) -> None:
+        season = _conf_season(starting_map_pool_ids_json=[10])
+        conf = _ConferenceStub(id=1, starting_map_rotation_ids_json=[20])
+        result = self._fn()(season, {1: conf})
+        self.assertIsInstance(result, list)
+        self.assertTrue(all(isinstance(i, int) for i in result), result)
+
+    def test_ordering_pool_then_rotation_then_conferences(self) -> None:
+        season = _conf_season(
+            starting_map_pool_ids_json=[10, 11],
+            starting_map_rotation_ids_json=[20, 21],
+        )
+        conf_a = _ConferenceStub(id=1, starting_map_rotation_ids_json=[30, 31])
+        conf_b = _ConferenceStub(id=2, starting_map_rotation_ids_json=[40])
+        result = self._fn()(season, {1: conf_a, 2: conf_a, 3: conf_b})
+        self.assertEqual(result, [10, 11, 20, 21, 30, 31, 40])
+
+    def test_conferences_in_first_seen_order(self) -> None:
+        """Conference order follows the ``conf_by_team`` dict's insertion
+        order, not the Conference ids."""
+        season = _conf_season()
+        conf_a = _ConferenceStub(id=9, starting_map_rotation_ids_json=[90])
+        conf_b = _ConferenceStub(id=1, starting_map_rotation_ids_json=[10])
+        self.assertEqual(self._fn()(season, {5: conf_a, 6: conf_b}), [90, 10])
+        self.assertEqual(self._fn()(season, {6: conf_b, 5: conf_a}), [10, 90])
+
+    def test_conference_deduped_by_id_across_n_member_teams(self) -> None:
+        """The same Conference appears once per member team in
+        ``conf_by_team``; its ids are contributed EXACTLY ONCE."""
+        season = _conf_season()
+        conf = _ConferenceStub(id=1, starting_map_rotation_ids_json=[30, 31])
+        conf_by_team = {t: conf for t in range(1, 9)}  # 8 member teams
+        self.assertEqual(self._fn()(season, conf_by_team), [30, 31])
+
+    def test_conference_deduped_by_id_even_for_distinct_objects(self) -> None:
+        """Dedupe is by ``conf.id``, NOT by object identity — a Season
+        re-fetched per team yields distinct instances of the same row."""
+        season = _conf_season()
+        c1 = _ConferenceStub(id=1, starting_map_rotation_ids_json=[30, 31])
+        c1_again = _ConferenceStub(id=1, starting_map_rotation_ids_json=[30, 31])
+        self.assertIsNot(c1, c1_again)
+        self.assertEqual(self._fn()(season, {1: c1, 2: c1_again}), [30, 31])
+
+    def test_duplicate_map_ids_across_sources_are_retained(self) -> None:
+        """Duplicates are harmless for ``in_bulk`` and are NOT deduped."""
+        season = _conf_season(
+            starting_map_pool_ids_json=[10, 10],
+            starting_map_rotation_ids_json=[10, 20],
+        )
+        conf_a = _ConferenceStub(id=1, starting_map_rotation_ids_json=[20, 20])
+        conf_b = _ConferenceStub(id=2, starting_map_rotation_ids_json=[10])
+        self.assertEqual(
+            self._fn()(season, {1: conf_a, 2: conf_b}),
+            [10, 10, 10, 20, 20, 20, 10],
+        )
+
+    def test_none_and_empty_conference_snapshots_contribute_nothing(self) -> None:
+        season = _conf_season(starting_map_pool_ids_json=[10])
+        conf_a = _ConferenceStub(id=1, starting_map_rotation_ids_json=None)
+        conf_b = _ConferenceStub(id=2, starting_map_rotation_ids_json=[])
+        conf_c = _ConferenceStub(id=3, starting_map_rotation_ids_json=[30])
+        self.assertEqual(
+            self._fn()(season, {1: conf_a, 2: conf_b, 3: conf_c}), [10, 30]
+        )
+
+    def test_does_not_mutate_the_season_snapshot_lists(self) -> None:
+        pool = [10]
+        rotation = [20]
+        season = _conf_season(
+            starting_map_pool_ids_json=pool,
+            starting_map_rotation_ids_json=rotation,
+        )
+        conf = _ConferenceStub(id=1, starting_map_rotation_ids_json=[30])
+        self._fn()(season, {1: conf})
+        self.assertEqual(pool, [10])
+        self.assertEqual(rotation, [20])
+
+
+class TestParseRotationIds(unittest.TestCase):
+    """``matches.forms.parse_rotation_ids(raw, valid_map_ids)`` — pure, no
+    ORM, no form state. All six locked properties of contract SS2."""
+
+    _VALID = {3, 4, 7}
+
+    def _fn(self):
+        from matches.forms import parse_rotation_ids
+
+        return parse_rotation_ids
+
+    def test_none_returns_empty_pair(self) -> None:
+        self.assertEqual(self._fn()(None, self._VALID), ([], []))
+
+    def test_empty_string_returns_empty_pair(self) -> None:
+        self.assertEqual(self._fn()("", self._VALID), ([], []))
+
+    def test_author_order_is_never_sorted(self) -> None:
+        ids, errors = self._fn()("7,3,4", self._VALID)
+        self.assertEqual(ids, [7, 3, 4])
+        self.assertEqual(errors, [])
+
+    def test_duplicates_are_kept(self) -> None:
+        ids, errors = self._fn()("3,3", self._VALID)
+        self.assertEqual(ids, [3, 3])
+        self.assertEqual(errors, [])
+
+    def test_whitespace_is_tolerated(self) -> None:
+        ids, errors = self._fn()(" 3 , 4 ", self._VALID)
+        self.assertEqual(ids, [3, 4])
+        self.assertEqual(errors, [])
+
+    def test_empty_tokens_are_skipped_silently(self) -> None:
+        ids, errors = self._fn()("3,,4,", self._VALID)
+        self.assertEqual(ids, [3, 4])
+        self.assertEqual(errors, [])
+
+    def test_whitespace_only_string_is_not_an_error(self) -> None:
+        self.assertEqual(self._fn()("   ", self._VALID), ([], []))
+
+    def test_invalid_token_error_string_is_verbatim(self) -> None:
+        ids, errors = self._fn()("abc", self._VALID)
+        self.assertEqual(ids, [])
+        self.assertEqual(errors, ["Map rotation contains an invalid id."])
+
+    def test_unknown_id_error_string_is_verbatim(self) -> None:
+        ids, errors = self._fn()("99", self._VALID)
+        self.assertEqual(ids, [])
+        self.assertEqual(errors, ["Map rotation contains an unknown map id."])
+
+    def test_one_error_per_offending_token_not_deduped(self) -> None:
+        _ids, errors = self._fn()("a,b", self._VALID)
+        self.assertEqual(
+            errors,
+            [
+                "Map rotation contains an invalid id.",
+                "Map rotation contains an invalid id.",
+            ],
+        )
+
+    def test_one_error_per_unknown_id_not_deduped(self) -> None:
+        _ids, errors = self._fn()("98,99", self._VALID)
+        self.assertEqual(len(errors), 2)
+        self.assertEqual(set(errors), {"Map rotation contains an unknown map id."})
+
+    def test_valid_ids_still_returned_from_a_partly_bad_string(self) -> None:
+        ids, errors = self._fn()("3,abc,4,99,7", self._VALID)
+        self.assertEqual(ids, [3, 4, 7])
+        self.assertEqual(
+            errors,
+            [
+                "Map rotation contains an invalid id.",
+                "Map rotation contains an unknown map id.",
+            ],
+        )
+
+    def test_empty_valid_set_rejects_every_id(self) -> None:
+        ids, errors = self._fn()("3,4", set())
+        self.assertEqual(ids, [])
+        self.assertEqual(len(errors), 2)
+        self.assertEqual(set(errors), {"Map rotation contains an unknown map id."})
+
+    def test_returns_a_tuple_of_list_int_and_list_str(self) -> None:
+        ids, errors = self._fn()("3,abc", self._VALID)
+        self.assertIsInstance(ids, list)
+        self.assertIsInstance(errors, list)
+        self.assertTrue(all(isinstance(i, int) for i in ids))
+        self.assertTrue(all(isinstance(e, str) for e in errors))

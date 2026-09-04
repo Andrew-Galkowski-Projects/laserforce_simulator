@@ -572,9 +572,16 @@ class TestPlaySeasonTaskMapResolution(TestCase):
         original_resolve = _tasks._resolve_fixture_map
         captured_calls: list = []
 
-        def _spy_resolve(season_, fixture, pool_by_id):
+        # CONF-06 — the production helper gained a FOURTH keyword argument
+        # (``conf_by_team``), so a 3-parameter spy now raises TypeError when
+        # the play loop calls it. The spy accepts and forwards the new
+        # argument; the invariant this test guards — the helper is called
+        # exactly once per fixture, in fixture order — is unchanged.
+        def _spy_resolve(season_, fixture, pool_by_id, conf_by_team=None):
             captured_calls.append((fixture.matchday, fixture.round_number))
-            return original_resolve(season_, fixture, pool_by_id)
+            return original_resolve(
+                season_, fixture, pool_by_id, conf_by_team=conf_by_team
+            )
 
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
             with patch.object(_tasks, "_resolve_fixture_map", _spy_resolve):

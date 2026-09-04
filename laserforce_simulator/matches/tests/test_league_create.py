@@ -486,11 +486,12 @@ class TestLeagueCreateMapMode(TestCase):
         form = _Lg01jCreateLeagueForm()
         self.assertIn("map_mode", form.fields)
 
-    def test_map_mode_choices_match_four_locked_tuples(self) -> None:
+    def test_map_mode_choices_match_five_locked_tuples(self) -> None:
         form = _Lg01jCreateLeagueForm()
         choices = list(form.fields["map_mode"].choices)
         # Choices come from the model field. SUB-01 widened the LG-01j
-        # 3-tuple to 4 with the ``rotate_by_matchday`` mode.
+        # 3-tuple to 4 with the ``rotate_by_matchday`` mode; CONF-06 appends
+        # ``rotate_by_conference`` as the FIFTH and LAST tuple.
         # ``required=True`` + ``initial="none"`` ⇒ no blank choice.
         self.assertEqual(
             choices,
@@ -499,6 +500,7 @@ class TestLeagueCreateMapMode(TestCase):
                 ("single", "Single map"),
                 ("random_per_round", "Random per Round"),
                 ("rotate_by_matchday", "Rotate by matchday"),
+                ("rotate_by_conference", "Rotate by Conference"),
             ],
         )
 
@@ -2210,3 +2212,159 @@ class TestConf02ConferenceTournamentTeamFloor(TestCase):
         )
         self.assertFalse(form.is_valid())
         self.assertIn("number_of_conferences", form.errors)
+
+
+# ---------------------------------------------------------------------------
+# CONF-06 — ``rotate_by_conference`` create-League guards
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/conf-06-seam-contract.md`` SS5.2. The
+# block uses ``add_error`` (NOT ``raise``) so all three guards can surface
+# together in one submission:
+#
+#   map_pool               "Map pool must be empty when Map mode is
+#                           'Rotate by Conference'."
+#   map_rotation           "Map rotation must be empty when Map mode is
+#                           'Rotate by Conference'."
+#   number_of_conferences  "Map mode 'Rotate by Conference' requires at least
+#                           2 conferences."
+#
+# The Season-level pool/rotation must both be EMPTY because the rotation lives
+# one level down, on each Conference (authored on Manage Conferences).
+#
+# WILL fail until the Code agent lands the fifth ``map_mode`` choice and the
+# new guard block.
+
+_CONF06_POOL_ERROR = "Map pool must be empty when Map mode is 'Rotate by Conference'."
+_CONF06_ROTATION_ERROR = (
+    "Map rotation must be empty when Map mode is 'Rotate by Conference'."
+)
+_CONF06_CONFERENCES_ERROR = (
+    "Map mode 'Rotate by Conference' requires at least 2 conferences."
+)
+
+
+class TestConf06CreateLeagueRotateByConferenceGuards(TestCase):
+    """The three locked SS5.2 error strings under their exact field keys, and
+    a valid ``rotate_by_conference`` submission."""
+
+    def _payload(self, **overrides) -> dict:
+        payload = _valid_payload(
+            map_mode="rotate_by_conference",
+            num_teams="4",
+            number_of_conferences="2",
+            league_name="Conf06CreateL",
+        )
+        payload.update(overrides)
+        return payload
+
+    def _errors(self, payload: dict, field: str) -> list:
+        form = _Lg01jCreateLeagueForm(payload)
+        self.assertFalse(form.is_valid())
+        return [str(e) for e in form.errors.get(field, [])]
+
+    def test_valid_submission_is_valid(self) -> None:
+        form = _Lg01jCreateLeagueForm(self._payload())
+        self.assertTrue(form.is_valid(), form.errors.as_json())
+
+    def test_valid_submission_with_four_conferences_is_valid(self) -> None:
+        form = _Lg01jCreateLeagueForm(
+            self._payload(num_teams="8", number_of_conferences="4")
+        )
+        self.assertTrue(form.is_valid(), form.errors.as_json())
+
+    def test_non_empty_pool_rejected_on_map_pool(self) -> None:
+        m = _lg01j_make_map_with_config("Conf06PoolMap")
+        errs = self._errors(self._payload(map_pool=[str(m.id)]), "map_pool")
+        self.assertIn(_CONF06_POOL_ERROR, errs, f"map_pool errors={errs!r}")
+
+    def test_non_empty_rotation_rejected_on_map_rotation(self) -> None:
+        m = _lg01j_make_map_with_config("Conf06RotMap")
+        errs = self._errors(
+            self._payload(map_rotation=_rotation_wire([m.id])), "map_rotation"
+        )
+        self.assertIn(_CONF06_ROTATION_ERROR, errs, f"map_rotation errors={errs!r}")
+
+    def test_zero_conferences_rejected_on_number_of_conferences(self) -> None:
+        errs = self._errors(
+            self._payload(number_of_conferences="0"), "number_of_conferences"
+        )
+        self.assertIn(
+            _CONF06_CONFERENCES_ERROR, errs, f"number_of_conferences errors={errs!r}"
+        )
+
+    def test_missing_conferences_field_rejected(self) -> None:
+        payload = self._payload()
+        payload.pop("number_of_conferences")
+        errs = self._errors(payload, "number_of_conferences")
+        self.assertIn(
+            _CONF06_CONFERENCES_ERROR, errs, f"number_of_conferences errors={errs!r}"
+        )
+
+    def test_one_conference_rejected(self) -> None:
+        errs = self._errors(
+            self._payload(number_of_conferences="1"), "number_of_conferences"
+        )
+        self.assertIn(
+            _CONF06_CONFERENCES_ERROR, errs, f"number_of_conferences errors={errs!r}"
+        )
+
+    def test_all_three_guards_surface_together(self) -> None:
+        """``add_error``, not ``raise`` — one submission reports every
+        offending field rather than only the first."""
+        m_pool = _lg01j_make_map_with_config("Conf06AllPool")
+        m_rot = _lg01j_make_map_with_config("Conf06AllRot")
+        payload = self._payload(
+            map_pool=[str(m_pool.id)],
+            map_rotation=_rotation_wire([m_rot.id]),
+            number_of_conferences="0",
+        )
+        form = _Lg01jCreateLeagueForm(payload)
+        self.assertFalse(form.is_valid())
+        self.assertIn(
+            _CONF06_POOL_ERROR, [str(e) for e in form.errors.get("map_pool", [])]
+        )
+        self.assertIn(
+            _CONF06_ROTATION_ERROR,
+            [str(e) for e in form.errors.get("map_rotation", [])],
+        )
+        self.assertIn(
+            _CONF06_CONFERENCES_ERROR,
+            [str(e) for e in form.errors.get("number_of_conferences", [])],
+        )
+
+    def test_invalid_create_writes_nothing(self) -> None:
+        before = League.objects.count()
+        response = self.client.post(
+            reverse("league_create_advanced"),
+            self._payload(number_of_conferences="0", league_name="Conf06NoWrite"),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(League.objects.count(), before)
+
+    def test_valid_create_persists_the_mode_with_no_season_level_maps(self) -> None:
+        """The Season-level pool/rotation stay empty — the rotation lives on
+        each Conference, authored later on Manage Conferences."""
+        response = self.client.post(
+            reverse("league_create_advanced"),
+            self._payload(num_teams="8", league_name="Conf06CreateOK"),
+        )
+        self.assertEqual(response.status_code, 302)
+        season = Season.objects.get(league__name="Conf06CreateOK")
+        self.assertEqual(season.map_mode, "rotate_by_conference")
+        self.assertEqual(season.map_pool.count(), 0)
+        self.assertEqual(season.map_rotation_ids_json or [], [])
+        self.assertEqual(season.conferences.count(), 2)
+
+    def test_other_modes_unaffected_by_the_new_guard(self) -> None:
+        """The four pre-existing per-mode blocks are untouched: a plain
+        ``none`` create with 2 Conferences still validates."""
+        form = _Lg01jCreateLeagueForm(
+            _valid_payload(
+                map_mode="none",
+                num_teams="4",
+                number_of_conferences="2",
+                league_name="Conf06Untouched",
+            )
+        )
+        self.assertTrue(form.is_valid(), form.errors.as_json())

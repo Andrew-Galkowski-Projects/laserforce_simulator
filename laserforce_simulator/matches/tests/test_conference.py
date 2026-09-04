@@ -37,6 +37,7 @@ from __future__ import annotations
 from datetime import date
 from unittest.mock import patch
 
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import CASCADE, ForeignKey
 from django.test import TestCase
@@ -565,3 +566,255 @@ class TestStampChampionByConferenceCount(TestCase):
         self.assertIsNotNone(season.champion_team_id)
         rows = season._final_standings_for_phase(season.ordered_phases()[-1])
         self.assertEqual(season.champion_team_id, rows[0].team_id)
+
+
+# ===========================================================================
+# CONF-06 — per-Conference rotating map pools (model + activation)
+# ===========================================================================
+#
+# Seam contract ``.claude/worktrees/conf-06-seam-contract.md`` (APPROVED):
+#   - SS1.2 two new ``Conference`` JSONFields, ``null=True, blank=True,
+#     default=None``: ``map_rotation_ids_json`` (live, author order) and
+#     ``starting_map_rotation_ids_json`` (activation snapshot).
+#   - SS1.4(b) ``Season.start_season()`` snapshots inside the EXISTING
+#     per-Conference loop: ``list(conf.map_rotation_ids_json or [])`` —
+#     author order PRESERVED, NOT sorted; ``None``/``[]`` ⇒ ``[]``. Written
+#     for EVERY Season with Conferences, regardless of ``map_mode``.
+#   - SS1.4(a) activation guard for ``map_mode == "rotate_by_conference"``:
+#     fewer than 2 Conferences, or ANY Conference with an empty rotation,
+#     raises ``ValidationError`` with the single locked message below.
+#
+# These WILL fail until the Code agent lands the fields + migration 0061 +
+# the two ``start_season`` edits — the expected TDD red state.
+
+_CONF06_ACTIVATION_ERROR = (
+    "A Season with map mode 'Rotate by Conference' requires at least "
+    "2 conferences, each with at least 1 rotation map."
+)
+
+
+def _conf06_season(prefix: str, rotations: "list[list[int] | None]"):
+    """A draft Season with ``len(rotations)`` Conferences of 2 teams each,
+    Conference ``i`` carrying ``rotations[i]`` as its LIVE rotation.
+
+    Rotation entries are bare ints: ``map_rotation_ids_json`` is a plain
+    JSON list with no FK to ``ArenaMap``, so no map rows are needed to pin
+    the ordering/snapshot contract.
+    """
+    season, confs, groups = _draft_conf_season(prefix, [2] * len(rotations))
+    for conf, rotation in zip(confs, rotations):
+        conf.map_rotation_ids_json = rotation
+        conf.save(update_fields=["map_rotation_ids_json"])
+    return season, confs, groups
+
+
+class TestConf06ConferenceMapRotationFields(TestCase):
+    """The two new ``Conference`` JSONFields and their pre-authoring
+    ``None`` sentinel."""
+
+    _FIELDS = ("map_rotation_ids_json", "starting_map_rotation_ids_json")
+
+    def test_both_fields_exist(self) -> None:
+        for name in self._FIELDS:
+            self.assertIsNotNone(Conference._meta.get_field(name), name)
+
+    def test_both_fields_are_json_fields(self) -> None:
+        from django.db import models as django_models
+
+        for name in self._FIELDS:
+            self.assertIsInstance(
+                Conference._meta.get_field(name), django_models.JSONField, name
+            )
+
+    def test_both_fields_null_blank_default_none(self) -> None:
+        for name in self._FIELDS:
+            field = Conference._meta.get_field(name)
+            self.assertTrue(field.null, name)
+            self.assertTrue(field.blank, name)
+            self.assertIsNone(field.default, name)
+
+    def test_new_conference_has_none_for_both(self) -> None:
+        season = _draft_season("Conf06New")
+        conf = Conference.objects.create(season=season, name="West", ordinal=1)
+        conf.refresh_from_db()
+        self.assertIsNone(conf.map_rotation_ids_json)
+        self.assertIsNone(conf.starting_map_rotation_ids_json)
+
+    def test_live_field_round_trips_a_non_ascending_list(self) -> None:
+        season = _draft_season("Conf06RT")
+        conf = Conference.objects.create(season=season, name="West", ordinal=1)
+        conf.map_rotation_ids_json = [30, 10, 20]
+        conf.save()
+        conf.refresh_from_db()
+        self.assertEqual(conf.map_rotation_ids_json, [30, 10, 20])
+
+
+class TestConf06StartSeasonRotationSnapshot(TestCase):
+    """``start_season()`` snapshots each Conference's rotation in AUTHOR
+    order; ``None``/``[]`` ⇒ ``[]``."""
+
+    def test_snapshot_preserves_author_order_not_sorted(self) -> None:
+        """Deliberately NON-ascending ids — a stray ``sorted()`` in
+        production fails here. The matchday index keys directly into this
+        list, so the order IS the behaviour."""
+        season, confs, _ = _conf06_season("Conf06Ord", [[30, 10, 20], [7, 5]])
+        season.start_season()
+        for conf, expected in zip(confs, [[30, 10, 20], [7, 5]]):
+            conf.refresh_from_db()
+            self.assertEqual(conf.starting_map_rotation_ids_json, expected)
+
+    def test_snapshot_is_empty_list_when_live_is_none(self) -> None:
+        season, confs, _ = _conf06_season("Conf06SnapNone", [None, None])
+        season.start_season()
+        for conf in confs:
+            conf.refresh_from_db()
+            self.assertEqual(conf.starting_map_rotation_ids_json, [])
+
+    def test_snapshot_is_empty_list_when_live_is_empty_list(self) -> None:
+        season, confs, _ = _conf06_season("Conf06SnapEmpty", [[], []])
+        season.start_season()
+        for conf in confs:
+            conf.refresh_from_db()
+            self.assertEqual(conf.starting_map_rotation_ids_json, [])
+
+    def test_snapshot_written_for_every_map_mode(self) -> None:
+        """Contract SS1.4(b): the loop stays mode-agnostic — the snapshot is
+        written for EVERY Season with Conferences."""
+        season, confs, _ = _conf06_season("Conf06AnyMode", [[9, 8], [7]])
+        self.assertEqual(season.map_mode, "none")
+        season.start_season()
+        confs[0].refresh_from_db()
+        confs[1].refresh_from_db()
+        self.assertEqual(confs[0].starting_map_rotation_ids_json, [9, 8])
+        self.assertEqual(confs[1].starting_map_rotation_ids_json, [7])
+
+    def test_existing_team_snapshot_still_written_alongside(self) -> None:
+        """The rotation snapshot rides in the SAME loop / ``update_fields``
+        as ``starting_team_ids_json`` — neither may clobber the other."""
+        season, confs, groups = _conf06_season("Conf06Both", [[30, 10], [20]])
+        season.start_season()
+        for conf, group, expected in zip(confs, groups, [[30, 10], [20]]):
+            conf.refresh_from_db()
+            self.assertEqual(conf.starting_team_ids_json, sorted(t.id for t in group))
+            self.assertEqual(conf.starting_map_rotation_ids_json, expected)
+
+    def test_snapshot_frozen_against_post_activation_drift(self) -> None:
+        season, confs, _ = _conf06_season("Conf06Frozen", [[30, 10], [20]])
+        season.start_season()
+        conf = confs[0]
+        conf.refresh_from_db()
+        self.assertEqual(conf.starting_map_rotation_ids_json, [30, 10])
+        conf.map_rotation_ids_json = [99, 98]
+        conf.save(update_fields=["map_rotation_ids_json"])
+        conf.refresh_from_db()
+        self.assertEqual(conf.starting_map_rotation_ids_json, [30, 10])
+
+    def test_zero_conference_season_still_activates(self) -> None:
+        season, _teams = _active_plain_season("Conf06Flat", 2)
+        self.assertEqual(season.state, "active")
+        self.assertEqual(season.conferences.count(), 0)
+
+
+class TestConf06ActivationGuard(TestCase):
+    """``start_season()`` refuses to activate a ``rotate_by_conference``
+    Season that cannot resolve a map — fewer than 2 Conferences, or any
+    Conference with an empty rotation."""
+
+    def _rotate_season(self, prefix: str, rotations: "list[list[int] | None]"):
+        season, confs, groups = _conf06_season(prefix, rotations)
+        season.map_mode = "rotate_by_conference"
+        season.save(update_fields=["map_mode"])
+        return season, confs, groups
+
+    def test_zero_conferences_raises_with_the_locked_message(self) -> None:
+        season = _draft_season("Conf06Zero")
+        for i in range(2):
+            team, _ = make_team_with_slots(f"Conf06Zero{i}")
+            season.teams.add(team)
+        season.map_mode = "rotate_by_conference"
+        season.save(update_fields=["map_mode"])
+        with self.assertRaises(ValidationError) as cm:
+            season.start_season()
+        self.assertIn(_CONF06_ACTIVATION_ERROR, str(cm.exception))
+        season.refresh_from_db()
+        self.assertEqual(season.state, "draft")
+
+    def test_one_conference_raises(self) -> None:
+        season, _confs, _groups = self._rotate_season("Conf06One", [[10, 20]])
+        with self.assertRaises(ValidationError) as cm:
+            season.start_season()
+        self.assertIn(_CONF06_ACTIVATION_ERROR, str(cm.exception))
+        season.refresh_from_db()
+        self.assertEqual(season.state, "draft")
+
+    def test_none_rotation_on_one_conference_raises(self) -> None:
+        season, _confs, _groups = self._rotate_season("Conf06NullRot", [[10, 20], None])
+        with self.assertRaises(ValidationError) as cm:
+            season.start_season()
+        self.assertIn(_CONF06_ACTIVATION_ERROR, str(cm.exception))
+        season.refresh_from_db()
+        self.assertEqual(season.state, "draft")
+
+    def test_empty_rotation_on_one_conference_raises(self) -> None:
+        season, _confs, _groups = self._rotate_season("Conf06EmptyRot", [[10, 20], []])
+        with self.assertRaises(ValidationError) as cm:
+            season.start_season()
+        self.assertIn(_CONF06_ACTIVATION_ERROR, str(cm.exception))
+        season.refresh_from_db()
+        self.assertEqual(season.state, "draft")
+
+    def test_all_conferences_populated_activates(self) -> None:
+        season, confs, _groups = self._rotate_season(
+            "Conf06Ok", [[30, 10], [20], [5, 6, 7]]
+        )
+        season.start_season()
+        season.refresh_from_db()
+        self.assertEqual(season.state, "active")
+        for conf, expected in zip(confs, [[30, 10], [20], [5, 6, 7]]):
+            conf.refresh_from_db()
+            self.assertEqual(conf.starting_map_rotation_ids_json, expected)
+
+    def test_single_map_rotation_per_conference_is_enough(self) -> None:
+        season, _confs, _groups = self._rotate_season("Conf06Solo", [[42], [43]])
+        season.start_season()
+        season.refresh_from_db()
+        self.assertEqual(season.state, "active")
+
+    def test_guard_does_not_fire_for_other_modes(self) -> None:
+        """Every pre-CONF-06 mode activates exactly as today, even with zero
+        Conferences or empty per-Conference rotations."""
+        for i, mode in enumerate(
+            ["none", "single", "random_per_round", "rotate_by_matchday"]
+        ):
+            season, _confs, _groups = _conf06_season(f"Conf06Other{i}", [[10], None])
+            season.map_mode = mode
+            season.save(update_fields=["map_mode"])
+            season.start_season()
+            season.refresh_from_db()
+            self.assertEqual(season.state, "active", mode)
+
+    def test_guard_does_not_fire_for_other_modes_with_zero_conferences(self) -> None:
+        for i, mode in enumerate(
+            ["none", "single", "random_per_round", "rotate_by_matchday"]
+        ):
+            season = _draft_season(f"Conf06OtherFlat{i}")
+            for j in range(2):
+                team, _ = make_team_with_slots(f"Conf06OtherFlat{i}x{j}")
+                season.teams.add(team)
+            season.map_mode = mode
+            season.save(update_fields=["map_mode"])
+            season.start_season()
+            season.refresh_from_db()
+            self.assertEqual(season.state, "active", mode)
+
+    def test_too_few_teams_guard_still_wins(self) -> None:
+        """The CONF-06 guard sits AFTER the ``teams.count() < 2`` check, so a
+        1-team Season still reports the team error."""
+        season = _draft_season("Conf06OneTeam")
+        team, _ = make_team_with_slots("Conf06OneTeamA")
+        season.teams.add(team)
+        season.map_mode = "rotate_by_conference"
+        season.save(update_fields=["map_mode"])
+        with self.assertRaises(ValidationError) as cm:
+            season.start_season()
+        self.assertIn("at least 2 enrolled teams", str(cm.exception))

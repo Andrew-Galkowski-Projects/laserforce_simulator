@@ -2743,3 +2743,70 @@ class TestConf04NextSeasonSkipsTheWorldsPhase(TestCase):
         self.assertEqual(phase.ordinal, 1)
         self.assertEqual(phase.phase_type, "round_robin")
         self.assertNotEqual(phase.tournament_mode, "worlds")
+
+
+# ---------------------------------------------------------------------------
+# CONF-06 — the rollover downgrades ``rotate_by_conference`` to ``none``
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/conf-06-seam-contract.md`` SS4.1: the
+# rollover carries NO Conferences, so a carried ``rotate_by_conference`` mode
+# would resolve ``None`` for every fixture all season. ``_run_season_rollover``
+# downgrades it to the 3-zone fallback and carries every other mode verbatim.
+#
+# WILL fail until the Code agent lands the ``map_mode=`` kwarg change.
+
+
+class TestConf06NextSeasonRotateByConferenceDowngrade(TestCase):
+    """A completed ``rotate_by_conference`` Season rolls over to a new Season
+    with ``map_mode == "none"``; every other mode still carries verbatim."""
+
+    def _completed(self, league_name: str, *, map_mode: str) -> League:
+        league = _make_league(league_name)
+        teams = _make_teams(f"{league_name}T", 2)
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        prev.map_mode = map_mode
+        prev.save(update_fields=["map_mode"])
+        return league
+
+    def _roll(self, league: League) -> Season:
+        response = self.client.post(
+            reverse("next_season", kwargs={"league_id": league.id})
+        )
+        self.assertEqual(response.status_code, 302)
+        return league.seasons.order_by("-id").first()
+
+    def test_rotate_by_conference_downgrades_to_none(self) -> None:
+        league = self._completed("Conf06Down", map_mode="rotate_by_conference")
+        new_season = self._roll(league)
+        self.assertEqual(new_season.map_mode, "none")
+
+    def test_downgraded_season_carries_no_conferences(self) -> None:
+        """The downgrade exists precisely because the new Season has no
+        Conferences to resolve a rotation from."""
+        league = self._completed("Conf06DownConf", map_mode="rotate_by_conference")
+        new_season = self._roll(league)
+        self.assertEqual(new_season.conferences.count(), 0)
+        self.assertEqual(new_season.map_mode, "none")
+
+    def test_downgraded_season_has_an_empty_pool(self) -> None:
+        league = self._completed("Conf06DownPool", map_mode="rotate_by_conference")
+        new_season = self._roll(league)
+        self.assertEqual(new_season.map_pool.count(), 0)
+
+    def test_previous_season_mode_is_left_untouched(self) -> None:
+        league = self._completed("Conf06DownPrev", map_mode="rotate_by_conference")
+        self._roll(league)
+        prev = league.seasons.filter(state="completed").order_by("id").first()
+        self.assertEqual(prev.map_mode, "rotate_by_conference")
+
+    def test_every_other_mode_carries_verbatim(self) -> None:
+        for mode in ("none", "single", "random_per_round", "rotate_by_matchday"):
+            league = self._completed(f"Conf06Carry-{mode}", map_mode=mode)
+            new_season = self._roll(league)
+            self.assertEqual(new_season.map_mode, mode, f"mode={mode}")
