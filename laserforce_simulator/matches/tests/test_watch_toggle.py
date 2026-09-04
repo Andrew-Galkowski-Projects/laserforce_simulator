@@ -32,6 +32,7 @@ from django.urls import reverse
 
 from matches.models import League, Season
 from matches.tests.conftest import make_team_with_slots
+from conftest import get_shared_manager
 
 
 def _make_league(name: str = "ToggleLeague") -> League:
@@ -64,6 +65,7 @@ def _toggle_url(league_id: int) -> str:
 class TestWatchToggleAddRemove(TestCase):
     def setUp(self) -> None:
         self.client = Client()
+        self.client.force_login(get_shared_manager())
         self.league = _make_league()
         self.season, teams = _make_active_season(self.league, n_teams=2)
         self.team_a, self.team_b = teams
@@ -114,6 +116,7 @@ class TestWatchToggleAddRemove(TestCase):
 class TestWatchTogglePerLeagueIsolation(TestCase):
     def setUp(self) -> None:
         self.client = Client()
+        self.client.force_login(get_shared_manager())
         self.league_a = _make_league("LeagueA")
         self.league_b = _make_league("LeagueB")
         self.season_a, teams_a = _make_active_season(self.league_a, n_teams=2)
@@ -157,6 +160,7 @@ class TestWatchTogglePerLeagueIsolation(TestCase):
 class TestWatchToggleErrors(TestCase):
     def setUp(self) -> None:
         self.client = Client()
+        self.client.force_login(get_shared_manager())
         self.league = _make_league()
         self.season, teams = _make_active_season(self.league, n_teams=2)
         self.player = teams[0].active_players[0]

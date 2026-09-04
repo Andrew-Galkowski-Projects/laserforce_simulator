@@ -23,6 +23,7 @@ from core import views as core_views
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("accounts/", include("accounts.urls")),
     path("api/", include("laserforce_simulator.api_urls")),
     path("help/", include("core.help_urls")),
     path("teams/", include("teams.urls")),

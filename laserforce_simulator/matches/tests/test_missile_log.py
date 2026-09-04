@@ -17,6 +17,7 @@ from django.urls import reverse
 from matches.models import GameEvent, GameRound
 from matches.simulation import BatchSimulator
 from matches.tests.conftest import make_team_with_slots
+from conftest import get_shared_manager
 
 # Production-source extensions scanned by the legacy-literal guard (test #13).
 # Listed at module top so a future reader can see the scope at a glance.
@@ -310,6 +311,7 @@ class TestRes03TickSemantics:
             },
         )
         client = Client()
+        client.force_login(get_shared_manager())
         # Dedicated endpoint locked by RES-03 grill (URL name "missile_log",
         # path /matches/game-round/<id>/missile-log/).
         url = reverse("missile_log", kwargs={"round_id": gr.id})
@@ -561,6 +563,7 @@ class TestRes03MissileLogView:
         property must hold.
         """
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(self._missile_log_url())
         assert resp.status_code == 200
         body = resp.content.decode("utf-8")
@@ -582,6 +585,7 @@ class TestRes03MissileLogView:
         For this fixture: fired=3, hit=2, eff=66.67%.
         """
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(self._missile_log_url())
         assert resp.status_code == 200
         body = resp.content.decode("utf-8")
@@ -607,6 +611,7 @@ class TestRes03MissileLogView:
         row must NOT carry that class.
         """
         client = Client()
+        client.force_login(get_shared_manager())
         resp = client.get(self._missile_log_url())
         body = resp.content.decode("utf-8")
         assert "friendly-fire" in body, (

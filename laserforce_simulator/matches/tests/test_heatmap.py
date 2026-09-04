@@ -19,6 +19,7 @@ from core.models import (
 )
 from matches.models import GameRound, PlayerRoundState
 from matches.tests.conftest import make_team_with_slots
+from conftest import get_shared_manager
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -119,7 +120,9 @@ class TestRoundHeatmapView(TestCase):
             blue_prefix="Res04View200B",
         )
         url = reverse("movement_heatmap", kwargs={"round_id": gr.id})
-        resp = Client().get(url)
+        client = Client()
+        client.force_login(get_shared_manager())
+        resp = client.get(url)
         self.assertEqual(resp.status_code, 200)
         body = resp.content.decode("utf-8")
         self.assertIn('id="heatmap-canvas"', body)
@@ -139,7 +142,9 @@ class TestRoundHeatmapView(TestCase):
             blue_prefix="Res04ViewNoMapB",
         )
         url = reverse("movement_heatmap", kwargs={"round_id": gr.id})
-        resp = Client().get(url)
+        client = Client()
+        client.force_login(get_shared_manager())
+        resp = client.get(url)
         self.assertEqual(resp.status_code, 200)
         body = resp.content.decode("utf-8")
         self.assertIn('id="heatmap-no-map-notice"', body)
@@ -148,7 +153,9 @@ class TestRoundHeatmapView(TestCase):
     def test_round_heatmap_view_404_for_missing_round(self) -> None:
         """Bogus round PK → 404 via ``get_object_or_404``."""
         url = reverse("movement_heatmap", kwargs={"round_id": 999999})
-        resp = Client().get(url)
+        client = Client()
+        client.force_login(get_shared_manager())
+        resp = client.get(url)
         self.assertEqual(resp.status_code, 404)
 
     def test_round_heatmap_view_405_non_get(self) -> None:
@@ -162,7 +169,9 @@ class TestRoundHeatmapView(TestCase):
             blue_prefix="Res04View405B",
         )
         url = reverse("movement_heatmap", kwargs={"round_id": gr.id})
-        resp = Client().post(url)
+        client = Client()
+        client.force_login(get_shared_manager())
+        resp = client.post(url)
         self.assertEqual(resp.status_code, 405)
 
 
@@ -197,7 +206,9 @@ class TestMapHeatmapDataEndpoint(TestCase):
         _ = (gr1, gr2)
 
         url = reverse("map_heatmap_data", kwargs={"map_id": arena_map.id})
-        resp = Client().get(url, {"zone_size": zone_size})
+        client = Client()
+        client.force_login(get_shared_manager())
+        resp = client.get(url, {"zone_size": zone_size})
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertEqual(data["round_count"], 2)
@@ -241,7 +252,9 @@ class TestMapHeatmapDataEndpoint(TestCase):
         )
 
         url = reverse("map_heatmap_data", kwargs={"map_id": arena_map.id})
-        resp = Client().get(url, {"zone_size": zone_size, "team_color": "red"})
+        client = Client()
+        client.force_login(get_shared_manager())
+        resp = client.get(url, {"zone_size": zone_size, "team_color": "red"})
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertIn("0,0", data["cell_occupancy"])
@@ -251,7 +264,9 @@ class TestMapHeatmapDataEndpoint(TestCase):
     def test_map_heatmap_data_404_for_missing_map(self) -> None:
         """Bogus map_id → 404."""
         url = reverse("map_heatmap_data", kwargs={"map_id": 999999})
-        resp = Client().get(url, {"zone_size": 50})
+        client = Client()
+        client.force_login(get_shared_manager())
+        resp = client.get(url, {"zone_size": 50})
         self.assertEqual(resp.status_code, 404)
 
     def test_map_heatmap_data_400_missing_zone_size(self) -> None:
@@ -259,7 +274,9 @@ class TestMapHeatmapDataEndpoint(TestCase):
         error string ``"zone_size required"``."""
         arena_map, _zs = _make_arena_map("Res04Bad400Zone")
         url = reverse("map_heatmap_data", kwargs={"map_id": arena_map.id})
-        resp = Client().get(url)
+        client = Client()
+        client.force_login(get_shared_manager())
+        resp = client.get(url)
         self.assertEqual(resp.status_code, 400)
         self.assertIn("zone_size required", resp.content.decode("utf-8"))
 
@@ -268,7 +285,9 @@ class TestMapHeatmapDataEndpoint(TestCase):
         string ``"invalid team_color"``."""
         arena_map, zone_size = _make_arena_map("Res04Bad400Team")
         url = reverse("map_heatmap_data", kwargs={"map_id": arena_map.id})
-        resp = Client().get(url, {"zone_size": zone_size, "team_color": "purple"})
+        client = Client()
+        client.force_login(get_shared_manager())
+        resp = client.get(url, {"zone_size": zone_size, "team_color": "purple"})
         self.assertEqual(resp.status_code, 400)
         self.assertIn("invalid team_color", resp.content.decode("utf-8"))
 
@@ -276,7 +295,9 @@ class TestMapHeatmapDataEndpoint(TestCase):
         """POST is not allowed; method-not-allowed → 405."""
         arena_map, zone_size = _make_arena_map("Res04Bad405")
         url = reverse("map_heatmap_data", kwargs={"map_id": arena_map.id})
-        resp = Client().post(url, {"zone_size": zone_size})
+        client = Client()
+        client.force_login(get_shared_manager())
+        resp = client.post(url, {"zone_size": zone_size})
         self.assertEqual(resp.status_code, 405)
 
 

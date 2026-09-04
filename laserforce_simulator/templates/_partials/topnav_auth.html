@@ -1,0 +1,20 @@
+{# UX-01 — the Account control, included once from base.html so it renders in all 3 app_mode branches at the far right of the top bar. #}
+{% if user.is_authenticated %}
+    <div class="nav-item dropdown">
+        <a class="nav-link dropdown-toggle" id="account-nav-link" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">{{ user.email }} ▾</a>
+        <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="account-nav-link">
+            <li><span class="dropdown-item-text" id="account-signed-in-as">Signed in as {{ user.email }}</span></li>
+            <li><a class="dropdown-item" id="account-password-change-link" href="{% url 'password_change' %}">Change password</a></li>
+            {# Django 5.x LogoutView rejects GET, so signing out is a POST form. #}
+            <li>
+                <form method="post" id="account-sign-out-form" action="{% url 'logout' %}">
+                    {% csrf_token %}
+                    <button type="submit" id="account-sign-out-button" class="dropdown-item">Sign out</button>
+                </form>
+            </li>
+        </ul>
+    </div>
+{% else %}
+    <a class="nav-link" id="account-sign-in-link" href="{% url 'login' %}">Sign in</a>
+    <a class="nav-link" id="account-register-link" href="{% url 'register' %}">Register</a>
+{% endif %}

@@ -30,6 +30,7 @@ import pytest
 
 from matches.simulation import BatchSimulator
 from matches.tests.conftest import make_team_with_slots
+from conftest import get_shared_manager
 
 # ---------------------------------------------------------------------------
 # Canonical constants (mirror SPEC). Used as the source of truth for the
@@ -590,6 +591,7 @@ class TestAPIReturnsRawTicks:
         from matches.models import GameEvent, GameRound, PlayerRoundState
 
         self.client = APIClient()
+        self.client.force_login(get_shared_manager())
         self.red, self.players = make_team_with_slots("T01ApiR")
         self.blue, _ = make_team_with_slots("T01ApiB")
         self.gr = GameRound.objects.create(
