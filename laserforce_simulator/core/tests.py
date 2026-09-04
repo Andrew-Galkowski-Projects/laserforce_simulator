@@ -423,3 +423,51 @@ class Infra01JsonFieldParityTests(TestCase):
                 "elevation": [[0.0, 1.5, 0.0], [2.25, 0.0, 1.0]],
             },
         )
+
+
+class LandingInProgressLeagueScopingTests(TestCase):
+    """UX-01 — the landing page's in-progress cards are Manager-scoped.
+
+    ``landing`` lists active Leagues. Without scoping it leaked every other
+    Account's League name and Season status to any signed-in visitor, even
+    though the League detail page itself correctly 404s. An **Unmanaged row**
+    (``manager IS NULL``) stays visible to everyone, as ADR-0038 specifies.
+    """
+
+    def setUp(self) -> None:
+        from django.contrib.auth import get_user_model
+        from matches.models import League
+
+        User = get_user_model()
+        self.me = User.objects.create_user(email="me@example.com", password="pw")
+        self.other = User.objects.create_user(email="other@example.com", password="pw")
+
+        self.mine = League.objects.create(
+            name="My League", state="active", manager=self.me
+        )
+        self.theirs = League.objects.create(
+            name="Their League", state="active", manager=self.other
+        )
+        self.unmanaged = League.objects.create(name="Shared League", state="active")
+
+    def _listed(self):
+        from django.urls import reverse
+
+        self.client.force_login(self.me)
+        return list(self.client.get(reverse("landing")).context["in_progress_leagues"])
+
+    def test_own_league_is_listed(self) -> None:
+        self.assertIn(self.mine, self._listed())
+
+    def test_unmanaged_league_is_listed(self) -> None:
+        self.assertIn(self.unmanaged, self._listed())
+
+    def test_other_accounts_league_is_not_listed(self) -> None:
+        self.assertNotIn(self.theirs, self._listed())
+
+    def test_other_accounts_league_name_absent_from_html(self) -> None:
+        from django.urls import reverse
+
+        self.client.force_login(self.me)
+        response = self.client.get(reverse("landing"))
+        self.assertNotContains(response, "Their League")
