@@ -1,5 +1,6 @@
 import random
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
@@ -35,6 +36,14 @@ ROLE_CHOICES = [
 ]
 
 
+# The magic name identifying the global sandbox free-agent pool Team (LG-00).
+# Single source of truth: ``TeamManager.regular()``, ``get_free_agents_team()``
+# and the UX-01 ``claim_unmanaged`` command all key off this constant. That
+# singleton is a cross-Account shared pool and is deliberately never stamped
+# with a ``manager`` -- see ADR-0038 and ``accounts/CLAUDE.md``.
+FREE_AGENTS_TEAM_NAME = "Free Agents"
+
+
 class TeamManager(models.Manager):
     """Default manager for `Team`, plus `regular()` which excludes every
     free-agent pool Team.
@@ -49,7 +58,7 @@ class TeamManager(models.Manager):
 
     def regular(self):
         """All Teams except free-agent pool Teams (global + per-League)."""
-        return self.exclude(name="Free Agents").exclude(
+        return self.exclude(name=FREE_AGENTS_TEAM_NAME).exclude(
             free_agent_pool_for__isnull=False
         )
 
@@ -110,6 +119,23 @@ class Team(models.Model):
     # FIN-04 — how the Team resolves an injured starter at fixture time.
     injury_policy = models.CharField(
         max_length=16, choices=INJURY_POLICY_CHOICES, default="auto_sub"
+    )
+
+    # UX-01 — the **Manager**: the Account this row belongs to (ADR-0038).
+    # NULL = an **Unmanaged row**: readable AND writable by any authenticated
+    # Account, and listed to all of them. SET_NULL so removing an Account in
+    # Admin demotes its rows to Unmanaged rather than cascading history away.
+    #
+    # NAMING HAZARD: ``Team.manager`` (this FK, Team -> Account) is NOT
+    # ``Team.managed_in_leagues`` (the reverse accessor of
+    # ``League.current_team``, Team -> Leagues). Nor is the **Manager** the
+    # **Owner** — that is the fictional boss of ADR-0026, never a login.
+    manager = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="teams",
     )
 
     def __str__(self):
@@ -241,7 +267,7 @@ def get_free_agents_team() -> "Team":
     generated players who are not assigned to a regular Team. The row has no
     slot FKs filled, so `is_valid_roster` returns False by design.
     """
-    team, _created = Team.objects.get_or_create(name="Free Agents")
+    team, _created = Team.objects.get_or_create(name=FREE_AGENTS_TEAM_NAME)
     return team
 
 

@@ -1,5 +1,6 @@
 import math
 from datetime import datetime
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from teams.models import Team, Player
@@ -99,6 +100,23 @@ class Match(models.Model):
         related_name="matches",
     )
     is_completed = models.BooleanField(default=False)
+
+    # UX-01 — the **Manager**: the Account this row belongs to (ADR-0038).
+    # NULL = an **Unmanaged row**: readable AND writable by any authenticated
+    # Account, and listed to all of them. SET_NULL so removing an Account in
+    # Admin demotes its rows to Unmanaged rather than cascading history away.
+    #
+    # NAMING HAZARD: ``Team.manager`` (this FK, Team -> Account) is NOT
+    # ``Team.managed_in_leagues`` (the reverse accessor of
+    # ``League.current_team``, Team -> Leagues). Nor is the **Manager** the
+    # **Owner** — that is the fictional boss of ADR-0026, never a login.
+    manager = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="matches",
+    )
 
     class Meta:
         verbose_name_plural = "Matches"
@@ -276,6 +294,23 @@ class GameRound(models.Model):
     # legacy rows, which are already ``full`` so never reach the re-sim
     # branch — the defensive guard in ensure_fidelity).
     roster_snapshot_json = models.JSONField(null=True, blank=True, default=None)
+
+    # UX-01 — the **Manager**: the Account this row belongs to (ADR-0038).
+    # NULL = an **Unmanaged row**: readable AND writable by any authenticated
+    # Account, and listed to all of them. SET_NULL so removing an Account in
+    # Admin demotes its rows to Unmanaged rather than cascading history away.
+    #
+    # NAMING HAZARD: ``Team.manager`` (this FK, Team -> Account) is NOT
+    # ``Team.managed_in_leagues`` (the reverse accessor of
+    # ``League.current_team``, Team -> Leagues). Nor is the **Manager** the
+    # **Owner** — that is the fictional boss of ADR-0026, never a login.
+    manager = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="game_rounds",
+    )
 
     def __str__(self):
         if self.match:
@@ -889,6 +924,15 @@ class League(models.Model):
         ("active", "Active"),
         ("archived", "Archived"),
     )
+    # UX-01 — DORMANT this slice: nothing reads it. Ships as a column plus one
+    # create-League control so the forward-compatible marker is authored from
+    # day one; League membership / joining / invitations are deferred
+    # (ADR-0038). Mirrors the LG-02-Part2c-3b ``SeasonPhase.tournament_mode``
+    # dormant-column precedent.
+    VISIBILITY_CHOICES = (
+        ("closed", "Closed"),
+        ("open", "Open"),
+    )
 
     name = models.CharField(max_length=100)
     mode = models.CharField(max_length=16, choices=MODE_CHOICES, default="league")
@@ -927,6 +971,28 @@ class League(models.Model):
     # independent of cumulative owner mood. Create-time only; inert unless
     # finances are enabled.
     challenge_fired_luxury_tax = models.BooleanField(default=False)
+
+    # UX-01 — the **Manager**: the Account this row belongs to (ADR-0038).
+    # NULL = an **Unmanaged row**: readable AND writable by any authenticated
+    # Account, and listed to all of them. SET_NULL so removing an Account in
+    # Admin demotes its rows to Unmanaged rather than cascading history away.
+    #
+    # NAMING HAZARD: ``Team.manager`` (this FK, Team -> Account) is NOT
+    # ``Team.managed_in_leagues`` (the reverse accessor of
+    # ``League.current_team``, Team -> Leagues). Nor is the **Manager** the
+    # **Owner** — that is the fictional boss of ADR-0026, never a login.
+    manager = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="leagues",
+    )
+    visibility = models.CharField(
+        max_length=16,
+        choices=VISIBILITY_CHOICES,
+        default="closed",
+    )
 
     def __str__(self) -> str:
         return self.name
@@ -1544,6 +1610,11 @@ class Season(models.Model):
             wb_advancers=phase.wb_advancers,
             lb_advancers=phase.lb_advancers,
             swiss_rounds=phase.swiss_rounds,
+            # UX-01 — an embedded Tournament inherits its League's **Manager**
+            # (ADR-0038 §2.3): it is still its own Ownership root, so the
+            # invariant is preserved by propagation at creation, not by
+            # treating ``season_phase`` as an ownership parent.
+            manager=self.league.manager,
             **(
                 {
                     "season_phase": phase,
@@ -1636,6 +1707,11 @@ class Season(models.Model):
             season_phase=phase,
             conference=conference,
             qualifier_stage="last_chance",
+            # UX-01 — an embedded Tournament inherits its League's **Manager**
+            # (ADR-0038 §2.3): it is still its own Ownership root, so the
+            # invariant is preserved by propagation at creation, not by
+            # treating ``season_phase`` as an ownership parent.
+            manager=self.league.manager,
         )
 
     @transaction.atomic
@@ -2063,6 +2139,11 @@ class Season(models.Model):
             wb_advancers=phase.wb_advancers,
             lb_advancers=phase.lb_advancers,
             swiss_rounds=phase.swiss_rounds,
+            # UX-01 — an embedded Tournament inherits its League's **Manager**
+            # (ADR-0038 §2.3): it is still its own Ownership root, so the
+            # invariant is preserved by propagation at creation, not by
+            # treating ``season_phase`` as an ownership parent.
+            manager=self.league.manager,
             # ``season_phase``, ``conference`` and ``qualifier_stage`` are
             # DELIBERATELY NOT PASSED: the Worlds row is Season-wide, not a
             # regional one, so it must never appear in any
@@ -2998,6 +3079,23 @@ class Tournament(models.Model):
     )
     role_assignment_mode = models.CharField(
         max_length=16, choices=ROLE_ASSIGNMENT_CHOICES, default="random"
+    )
+
+    # UX-01 — the **Manager**: the Account this row belongs to (ADR-0038).
+    # NULL = an **Unmanaged row**: readable AND writable by any authenticated
+    # Account, and listed to all of them. SET_NULL so removing an Account in
+    # Admin demotes its rows to Unmanaged rather than cascading history away.
+    #
+    # NAMING HAZARD: ``Team.manager`` (this FK, Team -> Account) is NOT
+    # ``Team.managed_in_leagues`` (the reverse accessor of
+    # ``League.current_team``, Team -> Leagues). Nor is the **Manager** the
+    # **Owner** — that is the fictional boss of ADR-0026, never a login.
+    manager = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="tournaments",
     )
 
     def __str__(self) -> str:
