@@ -1106,11 +1106,93 @@ shipped) and is most useful alongside **CAR-03** manager-mode career play.
   **CONF-05 manage conferences** subsection in
   [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
-- **CONF-06 · [NOT STARTED] Per-Conference rotating map pools.** The original PLAN map
-  lens: each Conference carries its own ordered `ArenaMap` pool, and a Round's map resolves
-  from the **Conference's** pool by matchday (`maps[matchday % len(maps)]`) — "Nevada games on
-  the Nevada map", with a per-fixture override option. The per-Conference analogue of the
-  Season-level `rotate_by_matchday` piece 1, unambiguous because fixtures are intra-Conference.
+- **CONF-06 · Per-Conference rotating map pools. [DONE] Shipped (2026-09-03).** The epic's closing
+  slice and the map lens the CONF-01 grill sketched: a **5th `Season.map_mode` value**
+  `rotate_by_conference` (label `Rotate by Conference`, appended as the last `MAP_MODE_CHOICES`
+  tuple — `Season.clean()` derives `valid_map_modes` from the choices, so it needed no edit) under
+  which each **Conference** carries its own author-ordered `ArenaMap` rotation and a regular-season
+  fixture resolves its map from **its own** Conference's rotation — "Nevada games on the Nevada
+  map", unambiguous because regular-season fixtures are always intra-Conference. The per-partition
+  analogue of SUB-01's Season-level `rotate_by_matchday`, one level down on the CONF-01 partition.
+  **Model:** TWO new `Conference` fields mirroring the SUB-01 Season-level pair —
+  `map_rotation_ids_json` (LIVE, written by the Manage Conferences Save) and
+  `starting_map_rotation_ids_json` (the activation snapshot, written by `Season.start_season()`
+  inside the **existing** per-Conference loop — for every Season with Conferences regardless of
+  `map_mode`, so the loop stays mode-agnostic), both `JSONField(null=True, blank=True,
+  default=None)` with `None` = pre-authoring / pre-activation and `[]` = authored-empty (consumers
+  read `(x or [])`). Author order is **PRESERVED, never `sorted()`** in either (`list(...)` — the
+  deliberate divergence from CONF-01's `starting_team_ids_json`), because the matchday index keys
+  directly into the ordered list. Migration
+  `matches/migrations/0061_conference_map_rotation.py` (dep
+  `0060_alter_seasonphase_tournament_mode`), 2× `AddField`, **no `RunPython` / no backfill**
+  (ADR-0004 — pre-CONF-06 Conferences take `None` and never reach the new branch).
+  **Resolver:** `matches.tasks._resolve_fixture_map` gains a **4th keyword-with-default argument**
+  `conf_by_team: dict[int, Conference] | None = None` (backwards compatibility is load-bearing —
+  all 37 existing 3-argument call sites in the suite keep working unchanged, `None` is treated as
+  `{}`) plus a `rotate_by_conference` branch placed after the `rotate_by_matchday` one: look up
+  `fixture.team_a_id`, read `ids = (conf and conf.starting_map_rotation_ids_json) or []`,
+  defensively `return None` on empty, else `return pool_by_id.get(ids[fixture.matchday %
+  len(ids)])`. **NO RNG** — the branch never constructs a `random.Random`, so the SIM-07 seed chain
+  is untouched; every failure shape (missing `conf_by_team`, unmapped team, `None`/`[]` snapshot,
+  an `ArenaMap` deleted after activation) returns `None` rather than raising. The index uses the
+  **1-based `matchday` with the modulo applied directly**, byte-mirroring the shipped
+  `rotate_by_matchday` formula: with a 2-map rotation matchday 1 resolves `ids[1]` and matchday 2
+  resolves `ids[0]`. That is correct-by-contract, **NOT an off-by-one** — do not "fix" it to
+  `(matchday - 1) % len(ids)`. New pure helper `matches.tasks._fixture_map_ids(season,
+  conf_by_team=None) -> list[int]` unions Season pool ids + Season rotation ids + each first-seen
+  Conference's rotation ids (Conferences deduped by `conf.id` since one Conference appears once per
+  member team; map ids deliberately NOT deduped — harmless for `in_bulk`) into the single argument
+  for the play loops' one `ArenaMap.objects.in_bulk`. New pure form helper
+  `matches.forms.parse_rotation_ids(raw, valid_map_ids) -> tuple[list[int], list[str]]` (author
+  order, duplicates kept, one error string per offending token, blank tokens skipped silently)
+  extracted verbatim from the old inline `CreateLeagueForm.clean` loop and now shared by the create
+  form and the Manage Conferences POST; its two error strings `"Map rotation contains an invalid
+  id."` / `"Map rotation contains an unknown map id."` are unchanged. **Three play-loop call sites**
+  each reordered to build `conf_by_team = season.conference_by_team_id()` **above** the `in_bulk`,
+  swap the `in_bulk` argument for `_fixture_map_ids(season, conf_by_team)`, and pass
+  `conf_by_team=conf_by_team` to the resolver: `tasks.play_season_task`,
+  `league_views.play_week`, and `league_views.play_week_live` (the manager live-game RR branch).
+  **Four guards** enforce the mode's shape — **≥2 Conferences** (Conferences are 0 or ≥2 by the
+  CONF-01 partition rule) each with **≥1 rotation map**: (1) `CreateLeagueForm.clean` via
+  `add_error` (NOT `raise`, so all three surface in one submission) — `"Map pool must be empty when
+  Map mode is 'Rotate by Conference'."` on `map_pool`, `"Map rotation must be empty when Map mode
+  is 'Rotate by Conference'."` on `map_rotation`, `"Map mode 'Rotate by Conference' requires at
+  least 2 conferences."` on `number_of_conferences`; (2) the Manage Conferences Save, page-level
+  `"Each conference needs at least 1 rotation map."` (appended once, only under this mode); (3)
+  `Season.start_season()`, `ValidationError` `"A Season with map mode 'Rotate by Conference'
+  requires at least 2 conferences, each with at least 1 rotation map."`; and (4) the rollover
+  downgrade below. **Authoring** rides the CONF-05 page rather than a new screen: a per-row hidden
+  `conference_rotation` input fed by a vanilla-JS composer (the `league-create-map-rotation`
+  precedent), DOM ids `manage-conferences-rotation-{i}` / `-rotation-composer-{i}` /
+  `-rotation-add-{i}` / `-rotation-row-{i}-{j}` / `-rotation-select-{i}`, the confirmed-map payload
+  `manage-conferences-confirmed-maps`, and the non-draft read-only list
+  `manage-conferences-readonly-rotation-{i}` — every existing CONF-05 DOM id survives unchanged, and
+  `_validate_conference_partition` keeps its exact signature and strings. The rotation is therefore
+  editable **only while the Season is `draft`**, inheriting the page's frozen-partition behaviour (a
+  non-draft POST still 400s). **Rollover downgrade:** `_run_season_rollover` creates the next Season
+  with `map_mode` forced to `"none"` when the completed Season was `rotate_by_conference`, carrying
+  every other mode verbatim — the rollover carries no Conferences forward, so a carried mode would
+  find an empty `conf_by_team` and resolve `None` for *every* fixture all season, i.e. a silently
+  map-less Season; the 3-zone fallback is the honest landing. **Scope-out:** the **per-fixture map
+  override** is DEFERRED (see Deferred Items — fixtures are not persisted rows); bracket Matches
+  (Regional playoff / Worlds) never carry an `arena_map` at all, so this mode governs
+  **regular-season fixtures only** — out of scope **by construction, not by omission**; no
+  `SeasonAdmin` surface for the rotation; no Conference (or rotation) carry-through `next_season`
+  beyond the downgrade; **no new ADR** (reversible model fields + a deterministic helper branch,
+  mirroring SUB-01's no-ADR rationale); and **no Score Calibration re-baseline** — the new branch is
+  unreachable without the new mode and `_fixture_map_ids` reduces to the old `(pool or []) +
+  (rotation or [])` expression when there are no Conferences, so every existing seeded outcome stays
+  byte-identical. Tests extend **five existing files, no new test file**:
+  `matches/tests/test_season_map_config.py` (the pure branch incl. the 1-based-modulo pin and every
+  defensive-`None` path, `_fixture_map_ids`, `parse_rotation_ids`), `test_conference.py`
+  (author-order snapshot + the activation guard), `test_manage_conferences.py` (composer GET, POST
+  save in submitted order, both guard re-renders, non-draft read-only + 400),
+  `test_league_next_season.py` (the downgrade, other modes still verbatim) and
+  `test_league_create.py` (the three form guards + a valid submission). See the seam contract
+  [`.claude/worktrees/conf-06-seam-contract.md`](.claude/worktrees/conf-06-seam-contract.md), the
+  CONTEXT.md **Map mode** / **Map pool** / **Per-fixture map resolution** / **Conference** terms, and
+  the **CONF-06** subsection in
+  [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
 ---
 
@@ -1307,6 +1389,13 @@ The following were explicitly scoped out and should not be implemented until re-
 - **Goal-recompute throttling** (MOVE-04) — behavioural perf lever (staler goals every *N* ticks);
   out of MOVE-02 scope, opened only if the MOVE-02 path cache alone is insufficient for the
   map-mode perf target
+- **Per-fixture map override** (CONF-06 follow-up) — the "with a per-fixture override option" half
+  of the original CONF-06 sentence, cut from the shipped slice: a `ScheduleFixture` is a plain
+  dataclass regenerated on demand by `generate_schedule`, not a persisted row, so there is nothing
+  to hang an override column on. Reopening it needs its own model keyed on synthetic fixture
+  identity (Season + matchday + round number + both team ids — the `random_per_round` seed tuple)
+  plus an authoring surface to set and clear it; deferred until a concrete need for pinning a
+  one-off arena to a single fixture appears
 
 ---
 
