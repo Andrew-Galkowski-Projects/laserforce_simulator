@@ -8024,8 +8024,11 @@ Season-level pair: **author order is PRESERVED, NEVER `sorted()`** in either fie
 divergence from CONF-01's ascending-`id` `starting_team_ids_json`), because the matchday index
 keys directly into the ordered list. Migration
 `matches/migrations/0061_conference_map_rotation.py` (dep
-`0060_alter_seasonphase_tournament_mode`), exactly 2× `AddField` (`map_rotation_ids_json` then
-`starting_map_rotation_ids_json`) — pure schema, **NO `RunPython` / NO backfill** (ADR-0004:
+`0060_alter_seasonphase_tournament_mode`), **3 ops**: 2× `AddField` (`map_rotation_ids_json` then
+`starting_map_rotation_ids_json`) followed by the `AlterField` Django emits for the widened
+`Season.map_mode` choices — kept in the same file, after the two `AddField`s. A choices-only
+`AlterField` is non-schema for a `CharField` on both supported backends, so the migration is
+still pure schema — **NO `RunPython` / NO backfill** (ADR-0004:
 pre-CONF-06 Conferences take `None`, and `None` never reaches the new branch because the mode
 cannot be selected without authoring a rotation).
 
@@ -8106,6 +8109,23 @@ Nothing else at these sites changes — for every pre-existing Season (`map_mode
 "rotate_by_conference"`) both the `in_bulk` argument and the resolved map are byte-identical to
 before.
 
+**`_build_map_config_label` 6th branch — the dashboard map label.** The LG-01j /
+SUB-01 label ladder gains a `rotate_by_conference` arm; without it the mode fell
+through to the ladder's defensive "unknown enum value" return and both dashboards
+reported **`Map: 3-zone fallback (no map)`** for a Season that was in fact running
+per-Conference rotations — the label actively lied about the configuration. (Caught
+in the CONF-06 browser pass, not by the seam contract, which never named this
+helper.) The arm mirrors the `rotate_by_matchday` one but per Conference: same
+snapshot-vs-live rule (`starting_map_rotation_ids_json` for active / completed, the
+live `map_rotation_ids_json` for draft), Conferences in `ordinal` order, map names in
+**AUTHOR order** (NOT name- or id-sorted). Conferences with an empty rotation
+contribute no part, so the count reflects only those that do. **ONE `ArenaMap` query
+for the whole label** — the ids are collected across every Conference first and
+resolved in a single `filter(id__in=...)`, never one query per Conference. Two NEW
+byte-equal label strings: `"Map: Rotating per Conference ({n} conferences: {conf}:
+{maps}; …)"` and `"Map: Rotating per Conference (no maps)"`. **No dashboard template
+edit** — both dashboards already render `{{ map_config_label }}` from LG-01j.
+
 **Rollover downgrade (`matches.league_views._run_season_rollover`).** The
 `Season.objects.create(...)` call takes `map_mode=("none" if latest_completed.map_mode ==
 "rotate_by_conference" else latest_completed.map_mode)`. **The why:** the rollover carries no
@@ -8171,7 +8191,15 @@ per-Conference rotation. **NO carrying of Conferences (or their rotations) throu
 stand). **NO new ADR** (reversible model fields + a deterministic helper branch — SUB-01's no-ADR
 rationale) and **NO `RunPython` / backfill** (ADR-0004).
 
-**Tests — five EXTENDED files, 0 NEW.** `matches/tests/test_season_map_config.py` (pure, no DB:
+**Locked label names.** EXTENDED helper
+`matches.league_views._build_map_config_label` (6th branch, single `ArenaMap` query);
+label string literals (2 NEW, byte-equal) `"Map: Rotating per Conference ({n}
+conferences: …)"` / `"Map: Rotating per Conference (no maps)"`; regression class
+`TestConf06LeagueDashboardRotateByConferenceLabel` in
+`matches/tests/test_league_dashboard.py` (draft/live, active/snapshot, no-maps — the
+first asserts the 3-zone label is ABSENT, so it fails against the pre-fix code).
+
+**Tests — six EXTENDED files, 0 NEW.** `matches/tests/test_season_map_config.py` (pure, no DB:
 the `rotate_by_conference` branch against stub `season` / `fixture` / `Conference` objects incl.
 the 1-based-modulo pin and every defensive-`None` path; `_fixture_map_ids` order, Conference
 dedupe by `conf.id`, and no-Conference equivalence to the old expression; `parse_rotation_ids`
