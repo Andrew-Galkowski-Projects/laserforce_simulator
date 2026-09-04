@@ -40,7 +40,7 @@ from teams.views import _coerce_dir, _generate_free_agents, _generate_teams
 
 from . import development, finance, injury, member_night, owner_mood
 from .development import STAT_FIELDS
-from .forms import CreateLeagueForm
+from .forms import CreateLeagueForm, _maps_with_confirmed_config, parse_rotation_ids
 from .league_templates import (
     LEAGUE_TEMPLATES,
     LEAGUE_TEMPLATES_BY_KEY,
@@ -540,11 +540,19 @@ def _manage_conferences_context(
     *,
     submitted_names: "list[str] | None" = None,
     submitted_assignments: "dict[int, int | None] | None" = None,
+    submitted_rotations: "list[str] | None" = None,
     errors: "list[str] | None" = None,
 ) -> dict:
     """Build the Manage-Conferences template context (shared GET + error
     re-render). Pre-fills the composer from the submitted values on a failed
-    POST, else from the Season's existing Conference partition."""
+    POST, else from the Season's existing Conference partition.
+
+    CONF-06 — also carries the per-Conference arena-map rotation: ``conf_rows``
+    (index-aligned with ``conf_names``, each ``rotation`` a comma-joined id
+    string for the hidden input) and ``confirmed_maps`` (the picker's allowed
+    maps). The read-only branch resolves the frozen snapshot to author-ordered
+    map names.
+    """
     confs = season.ordered_conferences()
     if submitted_names is not None:
         conf_names = submitted_names
@@ -557,9 +565,59 @@ def _manage_conferences_context(
                 idx_by_team[team.id] = i
         assignments = {t.id: idx_by_team.get(t.id) for t in teams}
 
+    # CONF-06 — the rotation string for row ``i``: the raw resubmitted value on
+    # a failed POST (so the user does not lose their picks), else the stored
+    # live list. A missing index (a row added client-side without a rotation)
+    # falls back to "".
+    confirmed_maps = list(_maps_with_confirmed_config())
+    if submitted_rotations is not None:
+        rotation_strings = list(submitted_rotations)
+    else:
+        rotation_strings = [
+            ",".join(str(i) for i in (c.map_rotation_ids_json or [])) for c in confs
+        ]
+    conf_rows = [
+        {
+            "name": name,
+            "rotation": (rotation_strings[i] if i < len(rotation_strings) else ""),
+        }
+        for i, name in enumerate(conf_names)
+    ]
+
     team_rows = [{"team": t, "selected": assignments.get(t.id)} for t in teams]
+    # CONF-06 — resolve rotation ids to names for the read-only branch. Read
+    # through ArenaMap (NOT ``confirmed_maps``) so a snapshotted map still
+    # displays after its zone config is un-confirmed; only a genuinely deleted
+    # row drops out. One query, on the union of every Conference's snapshot.
+    from core.models import ArenaMap
+
+    snapshot_by_conf = {
+        c.id: list(
+            c.starting_map_rotation_ids_json
+            if c.starting_map_rotation_ids_json is not None
+            else (c.map_rotation_ids_json or [])
+        )
+        for c in confs
+    }
+    map_name_by_id = {
+        m.id: m.name
+        for m in ArenaMap.objects.in_bulk(
+            [i for ids in snapshot_by_conf.values() for i in ids]
+        ).values()
+    }
     readonly_groups = [
-        {"conference": c, "teams": sorted(c.teams.all(), key=lambda t: t.name)}
+        {
+            "conference": c,
+            "teams": sorted(c.teams.all(), key=lambda t: t.name),
+            # CONF-06 — author-ordered map names off the activation snapshot
+            # (falling back to the live list when the Season never activated).
+            # Ids whose ArenaMap was deleted drop out silently.
+            "rotation_names": [
+                map_name_by_id[i]
+                for i in snapshot_by_conf.get(c.id, [])
+                if i in map_name_by_id
+            ],
+        }
         for c in confs
     ]
     league = season.league
@@ -573,6 +631,9 @@ def _manage_conferences_context(
         "teams": teams,
         "team_rows": team_rows,
         "conf_names": conf_names,
+        "conf_rows": conf_rows,
+        "confirmed_maps": confirmed_maps,
+        "map_mode": season.map_mode,
         "readonly_groups": readonly_groups,
         "is_editable": is_editable,
         "errors": errors or [],
@@ -605,6 +666,10 @@ def manage_conferences(request: HttpRequest, season_id: int) -> HttpResponse:
                 "Conferences can only be edited while the Season is in draft."
             )
         names = request.POST.getlist("conference_name")
+        # CONF-06 — one hidden ``conference_rotation`` input per
+        # ``.conference-row``, so index i here aligns with index i of ``names``
+        # (browsers submit both in document order). Missing index ⇒ "".
+        rotations = request.POST.getlist("conference_rotation")
         team_to_conf_idx: dict[int, int | None] = {}
         for team in teams:
             raw = request.POST.get(f"team_{team.id}_conference", "")
@@ -621,6 +686,25 @@ def manage_conferences(request: HttpRequest, season_id: int) -> HttpResponse:
                 MIN_BRACKET_PARTICIPANTS if has_tournament_phase else 2
             ),
         )
+        # CONF-06 — parse every submitted rotation row through the shared
+        # ``parse_rotation_ids``. This runs for EVERY map mode: a malformed or
+        # unknown id is invalid regardless of how the maps are used.
+        valid_map_ids = set(_maps_with_confirmed_config().values_list("id", flat=True))
+        per_conf_ids: list[list[int]] = []
+        for i in range(len(names)):
+            raw = rotations[i] if i < len(rotations) else ""
+            row_ids, row_errors = parse_rotation_ids(raw, valid_map_ids)
+            per_conf_ids.append(row_ids)
+            errors.extend(row_errors)
+        # CONF-06 — under ``rotate_by_conference`` an empty rotation would
+        # resolve the 3-zone fallback for that Conference's whole season, so the
+        # page refuses it. Appended ONCE, not per offending Conference.
+        if (
+            season.map_mode == "rotate_by_conference"
+            and names
+            and any(not ids for ids in per_conf_ids)
+        ):
+            errors.append("Each conference needs at least 1 rotation map.")
         if errors:
             context = _manage_conferences_context(
                 season,
@@ -628,6 +712,7 @@ def manage_conferences(request: HttpRequest, season_id: int) -> HttpResponse:
                 is_editable,
                 submitted_names=[n.strip() for n in names],
                 submitted_assignments=team_to_conf_idx,
+                submitted_rotations=[r for r in rotations],
                 errors=errors,
             )
             return render(request, "seasons/manage_conferences.html", context)
@@ -635,7 +720,10 @@ def manage_conferences(request: HttpRequest, season_id: int) -> HttpResponse:
             season.conferences.all().delete()
             for ordinal, (name, team_ids) in enumerate(normalized, start=1):
                 conf = Conference.objects.create(
-                    season=season, name=name, ordinal=ordinal
+                    season=season,
+                    name=name,
+                    ordinal=ordinal,
+                    map_rotation_ids_json=per_conf_ids[ordinal - 1],
                 )
                 conf.teams.set(team_ids)
         messages.success(request, "Conferences saved.")
@@ -2197,6 +2285,37 @@ def _build_map_config_label(
             return "Map: Rotating (no maps)"
         return f"Map: Rotating ({len(names)} maps: {', '.join(names)})"
 
+    if mode == "rotate_by_conference":
+        # CONF-06 - one author-ordered rotation PER Conference. Same
+        # snapshot-vs-live rule as ``rotate_by_matchday``, applied to each
+        # Conference's own list; author order is preserved (NOT alphabetical).
+        confs = list(displayed_season.conferences.all().order_by("ordinal"))
+        ids_by_conf = {
+            conf.id: (
+                (conf.starting_map_rotation_ids_json or [])
+                if season_mode in ("active", "completed")
+                else (conf.map_rotation_ids_json or [])
+            )
+            for conf in confs
+        }
+        # ONE query for every Conference's rotation ids (not one per Conference).
+        names_by_id = dict(
+            ArenaMap.objects.filter(
+                id__in={i for ids in ids_by_conf.values() for i in ids}
+            ).values_list("id", "name")
+        )
+        parts: list[str] = []
+        for conf in confs:
+            names = [names_by_id[i] for i in ids_by_conf[conf.id] if i in names_by_id]
+            if names:
+                parts.append(f"{conf.name}: {', '.join(names)}")
+        if not parts:
+            return "Map: Rotating per Conference (no maps)"
+        return (
+            f"Map: Rotating per Conference "
+            f"({len(parts)} conferences: {'; '.join(parts)})"
+        )
+
     # Defensive fallback — an unknown enum value (admin-side raw write)
     # surfaces as the 3-zone label rather than crashing the dashboard.
     return "Map: 3-zone fallback (no map)"
@@ -3164,7 +3283,7 @@ def play_week(request, season_id: int) -> HttpResponse:
             # pattern: ``in_bulk`` runs ONCE outside the per-fixture
             # loop, the helper is called per fixture.
             from core.models import ArenaMap
-            from matches.tasks import _resolve_fixture_map
+            from matches.tasks import _fixture_map_ids, _resolve_fixture_map
 
             # LG-02-Part2c-2 — by-phase fixtures (global-continuous matchday
             # offset already applied) + phase-aware played_keys.
@@ -3197,19 +3316,22 @@ def play_week(request, season_id: int) -> HttpResponse:
                 f.team_b_id for _pid, f in to_play
             }
             team_by_id = Team.objects.in_bulk(team_ids)
+            # CONF-01 — build the team→Conference map ONCE outside the loop.
+            # CONF-06 — built BEFORE the bulk-load: the per-Conference rotation
+            # snapshots are part of the resolvable id union.
+            conf_by_team = season.conference_by_team_id()
             # LG-01j — bulk-load the frozen-snapshot map pool once.
             # SUB-01 — UNION the pool snapshot with the rotation snapshot so the
             # ``rotate_by_matchday`` mode resolves its maps from the same load.
             pool_by_id: dict[int, ArenaMap] = ArenaMap.objects.in_bulk(
-                (season.starting_map_pool_ids_json or [])
-                + (season.starting_map_rotation_ids_json or [])
+                _fixture_map_ids(season, conf_by_team)
             )
-            # CONF-01 — build the team→Conference map ONCE outside the loop.
-            conf_by_team = season.conference_by_team_id()
             for phase_id, fixture in to_play:
                 team_a = team_by_id[fixture.team_a_id]
                 team_b = team_by_id[fixture.team_b_id]
-                arena_map = _resolve_fixture_map(season, fixture, pool_by_id)
+                arena_map = _resolve_fixture_map(
+                    season, fixture, pool_by_id, conf_by_team=conf_by_team
+                )
                 # FIN-04 — roll injuries / resolve rosters in memory before the
                 # round sims, then restore the temporary roster afterwards.
                 token = resolve_injuries_for_fixture(season, team_a, team_b)
@@ -3780,16 +3902,19 @@ def play_week_live(request, season_id: int) -> HttpResponse:
             # Resolve the fixture's arena map (deterministic by fixture identity
             # over the frozen pool snapshot) and play the manager's Round now.
             from core.models import ArenaMap
-            from matches.tasks import _resolve_fixture_map
+            from matches.tasks import _fixture_map_ids, _resolve_fixture_map
 
+            # CONF-01 — resolve the fixture's Conference for the Match stamp.
+            # CONF-06 — built BEFORE the bulk-load: the per-Conference rotation
+            # snapshots are part of the resolvable id union.
+            conf_by_team = season.conference_by_team_id()
             # SUB-01 — UNION pool + rotation snapshots for the map resolver.
             pool_by_id = ArenaMap.objects.in_bulk(
-                (season.starting_map_pool_ids_json or [])
-                + (season.starting_map_rotation_ids_json or [])
+                _fixture_map_ids(season, conf_by_team)
             )
-            arena_map = _resolve_fixture_map(season, cursor["fixture"], pool_by_id)
-            # CONF-01 — resolve the fixture's Conference for the Match stamp.
-            conf_by_team = season.conference_by_team_id()
+            arena_map = _resolve_fixture_map(
+                season, cursor["fixture"], pool_by_id, conf_by_team=conf_by_team
+            )
             # FIN-04 — roll injuries / resolve rosters in memory before the
             # round sims, then restore the temporary roster afterwards.
             token = resolve_injuries_for_fixture(
@@ -4857,7 +4982,15 @@ def _run_season_rollover(league: League, latest_completed: Season) -> Season:
         schedule_format=schedule_format,
         state="draft",
         # LG-01j — carry map_mode verbatim from the previous Season.
-        map_mode=latest_completed.map_mode,
+        # CONF-06 — the rollover carries no Conferences, so a carried
+        # ``rotate_by_conference`` mode would resolve None for every fixture
+        # all season. Downgrade it to the 3-zone fallback; carry every other
+        # mode verbatim.
+        map_mode=(
+            "none"
+            if latest_completed.map_mode == "rotate_by_conference"
+            else latest_completed.map_mode
+        ),
     )
 
     team_ids = latest_completed.starting_team_ids_json or []

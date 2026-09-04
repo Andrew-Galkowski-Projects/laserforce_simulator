@@ -12,7 +12,7 @@ from .simulation import BatchSimulator
 if TYPE_CHECKING:
     from core.models import ArenaMap
 
-    from .models import Season
+    from .models import Conference, Season
     from .schedule_generator import ScheduleFixture
 
 
@@ -20,6 +20,7 @@ def _resolve_fixture_map(
     season: "Season",
     fixture: "ScheduleFixture",
     pool_by_id: "dict[int, ArenaMap]",
+    conf_by_team: "dict[int, Conference] | None" = None,
 ) -> "ArenaMap | None":
     """LG-01j — per-fixture map resolver (pure, no Django ORM access).
 
@@ -40,6 +41,14 @@ def _resolve_fixture_map(
           replay-faithful, and isolated from the simulator's own RNG.
           ``None`` when the snapshot is empty or the chosen row was
           deleted.
+        * ``mode == "rotate_by_conference"`` (CONF-06) ⇒ the FIXTURE'S OWN
+          Conference's ``starting_map_rotation_ids_json``, indexed by
+          ``ids[fixture.matchday % len(ids)]`` — the same 1-based-matchday
+          formula as ``rotate_by_matchday``, one level down on the partition.
+          ``conf_by_team`` maps team id → Conference (both teams of an
+          intra-Conference fixture share one, so ``team_a_id`` suffices). No
+          RNG, so the SIM-07 seed chain is untouched. ``None`` whenever the
+          Conference, its rotation, or the ArenaMap row is missing.
         * Any other value ⇒ ``ValueError(f"Unknown map_mode: {mode!r}")``.
 
     The caller resolves ``pool_by_id`` once per call site via a single
@@ -71,7 +80,39 @@ def _resolve_fixture_map(
         if not ids:
             return None
         return pool_by_id.get(ids[fixture.matchday % len(ids)])
+    if mode == "rotate_by_conference":
+        conf = (conf_by_team or {}).get(fixture.team_a_id)
+        ids = (conf and conf.starting_map_rotation_ids_json) or []
+        if not ids:
+            return None
+        return pool_by_id.get(ids[fixture.matchday % len(ids)])
     raise ValueError(f"Unknown map_mode: {mode!r}")
+
+
+def _fixture_map_ids(
+    season: "Season", conf_by_team: "dict[int, Conference] | None" = None
+) -> "list[int]":
+    """CONF-06 — union of every ArenaMap id the fixture resolver can reach this
+    Season: the single argument to the play loops' one
+    ``ArenaMap.objects.in_bulk``.
+
+    Order-preserving concatenation of the Season pool snapshot, the Season
+    rotation snapshot, and each Conference's rotation snapshot (each Conference
+    contributing exactly once, in first-seen order, even though it appears in
+    ``conf_by_team`` once per member team). Duplicates are harmless for
+    ``in_bulk`` and are deliberately NOT deduped. With no Conferences this is
+    byte-identical to the pre-CONF-06 ``(pool or []) + (rotation or [])``
+    expression. Pure: no ORM access.
+    """
+    ids = list(season.starting_map_pool_ids_json or [])
+    ids += list(season.starting_map_rotation_ids_json or [])
+    seen: set[int] = set()
+    for conf in (conf_by_team or {}).values():
+        if conf.id in seen:
+            continue
+        seen.add(conf.id)
+        ids += list(conf.starting_map_rotation_ids_json or [])
+    return ids
 
 
 def _play_cancel_requested(season_id: int) -> bool:
@@ -283,21 +324,24 @@ def play_season_task(
                 f.team_b_id for _pid, f in to_play
             }
             team_by_id = Team.objects.in_bulk(team_ids)
-            # LG-01j — bulk-load the frozen-snapshot map pool ONCE outside
-            # the per-fixture loop (single ORM query regardless of
-            # ``len(to_play)``). ``in_bulk`` on an empty list is a no-op
-            # returning an empty dict.
-            # SUB-01 — UNION of the pool snapshot and the rotation snapshot so
-            # ``rotate_by_matchday`` resolves its maps from the same bulk-load.
-            pool_by_id: dict[int, ArenaMap] = ArenaMap.objects.in_bulk(
-                (season.starting_map_pool_ids_json or [])
-                + (season.starting_map_rotation_ids_json or [])
-            )
             # CONF-01 — build the team→Conference map ONCE; both teams of an
             # intra-Conference fixture share one Conference, so keying on
             # ``team_a_id`` is sufficient. Empty dict for a zero-Conference
             # Season ⇒ ``conference=None`` ⇒ byte-identical.
+            # CONF-06 — built BEFORE the bulk-load, because the per-Conference
+            # rotation snapshots are part of the resolvable id union.
             conf_by_team = season.conference_by_team_id()
+            # LG-01j — bulk-load the frozen-snapshot map pool ONCE outside
+            # the per-fixture loop (single ORM query regardless of
+            # ``len(to_play)``). ``in_bulk`` on an empty list is a no-op
+            # returning an empty dict.
+            # SUB-01 / CONF-06 — UNION of the Season pool snapshot, the Season
+            # rotation snapshot and every Conference rotation snapshot, so
+            # ``rotate_by_matchday`` and ``rotate_by_conference`` both resolve
+            # their maps from the same bulk-load.
+            pool_by_id: dict[int, ArenaMap] = ArenaMap.objects.in_bulk(
+                _fixture_map_ids(season, conf_by_team)
+            )
 
             for k, (phase_id, fixture) in enumerate(to_play):
                 # PLAY-01 — between-fixtures (running) cancel check, BEFORE
@@ -312,7 +356,9 @@ def play_season_task(
                 # LG-01j — resolve the per-Round arena_map via the locked
                 # algorithm (3-zone for ``none``, fixed map for ``single``,
                 # deterministic per-fixture draw for ``random_per_round``).
-                arena_map = _resolve_fixture_map(season, fixture, pool_by_id)
+                arena_map = _resolve_fixture_map(
+                    season, fixture, pool_by_id, conf_by_team=conf_by_team
+                )
                 # FIN-04 — roll injuries / resolve rosters in memory before the
                 # round sims, then restore the temporary roster afterwards.
                 token = resolve_injuries_for_fixture(season, team_a, team_b)

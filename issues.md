@@ -1,3 +1,138 @@
+# Web testing — CONF-06 (per-Conference rotating map pools)
+
+Date: 2026-09-03
+Branch: `conf-06-conference-map-pools`
+Scope: the new `rotate_by_conference` **Map mode** — the Manage Conferences rotation
+composer (`/seasons/<id>/conferences/`), the create-League Advanced screen's fifth map
+mode and its three guards, the `start_season` activation guard and snapshot, the
+read-only rotation list on a non-draft Season, and the real play-loop map resolution.
+Server on port **8010** (port 8000 was held by an unrelated Anaconda process serving a
+different app — "Campaign Codex"; not ours, not killed). Fixture: Season **66**
+(2 Conferences x 4 Teams, `ChromeTest Conf Flow`) plus Season **80** created live
+through the Advanced form (`ChromeTest Conf06 Happy`).
+
+## Summary — CONF-06
+| Area | Result |
+|---|---|
+| All 7 locked `manage-conferences-*` rotation DOM ids present; `conference_name` / `conference_rotation` getlists index-aligned | ✅ |
+| `+ Add map` builds a row with the confirmed-map options and serializes the hidden input immediately | ✅ |
+| Author order preserved end-to-end — `[4, 1]` (non-ascending) survives Save and reload | ✅ |
+| Rotation **rehydrates** into composer rows on page load; no re-picking needed | ✅ |
+| Empty-rotation guard renders `Each conference needs at least 1 rotation map.` once, not per row | ✅ |
+| Bad-token guard renders both verbatim parse errors; server echoes the RAW submitted string | ✅ |
+| `start_season` guard blocks activation (HTTP 400) and the Season stays `draft` | ✅ |
+| Activation snapshot `starting_map_rotation_ids_json = [4, 1]` in AUTHOR order, while `starting_team_ids_json` stays sorted ascending — both rules correct in the same loop | ✅ |
+| Non-draft page is read-only: no form, no rotation inputs, no `+ Add map`; renders `1. San Marcos Laser Tag / 2. Syracuse Laser Tag` in author order | ✅ |
+| **Two Conferences, one matchday, different maps** — matchdays 2/4/6: Conference 1 on San Marcos while Conference 2 is on Syracuse | ✅ |
+| `_fixture_map_ids` on the live Season → `[4, 1, 1]` — Conferences deduped (8 teams, 2 contributions), map-id duplicates retained | ✅ |
+| Play loop actually consults the resolver — played Rounds persisted `arena_map = San Marcos`, not the 3-zone fallback | ✅ |
+| Advanced form offers `rotate_by_conference :: Rotate by Conference` as the 5th mode | ✅ |
+| All three create-form guards surface together in one submission, verbatim | ✅ |
+| Valid `rotate_by_conference` create redirects straight to Manage Conferences (CONF-05 integration) with 2 pre-split Conferences | ✅ |
+| New rotation selects carry `aria-label="Rotation map"` | ✅ |
+| Console clean on the composer page; all requests 2xx; no horizontal overflow at 720px or 1280px | ✅ |
+
+**Overall:** the CONF-06 surface is correct on real data. One genuine in-slice defect
+was found and **fixed in-slice** (C6-1 — the dashboard map label). Three pre-existing
+issues were surfaced and left out of scope (C6-2, C6-3, C6-4), plus one cosmetic nit
+(C6-5).
+
+### 🔴 C6-1 — [FIXED in-slice] Dashboard map label reported "3-zone fallback" for a `rotate_by_conference` Season
+
+`_build_map_config_label` had no branch for the new fifth mode, so an active Season
+running per-Conference rotations fell through to the "unknown enum value" defensive
+return and the dashboard displayed:
+
+    Map: 3-zone fallback (no map)
+
+— actively misreporting the Season's configuration while the Rounds were in fact being
+played on the Conference rotations. The seam contract never named this helper, so all
+three parallel agents missed it; it was caught only by looking at the rendered
+dashboard.
+
+`laserforce_simulator/matches/league_views.py:2289` (the defensive tail):
+
+```python
+    # Defensive fallback — an unknown enum value (admin-side raw write)
+    # surfaces as the 3-zone label rather than crashing the dashboard.
+    return "Map: 3-zone fallback (no map)"
+```
+
+**Fixed** by adding the sixth label branch, mirroring the `rotate_by_matchday` one but
+per Conference (snapshot for active/completed, live list for draft; Conference order by
+`ordinal`, map order AUTHOR order). Now renders:
+
+    Map: Rotating per Conference (2 conferences: Conference 1: San Marcos Laser Tag, Syracuse Laser Tag; Conference 2: Syracuse Laser Tag)
+
+Regression guard added: `TestConf06LeagueDashboardRotateByConferenceLabel` in
+`matches/tests/test_league_dashboard.py` (3 tests — draft/live, active/snapshot, and
+the no-maps case; the first asserts the 3-zone label is **absent**, so it fails against
+the old code).
+
+### 🟡 C6-2 — [PRE-EXISTING, out of scope] `ValidationError` renders as a raw Python list repr
+
+Tripping the new activation guard shows the user:
+
+    ["A Season with map mode 'Rotate by Conference' requires at least 2 conferences, each with at least 1 rotation map."]
+
+— brackets and quotes included. `laserforce_simulator/matches/league_views.py:3189`:
+
+```python
+        messages_list = getattr(exc, "messages", None) or [str(exc)]
+        joined = " ".join(messages_list)
+        season.refresh_from_db()
+        if "non-completed" in joined or season.state == "active":
+            return redirect("season_dashboard", season_id=season.id)
+        return _render_season_dashboard_error(request, season, str(exc))
+```
+
+The clean `joined` string is computed on the line above and then **not used** for
+display — `str(exc)` is passed instead, and `str()` on a `ValidationError` yields the
+list repr. This is LG-01d code affecting **every** `ValidationError` on this view (the
+pre-existing `teams.count() < 2` guard renders identically); CONF-06 only made it more
+reachable by adding a second guard users will actually hit. One-word fix (`str(exc)` →
+`joined`) but out of scope for this slice.
+
+### 🟡 C6-3 — [PRE-EXISTING, out of scope] The map picker offers maps the simulator then rejects
+
+Selecting *Syracuse Laser Tag* for a rotation and playing a week fails the whole
+matchday with:
+
+    Map 'Syracuse Laser Tag' has no red base point
+
+`matches.forms._maps_with_confirmed_config()` gates only on a confirmed
+`MapZoneConfig`, but the simulator additionally requires `MapBaseConfig` rows. In the
+dev DB, map 1 (Syracuse) has **0** base configs while map 4 (San Marcos) has 6 — so one
+of the two selectable maps is unsimulable, with nothing in the UI to say so. This
+affects `single` / `random_per_round` / `rotate_by_matchday` identically; CONF-06
+reuses the same picker unchanged. Either the picker should also require base configs,
+or the map editor should mark a map incomplete until it has them.
+
+### 🟡 C6-4 — [PRE-EXISTING, out of scope] 10 unlabeled form fields on Manage Conferences
+
+Chrome reports `No label associated with a form field`. All 10 are **CONF-05**
+elements — the 2 `manage-conferences-name-{i}` conference-name inputs and the 8
+`manage-conferences-team-{id}` assignment selects. None of the CONF-06 additions are
+implicated (the new rotation selects carry `aria-label="Rotation map"`, and the hidden
+rotation inputs are exempt). Fix would be an `aria-label` on each, in a CONF-05 follow-up.
+
+### 🔵 C6-5 — [COSMETIC, not fixed] Rotation help text repeats under every Conference row
+
+The two-sentence explainer ("Author-ordered rotation for this conference… **Required:**
+this Season's map mode needs at least 1 map per conference.") is rendered in full
+beneath *each* Conference card — twice at 2 Conferences, four times at the maximum of
+4. It would read better once, above the Conference list. Purely presentational; the
+per-row `Required:` emphasis is genuinely useful, so this is a judgement call rather
+than a defect.
+
+### ✅ Dev-DB note
+Season 66 was mutated during the pass (map mode set to `rotate_by_conference`,
+rotations authored, activated, one week played) and Season 80 / league
+`ChromeTest Conf06 Happy` were created by the Advanced form. Both carry the
+`ChromeTest` prefix on their Teams and are teardown-eligible.
+
+---
+
 # Web testing — CONF-03 (Worlds qualification + last-chance qualifier)
 
 Date: 2026-09-03

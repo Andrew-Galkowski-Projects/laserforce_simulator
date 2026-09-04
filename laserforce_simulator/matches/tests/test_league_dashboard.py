@@ -865,6 +865,100 @@ class TestLg_Sub01LeagueDashboardRotateLabel(TestCase):
 
 
 # ===========================================================================
+# CONF-06 — rotate_by_conference 6th label branch on the LEAGUE dashboard
+# ===========================================================================
+#
+# REGRESSION GUARD. ``_build_map_config_label`` originally had no
+# ``rotate_by_conference`` branch, so a Season running per-Conference
+# rotations fell through to the "unknown enum value" defensive return and
+# the dashboard reported "Map: 3-zone fallback (no map)" — actively lying
+# about the Season's configuration. Caught by the CONF-06 browser pass.
+#
+#   "Map: Rotating per Conference (N conferences: C1: a, b; C2: c)"
+#   no rotations anywhere => "Map: Rotating per Conference (no maps)"
+# draft reads each Conference's LIVE ``map_rotation_ids_json``;
+# active/completed read its ``starting_map_rotation_ids_json`` snapshot.
+# Conference order is by ``ordinal``; map order is AUTHOR order.
+
+
+class TestConf06LeagueDashboardRotateByConferenceLabel(TestCase):
+    """CONF-06 — the rotate_by_conference label branch (regression guard)."""
+
+    _DOM_ID = "league-dashboard-map-config"
+
+    def _get_body(self, league: League) -> str:
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertEqual(response.status_code, 200)
+        return response.content.decode()
+
+    def _two_conferences(self, season):
+        from matches.models import Conference
+
+        teams = list(season.teams.all().order_by("id"))
+        c1 = Conference.objects.create(season=season, name="Nevada", ordinal=1)
+        c2 = Conference.objects.create(season=season, name="California", ordinal=2)
+        c1.teams.set(teams[:2])
+        c2.teams.set(teams[2:4])
+        return c1, c2
+
+    def test_draft_reads_live_per_conference_rotation_in_author_order(self) -> None:
+        """A DRAFT rotate_by_conference Season reads each Conference's LIVE
+        list and renders per-Conference names in AUTHOR order."""
+        league = _make_league("Conf06LabelDraft")
+        season, _ = _make_draft_season(league, n_teams=4)
+        m_a = _lg01j_arena_map("AlphaC")
+        m_b = _lg01j_arena_map("BravoC")
+        c1, c2 = self._two_conferences(season)
+        season.map_mode = "rotate_by_conference"
+        season.save()
+        # Author order Bravo, Alpha — NOT alphabetical, NOT id-sorted.
+        c1.map_rotation_ids_json = [m_b.id, m_a.id]
+        c1.save()
+        c2.map_rotation_ids_json = [m_a.id]
+        c2.save()
+        body = self._get_body(league)
+        self.assertIn(
+            "Map: Rotating per Conference "
+            "(2 conferences: Nevada: BravoC, AlphaC; California: AlphaC)",
+            body,
+        )
+        # The old bug rendered the 3-zone label here.
+        self.assertNotIn("Map: 3-zone fallback (no map)", body)
+
+    def test_active_reads_per_conference_snapshot(self) -> None:
+        """An ACTIVE rotate_by_conference Season reads each Conference's
+        ``starting_map_rotation_ids_json`` snapshot."""
+        league = _make_league("Conf06LabelActive")
+        season, _ = _make_draft_season(league, n_teams=4)
+        m_a = _lg01j_arena_map("AlphaS")
+        m_b = _lg01j_arena_map("BravoS")
+        c1, c2 = self._two_conferences(season)
+        c1.map_rotation_ids_json = [m_b.id, m_a.id]
+        c1.save()
+        c2.map_rotation_ids_json = [m_a.id]
+        c2.save()
+        season.map_mode = "rotate_by_conference"
+        season.save()
+        season.start_season()
+        body = self._get_body(league)
+        self.assertIn(
+            "Map: Rotating per Conference "
+            "(2 conferences: Nevada: BravoS, AlphaS; California: AlphaS)",
+            body,
+        )
+
+    def test_no_rotations_renders_no_maps(self) -> None:
+        league = _make_league("Conf06LabelEmpty")
+        season, _ = _make_draft_season(league, n_teams=4)
+        self._two_conferences(season)
+        season.map_mode = "rotate_by_conference"
+        season.save()
+        body = self._get_body(league)
+        self.assertIn("Map: Rotating per Conference (no maps)", body)
+        self.assertIn(f'id="{self._DOM_ID}"', body)
+
+
+# ===========================================================================
 # LG-07a — member-night Matches excluded from the dashboard standings snippet
 # ===========================================================================
 #

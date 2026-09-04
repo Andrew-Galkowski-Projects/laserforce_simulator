@@ -310,3 +310,319 @@ class TestConf02PartitionBracketFloor(TestCase):
         )
         self.assertEqual(errors, [])
         self.assertIsNotNone(normalized)
+
+
+# ---------------------------------------------------------------------------
+# CONF-06 — per-Conference rotation composer on Manage Conferences
+# ---------------------------------------------------------------------------
+#
+# Seam contract ``.claude/worktrees/conf-06-seam-contract.md`` SS6 / SS7:
+#   - GET (draft) renders one hidden ``conference_rotation`` input per
+#     Conference row (``manage-conferences-rotation-{i}``) plus the
+#     ``manage-conferences-confirmed-maps`` JSON script block.
+#   - POST reads ``request.POST.getlist("conference_rotation")``, index-aligned
+#     with ``conference_name``, parses each row with ``parse_rotation_ids`` and
+#     stores it VERBATIM (submitted order) on ``map_rotation_ids_json``.
+#   - A malformed id is a page-level error for EVERY map mode; the
+#     ``Each conference needs at least 1 rotation map.`` guard is appended ONCE
+#     and ONLY under ``map_mode == "rotate_by_conference"``.
+#   - Non-draft GET renders ``manage-conferences-readonly-rotation-{i}`` and no
+#     editable rotation input; non-draft POST still 400s.
+#
+# WILL fail until the Code agent lands the view + template edits.
+
+import io as _conf06_io
+
+from django.core.files.uploadedfile import (
+    SimpleUploadedFile as _Conf06SimpleUploadedFile,
+)
+
+from core.models import (
+    ArenaMap as _Conf06ArenaMap,
+    MapZoneConfig as _Conf06MapZoneConfig,
+)
+
+
+def _conf06_png_bytes() -> bytes:
+    from PIL import Image as _PILImage
+
+    buf = _conf06_io.BytesIO()
+    _PILImage.new("RGB", (10, 10), color=(0, 128, 0)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _conf06_confirmed_map(name: str) -> _Conf06ArenaMap:
+    """An ``ArenaMap`` with a confirmed ``MapZoneConfig`` so it surfaces in
+    ``_maps_with_confirmed_config()`` (the rotation picker's queryset)."""
+    arena_map = _Conf06ArenaMap.objects.create(
+        name=name,
+        image=_Conf06SimpleUploadedFile(
+            f"{name}.png", _conf06_png_bytes(), content_type="image/png"
+        ),
+        img_width=10,
+        img_height=10,
+    )
+    _Conf06MapZoneConfig.objects.create(
+        arena_map=arena_map,
+        zone_size=50,
+        zone_data={"zones": [[1, 1], [1, 1]]},
+        confirmed=True,
+    )
+    return arena_map
+
+
+def _conf06_wire(ids: list[int]) -> str:
+    """The hidden input's wire format — comma-joined ids in author order."""
+    return ",".join(str(i) for i in ids)
+
+
+class TestConf06ManageConferencesRotation(TestCase):
+    """The rotation composer's GET surface, POST persistence and error paths."""
+
+    def _url(self, season):
+        return reverse("manage_conferences", args=[season.id])
+
+    def _season_with_two_conferences(self, prefix: str):
+        """A draft Season, 4 teams, 2 Conferences already partitioned."""
+        season, teams = _draft_season_with_teams(prefix, 4)
+        west = Conference.objects.create(season=season, name="West", ordinal=1)
+        west.teams.set([teams[0].id, teams[1].id])
+        east = Conference.objects.create(season=season, name="East", ordinal=2)
+        east.teams.set([teams[2].id, teams[3].id])
+        return season, teams, [west, east]
+
+    def _partition_post(self, teams, names, rotations):
+        data = {
+            "conference_name": names,
+            "conference_rotation": rotations,
+        }
+        half = len(teams) // 2
+        for i, team in enumerate(teams):
+            data[f"team_{team.id}_conference"] = "0" if i < half else "1"
+        return data
+
+    # ---- GET (draft) ----
+
+    def test_get_draft_renders_rotation_input_per_conference(self):
+        season, _teams, _confs = self._season_with_two_conferences("c6get")
+        resp = self.client.get(self._url(season))
+        self.assertEqual(resp.status_code, 200)
+        html = resp.content.decode()
+        self.assertIn('id="manage-conferences-rotation-0"', html)
+        self.assertIn('id="manage-conferences-rotation-1"', html)
+        self.assertIn('name="conference_rotation"', html)
+
+    def test_get_draft_renders_confirmed_maps_json_block(self):
+        season, _teams, _confs = self._season_with_two_conferences("c6maps")
+        m = _conf06_confirmed_map("C6Pick")
+        resp = self.client.get(self._url(season))
+        html = resp.content.decode()
+        self.assertIn('id="manage-conferences-confirmed-maps"', html)
+        self.assertIn(str(m.id), html)
+        self.assertIn("C6Pick", html)
+
+    def test_get_draft_prefills_existing_rotation_in_author_order(self):
+        season, _teams, confs = self._season_with_two_conferences("c6fill")
+        m_a = _conf06_confirmed_map("C6FillA")
+        m_b = _conf06_confirmed_map("C6FillB")
+        # NON-ascending author order — a stray sort would change the value.
+        confs[0].map_rotation_ids_json = [m_b.id, m_a.id]
+        confs[0].save(update_fields=["map_rotation_ids_json"])
+        resp = self.client.get(self._url(season))
+        html = resp.content.decode()
+        self.assertIn(f'value="{m_b.id},{m_a.id}"', html)
+
+    # ---- POST persistence ----
+
+    def test_post_saves_rotation_per_conference_in_submitted_order(self):
+        season, teams = _draft_season_with_teams("c6post", 4)
+        m_a = _conf06_confirmed_map("C6PostA")
+        m_b = _conf06_confirmed_map("C6PostB")
+        m_c = _conf06_confirmed_map("C6PostC")
+        data = self._partition_post(
+            teams,
+            ["West", "East"],
+            [_conf06_wire([m_c.id, m_a.id]), _conf06_wire([m_b.id])],
+        )
+        resp = self.client.post(self._url(season), data)
+        self.assertRedirects(resp, self._url(season))
+        confs = list(season.conferences.order_by("ordinal"))
+        self.assertEqual([c.name for c in confs], ["West", "East"])
+        # Index i of conference_rotation aligns with index i of conference_name.
+        self.assertEqual(confs[0].map_rotation_ids_json, [m_c.id, m_a.id])
+        self.assertEqual(confs[1].map_rotation_ids_json, [m_b.id])
+
+    def test_post_saves_empty_list_for_an_unauthored_rotation(self):
+        """``[]`` (authored-empty), never ``None``, once the page has saved."""
+        season, teams = _draft_season_with_teams("c6empty", 4)
+        data = self._partition_post(teams, ["West", "East"], ["", ""])
+        resp = self.client.post(self._url(season), data)
+        self.assertRedirects(resp, self._url(season))
+        for conf in season.conferences.order_by("ordinal"):
+            self.assertEqual(conf.map_rotation_ids_json, [])
+
+    def test_post_keeps_duplicate_ids_in_a_rotation(self):
+        season, teams = _draft_season_with_teams("c6dup", 4)
+        m = _conf06_confirmed_map("C6Dup")
+        data = self._partition_post(
+            teams, ["West", "East"], [_conf06_wire([m.id, m.id]), _conf06_wire([m.id])]
+        )
+        self.client.post(self._url(season), data)
+        confs = list(season.conferences.order_by("ordinal"))
+        self.assertEqual(confs[0].map_rotation_ids_json, [m.id, m.id])
+
+    def test_post_under_rotate_by_conference_saves(self):
+        season, teams = _draft_season_with_teams("c6mode", 4)
+        season.map_mode = "rotate_by_conference"
+        season.save(update_fields=["map_mode"])
+        m_a = _conf06_confirmed_map("C6ModeA")
+        m_b = _conf06_confirmed_map("C6ModeB")
+        data = self._partition_post(
+            teams, ["West", "East"], [_conf06_wire([m_a.id]), _conf06_wire([m_b.id])]
+        )
+        resp = self.client.post(self._url(season), data)
+        self.assertRedirects(resp, self._url(season))
+        confs = list(season.conferences.order_by("ordinal"))
+        self.assertEqual(confs[0].map_rotation_ids_json, [m_a.id])
+        self.assertEqual(confs[1].map_rotation_ids_json, [m_b.id])
+
+    # ---- POST errors ----
+
+    def test_post_empty_rotation_under_the_mode_re_renders_with_error(self):
+        season, teams = _draft_season_with_teams("c6guard", 4)
+        season.map_mode = "rotate_by_conference"
+        season.save(update_fields=["map_mode"])
+        m = _conf06_confirmed_map("C6Guard")
+        data = self._partition_post(teams, ["West", "East"], [_conf06_wire([m.id]), ""])
+        resp = self.client.post(self._url(season), data)
+        self.assertEqual(resp.status_code, 200)
+        html = resp.content.decode()
+        self.assertIn("Each conference needs at least 1 rotation map.", html)
+        self.assertIn('id="manage-conferences-errors"', html)
+        self.assertEqual(season.conferences.count(), 0)
+
+    def test_empty_rotation_guard_appended_once_not_per_conference(self):
+        season, teams = _draft_season_with_teams("c6once", 4)
+        season.map_mode = "rotate_by_conference"
+        season.save(update_fields=["map_mode"])
+        data = self._partition_post(teams, ["West", "East"], ["", ""])
+        resp = self.client.post(self._url(season), data)
+        self.assertEqual(resp.status_code, 200)
+        html = resp.content.decode()
+        self.assertEqual(
+            html.count("Each conference needs at least 1 rotation map."), 1
+        )
+
+    def test_empty_rotation_guard_silent_under_other_modes(self):
+        """The guard is mode-scoped — an empty rotation is fine for a
+        ``none`` Season and the partition still saves."""
+        season, teams = _draft_season_with_teams("c6silent", 4)
+        self.assertEqual(season.map_mode, "none")
+        data = self._partition_post(teams, ["West", "East"], ["", ""])
+        resp = self.client.post(self._url(season), data)
+        self.assertRedirects(resp, self._url(season))
+        self.assertEqual(season.conferences.count(), 2)
+
+    def test_post_with_a_non_numeric_token_re_renders_with_parse_error(self):
+        season, teams = _draft_season_with_teams("c6bad", 4)
+        m = _conf06_confirmed_map("C6Bad")
+        data = self._partition_post(teams, ["West", "East"], ["abc", str(m.id)])
+        resp = self.client.post(self._url(season), data)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Map rotation contains an invalid id.", resp.content.decode())
+        self.assertEqual(season.conferences.count(), 0)
+
+    def test_post_with_an_unknown_map_id_re_renders_with_parse_error(self):
+        season, teams = _draft_season_with_teams("c6unknown", 4)
+        m = _conf06_confirmed_map("C6Unknown")
+        data = self._partition_post(teams, ["West", "East"], ["999999", str(m.id)])
+        resp = self.client.post(self._url(season), data)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Map rotation contains an unknown map id.", resp.content.decode())
+        self.assertEqual(season.conferences.count(), 0)
+
+    def test_parse_errors_surface_under_every_map_mode(self):
+        """A malformed id is invalid regardless of ``season.map_mode``."""
+        season, teams = _draft_season_with_teams("c6badany", 4)
+        self.assertEqual(season.map_mode, "none")
+        data = self._partition_post(teams, ["West", "East"], ["abc", ""])
+        resp = self.client.post(self._url(season), data)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Map rotation contains an invalid id.", resp.content.decode())
+        self.assertEqual(season.conferences.count(), 0)
+
+    def test_failed_post_re_renders_the_submitted_rotation(self):
+        """A failed POST must not make the author re-pick their maps."""
+        season, teams = _draft_season_with_teams("c6resub", 4)
+        m_a = _conf06_confirmed_map("C6ResubA")
+        m_b = _conf06_confirmed_map("C6ResubB")
+        data = self._partition_post(
+            teams, ["West", "East"], [_conf06_wire([m_b.id, m_a.id]), "abc"]
+        )
+        resp = self.client.post(self._url(season), data)
+        self.assertEqual(resp.status_code, 200)
+        html = resp.content.decode()
+        # The comma-joined pair is distinctive enough to pin the round-trip.
+        self.assertIn(f'value="{m_b.id},{m_a.id}"', html)
+
+    # ---- Non-draft (read-only) ----
+
+    def test_non_draft_get_renders_readonly_rotation_names(self):
+        season, _teams, confs = self._season_with_two_conferences("c6ro")
+        m_a = _conf06_confirmed_map("C6RoAlpha")
+        m_b = _conf06_confirmed_map("C6RoBeta")
+        confs[0].map_rotation_ids_json = [m_b.id, m_a.id]
+        confs[0].save(update_fields=["map_rotation_ids_json"])
+        confs[1].map_rotation_ids_json = [m_a.id]
+        confs[1].save(update_fields=["map_rotation_ids_json"])
+        season.start_season()
+        resp = self.client.get(self._url(season))
+        self.assertEqual(resp.status_code, 200)
+        html = resp.content.decode()
+        self.assertIn('id="manage-conferences-readonly-rotation-0"', html)
+        self.assertIn('id="manage-conferences-readonly-rotation-1"', html)
+        self.assertIn("C6RoAlpha", html)
+        self.assertIn("C6RoBeta", html)
+        # Author order survives into the read-only list.
+        self.assertLess(html.index("C6RoBeta"), html.index("C6RoAlpha"))
+
+    def test_non_draft_get_has_no_editable_rotation_input(self):
+        season, _teams, confs = self._season_with_two_conferences("c6noedit")
+        m = _conf06_confirmed_map("C6NoEdit")
+        for conf in confs:
+            conf.map_rotation_ids_json = [m.id]
+            conf.save(update_fields=["map_rotation_ids_json"])
+        season.start_season()
+        html = self.client.get(self._url(season)).content.decode()
+        self.assertNotIn('id="manage-conferences-rotation-0"', html)
+        self.assertNotIn('name="conference_rotation"', html)
+
+    def test_non_draft_post_still_400s(self):
+        season, teams, confs = self._season_with_two_conferences("c6post400")
+        m = _conf06_confirmed_map("C6Post400")
+        for conf in confs:
+            conf.map_rotation_ids_json = [m.id]
+            conf.save(update_fields=["map_rotation_ids_json"])
+        season.start_season()
+        resp = self.client.post(
+            self._url(season),
+            {
+                "conference_name": ["X", "Y"],
+                "conference_rotation": [str(m.id), str(m.id)],
+            },
+        )
+        self.assertEqual(resp.status_code, 400)
+        for conf in confs:
+            conf.refresh_from_db()
+            self.assertEqual(conf.map_rotation_ids_json, [m.id])
+
+    def test_readonly_rotation_drops_a_deleted_map_silently(self):
+        season, _teams, confs = self._season_with_two_conferences("c6rodel")
+        m = _conf06_confirmed_map("C6RoDel")
+        for conf in confs:
+            conf.map_rotation_ids_json = [m.id, 999999]
+            conf.save(update_fields=["map_rotation_ids_json"])
+        season.start_season()
+        resp = self.client.get(self._url(season))
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("C6RoDel", resp.content.decode())
