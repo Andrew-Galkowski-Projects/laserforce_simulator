@@ -10,6 +10,37 @@ def _maps_with_confirmed_config():
     return ArenaMap.objects.filter(zone_configs__confirmed=True).distinct()
 
 
+def parse_rotation_ids(
+    raw: "str | None", valid_map_ids: "set[int]"
+) -> "tuple[list[int], list[str]]":
+    """Parse a comma-separated ArenaMap-id string into an AUTHOR-ORDERED id
+    list plus a list of human error strings (pure; no ORM, no form state).
+
+    SUB-01 authored this loop inline in ``CreateLeagueForm.clean``; CONF-06
+    lifted it out verbatim so the per-Conference rotation composer on
+    ``manage_conferences`` parses its rows through the same locked algorithm
+    and the same two error strings. Order is preserved (never sorted),
+    duplicate ids are kept, empty tokens are skipped silently, and each
+    offending token contributes exactly one error string.
+    """
+    ids: list[int] = []
+    errors: list[str] = []
+    for token in (raw or "").split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            map_id = int(token)
+        except (TypeError, ValueError):
+            errors.append("Map rotation contains an invalid id.")
+            continue
+        if map_id not in valid_map_ids:
+            errors.append("Map rotation contains an unknown map id.")
+            continue
+        ids.append(map_id)
+    return ids, errors
+
+
 class MatchSetupForm(forms.Form):
     team_red = forms.ModelChoiceField(
         queryset=Team.objects.all(),
@@ -372,28 +403,14 @@ class CreateLeagueForm(forms.Form):
             return cleaned_data
         # SUB-01 — order-preserving parse of the rotation wire string into an
         # ordered list[int] (NOT sorted). Validate every id is a confirmed map.
-        rotation_ids: list[int] = []
-        raw_rotation = cleaned_data.get("map_rotation", "") or ""
+        # CONF-06 — the loop now lives in the module-level ``parse_rotation_ids``
+        # so ``manage_conferences`` parses its per-Conference rows identically.
         valid_map_ids = set(_maps_with_confirmed_config().values_list("id", flat=True))
-        for token in raw_rotation.split(","):
-            token = token.strip()
-            if not token:
-                continue
-            try:
-                map_id = int(token)
-            except (TypeError, ValueError):
-                self.add_error(
-                    "map_rotation",
-                    forms.ValidationError("Map rotation contains an invalid id."),
-                )
-                continue
-            if map_id not in valid_map_ids:
-                self.add_error(
-                    "map_rotation",
-                    forms.ValidationError("Map rotation contains an unknown map id."),
-                )
-                continue
-            rotation_ids.append(map_id)
+        rotation_ids, rotation_errors = parse_rotation_ids(
+            cleaned_data.get("map_rotation", ""), valid_map_ids
+        )
+        for message in rotation_errors:
+            self.add_error("map_rotation", forms.ValidationError(message))
         cleaned_data["map_rotation_ids"] = rotation_ids
         pool = cleaned_data.get("map_pool") or []
         pool_count = len(pool)
@@ -474,6 +491,34 @@ class CreateLeagueForm(forms.Form):
                             "mode is 'Rotate by matchday'."
                         )
                     }
+                )
+        # CONF-06 — the per-Conference rotation is authored on the
+        # Manage-Conferences page, not here, so BOTH Season-level lists must be
+        # empty; ``add_error`` (not ``raise``) so all three surface together.
+        if mode == "rotate_by_conference":
+            if pool_count > 0:
+                self.add_error(
+                    "map_pool",
+                    forms.ValidationError(
+                        "Map pool must be empty when Map mode is "
+                        "'Rotate by Conference'."
+                    ),
+                )
+            if rotation_count > 0:
+                self.add_error(
+                    "map_rotation",
+                    forms.ValidationError(
+                        "Map rotation must be empty when Map mode is "
+                        "'Rotate by Conference'."
+                    ),
+                )
+            if (cleaned_data.get("number_of_conferences") or 0) < 2:
+                self.add_error(
+                    "number_of_conferences",
+                    forms.ValidationError(
+                        "Map mode 'Rotate by Conference' requires at least "
+                        "2 conferences."
+                    ),
                 )
         return cleaned_data
 

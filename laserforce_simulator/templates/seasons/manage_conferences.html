@@ -33,18 +33,47 @@
                 </div>
             {% endif %}
 
+            {# CONF-06 -- the allowed maps for every per-conference rotation picker. #}
+            <script id="manage-conferences-confirmed-maps" type="application/json">[
+                {% for m in confirmed_maps %}
+                    {"id": {{ m.id }}, "name": "{{ m.name|escapejs }}"}{% if not forloop.last %},{% endif %}
+                {% endfor %}
+            ]</script>
+
             <form id="manage-conferences-form" method="post">
                 {% csrf_token %}
 
                 <h2 class="h5">Conferences</h2>
                 <div id="manage-conferences-list" class="mb-2">
-                    {% for name in conf_names %}
-                        <div class="conference-row input-group mb-2" style="max-width: 30rem;">
-                            <input type="text" name="conference_name"
-                                   id="manage-conferences-name-{{ forloop.counter0 }}"
-                                   class="conference-name form-control"
-                                   placeholder="Conference name" value="{{ name }}">
-                            <button type="button" class="conference-remove btn btn-outline-danger">Remove</button>
+                    {% for row in conf_rows %}
+                        <div class="conference-row card card-body mb-2"
+                             data-conf-index="{{ forloop.counter0 }}"
+                             style="max-width: 30rem;">
+                            <div class="input-group mb-2">
+                                <input type="text" name="conference_name"
+                                       id="manage-conferences-name-{{ forloop.counter0 }}"
+                                       class="conference-name form-control"
+                                       placeholder="Conference name" value="{{ row.name }}">
+                                <button type="button" class="conference-remove btn btn-outline-danger">Remove</button>
+                            </div>
+                            {# CONF-06 -- author-ordered rotation, comma-joined ids. #}
+                            <input type="hidden" name="conference_rotation"
+                                   id="manage-conferences-rotation-{{ forloop.counter0 }}"
+                                   class="conference-rotation" value="{{ row.rotation }}">
+                            <div id="manage-conferences-rotation-composer-{{ forloop.counter0 }}"
+                                 class="conference-rotation-composer"></div>
+                            <button type="button"
+                                    id="manage-conferences-rotation-add-{{ forloop.counter0 }}"
+                                    class="conference-rotation-add btn btn-outline-secondary btn-sm mt-2 align-self-start">+ Add map</button>
+                            <div class="form-text">
+                                Author-ordered rotation for this conference, used
+                                when Map mode is "Rotate by Conference". A Round's
+                                map is <code>rotation[matchday % len(rotation)]</code>.
+                                {% if map_mode == "rotate_by_conference" %}
+                                    <strong>Required:</strong> this Season's map mode
+                                    needs at least 1 map per conference.
+                                {% endif %}
+                            </div>
                         </div>
                     {% endfor %}
                 </div>
@@ -79,8 +108,30 @@
 
             <script>
             (function () {
+                "use strict";
+
                 const list = document.getElementById("manage-conferences-list");
                 const addBtn = document.getElementById("manage-conferences-add");
+                const form = document.getElementById("manage-conferences-form");
+                const dataEl = document.getElementById("manage-conferences-confirmed-maps");
+                if (!list || !addBtn || !form) {
+                    return;
+                }
+
+                // CONF-06 -- the confirmed-map catalogue every rotation picker
+                // offers. An empty/broken payload degrades to no options.
+                let maps = [];
+                if (dataEl) {
+                    try {
+                        maps = JSON.parse(dataEl.textContent);
+                    } catch (e) {
+                        maps = [];
+                    }
+                }
+
+                // Monotonic conference-row index, so removing a row never lets a
+                // later "+ Add conference" reuse a live DOM id.
+                let confSeq = list.querySelectorAll(".conference-row").length;
 
                 function escapeHtml(s) {
                     const d = document.createElement("div");
@@ -107,28 +158,132 @@
                         sel.value = (cur === null || cur >= ns.length) ? "" : String(cur);
                     });
                 }
+
+                // ---- CONF-06 rotation composer (one per conference row) ----
+
+                // Re-serialize ONE row's composer into its own hidden input, in
+                // document order. Rows without a selection are skipped.
+                function serializeRotation(row) {
+                    const hidden = row.querySelector(".conference-rotation");
+                    const composer = row.querySelector(".conference-rotation-composer");
+                    if (!hidden || !composer) return;
+                    const ids = [];
+                    composer.querySelectorAll(".conference-rotation-row").forEach(r => {
+                        const sel = r.querySelector(".conference-rotation-select");
+                        if (sel && sel.value !== "") ids.push(sel.value);
+                    });
+                    hidden.value = ids.join(",");
+                }
+
+                function buildMapRow(row, preselect) {
+                    const composer = row.querySelector(".conference-rotation-composer");
+                    if (!composer) return null;
+                    const i = row.getAttribute("data-conf-index");
+                    const j = parseInt(row.getAttribute("data-map-seq") || "0", 10);
+                    row.setAttribute("data-map-seq", String(j + 1));
+
+                    const mapRow = document.createElement("div");
+                    mapRow.id = "manage-conferences-rotation-row-" + i + "-" + j;
+                    mapRow.className = "conference-rotation-row input-group input-group-sm mb-1";
+
+                    const select = document.createElement("select");
+                    select.id = "manage-conferences-rotation-select-" + i + "-" + j;
+                    select.className = "conference-rotation-select form-select form-select-sm";
+                    select.setAttribute("aria-label", "Rotation map");
+                    for (let m = 0; m < maps.length; m++) {
+                        const opt = document.createElement("option");
+                        opt.value = maps[m].id;
+                        opt.textContent = maps[m].name;
+                        select.appendChild(opt);
+                    }
+                    if (preselect !== undefined && preselect !== null) {
+                        select.value = String(preselect);
+                    }
+                    select.addEventListener("change", () => serializeRotation(row));
+
+                    const removeBtn = document.createElement("button");
+                    removeBtn.type = "button";
+                    removeBtn.className = "conference-rotation-remove btn btn-outline-danger btn-sm";
+                    removeBtn.textContent = "Remove";
+                    removeBtn.addEventListener("click", () => {
+                        composer.removeChild(mapRow);
+                        serializeRotation(row);
+                    });
+
+                    mapRow.appendChild(select);
+                    mapRow.appendChild(removeBtn);
+                    composer.appendChild(mapRow);
+                    return mapRow;
+                }
+
+                // Rehydrate the composer from the hidden input's server-rendered
+                // value, so an existing (or resubmitted) rotation round-trips
+                // without the user re-picking every map.
+                function hydrateRotation(row) {
+                    const hidden = row.querySelector(".conference-rotation");
+                    if (!hidden) return;
+                    const raw = hidden.value || "";
+                    raw.split(",").forEach(token => {
+                        const t = token.trim();
+                        if (t !== "") buildMapRow(row, t);
+                    });
+                    serializeRotation(row);
+                }
+
                 function wireRow(row) {
                     row.querySelector(".conference-name").addEventListener("input", () => rebuildSelects());
                     row.querySelector(".conference-remove").addEventListener("click", () => {
                         const rows = Array.from(list.querySelectorAll(".conference-row"));
                         const idx = rows.indexOf(row);
+                        // The hidden rotation input is a child of the row, so it
+                        // leaves with it and the two getlists stay index-aligned.
                         row.remove();
                         rebuildSelects(idx);
                     });
+                    const addMap = row.querySelector(".conference-rotation-add");
+                    if (addMap) {
+                        addMap.addEventListener("click", () => {
+                            buildMapRow(row, null);
+                            serializeRotation(row);
+                        });
+                    }
                 }
-                list.querySelectorAll(".conference-row").forEach(wireRow);
-                addBtn.addEventListener("click", () => {
-                    const idx = list.querySelectorAll(".conference-row").length;
+
+                function buildConferenceRow() {
+                    const i = confSeq++;
                     const row = document.createElement("div");
-                    row.className = "conference-row input-group mb-2";
+                    row.className = "conference-row card card-body mb-2";
+                    row.setAttribute("data-conf-index", String(i));
                     row.style.maxWidth = "30rem";
                     row.innerHTML =
-                        '<input type="text" name="conference_name" id="manage-conferences-name-' + idx + '"' +
+                        '<div class="input-group mb-2">' +
+                        '<input type="text" name="conference_name" id="manage-conferences-name-' + i + '"' +
                         ' class="conference-name form-control" placeholder="Conference name">' +
-                        '<button type="button" class="conference-remove btn btn-outline-danger">Remove</button>';
+                        '<button type="button" class="conference-remove btn btn-outline-danger">Remove</button>' +
+                        '</div>' +
+                        '<input type="hidden" name="conference_rotation"' +
+                        ' id="manage-conferences-rotation-' + i + '" class="conference-rotation" value="">' +
+                        '<div id="manage-conferences-rotation-composer-' + i + '"' +
+                        ' class="conference-rotation-composer"></div>' +
+                        '<button type="button" id="manage-conferences-rotation-add-' + i + '"' +
+                        ' class="conference-rotation-add btn btn-outline-secondary btn-sm mt-2 align-self-start">+ Add map</button>';
                     list.appendChild(row);
                     wireRow(row);
+                    return row;
+                }
+
+                list.querySelectorAll(".conference-row").forEach(row => {
+                    wireRow(row);
+                    hydrateRotation(row);
+                });
+                addBtn.addEventListener("click", () => {
+                    buildConferenceRow();
                     rebuildSelects();
+                });
+                // Re-serialize every rotation on submit, so a value edited after
+                // the last change event still reaches the server.
+                form.addEventListener("submit", () => {
+                    list.querySelectorAll(".conference-row").forEach(serializeRotation);
                 });
             })();
             </script>
@@ -144,6 +299,18 @@
                                     <li class="list-group-item">{{ team.name }}</li>
                                 {% endfor %}
                             </ul>
+                            {# CONF-06 -- frozen author-ordered map rotation. #}
+                            <div class="card-body py-2">
+                                <div class="small text-muted mb-1">Map rotation</div>
+                                <ul id="manage-conferences-readonly-rotation-{{ forloop.counter0 }}"
+                                    class="list-unstyled small mb-0">
+                                    {% for map_name in group.rotation_names %}
+                                        <li>{{ forloop.counter }}. {{ map_name }}</li>
+                                    {% empty %}
+                                        <li class="text-muted">No rotation maps.</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
                         </div>
                     {% endfor %}
                 {% else %}

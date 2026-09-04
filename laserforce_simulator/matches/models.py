@@ -964,6 +964,7 @@ class Season(models.Model):
         ("single", "Single map"),
         ("random_per_round", "Random per Round"),
         ("rotate_by_matchday", "Rotate by matchday"),
+        ("rotate_by_conference", "Rotate by Conference"),
     )
 
     league = models.ForeignKey(
@@ -1068,6 +1069,19 @@ class Season(models.Model):
             raise ValidationError(
                 "A Season requires at least 2 enrolled teams to start."
             )
+        # CONF-06 — ``rotate_by_conference`` resolves every fixture's map from
+        # its own Conference's rotation, so activation is refused unless the
+        # partition exists AND every Conference has authored at least 1 map;
+        # otherwise the mode silently degrades to the 3-zone fallback all season.
+        conferences = list(self.conferences.all())
+        if self.map_mode == "rotate_by_conference":
+            if len(conferences) < 2 or any(
+                not (c.map_rotation_ids_json or []) for c in conferences
+            ):
+                raise ValidationError(
+                    "A Season with map mode 'Rotate by Conference' requires at "
+                    "least 2 conferences, each with at least 1 rotation map."
+                )
         self.starting_team_ids_json = sorted(t.id for t in self.teams.all())
         # LG-01j — snapshot the map pool at activation time, mirroring
         # the ``starting_team_ids_json`` precedent (sorted asc by id for
@@ -1080,9 +1094,17 @@ class Season(models.Model):
         # CONF-01 — snapshot each Conference's team-id set at activation
         # (sorted asc), mirroring ``starting_team_ids_json``. No-op for a
         # zero-Conference Season.
-        for conf in self.conferences.all():
+        for conf in conferences:
             conf.starting_team_ids_json = sorted(t.id for t in conf.teams.all())
-            conf.save(update_fields=["starting_team_ids_json"])
+            # CONF-06 — snapshot the rotation, author order PRESERVED
+            # (``list(...)``, NOT ``sorted(...)``). Empty/None ⇒ ``[]``.
+            conf.starting_map_rotation_ids_json = list(conf.map_rotation_ids_json or [])
+            conf.save(
+                update_fields=[
+                    "starting_team_ids_json",
+                    "starting_map_rotation_ids_json",
+                ]
+            )
         self.state = "active"
         self.save()
         # CONF-04 — Start Season is the EARLIEST moment at which every input is
@@ -2466,6 +2488,15 @@ class Conference(models.Model):
     # Season.starting_team_ids_json. None pre-activation; written by
     # Season.start_season().
     starting_team_ids_json = models.JSONField(null=True, blank=True, default=None)
+    # CONF-06 — author-ordered per-Conference arena-map rotation (live) + its
+    # activation snapshot. Read by the ``rotate_by_conference`` map mode;
+    # author order is PRESERVED (NOT id-sorted) in both, since the matchday
+    # index keys directly into the ordered list. The order-preserving twin of
+    # the Season-level SUB-01 pair, one level down on the partition.
+    map_rotation_ids_json = models.JSONField(null=True, blank=True, default=None)
+    starting_map_rotation_ids_json = models.JSONField(
+        null=True, blank=True, default=None
+    )
 
     class Meta:
         ordering = ["ordinal"]
