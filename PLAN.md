@@ -1124,7 +1124,9 @@ shipped) and is most useful alongside **CAR-03** manager-mode career play.
   deliberate divergence from CONF-01's `starting_team_ids_json`), because the matchday index keys
   directly into the ordered list. Migration
   `matches/migrations/0061_conference_map_rotation.py` (dep
-  `0060_alter_seasonphase_tournament_mode`), 2× `AddField`, **no `RunPython` / no backfill**
+  `0060_alter_seasonphase_tournament_mode`), **3 ops** — 2× `AddField` plus the
+  choices-only `AlterField` Django emits for the widened `Season.map_mode` (non-schema on
+  both backends, kept in the same file after the AddFields) — **no `RunPython` / no backfill**
   (ADR-0004 — pre-CONF-06 Conferences take `None` and never reach the new branch).
   **Resolver:** `matches.tasks._resolve_fixture_map` gains a **4th keyword-with-default argument**
   `conf_by_team: dict[int, Conference] | None = None` (backwards compatibility is load-bearing —
@@ -1183,6 +1185,12 @@ shipped) and is most useful alongside **CAR-03** manager-mode career play.
   unreachable without the new mode and `_fixture_map_ids` reduces to the old `(pool or []) +
   (rotation or [])` expression when there are no Conferences, so every existing seeded outcome stays
   byte-identical. Tests extend **five existing files, no new test file**:
+  `_build_map_config_label` gains a **6th branch** so the dashboard reports
+  `Map: Rotating per Conference (N conferences: …)` instead of falling through to the
+  ladder's defensive `Map: 3-zone fallback (no map)` return — the label otherwise lied
+  about a Season that was really running per-Conference rotations (caught in the browser
+  pass, not the seam contract; one `ArenaMap` query for the whole label, author order,
+  regression class `TestConf06LeagueDashboardRotateByConferenceLabel`). Tests:
   `matches/tests/test_season_map_config.py` (the pure branch incl. the 1-based-modulo pin and every
   defensive-`None` path, `_fixture_map_ids`, `parse_rotation_ids`), `test_conference.py`
   (author-order snapshot + the activation guard), `test_manage_conferences.py` (composer GET, POST
