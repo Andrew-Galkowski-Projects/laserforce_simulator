@@ -69,7 +69,33 @@ Three modes toggled in the top bar:
 /maps/<id>/strong-spots/save/       → POST: persist user-edited heavy strong spots
 /maps/<id>/spawn-cells/             → GET: red_spawn/blue_spawn lists from confirmed zone_data (no zone_size param — data is per-config)
 /maps/<id>/heatmap-data/            → GET: RES-04 multi-round movement heatmap aggregate (URL name "map_heatmap_data"; required ?zone_size=<n>, optional &team_color=red|blue)
+
+/api/maps/                          → ANG-01a ArenaMapViewSet list (route "arenamap-list")
+/api/maps/<id>/                     → ANG-01a ArenaMapViewSet detail (route "arenamap-detail")
 ```
+
+## REST API — maps (`core/api_views.py`, `core/serializers.py`, `core/filters.py`)
+
+**ANG-01a** adds a **read-only** maps API, registered in `laserforce_simulator/api_urls.py` as
+`router.register("maps", ArenaMapViewSet, basename="arenamap")`. It follows the project
+**API conventions** (envelope, error codes, `django-filter`, ADR-0039 — see
+[`../matches/CLAUDE.md`](../matches/CLAUDE.md)). Any write (POST / PUT / PATCH / DELETE) ⇒ 405; the
+map-editor endpoints (upload, delete, zones, sight lines, strong spots, spawns, heatmap data) are
+**ANG-01c**, still HTML/AJAX-only.
+
+- **`ArenaMapViewSet(ListOnlyFilterMixin, ReadOnlyModelViewSet)`** —
+  `@method_decorator(login_not_required, name="dispatch")` + settings-level `IsAuthenticated`
+  (anonymous ⇒ 403 `not_authenticated`). `get_queryset()` annotates
+  `has_confirmed_config = Exists(MapZoneConfig.objects.filter(arena_map=OuterRef("pk"), confirmed=True))`
+  — true iff `latest_confirmed_config() is not None`. Ordering `name` (default), `created_at`, `id`;
+  tiebreak `id`.
+- **Not ownership-filtered.** Every authenticated Account sees every map — the UX-01 posture below
+  (ArenaMap is shared reference data, ADR-0038) carries over to the API unchanged.
+- **`ArenaMapSerializer`** fields, exactly: `id`, `name`, `image` (absolute URL when the request is in
+  serializer context, else `null`), `is_default`, `img_width`, `img_height`, `created_at`,
+  `has_confirmed_config` (both `image` and `has_confirmed_config` read-only).
+- **`ArenaMapFilterSet`**: `is_default` and `has_confirmed_config` (booleans — `true/false/1/0`;
+  junk values are ignored, not 400).
 
 ## Storage Backend (`core/views.py`)
 
@@ -92,6 +118,8 @@ Three modes toggled in the top bar:
 - `SeedDefaultsTests` — skips seeding when non-`FileSystemStorage` is active
 - `UploadMapViewTests` — dimensions stored correctly after upload; corrupt uploads rejected and not persisted
 - `DeleteMapViewTests` — `delete_map` POST removes map + redirects to list, related configs cascade, GET → 405, missing map → 404, list page renders the Delete control
+
+`core/test_maps_api.py` (ANG-01a; a sibling of `core/tests.py` since `core` has no `tests/` package) — `/api/maps/` list / detail envelope, exact serializer fields, absolute `image` URL, `has_confirmed_config` true / false, `is_default` / `has_confirmed_config` filters, same maps visible to two different Accounts, anonymous 403, writes 405.
 
 Map-processing tests for MAP-05/07 features live in `matches/tests/test_map.py` alongside the MAP-02–04 tests:
 - `TestMap05ComputeHighLosRanking` — sort correctness (highest-LOS cell first), all cells returned, empty input returns empty
@@ -142,6 +170,9 @@ Concretely, and verified as part of the slice:
   `get_owned_or_404` (the other 83 were).
 - `/maps/` is still behind the **global login gate** (`LoginRequiredMiddleware`) with **no**
   `@login_not_required` exemption: authenticated, but unfiltered.
+- **ANG-01a** keeps the same posture on the API: `ArenaMapViewSet` (`/api/maps/`) is authenticated
+  (DRF `IsAuthenticated`; it carries the usual API `login_not_required` middleware exemption so an
+  anonymous caller gets a 403 JSON rather than a 302) but its queryset is **not** ownership-filtered.
 
 **Why** ([ADR-0038](../../docs/adr/0038-accounts-and-uniform-manager-ownership.md)): maps are
 referenced **across League boundaries** by `ArenaMap.is_default`, `Season.map_mode`, the CONF-06

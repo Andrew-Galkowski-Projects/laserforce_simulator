@@ -170,14 +170,14 @@ names**, not paths, so they survive a mount change), plus
 `REST_FRAMEWORK["DEFAULT_PERMISSION_CLASSES"] = ["rest_framework.permissions.IsAuthenticated"]`
 (was `AllowAny`).
 
-**Exactly eleven surfaces carry `@login_not_required`.** Nothing else is exempt — including every
-`/maps/` route:
+**Exactly twelve surfaces carry `@login_not_required`** (eleven at UX-01; **ANG-01a** added
+`ArenaMapViewSet`). Nothing else is exempt — including every HTML `/maps/` route:
 
 | Surface | Form |
 |---|---|
 | `login`, `logout`, `password_change`, `password_change_done` | `login_not_required(SomeView.as_view(...))` in `accounts/urls.py` |
 | `accounts.views.register` | plain `@login_not_required` decorator |
-| `TeamViewSet`, `PlayerViewSet` (`teams/api_views.py`); `MatchViewSet`, `GameRoundViewSet`, `SimulateBatchAPIView`, `SimulateBatchStatusAPIView` (`matches/api_views.py`) | `@method_decorator(login_not_required, name="dispatch")` |
+| `TeamViewSet`, `PlayerViewSet` (`teams/api_views.py`); `MatchViewSet`, `GameRoundViewSet`, `SimulateBatchAPIView`, `SimulateBatchStatusAPIView` (`matches/api_views.py`); `ArenaMapViewSet` (`core/api_views.py`, ANG-01a) | `@method_decorator(login_not_required, name="dispatch")` |
 
 `process_view` receives the **resolved** view, so an `include()` cannot be wrapped. Both CBV forms
 work because `View.as_view()` copies `dispatch.__dict__` onto the returned callable.
@@ -187,6 +187,15 @@ returns a **403 JSON** body instead of the middleware's HTML **302** to the logi
 an API client needs. Logging out of the browser session still locks the API. All four viewsets also
 gain a manager-scoped `get_queryset()` while **keeping** their class-level `queryset` attribute (the
 DRF router needs it for basename introspection).
+
+**API ownership after ANG-01a** ([ADR-0039](../../docs/adr/0039-rest-api-envelope-and-form-bound-writes.md)).
+The anonymous 403 is now enveloped — `{"errors": [{"code": "not_authenticated", ...}], "meta": {}}` —
+and stays **403, not 401**, until ANG-03 adds JWT. The Team / Player viewsets gained writes (create,
+PATCH, slots PUT, add player, generate, roster import, player DELETE); every one resolves its target
+through the same owned `get_queryset()` + `get_object()`, so a write against another Account's row is
+**404 and leaves the row unchanged**, and every create path stamps `manager_or_none(request)`.
+`ArenaMapViewSet` is authenticated but **not** owned (ArenaMap is shared reference data). The
+API-03 batch POST's team lookup is still not ownership-scoped (ANG-01b follow-up).
 
 `password_change_done` is exempt alongside `password_change` purely so the redirect target cannot
 bounce; both are only reachable post-login in practice.
@@ -258,6 +267,14 @@ free-agent pool Team; both `member_night_setup` draw Teams; `tournament_create`'
 `Match` / `GameRound` **returned by** `BatchSimulator`; and the three `Season._build_*`
 embedded-Tournament sites (`manager=self.league.manager`).
 
+**ANG-01a additions.** The roster-import helpers `_check_db_slot_collisions` / `_apply_roster`
+(now in `teams/services.py`) take a **required keyword `manager`**: Teams named in a CSV resolve only
+among the Account's own + Unmanaged Teams, and a miss creates a Team **stamped** with the importer —
+this closed a leak where importing appended to (and echoed player names from) another Account's
+same-named Team. Callers: the HTML `import_roster`, the API `POST /api/teams/import/`, and the
+Tournament participant import. The API `POST /api/teams/` and `POST /api/teams/generate/` stamp the
+same way as their HTML twins.
+
 `manager` is deliberately **not** threaded through `BatchSimulator` or `matches/simulation/*` — those
 run in worker processes with no request. Rows they create stay Unmanaged, which is fully accessible.
 
@@ -326,7 +343,8 @@ not part of it. Exactly four public functions:
 ### Link / unlink views (`accounts/views.py`, `accounts/urls.py`)
 
 Both are **POST-only** (`@require_POST` ⇒ any other method **405**) and are **not**
-`@login_not_required` — the eleven exempt surfaces stay eleven; an anonymous POST is 302'd to
+`@login_not_required` — the eleven exempt surfaces stayed eleven (twelve since ANG-01a's
+`ArenaMapViewSet`); an anonymous POST is 302'd to
 `LOGIN_URL` by the middleware.
 
 | URL name | Path | View |

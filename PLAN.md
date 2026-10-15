@@ -1491,6 +1491,127 @@ Before building Angular against it, ensure:
 - Filtering and pagination on list endpoints
 - Proper HTTP error codes (400 for validation, 404 for missing records, etc.)
 
+**Re-sliced (grill, 2026-10-14).** The maintainer chose **"Everything"** — full API parity with all
+~140 Django routes, not just the six resources above — so ANG-01 is split into seven sub-items,
+ANG-01a..g. ANG-01a lays the conventions every later slice inherits
+([ADR-0039](docs/adr/0039-rest-api-envelope-and-form-bound-writes.md)); 01b..g are independent of
+each other and each depends only on 01a. Locked across all of them: **one envelope** for every
+`/api/` response (the API-03 **Job** endpoints included); **API writes bind the existing Django
+`Form`** (serializers are output-only — this overturns the API-03 Forms-vs-Serializers idiom);
+`django-filter` allowlists + `OrderingFilter`; cross-Account access is **404, never 403**
+(ADR-0038); anonymous stays **403 `not_authenticated`** until ANG-03 swaps in JWT. Login / JWT
+token endpoints stay ANG-03, not ANG-01g.
+
+#### ANG-01a · [DONE] API foundation + core CRUD
+
+**[DONE] Shipped (2026-10-14).** **Envelope** — success `{"data": <obj|list>, "meta": {}}`, paginated
+lists `meta = {page, page_size, count, total_pages}` (empty ⇒ `count: 0, total_pages: 1`), errors
+`{"errors": [{"code", "message", "field"}], "meta": {}}` (`field` null for non-field errors), applied
+project-wide by settings, not per view: a new `laserforce_simulator/api/` package holds
+`EnvelopeJSONRenderer` (204 ⇒ empty body; 2xx always wrapped; a hand-built 4xx is defensively
+normalised), `EnvelopePagination` (`page_size` 20, `?page_size=` clamped to 100, bad / out-of-range
+`?page=` ⇒ 404 `not_found`), `envelope_exception_handler` (wraps DRF's handler, keeps `Allow` /
+`WWW-Authenticate` headers; unhandled exceptions stay a non-enveloped 500), the Form-error converters
+`form_errors_to_envelope` / `django_validation_error_to_envelope` / `validate_form_or_raise` +
+`EnvelopeValidationError` (views **raise**, never build a 4xx `Response`), the request-data helpers
+`plain_form_data` / `merged_form_data`, `AliasOrderingFilter` (public `?ordering=` names mapped
+through `ordering_aliases`, unknown terms silently dropped, `ordering_tiebreak` appended for stable
+pages) and `ListOnlyFilterMixin` (filters apply to `list` only, so query params never 404/400 a detail
+lookup). Locked code table: 400 Form/serializer/filter codes verbatim, `parse_error`, `roster_invalid`
+(`field = row:<n>[:<column>]`); 404 `not_found` (missing **and** cross-Account rows, bad page); 403
+`not_authenticated` / `permission_denied` (CSRF); 405 `method_not_allowed`; 415
+`unsupported_media_type`. Exemptions: player DELETE 204 and the raw `text/csv` roster template.
+**Filters** — new dependency **`django-filter>=25.1`** (`django_filters` in `INSTALLED_APPS`,
+`DjangoFilterBackend` + `AliasOrderingFilter` as default backends); explicit FilterSets in
+`teams/filters.py` (`TeamFilterSet`: `name`, `include_free_agents` — default excludes every
+free-agent pool via `Team.objects.regular()`, matching the HTML list; `PlayerFilterSet`: `team`,
+`name`), `matches/filters.py` (`MatchFilterSet`: `team` either side, `season`, `match_type`,
+`date_played_after/_before`; `GameRoundFilterSet`: `match`, `arena_map`; `GameEventFilterSet`:
+`event_type`, `actor`, `target`, `timestamp_min/_max` in raw ticks) and `core/filters.py`. A typed
+filter with a bad value is a **400** (unlike the HTML pages' forgiving fallback); booleans with junk
+are ignored. Player ordering = exactly the 23 LG-00c `_SORT_KEYS` (`offensive_synergy` alias,
+`overall_rating` via the shared annotation). **Endpoints** — Team: list / create (POST, stamps
+`manager`) / retrieve / PATCH (merged over the instance) / **PUT `/api/teams/<pk>/slots/`** (full
+replace — an omitted slot is cleared; another Account's player ⇒ 400 `invalid_choice` that never names
+it) / **POST `/api/teams/<pk>/players/`** (omitted fields filled from the same initial the HTML
+`player_add` GET uses) / **POST `/api/teams/generate/`** (201 `{created_teams, free_agent_count}`) /
+**POST `/api/teams/import/`** (multipart only, 201 `{created_teams, appended_teams, player_count,
+row_count}`) / **GET `/api/teams/import/template/`** (byte-identical CSV); **no team DELETE** (405).
+Player: list / retrieve / PATCH / DELETE (204); no POST / PUT. Matches, rounds and events stay
+read-only, gaining filters + ordering. **NEW read-only `/api/maps/`** (`ArenaMapViewSet`,
+`ArenaMapSerializer` with absolute `image` URL and an annotated `has_confirmed_config`) — **not
+ownership-filtered** (ArenaMap is shared reference data, ADR-0038). The API-03 batch endpoints are
+enveloped with `data` byte-identical to the UI polling JSON; their three hand-built `{"detail"}` 400s
+became raised `ValidationError`s (same messages). **Services** — new `teams/services.py` shared by the
+HTML views and the API: `run_player_generation` → `GenerationResult`, `run_roster_import` →
+`RosterImportResult`, `resolve_import_teams`, `player_form_initial`, `annotate_overall_rating`,
+`build_roster_template_csv`; the LG-00 / LG-00b private generation + import helpers moved there and
+are **re-exported from `teams/views.py`** so existing `from teams.views import ...` callers keep
+working. HTML generate / import / `player_add` / `player_list` / template output byte-identical.
+**Ownership fix (roster import leak)** — `_check_db_slot_collisions` / `_apply_roster` resolved Teams
+by bare name (`get_or_create`), so importing a CSV naming another Account's Team appended to it and
+could echo its players' names in collision errors. Both now take a **required keyword `manager`** and
+resolve through `resolve_import_teams` (own + Unmanaged Teams only, highest id wins on duplicate
+names, never `get_or_create`); a miss creates a **new Team stamped with the importer**. Same fix at the
+**tournament participant import** (`matches/tournament_views.py`), whose created Teams are now stamped.
+**Invariants:** **no migration, no simulation change, no Score Calibration re-baseline**, models /
+serializers / HTML templates / URL names unchanged. **Follow-up (out of scope):** the batch POST's
+`SimulateBatchRequestSerializer` team lookup is still not ownership-scoped. New tests:
+`laserforce_simulator/api/tests/` (envelope, form errors), `teams/tests/test_api_writes.py`,
+`test_api_filters.py`, `test_services.py`, `test_roster_import_ownership.py`,
+`matches/tests/test_api_filters.py`, `core/test_maps_api.py`; existing API tests migrated to the
+envelope. See the seam contract
+[`.claude/worktrees/ang-01a-seam-contract.md`](.claude/worktrees/ang-01a-seam-contract.md),
+ADR-0039, and the **REST API** sections of the `teams` / `matches` / `core` CLAUDE.md files.
+
+#### ANG-01b · Match / Round actions + analytics API
+
+Expose the sandbox Match and Round surfaces that are still HTML-only: create a 2-round Match and a
+single standalone Round (binding the existing create Forms, stamping `manager`), batch simulate +
+save-batch-games (enveloped Jobs, and close the ANG-01a follow-up by ownership-scoping the batch team
+lookup), the RES-03 missile log, RES-04 per-round heatmap data, RV-01 compare-rounds, HX-03 team and
+HX-04 player head-to-head, HX-01 career stats, HX-02 role benchmarks, and the RV-03 round report PDF
+download (a raw-file exemption like the roster CSV). Read endpoints are pure re-uses of the existing
+pure aggregation modules; no simulation change.
+
+#### ANG-01c · Map editor API
+
+Writable `/api/maps/`: upload / delete a map, zone detection + zone-config save (incl. `wall_meta`,
+elevation, bases), sight lines (load / compute / single-cell / batched save), ranked cells, Heavy
+strong spots, spawn cells, and the RES-04 multi-round heatmap aggregate. Maps stay shared reference
+data (not ownership-filtered, ADR-0038); writes bind or mirror the existing `core/views.py`
+validation (e.g. the `[0.0, 10.0]` elevation bound). The Angular map editor (ANG-06 item 6) depends
+on this slice.
+
+#### ANG-01d · Leagues / Seasons API
+
+League create (template chooser + Advanced form), League and Season dashboards, Standings and
+schedule, the play actions (play next / play week / play all) with their Job status and cancel
+endpoints, next-season rollover, Conferences, member nights, Season awards and the owner evaluation.
+Every League-tree row is resolved through `get_owned_or_404` / `owned_queryset` (404 cross-Account);
+play actions reuse the existing Celery tasks and enveloped Job polling.
+
+#### ANG-01e · League stats / finance / players screens API
+
+The read-mostly `league_screens/*` surfaces: League leaders, player stats and ratings history,
+free agents and watch list, team history, finances (budgets, ticket price, injury policy — writes
+bind the existing Team Finances form), and League player detail. Primarily output serializers over
+the existing screen helpers; finance writes stay gated on `finance_enabled`.
+
+#### ANG-01f · Tournaments API
+
+Sandbox and in-League Tournaments: list / create (formats incl. Random Draw), detail with bracket
+nodes, reseed, participant management and the CSV participant import (already ownership-fixed by
+ANG-01a), play next / play all with Job status, and the draw. Uses the ANG-01a roster-error mapping
+(`roster_invalid`, `row:<n>:<column>`) for import errors.
+
+#### ANG-01g · Accounts API
+
+`GET /api/accounts/me/` (the Account + its resolved Self-insert), registration, password change, and
+the UX-02 Self-insert link / unlink, each binding the existing `accounts/forms.py` Forms and
+`accounts/self_insert.py` helpers. **Login, logout and token issue / refresh stay ANG-03** (JWT);
+while `SessionAuthentication` is the only scheme, anonymous requests remain 403.
+
 ### ANG-02 · CORS configuration
 
 During development Angular runs on `http://localhost:4200` and Django runs on `http://localhost:8000`.
@@ -1542,6 +1663,11 @@ verify feature parity with the existing Django template, then remove the Django 
 4. **Round detail** — per-player stat table, MVP scores
 5. **Event timeline** — filtered event log, color-coded by type (SIM-05 replay controls slot in here)
 6. **Map editor** — most complex: canvas overlay, zone painting, sight-line drag-select (migrate last)
+
+**Note (ANG-01 re-slice, 2026-10-14):** the League / Season, League-screens and Tournament surfaces
+will have full API coverage from ANG-01d / ANG-01e / ANG-01f, but they are **not yet planned** as
+ANG-06 migration items — add them (and the Accounts screens backed by ANG-01g) here once the six
+items above are scoped.
 
 ### ANG-07 · Serve Angular from Docker (nginx sidecar)
 

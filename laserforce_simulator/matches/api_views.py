@@ -1,13 +1,19 @@
 from celery.result import AsyncResult
 from django.contrib.auth.decorators import login_not_required
+from django.db.models import QuerySet
 from django.utils.decorators import method_decorator
-from rest_framework import serializers, status, views
+from django_filters.utils import translate_validation
+from rest_framework import serializers, views
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.serializers import Serializer
 from rest_framework.viewsets import ReadOnlyModelViewSet
 
 from accounts.permissions import owned_game_round_q, owned_match_q
+from laserforce_simulator.api.viewsets import ListOnlyFilterMixin
+from matches.filters import GameEventFilterSet, GameRoundFilterSet, MatchFilterSet
 from matches.models import GameRound, Match
 from matches.serializers import (
     GameEventSerializer,
@@ -31,20 +37,23 @@ class SimulateBatchRequestSerializer(serializers.Serializer):
 # UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
 # DRF's 403 JSON rather than an HTML 302 to the login page; the settings-level
 # `IsAuthenticated` is what actually gates it.
+#
+# ANG-01a — ordering comes from `AliasOrderingFilter` / `ordering` (with an
+# `-id` tiebreak for stable pages), not from `get_queryset`.
 @method_decorator(login_not_required, name="dispatch")
-class MatchViewSet(ReadOnlyModelViewSet):
+class MatchViewSet(ListOnlyFilterMixin, ReadOnlyModelViewSet):
     # Class-level queryset required by the DRF router for model introspection.
     # get_queryset() overrides this at request time.
-    queryset = Match.objects.select_related("team_red", "team_blue", "winner").order_by(
-        "-date_played"
-    )
+    queryset = Match.objects.select_related("team_red", "team_blue", "winner")
     serializer_class = MatchSerializer
+    filterset_class = MatchFilterSet
+    ordering_fields = ("date_played", "id")
+    ordering = ("-date_played",)
+    ordering_tiebreak = ("-id",)
 
-    def get_queryset(self):
-        return (
-            Match.objects.filter(owned_match_q(self.request.user))
-            .select_related("team_red", "team_blue", "winner")
-            .order_by("-date_played")
+    def get_queryset(self) -> QuerySet[Match]:
+        return Match.objects.filter(owned_match_q(self.request.user)).select_related(
+            "team_red", "team_blue", "winner"
         )
 
 
@@ -52,30 +61,39 @@ class MatchViewSet(ReadOnlyModelViewSet):
 # DRF's 403 JSON rather than an HTML 302 to the login page; the settings-level
 # `IsAuthenticated` is what actually gates it.
 @method_decorator(login_not_required, name="dispatch")
-class GameRoundViewSet(ReadOnlyModelViewSet):
+class GameRoundViewSet(ListOnlyFilterMixin, ReadOnlyModelViewSet):
     # Class-level queryset required by the DRF router for model introspection.
     # get_queryset() overrides this at request time.
     queryset = GameRound.objects.all()
+    filterset_class = GameRoundFilterSet
+    ordering_fields = ("date_played", "round_number", "id")
+    ordering = ("-date_played",)
+    ordering_tiebreak = ("-id",)
 
-    def get_queryset(self):
-        qs = (
-            GameRound.objects.filter(owned_game_round_q(self.request.user))
-            .select_related("match", "team_red", "team_blue", "winner")
-            .order_by("-date_played")
-        )
+    def get_queryset(self) -> QuerySet[GameRound]:
+        qs = GameRound.objects.filter(
+            owned_game_round_q(self.request.user)
+        ).select_related("match", "team_red", "team_blue", "winner")
         if self.action == "retrieve":
             return qs.prefetch_related("player_states")
         return qs
 
-    def get_serializer_class(self):
+    def get_serializer_class(self) -> type[Serializer]:
         if self.action == "retrieve":
             return GameRoundSerializer
         return GameRoundListSerializer
 
     @action(detail=True, url_path="events")
-    def events(self, request: Request, pk: int | None = None) -> Response:
+    def events(self, request: Request, pk: str | None = None) -> Response:
+        """The round's events in fixed ``(timestamp, id)`` order, filterable."""
         game_round = self.get_object()
-        qs = game_round.events.select_related("actor", "target").order_by("timestamp")
+        qs = game_round.events.select_related("actor", "target").order_by(
+            "timestamp", "id"
+        )
+        fs = GameEventFilterSet(request.query_params, queryset=qs, request=request)
+        if not fs.is_valid():
+            raise translate_validation(fs.errors)
+        qs = fs.qs
         page = self.paginate_queryset(qs)
         if page is not None:
             serializer = GameEventSerializer(page, many=True)
@@ -107,34 +125,22 @@ class SimulateBatchAPIView(views.APIView):
         master_seed = data.get("master_seed")
 
         if team_red_id == team_blue_id:
-            return Response(
-                {"detail": "A team cannot play against itself!"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise ValidationError("A team cannot play against itself!")
 
         teams: dict = {}
         for slot, tid in (("red", team_red_id), ("blue", team_blue_id)):
             try:
                 teams[slot] = Team.objects.get(id=tid)
             except Team.DoesNotExist:
-                return Response(
-                    {"detail": f"Team {tid} does not exist."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+                raise ValidationError(f"Team {tid} does not exist.")
         team_red = teams["red"]
         team_blue = teams["blue"]
 
         for team in (team_red, team_blue):
             roster_errors = team.roster_errors
             if roster_errors:
-                return Response(
-                    {
-                        "detail": (
-                            f"{team.name} has an invalid roster: "
-                            f"{'; '.join(roster_errors)}"
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
+                raise ValidationError(
+                    f"{team.name} has an invalid roster: {'; '.join(roster_errors)}"
                 )
 
         async_result = simulate_batch_task.delay(

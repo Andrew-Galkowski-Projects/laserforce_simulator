@@ -531,7 +531,11 @@ class TestSimulateBatchAPIPost:
             )
 
         assert response.status_code == 200, response.content
-        body = response.json()
+        envelope = response.json()
+        # ANG-01a — success bodies are enveloped; ``data`` is byte-identical
+        # to the pre-envelope bare JSON.
+        assert envelope["meta"] == {}
+        body = envelope["data"]
         assert set(body.keys()) == _BATCH_POST_KEYS, (
             f"REST POST JSON keys drifted: got {set(body.keys())!r}, "
             f"expected {_BATCH_POST_KEYS!r}"
@@ -558,6 +562,18 @@ class TestSimulateBatchAPIPost:
             f"same-team POST must return 400; got {response.status_code}: "
             f"{response.content!r}"
         )
+        # ANG-01a — the hand-built ``{"detail": ...}`` becomes an envelope
+        # error with the same project-owned message.
+        assert response.json() == {
+            "errors": [
+                {
+                    "code": "invalid",
+                    "message": "A team cannot play against itself!",
+                    "field": None,
+                }
+            ],
+            "meta": {},
+        }
 
     def test_invalid_field_returns_400(self) -> None:
         client = APIClient()
@@ -569,6 +585,28 @@ class TestSimulateBatchAPIPost:
             format="json",
         )
         assert response.status_code == 400
+        errors = response.json()["errors"]
+        assert {"code": "required", "field": "team_blue"} in [
+            {"code": e["code"], "field": e["field"]} for e in errors
+        ]
+
+    def test_nonexistent_team_returns_400_envelope(self) -> None:
+        red, _ = make_team_with_slots("Api03APIMissingR")
+        client = APIClient()
+        client.force_login(get_shared_manager())
+        response = client.post(
+            "/api/simulate-batch/",
+            {"team_red": red.id, "team_blue": 999999, "n": 2},
+            format="json",
+        )
+        assert response.status_code == 400
+        assert response.json()["errors"] == [
+            {
+                "code": "invalid",
+                "message": "Team 999999 does not exist.",
+                "field": None,
+            }
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -596,7 +634,7 @@ class TestSimulateBatchAPIStatusEager:
                 format="json",
             )
         assert post_resp.status_code == 200, post_resp.content
-        job_id = post_resp.json()["job_id"]
+        job_id = post_resp.json()["data"]["job_id"]
 
         # Same query-param carry as the UI status endpoint.
         status_resp = client.get(
@@ -604,7 +642,7 @@ class TestSimulateBatchAPIStatusEager:
             {"team_red_id": red.id, "team_blue_id": blue.id},
         )
         assert status_resp.status_code == 200, status_resp.content
-        body = status_resp.json()
+        body = status_resp.json()["data"]
         assert set(body.keys()) == _BATCH_STATUS_KEYS, (
             f"REST status JSON keys drifted: got {set(body.keys())!r}, "
             f"expected (UI-identical) {_BATCH_STATUS_KEYS!r}"
@@ -631,7 +669,7 @@ class TestSimulateBatchAPIStatusUnknownJobId:
             "/api/simulate-batch/00000000-0000-0000-0000-000000000000/"
         )
         assert response.status_code == 200, response.content
-        body = response.json()
+        body = response.json()["data"]
         assert body["status"] == "running"
         assert body["completed"] == 0
         assert body["total"] == 0

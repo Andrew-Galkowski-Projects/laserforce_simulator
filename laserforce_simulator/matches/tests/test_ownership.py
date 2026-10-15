@@ -693,9 +693,7 @@ class TestApiQuerysetScoping(TestCase):
         self.theirs.save(update_fields=["manager"])
 
     def test_team_list_excludes_another_accounts_team(self) -> None:
-        names = {
-            row["name"] for row in self.client.get("/api/teams/").json()["results"]
-        }
+        names = {row["name"] for row in self.client.get("/api/teams/").json()["data"]}
         self.assertIn(self.mine.name, names)
         self.assertNotIn(self.theirs.name, names)
 
@@ -706,9 +704,7 @@ class TestApiQuerysetScoping(TestCase):
 
     def test_isolation_holds_in_the_reverse_direction(self) -> None:
         self.client.force_login(self.other)
-        names = {
-            row["name"] for row in self.client.get("/api/teams/").json()["results"]
-        }
+        names = {row["name"] for row in self.client.get("/api/teams/").json()["data"]}
         self.assertIn(self.theirs.name, names)
         self.assertNotIn(self.mine.name, names)
 

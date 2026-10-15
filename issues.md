@@ -1,3 +1,31 @@
+# Web testing — ANG-01a (REST API foundation + Team/Player writes)
+
+Date: 2026-10-14
+Branch: `ang-01a-api-foundation`
+Scope: scoped pass. Two fresh Accounts in isolated contexts (A, B) + an anonymous context.
+B: Team 26 `ChromeTest Shared` (commander Player 416 `SecretPlayer`, created via the API).
+A: Team 27 `ChromeTest Shared` (roster import), Teams 28/29 (`/teams/generate/`, 7 players each),
+12 free agents on the global pool. Server on port **8001**.
+
+## Summary — ANG-01a
+| Area | Result |
+|---|---|
+| API writes in-browser (B): `POST /api/teams/` 201, `POST /api/teams/26/players/` with only `name` 201 (stats 50), `PUT /api/teams/26/slots/` 200 | OK |
+| `DELETE /api/teams/26/` -> 405 `method_not_allowed` envelope; `POST /api/teams/` `{}` -> 400 `required` / `field: "name"` | OK |
+| Cross-Account (A on B's rows): `GET /api/teams/26/`, `GET` + `DELETE /api/players/416/` -> 404 `not_found` envelope | OK |
+| **Roster-import leak fix**: A imports a CSV naming `ChromeTest Shared` + a commander -> new Team 27 for A (created list, no appended list), page never contains `SecretPlayer`; B's Team 26 still has only SecretPlayer in `slot_commander` | OK |
+| `/api/teams/import/template/` body byte-equal to `/teams/import/template.csv` | OK |
+| `/teams/generate/` teams mode -> Teams 28/29, stamped to A (A 200, B 404 on `/api/teams/28/`); free-agent mode -> 12; cross-field error copy renders | OK |
+| `/teams/27/add-player/` prefill (random profile, stats 50) | OK |
+| `/players/?sort=overall_rating&dir=desc` order == `/api/players/?ordering=-overall_rating` order | OK |
+| Browsable API renders the envelope; `meta` page/page_size/count/total_pages correct | OK |
+| `/api/matches/?match_type=bogus` -> 400 `invalid_choice` / `field: "match_type"`; `/api/teams/?page=999` -> 404 `Invalid page.` | OK |
+| `/api/maps/` 200 (empty — no maps in the dev DB, so field shape not observed in-browser; covered by `core/test_maps_api.py`) | OK |
+| Anonymous `GET /api/teams/` -> 403 `not_authenticated` envelope, no redirect | OK |
+| Console: only the deliberate 400/404 and one DRF browsable-page autocomplete notice; all other requests 2xx | OK |
+
+No findings.
+
 # Web testing — UX-02 (Self-insert: Account ↔ Player link)
 
 Date: 2026-10-14

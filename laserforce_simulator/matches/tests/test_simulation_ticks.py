@@ -636,9 +636,9 @@ class TestAPIReturnsRawTicks:
 
     def test_events_endpoint_returns_raw_tick_timestamp(self):
         self._fixture_or_xfail()
-        data = self.client.get(f"/api/rounds/{self.gr.pk}/events/").json()
-        assert data["count"] == 1
-        ts = data["results"][0]["timestamp"]
+        body = self.client.get(f"/api/rounds/{self.gr.pk}/events/").json()
+        assert body["meta"]["count"] == 1
+        ts = body["data"][0]["timestamp"]
         assert ts == 1234, (
             f"API returned timestamp={ts}; expected raw tick 1234. A value of "
             f"617 would mean the serializer is dividing by 2 (forbidden by "
@@ -647,7 +647,7 @@ class TestAPIReturnsRawTicks:
 
     def test_round_detail_returns_raw_tick_uptime_fields(self):
         self._fixture_or_xfail()
-        data = self.client.get(f"/api/rounds/{self.gr.pk}/").json()
+        data = self.client.get(f"/api/rounds/{self.gr.pk}/").json()["data"]
         assert "player_states" in data and data["player_states"]
         ps = next(s for s in data["player_states"] if s["role"] == "commander")
 

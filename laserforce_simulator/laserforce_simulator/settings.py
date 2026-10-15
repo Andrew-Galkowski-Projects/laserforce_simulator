@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "matches.apps.MatchesConfig",
     "core.apps.CoreConfig",
     "rest_framework",
+    "django_filters",
 ]
 
 MIDDLEWARE = [
@@ -178,8 +179,20 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    # ANG-01a (ADR-0039) - every /api/ response leaves in one envelope:
+    # {"data", "meta"} on success, {"errors", "meta"} on a 4xx. Applied by the
+    # renderer / pagination class / exception handler below, never per view.
+    "DEFAULT_RENDERER_CLASSES": [
+        "laserforce_simulator.api.renderers.EnvelopeJSONRenderer",
+        "rest_framework.renderers.BrowsableAPIRenderer",
+    ],
+    "DEFAULT_PAGINATION_CLASS": "laserforce_simulator.api.pagination.EnvelopePagination",
     "PAGE_SIZE": 20,
+    "EXCEPTION_HANDLER": "laserforce_simulator.api.exceptions.envelope_exception_handler",
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",
+        "laserforce_simulator.api.filters.AliasOrderingFilter",
+    ],
 }
 
 # --- API-03: Celery + Redis (ADR-0013) ---
