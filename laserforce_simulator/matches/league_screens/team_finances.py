@@ -181,7 +181,11 @@ def team_finances(request: HttpRequest, league_id: int) -> HttpResponse:
     # Live figures from the current roster (independent of any persisted row).
     active = list(team.active_players)
     roster_salaries = [
-        {"name": p.name, "salary": finance.salary_for_overall(p.overall_rating)}
+        {
+            "name": p.name,
+            "salary": finance.salary_for_overall(p.overall_rating),
+            "player_id": p.id,  # UX-02 - "You" badge
+        }
         for p in active
     ]
     live_payroll = sum(r["salary"] for r in roster_salaries)
@@ -199,7 +203,11 @@ def team_finances(request: HttpRequest, league_id: int) -> HttpResponse:
 
     # FIN-04 — currently-unavailable players (newest-first by games remaining).
     availability = [
-        {"name": p.name, "games_remaining": p.games_unavailable}
+        {
+            "name": p.name,
+            "games_remaining": p.games_unavailable,
+            "player_id": p.id,  # UX-02 - "You" badge
+        }
         for p in sorted(
             team.players.filter(games_unavailable__gt=0),
             key=lambda p: p.games_unavailable,

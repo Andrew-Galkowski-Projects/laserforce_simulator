@@ -8361,6 +8361,66 @@ autouse login fixture cannot reach those. Seam contract:
 CONTEXT.md **Account** / **Ownership root** / **Unmanaged row** / **League visibility** terms and the
 rewritten **Manager** entry; PLAN.md **UX-01**.
 
+## UX-02 Self-insert badges + League player page buttons
+
+**UX-02** lets an Account link one existing Player as its **Self-insert** (CONTEXT.md). The model
+field (`accounts.User.self_insert`), the four domain helpers in `accounts/self_insert.py`, the two
+POST-only URLs, the context processor and the `you_badge` tag all live in the `accounts` app — see
+[`../accounts/CLAUDE.md`](../accounts/CLAUDE.md) **Self-insert (UX-02)**. In this app the feature is
+**presentation only**: **no simulation / RNG / `BatchSimulator` / persistence change, no Score
+Calibration re-baseline, no `matches` migration**, and nothing a Self-insert does affects a roster,
+enrolment or result.
+
+**The "You" badge.** Every **server-rendered, visible** Player name gets
+`{% you_badge <player id> %}` right after it (after the closing `</a>` when the name is a link), and
+each template — *including every included partial* — does its own `{% load self_insert_tags %}`. The
+tag reads the request-scoped `self_insert_player_id` context key, so it renders `""` whenever the
+Account has no (non-drifted) Self-insert. Sites in this app:
+
+| Area | Templates (player-id expression) |
+|---|---|
+| League | `leagues/player_detail.html` (`<h1>` + the no-Rounds empty-state alert; `player.id`), `free_agents.html`, `player_ratings.html`, `team_roster.html` starters + bench (`player.id`); `player_stats.html`, `league_leaders.html` (all four boards), `statistical_feats.html`, `watch_list.html` (`row.player_id`); `team_history.html` (`p.player_id`); `history.html` Season MVP / Finals MVP, in-progress and completed rows (`AwardWinner.player_id`); `team_finances.html` roster salaries + availability (`r.player_id` / `entry.player_id`); `_partials/dashboard_leaders_snippet.html`, shared by the League and Season dashboards (`LeaderRow.player_id`) |
+| Season | `seasons/awards.html` — all seven award rows incl. the `kd_rows` loop (`w.player_id`) |
+| Round / sandbox | `matches/game_round_detail.html` box score — both scoreboards and both resources lists, badge before the colon (`perf.player_id`); `compare_rounds.html` deltas (`row.player_id`); `head_to_head.html` top-impactful pair; `player_head_to_head.html` `<h2>` (`player_a.id` / `player_b.id`); `team_history.html` (`row.player.id`) |
+| Tournament | `tournament_detail.html` pool table + drawn-team list (`entry.player_id`) |
+
+**Two view changes, both additive row-dict enrichments:**
+
+- **`views.py::game_round_detail`** builds
+  `red_players = [{**_player_row(s), "player_id": s.player_id} for s in red_states]` (same for blue).
+  The `player_id` key is a **view-local enrichment, NOT a scoreboard key**: `_player_row` and
+  `round_summary.PLAYER_ROW_KEYS` are **unchanged (still 28 keys)**, and the `export_round_report` PDF
+  — which builds its rows from `_player_row` directly — is unaffected.
+- **`league_screens/team_finances.py::team_finances`** adds `"player_id": p.id` to the
+  `roster_salaries` and `availability` dict comprehensions. The existing keys (`name`, `salary` /
+  `games_remaining`) are unchanged.
+
+Every other badge site already had a player id in its context; no other view changed.
+
+**League player page buttons.** `templates/leagues/player_detail.html`
+(`league_screens.player_detail.player_detail`, `league_player_detail`,
+`/leagues/<league_id>/players/<player_id>/`) renders the same POST form as the sandbox player page,
+inside `#league-player-header` after the "Career stats (global)" link: *This is me*
+(`self-insert-link-form` / `self-insert-link-button`) when `player.team` is managed by this Account
+and the Player is not already the Self-insert, *Unlink* (`self-insert-unlink-form` /
+`self-insert-unlink-button`) when it is, nothing on an Unmanaged Team. Both carry a hidden
+`next={{ request.get_full_path }}` so the round-trip returns here. **No view change** — the frozen
+LG-06h context keys are untouched; `player.team` lazy-loads one row. (The topnav "My player" link
+still always targets the *sandbox* `player_detail`, since a Player carries no `league_id`.)
+
+**Out of scope (by rule).** No badge in `{% block title %}`, `<option>` text (e.g.
+`player_head_to_head.html`'s pickers, `tournament_detail.html`'s enrol option), free-text event
+descriptions (`missile_log.html`), or any **JS-drawn view** — `game_round_events.html` playback map
+and feed, `movement_heatmap.html`'s roster JSON, `play_week_live.html`, every chart. The **PLAY-01
+live dashboard** fragments re-rendered by `league_views._render_live_play_panels` through
+`render_to_string` with **no request** have no `self_insert_player_id`, so the badge drops off a
+JS-patched leaders card mid-run and returns on reload — accepted, and logged in PLAN.md **Deferred
+Items**. Tests: `matches/tests/test_self_insert_badges.py` (`league_player_detail` badge + both
+button states, League `team_roster`, `stats_league_leaders`, the `game_round_detail` box score with
+`PLAYER_ROW_KEYS` still 28, `season_awards`, `team_finances`, `compare_rounds`). Seam contract:
+[`.claude/worktrees/ux-02-seam-contract.md`](../../.claude/worktrees/ux-02-seam-contract.md);
+CONTEXT.md **Self-insert**; PLAN.md **UX-02**.
+
 ## Sub-packages
 
 - [`sim_helpers/CLAUDE.md`](sim_helpers/CLAUDE.md) — `BatchSimulator` helper modules: `PlayerState` dataclass, action weights, pathfinding, `mechanics.py` (pure game mechanics), `combat.py` (shared combat resolution), `role_constants.py` (canonical role stats), `score_calculator.py` (MVP formula), `map_context.py` (typed map wrapper), `map_loader.py` (map-loading helpers extracted from RBS by SIM-09), `pending_events.py` (typed pending-queue dataclasses), `spawn_assigner.py` (spawn logic)

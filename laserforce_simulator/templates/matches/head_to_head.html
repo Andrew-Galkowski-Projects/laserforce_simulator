@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load self_insert_tags %}
 
 {% block title %}Head-to-Head Record{% endblock %}
 
@@ -126,7 +127,7 @@
                     <h6 class="card-subtitle text-muted">Top impactful — {{ team_a.name }}</h6>
                     <p id="h2h-top-impactful-a" class="card-text fs-5 fw-bold mb-0">
                         {% if top_impactful.team_a %}
-                            {{ top_impactful.team_a.name }}
+                            {{ top_impactful.team_a.name }}{% you_badge top_impactful.team_a.player_id %}
                             <small class="text-muted d-block">MVP {{ top_impactful.team_a.mvp_total|floatformat:1 }} over {{ top_impactful.team_a.games }} round{{ top_impactful.team_a.games|pluralize }}</small>
                         {% else %}
                             <span class="text-muted">—</span>
@@ -141,7 +142,7 @@
                     <h6 class="card-subtitle text-muted">Top impactful — {{ team_b.name }}</h6>
                     <p id="h2h-top-impactful-b" class="card-text fs-5 fw-bold mb-0">
                         {% if top_impactful.team_b %}
-                            {{ top_impactful.team_b.name }}
+                            {{ top_impactful.team_b.name }}{% you_badge top_impactful.team_b.player_id %}
                             <small class="text-muted d-block">MVP {{ top_impactful.team_b.mvp_total|floatformat:1 }} over {{ top_impactful.team_b.games }} round{{ top_impactful.team_b.games|pluralize }}</small>
                         {% else %}
                             <span class="text-muted">—</span>

@@ -342,8 +342,11 @@ def game_round_detail(request, round_id):
         .order_by("-points_scored", "role", "player__name")
     )
 
-    red_players = [_player_row(s) for s in red_states]
-    blue_players = [_player_row(s) for s in blue_states]
+    # UX-02 — view-local ``player_id`` enrichment for the "You" badge. NOT a
+    # scoreboard key: ``_player_row`` / ``PLAYER_ROW_KEYS`` and the PDF export
+    # are unchanged.
+    red_players = [{**_player_row(s), "player_id": s.player_id} for s in red_states]
+    blue_players = [{**_player_row(s), "player_id": s.player_id} for s in blue_states]
 
     context = {
         "round": game_round,

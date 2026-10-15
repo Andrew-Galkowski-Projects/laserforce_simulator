@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load self_insert_tags %}
 {% load team_extras %}
 
 {% block title %}{{ team.name }} Match History - Laserforce Manager{% endblock %}
@@ -124,7 +125,7 @@
                                     <span class="text-warning" title="Mercenary (not a rostered member)">&#9888;</span>
                                     {% endif %}
                                 </td>
-                                <td><a href="{% url 'player_career_stats' row.player.id %}">{{ row.player.name }}</a></td>
+                                <td><a href="{% url 'player_career_stats' row.player.id %}">{{ row.player.name }}</a>{% you_badge row.player.id %}</td>
                                 <td class="text-center">{{ row.games_played }}</td>
                                 {% for cell in row.roles %}
                                 <td class="text-center border-start{% if not cell.games %} text-muted{% endif %}">{{ cell.games }}</td>

@@ -1,3 +1,45 @@
+# Web testing — UX-02 (Self-insert: Account ↔ Player link)
+
+Date: 2026-10-14
+Branch: `ux-02-self-insert`
+Scope: scoped pass. Fresh Account; sandbox Team `ChromeTest UX02` (Team 20, Player 282);
+League 5 `ChromeTest UX02 League` (4-Team Quick), Season 5, one week played (Rounds 34/35).
+Server on port **8001**.
+
+## Summary — UX-02
+| Area | Result |
+|---|---|
+| Owned, unlinked Player detail shows **This is me** | OK |
+| Link POST -> 302 back to page, success flash, **You** badge in header, **Unlink** shown | OK |
+| Badge on `/teams/20/` roster, `/players/`, `/players/282/stats/` (1 each) | OK |
+| Account menu `#account-my-player-link` -> `/teams/20/player/282/` | OK |
+| Unlink -> success flash, badge / nav link gone on all four pages, **This is me** back | OK |
+| League player page (`/leagues/5/players/<id>/`) link button + badge + Unlink | OK |
+| Linking a second Player replaces the first | OK |
+| Badge on League roster, league leaders (4 boards), player stats, statistical feats, Season + League dashboards (leaders snippet), Season awards | OK |
+| Round box score `/matches/game-round/34/` — 2 badges (scoreboard + resources list); Round 35 (other match) — 0 | OK |
+| "My player" for a League Player points at the sandbox `player_detail` (`/teams/21/player/285/`) | OK — per contract |
+| `GET /accounts/self-insert/unlink/` -> **405** | OK |
+| Console: only the deliberate 405; all other requests 2xx/3xx | OK |
+
+Not observed in-browser (covered by tests instead): `player_ratings` (paginated — the linked Player
+was not on page 1), `team_finances` (the 4-Team Quick League has finances off).
+
+### ✅ ~~U3-1 — The "You" badge scales with its heading~~ — FIXED in-slice (2026-10-14)
+On the sandbox and League player detail pages the badge sat inside the `<h3>` / `<h1>` name
+heading, and Bootstrap's `.badge` is `em`-sized, so it rendered heading-sized. Fixed by wrapping
+the tag at those two heading sites only in `<span class="fs-6 align-middle">` (the tag's
+`YOU_BADGE_HTML` output is unchanged). Inline in table rows it was already the expected small pill.
+
+### 🟡 U3-2 — [PRE-EXISTING, out of scope] Dashboard leaders-card links 404
+`templates/_partials/dashboard_leaders_snippet.html:11` links each leader to
+`/players/{{ row.player_id }}/career-stats/`, but the route is `/players/<id>/stats/`
+(`teams/player_urls.py`, name `player_career_stats`), so every name on the Season / League
+dashboard leaders cards 404s. Predates UX-02 (the href was only re-wrapped, not changed). Fix:
+`{% url 'player_career_stats' row.player_id %}`.
+
+
+---
 # Web testing — UX-01 follow-up: register / login / League / full Season
 
 Date: 2026-09-04
