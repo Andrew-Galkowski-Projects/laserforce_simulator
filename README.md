@@ -25,6 +25,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - **Member nights** — A Season's phase flow can include a **member night**: a casual/social play interlude run per Site (a venue's home-site grouping of players) between competitive fixtures. From the `Play ▾` topnav you pick a Site (or "All Sites present") and the system gathers whoever's available (enrolled-team players plus free agents), draws 5–9 ad-hoc games — each splitting 12 players into two attempt-balanced 6-player teams with randomized roles — then drains them in the background with live progress and a Stop button. Member-night games are recorded as part of the Season and show in raw match listings, but never count toward the competitive Standings or power rankings
 - **Manager firing (owner mood)** — In a single-player career League, the team owner evaluates you once per completed season on a ZenGM-style cumulative owner-mood model — *wins* (regular-season record vs a .500 baseline) plus *playoffs* (missed / advanced / champion of the season's tournament), each capped so you can't coast on one factor. After a two-season grace period, an overall mood at or below the firing threshold gets you fired; the owner-evaluation screen (`/seasons/<id>/owner-evaluation/`) shows the verdict, a hot-seat warning if you're trending toward the axe, and the per-factor breakdown, and is browsable for past seasons. A fired manager picks a fresh team from the five worst-performing clubs (your old team excluded) on a New Team screen, starting a new tenure and grace period. With team finances enabled, the *money* factor (season profit) joins the mood model, and an optional per-League "fire on luxury tax" rule — set at League creation — fires you outright (independent of mood, but still after the grace period) any season your team pays the luxury tax; the owner-evaluation screen names which trigger fired you.
 - **User accounts & ownership** — Email + password sign-in with open self-registration. Every Team, League, Tournament, sandbox Match and standalone Round belongs to the account that created it, and the whole site sits behind a login. Rows created before you had an account (or by a management command) are *unmanaged* and stay open to any signed-in account until claimed
+- **Self-insert** — Link your account to one Player on a team you manage ("This is me" on the player's page) and that Player is flagged with a **You** badge wherever its name appears on a server-rendered page — rosters, leaderboards, stats tables, awards, box scores and tournament pools — with a **My player** shortcut in the account menu. It is purely a vanity link: the Player is not moved, copied or added to any team, and simulations are unaffected
 - **Team history** — Win/loss records across all matches
 - **Read-only REST API** — JSON endpoints for teams, players, matches, rounds, and events at `/api/` (paginated, 20 per page)
 
@@ -136,6 +137,8 @@ Then open http://localhost:8000/ in your browser.
 | `/accounts/register/` | **Open self-registration** — anyone can create an account |
 | `/accounts/logout/` | Sign out (the top-nav control posts here) |
 | `/accounts/password-change/` | Change your password while signed in |
+| `/accounts/self-insert/<player_id>/link/` | POST — make that Player your **Self-insert** (the "This is me" button) |
+| `/accounts/self-insert/unlink/` | POST — clear your Self-insert (the "Unlink" button) |
 | `/admin/` | Django Admin — where an administrator **removes** an account |
 
 Every Team, League, Tournament, sandbox Match and standalone Round records the account that created it. You see your own rows and nothing of anybody else's — another account's row returns **404**, exactly as a nonexistent one would. Arena maps are the deliberate exception: they are shared reference data, visible to every signed-in account, because map pools and rotations reference maps across league boundaries.
@@ -147,6 +150,8 @@ Every Team, League, Tournament, sandbox Match and standalone Round records the a
 # Safe to re-run: a second pass finds nothing and reports 0 for every model.
 python laserforce_simulator/manage.py claim_unmanaged --user you@example.com
 ```
+
+**Your Self-insert.** Each account can link **one** Player as "you": open the Player's page (sandbox or League) and press **This is me**; press **Unlink** to clear it. Only a Player on a Team *your account manages* qualifies — a Player on an unmanaged Team must be claimed first (`claim_unmanaged`). If the Player later leaves your ownership the badge and the **My player** menu link simply disappear until it comes back.
 
 **There is no password reset.** The "forgot my password" flow needs an outbound mail provider the deployment does not have, so it is deferred along with Google/OAuth sign-in. Recovery is an operator command:
 

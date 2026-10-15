@@ -135,6 +135,41 @@ and `get_free_agents_team()` keep their signatures verbatim.
 See [`../accounts/CLAUDE.md`](../accounts/CLAUDE.md) for the permission seam and the traversal table,
 and [ADR-0038](../../docs/adr/0038-accounts-and-uniform-manager-ownership.md).
 
+### Player.self_insert_of (UX-02) — the Self-insert link
+
+**UX-02** lets an Account link one existing Player as its **Self-insert** (CONTEXT.md). The FK lives
+on the Account — `accounts.User.self_insert = OneToOneField("teams.Player", null=True, blank=True,
+on_delete=SET_NULL, related_name="self_insert_of")` (migration `accounts/0002_user_self_insert.py`)
+— so **`Player` gains no column and `teams` gains no migration**; it only gets the reverse accessor
+`player.self_insert_of`. That accessor raises `RelatedObjectDoesNotExist` when unlinked and
+**production code never reads it** — go through `accounts.self_insert.get_self_insert(user)` /
+`is_self_insert_eligible(player, user)` instead. It is a **link, not a copy**: linking never moves,
+enrols or re-rosters the Player, never touches a `slot_*` FK, and changes nothing the simulator sees.
+Deleting the Player (or its Team, which cascades it) leaves the Account with no Self-insert.
+
+Eligibility is **strict**: only a Player whose `team.manager_id == user.pk`. Players on an
+**Unmanaged** Team (including the never-stamped global "Free Agents" singleton) are not linkable. If
+the Player later leaves the Account's ownership (Team demoted to Unmanaged, Player moved to "Free
+Agents"), the link has **drifted** — `get_self_insert` returns `None` at read time with no write, and
+the link reappears if ownership returns.
+
+**Sandbox surfaces:**
+
+- `templates/teams/player_detail.html` (`player_detail`, `/teams/<team_id>/player/<player_id>/`) — a
+  POST form in the identity card directly under the Team name: *This is me*
+  (`self-insert-link-form` / `self-insert-link-button`, posting to `self_insert_link`) when `team` is
+  managed by this Account and the Player is not already the Self-insert; *Unlink*
+  (`self-insert-unlink-form` / `self-insert-unlink-button`, posting to `self_insert_unlink`) when it
+  is; nothing on an Unmanaged Team. **No view change.** This page is also the fixed target of the
+  topnav **"My player"** link (`account-my-player-link`).
+- The **"You" badge** (`{% load self_insert_tags %}` … `{% you_badge player.id %}`, rendering the
+  `you-badge` span) follows every server-rendered Player name on: `player_detail.html` (the `<h3>`),
+  `team_detail.html` (active roster + bench), `player_list.html` (`/players/`),
+  `player_career_stats.html` (the `<h1>`) and `player_delete.html`. Not on `<title>`, the avatar
+  initial, `<option>` text or form widgets (`team_slots_form.html`). No `teams` view changed.
+
+Full contract in [`../accounts/CLAUDE.md`](../accounts/CLAUDE.md) **Self-insert (UX-02)**.
+
 ## Constants (`teams/constants.py`)
 
 Static name pools used by `_random_player_profile()`:

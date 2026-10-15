@@ -22,8 +22,10 @@ Vocabulary, straight from CONTEXT.md — get these three apart before editing an
 - `username = None` — the field is dropped entirely.
 - `email = models.EmailField("email address", unique=True)`.
 - `USERNAME_FIELD = "email"`, `REQUIRED_FIELDS = []`, `__str__` returns the email.
-- No extra profile fields. `groups` / `user_permissions` come from `AbstractUser` unchanged (no
-  `related_name` collisions).
+- No profile fields **except** one: `self_insert` (**UX-02**), a nullable `OneToOneField` to
+  `teams.Player` appended as the **last** field after `email` — see
+  [Self-insert (UX-02)](#self-insert-ux-02) below. `groups` / `user_permissions` come from
+  `AbstractUser` unchanged (no `related_name` collisions).
 
 **`UserManager`** — a `BaseUserManager` with `use_in_migrations = True`. `AbstractUser`'s default
 manager is keyed on `username`, which this model drops, so both creators take **`email` as the first
@@ -234,7 +236,7 @@ and its label hardcodes `for=` to that id; `<h1>` headings carry no id.
 | `accounts/register.html` | `register-form`, `register-email`, `register-password1`, `register-password2`, `register-submit` (*Create account*), `register-errors`, `register-login-link` |
 | `accounts/password_change.html` | `password-change-form`, `password-change-old-password`, `password-change-new-password1`, `password-change-new-password2`, `password-change-submit`, `password-change-errors` |
 | `accounts/password_change_done.html` | `password-change-done-notice`, `password-change-done-home-link` |
-| `_partials/topnav_auth.html` | authenticated: `account-nav-link`, `account-signed-in-as`, `account-password-change-link`, `account-sign-out-form`, `account-sign-out-button` — anonymous: `account-sign-in-link`, `account-register-link` |
+| `_partials/topnav_auth.html` | authenticated: `account-nav-link`, `account-signed-in-as`, `account-password-change-link`, `account-sign-out-form`, `account-sign-out-button`, plus `account-my-player-link` (UX-02, only when a Self-insert resolves) — anonymous: `account-sign-in-link`, `account-register-link` |
 
 `_partials/topnav_auth.html` is included from `base.html` **once**, at the far right of
 `<div class="navbar-nav ms-auto">` and after the `app_mode` branch block, so it renders in all three
@@ -283,9 +285,123 @@ merely skipped but **vacuous** — a custom user model means a new, empty user t
 database, so it would find nobody and stamp nothing. See
 [ADR-0004](../../docs/adr/0004-simulation-data-is-disposable.md).
 
+## Self-insert (UX-02)
+
+An Account may link **one** existing `Player` as its **Self-insert** (CONTEXT.md) — a vanity record
+of the human behind the Account. It is a **link, not a copy**: linking never moves, enrols,
+re-rosters or re-simulates the Player, and the Player does **not** appear on any simulated Team
+because of it. **No simulation / RNG / `BatchSimulator` change, no re-baseline**, and
+`accounts/permissions.py` is untouched.
+
+### The field
+
+```python
+self_insert = models.OneToOneField(
+    "teams.Player", null=True, blank=True, on_delete=models.SET_NULL,
+    related_name="self_insert_of",
+)
+```
+
+- Stored on **`User`**, not on `Player` — the Account owns the choice; `Player` gains no column.
+- `SET_NULL`: deleting the Player (or its Team, which cascades the Player) just leaves the Account
+  with no Self-insert.
+- OneToOne ⇒ a Player is at most one Account's Self-insert (DB unique constraint).
+- Reverse accessor `player.self_insert_of` raises `RelatedObjectDoesNotExist` when unlinked —
+  **production code never reads it**; use the helpers below.
+- `accounts/admin.py` is **not** changed (the field is not in `UserAdmin.fieldsets`).
+
+### Domain helpers (`accounts/self_insert.py`)
+
+A **separate module, deliberately not `permissions.py`**: the permission seam table above is the
+*entire* public surface of that module, and the Self-insert is a domain feature built *on* the seam,
+not part of it. Exactly four public functions:
+
+| Name | Contract |
+|---|---|
+| `get_self_insert(user) -> Player \| None` | **The drift guard — read-only.** `None` for `None` / anonymous. `None` with **zero queries** when `user.self_insert_id is None` (the column is already on the loaded `User` row, so an unlinked Account's page renders cost nothing extra). Otherwise **one** query: the Player with `select_related("team")`, filtered `team__manager_id=user.pk`. Returns `None` when the link has **drifted** (the Player's Team is now Unmanaged, or another Account's — e.g. the Player moved to the global "Free Agents" Team). **Never writes**: a drifted link stays in the column and silently reappears if ownership returns. Does not touch the `user.self_insert` related-object cache. |
+| `is_self_insert_eligible(player, user) -> bool` | **Strict.** True iff `user` is authenticated **and** `player.team.manager_id` is not `None` **and** equals `user.pk`. An **Unmanaged** Team's Players are **not** eligible — readable/writable under the Unmanaged-row rule, but not linkable until `claim_unmanaged` stamps them. The "Free Agents" singleton is never stamped, so its Players are never eligible. |
+| `set_self_insert(user, player) -> None` | Precondition (caller-checked): eligible. One `transaction.atomic()`: (1) **stale-link takeover** — clear any *other* Account's link to this Player (a drifted link elsewhere; the strictly-owning Account wins), run first so the OneToOne unique constraint never fires; (2) set and `save(update_fields=["self_insert"])`. Linking a second Player **replaces** the first; idempotent on the current link. Touches nothing else. |
+| `clear_self_insert(user) -> None` | Sets `None` and saves `update_fields=["self_insert"]`. Clears the raw column even when the link had drifted. |
+
+### Link / unlink views (`accounts/views.py`, `accounts/urls.py`)
+
+Both are **POST-only** (`@require_POST` ⇒ any other method **405**) and are **not**
+`@login_not_required` — the eleven exempt surfaces stay eleven; an anonymous POST is 302'd to
+`LOGIN_URL` by the middleware.
+
+| URL name | Path | View |
+|---|---|---|
+| `self_insert_link` | `/accounts/self-insert/<int:player_id>/link/` | `self_insert_link(request, player_id)` |
+| `self_insert_unlink` | `/accounts/self-insert/unlink/` | `self_insert_unlink(request)` |
+
+- **`self_insert_link`:** resolves the Player via `get_owned_or_404(Player.objects.select_related("team"), request, pk=...)`
+  — nonexistent or another Account's ⇒ **404, never 403**. Not eligible (now reachable only for an
+  Unmanaged Team) ⇒ error flash *"Only a Player on a Team you manage can be your Self-insert."*, no
+  write. Otherwise `set_self_insert` + success flash *`"<name>" is now your Self-insert.`* Both
+  branches 302 to `next`, falling back to the sandbox `player_detail`.
+- **`self_insert_unlink`:** no link ⇒ info flash *"You have no Self-insert to unlink."* (no write);
+  otherwise `clear_self_insert` + success flash *"Self-insert unlinked."*; 302 to `next`, falling
+  back to `landing`.
+- `next` is honoured only when `url_has_allowed_host_and_scheme` accepts it for the request host
+  (private `_safe_next`); an off-host `next` falls back. Both buttons post
+  `next={{ request.get_full_path }}`, so the round-trip lands back on the page clicked from.
+
+### Context processor (`accounts/context_processors.py`)
+
+`self_insert(request)`, registered **last** in `TEMPLATES[0]["OPTIONS"]["context_processors"]` as
+`"accounts.context_processors.self_insert"` (after `core.context_processors.watch_list`). Returns
+exactly two keys on every request: `self_insert_player` (`get_self_insert(request.user)`) and
+`self_insert_player_id` (its id, or `None`). A request with no `user` attribute (bare
+`RequestFactory()`) or an anonymous one ⇒ both `None`, no query, no exception; a `DatabaseError` is
+swallowed to both `None` (the `core.context_processors` broken-transaction defence).
+
+### The "You" badge (`accounts/templatetags/self_insert_tags.py`)
+
+Library **`self_insert_tags`**, **not a builtin** — every template *and every included partial*
+that uses it must `{% load self_insert_tags %}` itself (`{% load %}` is not inherited from
+`base.html`).
+
+```python
+YOU_BADGE_HTML = '<span class="badge text-bg-primary ms-1 you-badge" title="Your Self-insert">You</span>'
+```
+
+`{% you_badge <player_id> %}` (`simple_tag(takes_context=True)`) renders `mark_safe(YOU_BADGE_HTML)`
+iff the context's `self_insert_player_id` is set and `int(player_id)` equals it (so `"5"` matches
+`5`); otherwise `""` — including a missing context key (`render_to_string` without a request),
+`None`, `""` or a non-int-coercible id. **Never raises.** `YOU_BADGE_HTML` is the exact rendered
+string (tests assert it verbatim); `you-badge` is the CSS hook; no project stylesheet is added.
+Usage: `{{ player.name }}{% you_badge player.id %}` — immediately after the name, and **after the
+closing `</a>`** when the name is a link, so the badge is not link text.
+
+**Coverage rule:** every **server-rendered, visible** Player-name site gets the badge (24 templates
+across the sandbox, League, Season, Round and Tournament pages — see the per-app guides). Excluded
+by rule: `{% block title %}` (no HTML in `<title>`), `<option>` text, the avatar initial, form
+widgets, free-text descriptions (`missile_log.html`), and **every JS-drawn view** (`|escapejs` /
+`json_script` consumers — playback map, heatmap roster, `play_week_live.html`, charts). The PLAY-01
+live-dashboard fragments re-rendered by `matches.league_views._render_live_play_panels` via
+`render_to_string` with no request get `""`, so the badge **disappears from a JS-patched leaders card
+until the page is reloaded** — accepted. Team / League / Season / map / Conference names are not
+Player names.
+
+### Surfaces
+
+- **Nav — "My player":** `_partials/topnav_auth.html` gains `account-my-player-link`, immediately
+  after `account-signed-in-as`, rendered only when `self_insert_player` is set (hidden when
+  unlinked, drifted or anonymous). It **always** points at the **sandbox** `player_detail`
+  (`/teams/<team_id>/player/<player_id>/`): `get_self_insert` guarantees the Team is strictly owned,
+  so the link can never 404, and that page hosts the Unlink button; a League page would need a
+  `league_id` a Player does not carry.
+- **Buttons on both player detail pages** — the sandbox `teams/player_detail.html` (in the identity
+  card under the Team name) and the League `leagues/player_detail.html` (inside
+  `#league-player-header`, after the "Career stats (global)" link). Same DOM ids on both; neither
+  view changed. If the Player is the current Self-insert ⇒ `self-insert-unlink-form` /
+  `self-insert-unlink-button` (*Unlink*); else if the Player's Team is managed by this Account ⇒
+  `self-insert-link-form` / `self-insert-link-button` (*This is me*); else (Unmanaged) nothing. Both
+  forms are `method="post"` with `{% csrf_token %}` and a hidden `next`.
+
 ## Migrations
 
-Three files, no `RunPython` in any of them:
+Four files, no `RunPython` in any of them:
 
 - `accounts/migrations/0001_initial.py` — `CreateModel` for `User` with
   `managers = [("objects", accounts.models.UserManager())]`; dep
@@ -296,6 +412,10 @@ Three files, no `RunPython` in any of them:
   all five matches-app changes in order (`league.manager`, `tournament.manager`, `match.manager`,
   `gameround.manager`, `league.visibility`); deps `swappable_dependency(AUTH_USER_MODEL)` +
   `matches.0061_conference_map_rotation`.
+- `accounts/migrations/0002_user_self_insert.py` (**UX-02**) — one `AddField` (`user.self_insert`);
+  deps `accounts.0001_initial` + `teams.0015_team_manager`. **No cycle:** `teams.0015` depends on
+  `swappable_dependency(AUTH_USER_MODEL)`, which resolves to `accounts.__first__` = `0001`, not
+  `0002`. The reverse relation generates **no** `teams` / `matches` / `core` migration.
 
 `core` is untouched and stays at `0004_map05_cell_ranking_and_strong_spots`.
 
@@ -321,7 +441,17 @@ email uniqueness, both `UserManager` creators and their `ValueError`s), `test_au
 five URL names, templates and DOM ids; the `username`-keyed login POST; anonymous → 302 to
 `LOGIN_URL`; anonymous API → 403 JSON), `test_permissions.py` (every public name in the seam;
 traversal *behaviour*, never `_PARENT_FIELD`; **404 never 403**; the Unmanaged read/write/list rule)
-and `test_claim_unmanaged.py` (the six output lines, the counts, `CommandError`, idempotency).
+and `test_claim_unmanaged.py` (the six output lines, the counts, `CommandError`, idempotency), and
+`test_self_insert.py` (**UX-02** — the field, `SET_NULL` on Player and Team delete, OneToOne
+uniqueness; the four `self_insert.py` functions incl. zero queries when unlinked and drift ⇒ `None`
+with the column unchanged; both views' 405 / 302-to-login / 404 / flash / `next` handling; the
+context processor; the `you_badge` tag output; the `account-my-player-link` nav item). Badge and
+button coverage on pages lives in `teams/tests/test_self_insert_badges.py` and
+`matches/tests/test_self_insert_badges.py`.
+
+> **Fixture warning (UX-02):** most fixtures create **Unmanaged** Teams. A test expecting a badge or a
+> successful link must first set `team.manager = get_shared_manager()` — otherwise `get_self_insert`
+> returns `None` by design.
 
 Ownership coverage for the roots themselves lives in `matches/tests/test_ownership.py` and
 `teams/tests/test_ownership.py`.
@@ -346,3 +476,6 @@ the test's own transaction, so `pytest -n auto --dist worksteal` workers never c
   dormant `League.visibility`.
 - [`../core/CLAUDE.md`](../core/CLAUDE.md) — why `ArenaMap` is deliberately not owned.
 - PLAN.md **UX-01**.
+- **UX-02** Self-insert: seam contract
+  [`.claude/worktrees/ux-02-seam-contract.md`](../../.claude/worktrees/ux-02-seam-contract.md),
+  CONTEXT.md **Self-insert**, PLAN.md **UX-02**.

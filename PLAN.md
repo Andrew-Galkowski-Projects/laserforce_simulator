@@ -1392,13 +1392,82 @@ entry, the new
 the **UX-01** subsection in
 [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
-### UX-02 · User–player link
+### UX-02 · [DONE] User–player link
 
 Each user account may be linked to exactly one `Player` record (one-to-one). This link represents
 a self-insert — the user's personal profile of what they believe their own stats are or aspire to be.
 The linked player is a vanity record and does not automatically appear on any simulated team.
 
-This should look at the screenshots existing within the /Screenshots_and_video_examples/ directory.
+**[DONE] Shipped (2026-10-14).** The **Self-insert** (CONTEXT.md): an Account may point at one
+existing Player it manages, and that Player is flagged "You" wherever the site prints its name.
+**Link, not copy** — the grill rejected a cloned "profile Player": linking never moves, enrols,
+re-rosters, re-slots or re-simulates anything, so the Player keeps living its normal life on its Team
+and the "does not automatically appear on any simulated team" clause holds by construction.
+**Storage:** `accounts.User.self_insert = OneToOneField("teams.Player", null=True, blank=True,
+on_delete=SET_NULL, related_name="self_insert_of")`, appended last after `email` — on the **Account**,
+not on `Player` (the Account owns the choice; `Player` gains no column, `teams` no migration). OneToOne
+makes a Player at most one Account's Self-insert; `SET_NULL` means deleting the Player (or its Team,
+which cascades it) just leaves no Self-insert. `accounts/admin.py` unchanged.
+**Domain helpers** live in a **new `accounts/self_insert.py`**, deliberately *not* in
+`accounts/permissions.py` — that module's public table is declared its *entire* surface and the
+Self-insert is a feature built on the seam, not part of it. Four functions: `get_self_insert(user)`,
+`is_self_insert_eligible(player, user)`, `set_self_insert(user, player)`, `clear_self_insert(user)`.
+**Strict eligibility:** only a Player whose `team.manager_id == user.pk` — Players on an **Unmanaged**
+Team are *not* linkable even though the Unmanaged-row rule lets any Account read and write them
+(claim them with `claim_unmanaged` first), and the never-stamped global "Free Agents" singleton's
+Players are therefore never eligible. **Read-time drift guard, no writes:** `get_self_insert` re-checks
+strict ownership on every read (one `select_related("team")` query filtered on
+`team__manager_id=user.pk`) and returns `None` when the link has **drifted** (Team demoted to
+Unmanaged, or the Player moved to another Account's / the Free Agents Team) — it never clears the
+column, so a drifted link silently reappears if ownership returns, and it costs **zero queries** for an
+unlinked Account because `self_insert_id` is already on the loaded `User` row (existing page query
+counts unchanged). **Stale other-Account link takeover:** `set_self_insert` runs, inside one
+`transaction.atomic()`, a clear of any *other* Account's (necessarily drifted) link to the same Player
+*before* saving its own — the strictly-owning Account wins and the OneToOne unique constraint never
+fires; linking a second Player simply replaces the first.
+**Views:** two **POST-only** (`@require_POST` ⇒ 405 otherwise) routes in `accounts/urls.py` —
+`self_insert_link` (`/accounts/self-insert/<int:player_id>/link/`) and `self_insert_unlink`
+(`/accounts/self-insert/unlink/`) — neither exempt from the login gate (the eleven exemptions stay
+eleven). Link resolves via `get_owned_or_404` (another Account's Player ⇒ **404, never 403**), refuses
+an ineligible (Unmanaged) Player with an error flash and no write, else links with a success flash;
+unlink clears or reports "no Self-insert". Both redirect to a host-checked `next` (the page clicked
+from), falling back to the sandbox `player_detail` / `landing`.
+**Buttons on both player detail pages** — the sandbox `teams/player_detail.html` and the League
+`leagues/player_detail.html` (LG-06h) — with identical DOM ids: *This is me*
+(`self-insert-link-form` / `-button`) when the Player's Team is managed by this Account, *Unlink*
+(`self-insert-unlink-form` / `-button`) when it is already the Self-insert, nothing on an Unmanaged
+Team. No view change on either page. **Nav "My player"** (`account-my-player-link`, in
+`_partials/topnav_auth.html` after `account-signed-in-as`) is shown only while a Self-insert resolves
+and **always** targets the **sandbox** `player_detail` — the drift guard guarantees an owned Team so
+it can never 404, that page hosts Unlink, and a League page would need a `league_id` a Player does not
+carry. Fed by a new context processor `accounts.context_processors.self_insert` (registered last)
+exposing `self_insert_player` / `self_insert_player_id` on every request.
+**Badge coverage rule:** every **server-rendered, visible** Player name gets the `{% you_badge id %}`
+tag (library `self_insert_tags`, loaded explicitly per template and per partial; exact markup
+`YOU_BADGE_HTML`, CSS hook `you-badge`, Bootstrap 5.3 `text-bg-primary`, no stylesheet) — **24
+templates** across the sandbox team/player pages, League roster/leaders/stats/ratings/free-agents/
+watch-list/history/team-history/finances pages, the shared dashboard leaders partial, Season awards,
+the Round box score, compare-rounds, head-to-head and Tournament detail. **Exclusions by rule:**
+`<title>`, `<option>` text, the avatar initial, form widgets, free-text event descriptions, every
+**JS-drawn view** (playback map + feed, heatmap roster JSON, `play_week_live.html`, charts), and the
+**PLAY-01 live-dashboard leaders card**: its fragments are re-rendered by
+`_render_live_play_panels` via `render_to_string` with no request, so the tag gets no context and the
+badge drops off a JS-patched card mid-run until the page is reloaded (accepted). Only two views
+changed, both additive: `game_round_detail` enriches its box-score rows with a **view-local**
+`player_id` (`_player_row` / `PLAYER_ROW_KEYS` still **28**, Round report PDF untouched), and
+`team_finances` adds `player_id` to its `roster_salaries` / `availability` row dicts.
+**Scope-out / invariants:** **no simulation change** — no RNG, ordering, parallelism,
+`BatchSimulator`, persistence or `matches/simulation/*` edit — so **no Score Calibration re-baseline**
+and every seeded outcome is byte-identical; no determinism test required. No change to
+`accounts/permissions.py`. **Migration:** `accounts/migrations/0002_user_self_insert.py` — one
+`AddField`, no `RunPython`, deps `accounts.0001_initial` + `teams.0015_team_manager` (no cycle:
+`teams.0015`'s swappable dependency resolves to `accounts.__first__`); no `teams` / `matches` / `core`
+migration. Tests: new `accounts/tests/test_self_insert.py`, `teams/tests/test_self_insert_badges.py`,
+`matches/tests/test_self_insert_badges.py`. See the seam contract
+[`.claude/worktrees/ux-02-seam-contract.md`](.claude/worktrees/ux-02-seam-contract.md), the CONTEXT.md
+**Self-insert** term, the **Self-insert (UX-02)** section of
+[`laserforce_simulator/accounts/CLAUDE.md`](laserforce_simulator/accounts/CLAUDE.md), and the
+**UX-02** section of [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
 ---
 
@@ -1601,6 +1670,18 @@ The following were explicitly scoped out and should not be implemented until re-
   silently break another Manager's rotation. A per-map `is_public` flag is the correct end state and
   needs the cross-League referencing rules settled first (what happens to a running rotation when a
   referenced map goes private)
+- **Self-insert badge in JS-drawn views** (UX-02 follow-up) — the "You" badge is a server-side
+  template tag, so it covers only server-rendered Player names. The round **playback map** and its
+  play-synced event feed (`game_round_events.html`), the movement-heatmap roster, the
+  `play_week_live.html` live-play feed and every chart build their Player labels in JavaScript from
+  `json_script` / `|escapejs` data and show no badge. Reopening it needs `self_insert_player_id`
+  shipped to the page (e.g. one `json_script`) plus a per-view JS hook to decorate the matching label
+- **Self-insert badge on the PLAY-01 live leaders card** (UX-02 follow-up) — the live-dashboard
+  fragments are re-rendered by `matches.league_views._render_live_play_panels` through
+  `render_to_string` with **no request**, so the context processor never runs and the badge drops off
+  a JS-patched leaders card mid-run (it returns on reload). Fix by passing `request=` (or the
+  `self_insert_player_id` key) into that `render_to_string` call, checking the poll endpoint's query
+  budget
 
 ---
 

@@ -410,6 +410,10 @@ _Avoid_: adding a `manager` column to a derived row (there is exactly one FK per
 An **Ownership root** whose `manager` is NULL — a row created outside a request (a test fixture, `score_averages`, or a database migrated before any **Account** existed), or a legacy row not yet claimed. Readable *and* writable by any authenticated Account, and listed to all of them; the `claim_unmanaged` management command stamps every Unmanaged row to a named Account.
 _Avoid_: reading NULL as "public but read-only" (an Unmanaged row is fully writable) or as "hidden until claimed" (Unmanaged rows are listed).
 
+**Self-insert**:
+The one **Player** an **Account** has chosen to represent itself — what the person behind the login believes their own **Stats** are, or aspires to. It is an ordinary Player that already exists on a **Team** whose **Manager** is that Account — an **Unmanaged** Team's Players are not eligible until claimed; choosing it is a *link*, not a copy or a move. Linking never places the Player on a Team, enrols it anywhere or changes how it is simulated, and an Account has at most one Self-insert while a Player is the Self-insert of at most one Account. If the Player's Team is deleted, the Account simply has no Self-insert.
+_Avoid_: treating the Self-insert as a separate kind of profile or a team-less Player (it is a normal Player on a normal Team); expecting linking to add the Player to a roster.
+
 **League visibility**:
 A per-**League** `closed` / `open` setting, `closed` by default — the forward-compatible marker for who may join a League once League membership exists. Shipped **dormant** by UX-01 (a column plus a create-League control, no read path), on the LG-02-Part2b `schedule_format` / LG-02-Part2c-3b `tournament_mode` dormant-column precedent.
 _Avoid_: reading League visibility as a *read* permission (cross-Account reads are refused outright regardless of it); expecting it to gate anything before the membership slice lands.
