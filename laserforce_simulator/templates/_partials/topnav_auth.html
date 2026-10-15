@@ -4,6 +4,10 @@
         <a class="nav-link dropdown-toggle" id="account-nav-link" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">{{ user.email }} ▾</a>
         <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="account-nav-link">
             <li><span class="dropdown-item-text" id="account-signed-in-as">Signed in as {{ user.email }}</span></li>
+            {# UX-02 - always the sandbox player_detail page (strictly owned, so never a 404). #}
+            {% if self_insert_player %}
+            <li><a class="dropdown-item" id="account-my-player-link" href="{% url 'player_detail' self_insert_player.team_id self_insert_player.id %}">My player</a></li>
+            {% endif %}
             <li><a class="dropdown-item" id="account-password-change-link" href="{% url 'password_change' %}">Change password</a></li>
             {# Django 5.x LogoutView rejects GET, so signing out is a POST form. #}
             <li>

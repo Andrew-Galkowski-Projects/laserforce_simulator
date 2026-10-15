@@ -1,3 +1,4 @@
+{% load self_insert_tags %}
 {% comment %}PLAY-01 — shared leaders snippet body (one board). Included by both
    dashboards inside each {season,league}-dashboard-leaders-{points,tags,ratio}
    panel and rendered by _build_play_status_response (render_to_string) as the
@@ -7,7 +8,7 @@
 <ul class="list-group list-group-flush">
     {% for row in leaders %}
         <li class="list-group-item d-flex justify-content-between">
-            <a href="/players/{{ row.player_id }}/career-stats/">{{ row.player_name }}</a>
+            <span><a href="/players/{{ row.player_id }}/career-stats/">{{ row.player_name }}</a>{% you_badge row.player_id %}</span>
             <span>{{ row.value|floatformat:2 }}</span>
         </li>
     {% endfor %}

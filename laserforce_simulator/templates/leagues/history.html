@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load self_insert_tags %}
 
 {% block title %}{{ league.name }} — History{% endblock %}
 
@@ -45,8 +46,8 @@
                                 <td>{% with t1=in_progress_row.top_three.0 %}{% if t1 %}{{ t1.name }}{% else %}—{% endif %}{% endwith %}</td>
                                 <td>{% with t2=in_progress_row.top_three.1 %}{% if t2 %}{{ t2.name }}{% else %}—{% endif %}{% endwith %}</td>
                                 <td>{% with t3=in_progress_row.top_three.2 %}{% if t3 %}{{ t3.name }}{% else %}—{% endif %}{% endwith %}</td>
-                                <td id="league-history-season-mvp-{{ in_progress_row.season_id }}">{% if in_progress_row.season_mvp %}{{ in_progress_row.season_mvp.player_name }}{% else %}—{% endif %}</td>
-                                <td id="league-history-finals-mvp-{{ in_progress_row.season_id }}">{% if in_progress_row.finals_mvp %}{{ in_progress_row.finals_mvp.player_name }}{% else %}—{% endif %}</td>
+                                <td id="league-history-season-mvp-{{ in_progress_row.season_id }}">{% if in_progress_row.season_mvp %}{{ in_progress_row.season_mvp.player_name }}{% you_badge in_progress_row.season_mvp.player_id %}{% else %}—{% endif %}</td>
+                                <td id="league-history-finals-mvp-{{ in_progress_row.season_id }}">{% if in_progress_row.finals_mvp %}{{ in_progress_row.finals_mvp.player_name }}{% you_badge in_progress_row.finals_mvp.player_id %}{% else %}—{% endif %}</td>
                                 <td><a id="league-history-awards-link-{{ in_progress_row.season_id }}" href="{% url 'season_awards' in_progress_row.season_id %}">Awards</a></td>
                             </tr>
                         {% endif %}
@@ -62,8 +63,8 @@
                                 <td>{% with t1=row.top_three.0 %}{% if t1 %}{{ t1.name }}{% else %}—{% endif %}{% endwith %}</td>
                                 <td>{% with t2=row.top_three.1 %}{% if t2 %}{{ t2.name }}{% else %}—{% endif %}{% endwith %}</td>
                                 <td>{% with t3=row.top_three.2 %}{% if t3 %}{{ t3.name }}{% else %}—{% endif %}{% endwith %}</td>
-                                <td id="league-history-season-mvp-{{ row.season_id }}">{% if row.season_mvp %}{{ row.season_mvp.player_name }}{% else %}—{% endif %}</td>
-                                <td id="league-history-finals-mvp-{{ row.season_id }}">{% if row.finals_mvp %}{{ row.finals_mvp.player_name }}{% else %}—{% endif %}</td>
+                                <td id="league-history-season-mvp-{{ row.season_id }}">{% if row.season_mvp %}{{ row.season_mvp.player_name }}{% you_badge row.season_mvp.player_id %}{% else %}—{% endif %}</td>
+                                <td id="league-history-finals-mvp-{{ row.season_id }}">{% if row.finals_mvp %}{{ row.finals_mvp.player_name }}{% you_badge row.finals_mvp.player_id %}{% else %}—{% endif %}</td>
                                 <td><a id="league-history-awards-link-{{ row.season_id }}" href="{% url 'season_awards' row.season_id %}">Awards</a></td>
                             </tr>
                         {% endfor %}

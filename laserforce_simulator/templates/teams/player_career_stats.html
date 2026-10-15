@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load self_insert_tags %}
 {% load static %}
 {% load team_extras %}  {# for the existing ÷2 tick→second filter (TIME-01) #}
 
@@ -7,7 +8,7 @@
 {% block content %}
 <div class="container mt-4">
     <div class="d-flex justify-content-between align-items-center">
-        <h1>{{ player.name }} <small class="text-muted">— {{ player.team.name }}</small></h1>
+        <h1>{{ player.name }}{% you_badge player.id %} <small class="text-muted">— {{ player.team.name }}</small></h1>
         <div>
             <a
                 href="{% url 'role_benchmarks' %}"

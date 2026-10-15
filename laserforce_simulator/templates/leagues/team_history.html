@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load self_insert_tags %}
 
 {% block title %}{% if team %}{{ team.name }} — History{% else %}{{ league.name }} — History{% endif %}{% endblock %}
 
@@ -160,7 +161,7 @@
                                 <tbody>
                                     {% for p in page_obj %}
                                         <tr id="team-history-player-row-{{ p.player_id }}" class="{{ p.colour_class }}">
-                                            <td>{% include "_partials/watch_flag.html" with player_id=p.player_id %} <a href="{% url 'league_player_detail' league.id p.player_id %}">{{ p.name }}</a></td>
+                                            <td>{% include "_partials/watch_flag.html" with player_id=p.player_id %} <a href="{% url 'league_player_detail' league.id p.player_id %}">{{ p.name }}</a>{% you_badge p.player_id %}</td>
                                             <td class="text-end">{{ p.games_played }}</td>
                                             <td class="text-end">{{ p.stats.points_scored }}</td>
                                             <td class="text-end">{{ p.stats.tags_made }}</td>

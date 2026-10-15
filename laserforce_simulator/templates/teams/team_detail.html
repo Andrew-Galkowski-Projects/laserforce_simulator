@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load self_insert_tags %}
 {% load team_extras %}
 
 {% block title %}{{ team.name }} - Laserforce Manager{% endblock %}
@@ -47,7 +48,7 @@
                     {% for role, player in active_roster %}
                     <tr>
                         <td><span class="badge bg-secondary">{{ role|capfirst }}</span></td>
-                        <td><a href="{% url 'player_detail' team.id player.id %}">{{ player.name }}</a></td>
+                        <td><a href="{% url 'player_detail' team.id player.id %}">{{ player.name }}</a>{% you_badge player.id %}</td>
                         <td>
                             {% if player.preferred_roles %}
                             {% for r in player.preferred_roles %}<span class="badge bg-light text-dark me-1">{{ r }}</span>{% endfor %}
@@ -77,7 +78,7 @@
                 <tbody>
                     {% for player in bench_players %}
                     <tr>
-                        <td><a href="{% url 'player_detail' team.id player.id %}">{{ player.name }}</a></td>
+                        <td><a href="{% url 'player_detail' team.id player.id %}">{{ player.name }}</a>{% you_badge player.id %}</td>
                         <td>
                             {% if player.preferred_roles %}
                             {% for r in player.preferred_roles %}<span class="badge bg-light text-dark me-1">{{ r }}</span>{% endfor %}

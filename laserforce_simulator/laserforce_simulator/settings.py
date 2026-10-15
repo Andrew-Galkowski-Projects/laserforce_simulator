@@ -73,6 +73,7 @@ TEMPLATES = [
                 "core.context_processors.league_nav",
                 "core.context_processors.app_mode",
                 "core.context_processors.watch_list",
+                "accounts.context_processors.self_insert",
             ],
         },
     },

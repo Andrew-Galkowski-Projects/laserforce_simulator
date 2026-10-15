@@ -60,4 +60,15 @@ urlpatterns = [
         ),
         name="password_change_done",
     ),
+    # UX-02 — Self-insert link / unlink. POST-only; NOT login-exempt.
+    path(
+        "self-insert/<int:player_id>/link/",
+        views.self_insert_link,
+        name="self_insert_link",
+    ),
+    path(
+        "self-insert/unlink/",
+        views.self_insert_unlink,
+        name="self_insert_unlink",
+    ),
 ]

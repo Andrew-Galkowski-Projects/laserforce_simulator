@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load self_insert_tags %}
 
 {% block title %}{{ season.league.name }} — {{ season.name }} — Awards{% endblock %}
 
@@ -40,7 +41,7 @@
                         <td>Most Points</td>
                         {% with w=awards.most_points %}
                             {% if w %}
-                                <td>{{ w.player_name }}</td>
+                                <td>{{ w.player_name }}{% you_badge w.player_id %}</td>
                                 <td>{{ w.team_name }}</td>
                                 <td>{{ w.role }}</td>
                                 <td class="text-end">{{ w.value|floatformat:0 }}</td>
@@ -53,7 +54,7 @@
                         <td>Best Accuracy</td>
                         {% with w=awards.best_accuracy %}
                             {% if w %}
-                                <td>{{ w.player_name }}</td>
+                                <td>{{ w.player_name }}{% you_badge w.player_id %}</td>
                                 <td>{{ w.team_name }}</td>
                                 <td>{{ w.role }}</td>
                                 <td class="text-end">{{ w.value|floatformat:1 }}</td>
@@ -66,7 +67,7 @@
                         <tr id="season-awards-kd-{{ role }}">
                             <td>{{ label }}</td>
                             {% if w %}
-                                <td>{{ w.player_name }}</td>
+                                <td>{{ w.player_name }}{% you_badge w.player_id %}</td>
                                 <td>{{ w.team_name }}</td>
                                 <td>{{ w.role }}</td>
                                 <td class="text-end">{{ w.value|floatformat:2 }}</td>
@@ -79,7 +80,7 @@
                         <td>Best Medic</td>
                         {% with w=awards.best_medic %}
                             {% if w %}
-                                <td>{{ w.player_name }}</td>
+                                <td>{{ w.player_name }}{% you_badge w.player_id %}</td>
                                 <td>{{ w.team_name }}</td>
                                 <td>{{ w.role }}</td>
                                 <td class="text-end">{{ w.value|floatformat:0 }}</td>
@@ -92,7 +93,7 @@
                         <td>Most Efficient Nuke</td>
                         {% with w=awards.most_efficient_nuke %}
                             {% if w %}
-                                <td>{{ w.player_name }}</td>
+                                <td>{{ w.player_name }}{% you_badge w.player_id %}</td>
                                 <td>{{ w.team_name }}</td>
                                 <td>{{ w.role }}</td>
                                 <td class="text-end">{{ w.value|floatformat:2 }}</td>
@@ -105,7 +106,7 @@
                         <td>Season MVP</td>
                         {% with w=awards.season_mvp %}
                             {% if w %}
-                                <td>{{ w.player_name }}</td>
+                                <td>{{ w.player_name }}{% you_badge w.player_id %}</td>
                                 <td>{{ w.team_name }}</td>
                                 <td>{{ w.role }}</td>
                                 <td class="text-end">{{ w.value|floatformat:1 }}</td>
@@ -118,7 +119,7 @@
                         <td>Finals MVP</td>
                         {% with w=awards.finals_mvp %}
                             {% if w %}
-                                <td>{{ w.player_name }}</td>
+                                <td>{{ w.player_name }}{% you_badge w.player_id %}</td>
                                 <td>{{ w.team_name }}</td>
                                 <td>{{ w.role }}</td>
                                 <td class="text-end">{{ w.value|floatformat:1 }}</td>
