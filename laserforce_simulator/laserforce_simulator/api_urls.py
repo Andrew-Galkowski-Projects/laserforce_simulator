@@ -1,6 +1,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
+from core.api_views import ArenaMapViewSet
 from matches.api_views import (
     GameRoundViewSet,
     MatchViewSet,
@@ -14,6 +15,7 @@ router.register("teams", TeamViewSet, basename="team")
 router.register("players", PlayerViewSet, basename="player")
 router.register("matches", MatchViewSet, basename="match")
 router.register("rounds", GameRoundViewSet, basename="gameround")
+router.register("maps", ArenaMapViewSet, basename="arenamap")
 
 urlpatterns = router.urls + [
     path(

@@ -830,8 +830,12 @@ def tournament_import_participants(
 
     try:
         parsed = parse_roster_csv(form.cleaned_data["csv_file"])
-        _check_db_slot_collisions(parsed)
-        created_teams, _appended_teams, _player_count = _apply_roster(parsed)
+        # ANG-01a — ownership-scoped: a name matching only another Account's
+        # Team creates a new Team (stamped) rather than appending to theirs.
+        _check_db_slot_collisions(parsed, manager=manager_or_none(request))
+        created_teams, _appended_teams, _player_count = _apply_roster(
+            parsed, manager=manager_or_none(request)
+        )
     except RosterImportError as exc:
         return _render_error(exc.errors)
 
