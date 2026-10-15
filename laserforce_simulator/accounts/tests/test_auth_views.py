@@ -530,6 +530,7 @@ class TestApiIsUnauthorisedNotRedirected(TestCase):
         "/api/players/",
         "/api/matches/",
         "/api/rounds/",
+        "/api/maps/",
     )
 
     def setUp(self) -> None:
@@ -550,6 +551,16 @@ class TestApiIsUnauthorisedNotRedirected(TestCase):
     def test_anonymous_api_response_is_json(self) -> None:
         response = self.client.get("/api/matches/")
         self.assertEqual(response["Content-Type"].split(";")[0], "application/json")
+
+    def test_anonymous_api_body_is_not_authenticated_envelope(self) -> None:
+        """ANG-01a — the 403 body is the error envelope with code
+        ``not_authenticated`` (SessionAuthentication: 403, never 401)."""
+        for path in self.API_PATHS:
+            with self.subTest(path=path):
+                body = self.client.get(path).json()
+                self.assertEqual(body["errors"][0]["code"], "not_authenticated")
+                self.assertIsNone(body["errors"][0]["field"])
+                self.assertEqual(body["meta"], {})
 
     def test_authenticated_api_get_returns_200(self) -> None:
         self.client.force_login(get_shared_manager())

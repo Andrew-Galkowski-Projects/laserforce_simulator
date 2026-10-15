@@ -362,7 +362,8 @@ class TestGeneratePostTransactionAtomic(TestCase):
     """``@transaction.atomic`` rolls back partial generations on any raise."""
 
     def test_pure_module_raises_mid_generation_rolls_back(self) -> None:
-        """Monkey-patch ``teams.views.draw_stats`` to raise on the 8th call
+        """Monkey-patch ``teams.services.draw_stats`` (ANG-01a: where
+        ``_build_player_kwargs`` now resolves it) to raise on the 8th call
         (well into the second team — after the first team's 6 players have
         been written). POST a 2-team / 6-player run. The exception propagates,
         the response is 5xx, and the DB is empty afterwards.
@@ -373,10 +374,10 @@ class TestGeneratePostTransactionAtomic(TestCase):
         call_count = {"n": 0}
         real_draw_stats = None  # populated inside the mock setup
 
-        import teams.views as views_module
+        import teams.services as services_module
 
         # Capture the real function once so the wrapper can delegate.
-        real_draw_stats = views_module.draw_stats
+        real_draw_stats = services_module.draw_stats
 
         def fail_after_n(rng, mean, std_dev):  # noqa: ANN001
             call_count["n"] += 1
@@ -384,7 +385,7 @@ class TestGeneratePostTransactionAtomic(TestCase):
                 raise RuntimeError("boom")
             return real_draw_stats(rng, mean, std_dev)
 
-        with mock.patch.object(views_module, "draw_stats", side_effect=fail_after_n):
+        with mock.patch.object(services_module, "draw_stats", side_effect=fail_after_n):
             # Suppress Django's exception page noise and let the raise
             # propagate. The test client uses ``raise_request_exception=True``
             # by default — set it False so the exception is captured into
