@@ -207,17 +207,76 @@ Used by `score_averages` to measure simulation accuracy against real-world avera
 
 > Note: these are **real San Marcos field ground-truth** averages and are **not** rewritten by any MOVE/SIM task. They were tuned against the non-spatial **3-zone fallback** model. MOVE-01 (movement decoupled from the Action), MOVE-02 (**Path commitment** — route-commitment changes which equal-cost path is walked, [ADR-0008](../../docs/adr/0008-path-commitment-via-goal-keyed-cache.md), CONTEXT.md), MOVE-03 (**Hold**/**Overwatch** — a new Action slot reweights every role and Overwatch shots add Tags/Downs, [ADR-0009](../../docs/adr/0009-hold-overwatch.md), CONTEXT.md), MOVE-04 (**Goal commitment** — steady-state goal-selection cascade throttled to a 4-tick cadence with reactive overrides still per-tick, shifts pursuit/positioning, [ADR-0010](../../docs/adr/0010-goal-commitment-via-tick-cadence-throttling.md), CONTEXT.md), and SIM-09 (view-mode rounds now run BatchSim mechanics — Path commitment, Hold/Overwatch, Goal commitment — that were previously RBS-only no-ops or missing, [ADR-0002](../../docs/adr/0002-two-simulation-engines.md) superseded) all leave these targets unchanged for now; the **single pending post-MOVE-01 re-baseline** against the map model absorbs the MOVE-02 route-commitment delta, the MOVE-03 behavioural delta, the MOVE-04 goal-staleness delta, **and** the SIM-09 view-mode mechanics-shift delta. None creates a separate re-baseline obligation. The longer-term intent is to tune the weights/system so map-model scores converge toward these ground-truth targets. Still pending separate measurement/discussion.
 
-## REST API (`matches/serializers.py`, `matches/api_views.py`)
+## API conventions (ANG-01a, project-wide)
 
-Read-only DRF endpoints registered under `/api/`:
+Every `/api/` endpoint in every app follows
+[ADR-0039](../../docs/adr/0039-rest-api-envelope-and-form-bound-writes.md); the machinery lives in the
+`laserforce_simulator/api/` package (beside `settings.py`) and is wired through `REST_FRAMEWORK`
+settings, **not per view**. New API slices (ANG-01b..g) must follow it. Seam contract:
+[`.claude/worktrees/ang-01a-seam-contract.md`](../../.claude/worktrees/ang-01a-seam-contract.md).
+
+- **Envelope.** Success `{"data": <obj|list>, "meta": {}}`; paginated lists put
+  `{page, page_size, count, total_pages}` in `meta` (empty list ⇒ `count: 0, total_pages: 1, page: 1`);
+  errors `{"errors": [{"code", "message", "field"}], "meta": {}}`, `field` null for non-field errors,
+  never an empty list. Exempt: **204** (empty body — player DELETE), raw file responses built as a
+  Django `HttpResponse` (the roster template CSV), and unhandled **500**s (Django default).
+- **Modules (`laserforce_simulator/api/`).** `renderers.EnvelopeJSONRenderer` (default renderer;
+  the browsable API shows the envelope too), `pagination.EnvelopePagination` (`page_size` 20,
+  `?page_size=` clamped to 100, invalid / out-of-range `?page=` ⇒ 404 `not_found`),
+  `exceptions.envelope_exception_handler` + `EnvelopeValidationError` + `form_errors_to_envelope` /
+  `django_validation_error_to_envelope` / `validate_form_or_raise`, `forms.plain_form_data` /
+  `merged_form_data`, `filters.AliasOrderingFilter`, `viewsets.ListOnlyFilterMixin`.
+- **Writes bind the existing Django `Form`** (serializers are output-only). A write view binds the
+  Form to `plain_form_data(...)` (POST), `merged_form_data(...)` (**PATCH merges over the instance** —
+  only sent fields change) or a full dict (**PUT = full replace**), then `validate_form_or_raise(form)`;
+  `Model.full_clean()` failures raise `EnvelopeValidationError(django_validation_error_to_envelope(e))`.
+  **Views raise; they never hand-build a 4xx `Response`.** API-03's `SimulateBatchRequestSerializer`
+  is the one grandfathered input serializer.
+- **Status / code table.** 400 — the Form / serializer / filter error code verbatim (`required`,
+  `invalid`, `invalid_choice`, `max_value`, …; `code=None` ⇒ `invalid`), `parse_error` (bad JSON),
+  `roster_invalid` (`field = row:<n>[:<column>]`); 404 `not_found` — missing row, **cross-Account row
+  (never 403, ADR-0038)**, bad page; 403 `not_authenticated` (anonymous — stays 403, not 401, until
+  ANG-03's JWT) / `permission_denied` (CSRF on a session write); 405 `method_not_allowed` (keeps the
+  `Allow` header); 415 `unsupported_media_type`.
+- **Filtering.** `django-filter` (`django_filters` in `INSTALLED_APPS`) with an explicit
+  `filterset_class` per viewset, plus `AliasOrderingFilter` (`?ordering=a,-b` over the viewset's
+  public `ordering_fields`, mapped through `ordering_aliases`, unknown terms silently dropped, then
+  `ordering_tiebreak` appended for stable pagination). A typed filter (number / choice / date / range)
+  with a bad value ⇒ **400** with `field` = the param name (range filters report the base name, e.g.
+  `date_played`, `timestamp`) — unlike the HTML pages' forgiving fallback. Boolean junk is ignored.
+  Every viewset mixes in `ListOnlyFilterMixin` first, so filters apply to `list` only and query params
+  never 404 / 400 a detail or write lookup.
+- **Ownership.** `get_queryset()` is built on `owned_queryset` / `owned_match_q` /
+  `owned_game_round_q`, and DRF `get_object()` does the rest ⇒ 404 cross-Account. All viewsets keep
+  `@method_decorator(login_not_required, name="dispatch")` + settings-level `IsAuthenticated`.
+  `ArenaMap` is the deliberate exception (shared reference data — see `core/CLAUDE.md`).
+
+## REST API (`matches/serializers.py`, `matches/api_views.py`, `matches/filters.py`)
+
+Read-only DRF endpoints registered under `/api/`, enveloped per **API conventions** above (any write
+⇒ 405):
 
 | Endpoint | Serializer | Notes |
 |----------|-----------|-------|
-| `GET /api/matches/` | `MatchSerializer` | Includes `round_ids` (PK list, not nested) |
+| `GET /api/matches/` | `MatchSerializer` | Includes `round_ids` (PK list, not nested). Filters: `team` (either side), `season`, `match_type` (bad choice ⇒ 400), `date_played_after` / `date_played_before` (`YYYY-MM-DD`, inclusive, bad date ⇒ 400). Ordering `date_played`, `id`; default `-date_played`, tiebreak `-id` |
 | `GET /api/matches/<id>/` | `MatchSerializer` | Same — full match fields + round PK list |
-| `GET /api/rounds/` | `GameRoundListSerializer` | Slim — no `player_states`, no `event_log` |
+| `GET /api/rounds/` | `GameRoundListSerializer` | Slim — no `player_states`, no `event_log`. Filters: `match`, `arena_map`. Ordering `date_played`, `round_number`, `id`; default `-date_played`, tiebreak `-id` |
 | `GET /api/rounds/<id>/` | `GameRoundSerializer` | Full — nested `player_states` array |
-| `GET /api/rounds/<id>/events/` | `GameEventSerializer` | Paginated, ordered by timestamp |
+| `GET /api/rounds/<id>/events/` | `GameEventSerializer` | Always paginated, fixed order `timestamp, id` (no `?ordering`). Filters (`GameEventFilterSet`): `event_type` (bad choice ⇒ 400), `actor`, `target`, `timestamp_min` / `timestamp_max` (raw ticks, inclusive) |
+
+`MatchFilterSet` / `GameRoundFilterSet` / `GameEventFilterSet` live in `matches/filters.py`. The
+`events` action resolves the round with `get_object()` (cross-Account ⇒ 404) and validates the
+FilterSet by hand (`translate_validation` ⇒ 400 envelope). `get_queryset()` no longer carries its own
+`.order_by(...)` — ordering comes from the backend.
+
+**Batch endpoints (API-03) are enveloped too.** `POST /api/simulate-batch/` (still **200**) and
+`GET /api/simulate-batch/<job_id>/` return `{"data": <bare JSON>, "meta": {}}` where `data` is
+**byte-identical** to the pre-ANG-01a body (`_BATCH_POST_KEYS` / `_BATCH_STATUS_KEYS`, i.e. the UI
+polling JSON). The three hand-built `Response({"detail": msg}, status=400)` (same-team, roster errors,
+unknown team) became `raise ValidationError(msg)` — same messages ⇒
+`{"code": "invalid", "message": msg, "field": null}`; serializer failures give per-field entries.
+**Known follow-up:** the `SimulateBatchRequestSerializer` team lookup is still **not
+ownership-scoped** (deferred to ANG-01b).
 
 **Serializer split:** `GameRoundListSerializer` (list) omits `player_states` to prevent serializing up to 240 objects per page. `GameRoundSerializer` (detail) adds the full nested `player_states`. Both share `_GAME_ROUND_FIELDS` and explicitly exclude `event_log` (legacy text dump).
 
@@ -247,9 +306,9 @@ Read-only DRF endpoints registered under `/api/`:
 /matches/save-batch-games/           → enqueue save_games_task for avg/outlier seeds (URL name "save_batch_games")
 /matches/save-batch-status/<job_id>/ → save-job status JSON (URL name "save_batch_status")
 
-/api/matches/                        → MatchViewSet (list, detail)
-/api/rounds/                         → GameRoundViewSet (list, detail, events action)
-/api/rounds/<id>/events/             → paginated GameEvent list for that round
+/api/matches/                        → MatchViewSet (list, detail; filters + ordering)
+/api/rounds/                         → GameRoundViewSet (list, detail, events action; filters + ordering)
+/api/rounds/<id>/events/             → paginated, filterable GameEvent list for that round
 /api/simulate-batch/                 → API-03 REST POST: enqueue simulate_batch_task (URL name "api_simulate_batch")
 /api/simulate-batch/<job_id>/        → API-03 REST GET: poll job status (URL name "api_simulate_batch_status")
 ```
@@ -298,7 +357,7 @@ The defensive `"running"` fallback for unknown states keeps the polling UI from 
 **Expiry asymmetry (`CELERY_RESULT_EXPIRES = 3600`, 1 hour).** Polling a Job id whose result has expired resolves to Celery `PENDING` — indistinguishable from a never-submitted id. The status mapping above maps `PENDING` → `"running"`, so the UI polls forever on an expired id. Documented on the CONTEXT.md `Job id` term; no special-case fallback path in the view layer.
 
 **REST surface (API-03).** Two new APIView subclasses in `matches/api_views.py` mounted off `laserforce_simulator/api_urls.py` after the DRF `DefaultRouter` urls (router only handles ViewSets — `APIView` needs plain `path()` entries):
-- `POST /api/simulate-batch/` (URL name `api_simulate_batch`, `SimulateBatchAPIView`) — accepts `{team_red, team_blue, n, arena_map?, master_seed?}` validated by an inline `SimulateBatchRequestSerializer(serializers.Serializer)` (Forms-vs-Serializers is the locked DRF idiom — the UI POST still uses `BatchSimulateForm`). Same-team rejection and `roster_errors` mirror the UI view, returning 400 with `{"detail": "<msg>"}`. Validation errors return DRF's default per-field shape. `master_seed` is REST-only (UI form has no field for it) and is plumbed for test pinning / scripted-run convenience, **not** a user-facing knob.
+- `POST /api/simulate-batch/` (URL name `api_simulate_batch`, `SimulateBatchAPIView`) — accepts `{team_red, team_blue, n, arena_map?, master_seed?}` validated by an inline `SimulateBatchRequestSerializer(serializers.Serializer)` (Forms-vs-Serializers is the locked DRF idiom — the UI POST still uses `BatchSimulateForm`). Same-team rejection and `roster_errors` mirror the UI view, returning 400 with `{"detail": "<msg>"}`. Validation errors return DRF's default per-field shape. *(**Superseded by ANG-01a:** both responses are now enveloped — see **REST API → Batch endpoints** above; the Forms-vs-Serializers idiom is overturned for new endpoints by ADR-0039, this serializer is grandfathered.)* `master_seed` is REST-only (UI form has no field for it) and is plumbed for test pinning / scripted-run convenience, **not** a user-facing knob.
 - `GET /api/simulate-batch/<str:job_id>/` (URL name `api_simulate_batch_status`, `SimulateBatchStatusAPIView`) — returns the identical polling JSON shape as the UI `batch_simulate_status` endpoint. Same query-param carry pattern.
 
 Both REST views **inherit `AllowAny` from the API-02 `REST_FRAMEWORK["DEFAULT_PERMISSION_CLASSES"]` default** — no override of `permission_classes` / `authentication_classes` (deferred-auth precedent locked by API-02 and pinned by `TestAPIInheritsAllowAnyPermissions`).
@@ -1768,7 +1827,8 @@ contract:
 - `test_spawn_assigner.py` — 15 unit tests for `assign_spawn_cells`: happy path role→cell mapping, pool exhaustion overflow, empty/missing pools, blue-team symmetry
 - `views_tests.py` — view behaviour: URL routing, form submissions, context keys
 - `test_serializers.py` — unit tests for all five serializer classes (including list vs detail split)
-- `test_apis.py` — HTTP-level tests for `/api/matches/` and `/api/rounds/` (including `/events/` action)
+- `test_apis.py` — HTTP-level tests for `/api/matches/` and `/api/rounds/` (including `/events/` action), reading through the ANG-01a envelope
+- `test_api_filters.py` — ANG-01a `MatchFilterSet` / `GameRoundFilterSet` / events filters (incl. typed-filter 400s), events `timestamp` order + pagination, match / round ordering
 - `test_tag_cooldown.py` — 23 pure-unit tests for MECH-02 same-target restriction and `game_awareness` gate; no DB required
 - `test_nuke.py` — 15 pure-unit tests for MECH-03 Commander nuke-stacking: `_commander_nuke_gate` threshold table, `_get_commander_weights` gating, edge cases at each SP/awareness boundary; no DB required
 - `test_nuke.py` — N regression tests for MECH-05: same-tick and within-fuse cancellation in `BatchSimulator`, tick-ordering guarantee; no DB required (the legacy "BatchSimulator consistency with ResourceBasedSimulator" assertion was retired by SIM-09)
@@ -2006,7 +2066,12 @@ append after the existing `<id>/play-next/`.
 **setup-only** (`is_locked` ⇒ `messages.error` + redirect, no writes). Happy path:
 `RosterImportForm(request.POST, request.FILES)` → `parse_roster_csv` →
 `_check_db_slot_collisions` → `_apply_roster` returning `(created_teams,
-appended_teams, player_count)`; **ONLY `created_teams`** become
+appended_teams, player_count)` (**ANG-01a:** both now receive
+`manager=manager_or_none(request)` — they resolve existing Teams only among the
+Account's own + Unmanaged Teams, so a CSV naming another Account's Team creates a
+**new Team stamped with the importer** instead of appending to the foreign one, and
+tournament-created Teams are now stamped; see `teams/CLAUDE.md` **Roster-import
+ownership fix**); **ONLY `created_teams`** become
 `TournamentParticipant`s (brand-new Teams ⇒ no `uniq_tournament_team` collision;
 `appended_teams` are created/extended but **NOT auto-added**); then **re-seed the
 whole field by talent** (`_team_mean_rating` → `default_seed_order`, rewriting
@@ -8290,7 +8355,8 @@ roots — accepted behaviour, not a bug.
   one.
 - **`api_views.py:SimulateBatchAPIView.post`'s `Team.objects.get(id=tid)` is deliberately left
   alone** — it is wrapped in `try/except Team.DoesNotExist → 400` and must keep returning **400, not
-  404**. The viewset-level `IsAuthenticated` is the gate there.
+  404**. The viewset-level `IsAuthenticated` is the gate there. (ANG-01a: the 400 is now a raised
+  `ValidationError` in the envelope; the lookup is still not ownership-scoped — ANG-01b follow-up.)
 - **List scoping:** `league_list` wraps both its `state="active"` / `"archived"` querysets in
   `owned_queryset`; `tournament_list` likewise. `match_list` uses the two longhand `Q` builders —
   `Match.objects.filter(owned_match_q(request.user))` and, for the standalone-round list,

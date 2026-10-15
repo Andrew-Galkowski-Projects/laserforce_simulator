@@ -27,7 +27,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - **User accounts & ownership** — Email + password sign-in with open self-registration. Every Team, League, Tournament, sandbox Match and standalone Round belongs to the account that created it, and the whole site sits behind a login. Rows created before you had an account (or by a management command) are *unmanaged* and stay open to any signed-in account until claimed
 - **Self-insert** — Link your account to one Player on a team you manage ("This is me" on the player's page) and that Player is flagged with a **You** badge wherever its name appears on a server-rendered page — rosters, leaderboards, stats tables, awards, box scores and tournament pools — with a **My player** shortcut in the account menu. It is purely a vanity link: the Player is not moved, copied or added to any team, and simulations are unaffected
 - **Team history** — Win/loss records across all matches
-- **Read-only REST API** — JSON endpoints for teams, players, matches, rounds, and events at `/api/` (paginated, 20 per page)
+- **REST API** — JSON endpoints at `/api/` for teams and players (read + write: create / edit teams, set roster slots, add / edit / delete players, generate players, import a roster CSV) plus read-only matches, rounds, events and maps. Every response uses one envelope — `{"data": ..., "meta": {...}}` on success, `{"errors": [{"code", "message", "field"}], "meta": {}}` on failure — lists are paginated (20 per page, `?page_size=` up to 100) and filterable / sortable via query params. You only ever see your own account's rows (another account's row is a `404`)
 
 ## Tech Stack
 
@@ -37,7 +37,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - `gunicorn` as the production WSGI server (start with `gunicorn laserforce_simulator.wsgi:application --bind 0.0.0.0:8000`)
 - `whitenoise` for production static file serving directly from Django (no separate nginx required)
 - `django-storages` + `boto3` for Cloudflare R2 media storage in production (set `R2_*` env vars to activate; falls back to local disk when unset)
-- `djangorestframework` for the read-only JSON API at `/api/`
+- `djangorestframework` + `django-filter` for the JSON API at `/api/`
 - `psycopg2-binary` for PostgreSQL support in production (CI runs tests against `postgres:16`)
 - pytest + pytest-django for testing, with Codecov coverage reporting
 - Docker (multi-stage `python:3.11-slim`); `docker-compose.yml` for local dev with PostgreSQL; deployed to Fly.io via CI on push to `main`
@@ -243,9 +243,16 @@ Action weights live in `matches/sim_helpers/weights.py` and shift dynamically ba
 | `/tournaments/` | Sandbox tournament list |
 | `/tournaments/create/` | Create a single-elim, double-elim, round-robin, RR → double-elim, or Swiss tournament (preset teams or a Random Draw player pool) |
 | `/tournaments/<id>/` | Bracket tree, seeding, play controls, and (Random Draw) player-pool intake + draw |
-| `/api/teams/` | Team list (paginated JSON) |
-| `/api/teams/<id>/` | Team detail with full player stats |
-| `/api/players/` | Player list (paginated JSON) |
+| `/api/teams/` | Team list (paginated JSON; `?name=`, `?include_free_agents=true`) / POST to create a team |
+| `/api/teams/<id>/` | Team detail with full player stats / PATCH to rename |
+| `/api/teams/<id>/slots/` | PUT to replace the six roster slots |
+| `/api/teams/<id>/players/` | POST to add a player to the team |
+| `/api/teams/generate/` | POST to generate teams or a free-agent pool |
+| `/api/teams/import/` | POST (multipart `csv_file`) to import a roster CSV; `/api/teams/import/template/` downloads the template |
+| `/api/players/` | Player list (paginated JSON; `?team=`, `?name=`, `?ordering=`) |
+| `/api/players/<id>/` | Player detail / PATCH to edit / DELETE |
+| `/api/matches/` | Match list (`?team=`, `?season=`, `?match_type=`, `?date_played_after=` / `_before=`) |
 | `/api/matches/<id>/` | Match detail with round ID list |
 | `/api/rounds/<id>/` | Round detail with player states |
-| `/api/rounds/<id>/events/` | Paginated event log for a round |
+| `/api/rounds/<id>/events/` | Paginated event log for a round (`?event_type=`, `?actor=`, `?target=`, `?timestamp_min=` / `_max=`) |
+| `/api/maps/` | Arena map list / detail (shared across accounts) |
