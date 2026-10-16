@@ -1633,7 +1633,7 @@ See the seam contract
 [`.claude/worktrees/ang-01b-seam-contract.md`](.claude/worktrees/ang-01b-seam-contract.md) and the
 **REST API** sections of the `teams` / `matches` CLAUDE.md files.
 
-#### ANG-01c · Map editor API
+#### ANG-01c · [DONE] Map editor API
 
 Writable `/api/maps/`: upload / delete a map, zone detection + zone-config save (incl. `wall_meta`,
 elevation, bases), sight lines (load / compute / single-cell / batched save), ranked cells, Heavy
@@ -1641,6 +1641,57 @@ strong spots, spawn cells, and the RES-04 multi-round heatmap aggregate. Maps st
 data (not ownership-filtered, ADR-0038); writes bind or mirror the existing `core/views.py`
 validation (e.g. the `[0.0, 10.0]` elevation bound). The Angular map editor (ANG-06 item 6) depends
 on this slice.
+
+**[DONE] Shipped (2026-10-15).** **Endpoints** — `ArenaMapViewSet` gains `create` + `DestroyModelMixin`
+and 10 `detail=True` actions (still **not ownership-filtered**: maps are shared, any Account may
+upload / edit / delete any map, no `manager` column, ADR-0038 unchanged): `POST /api/maps/`
+(multipart only, `MapUploadForm`, **201** with the 8 serializer fields; corrupt file ⇒ 400
+`invalid_image`; JSON ⇒ 415), `DELETE /api/maps/<pk>/` (204), `GET …/processed-image/` (raw
+`image/png`, **not enveloped**), `GET …/zones/?zone_size=`, `GET` / `PUT …/zone-config/`, `GET` / `PUT`
+(replace) / `PATCH` (merge) `…/sight-lines/`, `POST …/sight-lines/compute/` (**synchronous**),
+`GET …/sight-lines/cell/?zone_size=&r=&c=` (off-grid / impassable ⇒ `visible_cells: []`, 200),
+`GET …/ranked-cells/`, `GET` / `PUT …/strong-spots/`, `GET …/spawn-cells/`,
+`GET …/heatmap/?zone_size=[&team_color=]`. JSON actions take `JSONParser` only (multipart ⇒ 415,
+non-object body ⇒ 400 `parse_error`); PUT / PATCH on the detail stay **405**. Read `data` is the HTML
+JSON byte for byte; writes return the saved state (the matching GET's `data`), never
+`{"status": "ok"}`. **Forms** — new `core/forms.py` (strict write Forms shared by HTML + API:
+`ParsedJSONField` — already-decoded JSON, `[]` / `{}` survive — plus `MapUploadForm`, `ZoneConfigForm`,
+`ComputeSightLinesForm`, `SightLinesSaveForm`, `StrongSpotsForm`, with pinned `invalid` messages;
+elevation messages and the strong-spot `cells` message byte-identical to before) and
+`core/api_forms.py` (strict read-param Forms `ZoneSizeParamsForm`, `SingleCellParamsForm`,
+`HeatmapParamsForm`, the ANG-01b `matches/api_forms.py` precedent). **Services** — new
+`core/services.py` owns every map read / write / compute (`upload_map`, `delete_map`, `map_in_use`,
+`processed_image_path`, `detect_zones_with_overlay`, `get_zone_config` / `save_zone_config`,
+`get_sight_lines` / `compute_and_store_sight_lines` / `compute_single_cell` / `save_sight_lines(mode=
+"replace" | "merge")`, `update_spawn_cells`, `get_ranked_cells`, `get_strong_spots` /
+`save_strong_spots`, `get_spawn_cells`, `aggregate_map_heatmap`; `MapInUseError`, `InvalidMapImage`);
+`_get_image_local_path` / `_clear_processed_cache` moved there and are **re-exported from
+`core/views.py`** (`_update_spawn_cells_in_zone_data` kept as an alias of `update_spawn_cells`); the
+HTML map views now delegate to it. **Delete guard** — a map referenced by a **non-completed** Season
+cannot be deleted: `map_in_use` checks six references (`Season.map_pool` M2M,
+`Season.starting_map_pool_ids_json`, `map_rotation_ids_json`, `starting_map_rotation_ids_json`, and
+the Conference `map_rotation_ids_json` / `starting_map_rotation_ids_json`), in Python (SQLite has no
+JSONField `contains`). API ⇒ **409 `map_in_use`** (new `MapInUse` `APIException`); HTML ⇒ an error
+message + redirect to `/maps/`; nothing is touched either way. Completed Seasons and historical
+`GameRound`s (`SET_NULL`) never block. **Heatmap scoping (behaviour change)** — the RES-04 multi-round
+map heatmap aggregate (API **and** HTML `map_heatmap_data`) now counts only rounds visible to the
+requester (`owned_game_round_q`: own + Unmanaged + own / Unmanaged Match / League); `round_count` is
+the scoped count. **Strictness** — the API is strict (`zone_size` required, 10..200; bad `r` / `c` /
+`team_color` ⇒ 400 Django codes); the HTML views keep their lenient parse (default 50, clamp to
+10..200, existing parse-error bodies) and bind the strict Form afterwards, so valid editor payloads give
+the same DB writes and **byte-identical** success bodies, while malformed payloads (ragged / out-of-set
+zones, bad `wall_meta`, non-list elevation, bad spawn pairs, unknown / duplicate base types, malformed
+sight-line keys, bool cell pairs, non-object bodies — previously saved, ignored or a 500) are now
+rejected with each view's existing error body shape. **Bug fix** — a merge save (`replace: false` /
+PATCH) onto a **missing** `SightLineConfig` used to create an empty config and discard the batch; it
+now stores the batch. **Invariants:** **no migration, no simulation change, no Score Calibration
+re-baseline, no ADR**; models / serializers / URL names / templates unchanged; the 14
+`get_object_or_404(ArenaMap, …)` sites stay. Deferred (see Deferred Items): no zones↔elevation shape
+check or grid-bounds check for cells; strict `wall_meta`. New tests: `core/test_map_forms.py`,
+`core/test_map_services.py`, `core/test_maps_api_writes.py`, `core/test_map_views_html.py`;
+`core/test_maps_api.py` write test rewritten (PUT / PATCH detail ⇒ 405). See the seam contract
+[`.claude/worktrees/ang-01c-seam-contract.md`](.claude/worktrees/ang-01c-seam-contract.md) and the
+**REST API — maps** section of `laserforce_simulator/core/CLAUDE.md`.
 
 #### ANG-01d · Leagues / Seasons API
 
@@ -1878,6 +1929,15 @@ The following were explicitly scoped out and should not be implemented until re-
   the team ids the status poll wrote into the session from its query params, with no ownership check.
   The API save is unaffected (teams in the body, resolved by `resolve_batch_teams`); the HTML path
   could reuse `resolve_batch_teams` the same way
+- **Map zone-config shape / bounds checks** (ANG-01c follow-up) — `ZoneConfigForm` has no
+  cross-field check that `elevation` matches the `zones` grid shape, and no Form or service checks
+  spawn cells, Heavy strong-spot cells or base-sight cells against the grid bounds (an out-of-grid
+  pair is stored as-is; `compute_single_cell` already returns `[]` off-grid). Fix with a grid-aware
+  `clean()` once the zone grid is resolvable inside the Form
+- **Strict `wall_meta` may reject a legacy re-save** (ANG-01c follow-up) — `ZoneConfigForm` accepts
+  only `facing` / `height` keys per wall cell, so a stored legacy config carrying any other key fails
+  to re-save from the editor (400) until the wall is repainted. Low risk (the editor only writes those
+  two keys); relax to ignore-unknown-keys if one ever surfaces
 
 ---
 

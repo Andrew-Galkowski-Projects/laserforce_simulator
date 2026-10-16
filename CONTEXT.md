@@ -205,7 +205,8 @@ The per-player split of a round into active, reset-window, not-targetable, and d
 ### Arena and space
 
 **Arena map**:
-An uploaded venue layout, processed into a **Cell** grid with precomputed **Sight lines**; optional for a round.
+An uploaded venue layout, processed into a **Cell** grid with precomputed **Sight lines**; optional for a round. Shared reference data: every **Account** may read and edit every Arena map. An Arena map is **in use** while any non-completed **Season** references it (its **Map pool**, its map rotation, or a **Conference** rotation); an in-use map cannot be deleted.
+_Avoid_: treating an Arena map as an **Ownership root**; deleting a map out from under a running Season (its fixtures would silently fall back to the 3-zone model).
 
 **Cell**:
 One square of the arena grid — the unit of player position and movement.

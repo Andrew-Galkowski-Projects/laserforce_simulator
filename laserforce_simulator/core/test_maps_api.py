@@ -1,4 +1,7 @@
-"""ANG-01a — read-only ``/api/maps/`` (seam contract §5.12).
+"""ANG-01a — the read side of ``/api/maps/`` (seam contract §5.12).
+
+The ANG-01c writes (upload, delete, the map-editor detail actions) are tested
+in ``core/test_maps_api_writes.py``; this module keeps list / detail / filters.
 
 ``ArenaMapViewSet`` over ``ArenaMapSerializer`` with ``ArenaMapFilterSet``
 (``is_default``, ``has_confirmed_config``). ArenaMap is **shared reference
@@ -176,15 +179,14 @@ class TestMapsSharedAndAuth(_MapsTestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json()["errors"][0]["code"], "not_authenticated")
 
-    def test_writes_are_405(self) -> None:
-        for method, path in (
-            ("post", "/api/maps/"),
-            ("put", f"/api/maps/{self.alpha.pk}/"),
-            ("patch", f"/api/maps/{self.alpha.pk}/"),
-            ("delete", f"/api/maps/{self.alpha.pk}/"),
-        ):
+    def test_detail_put_and_patch_are_405(self) -> None:
+        """ANG-01c: there is no update / partial_update. Upload (POST) and
+        delete (DELETE) are covered in ``core/test_maps_api_writes.py``."""
+        for method in ("put", "patch"):
             with self.subTest(method=method):
-                response = getattr(self.api, method)(path, {}, format="json")
+                response = getattr(self.api, method)(
+                    f"/api/maps/{self.alpha.pk}/", {}, format="json"
+                )
                 self.assertEqual(response.status_code, 405)
                 self.assertEqual(
                     response.json()["errors"][0]["code"], "method_not_allowed"

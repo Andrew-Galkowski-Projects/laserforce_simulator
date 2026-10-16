@@ -804,4 +804,8 @@ class TestMethodsNotAllowed(_ApiTestCase):
         )
 
     def test_map_writes(self) -> None:
-        self.assert_405(self.api.post("/api/maps/", {}, format="json"))
+        # ANG-01c: POST /api/maps/ is now a multipart upload, so a JSON body is
+        # 415; the full map write surface lives in core/test_maps_api_writes.py.
+        self.assertEqual(
+            self.api.post("/api/maps/", {}, format="json").status_code, 415
+        )

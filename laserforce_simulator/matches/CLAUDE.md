@@ -218,8 +218,9 @@ settings, **not per view**. New API slices (ANG-01b..g) must follow it. Seam con
 - **Envelope.** Success `{"data": <obj|list>, "meta": {}}`; paginated lists put
   `{page, page_size, count, total_pages}` in `meta` (empty list ⇒ `count: 0, total_pages: 1, page: 1`);
   errors `{"errors": [{"code", "message", "field"}], "meta": {}}`, `field` null for non-field errors,
-  never an empty list. Exempt: **204** (empty body — player DELETE), raw file responses built as a
-  Django `HttpResponse` (the roster template CSV), and unhandled **500**s (Django default).
+  never an empty list. Exempt: **204** (empty body — player DELETE, ANG-01c map DELETE), raw file
+  responses built as a Django `HttpResponse` / `FileResponse` (the roster template CSV, the ANG-01b
+  round report PDF, the ANG-01c map `processed-image/` PNG), and unhandled **500**s (Django default).
 - **Modules (`laserforce_simulator/api/`).** `renderers.EnvelopeJSONRenderer` (default renderer;
   the browsable API shows the envelope too), `pagination.EnvelopePagination` (`page_size` 20,
   `?page_size=` clamped to 100, invalid / out-of-range `?page=` ⇒ 404 `not_found`),
@@ -241,7 +242,8 @@ settings, **not per view**. New API slices (ANG-01b..g) must follow it. Seam con
   `roster_invalid` (`field = row:<n>[:<column>]`); 404 `not_found` — missing row, **cross-Account row
   (never 403, ADR-0038)**, bad page; 403 `not_authenticated` (anonymous — stays 403, not 401, until
   ANG-03's JWT) / `permission_denied` (CSRF on a session write); 405 `method_not_allowed` (keeps the
-  `Allow` header); 415 `unsupported_media_type`.
+  `Allow` header); 409 — a raised `APIException` subclass for a state conflict (ANG-01b
+  `job_not_complete`, ANG-01c `map_in_use`); 415 `unsupported_media_type`.
 - **Filtering.** `django-filter` (`django_filters` in `INSTALLED_APPS`) with an explicit
   `filterset_class` per viewset, plus `AliasOrderingFilter` (`?ordering=a,-b` over the viewset's
   public `ordering_fields`, mapped through `ordering_aliases`, unknown terms silently dropped, then
@@ -253,7 +255,11 @@ settings, **not per view**. New API slices (ANG-01b..g) must follow it. Seam con
 - **Ownership.** `get_queryset()` is built on `owned_queryset` / `owned_match_q` /
   `owned_game_round_q`, and DRF `get_object()` does the rest ⇒ 404 cross-Account. All viewsets keep
   `@method_decorator(login_not_required, name="dispatch")` + settings-level `IsAuthenticated`.
-  `ArenaMap` is the deliberate exception (shared reference data — see `core/CLAUDE.md`).
+  `ArenaMap` is the deliberate exception (shared reference data — see `core/CLAUDE.md`): since
+  **ANG-01c** `/api/maps/` is a full read / write map-editor API (upload, delete with a 409
+  `map_in_use` guard, zones, zone-config, sight lines, ranked cells, strong spots, spawn cells,
+  processed image, multi-round heatmap) that any Account may use on any map; only the multi-round
+  heatmap's **rounds** are scoped by `owned_game_round_q`.
 
 ## REST API (`matches/serializers.py`, `matches/api_views.py`, `matches/filters.py`)
 
@@ -524,7 +530,7 @@ Per-round **Cell occupancy** snapshots ship via two surfaces driven from a singl
 
 **Per-round view** (`matches/views.py::movement_heatmap`) at `/matches/game-round/<int:round_id>/heatmap/` (URL name `movement_heatmap`, template `templates/matches/movement_heatmap.html`). GET only (`HttpResponseNotAllowed` on non-GET, 405); `get_object_or_404(GameRound, pk=round_id)`. Context: `game_round`, `cell_occupancy_json` (raw — passed through `json_script` as DOM id `cell-occupancy-data`), `player_roster` (list of `{id, name, role, team_color}` dicts ordered red-then-blue, role-then-name; rendered via `json_script` as DOM id `player-roster-data`), `has_map`, `arena_map`, `zone_size` (exposed to JS as `window.LF_ZONE_SIZE`), `processed_image_url`. Filter strategy is **client-side** — three dropdowns (`heatmap-filter-player`, `heatmap-filter-role`, `heatmap-filter-team`) sum the per-player JSON in-browser and re-paint the canvas; no server round-trip per filter change. Map-less rounds render a **"No map — heatmap unavailable"** notice (DOM id `heatmap-no-map-notice`); the original PLAN.md "per-zone bar chart fallback" is **dropped** because MAP-01..09 are complete (the 3-zone fallback survives only as a compatibility shim for rounds the user explicitly creates without a map — RES-04 simply does not render a heatmap there).
 
-**Multi-round aggregate** lives **inside the existing map editor** as a third mode toggle alongside Zones & Bases and Sight Lines (see [`core/CLAUDE.md`](../../laserforce_simulator/core/CLAUDE.md)). Driven by `core/views.py::map_heatmap_data` at `/maps/<int:map_id>/heatmap-data/` (URL name `map_heatmap_data`); GET only (405 on non-GET), required `zone_size` int query param (400 `"zone_size required"` when missing), optional `team_color` ∈ {`"red"`, `"blue"`} (400 `"invalid team_color"` on any other non-empty value). Filtering is **server-side on `team_color` only** — the view joins `GameRound.cell_occupancy_json` against `PlayerRoundState.team_color` to drop non-matching players, then sums the remaining `"r,c"` → ticks entries. Response shape `{"cell_occupancy": {"r,c": int}, "zone_size": int, "rows": int, "cols": int, "round_count": int}` with cells whose final sum is `0` omitted (matches the per-round file format). The editor view exposes **no** per-player or per-role dropdowns — those are single-round only.
+**Multi-round aggregate** lives **inside the existing map editor** as a third mode toggle alongside Zones & Bases and Sight Lines (see [`core/CLAUDE.md`](../../laserforce_simulator/core/CLAUDE.md)). Driven by `core/views.py::map_heatmap_data` at `/maps/<int:map_id>/heatmap-data/` (URL name `map_heatmap_data`; since ANG-01c it delegates to `core.services.aggregate_map_heatmap`, also served strictly as `GET /api/maps/<id>/heatmap/`, and **only rounds visible to the requester** — `owned_game_round_q(request.user)`: own + Unmanaged + own / Unmanaged Match / League — are aggregated, with `round_count` the scoped count); GET only (405 on non-GET), required `zone_size` int query param (400 `"zone_size required"` when missing), optional `team_color` ∈ {`"red"`, `"blue"`} (400 `"invalid team_color"` on any other non-empty value). Filtering is **server-side on `team_color` only** — the view joins `GameRound.cell_occupancy_json` against `PlayerRoundState.team_color` to drop non-matching players, then sums the remaining `"r,c"` → ticks entries. Response shape `{"cell_occupancy": {"r,c": int}, "zone_size": int, "rows": int, "cols": int, "round_count": int}` with cells whose final sum is `0` omitted (matches the per-round file format). The editor view exposes **no** per-player or per-role dropdowns — those are single-round only.
 
 **Single-source contract.** Per-player JSON is the only persisted form; team-color / role / per-player aggregates are **always derived at view time** via `PlayerRoundState` (the editor view server-side, the round view client-side via `player_roster`). Same seed + Orientation + rosters + map ⇒ identical `cell_occupancy_json` — reconstruction consumes no RNG and reads only the deterministic movement trail + A* route, so the SIM-07/08 contract extends to the new field. **No simulation behaviour change** → **no Score Calibration re-baseline obligation**. Locked names (model field, migration, pure function, view names + URLs, JSON ids, DOM ids, test files) are pinned by the seam contract at [`.claude/worktrees/res-04-seam-contract.md`](../../.claude/worktrees/res-04-seam-contract.md). **No ADR** — decisions are reversible (the column is a `JSONField` add; the cache is regenerable). **Scope-out:** no backfill, no time-window slicing, no PNG/PDF/CSV export, no JS unit tests, no new `MapContext` accessor.
 
