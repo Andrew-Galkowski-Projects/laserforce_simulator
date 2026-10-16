@@ -14,6 +14,7 @@ member nights) is ANG-01d-2 and deliberately absent here.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TypeVar
 from dataclasses import asdict, fields
 
 from django.contrib.auth.decorators import login_not_required
@@ -73,11 +74,14 @@ from matches.league_services import (
     template_to_form_data,
 )
 from matches.league_play_services import (
+    NoLiveCursorError,
     PlayInProgressError,
     SeasonNotActiveError,
     SeasonNotDraftError,
     WrongPhaseError,
+    build_play_controls,
     build_play_job_status,
+    play_live,
     play_playoffs_run,
     play_season_run,
     request_play_cancel,
@@ -299,15 +303,20 @@ def _start_play_run(start: Callable[[], str]) -> str:
         raise WrongPhase(str(exc)) from exc
 
 
-def _run_sync_play(play: Callable[[], None]) -> None:
+_T = TypeVar("_T")
+
+
+def _run_sync_play(play: Callable[[], _T]) -> _T:
     """Run a Start Season / synchronous play service, mapping its errors.
 
-    The service domain errors become 409s; a model ``ValidationError`` (e.g.
-    starting a Season with fewer than 2 teams) and a simulator ``ValueError``
-    become 400s.
+    Returns the service's result. The service domain errors become 409s; a
+    model ``ValidationError`` (e.g. starting a Season with fewer than 2 teams)
+    and a simulator ``ValueError`` become 400s.
     """
     try:
-        play()
+        return play()
+    except NoLiveCursorError as exc:
+        raise NoLiveCursor(str(exc)) from exc
     except SeasonNotDraftError as exc:
         raise SeasonNotDraft(str(exc)) from exc
     except PlayInProgressError as exc:
@@ -419,6 +428,17 @@ class LeagueViewSet(
         return Response(
             {"league": league_ref(league), **_dashboard_payload(displayed_season, mode)}
         )
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="play-controls",
+        url_name="play-controls",
+    )
+    def play_controls(self, request: Request, pk: str | None = None) -> Response:
+        """The structured play controls for the League's displayed Season."""
+        league = self.get_object()
+        return Response(build_play_controls(league, pick_displayed_season(league)))
 
     @action(detail=True, methods=["get"], url_path="history", url_name="history")
     def history(self, request: Request, pk: str | None = None) -> Response:
@@ -792,6 +812,17 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
         season = self.get_object()
         job_id = _start_play_run(lambda: play_playoffs_run(season))
         return Response(_job_ref(season, job_id))
+
+    @action(detail=True, methods=["post"], url_path="play-live", url_name="play-live")
+    def play_live(self, request: Request, pk: str | None = None) -> Response:
+        """One Week (Live): commit the manager's game, run the rest in the
+        background; 200 ``{kind, round_ids, job}``."""
+        season = self.get_object()
+        result = _run_sync_play(lambda: play_live(season))
+        job = _job_ref(season, result.job_id) if result.job_id else None
+        return Response(
+            {"kind": result.kind, "round_ids": result.round_ids, "job": job}
+        )
 
     @action(
         detail=True, methods=["post"], url_path="play-cancel", url_name="play-cancel"

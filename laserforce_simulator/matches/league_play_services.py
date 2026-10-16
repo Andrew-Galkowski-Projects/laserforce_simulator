@@ -14,15 +14,16 @@ from __future__ import annotations
 
 import random
 import uuid
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Optional
 
 from celery.result import AsyncResult
 from django.db import transaction
 
-from matches import finance, injury
+from matches import finance, injury, member_night
 from matches.development import STAT_FIELDS
-from matches.league_services import is_career_league
-from matches.models import GameRound, Season
+from matches.league_services import _playoff_cursor_keys, is_career_league
+from matches.models import GameRound, Match, Season
 from matches.season_dashboard import select_play_fixtures
 from matches.simulation import BatchSimulator
 from matches.views import _celery_state_to_job_status
@@ -377,6 +378,174 @@ def play_single_round(season: Season) -> None:
 
 
 # ---------------------------------------------------------------------------
+# LG-01i -- "One Week (Live)" cursor resolution (moved from ``league_views``)
+# ---------------------------------------------------------------------------
+
+
+def _alive_playoff_node(tournament, team) -> "BracketNode | None":
+    """LG-01i §5a — the manager team's next undecided, non-bye bracket node it
+    currently occupies, or ``None``.
+
+    A node qualifies when: ``winner_id is None``, ``is_bye is False``, both team
+    slots filled, and (``team_a_id == team.id`` or ``team_b_id == team.id``). Of
+    the qualifying nodes, the one with the lowest
+    ``(_BRACKET_RANK[bracket_type], bracket_round, position)`` is the next
+    playable node for that team. Pin to a Series that has NOT started
+    (``series_matches.count() == 0``) so the watched Match is game 1.
+
+    ``None`` ⇒ the team is eliminated, not a participant, or has no undecided
+    node it occupies ⇒ no live entry.
+    """
+    from .bracket import _BRACKET_RANK
+
+    candidates = []
+    for node in tournament.nodes.select_related("team_a", "team_b").all():
+        if node.winner_id is not None or node.is_bye:
+            continue
+        if node.team_a_id is None or node.team_b_id is None:
+            continue
+        if node.team_a_id != team.id and node.team_b_id != team.id:
+            continue
+        candidates.append(node)
+
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda n: (
+            _BRACKET_RANK.get(n.bracket_type, 0),
+            n.bracket_round,
+            n.position,
+        )
+    )
+    node = candidates[0]
+
+    # Pin to a Series that has not started so the watched Match is game 1.
+    if node.series_matches.count() != 0:
+        return None
+    return node
+
+
+def _next_matchday_to_play(season) -> tuple[list, dict]:
+    """LG-01i — the next unplayed matchday's fixtures for ``season``.
+
+    Returns ``(to_play, phase_by_id)`` where ``to_play`` is the
+    ``list[(phase_id, ScheduleFixture)]`` of the next single unplayed matchday
+    (the ``play_week`` RR machinery — by-phase fixtures + Side-agnostic
+    ``played_keys``) and ``phase_by_id`` maps each phase id to its
+    ``SeasonPhase``. Shared by ``_resolve_live_cursor`` and the RR commit so the
+    fixture/played-key computation lives in one place.
+    """
+    by_phase = season.playable_fixtures_by_phase()
+    phase_by_id = {phase.id: phase for phase, _ in by_phase}
+    fixtures = [
+        (phase.id, fixture)
+        for phase, phase_fixtures in by_phase
+        for fixture in phase_fixtures
+    ]
+    played_keys = {
+        (
+            gr.match.season_phase_id,
+            frozenset({gr.match.team_red_id, gr.match.team_blue_id}),
+            gr.round_number,
+            gr.match.leg,
+        )
+        for gr in GameRound.objects.filter(match__season=season).select_related("match")
+    }
+    return select_play_fixtures(fixtures, played_keys, 1), phase_by_id
+
+
+def _resolve_live_cursor(season: "Season") -> Optional[dict]:
+    """LG-01i §5 — resolve the manager's watchable live cursor for ``season``.
+
+    Returns a cursor descriptor, the ``{"kind": "rr_bye"}`` degrade marker, or
+    ``None`` (no live entry). Algorithm (LOCKED order):
+
+      1. ``team = season.league.current_team``; ``None`` ⇒ ``None``.
+      2. ``phase = season.current_phase()``.
+         * **Playoff cursor** — a built + active tournament phase: resolve the
+           team's ``_alive_playoff_node``; found ⇒ a ``{"kind": "playoff", ...}``
+           descriptor; else ``None``.
+         * **RR cursor** — an RR phase (or the implicit fallback): compute the
+           next unplayed matchday's fixtures via the ``play_week`` machinery and
+           find the fixture whose Side-agnostic pair contains the team; found ⇒
+           ``{"kind": "rr", ...}``; bye ⇒ ``{"kind": "rr_bye"}``.
+      3. Anything else ⇒ ``None``.
+    """
+    team = season.league.current_team
+    if team is None:
+        return None
+
+    phase = season.current_phase()
+    if phase is None:
+        return None
+
+    # --- Playoff cursor ----------------------------------------------------
+    if (
+        phase.phase_type == "tournament"
+        and phase.tournament_id is not None
+        and phase.tournament.state == "active"
+    ):
+        node = _alive_playoff_node(phase.tournament, team)
+        if node is None:
+            return None
+        return {
+            "kind": "playoff",
+            "node": node,
+            "tournament": phase.tournament,
+            "cursor": {
+                "type": "playoff",
+                "tournament_id": phase.tournament_id,
+                "bracket_type": node.bracket_type,
+                "bracket_round": node.bracket_round,
+                "position": node.position,
+            },
+            "red_team": node.team_a,
+            "blue_team": node.team_b,
+        }
+
+    # --- RR cursor ---------------------------------------------------------
+    if phase.phase_type == "round_robin":
+        to_play, phase_by_id = _next_matchday_to_play(season)
+
+        watched = None
+        watched_phase_id = None
+        for phase_id, fixture in to_play:
+            if team.id in (fixture.team_a_id, fixture.team_b_id):
+                watched = fixture
+                watched_phase_id = phase_id
+                break
+
+        if watched is None:
+            # Manager has a bye this matchday ⇒ degrade to a plain commit.
+            return {"kind": "rr_bye"}
+
+        watched_phase = phase_by_id.get(watched_phase_id)
+        team_by_id = Team.objects.in_bulk([watched.team_a_id, watched.team_b_id])
+        team_a = team_by_id.get(watched.team_a_id)
+        team_b = team_by_id.get(watched.team_b_id)
+        return {
+            "kind": "rr",
+            "fixture": watched,
+            "season_phase": watched_phase,
+            "phase_id": watched_phase_id,
+            "cursor": {
+                "type": "rr",
+                "season_id": season.id,
+                "season_phase_id": watched_phase_id,
+                "matchday": watched.matchday,
+                "pair": sorted([watched.team_a_id, watched.team_b_id]),
+                "round_number": watched.round_number,
+                "leg": watched.leg,
+            },
+            "red_team": team_a,
+            "blue_team": team_b,
+        }
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # FIN-04 -- per-fixture injury resolution (moved from ``league_views``; the
 # views re-export every name, and ``tasks.play_season_task`` imports it there)
 # ---------------------------------------------------------------------------
@@ -526,3 +695,186 @@ def restore_after_fixture(token: dict) -> None:
     for player, originals in token.get("stat_restore", []):
         for name, value in originals.items():
             setattr(player, name, value)
+
+
+# ---------------------------------------------------------------------------
+# One Week (Live) -- play the manager's game now, the rest in the background
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LivePlayResult:
+    """What a live play committed and started.
+
+    ``kind`` is ``"rr"``, ``"playoff"`` or ``"member_night"``; ``round_ids``
+    are the committed Rounds to watch (empty when the manager had a bye);
+    ``job_id`` is the background play run started for the rest of the week
+    (``None`` when nothing was enqueued).
+    """
+
+    kind: str
+    round_ids: list[int]
+    job_id: str | None
+
+
+def _commit_live_rr_round(season: Season, cursor: dict) -> list[int]:
+    """Play the manager's round-robin Round at full fidelity; return its id."""
+    from core.models import ArenaMap
+    from matches.tasks import _fixture_map_ids, _resolve_fixture_map
+
+    fixture = cursor["fixture"]
+    # CONF-01 / CONF-06 -- the Conference map is built before the bulk-load:
+    # per-Conference rotation snapshots are part of the resolvable id union.
+    conf_by_team = season.conference_by_team_id()
+    pool_by_id = ArenaMap.objects.in_bulk(_fixture_map_ids(season, conf_by_team))
+    arena_map = _resolve_fixture_map(
+        season, fixture, pool_by_id, conf_by_team=conf_by_team
+    )
+    # FIN-04 -- roll injuries before the sim, restore the roster afterwards.
+    token = resolve_injuries_for_fixture(
+        season, cursor["red_team"], cursor["blue_team"]
+    )
+    try:
+        game_round = BatchSimulator().simulate_scheduled_round(
+            season,
+            cursor["red_team"],
+            cursor["blue_team"],
+            fixture.round_number,
+            arena_map=arena_map,
+            season_phase=cursor["season_phase"],
+            leg=fixture.leg,
+            conference=conf_by_team.get(fixture.team_a_id),
+            fidelity="full",
+        )
+    finally:
+        restore_after_fixture(token)
+    return [game_round.id]
+
+
+def _commit_live_playoff_match(cursor: dict) -> list[int]:
+    """Play the manager's bracket node (its 2-round Match); return Round ids."""
+    from matches.tournament_engine import play_specific_node
+
+    node = cursor["node"]
+    play_specific_node(node, fidelity="full")
+    node.refresh_from_db()
+    latest = (
+        node.series_matches.select_related("match").order_by("-game_number").first()
+    )
+    if latest is None or latest.match_id is None:
+        return []
+    return list(
+        latest.match.game_rounds.order_by("round_number").values_list("id", flat=True)
+    )
+
+
+def play_live(season: Season) -> LivePlayResult:
+    """One Week (Live): commit the manager's game, then run the rest of the week.
+
+    Raises ``SeasonNotActiveError``, ``PlayInProgressError`` (checked BEFORE
+    anything is committed) or ``NoLiveCursorError``. On a manager bye only the
+    background run starts. A ``ValidationError`` / ``ValueError`` from the
+    simulator propagates with no run started.
+    """
+    from matches.tasks import play_season_task
+
+    _require_active(season)
+    _require_no_live_run(season)
+    cursor = _resolve_live_cursor(season)
+    if cursor is None:
+        raise NoLiveCursorError("No live game to play for your team.")
+    if cursor["kind"] == "rr_bye":
+        round_ids: list[int] = []
+        kind = "rr"
+    elif cursor["kind"] == "rr":
+        round_ids = _commit_live_rr_round(season, cursor)
+        kind = "rr"
+    else:
+        round_ids = _commit_live_playoff_match(cursor)
+        kind = "playoff"
+    # The background run skips the manager's just-played game via its
+    # played-keys / find-next-playable-node checks.
+    job_id = enqueue_play_run(season, play_season_task, max_matchdays=1)
+    return LivePlayResult(kind=kind, round_ids=round_ids, job_id=job_id)
+
+
+# ---------------------------------------------------------------------------
+# Play controls (NAV-01) -- structured, no HTML
+# ---------------------------------------------------------------------------
+
+
+def _action_button(season_mode: str) -> tuple[str, str]:
+    """The NAV-01 action-button ``(label, state)`` for a Season mode."""
+    return {
+        "none": ("No Season", "none"),
+        "draft": ("Start Season", "start_season"),
+        "active": ("Play Next", "play_next"),
+    }.get(season_mode, ("Start Next Season", "start_next_season"))
+
+
+def build_play_controls(league: Any, displayed_season: Season | None) -> dict:
+    """The play-control state for ``league`` and its resolved displayed Season.
+
+    Returns 13 keys: ``action_button_label`` / ``action_button_state``, the
+    five ``_playoff_cursor_keys`` values, ``live_preview_available``,
+    ``is_career_mode``, ``member_night_phase_active``, ``member_night_sites``
+    (``[{"site", "count"}]`` -- viable Sites only, sorted by Site),
+    ``member_night_has_unplayed`` and ``active_play_job_id``.
+    """
+    season_mode = "none" if displayed_season is None else displayed_season.state
+    action_button_label, action_button_state = _action_button(season_mode)
+    (
+        playoff_phase_active,
+        playoff_tournament_id,
+        playoff_completed,
+        has_following_tournament_phase,
+        following_tournament_is_final,
+    ) = _playoff_cursor_keys(displayed_season)
+
+    live_preview_available = False
+    if displayed_season is not None and season_mode == "active":
+        cursor = _resolve_live_cursor(displayed_season)
+        live_preview_available = cursor is not None and cursor["kind"] in (
+            "rr",
+            "playoff",
+        )
+
+    member_night_phase_active = False
+    member_night_sites: list[dict] = []
+    member_night_has_unplayed = False
+    if displayed_season is not None:
+        mn_phase = displayed_season.current_phase()
+        if mn_phase is not None and mn_phase.phase_type == "member_night":
+            member_night_phase_active = True
+            pool_by_site = displayed_season._member_night_pool_by_site()
+            member_night_sites = [
+                {"site": site, "count": count}
+                for site, count in sorted(
+                    (site, len(pool))
+                    for site, pool in pool_by_site.items()
+                    if len(pool) >= member_night.MIN_POOL
+                )
+            ]
+            member_night_has_unplayed = Match.objects.filter(
+                season_phase=mn_phase, is_completed=False
+            ).exists()
+
+    return {
+        "action_button_label": action_button_label,
+        "action_button_state": action_button_state,
+        "playoff_phase_active": playoff_phase_active,
+        "playoff_tournament_id": playoff_tournament_id,
+        "playoff_completed": playoff_completed,
+        "has_following_tournament_phase": has_following_tournament_phase,
+        "following_tournament_is_final": following_tournament_is_final,
+        "live_preview_available": live_preview_available,
+        "is_career_mode": is_career_league(league),
+        "member_night_phase_active": member_night_phase_active,
+        "member_night_sites": member_night_sites,
+        "member_night_has_unplayed": member_night_has_unplayed,
+        "active_play_job_id": (
+            displayed_season.active_play_job_id
+            if displayed_season is not None
+            else None
+        ),
+    }
