@@ -118,14 +118,38 @@ def enqueue_play_run(season: Season, task: Task, **task_kwargs: Any) -> str:
     return job_id
 
 
+#: Celery states of a job a worker is executing. ``STARTED`` needs
+#: ``CELERY_TASK_TRACK_STARTED``; ``PROGRESS`` is the play tasks' custom state.
+_RUNNING_JOB_STATES = frozenset({"STARTED", "RETRY", "PROGRESS"})
+
+
 def request_play_cancel(season: Season) -> bool:
-    """Ask the Active play run to stop; ``False`` (and no write) when idle."""
+    """Ask the Active play run to stop; ``False`` (and no write) when idle.
+
+    When Celery reports the job is not running (``PENDING`` -- unknown to the
+    backend -- or a terminal state), the run is stale: also release the
+    column, filtered on that exact id so a newer run's id is never cleared.
+    """
+    job_id = (
+        Season.objects.filter(pk=season.pk)
+        .values_list("active_play_job_id", flat=True)
+        .first()
+    )
+    if not job_id:
+        return False
     updated = Season.objects.filter(
         pk=season.pk, active_play_job_id__isnull=False
     ).update(play_cancel_requested=True)
-    if updated:
-        season.play_cancel_requested = True
-    return bool(updated)
+    if not updated:
+        return False
+    season.play_cancel_requested = True
+    if AsyncResult(job_id).state not in _RUNNING_JOB_STATES:
+        released = Season.objects.filter(
+            pk=season.pk, active_play_job_id=job_id
+        ).update(active_play_job_id=None)
+        if released:
+            season.active_play_job_id = None
+    return True
 
 
 def job_status_fields(async_result: AsyncResult) -> dict:

@@ -32,8 +32,15 @@ forever.
 
 ## Consequences
 
-- A worker that dies without reaching its `finally` leaves the Season locked. Recovery is the
-  existing cancel action plus clearing the column; this is accepted as rare.
+- A worker that dies without reaching its `finally`, or a message no worker ever consumed, leaves
+  the column set. Cancel is the recovery path: `request_play_cancel` always sets the cancel flag,
+  and when `AsyncResult(job_id).state` says the job is not running (`PENDING`, `SUCCESS`, `FAILURE`
+  or `REVOKED`) it also clears the column with an update filtered on that exact id, so it can never
+  clear a newer run. `STARTED` / `RETRY` / `PROGRESS` keep the column and only set the flag.
+  `CELERY_TASK_TRACK_STARTED` is on so a picked-up task reads `STARTED` before its first
+  `PROGRESS`. A job still queued (also `PENDING`) is released too; the cancel flag makes it return
+  at its top-of-task check when a worker finally takes it. This consults `AsyncResult` only on an
+  explicit Cancel, never for the "is a run live" guard.
 - A race between two synchronous plays that both start before either writes a job id (two
   simultaneous Play One Week POSTs) is **not** covered, because sync plays do not hold the column.
   It is recorded in PLAN.md Deferred Items.

@@ -225,6 +225,9 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TIMEZONE = "UTC"
 CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_TASK_STORE_EAGER_RESULT = True
+# A picked-up task reports STARTED (not PENDING) before its first PROGRESS, so
+# the play-cancel stale-run check (ADR-0040) can tell "running" from "lost".
+CELERY_TASK_TRACK_STARTED = True
 
 
 # Cloudflare R2 credentials — all four must be present to activate remote storage
