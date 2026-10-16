@@ -1,6 +1,6 @@
 """Round scoreboard — pure aggregation over per-player dicts.
 
-The **Round scoreboard** (CONTEXT.md, `### Analytics and review`) is the
+The **Round scoreboard** (GLOSSARY.md, `### Analytics and review`) is the
 per-player table both the HTML round-detail page and the **Round report**
 PDF render. The view materialises one 27-key dict per ``PlayerRoundState``
 via ``matches.views._player_row`` and hands the lists to the functions

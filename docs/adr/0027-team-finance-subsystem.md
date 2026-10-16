@@ -172,7 +172,7 @@ career-mode world FIN-01 ships into.
   and consume no RNG; LG-04 / LG-05 develop output is byte-identical with the
   toggle ON or OFF.
 
-- **No CONTEXT.md term churn.** The finance glossary (the `### Finance` section
+- **No GLOSSARY.md term churn.** The finance glossary (the `### Finance` section
   — Salary / Budget / Profit / Luxury tax) and the two "money dormant" caveat
   edits were finalised inline at the grill (the CAR-02 precedent), so this slice
   needs no new term.
@@ -206,7 +206,7 @@ AI **and** manager team budgets at League create.
   frozen import allowlist (`NEUTRAL_SCOUTING_BUDGET` only *equals* LG-05's
   `DEFAULT_SCOUTING_BUDGET` by value — **`finance.py` does not import
   `development`**). The level fed in is the same **games-weighted ≤3-Season**
-  average (the `getLevelLastThree` / CONTEXT.md "Budget level" contract) FIN-02
+  average (the `getLevelLastThree` / GLOSSARY.md "Budget level" contract) FIN-02
   uses, sourced from the per-Season budget snapshots on `TeamSeasonFinance` FIN-02
   already added — so **no migration, no simulator change, and no Score Calibration
   re-baseline**. Gated on `League.finance_enabled`; finance-OFF (or any Team at the

@@ -56,7 +56,7 @@ class User(AbstractUser):
 
     username = None  # type: ignore[assignment]
     email = models.EmailField("email address", unique=True)
-    # UX-02 — the Account's Self-insert (CONTEXT.md). A vanity *link* to an
+    # UX-02 — the Account's Self-insert (GLOSSARY.md). A vanity *link* to an
     # existing Player: never moves, enrols or re-simulates it. SET_NULL so deleting
     # the Player (or its Team, which cascades the Player) just leaves no Self-insert.
     self_insert = models.OneToOneField(

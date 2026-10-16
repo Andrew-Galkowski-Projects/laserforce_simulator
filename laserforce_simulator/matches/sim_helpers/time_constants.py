@@ -35,7 +35,7 @@ RESPAWN_TICKS: int = 16
 
 #: Not-targetable window after a Down — cannot be Tagged (was < 4 s). The
 #: Reset window (taggable but not active) is the derived span
-#: [NOT_TARGETABLE_TICKS, RESPAWN_TICKS), per the CONTEXT.md glossary.
+#: [NOT_TARGETABLE_TICKS, RESPAWN_TICKS), per the GLOSSARY.md glossary.
 NOT_TARGETABLE_TICKS: int = 8
 
 # --- End-game / base-rush thresholds --------------------------------------

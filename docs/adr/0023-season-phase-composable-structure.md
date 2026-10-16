@@ -600,7 +600,7 @@ playoff Match-history surface** and **weekly playoff pacing**. It adds no new AD
   preserves.
 - [ADR-0004](0004-simulation-data-is-disposable.md) — disposable-data /
   no-backfill precedent for the defensive implicit-single-phase fallback.
-- CONTEXT.md `### League and seasons` — the **Season phase** glossary entry.
+- GLOSSARY.md `### League and seasons` — the **Season phase** glossary entry.
 - PLAN.md LG-02-Part2 (Part2a foundation; Part2b composer UI; Part2c
   multi-phase play loop + tournament embed) and LG-06 (phased lifecycle,
   merged into this phase model).

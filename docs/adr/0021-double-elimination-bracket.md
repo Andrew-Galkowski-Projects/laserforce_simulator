@@ -263,7 +263,7 @@ introduces one decision worth recording against this ADR:
   the single/double-elim lock path and the deferred Finals build reuse them verbatim
   (single/double-elim `lock_and_build` stays byte-identical). The depth→`series_length`
   escalation, the loser-Drop machinery, and the Grand-final Bracket reset are all
-  consumed **unchanged** from this ADR. No new ADR and **no new CONTEXT.md term** (the
+  consumed **unchanged** from this ADR. No new ADR and **no new GLOSSARY.md term** (the
   **Round robin → double elimination** term was written at grilling time). Seam
   contract:
   [`.claude/worktrees/lg-02c-rr-de-seam-contract.md`](../../.claude/worktrees/lg-02c-rr-de-seam-contract.md).
@@ -320,7 +320,7 @@ ADR:
   `round_robin_standings()` into a shared `Tournament._standings_over_nodes(node_qs)`
   (RR's behaviour stays byte-identical) and reused by `swiss_standings()`. **Non-
   deterministic** per-Match sims ⇒ **no SIM-07/08 interaction, no Score Calibration
-  re-baseline**. No new ADR and **no new CONTEXT.md term** (the **Swiss** + **Buchholz**
+  re-baseline**. No new ADR and **no new GLOSSARY.md term** (the **Swiss** + **Buchholz**
   terms were written at grilling time). Seam contract:
   [`.claude/worktrees/lg-02c-swiss-seam-contract.md`](../../.claude/worktrees/lg-02c-swiss-seam-contract.md).
 
@@ -336,7 +336,7 @@ ADR:
   depth-from-final escalation generalised here to depth-from-Grand-final.
 - [ADR-0004](0004-simulation-data-is-disposable.md) — disposable-data /
   no-backfill precedent for the migration.
-- CONTEXT.md `### Tournaments` — the revised Bracket / Bracket round /
+- GLOSSARY.md `### Tournaments` — the revised Bracket / Bracket round /
   Advancement / Bye entries and the new Winners bracket / Losers bracket /
   Drop / Grand final / Bracket reset terms.
 - PLAN.md LG-02c+ — the four-format bundle this slices to double elimination.

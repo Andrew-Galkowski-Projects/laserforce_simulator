@@ -268,7 +268,7 @@ def game_round_detail(request, round_id):
     """Display detailed single round results with player performance.
 
     Materialises the same 28-key **Round scoreboard** dict the
-    ``export_round_report`` PDF consumes (CONTEXT.md, ``Round scoreboard``)
+    ``export_round_report`` PDF consumes (GLOSSARY.md, ``Round scoreboard``)
     so the HTML scoreboard and the PDF scoreboard cannot drift.
     """
     game_round = get_owned_or_404(GameRound, request, id=round_id)

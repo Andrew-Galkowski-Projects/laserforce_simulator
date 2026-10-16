@@ -4,7 +4,7 @@ the ``Season.worlds_qualifiers()`` derivation.
 The seam contract is locked at ``.claude/worktrees/conf-03-seam-contract.md``;
 the design rationale is
 [ADR-0036](../../docs/adr/0036-worlds-qualification-size-tiered-with-last-chance-bracket.md)
-and the CONTEXT.md **Worlds** / **Worlds qualifier** / **Last-chance
+and the GLOSSARY.md **Worlds** / **Worlds qualifier** / **Last-chance
 qualifier** terms.
 
 What is asserted here (contract §9.4 items 1-15):

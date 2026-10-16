@@ -139,7 +139,7 @@ making the completion gate fragile.
   Tournament model whose engine the regional brackets reuse unchanged.
 - [ADR-0004](0004-simulation-data-is-disposable.md) — disposable-data /
   no-backfill posture for the additive nullable columns.
-- CONTEXT.md **Regional playoff** / **Conference champion** / **Conference** /
+- GLOSSARY.md **Regional playoff** / **Conference champion** / **Conference** /
   **Season phase** / **Standings**.
 - PLAN.md **CONF-02 · Per-Conference regional playoffs** (and CONF-03 / CONF-04,
   which consume this slice's output).

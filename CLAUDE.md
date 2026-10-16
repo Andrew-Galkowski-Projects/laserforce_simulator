@@ -117,6 +117,10 @@ CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci
 - **ALWAYS pause for user approval before `git commit` or `git push`.** Output
   a PR template/summary first (summary, test counts, files changed) and wait
   for explicit "go" before writing to the repo or remote.
+  **One exception (`/implement-spec`):** when the user approves a `/to-tickets`
+  breakdown, that approval covers local commits on that feature's integration
+  branch and its ticket branches (never `main`). Pushing, opening the PR and
+  merging to `main` still wait for an explicit "go".
 - **Never use `cd` (or `-C`) before git commands.** Run `git` directly from the
   session cwd — see `## Tooling` above for the full rationale (a stray
   `cd`-then-git sequence has corrupted the working tree before).
@@ -127,7 +131,7 @@ This project follows TDD. Before implementing any new feature or fixing a bug:
 
 1. **Write the test first.** Add a failing test that describes the expected behavior. Run it to confirm it fails for the right reason.
 2. **Implement the minimum code** to make the test pass. Don't add more than needed.
-3. **Refactor** if needed, keeping all tests green.
+3. Repeat one slice at a time (one test, then just enough code to pass it). Refactoring belongs to review (`mattpocock-skills:code-review`), not to the red-green loop.
 
 **Test placement:**
 - `matches/tests/simulation_tests.py` — simulator logic, game events, round outcomes
@@ -159,15 +163,42 @@ This project follows TDD. Before implementing any new feature or fixing a bug:
 
 ## Sub-Agent Delegation
 
-- When dispatching parallel agents (code / tests / docs), **define the seam
-  contract upfront** as a written artifact: every new method name, signature,
-  dataclass field, and return shape. Share it with all agents so the test
-  agent and code agent cannot disagree on names.
+- **Parallelise by ticket, never by layer.** Each implementer agent owns one
+  vertical ticket and writes both its tests and its code, test-first. Never
+  split a ticket into separate Code and Tests agents. Agree the seams up front
+  in the `/to-spec` spec (every new public name, signature and return shape at
+  the seam), and point every agent at the spec issue so no two agents disagree
+  on names.
 - **After agents return, manually verify their work — do not assume
   completeness.** Triage failing tests yourself rather than trusting an
   agent's self-report. Check for the failure modes that have bitten us before:
   off-by-one in tick math, constant mismatches in formulas (e.g. MVP weights),
   field-name drift between docs and code, missing methods on the seam.
+
+## Agent skills
+
+Engineering skills come from the `mattpocock-skills` plugin (auto-updating);
+project-specific skills live in `.claude/skills/`. The feature pipeline is run
+by `/next-feature`: grill, spec, tickets, implement, review, PR, retro.
+
+### Issue tracker
+
+Specs and tickets are GitHub Issues (`gh`); `PLAN.md` stays the roadmap and
+links each task to its spec issue. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default roles (`needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` + `docs/adr/` at the repo root. See
+`docs/agents/domain.md`.
+
+### Coding standards
+
+The `/code-review` Standards reviewer reads `CODING_STANDARDS.md`.
 
 ## Architecture
 

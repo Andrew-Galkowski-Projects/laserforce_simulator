@@ -167,7 +167,7 @@ to a per-node value.
 resolution layer over the *same* Series engine ADR-0020 locked. Anchoring (the one
 hard-to-reverse, surprising-without-context choice) is recorded here so the whole
 Series story stays in one place. Still **non-deterministic, no SIM-07/08, no Score
-Calibration re-baseline** (no simulation mechanic changed). CONTEXT.md `###
+Calibration re-baseline** (no simulation mechanic changed). GLOSSARY.md `###
 Tournaments` gains the **Series escalation** term and revises **Series length**.
 
 ## Rejected alternatives
@@ -234,7 +234,7 @@ no-backfill precedent ADR-0019's models were created under.
   play-job precedent this ADR extends from per-node (LG-02a-2) to per-Match.
 - [ADR-0004](0004-simulation-data-is-disposable.md) — disposable-data /
   no-backfill precedent for the `RemoveField(BracketNode.match)` schema op.
-- CONTEXT.md `### Tournaments` — the **Series** / **Series length** glossary
+- GLOSSARY.md `### Tournaments` — the **Series** / **Series length** glossary
   terms (added at grilling time) on top of the LG-02a Bracket vocabulary.
 - PLAN.md LG-02 Part 1 (LG-02b done; LG-02b-2 per-round escalation done — see
   the *Follow-up* section above).

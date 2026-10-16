@@ -163,7 +163,7 @@ every case and replay-faithful.
   results-contingent Bracket.
 - [ADR-0004](0004-simulation-data-is-disposable.md) — disposable-data /
   no-backfill precedent for the new models.
-- CONTEXT.md `### Tournaments` — the Tournament / Bracket / Bracket round /
+- GLOSSARY.md `### Tournaments` — the Tournament / Bracket / Bracket round /
   Bracket node / Bracket seed / Seeding / Advancement / Bye glossary.
 - PLAN.md LG-02 (Part 1 sandbox tournaments — LG-02a + follow-ups; Part 2
   in-Season composable structure).

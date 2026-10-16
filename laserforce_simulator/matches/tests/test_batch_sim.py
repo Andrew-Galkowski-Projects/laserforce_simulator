@@ -1439,7 +1439,7 @@ class TestPrecomputeRosterParity:
 # ---------------------------------------------------------------------------
 # MOVE-01 — BatchSimulator compact movement trail + determinism
 #
-# Locked decisions encoded here (CONTEXT.md / sim_helpers/CLAUDE.md / ADR-0007):
+# Locked decisions encoded here (GLOSSARY.md / sim_helpers/CLAUDE.md / ADR-0007):
 #   * PlayerState.movement_trail: transient list of compact
 #     (start_cell, end_cell, timestamp) Advance steps; NO DB column, NO
 #     migration; appended only when the cell actually changed.
@@ -1785,7 +1785,7 @@ class TestMove01DeterminismPreserved:
 # MOVE-02 — path commitment via a goal-keyed A* cache (BatchSimulator only)
 #
 # Behavioural spec: docs/adr/0008-path-commitment-via-goal-keyed-cache.md +
-# CONTEXT.md "Path commitment".
+# GLOSSARY.md "Path commitment".
 #
 # Locked decisions encoded here:
 #   * The MOVE-02 contract is *internal* determinism, NOT identity to

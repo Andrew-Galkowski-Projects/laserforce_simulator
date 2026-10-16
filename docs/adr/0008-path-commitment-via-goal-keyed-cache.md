@@ -62,4 +62,4 @@ returning to per-tick re-planning would again move every seeded result and
 invalidate the re-baselined targets. Goal-recompute throttling (a *behavioural*
 perf lever — staler goals) is explicitly **out of MOVE-02 scope**, parked as
 MOVE-04. The `hold`/overwatch action is split to MOVE-03. Domain term **Path
-commitment** is defined in CONTEXT.md.
+commitment** is defined in GLOSSARY.md.

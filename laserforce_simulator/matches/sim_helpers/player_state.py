@@ -58,7 +58,7 @@ class PlayerState:
     # column / no migration (PlayerRoundState has no such attr by default —
     # read everywhere via getattr(player, "is_holding", False)).
     is_holding: bool = False
-    # RV-02: Medic reset-chain counter (CONTEXT.md "Medic reset chain").
+    # RV-02: Medic reset-chain counter (GLOSSARY.md "Medic reset chain").
     # Incremented in BatchSimulator._record_down (before stamping
     # last_downed_time) when the player is re-Downed before recovering
     # (``not is_active_at(second)``); fires a one-shot ``medic_reset`` event

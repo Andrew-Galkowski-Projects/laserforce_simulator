@@ -48,7 +48,7 @@ the re-baselined targets. The SIM-07/SIM-08 determinism contract is unaffected
 in *form* — same (seed, orientation, rosters, map) ⇒ identical game still holds —
 but the games a given seed produces are different from pre-MOVE-01 (no backfill,
 [ADR-0004](0004-simulation-data-is-disposable.md)). Domain terms (**Advance**,
-**only_move**, **Stationary**, **Movement trail**) are defined in CONTEXT.md;
+**only_move**, **Stationary**, **Movement trail**) are defined in GLOSSARY.md;
 the `change_zone` → `only_move` rename is recorded there under Flagged
 ambiguities. The performance cost of every role now moving (more A* per tick) is
 deferred to MOVE-02 (goal/path caching).

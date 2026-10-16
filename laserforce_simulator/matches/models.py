@@ -181,7 +181,7 @@ class Match(models.Model):
 # scores ⊂ combat ⊂ full; ``flush_to_db`` writes only what the tier
 # requires, and ``BatchSimulator.ensure_fidelity`` lazily backfills the
 # higher-tier rows onto an existing GameRound from (rng_seed +
-# roster_snapshot_json + arena_map). See ADR-0029 and CONTEXT.md
+# roster_snapshot_json + arena_map). See ADR-0029 and GLOSSARY.md
 # "Persistence fidelity".
 FIDELITY_CHOICES = (
     ("scores", "Scores"),

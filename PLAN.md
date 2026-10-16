@@ -82,7 +82,7 @@ unchanged (`scores`). Residual caveat: map edits after a round was played can st
 drift its replay (map context is re-derived from the `arena_map` FK, not snapshotted)
 — stays under the pre-existing `rng_seed` "map config unchanged" caveat. See
 [ADR-0029](docs/adr/0029-persistence-fidelity-tiers-and-faithful-lazy-upgrade.md), the
-CONTEXT.md **Persistence fidelity** term, the seam contract
+GLOSSARY.md **Persistence fidelity** term, the seam contract
 [`.claude/worktrees/gen-01-seam-contract.md`](.claude/worktrees/gen-01-seam-contract.md),
 and the **GEN-01 persistence-fidelity tiers** subsection in
 [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
@@ -272,7 +272,7 @@ CASCADE) — are deleted under a **post-teardown zero-reference guard** keyed on
 PK/FK (`red_matches` / `blue_matches` / `enrolled_seasons` / `managed_in_leagues`
 / `free_agent_pool_for`), leaving behind anything still referenced (safe over
 complete). Correctness rests on the one-context ownership invariant now in the
-CONTEXT.md **Team** / **Player** entries (a Team + its Players belong to exactly
+GLOSSARY.md **Team** / **Player** entries (a Team + its Players belong to exactly
 one context, never shared). Ships as a GET-confirm / POST-teardown view
 (`matches.league_views.league_delete` + the `_teardown_league` helper), gated by
 `_is_career_league` (`HttpResponseBadRequest` 400 on non-`league` mode), with both
@@ -281,7 +281,7 @@ entry points (`league-dashboard-delete-link` + per-row
 template (`templates/leagues/league_confirm_delete.html`), URL name `league_delete`,
 redirect to `league_list`, and `matches/tests/test_league_delete.py`. **No model
 change, no migration, no simulator / RNG touch, no Score Calibration re-baseline.**
-See [ADR-0032](docs/adr/0032-delete-league-full-teardown.md), the CONTEXT.md
+See [ADR-0032](docs/adr/0032-delete-league-full-teardown.md), the GLOSSARY.md
 **Team** / **Player** one-context ownership invariant, the seam contract
 [`.claude/worktrees/del-01-seam-contract.md`](.claude/worktrees/del-01-seam-contract.md),
 and the **DEL-01 delete league** subsection in
@@ -356,7 +356,7 @@ preset's resolved League/Season/phase shape end-to-end (no `_generate_teams`
 mock), and that the relocated advanced form still creates as before.
 
 **[DONE] Shipped (2026-06-30).** The first-slice "preset" framing shipped under
-the grilled **League template** name (the CONTEXT.md **League template** /
+the grilled **League template** name (the GLOSSARY.md **League template** /
 **League difficulty** terms). **Routing:** `/leagues/create/` now serves the
 **template chooser** (view `matches.league_views.league_create`, URL name
 `league_create` **unchanged** — so the raw `league-create-link` nav target needs
@@ -406,7 +406,7 @@ no simulator/RNG touch, no Score Calibration re-baseline. CRE-01 is the
 sibling **CRE-02** below (shipped 2026-09-02 as **League spread**). See the seam
 contract
 [`.claude/worktrees/cre-01-seam-contract.md`](.claude/worktrees/cre-01-seam-contract.md),
-the CONTEXT.md **League template** / **League difficulty** terms, and the **CRE-01
+the GLOSSARY.md **League template** / **League difficulty** terms, and the **CRE-01
 league templates + difficulty** subsection in
 [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
@@ -440,7 +440,7 @@ mean vector) — confirm during the grill whether that re-baselines any
 generation-dependent test fixtures.
 
 **[DONE] Shipped (2026-09-02).** The grill answered every open question above and the
-work shipped under the grilled **League spread** name (the CONTEXT.md **League
+work shipped under the grilled **League spread** name (the GLOSSARY.md **League
 spread** term, plus an amended **League difficulty** entry). **Gradient shape:**
 linear and **mean-preserving** — `tier_mean(i) = clamp(mean + Δ − 2Δ·i/(N−1), 0.0,
 100.0)` for 0-based `i` in generation order, index 0 the strongest tier and index N−1
@@ -514,7 +514,7 @@ HTTP status, object counts and DOM ids only, and every strength assertion lives 
 `_generate_teams` layer with an injected `rng=random.Random(42)`, asserting a
 direction/magnitude gap rather than an exact point total. See the seam contract
 [`.claude/worktrees/cre-02-seam-contract.md`](.claude/worktrees/cre-02-seam-contract.md),
-the CONTEXT.md **League spread** term (and the amended **League difficulty** entry),
+the GLOSSARY.md **League spread** term (and the amended **League difficulty** entry),
 the **CRE-02 tiered generation** subsection in
 [`laserforce_simulator/teams/CLAUDE.md`](laserforce_simulator/teams/CLAUDE.md), and the
 **CRE-02 league spread** subsection in
@@ -645,7 +645,7 @@ list. The pieces (mirroring how LG-02-Part2 was sliced):
    (2026-06-29) **reframed** this around the maintainer's actual target — the ZenGM
    **worlds** game type (multiple regional leagues, each its own regular season; top
    finishers feed a cross-region Worlds tournament) — and **renamed the canonical
-   term "Sub-league" → Conference** (term now retired; see ADR-0034 / CONTEXT.md).
+   term "Sub-league" → Conference** (term now retired; see ADR-0034 / GLOSSARY.md).
    It is a **multi-slice epic**, sequenced CONF-01..CONF-06 below.
 
 - **SUB-01 (piece 1) · [DONE] Season `rotate_by_matchday` arena-map mode.**
@@ -760,7 +760,7 @@ shipped) and is most useful alongside **CAR-03** manager-mode career play.
   widening of this slice's blast radius). See
   [ADR-0035](docs/adr/0035-regional-playoffs-one-tournament-per-conference.md), the seam contract
   [`.claude/worktrees/conf-02-seam-contract.md`](.claude/worktrees/conf-02-seam-contract.md), the
-  CONTEXT.md **Regional playoff** / **Conference champion** terms, and the **CONF-02** subsection
+  GLOSSARY.md **Regional playoff** / **Conference champion** terms, and the **CONF-02** subsection
   in [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
 - **CONF-03 · Worlds qualification. [DONE] Shipped (2026-09-03).** The slice that settles **who
@@ -880,7 +880,7 @@ shipped) and is most useful alongside **CAR-03** manager-mode career play.
   [ADR-0036](docs/adr/0036-worlds-qualification-size-tiered-with-last-chance-bracket.md), the seam
   contract
   [`.claude/worktrees/conf-03-seam-contract.md`](.claude/worktrees/conf-03-seam-contract.md), the
-  CONTEXT.md **Worlds** / **Worlds qualifier** / **Last-chance qualifier** terms, and the **CONF-03**
+  GLOSSARY.md **Worlds** / **Worlds qualifier** / **Last-chance qualifier** terms, and the **CONF-03**
   subsection in
   [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
@@ -1068,7 +1068,7 @@ shipped) and is most useful alongside **CAR-03** manager-mode career play.
   no template edit, and **no data migration or `RunPython` backfill of any kind**. See
   [ADR-0037](docs/adr/0037-worlds-is-a-derived-season-phase.md), the seam contract
   [`.claude/worktrees/conf-04-seam-contract.md`](.claude/worktrees/conf-04-seam-contract.md), the
-  CONTEXT.md **Worlds** / **Worlds phase** / **Season phase** terms, and the **CONF-04** subsection
+  GLOSSARY.md **Worlds** / **Worlds phase** / **Season phase** terms, and the **CONF-04** subsection
   in [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
 - **CONF-05 · [DONE] Shipped (2026-06-30) — draft-Season Manage Conferences page.**
@@ -1198,7 +1198,7 @@ shipped) and is most useful alongside **CAR-03** manager-mode career play.
   `test_league_next_season.py` (the downgrade, other modes still verbatim) and
   `test_league_create.py` (the three form guards + a valid submission). See the seam contract
   [`.claude/worktrees/conf-06-seam-contract.md`](.claude/worktrees/conf-06-seam-contract.md), the
-  CONTEXT.md **Map mode** / **Map pool** / **Per-fixture map resolution** / **Conference** terms, and
+  GLOSSARY.md **Map mode** / **Map pool** / **Per-fixture map resolution** / **Conference** terms, and
   the **CONF-06** subsection in
   [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 
@@ -1385,7 +1385,7 @@ login fixture** in the root `conftest.py` (`SHARED_MANAGER_EMAIL` / `get_shared_
 locally-instantiated `Client()` / `APIClient()` sites across 5 files** the fixture cannot reach. See
 the seam contract
 [`.claude/worktrees/ux-01-seam-contract.md`](.claude/worktrees/ux-01-seam-contract.md),
-[ADR-0038](docs/adr/0038-accounts-and-uniform-manager-ownership.md), the CONTEXT.md **Account** /
+[ADR-0038](docs/adr/0038-accounts-and-uniform-manager-ownership.md), the GLOSSARY.md **Account** /
 **Ownership root** / **Unmanaged row** / **League visibility** terms and the rewritten **Manager**
 entry, the new
 [`laserforce_simulator/accounts/CLAUDE.md`](laserforce_simulator/accounts/CLAUDE.md) app guide, and
@@ -1398,7 +1398,7 @@ Each user account may be linked to exactly one `Player` record (one-to-one). Thi
 a self-insert — the user's personal profile of what they believe their own stats are or aspire to be.
 The linked player is a vanity record and does not automatically appear on any simulated team.
 
-**[DONE] Shipped (2026-10-14).** The **Self-insert** (CONTEXT.md): an Account may point at one
+**[DONE] Shipped (2026-10-14).** The **Self-insert** (GLOSSARY.md): an Account may point at one
 existing Player it manages, and that Player is flagged "You" wherever the site prints its name.
 **Link, not copy** — the grill rejected a cloned "profile Player": linking never moves, enrols,
 re-rosters, re-slots or re-simulates anything, so the Player keeps living its normal life on its Team
@@ -1464,7 +1464,7 @@ and every seeded outcome is byte-identical; no determinism test required. No cha
 `teams.0015`'s swappable dependency resolves to `accounts.__first__`); no `teams` / `matches` / `core`
 migration. Tests: new `accounts/tests/test_self_insert.py`, `teams/tests/test_self_insert_badges.py`,
 `matches/tests/test_self_insert_badges.py`. See the seam contract
-[`.claude/worktrees/ux-02-seam-contract.md`](.claude/worktrees/ux-02-seam-contract.md), the CONTEXT.md
+[`.claude/worktrees/ux-02-seam-contract.md`](.claude/worktrees/ux-02-seam-contract.md), the GLOSSARY.md
 **Self-insert** term, the **Self-insert (UX-02)** section of
 [`laserforce_simulator/accounts/CLAUDE.md`](laserforce_simulator/accounts/CLAUDE.md), and the
 **UX-02** section of [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
@@ -2078,7 +2078,7 @@ filter toggles.
 **Scope:** frontend-only; no model change, no migration, no simulator change. Depends on RES-02
 (chart + overlay-plugin infrastructure). **Acceptance:** toggling "Medic hits" marks each qualifying
 event on the charts at the correct tick and toggling it off restores the prior appearance; the
-definition chosen in the grill is documented in CONTEXT.md if it introduces new domain language.
+definition chosen in the grill is documented in GLOSSARY.md if it introduces new domain language.
 
 ---
 
@@ -2622,4 +2622,4 @@ tiers (see Blocker 1 — likely resolved by making cheap-compute games terminal 
 Standings + a transient full re-sim for watching); (e) a **dedicated re-baseline** of
 each tier against the targets (this DOES touch Score Calibration, unlike GEN-01). Needs
 a new ADR (the seed↔tier mapping + the two-axis `compute_tier` × `fidelity` model) and a
-CONTEXT.md **Compute tier** term.
+GLOSSARY.md **Compute tier** term.

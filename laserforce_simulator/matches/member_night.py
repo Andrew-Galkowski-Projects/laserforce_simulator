@@ -1,7 +1,7 @@
 """LG-07a — pure member-night balanced-split + game-count / pool draws.
 
 Owns the balanced 6/6 split and the per-Site game draws for a member night
-(CONTEXT.md **Member night**), as plain data. No Django / ORM / I/O / logging.
+(GLOSSARY.md **Member night**), as plain data. No Django / ORM / I/O / logging.
 
 Frozen import allowlist (the ONLY modules this file may import):
 ``dataclasses``, ``typing``, ``random``, ``collections``. NO ``django.*``, NO

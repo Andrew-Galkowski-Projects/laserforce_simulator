@@ -56,7 +56,7 @@ PK/FK identity, in a single `@transaction.atomic` block.**
 
 3. **Delete the league's Teams + Players** (Players cascade with their Team via the
    single-CASCADE `Player.team`). This rests on the domain invariant — now written
-   into the CONTEXT.md **Team** / **Player** entries — that **a Team and its Players
+   into the GLOSSARY.md **Team** / **Player** entries — that **a Team and its Players
    belong to exactly one context (the sandbox or a single League) and are never
    shared**. The invariant is convention, not schema-enforced, so:
 
@@ -107,7 +107,7 @@ clean removal, which the schema's FK graph cannot express on its own.
   `league.delete()`, and is the accepted price of a real delete.
 
 - **Correctness rests on the one-context ownership invariant.** Documented in
-  CONTEXT.md (**Team** / **Player**). If that invariant is ever broken (a Team
+  GLOSSARY.md (**Team** / **Player**). If that invariant is ever broken (a Team
   deliberately shared across Leagues), the zero-reference guard degrades gracefully —
   the shared Team is left behind rather than cascading a foreign Match — but the
   league deletion is then *incomplete* rather than *destructive*, which is the

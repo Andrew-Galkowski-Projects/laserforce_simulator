@@ -19,7 +19,7 @@ from its victim — i.e. it routes through the same tag-resolution path as a
 deliberate `tag`. It is nonetheless terminologically distinct from a **Reaction
 shot**: a Reaction shot *requires a prior enemy Shot at the defender*; an
 Overwatch shot is *pre-emptive* — it fires first, triggered purely by an enemy
-entering LoS. CONTEXT.md gets a new **Overwatch shot** term and the **Reaction
+entering LoS. GLOSSARY.md gets a new **Overwatch shot** term and the **Reaction
 shot** entry is amended to state the contrast.
 - *Rejected — "no chains" (Overwatch hits but never spawns Follow-up/Reaction):*
   simpler and lower-RNG, but an arbitrary carve-out from the Shot ladder for one
@@ -89,4 +89,4 @@ re-moves every seeded outcome, re-invalidating the calibrated targets — the sa
 irreversibility as
 [ADR-0007](0007-movement-decoupled-from-action.md)/[ADR-0008](0008-path-commitment-via-goal-keyed-cache.md).
 Domain terms **Hold**, **Overwatch**, **Overwatch shot** (and the **Reaction
-shot** contrast) are defined in CONTEXT.md.
+shot** contrast) are defined in GLOSSARY.md.

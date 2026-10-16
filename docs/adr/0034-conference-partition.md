@@ -142,7 +142,7 @@ Rejected: disjoint schedules make it apples-to-oranges; NULL-until-Worlds is hon
   Conference when `>= 2` Conferences exist.
 - **No Score Calibration re-baseline** — no simulation mechanic changes; the only
   shift is which `Match` a Round attaches to + a new discriminator.
-- The **Conference** glossary term lands in CONTEXT.md `### League and seasons`
+- The **Conference** glossary term lands in GLOSSARY.md `### League and seasons`
   (retiring the reserved "Sub-league"; the Site / Map mode cross-references are
   updated).
 - **Deferred to later CONF slices:** per-Conference regional playoffs;
@@ -161,6 +161,6 @@ Rejected: disjoint schedules make it apples-to-oranges; NULL-until-Worlds is hon
   `generate_schedule` algorithm the per-Conference round-robins reuse unchanged.
 - [ADR-0004](0004-simulation-data-is-disposable.md) — disposable-data /
   no-backfill posture.
-- CONTEXT.md **Conference** / **Season phase** / **Standings** / **Matchday** /
+- GLOSSARY.md **Conference** / **Season phase** / **Standings** / **Matchday** /
   **Site**.
 - PLAN.md **SUB-01 piece 3 / CONF-01 · Conference foundation**.

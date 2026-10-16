@@ -3,7 +3,7 @@
 UX-01 introduces real logins, and the obvious word for the new relationship — "owner" — was already
 taken: this project's **Owner** is the fictional boss who judges and fires the **Manager** via the
 **Owner evaluation** ([ADR-0026](0026-manager-firing-owner-mood.md), `OwnerEvaluation`,
-`owner_mood.py`). Rather than rename that career-mode vocabulary, we promoted the term CONTEXT.md had
+`owner_mood.py`). Rather than rename that career-mode vocabulary, we promoted the term GLOSSARY.md had
 already reserved for exactly this moment ("the Manager is not a persisted entity — there is no
 `Manager`/`User` row until UX-01"). We decided:
 
@@ -24,13 +24,13 @@ already reserved for exactly this moment ("the Manager is not a persisted entity
 ## Considered options
 
 - **Renaming the fictional Owner** (to "Club owner"/"Boss") so "owner" could mean the login. Rejected:
-  it would churn ADR-0026, the `OwnerEvaluation` model, `owner_mood.py`, CONTEXT.md and the
+  it would churn ADR-0026, the `OwnerEvaluation` model, `owner_mood.py`, GLOSSARY.md and the
   career-screen DOM ids, to buy a word we did not need.
 - **A separate generic `created_by` custody axis alongside a career-seat `League.manager`.** More
   precise — a League's 20 generated AI Teams are custodied, not *managed*, in the career sense — but
   it adds two concepts in one slice. Instead, **Manager widened to "the Account this row belongs
   to"** and the career seat stays expressed as the pre-existing `League.current_team`, which
-  CONTEXT.md already defines as how the Manager is identified.
+  GLOSSARY.md already defines as how the Manager is identified.
 - **`League.manager` only, with permission inherited by traversal.** Rejected: sandbox Teams,
   sandbox Tournaments and sandbox Matches have no League to inherit from, so a second axis would be
   needed anyway, and every check would become a join.

@@ -49,7 +49,7 @@ def summarize_missile_log(events: Iterable[Mapping]) -> dict:
     Returns ``{"fired": int, "hit": int, "efficiency": float,
     "rows": list[dict]}`` where each row is the ``MissileRow`` dict (9
     keys, fully flat — the legacy ``row["event"]`` ORM ref is gone).
-    Friendly-fire hits count as hits — preserves the CONTEXT.md
+    Friendly-fire hits count as hits — preserves the GLOSSARY.md
     **Friendly fire** contract (the missile landed; FF is qualitative).
 
     Empty input ⇒ ``{"fired": 0, "hit": 0, "efficiency": 0.0, "rows": []}``.

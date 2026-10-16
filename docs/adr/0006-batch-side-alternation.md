@@ -33,7 +33,7 @@ a 50/50 mix of both teams, breaking the existing per-team win% view/template.
 
 **Consequence:** the SIM-07 replay contract extends from "same seed + rosters +
 map" to **"same seed + orientation + rosters + map ⇒ identical game"**;
-[ADR-0005](0005-rng-seed-not-state-for-replay.md) and CONTEXT.md (RNG seed,
+[ADR-0005](0005-rng-seed-not-state-for-replay.md) and GLOSSARY.md (RNG seed,
 Replay, Batch run) are amended accordingly. Even alternation is guaranteed at the
 **`run()` level** over the full ordered game sequence (even n ⇒ exact 50/50,
 odd ⇒ ±1); `save_games` does **not** re-alternate — it replays each carried

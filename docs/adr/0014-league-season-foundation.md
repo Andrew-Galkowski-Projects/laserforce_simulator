@@ -268,7 +268,7 @@ is surprising.
 - [ADR-0015](0015-schedule-on-demand-no-fixture-rows.md) — the schedule
   is computed on demand, not persisted; this ADR locks the model,
   ADR-0015 locks the algorithm surface.
-- CONTEXT.md `League`, `Season`, `Standings` glossary entries.
+- GLOSSARY.md `League`, `Season`, `Standings` glossary entries.
 - PLAN.md LG-01 (this task), LG-01a..g (UX sub-tasks), CAR-01..03
   (manager identity), LG-02 (tournaments), LG-03 (awards), LG-04 (stat
   updates), LG-05 (potential).

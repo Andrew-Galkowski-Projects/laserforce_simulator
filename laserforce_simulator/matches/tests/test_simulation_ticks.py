@@ -2,7 +2,7 @@
 
 Tests written TDD-first against the locked SPEC in
 docs/adr/0001-time-unit-seconds-now-tick-native-later.md (Amendment section)
-and CONTEXT.md (Time section). Production code is written by a parallel agent
+and GLOSSARY.md (Time section). Production code is written by a parallel agent
 and may be incomplete when this suite runs; import-sensitive tests are guarded
 so the suite still *collects* and the not-yet-done items show as xfail rather
 than collection errors.
@@ -141,7 +141,7 @@ class TestTimeConstantsModule:
         # Respawn cooldown = 16 ticks (8 s); the not-targetable window is
         # the front half (8 ticks / 4 s, cannot be Tagged). The reset
         # window is the derived back half (also 8 ticks / 4 s,
-        # taggable-but-not-active) per CONTEXT.md.
+        # taggable-but-not-active) per GLOSSARY.md.
         assert RESPAWN_TICKS == 16
         assert NOT_TARGETABLE_TICKS == 8
         assert RESPAWN_TICKS - NOT_TARGETABLE_TICKS == 8
