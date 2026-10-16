@@ -287,8 +287,12 @@ class TestPlayMemberNightTaskDrain(TestCase):
         season, _teams, _mn = self._setup_with_shells("MnDrainClear")
         season.active_play_job_id = "some-job-id"
         season.save(update_fields=["active_play_job_id"])
+        # ANG-01d-2 (ADR-0040): the finally clears only the task's OWN job id,
+        # so the task must run under the id the enqueue recorded.
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            play_member_night_task.delay(season.id)
+            play_member_night_task.apply_async(
+                kwargs={"season_id": season.id}, task_id="some-job-id"
+            )
         season.refresh_from_db()
         self.assertIsNone(season.active_play_job_id)
 
@@ -355,9 +359,13 @@ class TestPlayMemberNightTaskCancel(TestCase):
             state["n"] += 1
             return i >= 2
 
+        # ANG-01d-2 (ADR-0040): run under the recorded id -- the finally clears
+        # only the task's OWN job id.
         with patch.object(_tasks, "_play_cancel_requested", _cancel):
             with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-                result = play_member_night_task.delay(season.id)
+                result = play_member_night_task.apply_async(
+                    kwargs={"season_id": season.id}, task_id="job-mid"
+                )
 
         self.assertEqual(result.result.get("cancelled"), True)
         self.assertEqual(result.result["completed"], 1)

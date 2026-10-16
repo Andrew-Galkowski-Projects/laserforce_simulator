@@ -13,11 +13,13 @@ member nights) is ANG-01d-2 and deliberately absent here.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, fields
 
 from django.contrib.auth.decorators import login_not_required
 from django.db import transaction
 from django.db.models import QuerySet
+from django.urls import reverse
 from django.utils.decorators import method_decorator
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -64,6 +66,15 @@ from matches.league_services import (
     start_next_season,
     teardown_league,
     template_to_form_data,
+)
+from matches.league_play_services import (
+    PlayInProgressError,
+    SeasonNotActiveError,
+    WrongPhaseError,
+    build_play_job_status,
+    play_playoffs_run,
+    play_season_run,
+    request_play_cancel,
 )
 from matches.league_templates import LEAGUE_TEMPLATES, LEAGUE_TEMPLATES_BY_KEY
 from matches.models import League, Season
@@ -132,6 +143,53 @@ class NotCareerLeague(APIException):
     status_code = 409
     default_code = "not_career_league"
     default_detail = "This action is only available for career (league-mode) Leagues."
+
+
+class PlayInProgress(APIException):
+    """409 — the Season already has an Active play run (ADR-0040).
+
+    The detail is keyed ``job:<id>`` so the envelope ``field`` names the live
+    Job the client should poll instead.
+    """
+
+    status_code = 409
+    default_code = "play_in_progress"
+    default_detail = "The Season already has a play run in progress."
+
+    def __init__(self, job_id: str) -> None:
+        super().__init__(detail={f"job:{job_id}": self.default_detail})
+
+
+class SeasonNotActive(APIException):
+    """409 — a play action on a Season that is not active."""
+
+    status_code = 409
+    default_code = "season_not_active"
+    default_detail = "The Season is not active."
+
+
+class WrongPhase(APIException):
+    """409 — the play action does not apply to the Season's current phase."""
+
+    status_code = 409
+    default_code = "wrong_phase"
+    default_detail = "That play action does not apply to the current phase."
+
+
+class NoMemberNightGames(APIException):
+    """409 — the member-night phase has no unplayed game."""
+
+    status_code = 409
+    default_code = "no_member_night_games"
+    default_detail = "No member-night game to play."
+
+
+class NoLiveCursor(APIException):
+    """409 — there is no game for the manager's team to play live."""
+
+    status_code = 409
+    default_code = "no_live_cursor"
+    default_detail = "No live game to play for your team."
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +267,27 @@ def _conferences_payload(season: Season) -> dict:
         "conferences": state["conferences"],
         "unassigned_team_ids": state["unassigned_team_ids"],
     }
+
+
+def _job_ref(season: Season, job_id: str) -> dict:
+    """A Job ref for an Active play run (the API-03 200 + Job convention)."""
+    return {
+        "job_id": job_id,
+        "season_id": season.pk,
+        "status_url": reverse("season-play-job", args=[season.pk, job_id]),
+    }
+
+
+def _start_play_run(start: Callable[[], str]) -> str:
+    """Run a play-run starter, mapping the service errors to 409s."""
+    try:
+        return start()
+    except PlayInProgressError as exc:
+        raise PlayInProgress(exc.job_id) from exc
+    except SeasonNotActiveError as exc:
+        raise SeasonNotActive(str(exc)) from exc
+    except WrongPhaseError as exc:
+        raise WrongPhase(str(exc)) from exc
 
 
 def _season_detail(season: Season) -> Season:
@@ -612,3 +691,62 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
         validate_form_or_raise(form)
         replace_conferences(season, form.cleaned_data["conferences"])
         return Response(_conferences_payload(season))
+
+    # --- ANG-01d-2: the Active play run (ADR-0040) ----------------------
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="play-two-months",
+        url_name="play-two-months",
+    )
+    def play_two_months(self, request: Request, pk: str | None = None) -> Response:
+        """Start a background run of the next 8 matchdays; 200 Job ref."""
+        season = self.get_object()
+        job_id = _start_play_run(lambda: play_season_run(season, max_matchdays=8))
+        return Response(_job_ref(season, job_id))
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="play-until-end",
+        url_name="play-until-end",
+    )
+    def play_until_end(self, request: Request, pk: str | None = None) -> Response:
+        """Start a background run of the rest of the regular season."""
+        season = self.get_object()
+        job_id = _start_play_run(lambda: play_season_run(season, max_matchdays=None))
+        return Response(_job_ref(season, job_id))
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="play-playoffs",
+        url_name="play-playoffs",
+    )
+    def play_playoffs(self, request: Request, pk: str | None = None) -> Response:
+        """Start a background drain of the built tournament phase."""
+        season = self.get_object()
+        job_id = _start_play_run(lambda: play_playoffs_run(season))
+        return Response(_job_ref(season, job_id))
+
+    @action(
+        detail=True, methods=["post"], url_path="play-cancel", url_name="play-cancel"
+    )
+    def play_cancel(self, request: Request, pk: str | None = None) -> Response:
+        """Ask the Active play run to stop; a no-op when nothing is running."""
+        season = self.get_object()
+        return Response({"cancel_requested": request_play_cancel(season)})
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"play-jobs/(?P<job_id>[^/.]+)",
+        url_name="play-job",
+    )
+    def play_job(
+        self, request: Request, pk: str | None = None, job_id: str | None = None
+    ) -> Response:
+        """Structured Job status. The job id is a capability token (API-03)."""
+        self.get_object()
+        return Response(build_play_job_status(job_id or ""))

@@ -39,6 +39,15 @@ from .forms import (
     CreateLeagueForm,
     _maps_with_confirmed_config,
 )
+from .league_play_services import (
+    PlayInProgressError,
+    SeasonNotActiveError,
+    WrongPhaseError,
+    _job_status_fields,
+    play_playoffs_run,
+    play_season_run,
+    request_play_cancel,
+)
 from .league_templates import (
     LEAGUE_TEMPLATES,
     LEAGUE_TEMPLATES_BY_KEY,
@@ -61,8 +70,7 @@ from .season_dashboard import (
 )
 from .simulation import BatchSimulator
 from .standings import StandingsRow, compute_standings
-from .tasks import play_member_night_task, play_playoffs_task, play_season_task
-from .views import _celery_state_to_job_status
+from .tasks import play_member_night_task, play_season_task
 
 # ANG-01d-1 — the League / Season lifecycle + read helpers now live in
 # ``matches.league_services`` (shared with the REST API). Every moved name is
@@ -1621,12 +1629,22 @@ def play_week(request, season_id: int) -> HttpResponse:
     return redirect("season_dashboard", season_id=season.id)
 
 
-def play_two_months(request, season_id: int) -> HttpResponse:
-    """LG-01d — POST entry point for the Play Two Months async run.
+def _play_in_progress_response(exc: PlayInProgressError) -> JsonResponse:
+    """ANG-01d-2 — the HTML async endpoints' 409 while a run is live."""
+    return JsonResponse(
+        {"error": str(exc), "code": "play_in_progress", "job_id": exc.job_id},
+        status=409,
+    )
 
-    Validates the Season is ``active`` (else 400 + ``play_error``), then
-    enqueues ``play_season_task.delay(season_id, max_matchdays=8)`` and
-    returns ``JsonResponse({"job_id", "season_id"}, status=202)``.
+
+def _play_season_run_view(
+    request: HttpRequest, season_id: int, max_matchdays: int | None
+) -> HttpResponse:
+    """LG-01d — shared body of the two ``play_season_task`` async endpoints.
+
+    Non-active ⇒ 400 + ``play_error``; a live run ⇒ 409 ``play_in_progress``;
+    else enqueue through ``enqueue_play_run`` and return 202
+    ``{"job_id", "season_id"}``.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1634,40 +1652,23 @@ def play_two_months(request, season_id: int) -> HttpResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    if season.state != "active":
-        return _render_season_dashboard_error(
-            request,
-            season,
-            f"Season must be active to play; got state={season.state!r}",
-        )
+    try:
+        job_id = play_season_run(season, max_matchdays=max_matchdays)
+    except SeasonNotActiveError as exc:
+        return _render_season_dashboard_error(request, season, str(exc))
+    except PlayInProgressError as exc:
+        return _play_in_progress_response(exc)
+    return JsonResponse({"job_id": job_id, "season_id": season.id}, status=202)
 
-    result = play_season_task.delay(season.id, max_matchdays=8)
-    season.active_play_job_id = result.id
-    season.play_cancel_requested = False
-    season.save(update_fields=["active_play_job_id", "play_cancel_requested"])
-    return JsonResponse({"job_id": result.id, "season_id": season.id}, status=202)
+
+def play_two_months(request, season_id: int) -> HttpResponse:
+    """LG-01d — POST entry point for the Play Two Months async run (8 matchdays)."""
+    return _play_season_run_view(request, season_id, 8)
 
 
 def play_until_end(request, season_id: int) -> HttpResponse:
     """LG-01d — POST entry point for the Play Until End of Season async run."""
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
-
-    season = get_owned_or_404(Season, request, pk=season_id)
-    request.session["last_league_id"] = season.league_id
-
-    if season.state != "active":
-        return _render_season_dashboard_error(
-            request,
-            season,
-            f"Season must be active to play; got state={season.state!r}",
-        )
-
-    result = play_season_task.delay(season.id, max_matchdays=None)
-    season.active_play_job_id = result.id
-    season.play_cancel_requested = False
-    season.save(update_fields=["active_play_job_id", "play_cancel_requested"])
-    return JsonResponse({"job_id": result.id, "season_id": season.id}, status=202)
+    return _play_season_run_view(request, season_id, None)
 
 
 def play_single_round(request, season_id: int) -> HttpResponse:
@@ -1744,9 +1745,11 @@ def play_playoffs(request, season_id: int) -> JsonResponse:
     """LG-02-Part2c-1 — POST entry point for the Play Playoffs async run.
 
     POST only (405 on GET). Requires the cursor be on a built + active
-    tournament phase; otherwise 409 JSON ``{"error": ...}``. Happy path
-    enqueues ``play_playoffs_task.delay(season_id)`` and returns
-    ``JsonResponse({"job_id", "season_id"}, status=202)``.
+    tournament phase; otherwise 409 JSON ``{"error": ...}``. A live run ⇒ 409
+    ``play_in_progress``. Happy path enqueues ``play_playoffs_task`` through
+    ``enqueue_play_run`` and returns ``JsonResponse({"job_id", "season_id"},
+    status=202)``. The CONF-04 Worlds build-before-cursor-read and the CONF-02
+    ``tournaments_for_phase`` guard live in ``play_playoffs_run``.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1754,45 +1757,25 @@ def play_playoffs(request, season_id: int) -> JsonResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    # CONF-04 — build BEFORE the cursor read (ADR-0037). The cursor may already
-    # be parked on an unbuilt Worlds phase, whose ``tournaments_for_phase`` is
-    # ``[]`` — the guard below would 409 "No active playoff bracket to play." and
-    # the drain could never be started. The call MUST precede the
-    # ``current_phase()`` read, not merely the ``if``:
-    # ``build_pending_worlds_bracket`` writes ``phase.tournament`` on its OWN
-    # freshly-loaded ``SeasonPhase`` instance, so a ``phase`` object read before
-    # the build carries a stale ``tournament_id is None`` — and
-    # ``tournaments_for_phase`` reads exactly that attribute.
-    season.build_pending_worlds_bracket()
-
-    phase = season.current_phase()
-    # CONF-02 — guard through the ``tournaments_for_phase`` seam. A regional
-    # phase carries a NULL ``tournament_id`` (its N brackets hang off
-    # ``regional_tournaments``), so the old ``tournament_id is None`` guard
-    # returned 409 and made the already-generalised ``play_playoffs_task``
-    # unreachable for a >= 2-Conference Season. Byte-identical for 0/1.
-    if (
-        phase is None
-        or phase.phase_type != "tournament"
-        or not season.tournaments_for_phase(phase)
-    ):
+    try:
+        job_id = play_playoffs_run(season)
+    except (SeasonNotActiveError, WrongPhaseError):
         return JsonResponse({"error": "No active playoff bracket to play."}, status=409)
-
-    result = play_playoffs_task.delay(season.id)
-    season.active_play_job_id = result.id
-    season.play_cancel_requested = False
-    season.save(update_fields=["active_play_job_id", "play_cancel_requested"])
-    return JsonResponse({"job_id": result.id, "season_id": season.id}, status=202)
+    except PlayInProgressError as exc:
+        return _play_in_progress_response(exc)
+    return JsonResponse({"job_id": job_id, "season_id": season.id}, status=202)
 
 
 def play_cancel(request, season_id: int) -> JsonResponse:
     """PLAY-01 — POST-only cooperative cancel for an in-flight async run.
 
-    Sets ``Season.play_cancel_requested = True`` and returns
-    ``JsonResponse({"cancelled": True, "season_id": ...})`` (HTTP 200).
-    No active-run guard — a stale flag is cleared by the next enqueue.
-    The task reads the flag (top + between fixtures), stops cleanly, and
-    returns NORMALLY (Celery SUCCESS, mapped to ``"complete"``).
+    ANG-01d-2 — sets ``Season.play_cancel_requested`` only while an Active
+    play run is live (``request_play_cancel``) and returns
+    ``JsonResponse({"cancelled": <bool>, "season_id": ...})`` (HTTP 200).
+    ``cancelled`` is ``False`` and nothing is written when no run is live, so
+    a late click cannot leave a stale flag that kills the next run. The task
+    reads the flag (top + between fixtures), stops cleanly, and returns
+    NORMALLY (Celery SUCCESS, mapped to ``"complete"``).
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1800,9 +1783,8 @@ def play_cancel(request, season_id: int) -> JsonResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    season.play_cancel_requested = True
-    season.save(update_fields=["play_cancel_requested"])
-    return JsonResponse({"cancelled": True, "season_id": season.id})
+    cancelled = request_play_cancel(season)
+    return JsonResponse({"cancelled": cancelled, "season_id": season.id})
 
 
 def member_night_setup(request, season_id: int) -> HttpResponse:
@@ -2003,37 +1985,17 @@ def _build_play_status_response(
     poll (running OR complete). ``season`` is resolved by the caller and passed
     in; when absent (defensive) the live fragments fall back to empty strings.
     """
-    state = async_result.state
-    status = _celery_state_to_job_status(state)
-
-    completed = 0
-    total = 0
-    error: str | None = None
-    cancelled = False
-
-    if state == "PROGRESS":
-        info = async_result.info or {}
-        if isinstance(info, dict):
-            completed = int(info.get("completed", 0) or 0)
-            total = int(info.get("total", 0) or 0)
-    elif state == "SUCCESS":
-        result = async_result.result or {}
-        if isinstance(result, dict):
-            completed = int(result.get("completed", 0) or 0)
-            total = int(result.get("total", 0) or 0)
-            cancelled = bool(result.get("cancelled", False))
-    elif state in ("FAILURE", "REVOKED"):
-        info = async_result.info
-        if info is not None:
-            error = str(info)
+    # ANG-01d-2 — the Celery-state mapping is shared with the API's structured
+    # Job poll (``build_play_job_status``).
+    job = _job_status_fields(async_result)
 
     panels = _render_live_play_panels(season)
 
     return {
-        "status": status,
-        "completed": completed,
-        "total": total,
-        "error": error,
+        "status": job["status"],
+        "completed": job["completed"],
+        "total": job["total"],
+        "error": job["error"],
         "season_id": season_id,
         "standings": panels["standings"],
         "leaders": panels["leaders"],
@@ -2041,7 +2003,7 @@ def _build_play_status_response(
         # update per poll (they change per Round, unlike Match-keyed standings).
         "next_round": panels["next_round"],
         "round_count": panels["round_count"],
-        "cancelled": cancelled,
+        "cancelled": job["cancelled"],
     }
 
 
