@@ -5,7 +5,7 @@
 The seam contract is locked at ``.claude/worktrees/conf-04-seam-contract.md``;
 the design rationale is
 [ADR-0037](../../docs/adr/0037-worlds-is-a-derived-season-phase.md) and the
-CONTEXT.md **Worlds** / **Worlds phase** / **Worlds qualifier** terms. This
+GLOSSARY.md **Worlds** / **Worlds phase** / **Worlds qualifier** terms. This
 builds directly on CONF-02's regional playoffs (ADR-0035) and CONF-03's
 qualification derivation (ADR-0036).
 

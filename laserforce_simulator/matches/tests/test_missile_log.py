@@ -696,22 +696,22 @@ def test_legacy_missile_event_type_string_is_absent_from_codebase():
 
 # bug-class: doc/code consistency
 def test_context_md_defines_locking_and_missiled_terms():
-    """CONTEXT.md is the project glossary; RES-03 adds the new domain
-    terms. We check both common locations (root and ``docs/CONTEXT.md``)
+    """GLOSSARY.md is the project glossary; RES-03 adds the new domain
+    terms. We check both common locations (root and ``docs/GLOSSARY.md``)
     and require the strings ``Locking event``, ``Missiled event``, and
     ``Friendly fire`` to appear at least once in whichever file exists.
     """
     root = _project_root().parent  # repo root (parent of laserforce_simulator/)
-    candidates = [root / "CONTEXT.md", root / "docs" / "CONTEXT.md"]
+    candidates = [root / "GLOSSARY.md", root / "docs" / "GLOSSARY.md"]
     existing = [p for p in candidates if p.exists()]
     assert existing, (
-        "neither CONTEXT.md nor docs/CONTEXT.md exists — RES-03 glossary "
+        "neither GLOSSARY.md nor docs/GLOSSARY.md exists — RES-03 glossary "
         "update has nothing to update"
     )
     body = "\n".join(p.read_text(encoding="utf-8") for p in existing)
     for term in ("Locking event", "Missiled event", "Friendly fire"):
         assert term in body, (
-            f"CONTEXT.md must define the RES-03 term {term!r}; substring " f"not found"
+            f"GLOSSARY.md must define the RES-03 term {term!r}; substring " f"not found"
         )
 
 
@@ -804,7 +804,7 @@ class TestSummarizeMissileLogCounts(unittest.TestCase):
 
 class TestFriendlyFireCountedAsHit(unittest.TestCase):
     def test_friendly_fire_hit_counted(self) -> None:
-        # CONTEXT.md: the missile landed; FF is qualitative, not discount.
+        # GLOSSARY.md: the missile landed; FF is qualitative, not discount.
         out = summarize_missile_log(
             [_ev(result="hit", friendly_fire=True), _ev(result="miss")]
         )

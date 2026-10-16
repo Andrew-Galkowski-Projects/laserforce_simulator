@@ -77,6 +77,6 @@ the real database and why both exist. This ADR records that decision.
 - **No simulator-mechanic change, no Score Calibration re-baseline.** This is an
   infrastructure decision; no simulation input or mechanic moves.
 - **No new domain term.** Database engine choice is infrastructure, not
-  ubiquitous language — CONTEXT.md is untouched.
+  ubiquitous language — GLOSSARY.md is untouched.
 - **CI cost.** Running the suite against a real Postgres service (vs in-memory
   SQLite) is marginally slower but buys prod parity; accepted.

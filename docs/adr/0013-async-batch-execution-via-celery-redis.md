@@ -93,7 +93,7 @@ Upstash credential. A second Fly process (`processes = ["app", "worker"]` in
 project would carry *two* idioms for the same async-job concept indefinitely
 — every future async surface would have to pick one, and the two patterns
 would drift (job-state shape, status vocabulary, error semantics, expiry
-behaviour). The "Async execution" domain term in CONTEXT.md would have to
+behaviour). The "Async execution" domain term in GLOSSARY.md would have to
 caveat itself with "in-process for UI, Celery for API."
 
 **Hybrid: route small `n` (< 50) through in-process threading, large `n`
@@ -146,7 +146,7 @@ restart wiped both `_BATCH_JOBS` and `_SAVE_JOBS` — every in-flight job
 disappeared. Post-API-03, Job results survive web-process restarts (they
 live in Redis, not Python memory) but expire after 1 hour regardless. A
 polled-after-expiry Job id is indistinguishable from a never-submitted one;
-the CONTEXT.md **Job id** entry documents this.
+the GLOSSARY.md **Job id** entry documents this.
 
 **Two new env vars and one new Fly.io process.** `CELERY_BROKER_URL` and
 `CELERY_RESULT_BACKEND` are required in production (Fly.io secrets). The

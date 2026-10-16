@@ -52,7 +52,7 @@ Resolved in the GEN-01 grilling session (2026-06-25 / 2026-06-26).
    `scores` / `combat` / `full`, `default="full"`. No backfill ([ADR-0004](0004-simulation-data-is-disposable.md)
    precedent) — legacy rows already hold events + movement, so `full` is *true*
    for them. Surfaces read it to decide whether an upgrade is needed. Domain term:
-   **Persistence fidelity** (CONTEXT.md).
+   **Persistence fidelity** (GLOSSARY.md).
 
 3. **Lazy upgrade in place, made faithful by a roster-stat snapshot — NOT
    verify-then-degrade, NOT re-create.** Every persisted round (every tier) also

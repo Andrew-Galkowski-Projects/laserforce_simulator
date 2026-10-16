@@ -17,7 +17,7 @@ Verb definitions:
 * ``fewest_tagged`` — ``mean(times_tagged)`` per player, **ascending**
   (least-tagged leads).
 * ``tag_ratio``     — ``sum(tags_made) / max(sum(times_tagged), 1)`` per
-  player, **descending** (canonical CONTEXT.md sum/sum form, NOT a mean
+  player, **descending** (canonical GLOSSARY.md sum/sum form, NOT a mean
   of per-row ratios; the ``max(..., 1)`` denominator avoids div-by-zero).
 
 Reuses the LG-01c ``LeaderRow`` dataclass for each row (importing the

@@ -7,7 +7,7 @@ tick. The caller (``BatchSimulator._flush_to_db``) passes ``id -> name`` and
 ``id -> team`` maps so this function stays pure while still emitting player
 NAME strings and per-event team in each record.
 
-See CONTEXT.md (Highlight, Scoring burst, Medic reset chain, Nuke cancellation)
+See GLOSSARY.md (Highlight, Scoring burst, Medic reset chain, Nuke cancellation)
 and docs/adr/0012-nuke-cancelled-event.md.
 """
 

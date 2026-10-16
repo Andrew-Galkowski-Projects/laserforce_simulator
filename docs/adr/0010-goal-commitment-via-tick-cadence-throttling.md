@@ -108,7 +108,7 @@ Hard to reverse for the same reason as
 [ADR-0009](0009-hold-overwatch.md): returning to per-tick goal selection would
 again move every seeded outcome and re-invalidate the calibrated targets.
 
-Domain term **Goal commitment** is defined in CONTEXT.md, together with the
+Domain term **Goal commitment** is defined in GLOSSARY.md, together with the
 superseded "Goal cell is recomputed every tick" flagged-ambiguity entry. The
 constant `GOAL_RECOMPUTE_PERIOD_TICKS = 4` is in `sim_helpers/time_constants.py`
 alongside the other tick-valued constants. Map-mode perf measurement (cells/tick

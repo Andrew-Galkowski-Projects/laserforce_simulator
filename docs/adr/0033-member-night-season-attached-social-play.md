@@ -146,7 +146,7 @@ derived `≥1 game AND all complete` rule makes it unnecessary.
 - **Non-deterministic, no Score Calibration re-baseline** — the run consumes a
   fresh `random.Random()` outside the SIM-07/08 seed chain and changes no
   simulation mechanic.
-- A new **Member night** + **Site** glossary pair lands in CONTEXT.md
+- A new **Member night** + **Site** glossary pair lands in GLOSSARY.md
   `### League and seasons`.
 
 ## See also
@@ -160,5 +160,5 @@ derived `≥1 game AND all complete` rule makes it unnecessary.
   reuse.
 - [ADR-0004](0004-simulation-data-is-disposable.md) — disposable-data /
   no-backfill posture.
-- CONTEXT.md **Member night** / **Site** / **Season phase** / **Standings**.
+- GLOSSARY.md **Member night** / **Site** / **Season phase** / **Standings**.
 - PLAN.md **LG-07 · Member night simulator**.

@@ -29,7 +29,7 @@ The decision matters because:
   dataclass, `_flush_to_db`, and the per-tick read sites in
   `score_calculator.py` / `simulation.py` / `event_log.py` together.
 - The aggregate-vs-directional split between `PlayerRoundState` and
-  `GameEvent` is already documented in CONTEXT.md as a load-bearing pattern,
+  `GameEvent` is already documented in GLOSSARY.md as a load-bearing pattern,
   not an accident.
 - Acting on the candidate would be the largest refactor on the
   architecture-improvements list (the candidate itself flags this), and the
@@ -87,7 +87,7 @@ Load-bearing arguments:
    which is which.
 
 4. **The aggregate-vs-directional split is already documented and
-   load-bearing.** CONTEXT.md's **Player head-to-head record** entry says
+   load-bearing.** GLOSSARY.md's **Player head-to-head record** entry says
    explicitly:
    > deriving the per-Round tag counts from `PlayerRoundState.tags_made`
    > (that counter aggregates Tags against **all** enemies; the directional

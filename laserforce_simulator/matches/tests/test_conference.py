@@ -3,7 +3,7 @@ and the ``Season`` Conference seams (SUB-01 piece 3, slice 1).
 
 The seam contract is locked at ``.claude/worktrees/conf-01-seam-contract.md``;
 the design rationale is [ADR-0034](../../docs/adr/0034-conference-partition.md)
-and the CONTEXT.md **Conference** term.
+and the GLOSSARY.md **Conference** term.
 
 These tests assert ONLY the locked public surface — model fields / defaults /
 ``__str__`` / the ``uniq_season_conference_ordinal`` constraint /

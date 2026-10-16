@@ -36,13 +36,13 @@ Split the missile event into two event types. Remove the legacy
 1. **`event_type="locking"`** — emitted at the missile *fire / lock-start*
    tick. Carries `metadata = {"actor_role", "target_role"}`. Marks the moment
    the missile leaves the shooter; persists in the log even if the missile is
-   subsequently cancelled. The **Locking event** in CONTEXT.md.
+   subsequently cancelled. The **Locking event** in GLOSSARY.md.
 
 2. **`event_type="missiled"`** — emitted at the missile *resolution* tick.
    Carries `metadata = {"result": "hit"|"miss", "friendly_fire": bool,
    "actor_role", "target_role"}`. One row per resolved missile; never emitted
    when the locking actor was **Down**ed before resolution. The **Missiled
-   event** in CONTEXT.md.
+   event** in GLOSSARY.md.
 
 3. **`friendly_fire` is server-emitted.** The simulator writes
    `metadata["friendly_fire"]: bool` to every `missiled` event, computed as

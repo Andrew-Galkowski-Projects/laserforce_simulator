@@ -2534,7 +2534,7 @@ class TestMoveInMemoryMultiCell:
 # ---------------------------------------------------------------------------
 # MOVE-01 — movement decoupled from the weighted action
 #
-# Locked decisions encoded here (see CONTEXT.md / matches/CLAUDE.md / ADR-0007):
+# Locked decisions encoded here (see GLOSSARY.md / matches/CLAUDE.md / ADR-0007):
 #   1. action `change_zone` renamed `only_move` (index 1 unchanged).
 #   2. every non-stationary player Advances toward their goal cell EVERY tick,
 #      regardless of which weighted action was chosen (map path only).
@@ -3018,7 +3018,7 @@ class TestMove01SelectLosCell:
 # MOVE-02 — path commitment via a goal-keyed A* cache (BatchSimulator only)
 #
 # Behavioural spec: docs/adr/0008-path-commitment-via-goal-keyed-cache.md +
-# CONTEXT.md "Path commitment".
+# GLOSSARY.md "Path commitment".
 #
 # Locked decisions encoded here:
 #   1. The player follows the route computed when its Goal cell was set;

@@ -4,7 +4,7 @@ The fourth Django app, added by **UX-01**. It owns the **Account** (the row a hu
 `/accounts/` auth surfaces, and the **permission seam** every other app calls to answer "may this
 Account see this row?".
 
-Vocabulary, straight from CONTEXT.md — get these three apart before editing anything here:
+Vocabulary, straight from GLOSSARY.md — get these three apart before editing anything here:
 
 | Term | What it is |
 |---|---|
@@ -304,7 +304,7 @@ database, so it would find nobody and stamp nothing. See
 
 ## Self-insert (UX-02)
 
-An Account may link **one** existing `Player` as its **Self-insert** (CONTEXT.md) — a vanity record
+An Account may link **one** existing `Player` as its **Self-insert** (GLOSSARY.md) — a vanity record
 of the human behind the Account. It is a **link, not a copy**: linking never moves, enrols,
 re-rosters or re-simulates the Player, and the Player does **not** appear on any simulated Team
 because of it. **No simulation / RNG / `BatchSimulator` change, no re-baseline**, and
@@ -486,7 +486,7 @@ the test's own transaction, so `pytest -n auto --dist worksteal` workers never c
 - [ADR-0038](../../docs/adr/0038-accounts-and-uniform-manager-ownership.md) — the decision record.
 - Seam contract:
   [`.claude/worktrees/ux-01-seam-contract.md`](../../.claude/worktrees/ux-01-seam-contract.md).
-- CONTEXT.md **Account** / **Ownership root** / **Unmanaged row** / **League visibility** terms and
+- GLOSSARY.md **Account** / **Ownership root** / **Unmanaged row** / **League visibility** terms and
   the rewritten **Manager** entry.
 - [`../teams/CLAUDE.md`](../teams/CLAUDE.md) — `Team.manager` and the `Team.managed_in_leagues`
   naming hazard.
@@ -496,4 +496,4 @@ the test's own transaction, so `pytest -n auto --dist worksteal` workers never c
 - PLAN.md **UX-01**.
 - **UX-02** Self-insert: seam contract
   [`.claude/worktrees/ux-02-seam-contract.md`](../../.claude/worktrees/ux-02-seam-contract.md),
-  CONTEXT.md **Self-insert**, PLAN.md **UX-02**.
+  GLOSSARY.md **Self-insert**, PLAN.md **UX-02**.

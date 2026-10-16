@@ -4,7 +4,7 @@ seeding seam, the completion gate, and the four drain hooks.
 The seam contract is locked at ``.claude/worktrees/conf-03-seam-contract.md``
 (§3, §5.3, §5.4, §5.6, §6); the design rationale is
 [ADR-0036](../../docs/adr/0036-worlds-qualification-size-tiered-with-last-chance-bracket.md)
-and the CONTEXT.md **Last-chance qualifier** term.
+and the GLOSSARY.md **Last-chance qualifier** term.
 
 What is asserted here (contract §9.4 items 16-26):
 

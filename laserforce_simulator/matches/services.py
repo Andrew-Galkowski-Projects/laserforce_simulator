@@ -857,7 +857,7 @@ def build_heatmap(game_round: GameRound) -> dict:
 
 
 def _player_row(state: PlayerRoundState) -> dict:
-    """Build one **Round scoreboard** row dict (CONTEXT.md, frozen 28-key shape
+    """Build one **Round scoreboard** row dict (GLOSSARY.md, frozen 28-key shape
     pinned by ``round_summary.PLAYER_ROW_KEYS``).
 
     Both ``game_round_detail`` (HTML) and ``export_round_report`` (PDF) consume

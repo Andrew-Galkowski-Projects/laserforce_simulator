@@ -1,6 +1,6 @@
 """MOVE-03 — Hold Action + pre-emptive Overwatch fire (pure-unit, deterministic).
 
-Spec sources: docs/adr/0009-hold-overwatch.md and CONTEXT.md
+Spec sources: docs/adr/0009-hold-overwatch.md and GLOSSARY.md
 (**Hold**, **Overwatch**, **Overwatch shot**, **Stationary**, **Reaction shot**).
 
 These tests are written to the agreed MOVE-03 contract (TDD). The production
@@ -8,7 +8,7 @@ code is being written in parallel by another agent, so some of these tests are
 expected to fail until that lands — each block documents which contract surface
 it exercises so a failure points straight at the missing piece.
 
-Contract being asserted (from ADR-0009 + CONTEXT.md + matches/CLAUDE.md):
+Contract being asserted (from ADR-0009 + GLOSSARY.md + matches/CLAUDE.md):
 
 * A 9th Action slot ``hold`` is added at index 8 of the action-weight array and
   the ``_CHOICES`` list; ``plan_action`` returns ``[{"type":"hold","actor":p}]``

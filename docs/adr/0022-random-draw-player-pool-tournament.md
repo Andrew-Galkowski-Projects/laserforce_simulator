@@ -19,7 +19,7 @@ The original PLAN.md description was a single line — *"randomize team
 assignments once the pool is full, admin reviews/edits, then locks; runs as
 Round Robin → Double Elimination."* The LG-02x-1 grilling session
 (2026-06-04) superseded that flat-shuffle sketch. It established the domain
-language (CONTEXT.md gained **Player pool**, **Drawn-team membership**,
+language (GLOSSARY.md gained **Player pool**, **Drawn-team membership**,
 **Random Draw**, **Tier**, and **Role assignment mode** at grilling time) and
 forced four design decisions that are load-bearing and surprising without the
 session context. This ADR records them. The grill also **deferred** Duos /
@@ -259,7 +259,7 @@ loop change.
   (`format` stays `"round_robin_double_elim"`).
 - [ADR-0004](0004-simulation-data-is-disposable.md) — disposable-data /
   no-backfill precedent for the two new migrations.
-- CONTEXT.md — the **Player pool**, **Drawn-team membership**, **Random Draw**,
+- GLOSSARY.md — the **Player pool**, **Drawn-team membership**, **Random Draw**,
   **Tier**, and **Role assignment mode** terms, finalised at the LG-02x-1
   grilling session.
 - PLAN.md LG-02x-1 (completed) / LG-02x-2 (deferred Duos / Trios +

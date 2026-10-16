@@ -65,7 +65,7 @@ Each entry below:
   before that task lands.
 
 These are **scope sketches**, not seam contracts. Each item is expected to
-go through its own grilling session (CONTEXT.md update, ADR if applicable,
+go through its own grilling session (GLOSSARY.md update, ADR if applicable,
 seam contract under `.claude/worktrees/`) before implementation.
 
 ---
@@ -83,7 +83,7 @@ Player-economy entries below.
 
 **Depends on:** a `Player.contract` / `Player.salary` field (new model
 work, no PLAN entry yet) and a `Team.cap_space` derivation. Ships its own
-migration, ADR, and CONTEXT.md terms (**Salary cap**, **Payroll**,
+migration, ADR, and GLOSSARY.md terms (**Salary cap**, **Payroll**,
 **Cap room**).
 
 ### LG-01z-b · Power Rankings (`league_power_rankings`)
@@ -98,7 +98,7 @@ Matches change; no schedule cadence in v1.
 
 **Depends on:** the LG-01 standings + the existing `Match` / `GameRound`
 aggregates. Pure aggregation module — no model change, no migration.
-Likely a new CONTEXT.md term (**Power ranking**).
+Likely a new GLOSSARY.md term (**Power ranking**).
 
 ---
 
@@ -179,7 +179,7 @@ assignments. AI Team acceptance (will Team B accept this trade?) is a
 deferred sub-task — v1 commits both sides unconditionally as the user is
 managing both Teams.
 
-**Depends on:** LG-01z-a (cap validation) + CONTEXT.md term **Trade**.
+**Depends on:** LG-01z-a (cap validation) + GLOSSARY.md term **Trade**.
 
 ### LG-01z-h · Trading Block (`players_trading_block`)
 
@@ -227,7 +227,7 @@ career stat thresholds, awards). Inductees are derived from
 
 **Depends on:** **LG-03** (season-end awards) + **LG-04** (season-end
 stat updates) so career aggregates and awards exist to derive from. Adds
-a `Player.retired: BoolField` (one migration) and CONTEXT.md term **Hall
+a `Player.retired: BoolField` (one migration) and GLOSSARY.md term **Hall
 of Fame**.
 
 ---
@@ -316,7 +316,7 @@ MVP, longest tag streak, etc. Each feat is a derived predicate over
 the originating Round.
 
 **Depends on:** existing `GameEvent` log + a pure helper module per feat
-predicate. CONTEXT.md term **Statistical feat** likely worth adding.
+predicate. GLOSSARY.md term **Statistical feat** likely worth adding.
 
 ---
 
@@ -329,7 +329,7 @@ predicate. CONTEXT.md term **Statistical feat** likely worth adding.
   `coming_soon_*` to its real URL, with the rest of the sidebar (other
   disabled entries) unchanged.
 - Each entry above is expected to:
-  1. Carve its CONTEXT.md domain language additions in its own grill.
+  1. Carve its GLOSSARY.md domain language additions in its own grill.
   2. Add an ADR if it introduces a hard-to-reverse choice (most do not).
   3. Land its own seam contract under `.claude/worktrees/`.
   4. Update `_FEATURE_REGISTRY` in `matches/views.py` to flip its entry

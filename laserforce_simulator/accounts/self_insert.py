@@ -1,4 +1,4 @@
-"""UX-02 — the Account's **Self-insert** (CONTEXT.md).
+"""UX-02 — the Account's **Self-insert** (GLOSSARY.md).
 
 A Self-insert is a vanity *link* from an Account to one existing Player. It
 never moves, enrols or re-simulates that Player. This module is a domain

@@ -5,7 +5,7 @@ amendment.
 The seam contract is locked at ``.claude/worktrees/conf-02-seam-contract.md``;
 the design rationale is
 [ADR-0035](../../docs/adr/0035-regional-playoffs-one-tournament-per-conference.md)
-and the CONTEXT.md **Regional playoff** / **Conference champion** terms.
+and the GLOSSARY.md **Regional playoff** / **Conference champion** terms.
 
 What is asserted here (contract §9.4 items 1-9 plus the §11.4 amendment):
 

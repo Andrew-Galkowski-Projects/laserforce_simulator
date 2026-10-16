@@ -39,7 +39,7 @@ numbers of games: a 12-team Conference's 11-game total is not comparable to a
 **Where the second and third slots come from.** Taking a Conference's top N
 straight from its regular-season Standings was rejected: it lets a Conference
 champion that finished mid-table miss Worlds entirely, contradicting the
-Conference lifecycle CONTEXT.md already states. Adding a placement /
+Conference lifecycle GLOSSARY.md already states. Adding a placement /
 elimination-depth ranking API to `Tournament` was rejected as a large new
 surface on the bracket engine that ADR-0035 had already scoped out, and because
 elimination depth is a poor ranking signal anyway (two teams knocked out in the

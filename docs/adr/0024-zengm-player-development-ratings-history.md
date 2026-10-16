@@ -129,7 +129,7 @@ FIN-01's per-Team coaching **Budget level**:
   `development.develop_player_stats(..., coaching_effect=0.0)`; `development.py`
   keeps its frozen import allowlist (no `finance` import). **Default `0.0` ⇒
   multiplier exactly `1.0` ⇒ byte-identical to LG-04.**
-- **Multi-Season smoothing (the `getLevelLastThree` / CONTEXT.md "Budget level"
+- **Multi-Season smoothing (the `getLevelLastThree` / GLOSSARY.md "Budget level"
   contract).** The level fed to the effect is a **games-weighted average over the
   last up-to-3 completed Seasons**, sourced from **new per-Season budget-level
   snapshots on `TeamSeasonFinance`** (all three of `coaching` / `scouting` /

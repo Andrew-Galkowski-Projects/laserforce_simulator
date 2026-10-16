@@ -69,7 +69,7 @@ def compute_leaders(
             ``"points_per_game"`` — ``mean(points_scored)``;
             ``"tags_per_game"`` — ``mean(tags_made)``;
             ``"tag_ratio"``     — ``sum(tags_made) / max(sum(times_tagged), 1)``
-            (canonical CONTEXT.md sum/sum form — NOT mean of per-row
+            (canonical GLOSSARY.md sum/sum form — NOT mean of per-row
             ratios; the ``max(..., 1)`` denominator avoids div-by-zero).
         limit: how many rows to return after sorting. Default 3.
 
