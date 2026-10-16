@@ -793,9 +793,9 @@ class MemberNightSetupForm(forms.Form):
         super().__init__(*args, **kwargs)
         # Lazy: ``league_play_services`` imports models / simulation; importing
         # it at module load would create a ``forms`` -> services edge.
-        from .league_play_services import _viable_member_night_sites
+        from .league_play_services import viable_member_night_sites
 
         self.season = season
         self.fields["sites"].choices = [
-            (site, site) for site, _count in _viable_member_night_sites(season)
+            (site, site) for site, _count in viable_member_night_sites(season)
         ]

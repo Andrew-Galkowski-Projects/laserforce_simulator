@@ -89,6 +89,28 @@ class TestAsyncPlayClearsTheRun(TestCase):
         self.assertIsNone(season.active_play_job_id)
 
 
+class TestPlayWeekLiveRecordsTheRun(TestCase):
+    """One Week (Live) leaves its background "rest of the week" Job id in the
+    Season's Active play run column (the Job itself is stubbed so it never runs
+    and clears the column)."""
+
+    def test_play_week_live_records_the_background_job_id(self) -> None:
+        season = _active_season("HtmLive", 4)
+        season.league.current_team = season.teams.order_by("id").first()
+        season.league.save(update_fields=["current_team"])
+        Season.objects.filter(pk=season.pk).update(play_cancel_requested=True)
+        with patch("matches.tasks.play_season_task.apply_async") as apply_async:
+            with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+                response = self.client.post(reverse("play_week_live", args=[season.id]))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(apply_async.call_count, 1)
+        job_id = apply_async.call_args.kwargs["task_id"]
+        season.refresh_from_db()
+        self.assertTrue(job_id)
+        self.assertEqual(season.active_play_job_id, job_id)
+        self.assertFalse(season.play_cancel_requested)
+
+
 class TestAsyncPlayRefusedWhileARunIsLive(TestCase):
     def _assert_play_in_progress(self, response, job_id: str) -> None:
         self.assertEqual(response.status_code, 409)

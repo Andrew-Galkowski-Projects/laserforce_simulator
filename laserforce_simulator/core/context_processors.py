@@ -62,10 +62,8 @@ def league_nav(request: HttpRequest) -> dict[str, Any]:
     # we still want League / helper visible at function scope, not module
     # scope (avoids the ``core`` ↔ ``matches`` apps-loading cycle).
     from matches.models import League, Season
-    from matches.league_views import (
-        _build_league_sidebar_links,
-        _build_play_controls_context,
-    )
+    from matches.league_play_services import build_play_controls
+    from matches.league_views import _build_league_sidebar_links
 
     list_url = reverse("league_list")
 
@@ -130,10 +128,10 @@ def league_nav(request: HttpRequest) -> dict[str, Any]:
         # same defensive ``DatabaseError`` guard the file already uses.
         if is_league_path:
             try:
-                play_keys = _build_play_controls_context(league_obj, displayed)
+                play_keys = build_play_controls(league_obj, displayed)
             except DatabaseError:
                 logger.debug(
-                    "league_nav: _build_play_controls_context raised inside "
+                    "league_nav: build_play_controls raised inside "
                     "broken transaction; omitting play keys",
                     exc_info=True,
                 )

@@ -13,8 +13,9 @@ member nights) is ANG-01d-2 and deliberately absent here.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import TypeVar
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from typing import Any, TypeVar
 from dataclasses import asdict, fields
 
 from django.contrib.auth.decorators import login_not_required
@@ -74,6 +75,7 @@ from matches.league_services import (
     teardown_league,
     template_to_form_data,
 )
+from matches import league_play_services as play_services
 from matches.league_play_services import (
     NoLiveCursorError,
     NoMemberNightGamesError,
@@ -81,22 +83,7 @@ from matches.league_play_services import (
     SeasonNotActiveError,
     SeasonNotDraftError,
     WrongPhaseError,
-    build_member_night_state,
-    build_play_controls,
-    build_play_job_status,
-    play_live,
-    play_member_night_live,
-    play_member_night_run,
-    play_member_night_single,
-    play_playoffs_run,
-    play_season_run,
-    request_play_cancel,
 )
-from matches.league_play_services import _require_member_night
-from matches.league_play_services import play_single_round as play_single_round_svc
-from matches.league_play_services import setup_member_night as setup_member_night_svc
-from matches.league_play_services import play_week as play_week_svc
-from matches.league_play_services import start_season as start_season_svc
 from matches.league_templates import LEAGUE_TEMPLATES, LEAGUE_TEMPLATES_BY_KEY
 from matches.models import League, Season
 from matches.season_awards import ROLE_KEYS, AwardWinner
@@ -299,18 +286,34 @@ def _job_ref(season: Season, job_id: str) -> dict:
     }
 
 
+# One mapping from each play-service domain error to its 409 APIException
+# (each factory takes the caught error; ``Any`` so ``.job_id`` type-checks).
+_SERVICE_ERRORS: dict[type[Exception], Callable[[Any], APIException]] = {
+    PlayInProgressError: lambda exc: PlayInProgress(exc.job_id),
+    SeasonNotActiveError: lambda exc: SeasonNotActive(str(exc)),
+    SeasonNotDraftError: lambda exc: SeasonNotDraft(str(exc)),
+    WrongPhaseError: lambda exc: WrongPhase(str(exc)),
+    NoMemberNightGamesError: lambda exc: NoMemberNightGames(str(exc)),
+    NoLiveCursorError: lambda exc: NoLiveCursor(str(exc)),
+}
+
+
+@contextmanager
+def _translate_service_errors() -> Iterator[None]:
+    """Re-raise a play-service domain error as its 409 (``_SERVICE_ERRORS``)."""
+    try:
+        yield
+    except tuple(_SERVICE_ERRORS) as exc:
+        factory = next(
+            _SERVICE_ERRORS[cls] for cls in type(exc).__mro__ if cls in _SERVICE_ERRORS
+        )
+        raise factory(exc) from exc
+
+
 def _start_play_run(start: Callable[[], str]) -> str:
     """Run a play-run starter, mapping the service errors to 409s."""
-    try:
+    with _translate_service_errors():
         return start()
-    except PlayInProgressError as exc:
-        raise PlayInProgress(exc.job_id) from exc
-    except SeasonNotActiveError as exc:
-        raise SeasonNotActive(str(exc)) from exc
-    except WrongPhaseError as exc:
-        raise WrongPhase(str(exc)) from exc
-    except NoMemberNightGamesError as exc:
-        raise NoMemberNightGames(str(exc)) from exc
 
 
 _T = TypeVar("_T")
@@ -324,19 +327,8 @@ def _run_sync_play(play: Callable[[], _T]) -> _T:
     and a simulator ``ValueError`` become 400s.
     """
     try:
-        return play()
-    except NoLiveCursorError as exc:
-        raise NoLiveCursor(str(exc)) from exc
-    except NoMemberNightGamesError as exc:
-        raise NoMemberNightGames(str(exc)) from exc
-    except SeasonNotDraftError as exc:
-        raise SeasonNotDraft(str(exc)) from exc
-    except PlayInProgressError as exc:
-        raise PlayInProgress(exc.job_id) from exc
-    except SeasonNotActiveError as exc:
-        raise SeasonNotActive(str(exc)) from exc
-    except WrongPhaseError as exc:
-        raise WrongPhase(str(exc)) from exc
+        with _translate_service_errors():
+            return play()
     except DjangoValidationError as exc:
         raise EnvelopeValidationError(django_validation_error_to_envelope(exc)) from exc
     except ValueError as exc:
@@ -450,7 +442,9 @@ class LeagueViewSet(
     def play_controls(self, request: Request, pk: str | None = None) -> Response:
         """The structured play controls for the League's displayed Season."""
         league = self.get_object()
-        return Response(build_play_controls(league, pick_displayed_season(league)))
+        return Response(
+            play_services.build_play_controls(league, pick_displayed_season(league))
+        )
 
     @action(detail=True, methods=["get"], url_path="history", url_name="history")
     def history(self, request: Request, pk: str | None = None) -> Response:
@@ -617,12 +611,12 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=["post"], url_path="start", url_name="start")
     def start(self, request: Request, pk: str | None = None) -> Response:
         """Start a draft Season; 409 ``season_not_draft`` otherwise."""
-        return self._play_then_dashboard(start_season_svc)
+        return self._play_then_dashboard(play_services.start_season)
 
     @action(detail=True, methods=["post"], url_path="play-week", url_name="play-week")
     def play_week(self, request: Request, pk: str | None = None) -> Response:
         """Play the next matchday (or one bracket stage) synchronously."""
-        return self._play_then_dashboard(play_week_svc)
+        return self._play_then_dashboard(play_services.play_week)
 
     @action(
         detail=True,
@@ -632,7 +626,7 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
     )
     def play_single_round(self, request: Request, pk: str | None = None) -> Response:
         """Play one bracket round node synchronously."""
-        return self._play_then_dashboard(play_single_round_svc)
+        return self._play_then_dashboard(play_services.play_single_round)
 
     @action(detail=True, methods=["get"], url_path="standings", url_name="standings")
     def standings(self, request: Request, pk: str | None = None) -> Response:
@@ -798,7 +792,9 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
     def play_two_months(self, request: Request, pk: str | None = None) -> Response:
         """Start a background run of the next 8 matchdays; 200 Job ref."""
         season = self.get_object()
-        job_id = _start_play_run(lambda: play_season_run(season, max_matchdays=8))
+        job_id = _start_play_run(
+            lambda: play_services.play_season_run(season, max_matchdays=8)
+        )
         return Response(_job_ref(season, job_id))
 
     @action(
@@ -810,7 +806,9 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
     def play_until_end(self, request: Request, pk: str | None = None) -> Response:
         """Start a background run of the rest of the regular season."""
         season = self.get_object()
-        job_id = _start_play_run(lambda: play_season_run(season, max_matchdays=None))
+        job_id = _start_play_run(
+            lambda: play_services.play_season_run(season, max_matchdays=None)
+        )
         return Response(_job_ref(season, job_id))
 
     @action(
@@ -822,7 +820,7 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
     def play_playoffs(self, request: Request, pk: str | None = None) -> Response:
         """Start a background drain of the built tournament phase."""
         season = self.get_object()
-        job_id = _start_play_run(lambda: play_playoffs_run(season))
+        job_id = _start_play_run(lambda: play_services.play_playoffs_run(season))
         return Response(_job_ref(season, job_id))
 
     @action(detail=True, methods=["post"], url_path="play-live", url_name="play-live")
@@ -830,7 +828,7 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
         """One Week (Live): commit the manager's game, run the rest in the
         background; 200 ``{kind, round_ids, job}``."""
         season = self.get_object()
-        result = _run_sync_play(lambda: play_live(season))
+        result = _run_sync_play(lambda: play_services.play_live(season))
         job = _job_ref(season, result.job_id) if result.job_id else None
         return Response(
             {"kind": result.kind, "round_ids": result.round_ids, "job": job}
@@ -845,7 +843,10 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
         """The member-night Sites state (viable Sites + games drawn)."""
         season = self.get_object()
         return Response(
-            {"season": season_ref(season), **build_member_night_state(season)}
+            {
+                "season": season_ref(season),
+                **play_services.build_member_night_state(season),
+            }
         )
 
     @member_night.mapping.post
@@ -856,13 +857,13 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
         Season is a 409 even when ``sites`` is also invalid.
         """
         season = self.get_object()
-        _run_sync_play(lambda: _require_member_night(season))
+        _run_sync_play(lambda: play_services.require_member_night(season))
         form = MemberNightSetupForm(
             data=plain_form_data(MemberNightSetupForm, request.data), season=season
         )
         validate_form_or_raise(form)
         _run_sync_play(
-            lambda: setup_member_night_svc(
+            lambda: play_services.setup_member_night(
                 season, form.cleaned_data["sites"], manager=request.user
             )
         )
@@ -878,7 +879,7 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
     def member_night_play(self, request: Request, pk: str | None = None) -> Response:
         """Play every unplayed member-night game as the Active play run."""
         season = self.get_object()
-        job_id = _start_play_run(lambda: play_member_night_run(season))
+        job_id = _start_play_run(lambda: play_services.play_member_night_run(season))
         return Response(_job_ref(season, job_id))
 
     @action(
@@ -891,7 +892,7 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
         self, request: Request, pk: str | None = None
     ) -> Response:
         """Play one member-night game synchronously; 200 dashboard."""
-        return self._play_then_dashboard(play_member_night_single)
+        return self._play_then_dashboard(play_services.play_member_night_single)
 
     @action(
         detail=True,
@@ -905,7 +906,7 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
         """Play one member-night game at full fidelity; 200 ``{kind, round_ids,
         job}`` (``job`` is always null -- no background run)."""
         season = self.get_object()
-        result = _run_sync_play(lambda: play_member_night_live(season))
+        result = _run_sync_play(lambda: play_services.play_member_night_live(season))
         return Response(
             {"kind": result.kind, "round_ids": result.round_ids, "job": None}
         )
@@ -916,7 +917,7 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
     def play_cancel(self, request: Request, pk: str | None = None) -> Response:
         """Ask the Active play run to stop; a no-op when nothing is running."""
         season = self.get_object()
-        return Response({"cancel_requested": request_play_cancel(season)})
+        return Response({"cancel_requested": play_services.request_play_cancel(season)})
 
     @action(
         detail=True,
@@ -929,4 +930,4 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
     ) -> Response:
         """Structured Job status. The job id is a capability token (API-03)."""
         self.get_object()
-        return Response(build_play_job_status(job_id or ""))
+        return Response(play_services.build_play_job_status(job_id or ""))

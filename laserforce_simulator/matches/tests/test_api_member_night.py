@@ -84,6 +84,17 @@ class TestMemberNightState(MemberNightApiTestCase):
         self.assertEqual(data["games_total"], n)
         self.assertEqual(data["games_unplayed"], n)
 
+    def test_site_counts_survive_a_drawn_team_rename(self) -> None:
+        # The Site is derived from the drawn Teams' players (their home_site),
+        # not parsed out of the "MN <site> G<n> A" Team name.
+        n = self.setup_games()
+        for shell in self.shells().select_related("team_red", "team_blue"):
+            for team in (shell.team_red, shell.team_blue):
+                team.name = f"Renamed {team.pk}"
+                team.save(update_fields=["name"])
+        data = self.ok(self.api.get(mn_url(self.season.id)))
+        self.assertEqual(data["sites"], [{"site": "SiteA", "count": 12, "games": n}])
+
     def test_off_a_member_night_cursor_reads_inactive(self) -> None:
         season = mn_season(
             make_league("MnOffL", manager=self.user_a), "MnOff", phases=()

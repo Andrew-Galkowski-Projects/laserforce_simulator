@@ -7,9 +7,7 @@ schedule pages, league history) in one file. URL configs in
 callables here; URL names are unchanged.
 """
 
-import random
 from collections.abc import Callable
-from datetime import date
 from typing import Optional, TypeVar
 
 from celery.result import AsyncResult
@@ -33,8 +31,7 @@ from accounts.permissions import get_owned_or_404, manager_or_none, owned_querys
 from teams.models import Player, Team
 from teams.views import _coerce_dir
 
-from . import finance, injury, member_night
-from .development import STAT_FIELDS
+from . import league_play_services as play_services
 from .forms import (
     ConferencePartitionForm,
     CreateLeagueForm,
@@ -42,19 +39,12 @@ from .forms import (
     _maps_with_confirmed_config,
 )
 from .league_play_services import (
-    _NO_MEMBER_NIGHT_TO_SET_UP,
     NoLiveCursorError,
     NoMemberNightGamesError,
     PlayInProgressError,
     SeasonNotActiveError,
     SeasonNotDraftError,
     WrongPhaseError,
-    _job_status_fields,
-    _require_member_night,
-    play_member_night_run,
-    play_playoffs_run,
-    play_season_run,
-    request_play_cancel,
 )
 
 # ANG-01d-2 T2/T3 — the Start Season / sync play logic, the live cursor +
@@ -64,48 +54,29 @@ from .league_play_services import (
 # ``core.context_processors``, tests) keep resolving. Patch the service module.
 from .league_play_services import (  # noqa: F401 - re-exports
     _INJURY_SLOT_FIELDS,
-    _alive_playoff_node,
     _apply_play_hurt,
     _next_matchday_to_play,
     _pick_substitute,
     _resolve_injuries_for_team,
-    _resolve_live_cursor,
-    build_play_controls,
-    play_live,
     resolve_injuries_for_fixture,
     restore_after_fixture,
 )
-from .league_play_services import play_member_night_live as _play_member_night_live
-from .league_play_services import (
-    play_member_night_single as _play_member_night_single,
+from .league_play_services import (  # noqa: F401 - re-exports
+    alive_playoff_node as _alive_playoff_node,
 )
-from .league_play_services import play_single_round as _play_single_round
-from .league_play_services import setup_member_night as _setup_member_night
-from .league_play_services import play_week as _play_week
-from .league_play_services import start_season as _start_season
+from .league_play_services import (  # noqa: F401 - re-exports
+    resolve_live_cursor as _resolve_live_cursor,
+)
 from .league_templates import (
     LEAGUE_TEMPLATES,
     LEAGUE_TEMPLATES_BY_KEY,
-    LeagueTemplate,
 )
 from .models import (
-    Conference,
     GameRound,
     League,
     Match,
-    PlayerRoundState,
     Season,
-    SeasonPhase,
 )
-from .season_dashboard import (
-    compute_leaders,
-    find_next_fixture,
-    round_progress,
-    select_play_fixtures,
-)
-from .simulation import BatchSimulator
-from .standings import StandingsRow, compute_standings
-from .tasks import play_season_task
 
 # ANG-01d-1 — the League / Season lifecycle + read helpers now live in
 # ``matches.league_services`` (shared with the REST API). Every moved name is
@@ -686,29 +657,6 @@ def league_create_advanced(request) -> HttpResponse:
 
 
 # ---------------------------------------------------------------------------
-# LG-01c — League / Season dashboard
-# ---------------------------------------------------------------------------
-
-
-def _build_play_controls_context(
-    league: League, displayed_season: Optional[Season]
-) -> dict:
-    """NAV-01 -- the play-control keys for the league-mode ``Play`` topnav.
-
-    Thin wrapper over ``league_play_services.build_play_controls`` (the single
-    source, shared with ``GET /api/leagues/<id>/play-controls/``): identical
-    keys, but ``member_night_sites`` stays a list of ``(site, count)`` tuples
-    because ``templates/_partials/topnav_play.html`` unpacks them. Consumed by
-    ``core.context_processors.league_nav``.
-    """
-    controls = build_play_controls(league, displayed_season)
-    controls["member_night_sites"] = [
-        (entry["site"], entry["count"]) for entry in controls["member_night_sites"]
-    ]
-    return controls
-
-
-# ---------------------------------------------------------------------------
 # LG-01f — League history + sidebar helpers
 # ---------------------------------------------------------------------------
 
@@ -1258,7 +1206,7 @@ def start_season(request, season_id: int) -> HttpResponse:
     request.session["last_league_id"] = season.league_id
 
     try:
-        _start_season(season)
+        play_services.start_season(season)
     except SeasonNotDraftError:
         return redirect("season_dashboard", season_id=season.id)
     except ValidationError as exc:
@@ -1295,7 +1243,7 @@ def play_week(request, season_id: int) -> HttpResponse:
     request.session["last_league_id"] = season.league_id
 
     try:
-        _play_week(season)
+        play_services.play_week(season)
     except SeasonNotActiveError as exc:
         return _render_season_dashboard_error(request, season, str(exc))
     except PlayInProgressError as exc:
@@ -1330,7 +1278,7 @@ def _play_season_run_view(
     request.session["last_league_id"] = season.league_id
 
     try:
-        job_id = play_season_run(season, max_matchdays=max_matchdays)
+        job_id = play_services.play_season_run(season, max_matchdays=max_matchdays)
     except SeasonNotActiveError as exc:
         return _render_season_dashboard_error(request, season, str(exc))
     except PlayInProgressError as exc:
@@ -1366,7 +1314,7 @@ def play_single_round(request, season_id: int) -> HttpResponse:
     request.session["last_league_id"] = season.league_id
 
     try:
-        _play_single_round(season)
+        play_services.play_single_round(season)
     except (SeasonNotActiveError, WrongPhaseError) as exc:
         return _render_season_dashboard_error(request, season, str(exc))
     except PlayInProgressError as exc:
@@ -1391,7 +1339,7 @@ def play_playoffs(request, season_id: int) -> JsonResponse:
     request.session["last_league_id"] = season.league_id
 
     try:
-        job_id = play_playoffs_run(season)
+        job_id = play_services.play_playoffs_run(season)
     except (SeasonNotActiveError, WrongPhaseError):
         return JsonResponse({"error": "No active playoff bracket to play."}, status=409)
     except PlayInProgressError as exc:
@@ -1416,7 +1364,7 @@ def play_cancel(request, season_id: int) -> JsonResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    cancelled = request_play_cancel(season)
+    cancelled = play_services.request_play_cancel(season)
     return JsonResponse({"cancelled": cancelled, "season_id": season.id})
 
 
@@ -1445,13 +1393,15 @@ def member_night_setup(request, season_id: int) -> HttpResponse:
 
     try:
         # The state guards run before the Form (the API's order too).
-        _require_member_night(season, _NO_MEMBER_NIGHT_TO_SET_UP)
+        play_services.require_member_night(
+            season, play_services.NO_MEMBER_NIGHT_TO_SET_UP
+        )
         form = MemberNightSetupForm(request.POST, season=season)
         if not form.is_valid():
             return _render_season_dashboard_error(
                 request, season, form.errors["sites"][0]
             )
-        _setup_member_night(
+        play_services.setup_member_night(
             season, form.cleaned_data["sites"], manager=manager_or_none(request)
         )
     except (SeasonNotActiveError, WrongPhaseError) as exc:
@@ -1480,7 +1430,7 @@ def play_member_night(request, season_id: int) -> JsonResponse:
     request.session["last_league_id"] = season.league_id
 
     try:
-        job_id = play_member_night_run(season)
+        job_id = play_services.play_member_night_run(season)
     except SeasonNotActiveError as exc:
         return _render_season_dashboard_error(request, season, str(exc))
     except PlayInProgressError as exc:
@@ -1526,7 +1476,7 @@ def play_member_night_single(request, season_id: int) -> HttpResponse:
     request.session["last_league_id"] = season.league_id
 
     _result, error = _member_night_play_guarded(
-        request, season, _play_member_night_single
+        request, season, play_services.play_member_night_single
     )
     if error is not None:
         return error
@@ -1549,7 +1499,9 @@ def play_member_night_live(request, season_id: int) -> HttpResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    result, error = _member_night_play_guarded(request, season, _play_member_night_live)
+    result, error = _member_night_play_guarded(
+        request, season, play_services.play_member_night_live
+    )
     if error is not None:
         return error
     request.session["live_watch"] = {
@@ -1585,7 +1537,7 @@ def _build_play_status_response(
     """
     # ANG-01d-2 — the Celery-state mapping is shared with the API's structured
     # Job poll (``build_play_job_status``).
-    job = _job_status_fields(async_result)
+    job = play_services.job_status_fields(async_result)
 
     panels = _render_live_play_panels(season)
 
@@ -1715,7 +1667,7 @@ def play_week_live(request, season_id: int) -> HttpResponse:
     request.session["last_league_id"] = season.league_id
 
     try:
-        result = play_live(season)
+        result = play_services.play_live(season)
     except PlayInProgressError as exc:
         return _redirect_with_play_error(season, request, str(exc))
     except (

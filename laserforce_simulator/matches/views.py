@@ -25,6 +25,7 @@ from . import (
     round_comparison,
     round_summary,
 )
+from .job_status import celery_state_to_job_status
 from .models import (
     Match,
     GameRound,
@@ -58,15 +59,9 @@ from .services import (  # noqa: F401 - _comparison_row / _cumulative_team_point
 )
 from .tasks import save_games_task, simulate_batch_task
 
-
-def _celery_state_to_job_status(state: str) -> str:
-    """Map a Celery native state to the public SIM-10 vocabulary."""
-    if state == "SUCCESS":
-        return "complete"
-    if state in ("FAILURE", "REVOKED"):
-        return "error"
-    # PENDING / STARTED / PROGRESS / RETRY / anything else → keep polling.
-    return "running"
+# The Celery-state mapper lives in ``matches.job_status`` (shared with the
+# service layer); the old private name stays importable from here.
+_celery_state_to_job_status = celery_state_to_job_status
 
 
 def int_or_none(raw: str | None) -> int | None:

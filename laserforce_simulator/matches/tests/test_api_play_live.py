@@ -192,7 +192,7 @@ class TestPlayLiveBye(LeagueApiTestCase):
     def _cursor_kind_for(self, team) -> str | None:
         set_manager_team(self.season, team)
         self.season.refresh_from_db()
-        cursor = league_play_services._resolve_live_cursor(self.season)
+        cursor = league_play_services.resolve_live_cursor(self.season)
         return cursor and cursor["kind"]
 
     def test_a_bye_starts_only_the_job(self) -> None:
@@ -298,9 +298,7 @@ class TestPlayControls(LeagueApiTestCase):
 
 
 class TestBuildPlayControls(LeagueApiTestCase):
-    def test_sites_are_dicts_and_the_html_wrapper_keeps_tuples(self) -> None:
-        from matches.league_views import _build_play_controls_context
-
+    def test_sites_are_site_count_dicts(self) -> None:
         league = make_league("BpcL", manager=self.user_a)
         teams = make_teams("Bpc", 2)
         Player.objects.filter(team__in=teams).update(home_site="SiteB")
@@ -318,5 +316,3 @@ class TestBuildPlayControls(LeagueApiTestCase):
             controls["member_night_sites"], [{"site": "SiteB", "count": 12}]
         )
         self.assertTrue(controls["member_night_has_unplayed"])
-        html = _build_play_controls_context(league, season)
-        self.assertEqual(html["member_night_sites"], [("SiteB", 12)])

@@ -15,19 +15,26 @@ from __future__ import annotations
 import random
 import uuid
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from celery.result import AsyncResult
 from django.db import transaction
 
 from matches import finance, injury, member_night
 from matches.development import STAT_FIELDS
+from matches.draw import ROLE_SLOTS
+from matches.job_status import celery_state_to_job_status
 from matches.league_services import _playoff_cursor_keys, is_career_league
-from matches.models import GameRound, Match, Season, SeasonPhase
+from matches.models import GameRound, League, Match, Season, SeasonPhase, Tournament
 from matches.season_dashboard import select_play_fixtures
 from matches.simulation import BatchSimulator
-from matches.views import _celery_state_to_job_status
 from teams.models import Player, Team
+
+if TYPE_CHECKING:
+    from celery import Task
+
+    from accounts.models import User
+    from matches.models import BracketNode
 
 # ---------------------------------------------------------------------------
 # Domain errors
@@ -67,13 +74,8 @@ class NoLiveCursorError(Exception):
 # ---------------------------------------------------------------------------
 
 
-def enqueue_play_run(season: Season, task: Any, **task_kwargs: Any) -> str:
-    """Start ``task`` as the Season's Active play run; return its job id.
-
-    Raises ``PlayInProgressError`` when a run is already live. The job id is
-    written (and the cancel flag cleared) BEFORE ``apply_async`` so a fast or
-    eager task can never clear the column ahead of the write.
-    """
+def _require_no_live_run(season: Season) -> None:
+    """Raise ``PlayInProgressError`` while the Season has an Active play run."""
     current = (
         Season.objects.filter(pk=season.pk)
         .values_list("active_play_job_id", flat=True)
@@ -81,6 +83,16 @@ def enqueue_play_run(season: Season, task: Any, **task_kwargs: Any) -> str:
     )
     if current:
         raise PlayInProgressError(current)
+
+
+def enqueue_play_run(season: Season, task: Task, **task_kwargs: Any) -> str:
+    """Start ``task`` as the Season's Active play run; return its job id.
+
+    Raises ``PlayInProgressError`` when a run is already live. The job id is
+    written (and the cancel flag cleared) BEFORE ``apply_async`` so a fast or
+    eager task can never clear the column ahead of the write.
+    """
+    _require_no_live_run(season)
     job_id = str(uuid.uuid4())
     claimed = Season.objects.filter(
         pk=season.pk, active_play_job_id__isnull=True
@@ -116,7 +128,7 @@ def request_play_cancel(season: Season) -> bool:
     return bool(updated)
 
 
-def _job_status_fields(async_result: AsyncResult) -> dict:
+def job_status_fields(async_result: AsyncResult) -> dict:
     """``status`` / ``completed`` / ``total`` / ``cancelled`` / ``error`` for a
     Season play Job, mapped from Celery as the LG-01d poll does."""
     state = async_result.state
@@ -140,7 +152,7 @@ def _job_status_fields(async_result: AsyncResult) -> dict:
         if info is not None:
             error = str(info)
     return {
-        "status": _celery_state_to_job_status(state),
+        "status": celery_state_to_job_status(state),
         "completed": completed,
         "total": total,
         "cancelled": cancelled,
@@ -150,7 +162,7 @@ def _job_status_fields(async_result: AsyncResult) -> dict:
 
 def build_play_job_status(job_id: str) -> dict:
     """Structured progress for a Season play Job (no HTML fragments)."""
-    return _job_status_fields(AsyncResult(job_id))
+    return job_status_fields(AsyncResult(job_id))
 
 
 # ---------------------------------------------------------------------------
@@ -188,17 +200,6 @@ def play_playoffs_run(season: Season) -> str:
     ):
         raise WrongPhaseError("No active playoff bracket to play.")
     return enqueue_play_run(season, play_playoffs_task)
-
-
-def _require_no_live_run(season: Season) -> None:
-    """Raise ``PlayInProgressError`` while the Season has an Active play run."""
-    current = (
-        Season.objects.filter(pk=season.pk)
-        .values_list("active_play_job_id", flat=True)
-        .first()
-    )
-    if current:
-        raise PlayInProgressError(current)
 
 
 # ---------------------------------------------------------------------------
@@ -264,31 +265,9 @@ def play_week(season: Season) -> None:
         from core.models import ArenaMap
         from matches.tasks import _fixture_map_ids, _resolve_fixture_map
 
-        # LG-02-Part2c-2 -- by-phase fixtures (global-continuous matchday
-        # offset already applied) + phase-aware played_keys.
-        # LG-02-Part2c-3c -- barrier-aware: the RR loop halts at an incomplete
-        # tournament phase so a mid-season bracket drains first.
-        by_phase = season.playable_fixtures_by_phase()
-        phase_by_id = {phase.id: phase for phase, _ in by_phase}
-        fixtures = [
-            (phase.id, fixture)
-            for phase, phase_fixtures in by_phase
-            for fixture in phase_fixtures
-        ]
-        # LG-02-Part2c-3a -- played_keys gain ``leg`` so a double_round_robin
-        # phase's two legs are distinct.
-        played_keys = {
-            (
-                gr.match.season_phase_id,
-                frozenset({gr.match.team_red_id, gr.match.team_blue_id}),
-                gr.round_number,
-                gr.match.leg,
-            )
-            for gr in GameRound.objects.filter(match__season=season).select_related(
-                "match"
-            )
-        }
-        to_play = select_play_fixtures(fixtures, played_keys, 1)
+        # LG-02-Part2c-2/3a/3c -- the next unplayed matchday (by-phase,
+        # barrier-aware fixtures + leg-bearing played keys).
+        to_play, phase_by_id = _next_matchday_to_play(season)
         if not to_play:
             return
         team_ids = {f.team_a_id for _pid, f in to_play} | {
@@ -382,7 +361,7 @@ def play_single_round(season: Season) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _alive_playoff_node(tournament, team) -> "BracketNode | None":
+def alive_playoff_node(tournament: Tournament, team: Team) -> BracketNode | None:
     """LG-01i §5a — the manager team's next undecided, non-bye bracket node it
     currently occupies, or ``None``.
 
@@ -426,14 +405,14 @@ def _alive_playoff_node(tournament, team) -> "BracketNode | None":
     return node
 
 
-def _next_matchday_to_play(season) -> tuple[list, dict]:
+def _next_matchday_to_play(season: Season) -> tuple[list, dict]:
     """LG-01i — the next unplayed matchday's fixtures for ``season``.
 
     Returns ``(to_play, phase_by_id)`` where ``to_play`` is the
     ``list[(phase_id, ScheduleFixture)]`` of the next single unplayed matchday
     (the ``play_week`` RR machinery — by-phase fixtures + Side-agnostic
     ``played_keys``) and ``phase_by_id`` maps each phase id to its
-    ``SeasonPhase``. Shared by ``_resolve_live_cursor`` and the RR commit so the
+    ``SeasonPhase``. Shared by ``resolve_live_cursor`` and the RR commit so the
     fixture/played-key computation lives in one place.
     """
     by_phase = season.playable_fixtures_by_phase()
@@ -455,7 +434,7 @@ def _next_matchday_to_play(season) -> tuple[list, dict]:
     return select_play_fixtures(fixtures, played_keys, 1), phase_by_id
 
 
-def _resolve_live_cursor(season: "Season") -> Optional[dict]:
+def resolve_live_cursor(season: Season) -> Optional[dict]:
     """LG-01i §5 — resolve the manager's watchable live cursor for ``season``.
 
     Returns a cursor descriptor, the ``{"kind": "rr_bye"}`` degrade marker, or
@@ -464,7 +443,7 @@ def _resolve_live_cursor(season: "Season") -> Optional[dict]:
       1. ``team = season.league.current_team``; ``None`` ⇒ ``None``.
       2. ``phase = season.current_phase()``.
          * **Playoff cursor** — a built + active tournament phase: resolve the
-           team's ``_alive_playoff_node``; found ⇒ a ``{"kind": "playoff", ...}``
+           team's ``alive_playoff_node``; found ⇒ a ``{"kind": "playoff", ...}``
            descriptor; else ``None``.
          * **RR cursor** — an RR phase (or the implicit fallback): compute the
            next unplayed matchday's fixtures via the ``play_week`` machinery and
@@ -486,7 +465,7 @@ def _resolve_live_cursor(season: "Season") -> Optional[dict]:
         and phase.tournament_id is not None
         and phase.tournament.state == "active"
     ):
-        node = _alive_playoff_node(phase.tournament, team)
+        node = alive_playoff_node(phase.tournament, team)
         if node is None:
             return None
         return {
@@ -780,7 +759,7 @@ def play_live(season: Season) -> LivePlayResult:
 
     _require_active(season)
     _require_no_live_run(season)
-    cursor = _resolve_live_cursor(season)
+    cursor = resolve_live_cursor(season)
     if cursor is None:
         raise NoLiveCursorError("No live game to play for your team.")
     if cursor["kind"] == "rr_bye":
@@ -802,11 +781,15 @@ def play_live(season: Season) -> LivePlayResult:
 # Member nights (LG-07a) -- setup, play-all, single, live
 # ---------------------------------------------------------------------------
 
-# Drawn-Team names encode the Site: ``MN <site> G<n> A`` / ``... B``.
+# Display prefix for drawn-Team names (``MN <site> G<n> A`` / ``... B``).
+# The Site is never parsed back out of the name -- see ``_site_by_drawn_team``.
 _MN_TEAM_PREFIX = "MN "
 
+# The six ``Team.slot_*_id`` columns a drawn Team's players sit in.
+_DRAWN_SLOT_ID_FIELDS = tuple(f"slot_{slot}_id" for slot in ROLE_SLOTS)
 
-def _viable_member_night_sites(season: Season) -> list[tuple[str, int]]:
+
+def viable_member_night_sites(season: Season) -> list[tuple[str, int]]:
     """``(site, available-player count)`` for every viable Site, sorted."""
     return sorted(
         (site, len(pool))
@@ -815,18 +798,38 @@ def _viable_member_night_sites(season: Season) -> list[tuple[str, int]]:
     )
 
 
-def _site_of_drawn_team(name: str) -> str | None:
-    """The Site encoded in a drawn Team's ``MN <site> G<n> A`` name."""
-    if not name.startswith(_MN_TEAM_PREFIX) or " G" not in name:
-        return None
-    return name[len(_MN_TEAM_PREFIX) :].rsplit(" G", 1)[0]
+def _site_by_drawn_team(teams: list[Team]) -> dict[int, str]:
+    """The Site of each drawn Team, from its players' ``home_site``.
+
+    ``setup_member_night`` draws every player of a game from one Site's pool
+    (``Season._member_night_pool_by_site`` groups by ``Player.home_site``), so
+    any filled slot's player names the Site. A Team with no filled slot is
+    omitted. One query for all the Teams' players.
+    """
+    first_player_by_team: dict[int, int] = {}
+    for team in teams:
+        for field in _DRAWN_SLOT_ID_FIELDS:
+            player_id = getattr(team, field)
+            if player_id is not None:
+                first_player_by_team[team.pk] = player_id
+                break
+    home_site_by_player = dict(
+        Player.objects.filter(pk__in=first_player_by_team.values()).values_list(
+            "pk", "home_site"
+        )
+    )
+    return {
+        team_id: home_site_by_player[player_id]
+        for team_id, player_id in first_player_by_team.items()
+        if player_id in home_site_by_player
+    }
 
 
-_NO_MEMBER_NIGHT_TO_SET_UP = "No member night to set up."
+NO_MEMBER_NIGHT_TO_SET_UP = "No member night to set up."
 _NO_MEMBER_NIGHT_GAME = "No member-night game to play."
 
 
-def _require_member_night(
+def require_member_night(
     season: Season, wrong_phase_message: str = _NO_MEMBER_NIGHT_GAME
 ) -> SeasonPhase:
     """The current ``member_night`` phase of an active, idle Season.
@@ -845,17 +848,19 @@ def _require_member_night(
 def _next_member_night_shell(season: Season) -> tuple[SeasonPhase, Match]:
     """The member-night phase + its first unplayed game shell.
 
-    Raises the ``_require_member_night`` errors, then
+    Raises the ``require_member_night`` errors, then
     ``NoMemberNightGamesError`` when every shell is played (or none exist).
     """
-    phase = _require_member_night(season)
+    phase = require_member_night(season)
     shell = Match.objects.filter(season_phase=phase, is_completed=False).first()
     if shell is None:
         raise NoMemberNightGamesError(_NO_MEMBER_NIGHT_GAME)
     return phase, shell
 
 
-def setup_member_night(season: Season, sites: list[str], *, manager: Any = None) -> int:
+def setup_member_night(
+    season: Season, sites: list[str], *, manager: User | None = None
+) -> int:
     """Draw member-night games for ``sites``; return how many were drawn.
 
     Creates two ``is_draw_team`` Teams per game (roles fixed once, onto the
@@ -863,9 +868,9 @@ def setup_member_night(season: Season, sites: list[str], *, manager: Any = None)
     ``Match`` shell stamped ``season`` + ``season_phase`` (build-then-drain).
     The draw consumes a FRESH ``random.Random()`` (outside the SIM seed
     chain). A repeat call APPENDS more games. ``sites`` is pre-validated by
-    ``MemberNightSetupForm``. Raises the ``_require_member_night`` errors.
+    ``MemberNightSetupForm``. Raises the ``require_member_night`` errors.
     """
-    phase = _require_member_night(season, _NO_MEMBER_NIGHT_TO_SET_UP)
+    phase = require_member_night(season, NO_MEMBER_NIGHT_TO_SET_UP)
     full_pool = season._member_night_pool_by_site()
     pool_by_site = {site: full_pool.get(site, []) for site in sites}
 
@@ -959,16 +964,19 @@ def build_member_night_state(season: Season) -> dict:
             "games_unplayed": 0,
         }
     shells = list(Match.objects.filter(season_phase=phase).select_related("team_red"))
+    site_by_team = _site_by_drawn_team(
+        [shell.team_red for shell in shells if shell.team_red_id]
+    )
     games_by_site: dict[str, int] = {}
     for shell in shells:
-        site = _site_of_drawn_team(shell.team_red.name) if shell.team_red_id else None
+        site = site_by_team.get(shell.team_red_id)
         if site is not None:
             games_by_site[site] = games_by_site.get(site, 0) + 1
     return {
         "phase_active": True,
         "sites": [
             {"site": site, "count": count, "games": games_by_site.get(site, 0)}
-            for site, count in _viable_member_night_sites(season)
+            for site, count in viable_member_night_sites(season)
         ],
         "games_total": len(shells),
         "games_unplayed": sum(1 for shell in shells if not shell.is_completed),
@@ -989,7 +997,7 @@ def _action_button(season_mode: str) -> tuple[str, str]:
     }.get(season_mode, ("Start Next Season", "start_next_season"))
 
 
-def build_play_controls(league: Any, displayed_season: Season | None) -> dict:
+def build_play_controls(league: League, displayed_season: Season | None) -> dict:
     """The play-control state for ``league`` and its resolved displayed Season.
 
     Returns 13 keys: ``action_button_label`` / ``action_button_state``, the
@@ -1010,7 +1018,7 @@ def build_play_controls(league: Any, displayed_season: Season | None) -> dict:
 
     live_preview_available = False
     if displayed_season is not None and season_mode == "active":
-        cursor = _resolve_live_cursor(displayed_season)
+        cursor = resolve_live_cursor(displayed_season)
         live_preview_available = cursor is not None and cursor["kind"] in (
             "rr",
             "playoff",
@@ -1023,14 +1031,9 @@ def build_play_controls(league: Any, displayed_season: Season | None) -> dict:
         mn_phase = displayed_season.current_phase()
         if mn_phase is not None and mn_phase.phase_type == "member_night":
             member_night_phase_active = True
-            pool_by_site = displayed_season._member_night_pool_by_site()
             member_night_sites = [
                 {"site": site, "count": count}
-                for site, count in sorted(
-                    (site, len(pool))
-                    for site, pool in pool_by_site.items()
-                    if len(pool) >= member_night.MIN_POOL
-                )
+                for site, count in viable_member_night_sites(displayed_season)
             ]
             member_night_has_unplayed = Match.objects.filter(
                 season_phase=mn_phase, is_completed=False

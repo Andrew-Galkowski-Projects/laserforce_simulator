@@ -9,7 +9,7 @@ the views only parse requests and render.
 Must NOT import ``matches.league_views`` (the views import this module and
 re-export every moved name for back-compat). Randomness goes through
 ``import random`` + ``random.Random()`` so a test patch on
-``matches.league_views.random.Random`` (the global ``random`` module) still
+``matches.league_services.random.Random`` (the global ``random`` module) still
 reaches the moved code.
 """
 
@@ -1100,8 +1100,8 @@ def build_dashboard_context(
 
     # LG-02-Part2c-1 — playoff-cursor keys. NAV-01 factored the 9 play keys
     # (action button + playoff group + One-Week-Live gate + career flag) OUT
-    # of this body into ``_build_play_controls_context`` (the topnav ``Play ▾``
-    # dropdown source). ``build_dashboard_context`` KEEPS ``playoff_tournament_id``
+    # of this body into ``league_play_services.build_play_controls`` (the
+    # topnav ``Play ▾`` dropdown source). ``build_dashboard_context`` KEEPS ``playoff_tournament_id``
     # ONLY — the read-only "View bracket" dashboard link still needs it (§4).
     (
         _playoff_phase_active,
