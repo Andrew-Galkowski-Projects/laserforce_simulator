@@ -1,3 +1,4 @@
+from collections import Counter
 from typing import TYPE_CHECKING
 
 from django import forms
@@ -5,8 +6,10 @@ from django.db.models import QuerySet
 from django.utils import timezone
 from accounts.permissions import owned_queryset
 from teams.models import Team
+from .league_templates import LEAGUE_TEMPLATES
 from .models import MIN_BRACKET_PARTICIPANTS, League, Match, Season
 from .phase_composer import parse_phase_composition
+from core.forms import ParsedJSONField
 from core.models import ArenaMap
 
 if TYPE_CHECKING:
@@ -610,3 +613,162 @@ class SaveBatchGamesForm(forms.Form):
     arena_map = forms.IntegerField(min_value=1, required=False)
     game_type = forms.ChoiceField(choices=[("avg", "avg"), ("outlier", "outlier")])
     n = forms.IntegerField(min_value=1, max_value=10)
+
+
+# ---------------------------------------------------------------------------
+# ANG-01d-1 — Conference partition + League lifecycle write Forms
+# ---------------------------------------------------------------------------
+
+_CONFERENCE_KEYS: frozenset[str] = frozenset({"name", "team_ids", "map_rotation_ids"})
+_CONFERENCE_SHAPE_ERROR = (
+    'conferences must be a list of {"name", "team_ids", "map_rotation_ids"} objects.'
+)
+
+
+def _is_json_int(value: object) -> bool:
+    """A JSON integer — ``bool`` is an ``int`` subclass and is excluded."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _conference_shape_ok(conf: object) -> bool:
+    """One submitted Conference object has the locked step-1 shape."""
+    if not isinstance(conf, dict) or not set(conf) <= _CONFERENCE_KEYS:
+        return False
+    if not isinstance(conf.get("name"), str):
+        return False
+    team_ids = conf.get("team_ids")
+    if not isinstance(team_ids, list) or not all(_is_json_int(t) for t in team_ids):
+        return False
+    rotation = conf.get("map_rotation_ids")
+    return rotation is None or isinstance(rotation, (list, str))
+
+
+class ConferencePartitionForm(forms.Form):
+    """ANG-01d-1 — validate a Season's Conference partition (shared HTML + API).
+
+    ``conferences`` is already-decoded JSON: a list of
+    ``{"name", "team_ids", "map_rotation_ids"}`` objects (``map_rotation_ids``
+    optional, a comma-joined id string or a list of ints). ``clean_conferences``
+    runs, in order: the shape check, the membership check (duplicate /
+    non-enrolled team ids — unreachable from the HTML composer), the CONF-05
+    partition rules (CONF-02 bracket floor when the Season has a tournament
+    phase), the CONF-06 rotation parse, and the rotate-by-conference guard.
+    Returns ``[(name, sorted_team_ids, rotation_ids), ...]`` (``[]`` clears).
+    """
+
+    conferences = ParsedJSONField()
+
+    def __init__(self, *args: object, season: Season, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.season = season
+
+    def clean_conferences(self) -> "list[tuple[str, list[int], list[int]]]":
+        # Lazy: ``league_services`` imports models / teams.views; importing it
+        # at module load would create a ``forms`` -> ``league_services`` edge.
+        from .league_services import _validate_conference_partition
+
+        value = self.cleaned_data["conferences"]
+
+        # 1. Shape.
+        if not isinstance(value, list) or not all(
+            _conference_shape_ok(c) for c in value
+        ):
+            raise forms.ValidationError(_CONFERENCE_SHAPE_ERROR, code="invalid")
+
+        # 2. Membership — duplicates, then non-enrolled ids, each ascending.
+        enrolled = {t.id for t in self.season.teams.all()}
+        counts = Counter(tid for conf in value for tid in conf["team_ids"])
+        membership = [
+            f"Team {tid} is in more than one conference."
+            for tid in sorted(t for t, n in counts.items() if n > 1)
+        ] + [
+            f"Team {tid} is not enrolled in this Season."
+            for tid in sorted(t for t in counts if t not in enrolled)
+        ]
+        if membership:
+            raise forms.ValidationError(
+                [forms.ValidationError(m, code="invalid") for m in membership]
+            )
+
+        # 3. Partition (the CONF-05 validator, strings unchanged).
+        names = [conf["name"] for conf in value]
+        team_to_conf_idx = {
+            tid: idx for idx, conf in enumerate(value) for tid in conf["team_ids"]
+        }
+        has_tournament_phase = self.season.phases.filter(
+            phase_type="tournament"
+        ).exists()
+        errors, normalized = _validate_conference_partition(
+            names,
+            team_to_conf_idx,
+            enrolled,
+            min_per_conference=(
+                MIN_BRACKET_PARTICIPANTS if has_tournament_phase else 2
+            ),
+        )
+
+        # 4. Rotation — a str goes through ``parse_rotation_ids``; a list keeps
+        # its order + duplicates, each item a known JSON int.
+        valid_map_ids = set(_maps_with_confirmed_config().values_list("id", flat=True))
+        rotations: list[list[int]] = []
+        for conf in value:
+            raw = conf.get("map_rotation_ids")
+            if raw is None:
+                raw = ""
+            if isinstance(raw, str):
+                ids, row_errors = parse_rotation_ids(raw, valid_map_ids)
+            else:
+                ids, row_errors = [], []
+                for item in raw:
+                    if not _is_json_int(item):
+                        row_errors.append("Map rotation contains an invalid id.")
+                    elif item not in valid_map_ids:
+                        row_errors.append("Map rotation contains an unknown map id.")
+                    else:
+                        ids.append(item)
+            rotations.append(ids)
+            errors.extend(row_errors)
+
+        # 5. Guard — appended once, not per offending Conference.
+        if (
+            self.season.map_mode == "rotate_by_conference"
+            and value
+            and any(not ids for ids in rotations)
+        ):
+            errors.append("Each conference needs at least 1 rotation map.")
+
+        if errors:
+            raise forms.ValidationError(
+                [forms.ValidationError(m, code="invalid") for m in errors]
+            )
+        return [
+            (name, team_ids, rotations[idx])
+            for idx, (name, team_ids) in enumerate(normalized)
+        ]
+
+
+class LeagueTemplateForm(forms.Form):
+    """ANG-01d-1 — API-only: the League-template key for the template-path create.
+
+    Unknown key ⇒ ``invalid_choice``; empty / absent ⇒ ``required``. The HTML
+    chooser keeps its own ``LEAGUE_TEMPLATES_BY_KEY`` lookup.
+    """
+
+    template = forms.ChoiceField(choices=[(t.key, t.label) for t in LEAGUE_TEMPLATES])
+
+
+class ReassignTeamForm(forms.Form):
+    """ANG-01d-1 — API-only: the fired Manager's pick among the eligible teams.
+
+    Choices are the eligible (worst-N) team ids; a non-int or ineligible id ⇒
+    ``invalid_choice``, absent ⇒ ``required``. The HTML ``reassign_team`` keeps
+    its own int parse and 400 strings.
+    """
+
+    team_id = forms.TypedChoiceField(coerce=int, choices=())
+
+    def __init__(
+        self, *args: object, eligible_team_ids: "list[int]", **kwargs: object
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.fields["team_id"].choices = [(i, str(i)) for i in eligible_team_ids]

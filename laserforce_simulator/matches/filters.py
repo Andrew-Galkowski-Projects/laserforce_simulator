@@ -11,7 +11,7 @@ from __future__ import annotations
 from django.db.models import Q, QuerySet
 from django_filters import rest_framework as filters
 
-from matches.models import GameEvent, GameRound, Match
+from matches.models import GameEvent, GameRound, League, Match, Season
 
 
 class MatchFilterSet(filters.FilterSet):
@@ -51,3 +51,26 @@ class GameEventFilterSet(filters.FilterSet):
     class Meta:
         model = GameEvent
         fields = ["event_type", "actor", "target", "timestamp"]
+
+
+class LeagueFilterSet(filters.FilterSet):
+    """ANG-01d-1 — ``?state=`` / ``?mode=`` (bad choice ⇒ 400)."""
+
+    state = filters.ChoiceFilter(choices=League.STATE_CHOICES)
+    mode = filters.ChoiceFilter(choices=League.MODE_CHOICES)
+
+    class Meta:
+        model = League
+        fields = ["state", "mode"]
+
+
+class SeasonFilterSet(filters.FilterSet):
+    """ANG-01d-1 — ``?league=`` / ``?state=``. A foreign ``league`` id yields an
+    empty page (the base queryset is already ownership-scoped)."""
+
+    league = filters.NumberFilter(field_name="league")
+    state = filters.ChoiceFilter(choices=Season.STATE_CHOICES)
+
+    class Meta:
+        model = Season
+        fields = ["league", "state"]

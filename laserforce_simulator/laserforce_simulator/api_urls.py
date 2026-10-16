@@ -10,6 +10,7 @@ from matches.api_views import (
     SimulateBatchAPIView,
     SimulateBatchStatusAPIView,
 )
+from matches.league_api_views import LeagueViewSet, SeasonViewSet
 from teams.api_views import PlayerViewSet, TeamViewSet
 
 router = DefaultRouter()
@@ -18,6 +19,8 @@ router.register("players", PlayerViewSet, basename="player")
 router.register("matches", MatchViewSet, basename="match")
 router.register("rounds", GameRoundViewSet, basename="gameround")
 router.register("maps", ArenaMapViewSet, basename="arenamap")
+router.register("leagues", LeagueViewSet, basename="league")
+router.register("seasons", SeasonViewSet, basename="season")
 
 # ANG-01b — `save/<save_job_id>/` sits before `<job_id>/save/` because
 # `simulate-batch/save/save/` matches both; Celery ids are UUIDs, so a batch

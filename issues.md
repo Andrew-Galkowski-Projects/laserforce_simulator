@@ -1,3 +1,156 @@
+# Web testing — ANG-01d-1 (League lifecycle + reads API, league_services extraction)
+
+Date: 2026-10-16
+Branch: `ang-01d-1-league-lifecycle-api` (uncommitted working tree)
+Scope: scoped pass, server on port **8001**. One fresh Account (`chrometest-ang01d1@example.com`).
+League 7 `ChromeTest ANG01d1 League` created via `/leagues/create/advanced/` (8 teams, 2 conferences,
+single round-robin phase, 3-zone fallback). Season 7 played to completion with sync One Week POSTs
+only, then Season 8 rolled via the owner-evaluation CTA. League deleted via the dashboard delete link
+afterwards (summary: 2 Seasons / 13 Matches / 9 Teams / 194 Players). Account left in place.
+
+Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
+
+## Summary — ANG-01d-1
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| L-1 | 🟠 | League History (HTML + new API) | Multi-Conference RR-final Season shows a cross-Conference "Champion" although `champion_team` is NULL |
+| L-2 | 🟡 | Season standings | `season-standings-th-*` ids duplicated once per Conference table |
+| L-3 | ℹ️ | League History | Draft in-progress row shows a Runner-Up / 1st-3rd from all-zero standings |
+
+**Overall:** every flow in scope works. Advanced create with 2 conferences lands on Manage
+Conferences pre-filled 4/4; rename + move + save persists (DB 3/5); an invalid save (1-team
+conference) shows "Each conference needs at least 2 teams." and writes nothing. The new
+`reassign_team` active-Season guard holds in all three states tried. All 17 API GETs return the
+`{data, meta}` envelope. No console errors or non-2xx requests on any page. All three findings are
+**pre-existing** (code moved verbatim / template untouched on this branch); L-1 is newly *exposed*
+through the ANG-01d-1 history API.
+
+---
+
+## Create League (advanced) + Manage Conferences
+
+### ✅ Create with Number of conferences = 2 — works
+POST `/leagues/create/advanced/` (8 teams, Conferences 2) redirected to `/seasons/7/conferences/`
+with two conferences pre-filled 4/4 (alternating auto-split).
+
+### ✅ Rename + move + save — works
+Renamed Conference 1 -> "ChromeTest East", moved Aurora Aces to Conference 2, Save -> "Conferences
+saved."; DB: East = 3 teams, Conference 2 = 5 teams. Renaming live-updates every team `<select>`'s
+option text (the JS rebuild).
+
+### ✅ Invalid save rejected, nothing written — works
+Moved two East teams out (East = 1 team) and renamed Conference 2 to "ChromeTest ShouldNotSave";
+POST -> 200 re-render with "Each conference needs at least 2 teams.", submitted values preserved in
+the form, DB unchanged (names + memberships identical to the prior save). The shared
+`ConferencePartitionForm` path behaves exactly like the old inline validation.
+
+### ✅ Map-rotation composer — visible, works
+"+ Add map" on the advanced form adds a `Rotation map` select + Remove (empty — the DB has no
+confirmed-config maps). Removed before submit. The per-conference "+ Add map" composers render on
+Manage Conferences.
+
+## Dashboards / reads
+
+### ✅ League + Season dashboards — work
+Draft, active and completed states render; completed shows "All fixtures played", Rounds 26 / 26,
+manager-Conference top-3 snippet, three leaders snippets, `topbar-play-owner-evaluation` entry.
+
+### ✅ Season standings — work
+Two per-Conference tables (3 + 5 rows). `?sort=wins&dir=asc` then the W header (now `dir=desc`,
+glyph ↓) re-sorted both tables correctly with `rank` frozen; `?sort=team&dir=asc` alphabetical.
+
+### ✅ Schedule / Team schedule / History / Awards — work
+`/seasons/7/schedule/` 10 matchdays; `/leagues/7/team_schedule/35/` (sidebar Team > Schedule)
+8 completed rows (4 opponents x 2 rounds); History 200 incl. `?per_page=25` and the forgiving
+`?per_page=foo&page=99`; only one page of Seasons so no pagination nav (expected). Awards: all 12
+`season-awards-*` ids, Finals MVP "—" (no playoff phase).
+
+## Play loop + rollover
+
+### ✅ Full Season via sync controls — works
+`topbar-play-start-season` -> ACTIVE; `topbar-play-one-week` x10 -> 26 / 26 and state `completed`
+(an 11th click correctly re-renders the dashboard with a 400 play error). Champion NULL (2-Conference
+RR-final — CONF-01 rule).
+
+### ✅ Owner evaluation + Start Next Season — works
+Verdict RETAINED (wins -0.125, playoffs 0, money 0.0); the `owner-evaluation-cta-start-next` POST to
+`/leagues/7/next-season/` redirected to `/seasons/8/` (Season 2, draft, 8 teams, one RR phase,
+0 conferences — the rollover does not carry conferences, as documented). Manager not fired, so the
+new-team picker path was not reachable.
+
+### ✅ `reassign_team` active-Season guard (new on this branch) — works
+POST `/leagues/7/reassign-team/` (fetch + csrftoken cookie) returned a 302 to the in-progress
+Season's dashboard and wrote nothing in all three cases:
+- Season 7 **draft** (team 36) -> `/seasons/7/`, still 1 Season, `current_team` 35.
+- Season 7 **active** (team 36) -> `/seasons/7/`, still 1 Season.
+- Season 8 **draft with Season 7 completed** and team 36 in the eligible worst-5 set (the exact
+  pre-fix bug shape) -> `/seasons/8/`, still exactly 2 Seasons, `current_team` 35.
+
+## Browsable API (GET)
+
+### ✅ All GETs enveloped — works
+200 + `{data, meta}`: `/api/leagues/` (paginated meta), `/templates/` (5), `/leagues/7/`,
+`/dashboard/`, `/history/` (paginated), `/teams/35/schedule/`, `/new-team-candidates/`,
+`/api/seasons/` (paginated), `/seasons/7/`, `/standings/` (2 conference groups; `?sort=wins&dir=desc`
+honoured), `/conferences/` (`editable: false` once active), `/owner-evaluation/`, `/schedule/`,
+`/awards/`, `/dashboard/`. `?sort=bogus` -> 400 `{"errors":[{"code":"invalid_choice", ...,
+"field":"sort"}], "meta":{}}`. The browsable HTML renderer loads with no console errors.
+
+---
+
+## League History
+
+### 🟠 L-1 — Multi-Conference RR-final Season shows a cross-Conference champion
+**Repro:** 2-Conference League, single round-robin phase (no tournament), play to completion.
+`Season.champion_team` is correctly NULL (CONF-01: no cross-Conference champion without Worlds), and
+`/api/seasons/7/` reports `"champion_team": null` — but `/leagues/7/history/` renders
+**Champion = Rogue Recon #2**, Runner-Up Aurora Aces #3, 1st-3rd Rogue Recon / Aurora Aces / Lumen
+Legion, and the new `/api/leagues/7/history/` returns the same `"champion": {"id": 39, ...}`. The
+"1st place" ranks are whole-Season standings across Conferences whose schedules are disjoint, the
+comparison CONF-01 explicitly calls meaningless.
+**Expected:** Champion "—" (and probably per-Conference or "—" placings) for a `>= 2`-Conference
+Season with a NULL champion.
+**Root cause:** `laserforce_simulator/matches/league_services.py:1620-1622` (`build_history_row`)
+falls back to whole-Season standings rank 1:
+```python
+champion = season.champion_team
+if champion is None and standings:
+    champion = teams_by_id.get(standings[0].team_id)
+```
+`standings` (line 1610) is `compute_standings` over every completed Match in the Season with no
+Conference scoping; runner-up / top-3 (1612-1615, 1624-1625) use the same list. Rendered by
+`templates/leagues/history.html:60`.
+**Regression?** No — the fallback is identical on `main` (`matches/league_views.py:3013`, the old
+`_build_history_row`), moved verbatim. Newly exposed via the ANG-01d-1 history API, so API
+consumers inherit it.
+**Fix idea:** skip the standings fallback when `season.conferences.count() >= 2` (mirror
+`_stamp_champion_for_final_phase`), and either blank the placings or compute them per Conference.
+
+## Season standings
+
+### 🟡 L-2 — Duplicate sort-header DOM ids across Conference tables
+On a 2-Conference Season every `season-standings-th-<key>` id (17 of them) appears twice, once per
+Conference table. Invalid HTML and ambiguous for `getElementById` / tests.
+**Root cause:** `laserforce_simulator/templates/seasons/standings.html:45`
+`<th id="season-standings-th-{{ key }}">` inside the per-group loop.
+**Regression?** No — template untouched on this branch (last change CONF-05).
+**Fix idea:** suffix with the conference id when grouped (`season-standings-th-{{ key }}-{{ group.conference.id }}`)
+or keep the plain id on the first table only.
+
+## League History
+
+### ℹ️ L-3 — Draft in-progress row shows placings from all-zero standings
+After Start Next Season, the in-progress Season 2 row (0 matches played) shows Runner-Up "Blackout
+Bobcats #2" and 1st-3rd "Aurora Aces / Blackout Bobcats / Ember Enforcers" — alphabetical tiebreak of
+a zero-filled table. Same `build_history_row` (`league_services.py:1610-1625`). Pre-existing; cosmetic.
+
+## Environment
+
+### ℹ️ E-1 — Registration password similarity
+The first registration attempt with a password containing "ChromeTest" was rejected ("too similar
+to the email address") — correct Django validation, not a bug; noted for future test runs.
+
 # Web testing — ANG-01c (Map editor API)
 
 Date: 2026-10-15

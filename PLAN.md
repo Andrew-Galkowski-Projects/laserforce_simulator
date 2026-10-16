@@ -1500,7 +1500,9 @@ each other and each depends only on 01a. Locked across all of them: **one envelo
 `Form`** (serializers are output-only — this overturns the API-03 Forms-vs-Serializers idiom);
 `django-filter` allowlists + `OrderingFilter`; cross-Account access is **404, never 403**
 (ADR-0038); anonymous stays **403 `not_authenticated`** until ANG-03 swaps in JWT. Login / JWT
-token endpoints stay ANG-03, not ANG-01g.
+token endpoints stay ANG-03, not ANG-01g. **ANG-01d re-sliced (grill, 2026-10-16)** into
+**ANG-01d-1** (League lifecycle + reads — done) and **ANG-01d-2** (the play loop — not started),
+so the full set is now ANG-01a..c, 01d-1, 01d-2, 01e..g.
 
 #### ANG-01a · [DONE] API foundation + core CRUD
 
@@ -1693,13 +1695,92 @@ check or grid-bounds check for cells; strict `wall_meta`. New tests: `core/test_
 [`.claude/worktrees/ang-01c-seam-contract.md`](.claude/worktrees/ang-01c-seam-contract.md) and the
 **REST API — maps** section of `laserforce_simulator/core/CLAUDE.md`.
 
-#### ANG-01d · Leagues / Seasons API
+#### ANG-01d-1 · [DONE] League lifecycle + reads API
 
 League create (template chooser + Advanced form), League and Season dashboards, Standings and
 schedule, the play actions (play next / play week / play all) with their Job status and cancel
 endpoints, next-season rollover, Conferences, member nights, Season awards and the owner evaluation.
 Every League-tree row is resolved through `get_owned_or_404` / `owned_queryset` (404 cross-Account);
-play actions reuse the existing Celery tasks and enveloped Job polling.
+play actions reuse the existing Celery tasks and enveloped Job polling. *(Re-sliced 2026-10-16: this
+item ships the lifecycle + reads half; the play actions, Job status / cancel and member nights moved
+to ANG-01d-2.)*
+
+**[DONE] Shipped (2026-10-16).** **Endpoints** — new `matches/league_api_views.py` with
+`LeagueViewSet` (list / create / retrieve / destroy) and `SeasonViewSet` (`ReadOnlyModelViewSet`),
+registered as `leagues` / `seasons` in `api_urls.py`: `GET` / `POST /api/leagues/` (a **single
+create** — if the body has a `template` key it binds the API-only `LeagueTemplateForm` and builds the
+`CreateLeagueForm` data via `template_to_form_data(template, league_name=, difficulty=)`, every other
+key ignored; otherwise the **Advanced** path binds `CreateLeagueForm` to the body with no injected
+defaults; **201** = `LeagueSerializer` + `draft_season` ref + `conference_ids` (always present, `[]`
+when none), `manager` = requester), `GET /api/leagues/templates/` (the 5 `LEAGUE_TEMPLATES` as dicts,
+not paginated), `GET` / `DELETE /api/leagues/<pk>/` (career only, `teardown_league` ⇒ 204),
+`…/dashboard/` (displayed Season + `season_mode` + standings snippet, next fixture, round counts,
+leaders, map-config label, playoff tournament id — **no play-control keys**), `…/history/`
+(`EnvelopePagination`; rows built for the page slice only; the in-progress row is item 1 of page 1,
+**not pinned on every page** like HTML), `…/teams/<team_id>/schedule/` (no Season ⇒ 404),
+`POST …/next-season/` (201 `SeasonSerializer`), `GET …/new-team-candidates/` (worst-first, ≤
+`WORST_N_ELIGIBLE`, current team excluded), `POST …/reassign-team/` (`ReassignTeamForm` over the
+eligible ids ⇒ 201 `SeasonSerializer`); `GET /api/seasons/[<pk>/]` (list slim
+`SeasonListSerializer`, detail `SeasonSerializer` with nested `phases` / `conferences`, play state
+`active_play_job_id` / `play_cancel_requested` excluded), `…/dashboard/`, `…/standings/[?sort=&dir=]`
+(strict `StandingsParamsForm`; one group per Conference, exactly one `conference: null` group when
+flat; `rank` frozen under any sort), `…/schedule/`, `…/awards/` (incl. 5-role `kd_by_role`),
+`…/owner-evaluation/` (performs the same lazy finance + evaluation writes as HTML; not completed /
+non-career ⇒ 404), `GET` / **`PUT …/conferences/`** (JSON only, **full replace**, `{"conferences":
+[]}` clears; returns the saved GET state; multipart ⇒ 415). Filters: `LeagueFilterSet` (`state`,
+`mode`), `SeasonFilterSet` (`league`, `state`); default ordering `-id`. **No** PUT / PATCH on either
+detail, no `POST` / `DELETE` on seasons (all 405). The API **never touches
+`request.session["last_league_id"]`**. **409 state conflicts** (named `APIException`s in
+`league_api_views.py`): `season_in_progress` (`field = season:<id>`, the non-completed Season),
+`manager_fired`, `season_not_draft` (checked before body validation), `no_completed_season`,
+`not_career_league` (HTML message per site). **Services** — new `matches/league_services.py` (must
+not import `league_views`): the creation / rollover / teardown / reads / standings / conferences
+helpers **moved verbatim** out of `league_views.py` (renamed public: `template_to_form_data`,
+`create_league_and_season`, `is_career_league`, `run_season_rollover`, `eligible_new_teams`,
+`teardown_league`, `build_dashboard_context`, `pick_displayed_season`, `compute_season_award_set`,
+`build_history_row`, `STANDINGS_SORT_KEYS`) and **re-exported from `league_views.py`** under their
+old underscore names, plus new `season_mode_for`, `latest_completed_season`, `start_next_season`
+(raises `SeasonInProgressError` / `NoCompletedSeasonError` / `ManagerFiredError`; caller owns the
+atomic), `reassign_and_roll`, `ensure_owner_evaluation`, `build_season_standings`,
+`build_season_schedule`, `build_team_schedule`, `history_seasons`, `build_season_awards`,
+`build_conferences_state`, `replace_conferences`. **Forms** — shared `ConferencePartitionForm`
+(`matches/forms.py`, `conferences` = `ParsedJSONField`, `season=` kwarg; locked check order shape →
+membership (duplicate / non-enrolled ids, API-only reachable) → partition → rotation (str via
+`parse_rotation_ids` or a JSON id list) → `rotate_by_conference` guard; partition / rotation / guard
+strings and order unchanged from HTML), API-only `LeagueTemplateForm` / `ReassignTeamForm`, and
+`StandingsParamsForm` (`matches/api_forms.py`); output-only `LeagueSerializer`,
+`SeasonListSerializer`, `SeasonSerializer`, `SeasonPhaseSerializer`, `ConferenceSerializer` and refs
+`league_ref` / `season_ref` / `conference_ref`. **HTML views** — `league_dashboard`,
+`season_standings`, `season_schedule`, `team_schedule`, `league_history`, `season_awards`,
+`owner_evaluation`, `next_season`, `reassign_team` and `manage_conferences` (POST binds
+`ConferencePartitionForm` after its indexed parse) delegate to the services with **byte-identical
+output** and the same DB writes. **Bug fix (user-approved):** HTML `reassign_team` had no
+active-Season guard, so a POST while a Season was draft / active created a **second non-completed
+Season** (`Season.objects.create` bypasses `Season.clean`); it now redirects (302) to that Season's
+dashboard, mirroring `next_season`, with nothing written. **Atomicity note:** an API next-season 409
+rolls back the lazy finance / evaluation writes (HTML commits them) — harmless, both writers are
+idempotent and deterministic. **Patch-target rule:** `patch("matches.league_views._x")` no longer
+intercepts moved code; new tests patch `matches.league_services.<name>`
+(`matches.league_views.random.Random` still works — the global module). **Invariants:** **no
+migration, no simulation change, no Score Calibration re-baseline, no ADR**; models, templates,
+`league_urls.py`, `season_urls.py`, `tasks.py`, `league_screens/*` unchanged. Deferred (see Deferred
+Items): no fired check on candidates / reassign; team schedule accepts any owned Team; per-row
+`active_season` query. New tests: `matches/tests/test_league_services.py`, `test_api_leagues.py`,
+`test_api_league_lifecycle.py`, `test_api_seasons.py`, `test_api_conferences.py`; regression in
+`test_reassign_team.py`. See the seam contract
+[`.claude/worktrees/ang-01d-1-seam-contract.md`](.claude/worktrees/ang-01d-1-seam-contract.md) and
+the **ANG-01d-1** section of `laserforce_simulator/matches/CLAUDE.md`.
+
+#### ANG-01d-2 · League play-loop API
+
+**[NOT STARTED]** The play half split out of ANG-01d (grill, 2026-10-16): start Season (draft ⇒
+active), play week / play two months / play until end / play playoffs / play a single round, the One
+Week (Live) watch feed, Job status + cancel (the `Season.active_play_job_id` /
+`play_cancel_requested` state ANG-01d-1 deliberately keeps out of `SeasonSerializer`), member-night
+setup / play, and the topnav play-control keys (`_build_play_controls_context`). Reuses the existing
+Celery tasks in `matches/tasks.py` and the enveloped Job-polling shape; builds on the ANG-01d-1
+`LeagueViewSet` / `SeasonViewSet` and `matches/league_services.py`. None of the play views,
+`_build_play_controls_context` or `tasks.py` moved in ANG-01d-1.
 
 #### ANG-01e · League stats / finance / players screens API
 
@@ -1775,7 +1856,7 @@ verify feature parity with the existing Django template, then remove the Django 
 6. **Map editor** — most complex: canvas overlay, zone painting, sight-line drag-select (migrate last)
 
 **Note (ANG-01 re-slice, 2026-10-14):** the League / Season, League-screens and Tournament surfaces
-will have full API coverage from ANG-01d / ANG-01e / ANG-01f, but they are **not yet planned** as
+will have full API coverage from ANG-01d-1 / ANG-01d-2 / ANG-01e / ANG-01f, but they are **not yet planned** as
 ANG-06 migration items — add them (and the Accounts screens backed by ANG-01g) here once the six
 items above are scoped.
 
@@ -1938,6 +2019,20 @@ The following were explicitly scoped out and should not be implemented until re-
   only `facing` / `height` keys per wall cell, so a stored legacy config carrying any other key fails
   to re-save from the editor (400) until the wall is repainted. Low risk (the editor only writes those
   two keys); relax to ignore-unknown-keys if one ever surfaces
+- **No fired check on new-team candidates / reassign** (ANG-01d-1 follow-up) — neither the HTML
+  `new_team_picker` / `reassign_team` nor the API `new-team-candidates` / `reassign-team` checks that
+  the Manager was actually fired, so a career Manager in good standing can switch teams between
+  Seasons. Kept for HTML parity; gate both on the latest `OwnerEvaluation.verdict == "fired"` if it
+  matters
+- **League team schedule accepts any owned Team** (ANG-01d-1 follow-up) — HTML `team_schedule` and
+  `GET /api/leagues/<pk>/teams/<team_id>/schedule/` resolve any Team the requester owns, enrolled in
+  the displayed Season or not (an un-enrolled Team gets an empty schedule). Kept for parity; add an
+  enrolment check if a 404 is preferred
+- **History API does not pin the in-progress Season** (ANG-01d-1 follow-up) — the HTML League
+  history repeats the in-progress row at the top of every page; the API lists it once (first item of
+  page 1). Deliberate; revisit only if the Angular history screen needs the pinned row
+- **`LeagueSerializer.active_season` is one query per League** (ANG-01d-1 follow-up) — acceptable at
+  page size 20; prefetch non-completed Seasons if the League list grows
 
 ---
 
