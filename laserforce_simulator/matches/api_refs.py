@@ -7,7 +7,7 @@ to one of these refs so the envelope never serializes an ORM object.
 
 from __future__ import annotations
 
-from matches.models import GameRound
+from matches.models import Conference, GameRound, League, Season
 from teams.models import Player, Team
 
 
@@ -35,3 +35,18 @@ def round_ref(game_round: GameRound) -> dict:
         "team_red": team_ref(game_round.team_red),
         "team_blue": team_ref(game_round.team_blue),
     }
+
+
+def league_ref(league: League) -> dict:
+    """``{"id", "name"}`` for a League (ANG-01d-1)."""
+    return {"id": league.id, "name": league.name}
+
+
+def season_ref(season: Season) -> dict:
+    """``{"id", "name"}`` for a Season (ANG-01d-1)."""
+    return {"id": season.id, "name": season.name}
+
+
+def conference_ref(conference: Conference) -> dict:
+    """``{"id", "name"}`` for a Conference (ANG-01d-1)."""
+    return {"id": conference.id, "name": conference.name}

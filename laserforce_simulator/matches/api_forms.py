@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from django import forms
 
+from matches.league_services import STANDINGS_SORT_KEYS
+
 _PROVENANCE_CHOICES = [("all", "all"), ("real", "real"), ("sim", "sim")]
 _ROLE_CHOICES = [
     ("commander", "commander"),
@@ -100,3 +102,22 @@ class PlayerH2HParamsForm(forms.Form):
 
 _add_date_range(TeamH2HParamsForm)
 _add_date_range(PlayerH2HParamsForm)
+
+
+class StandingsParamsForm(forms.Form):
+    """ANG-01d-1 — ``?sort=&dir=`` for the Season standings endpoint.
+
+    Defaults ``rank`` / ``asc`` are applied in ``clean_<field>``; a bad value is
+    a 400 ``invalid_choice`` (unlike the forgiving HTML coercion).
+    """
+
+    sort = forms.ChoiceField(
+        choices=[(k, k) for k in sorted(STANDINGS_SORT_KEYS)], required=False
+    )
+    dir = forms.ChoiceField(choices=[("asc", "asc"), ("desc", "desc")], required=False)
+
+    def clean_sort(self) -> str:
+        return self.cleaned_data.get("sort") or "rank"
+
+    def clean_dir(self) -> str:
+        return self.cleaned_data.get("dir") or "asc"

@@ -1,0 +1,614 @@
+"""ANG-01d-1 — League lifecycle + read REST API (``/api/leagues/``, ``/api/seasons/``).
+
+Follows ADR-0039: one envelope, Form-bound writes, output-only serializers,
+views RAISE (never hand-build a 4xx ``Response``). Every League / Season /
+Team row resolves through ``owned_queryset`` / ``get_owned_or_404``, so a
+cross-Account row is a 404 and an anonymous request is DRF's 403. All
+computation is shared with the HTML views via ``matches.league_services``; the
+API never reads or writes ``request.session["last_league_id"]``.
+
+The play loop (start season, play week / months / playoffs, job status + cancel,
+member nights) is ANG-01d-2 and deliberately absent here.
+"""
+
+from __future__ import annotations
+
+from dataclasses import asdict, fields
+
+from django.contrib.auth.decorators import login_not_required
+from django.db import transaction
+from django.db.models import QuerySet
+from django.utils.decorators import method_decorator
+from rest_framework import mixins, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import APIException, NotFound
+from rest_framework.parsers import JSONParser
+from rest_framework.request import Request
+from rest_framework.response import Response
+from rest_framework.serializers import Serializer
+
+from accounts.permissions import get_owned_or_404, owned_queryset
+from laserforce_simulator.api.exceptions import validate_form_or_raise
+from laserforce_simulator.api.forms import plain_form_data
+from laserforce_simulator.api.viewsets import ListOnlyFilterMixin
+from matches.api_forms import StandingsParamsForm
+from matches.api_refs import conference_ref, league_ref, season_ref, team_ref
+from matches.filters import LeagueFilterSet, SeasonFilterSet
+from matches.forms import (
+    ConferencePartitionForm,
+    CreateLeagueForm,
+    LeagueTemplateForm,
+    ReassignTeamForm,
+)
+from matches.league_services import (
+    ManagerFiredError,
+    NoCompletedSeasonError,
+    SeasonInProgressError,
+    build_conferences_state,
+    build_dashboard_context,
+    build_history_row,
+    build_season_awards,
+    build_season_schedule,
+    build_season_standings,
+    build_team_schedule,
+    create_league_and_season,
+    eligible_new_teams,
+    ensure_owner_evaluation,
+    history_seasons,
+    is_career_league,
+    latest_completed_season,
+    pick_displayed_season,
+    reassign_and_roll,
+    replace_conferences,
+    season_mode_for,
+    start_next_season,
+    teardown_league,
+    template_to_form_data,
+)
+from matches.league_templates import LEAGUE_TEMPLATES, LEAGUE_TEMPLATES_BY_KEY
+from matches.models import League, Season
+from matches.season_awards import ROLE_KEYS, AwardWinner
+from matches.season_dashboard import LeaderRow
+from matches.serializers import LeagueSerializer, SeasonListSerializer, SeasonSerializer
+from matches.standings import StandingsRow
+from teams.models import Team
+
+_DELETE_NOT_CAREER = "Delete League is only available for career (league-mode) Leagues."
+_FIRING_NOT_CAREER = "Manager firing applies only in single-player career mode."
+
+# The retrieve / write-response prefetch for a Season detail payload.
+_SEASON_DETAIL_PREFETCH = ("phases", "conferences__teams", "teams", "map_pool")
+
+
+# ---------------------------------------------------------------------------
+# 409 state conflicts (named codes; the envelope handler shapes them).
+# ---------------------------------------------------------------------------
+
+
+class SeasonInProgress(APIException):
+    """409 — the League already has a non-completed Season.
+
+    The detail is keyed ``season:<id>`` so the envelope ``field`` points at the
+    in-progress Season (the ``roster_invalid`` ``row:<n>`` precedent).
+    """
+
+    status_code = 409
+    default_code = "season_in_progress"
+    default_detail = "The League already has a Season in progress."
+
+    def __init__(self, season: Season) -> None:
+        super().__init__(detail={f"season:{season.pk}": self.default_detail})
+
+
+class ManagerFired(APIException):
+    """409 — the Manager was fired and must reassign before rolling."""
+
+    status_code = 409
+    default_code = "manager_fired"
+    default_detail = (
+        "The Manager was fired. Choose a new team before starting the next Season."
+    )
+
+
+class SeasonNotDraft(APIException):
+    """409 — Conferences are editable only while the Season is draft."""
+
+    status_code = 409
+    default_code = "season_not_draft"
+    default_detail = "Conferences can only be edited while the Season is in draft."
+
+
+class NoCompletedSeason(APIException):
+    """409 — the League has no completed Season to roll / pick from."""
+
+    status_code = 409
+    default_code = "no_completed_season"
+    default_detail = "No completed Season in this League."
+
+
+class NotCareerLeague(APIException):
+    """409 — the action exists only for career (``mode="league"``) Leagues."""
+
+    status_code = 409
+    default_code = "not_career_league"
+    default_detail = "This action is only available for career (league-mode) Leagues."
+
+
+# ---------------------------------------------------------------------------
+# Row flatteners — builder output → plain JSON-able dicts.
+# ---------------------------------------------------------------------------
+
+
+def _ref_or_none(team: Team | None) -> dict | None:
+    return team_ref(team) if team is not None else None
+
+
+def _standings_row(row: StandingsRow | dict, team: Team | None) -> dict:
+    """The 17 standings keys in ``StandingsRow`` field order + ``team``.
+
+    Works for a ``StandingsRow`` and the 17-key zeroed draft-preview dict.
+    """
+    source = asdict(row) if isinstance(row, StandingsRow) else row
+    out = {f.name: source[f.name] for f in fields(StandingsRow)}
+    out["team"] = _ref_or_none(team)
+    return out
+
+
+def _leader(row: LeaderRow) -> dict:
+    return asdict(row)
+
+
+def _winner(winner: AwardWinner | None) -> dict | None:
+    return asdict(winner) if winner is not None else None
+
+
+def _snippet_row(row_dict: dict, team: Team | None) -> dict:
+    return {**row_dict, "team": _ref_or_none(team)}
+
+
+def _dashboard_payload(displayed_season: Season | None, season_mode: str) -> dict:
+    """The read-only dashboard body (no play-control keys — those are 01d-2)."""
+    body = build_dashboard_context(displayed_season, season_mode)
+    return {
+        "displayed_season": (
+            season_ref(displayed_season) if displayed_season is not None else None
+        ),
+        "season_mode": season_mode,
+        "standings_snippet": [
+            _snippet_row(row, team) for row, team in body["standings_snippet"]
+        ],
+        "next_fixture": body["next_fixture"],
+        "round_count_completed": body["round_count_completed"],
+        "round_count_total": body["round_count_total"],
+        "leaders_points": [_leader(r) for r in body["leaders_points"]],
+        "leaders_tags": [_leader(r) for r in body["leaders_tags"]],
+        "leaders_ratio": [_leader(r) for r in body["leaders_ratio"]],
+        "map_config_label": body["map_config_label"],
+        "playoff_tournament_id": body["playoff_tournament_id"],
+    }
+
+
+def _history_item(row: dict) -> dict:
+    return {
+        **row,
+        "champion": _ref_or_none(row["champion"]),
+        "runner_up": _ref_or_none(row["runner_up"]),
+        "top_three": [_ref_or_none(t) for t in row["top_three"]],
+        "season_mvp": _winner(row["season_mvp"]),
+        "finals_mvp": _winner(row["finals_mvp"]),
+    }
+
+
+def _conferences_payload(season: Season) -> dict:
+    state = build_conferences_state(season)
+    return {
+        "season": season_ref(season),
+        "editable": state["editable"],
+        "map_mode": state["map_mode"],
+        "teams": [team_ref(t) for t in state["teams"]],
+        "conferences": state["conferences"],
+        "unassigned_team_ids": state["unassigned_team_ids"],
+    }
+
+
+def _season_detail(season: Season) -> Season:
+    """Re-fetch a Season with the detail prefetch for a serializer payload."""
+    return (
+        Season.objects.select_related("league", "champion_team")
+        .prefetch_related(*_SEASON_DETAIL_PREFETCH)
+        .get(pk=season.pk)
+    )
+
+
+# ---------------------------------------------------------------------------
+# /api/leagues/
+# ---------------------------------------------------------------------------
+
+
+# UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
+# DRF's 403 JSON; the settings-level `IsAuthenticated` is what gates it. No
+# `update` / `partial_update`, so PUT / PATCH on the detail stay 405.
+@method_decorator(login_not_required, name="dispatch")
+class LeagueViewSet(
+    ListOnlyFilterMixin,
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.DestroyModelMixin,
+    viewsets.GenericViewSet,
+):
+    # Class-level queryset for router introspection; get_queryset() scopes it.
+    queryset = League.objects.select_related("current_team")
+    serializer_class = LeagueSerializer
+    filterset_class = LeagueFilterSet
+    ordering_fields = ("name", "created_at", "id")
+    ordering = ("-id",)
+    ordering_tiebreak = ("-id",)
+
+    def get_queryset(self) -> QuerySet[League]:
+        return owned_queryset(
+            League.objects.select_related("current_team"), self.request.user
+        )
+
+    def create(self, request: Request) -> Response:
+        """Create a League + draft Season (template path or Advanced path); 201."""
+        # Normalise first so a non-object body is a 400 ``parse_error``.
+        template_data = plain_form_data(LeagueTemplateForm, request.data)
+        if "template" in request.data:
+            template_form = LeagueTemplateForm(data=template_data)
+            validate_form_or_raise(template_form)
+            template = LEAGUE_TEMPLATES_BY_KEY[template_form.cleaned_data["template"]]
+            form = CreateLeagueForm(
+                data=template_to_form_data(
+                    template,
+                    league_name=request.data.get("league_name", ""),
+                    difficulty=request.data.get("difficulty", "medium"),
+                )
+            )
+        else:
+            form = CreateLeagueForm(
+                data=plain_form_data(CreateLeagueForm, request.data)
+            )
+        validate_form_or_raise(form)
+        season = create_league_and_season(form, manager=request.user)
+        league = self.get_queryset().get(pk=season.league_id)
+        return Response(
+            {
+                **self.get_serializer(league).data,
+                "draft_season": season_ref(season),
+                "conference_ids": [c.id for c in season.ordered_conferences()],
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    def perform_destroy(self, instance: League) -> None:
+        if not is_career_league(instance):
+            raise NotCareerLeague(_DELETE_NOT_CAREER)
+        teardown_league(instance)
+
+    @action(detail=False, methods=["get"], url_path="templates", url_name="templates")
+    def league_templates(self, request: Request) -> Response:
+        """The 5 curated create-League presets (not paginated)."""
+        return Response([asdict(t) for t in LEAGUE_TEMPLATES])
+
+    @action(detail=True, methods=["get"], url_path="dashboard", url_name="dashboard")
+    def dashboard(self, request: Request, pk: str | None = None) -> Response:
+        """The League dashboard body for its displayed Season."""
+        league = self.get_object()
+        displayed_season = pick_displayed_season(league)
+        mode = season_mode_for(displayed_season)
+        return Response(
+            {"league": league_ref(league), **_dashboard_payload(displayed_season, mode)}
+        )
+
+    @action(detail=True, methods=["get"], url_path="history", url_name="history")
+    def history(self, request: Request, pk: str | None = None) -> Response:
+        """The League's Seasons (in-progress first, then completed newest-first)."""
+        league = self.get_object()
+        in_progress, completed, teams_by_id = history_seasons(league)
+        seasons = ([in_progress] if in_progress is not None else []) + completed
+        page = self.paginate_queryset(seasons)
+        items = page if page is not None else seasons
+        data = [
+            _history_item(
+                build_history_row(s, teams_by_id, is_in_progress=(s is in_progress))
+            )
+            for s in items
+        ]
+        if page is not None:
+            return self.get_paginated_response(data)
+        return Response(data)
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"teams/(?P<team_id>[0-9]+)/schedule",
+        url_name="team-schedule",
+    )
+    def team_schedule(
+        self, request: Request, pk: str | None = None, team_id: str | None = None
+    ) -> Response:
+        """One owned Team's per-Round schedule in the displayed Season."""
+        league = self.get_object()
+        team = get_owned_or_404(Team, request, pk=team_id)
+        displayed_season = pick_displayed_season(league)
+        if displayed_season is None:
+            raise NotFound("No Season in this League.")
+        return Response(
+            {
+                "league": league_ref(league),
+                "season": season_ref(displayed_season),
+                "team": team_ref(team),
+                **build_team_schedule(displayed_season, team),
+            }
+        )
+
+    @action(
+        detail=True, methods=["post"], url_path="next-season", url_name="next-season"
+    )
+    @transaction.atomic
+    def next_season(self, request: Request, pk: str | None = None) -> Response:
+        """Start the next Season (verdict gate + rollover); 201 with it."""
+        league = self.get_object()
+        try:
+            new_season = start_next_season(league)
+        except SeasonInProgressError as exc:
+            raise SeasonInProgress(exc.season) from exc
+        except NoCompletedSeasonError as exc:
+            raise NoCompletedSeason() from exc
+        except ManagerFiredError as exc:
+            raise ManagerFired() from exc
+        return Response(
+            SeasonSerializer(_season_detail(new_season)).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="new-team-candidates",
+        url_name="new-team-candidates",
+    )
+    def new_team_candidates(self, request: Request, pk: str | None = None) -> Response:
+        """The worst-N teams a fired Manager may reassign to (current excluded)."""
+        league = self.get_object()
+        if not is_career_league(league):
+            raise NotCareerLeague(_FIRING_NOT_CAREER)
+        latest = latest_completed_season(league)
+        if latest is None:
+            raise NoCompletedSeason()
+        return Response(
+            {
+                "latest_completed": season_ref(latest),
+                "candidates": [
+                    _standings_row(row, team)
+                    for row, team in eligible_new_teams(league, latest)
+                ],
+            }
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="reassign-team",
+        url_name="reassign-team",
+    )
+    @transaction.atomic
+    def reassign_team(self, request: Request, pk: str | None = None) -> Response:
+        """Reassign the Manager to an eligible team, then roll; 201."""
+        league = self.get_object()
+        if not is_career_league(league):
+            raise NotCareerLeague(_FIRING_NOT_CAREER)
+        active = league.active_season
+        if active is not None:
+            raise SeasonInProgress(active)
+        latest = latest_completed_season(league)
+        if latest is None:
+            raise NoCompletedSeason()
+        eligible = eligible_new_teams(league, latest)
+        form = ReassignTeamForm(
+            data=plain_form_data(ReassignTeamForm, request.data),
+            eligible_team_ids=[row.team_id for row, _team in eligible],
+        )
+        validate_form_or_raise(form)
+        team = get_owned_or_404(Team, request, pk=form.cleaned_data["team_id"])
+        new_season = reassign_and_roll(league, team, latest)
+        return Response(
+            SeasonSerializer(_season_detail(new_season)).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+# ---------------------------------------------------------------------------
+# /api/seasons/
+# ---------------------------------------------------------------------------
+
+
+# Seasons are created by League create / next-season only, so POST on the list
+# and PUT / PATCH / DELETE on the detail stay 405.
+@method_decorator(login_not_required, name="dispatch")
+class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
+    queryset = Season.objects.select_related("league", "champion_team")
+    filterset_class = SeasonFilterSet
+    ordering_fields = ("start_date", "created_at", "id")
+    ordering = ("-id",)
+    ordering_tiebreak = ("-id",)
+
+    def get_queryset(self) -> QuerySet[Season]:
+        qs = owned_queryset(
+            Season.objects.select_related("league", "champion_team"),
+            self.request.user,
+            path="league",
+        )
+        if self.action == "retrieve":
+            return qs.prefetch_related(*_SEASON_DETAIL_PREFETCH)
+        return qs
+
+    def get_serializer_class(self) -> type[Serializer]:
+        if self.action == "retrieve":
+            return SeasonSerializer
+        return SeasonListSerializer
+
+    @action(detail=True, methods=["get"], url_path="dashboard", url_name="dashboard")
+    def dashboard(self, request: Request, pk: str | None = None) -> Response:
+        """The Season dashboard body (mode = the Season's state)."""
+        season = self.get_object()
+        return Response(
+            {
+                "season": season_ref(season),
+                "league": league_ref(season.league),
+                **_dashboard_payload(season, season.state),
+            }
+        )
+
+    @action(detail=True, methods=["get"], url_path="standings", url_name="standings")
+    def standings(self, request: Request, pk: str | None = None) -> Response:
+        """Per-Conference standings, sortable via ``?sort=&dir=``."""
+        season = self.get_object()
+        form = StandingsParamsForm(
+            data=plain_form_data(StandingsParamsForm, request.query_params)
+        )
+        validate_form_or_raise(form)
+        sort = form.cleaned_data["sort"]
+        direction = form.cleaned_data["dir"]
+        body = build_season_standings(season, sort=sort, direction=direction)
+        return Response(
+            {
+                "season": season_ref(season),
+                "is_draft_preview": body["is_draft_preview"],
+                "sort": sort,
+                "dir": direction,
+                "groups": [
+                    {
+                        "conference": (
+                            conference_ref(group["conference"])
+                            if group["conference"] is not None
+                            else None
+                        ),
+                        "name": group["name"],
+                        "rows": [
+                            _standings_row(row, team)
+                            for row, team in group["rows_with_teams"]
+                        ],
+                    }
+                    for group in body["standings_groups"]
+                ],
+            }
+        )
+
+    @action(detail=True, methods=["get"], url_path="schedule", url_name="schedule")
+    def schedule(self, request: Request, pk: str | None = None) -> Response:
+        """Matchdays of fixtures (played Rounds overlaid) + member-night games."""
+        season = self.get_object()
+        body = build_season_schedule(season)
+        return Response(
+            {
+                "season": season_ref(season),
+                "matchdays": [
+                    {
+                        "matchday": md["matchday"],
+                        "date": md["date"],
+                        "fixtures": [
+                            {
+                                **fixture,
+                                "team_a": _ref_or_none(fixture["team_a"]),
+                                "team_b": _ref_or_none(fixture["team_b"]),
+                            }
+                            for fixture in md["fixtures"]
+                        ],
+                    }
+                    for md in body["matchdays"]
+                ],
+                "member_night_games": body["member_night_games"],
+            }
+        )
+
+    @action(detail=True, methods=["get"], url_path="awards", url_name="awards")
+    def awards(self, request: Request, pk: str | None = None) -> Response:
+        """LG-03 season-end awards."""
+        season = self.get_object()
+        body = build_season_awards(season)
+        award_set = body["awards"]
+        return Response(
+            {
+                "season": season_ref(season),
+                "has_rounds": body["has_rounds"],
+                "most_points": _winner(award_set.most_points),
+                "best_accuracy": _winner(award_set.best_accuracy),
+                "kd_by_role": {
+                    role: _winner(award_set.kd_by_role.get(role)) for role in ROLE_KEYS
+                },
+                "best_medic": _winner(award_set.best_medic),
+                "most_efficient_nuke": _winner(award_set.most_efficient_nuke),
+                "season_mvp": _winner(award_set.season_mvp),
+                "finals_mvp": _winner(award_set.finals_mvp),
+            }
+        )
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="owner-evaluation",
+        url_name="owner-evaluation",
+    )
+    def owner_evaluation(self, request: Request, pk: str | None = None) -> Response:
+        """CAR-02 owner evaluation (lazily writes the finance + eval rows)."""
+        season = self.get_object()
+        evaluation = ensure_owner_evaluation(season)
+        if evaluation is None:
+            raise NotFound("No owner evaluation for this Season.")
+        league = season.league
+        is_fired = evaluation.verdict == "fired"
+        return Response(
+            {
+                "season": season_ref(season),
+                "league": league_ref(league),
+                "team_managed": (
+                    team_ref(evaluation.team_managed)
+                    if evaluation.team_managed_id is not None
+                    else None
+                ),
+                "wins_delta": evaluation.wins_delta,
+                "playoffs_delta": evaluation.playoffs_delta,
+                "money_delta": evaluation.money_delta,
+                "wins_total": evaluation.wins_total,
+                "playoffs_total": evaluation.playoffs_total,
+                "money_total": evaluation.money_total,
+                "overall_mood": (
+                    evaluation.wins_total
+                    + evaluation.playoffs_total
+                    + evaluation.money_total
+                ),
+                "verdict": evaluation.verdict,
+                "hot_seat_level": evaluation.hot_seat_level,
+                "fired_reason": evaluation.fired_reason,
+                "is_fired": is_fired,
+                "reassigned": (
+                    is_fired and league.current_team_id != evaluation.team_managed_id
+                ),
+                "created_at": evaluation.created_at,
+            }
+        )
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="conferences",
+        url_name="conferences",
+        parser_classes=[JSONParser],
+    )
+    def conferences(self, request: Request, pk: str | None = None) -> Response:
+        """The Season's Conference partition."""
+        return Response(_conferences_payload(self.get_object()))
+
+    @conferences.mapping.put
+    def put_conferences(self, request: Request, pk: str | None = None) -> Response:
+        """Full replace of the partition (draft only); returns the saved state."""
+        season = self.get_object()
+        if season.state != "draft":
+            raise SeasonNotDraft()
+        form = ConferencePartitionForm(
+            data=plain_form_data(ConferencePartitionForm, request.data), season=season
+        )
+        validate_form_or_raise(form)
+        replace_conferences(season, form.cleaned_data["conferences"])
+        return Response(_conferences_payload(season))
