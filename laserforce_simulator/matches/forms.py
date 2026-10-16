@@ -1,9 +1,40 @@
+from typing import TYPE_CHECKING
+
 from django import forms
+from django.db.models import QuerySet
 from django.utils import timezone
+from accounts.permissions import owned_queryset
 from teams.models import Team
 from .models import MIN_BRACKET_PARTICIPANTS, League, Match, Season
 from .phase_composer import parse_phase_composition
 from core.models import ArenaMap
+
+if TYPE_CHECKING:
+    from django.contrib.auth.base_user import AbstractBaseUser
+
+
+def _valid_owned_teams(user: "AbstractBaseUser | None") -> QuerySet[Team]:
+    """ANG-01b — the valid-roster subset of the Account's competitive Teams.
+
+    Own + Unmanaged Teams via ``owned_queryset`` over ``Team.objects.regular()``
+    (so free-agent pools are excluded); ``user=None`` sees Unmanaged Teams only.
+    A foreign / pool / invalid-roster id therefore fails as ``invalid_choice``.
+    """
+    from .services import _scope_user
+
+    # The roster check reads all six slot FKs; join them so the loop issues one
+    # query instead of one per slot per Team.
+    owned = owned_queryset(Team.objects.regular(), _scope_user(user)).select_related(
+        "slot_commander",
+        "slot_heavy",
+        "slot_scout_1",
+        "slot_scout_2",
+        "slot_medic",
+        "slot_ammo",
+    )
+    return Team.objects.filter(
+        id__in=[team.id for team in owned if team.is_valid_roster]
+    )
 
 
 def _maps_with_confirmed_config():
@@ -66,11 +97,9 @@ class MatchSetupForm(forms.Form):
         empty_label="No map (3-zone fallback)",
     )
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, user: "AbstractBaseUser | None" = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        valid_teams = Team.objects.filter(
-            id__in=[team.id for team in Team.objects.all() if team.is_valid_roster]
-        )
+        valid_teams = _valid_owned_teams(user)
         self.fields["team_red"].queryset = valid_teams
         self.fields["team_blue"].queryset = valid_teams
         self.fields["arena_map"].queryset = _maps_with_confirmed_config()
@@ -95,11 +124,9 @@ class SingleRoundSetupForm(forms.Form):
         empty_label="No map (3-zone fallback)",
     )
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, user: "AbstractBaseUser | None" = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        valid_teams = Team.objects.filter(
-            id__in=[team.id for team in Team.objects.all() if team.is_valid_roster]
-        )
+        valid_teams = _valid_owned_teams(user)
         self.fields["team_red"].queryset = valid_teams
         self.fields["team_blue"].queryset = valid_teams
         self.fields["arena_map"].queryset = _maps_with_confirmed_config()
@@ -563,11 +590,23 @@ class BatchSimulateForm(forms.Form):
         empty_label="No map (3-zone fallback)",
     )
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, user: "AbstractBaseUser | None" = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        valid_teams = Team.objects.filter(
-            id__in=[team.id for team in Team.objects.all() if team.is_valid_roster]
-        )
+        valid_teams = _valid_owned_teams(user)
         self.fields["team_red"].queryset = valid_teams
         self.fields["team_blue"].queryset = valid_teams
         self.fields["arena_map"].queryset = _maps_with_confirmed_config()
+
+
+class SaveBatchGamesForm(forms.Form):
+    """ANG-01b — API-only write Form for ``POST /api/simulate-batch/<job_id>/save/``.
+
+    API-03 has no HTML Form for the save step, so ADR-0039's Form-bound-write
+    rule is met with this one. ``n`` is strict here (the HTML view clamps).
+    """
+
+    team_red = forms.IntegerField(min_value=1)
+    team_blue = forms.IntegerField(min_value=1)
+    arena_map = forms.IntegerField(min_value=1, required=False)
+    game_type = forms.ChoiceField(choices=[("avg", "avg"), ("outlier", "outlier")])
+    n = forms.IntegerField(min_value=1, max_value=10)
