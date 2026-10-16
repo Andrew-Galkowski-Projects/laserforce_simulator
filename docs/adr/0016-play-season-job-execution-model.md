@@ -1,6 +1,8 @@
 # Play Season job execution model (per-Round atomic commits, shared task body)
 
-**Status:** Accepted (LG-01d, 2026-05-27)
+**Status:** Accepted (LG-01d, 2026-05-27). §5 and the "client-side dropdown disable as the only
+concurrency guard" decision are superseded by
+[ADR-0040](0040-single-active-play-run-per-season.md) (ANG-01d-2).
 
 ## Context
 

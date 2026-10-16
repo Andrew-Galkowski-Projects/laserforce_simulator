@@ -1773,6 +1773,8 @@ the **ANG-01d-1** section of `laserforce_simulator/matches/CLAUDE.md`.
 
 #### ANG-01d-2 · League play-loop API
 
+Spec: #173
+
 **[NOT STARTED]** The play half split out of ANG-01d (grill, 2026-10-16): start Season (draft ⇒
 active), play week / play two months / play until end / play playoffs / play a single round, the One
 Week (Live) watch feed, Job status + cancel (the `Season.active_play_job_id` /

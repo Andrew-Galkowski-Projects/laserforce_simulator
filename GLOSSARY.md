@@ -357,6 +357,10 @@ _Avoid_: deriving a Job id from inputs (it is random); persisting one (it is eph
 One of `running` | `complete` | `error`. The canonical surface across both the UI polling JSON and the REST polling JSON. **Mapped from Celery's native task states at the view boundary**: `PENDING` / `STARTED` / `PROGRESS` → `running`; `SUCCESS` → `complete`; `FAILURE` / `REVOKED` → `error`. The mapped vocabulary predates API-03 (SIM-10's `_BATCH_JOBS` dict used the same three values) and is preserved deliberately so the existing polling UI JS keeps working unchanged.
 _Avoid_: exposing raw Celery states (`PENDING`, `SUCCESS`, …) in the polling JSON — the mapped values are the public contract.
 
+**Active play run**:
+The one play **Job** a **Season** may have in flight at a time (a Play Season, Play Playoffs, or Member-night job, including the rest-of-week run started by **One Week (Live)**). While a Season has an Active play run, every play action on it is refused, whether it would run in the foreground or the background. A run stops being active when its Job ends or is **stopped**. Its **Job id** remains a capability token for polling (ADR-0040).
+_Avoid_: "running job" when the Job's Celery status is meant. A Job's status can read `running` after its result expires, but the Season no longer has an Active play run.
+
 ### Analytics and review
 
 **Round scoreboard**:
