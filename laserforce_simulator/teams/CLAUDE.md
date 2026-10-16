@@ -206,11 +206,28 @@ Player is **404 on every read and write**, and the row is left unchanged.
 | GET `/api/players/<pk>/` | `retrieve` (`player-detail`) | — | 200 `PlayerSerializer` |
 | PATCH `/api/players/<pk>/` | `partial_update` (`player-detail`) | `PlayerForm` over `merged_form_data` + `full_clean()`; `team` is not a form field (cannot move a Player) | 200 `PlayerSerializer` |
 | DELETE `/api/players/<pk>/` | `destroy` (`player-detail`) | — | **204, empty body** (slot FKs `SET_NULL`) |
+| GET `/api/teams/head-to-head/?team_a=&team_b=[&provenance=&from=&to=]` | `head_to_head` (`team-head-to-head`, ANG-01b) | `TeamH2HParamsForm` (`matches/api_forms.py`) | 200 `{team_a, team_b, provenance, date_from, date_to, match_record, round_record, score_margin, avg_survivors, top_impactful, per_map_breakdown, detail_list, margin_series, cumulative_wl_series}` via `matches.services.build_team_h2h` |
+| GET `/api/players/head-to-head/?player_a=&player_b=[&role=&provenance=&from=&to=]` | `head_to_head` (`player-head-to-head`, ANG-01b) | `PlayerH2HParamsForm` (`matches/api_forms.py`) | 200 `{player_a, player_b, role, provenance, date_from, date_to, round_record, score_margin, tag_stats, per_role_breakdown, per_map_breakdown, detail_list, margin_series, cumulative_wl_series}` via `matches.services.build_player_h2h`; empty corpus ⇒ zeroed aggregates |
+| GET `/api/players/<pk>/career/[?threshold=&display=]` | `career` (`player-career`, ANG-01b) | `BenchmarkParamsForm` (`teams/api_forms.py`) | 200 `{player, total_rounds, has_rounds, career, per_role, trend, min_rounds, display, stat_keys, per_role_with_benchmarks}` via `build_career_stats` |
+| GET `/api/players/benchmarks/[?threshold=&display=]` | `benchmarks` (`player-benchmarks`, ANG-01b) | `BenchmarkParamsForm` | 200 `{min_rounds, display, roles, stat_keys, benchmarks, any_data}` via `build_role_benchmarks` (the template-only `benchmarks_by_role` is dropped) |
 
 **405s (locked):** PUT / DELETE `/api/teams/<pk>/` (**there is no team DELETE**), GET on `slots/` and
 `players/`, POST / PUT `/api/players/`, PUT `/api/players/<pk>/`, GET on `generate/` and `import/`,
 POST on `import/template/`. The three `detail=False` actions register before the detail route, so
-`generate` / `import` never resolve as a `pk`.
+`generate` / `import` never resolve as a `pk` (the ANG-01b `head-to-head` / `benchmarks` actions
+likewise).
+
+**Analytics reads (ANG-01b).** Model instances are flattened to refs — `team_ref = {id, name}`,
+`player_ref = {id, name, team: team_ref | null}`; builder output is passed through verbatim
+(including `detail_list[*].detail_url`, an HTML path). Query params are **strict** param Forms bound
+via `plain_form_data(Form, request.query_params)` + `validate_form_or_raise` (the HTML pages keep their
+lenient parsing): missing id ⇒ `required`, non-int / bad date ⇒ `invalid`, id < 1 / negative
+`threshold` ⇒ `min_value`, bad `provenance` / `role` / `display` ⇒ `invalid_choice`, the same id twice
+⇒ `invalid` with `field` null (checked **before** the lookup, so an unknown id repeated is 400, not
+404). Rows then resolve through `get_owned_or_404` (head-to-head) or `get_object()` (career) — unknown
+/ cross-Account ⇒ 404. Defaults: `provenance` "all", `role` null, `threshold` 5, `display` "mean".
+`BenchmarkParamsForm` lives in **`teams/api_forms.py`** (new). Known gap (PLAN.md Deferred Items): the
+head-to-head / career / benchmark corpora are not ownership-filtered.
 
 **Write rules worth knowing.** A slot holding a player not on this Team (including another
 Account's) ⇒ 400 `invalid_choice`, `field: "slot_<x>"`, and the message **never names** the foreign
@@ -255,6 +272,19 @@ The LG-00 / LG-00b private helpers **moved here** (`_pop_unique_name`, `_team_na
 works. To monkey-patch a dependency such as `draw_stats`, patch `teams.services`, not `teams.views`.
 `_SORT_KEYS` / `_coerce_*` stay in `teams/views.py`.
 
+**ANG-01b additions.** Two context builders shared by the HTML `player_career_stats` /
+`role_benchmarks` views (output byte-identical) and the API:
+
+| Name | What |
+|---|---|
+| `build_career_stats(player, *, min_rounds, display) -> dict` | the HX-01 context minus `player`: `total_rounds`, `career`, `per_role`, `trend`, `has_rounds`, `min_rounds`, `display`, `stat_keys`, `per_role_with_benchmarks` (benchmark overlay only when `total_rounds > 0`, else `[]`) |
+| `build_role_benchmarks(*, min_rounds, display) -> dict` | the HX-02 context verbatim: `min_rounds`, `display`, `roles`, `benchmarks`, `stat_keys`, `benchmarks_by_role` (template-only), `any_data` |
+
+The HX-01 / HX-02 helpers `_round_dict_from_state`, `_build_per_role_overlay`,
+`_HX01_DISPLAY_STAT_KEYS`, `_HX01_TO_BENCHMARK_STAT`, `_HX01B_STAT_ROW_SPEC` **moved here** and are
+re-exported from `teams/views.py`. The team / player head-to-head builders live in
+`matches/services.py` (see `matches/CLAUDE.md` **ANG-01b**).
+
 **Roster-import ownership fix (ANG-01a).** Before ANG-01a, `_check_db_slot_collisions` and
 `_apply_roster` looked Teams up by bare name (`Team.objects.get_or_create(name=...)`), ignoring
 ownership: a CSV naming **another Account's** Team appended Players to it, and a slot collision there
@@ -284,7 +314,11 @@ Tournament participant import (`matches/tournament_views.py`) all pass `manager_
 /api/teams/generate/           → POST: LG-00 generation
 /api/teams/import/             → POST (multipart): LG-00b roster import
 /api/teams/import/template/    → GET: roster template CSV (raw, not enveloped)
+/api/teams/head-to-head/       → GET: ANG-01b HX-03 team head-to-head ("team-head-to-head")
 /api/players/                  → PlayerViewSet (list, detail, PATCH, DELETE)
+/api/players/head-to-head/     → GET: ANG-01b HX-04 player head-to-head ("player-head-to-head")
+/api/players/<id>/career/      → GET: ANG-01b HX-01 career stats ("player-career")
+/api/players/benchmarks/       → GET: ANG-01b HX-02 role benchmarks ("player-benchmarks")
 ```
 
 ## HX-01 career stats

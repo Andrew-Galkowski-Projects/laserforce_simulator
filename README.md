@@ -27,7 +27,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - **User accounts & ownership** — Email + password sign-in with open self-registration. Every Team, League, Tournament, sandbox Match and standalone Round belongs to the account that created it, and the whole site sits behind a login. Rows created before you had an account (or by a management command) are *unmanaged* and stay open to any signed-in account until claimed
 - **Self-insert** — Link your account to one Player on a team you manage ("This is me" on the player's page) and that Player is flagged with a **You** badge wherever its name appears on a server-rendered page — rosters, leaderboards, stats tables, awards, box scores and tournament pools — with a **My player** shortcut in the account menu. It is purely a vanity link: the Player is not moved, copied or added to any team, and simulations are unaffected
 - **Team history** — Win/loss records across all matches
-- **REST API** — JSON endpoints at `/api/` for teams and players (read + write: create / edit teams, set roster slots, add / edit / delete players, generate players, import a roster CSV) plus read-only matches, rounds, events and maps. Every response uses one envelope — `{"data": ..., "meta": {...}}` on success, `{"errors": [{"code", "message", "field"}], "meta": {}}` on failure — lists are paginated (20 per page, `?page_size=` up to 100) and filterable / sortable via query params. You only ever see your own account's rows (another account's row is a `404`)
+- **REST API** — JSON endpoints at `/api/` for teams and players (read + write: create / edit teams, set roster slots, add / edit / delete players, generate players, import a roster CSV), match / round creation and analytics, read-only events, and the full map editor (upload / delete maps, zones, sight lines, strong spots, spawns, heatmap — maps are shared by every account). Every response uses one envelope — `{"data": ..., "meta": {...}}` on success, `{"errors": [{"code", "message", "field"}], "meta": {}}` on failure — lists are paginated (20 per page, `?page_size=` up to 100) and filterable / sortable via query params. You only ever see your own account's rows (another account's row is a `404`)
 
 ## Tech Stack
 
@@ -251,8 +251,29 @@ Action weights live in `matches/sim_helpers/weights.py` and shift dynamically ba
 | `/api/teams/import/` | POST (multipart `csv_file`) to import a roster CSV; `/api/teams/import/template/` downloads the template |
 | `/api/players/` | Player list (paginated JSON; `?team=`, `?name=`, `?ordering=`) |
 | `/api/players/<id>/` | Player detail / PATCH to edit / DELETE |
-| `/api/matches/` | Match list (`?team=`, `?season=`, `?match_type=`, `?date_played_after=` / `_before=`) |
+| `/api/players/<id>/career/` | Career stats for a player (`?threshold=`, `?display=mean\|median`) |
+| `/api/players/benchmarks/` | Per-role stat benchmarks (`?threshold=`, `?display=`) |
+| `/api/players/head-to-head/` | Player head-to-head (`?player_a=&player_b=`, optional `?role=`, `?provenance=`, `?from=` / `?to=`) |
+| `/api/teams/head-to-head/` | Team head-to-head (`?team_a=&team_b=`, optional `?provenance=`, `?from=` / `?to=`) |
+| `/api/matches/` | Match list (`?team=`, `?season=`, `?match_type=`, `?date_played_after=` / `_before=`) / POST to create and simulate a 2-round match |
 | `/api/matches/<id>/` | Match detail with round ID list |
+| `/api/rounds/` | Round list / POST to create and simulate a standalone round |
 | `/api/rounds/<id>/` | Round detail with player states |
 | `/api/rounds/<id>/events/` | Paginated event log for a round (`?event_type=`, `?actor=`, `?target=`, `?timestamp_min=` / `_max=`) |
-| `/api/maps/` | Arena map list / detail (shared across accounts) |
+| `/api/rounds/<id>/missile-log/` | Missile usage log for a round |
+| `/api/rounds/<id>/heatmap/` | Movement heatmap data for a round |
+| `/api/rounds/<id>/report/` | Round report PDF download |
+| `/api/rounds/compare/` | Side-by-side round comparison (`?round_a=&round_b=`) |
+| `/api/simulate-batch/` | POST to start a batch simulation; `/api/simulate-batch/<job_id>/` polls it, `/api/simulate-batch/<job_id>/save/` (POST) saves its average / outlier games, `/api/simulate-batch/save/<save_job_id>/` polls the save |
+| `/api/maps/` | Arena map list (shared across accounts) / POST (multipart `name` + `image`) to upload a map |
+| `/api/maps/<id>/` | Arena map detail / DELETE (refused with `409` while a Season that is not completed uses the map) |
+| `/api/maps/<id>/processed-image/` | Black-and-white processed map image (PNG) |
+| `/api/maps/<id>/zones/` | Detect the zone grid for a zone size (`?zone_size=`) |
+| `/api/maps/<id>/zone-config/` | Saved zone configuration (zones, walls, elevation, spawns, bases) / PUT to replace it |
+| `/api/maps/<id>/sight-lines/` | Saved sight lines (`?zone_size=`) / PUT to replace / PATCH to merge a batch |
+| `/api/maps/<id>/sight-lines/compute/` | POST to compute all sight lines for a zone size |
+| `/api/maps/<id>/sight-lines/cell/` | Visible cells from one cell (`?zone_size=&r=&c=`) |
+| `/api/maps/<id>/ranked-cells/` | Cells ranked by visibility (`?zone_size=`) |
+| `/api/maps/<id>/strong-spots/` | Heavy strong spots (`?zone_size=`) / PUT to replace them |
+| `/api/maps/<id>/spawn-cells/` | Red and blue spawn cells |
+| `/api/maps/<id>/heatmap/` | Movement heatmap across your rounds on this map (`?zone_size=`, optional `?team_color=red\|blue`) |

@@ -10,7 +10,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.serializers import Serializer
 
-from accounts.permissions import manager_or_none, owned_queryset
+from accounts.permissions import get_owned_or_404, manager_or_none, owned_queryset
 from laserforce_simulator.api.exceptions import (
     EnvelopeValidationError,
     ErrorEntry,
@@ -19,6 +19,10 @@ from laserforce_simulator.api.exceptions import (
 )
 from laserforce_simulator.api.forms import merged_form_data, plain_form_data
 from laserforce_simulator.api.viewsets import ListOnlyFilterMixin
+from matches.api_forms import PlayerH2HParamsForm, TeamH2HParamsForm
+from matches.api_refs import player_ref, team_ref
+from matches.services import build_player_h2h, build_team_h2h
+from teams.api_forms import BenchmarkParamsForm
 from teams.filters import PlayerFilterSet, TeamFilterSet
 from teams.forms import (
     GenerateLeagueForm,
@@ -32,6 +36,8 @@ from teams.roster_importer import RosterImportError, RowError
 from teams.serializers import PlayerSerializer, TeamListSerializer, TeamSerializer
 from teams.services import (
     annotate_overall_rating,
+    build_career_stats,
+    build_role_benchmarks,
     build_roster_template_csv,
     player_form_initial,
     run_player_generation,
@@ -211,6 +217,39 @@ class TeamViewSet(
         response["Content-Disposition"] = 'attachment; filename="roster_template.csv"'
         return response
 
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="head-to-head",
+        url_name="head-to-head",
+    )
+    def head_to_head(self, request: Request) -> Response:
+        """HX-03 team head-to-head record (strict params; 404 cross-Account)."""
+        form = TeamH2HParamsForm(
+            data=plain_form_data(TeamH2HParamsForm, request.query_params)
+        )
+        validate_form_or_raise(form)
+        cleaned = form.cleaned_data
+        team_a: Team = get_owned_or_404(Team, request, id=cleaned["team_a"])
+        team_b: Team = get_owned_or_404(Team, request, id=cleaned["team_b"])
+        payload = build_team_h2h(
+            team_a,
+            team_b,
+            provenance=cleaned["provenance"],
+            date_from=cleaned["from"],
+            date_to=cleaned["to"],
+        )
+        return Response(
+            {
+                "team_a": team_ref(team_a),
+                "team_b": team_ref(team_b),
+                "provenance": cleaned["provenance"],
+                "date_from": cleaned["from"],
+                "date_to": cleaned["to"],
+                **payload,
+            }
+        )
+
 
 @method_decorator(login_not_required, name="dispatch")
 class PlayerViewSet(
@@ -248,3 +287,92 @@ class PlayerViewSet(
         _full_clean_or_raise(player)
         player.save()
         return Response(self.get_serializer(player).data)
+
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="head-to-head",
+        url_name="head-to-head",
+    )
+    def head_to_head(self, request: Request) -> Response:
+        """HX-04 player head-to-head record (strict params; 404 cross-Account)."""
+        form = PlayerH2HParamsForm(
+            data=plain_form_data(PlayerH2HParamsForm, request.query_params)
+        )
+        validate_form_or_raise(form)
+        cleaned = form.cleaned_data
+        player_a = get_owned_or_404(
+            Player.objects.select_related("team"), request, id=cleaned["player_a"]
+        )
+        player_b = get_owned_or_404(
+            Player.objects.select_related("team"), request, id=cleaned["player_b"]
+        )
+        payload = build_player_h2h(
+            player_a,
+            player_b,
+            role=cleaned["role"],
+            provenance=cleaned["provenance"],
+            date_from=cleaned["from"],
+            date_to=cleaned["to"],
+        )
+        return Response(
+            {
+                "player_a": player_ref(player_a),
+                "player_b": player_ref(player_b),
+                "role": cleaned["role"],
+                "provenance": cleaned["provenance"],
+                "date_from": cleaned["from"],
+                "date_to": cleaned["to"],
+                **payload,
+            }
+        )
+
+    @action(detail=True, methods=["get"], url_path="career", url_name="career")
+    def career(self, request: Request, pk: str | None = None) -> Response:
+        """HX-01 career stats + HX-02 per-role benchmark overlay."""
+        player = self.get_object()
+        form = BenchmarkParamsForm(
+            data=plain_form_data(BenchmarkParamsForm, request.query_params)
+        )
+        validate_form_or_raise(form)
+        payload = build_career_stats(
+            player,
+            min_rounds=form.cleaned_data["threshold"],
+            display=form.cleaned_data["display"],
+        )
+        return Response(
+            {
+                "player": player_ref(player),
+                "total_rounds": payload["total_rounds"],
+                "has_rounds": payload["has_rounds"],
+                "career": payload["career"],
+                "per_role": payload["per_role"],
+                "trend": payload["trend"],
+                "min_rounds": payload["min_rounds"],
+                "display": payload["display"],
+                "stat_keys": payload["stat_keys"],
+                "per_role_with_benchmarks": payload["per_role_with_benchmarks"],
+            }
+        )
+
+    @action(detail=False, methods=["get"], url_path="benchmarks", url_name="benchmarks")
+    def benchmarks(self, request: Request) -> Response:
+        """HX-02 global role benchmarks (``benchmarks_by_role`` is HTML-only)."""
+        form = BenchmarkParamsForm(
+            data=plain_form_data(BenchmarkParamsForm, request.query_params)
+        )
+        validate_form_or_raise(form)
+        payload = build_role_benchmarks(
+            min_rounds=form.cleaned_data["threshold"],
+            display=form.cleaned_data["display"],
+        )
+        return Response(
+            {
+                "min_rounds": payload["min_rounds"],
+                "display": payload["display"],
+                "roles": payload["roles"],
+                "stat_keys": payload["stat_keys"],
+                "benchmarks": payload["benchmarks"],
+                "any_data": payload["any_data"],
+            }
+        )

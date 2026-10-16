@@ -774,7 +774,11 @@ class TestMethodsNotAllowed(_ApiTestCase):
         )
 
     def test_match_writes(self) -> None:
-        self.assert_405(self.api.post("/api/matches/", {}, format="json"))
+        # ANG-01b: POST /api/matches/ is now a create (400 on an empty body);
+        # every other write on a Match stays 405.
+        self.assertEqual(
+            self.api.post("/api/matches/", {}, format="json").status_code, 400
+        )
         self.assert_405(
             self.api.patch(f"/api/matches/{self.match.pk}/", {}, format="json")
         )
@@ -784,7 +788,13 @@ class TestMethodsNotAllowed(_ApiTestCase):
         self.assert_405(self.api.delete(f"/api/matches/{self.match.pk}/"))
 
     def test_round_and_event_writes(self) -> None:
-        self.assert_405(self.api.post("/api/rounds/", {}, format="json"))
+        # ANG-01b: POST /api/rounds/ is now a create (400 on an empty body).
+        self.assertEqual(
+            self.api.post("/api/rounds/", {}, format="json").status_code, 400
+        )
+        self.assert_405(
+            self.api.put(f"/api/rounds/{self.round.pk}/", {}, format="json")
+        )
         self.assert_405(
             self.api.patch(f"/api/rounds/{self.round.pk}/", {}, format="json")
         )
@@ -794,4 +804,8 @@ class TestMethodsNotAllowed(_ApiTestCase):
         )
 
     def test_map_writes(self) -> None:
-        self.assert_405(self.api.post("/api/maps/", {}, format="json"))
+        # ANG-01c: POST /api/maps/ is now a multipart upload, so a JSON body is
+        # 415; the full map write surface lives in core/test_maps_api_writes.py.
+        self.assertEqual(
+            self.api.post("/api/maps/", {}, format="json").status_code, 415
+        )

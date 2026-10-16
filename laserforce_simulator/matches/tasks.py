@@ -226,11 +226,18 @@ def save_games_task(
     seeds: list,
     n: int,
     arena_map_id: int | None = None,
+    *,
+    manager_id: int | None = None,
 ) -> dict:
     """Replay carried ``(seed, flipped)`` pairs through
     ``BatchSimulator.save_games``, return ``{"round_ids": [...]}``.
+
+    ANG-01b — when ``manager_id`` is given, every saved round is stamped to
+    that Account (the simulator itself stays manager-agnostic).
     """
     import django.db
+
+    from .models import GameRound
 
     try:
         team_red = Team.objects.get(id=team_red_id)
@@ -239,7 +246,10 @@ def save_games_task(
         game_rounds = BatchSimulator().save_games(
             team_red, team_blue, seeds, n, arena_map=arena_map
         )
-        return {"round_ids": [gr.id for gr in game_rounds]}
+        round_ids = [gr.id for gr in game_rounds]
+        if manager_id is not None:
+            GameRound.objects.filter(id__in=round_ids).update(manager_id=manager_id)
+        return {"round_ids": round_ids}
     finally:
         django.db.close_old_connections()
 

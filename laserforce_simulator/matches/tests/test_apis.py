@@ -56,9 +56,19 @@ class TestMatchAPI:
         data = self.client.get(f"/api/matches/{self.match.pk}/").json()["data"]
         assert round_.pk in data["round_ids"]
 
+    def test_post_list_now_validates(self):
+        """ANG-01b: POST creates a sandbox Match, so an empty body is 400."""
+        response = self.client.post("/api/matches/", {}, format="json")
+        assert response.status_code == 400
+        assert ("required", "team_red") in [
+            (e["code"], e["field"]) for e in response.json()["errors"]
+        ]
+
     def test_write_methods_not_allowed(self):
-        assert self.client.post("/api/matches/", {}, format="json").status_code == 405
-        assert self.client.delete(f"/api/matches/{self.match.pk}/").status_code == 405
+        url = f"/api/matches/{self.match.pk}/"
+        assert self.client.put(url, {}, format="json").status_code == 405
+        assert self.client.patch(url, {}, format="json").status_code == 405
+        assert self.client.delete(url).status_code == 405
 
 
 @pytest.mark.django_db
@@ -166,5 +176,16 @@ class TestGameRoundAPI:
         assert body["meta"]["count"] >= 1
         assert "player_states" not in body["data"][0]
 
+    def test_post_list_now_validates(self):
+        """ANG-01b: POST creates a standalone round, so an empty body is 400."""
+        response = self.client.post("/api/rounds/", {}, format="json")
+        assert response.status_code == 400
+        assert ("required", "team_red") in [
+            (e["code"], e["field"]) for e in response.json()["errors"]
+        ]
+
     def test_write_methods_not_allowed(self):
-        assert self.client.post("/api/rounds/", {}, format="json").status_code == 405
+        url = f"/api/rounds/{self.game_round.pk}/"
+        assert self.client.put(url, {}, format="json").status_code == 405
+        assert self.client.patch(url, {}, format="json").status_code == 405
+        assert self.client.delete(url).status_code == 405
