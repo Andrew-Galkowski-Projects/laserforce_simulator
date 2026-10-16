@@ -559,3 +559,79 @@ class TestBatchWorkerCount:
         with patch.object(BatchSimulator, "run_incremental", _spy):
             simulate_batch_task.apply(args=(red.id, blue.id, 2, None, 42))
         assert captured["workers"] == 1
+
+
+@pytest.mark.django_db
+class TestSaveGamesTaskManagerStamping:
+    """ANG-01b §4 — ``save_games_task(..., manager_id=...)`` stamps every
+    returned round with that Account; the default leaves them Unmanaged.
+    The positional 5-arg ``.apply(args=...)`` shape keeps working.
+    """
+
+    def test_manager_id_stamps_every_returned_round(self) -> None:
+        from django.contrib.auth import get_user_model
+
+        from matches.models import GameRound
+        from matches.tasks import save_games_task
+
+        user = get_user_model().objects.create_user(
+            email="ang01b-task-stamp@example.com", password="Str0ng-Passphrase-9"
+        )
+        red, _ = make_team_with_slots("Ang01bStampR")
+        blue, _ = make_team_with_slots("Ang01bStampB")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            result = save_games_task.apply(
+                args=(red.id, blue.id, [[111, False], [222, True]], 2, None),
+                kwargs={"manager_id": user.pk},
+            )
+
+        assert result.state == "SUCCESS", result.info
+        round_ids = result.result["round_ids"]
+        assert len(round_ids) == 2
+        managers = set(
+            GameRound.objects.filter(id__in=round_ids).values_list(
+                "manager_id", flat=True
+            )
+        )
+        assert managers == {user.pk}
+
+    def test_default_leaves_rounds_unmanaged(self) -> None:
+        from matches.models import GameRound
+        from matches.tasks import save_games_task
+
+        red, _ = make_team_with_slots("Ang01bNoStampR")
+        blue, _ = make_team_with_slots("Ang01bNoStampB")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            result = save_games_task.apply(
+                args=(red.id, blue.id, [[333, False]], 1, None)
+            )
+
+        assert result.state == "SUCCESS", result.info
+        round_ids = result.result["round_ids"]
+        assert round_ids
+        assert list(
+            GameRound.objects.filter(id__in=round_ids).values_list(
+                "manager_id", flat=True
+            )
+        ) == [None]
+
+    def test_return_shape_unchanged_with_manager_id(self) -> None:
+        from django.contrib.auth import get_user_model
+
+        from matches.tasks import save_games_task
+
+        user = get_user_model().objects.create_user(
+            email="ang01b-task-shape@example.com", password="Str0ng-Passphrase-9"
+        )
+        red, _ = make_team_with_slots("Ang01bShapeR")
+        blue, _ = make_team_with_slots("Ang01bShapeB")
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            result = save_games_task.apply(
+                args=(red.id, blue.id, [[444, False]], 1, None),
+                kwargs={"manager_id": user.pk},
+            )
+
+        assert set(result.result) == {"round_ids"}
