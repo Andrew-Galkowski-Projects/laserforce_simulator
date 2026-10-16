@@ -1,7 +1,7 @@
 """Compute the set of changed files and the pytest targets they imply.
 
-Single source of truth shared by the `verify`, `code-review`, and `update-docs`
-skills. These three skills all need the *same* deterministic facts:
+Single source of truth shared by the `verify` and `update-docs`
+skills. Both skills need the *same* deterministic facts:
 
   1. Which files changed (vs. a base ref, or just the working tree).
   2. How those files bucket by kind (python / template / migration / other).

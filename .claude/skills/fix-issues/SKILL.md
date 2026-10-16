@@ -42,7 +42,7 @@ severity, area, one-liner, and full detail section. Then:
    reproduce (stale/env), strike it
    `--tag "skipped: not reproducible"`, note it for the report, and
    `continue` the loop — never commit a non-reproducible item.
-3. **Test-first** (project TDD is mandatory — see [/tdd](../tdd/SKILL.md)).
+3. **Test-first** (project TDD is mandatory — see the `tdd` skill).
    Write ONE failing pytest regression test in the file dictated by
    CLAUDE.md placement rules. Run it; confirm it fails for the right
    reason. For pure template/markup bugs use template/view assertions

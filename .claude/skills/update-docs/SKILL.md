@@ -6,8 +6,8 @@ description: Sync all documentation (CLAUDE.md files, PLAN.md, README.md, IMPLEM
 ## Step 1 — Identify what changed
 
 The file inventory is a fixed git operation — use the shared helper (single
-source of truth, also used by `verify` and `code-review`), so the bucketing
-matches those skills exactly:
+source of truth, also used by `verify`), so the bucketing
+matches that skill exactly:
 
 ```
 python .claude/skills/verify/scripts/changed_files.py --base main --mode branch
