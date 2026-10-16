@@ -27,6 +27,7 @@ from django.urls import reverse
 
 from matches.models import GameRound, League, Match, Season
 from matches.tests.conftest import make_team_with_slots
+from teams.models import Team
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -377,3 +378,84 @@ class TestCar03MultiplayerIsolation(TestCase):
         )
         league.refresh_from_db()
         self.assertEqual(league.current_team_id, before_team)
+
+
+# ---------------------------------------------------------------------------
+# TestReassignTeamActiveSeasonGuard (ANG-01d-1 user-approved bug fix)
+# ---------------------------------------------------------------------------
+
+
+class TestReassignTeamActiveSeasonGuard(TestCase):
+    """ANG-01d-1 seam contract section 7 -- ``reassign_team`` gains an
+    active-Season guard mirroring ``next_season``.
+
+    Before the fix, a POST while a draft / active Season already existed ran
+    the rollover and created a SECOND non-completed Season
+    (``Season.objects.create`` bypasses ``Season.clean``). Now it redirects to
+    that Season's dashboard (302) and writes nothing.
+    """
+
+    def _league_with_open_season(
+        self, state: str, prefix: str
+    ) -> tuple[League, Season, list[Team]]:
+        league, _season, teams = _make_ranked_league(8, league_name=prefix)
+        open_season = Season.objects.create(
+            league=league,
+            name="Season 2",
+            start_date=date(2026, 1, 1),
+            schedule_format="single_round_robin",
+            state=state,
+        )
+        open_season.teams.add(*teams)
+        return league, open_season, teams
+
+    def _assert_guarded(self, state: str, prefix: str) -> None:
+        league, open_season, teams = self._league_with_open_season(state, prefix)
+        before_team = league.current_team_id
+        before_count = Season.objects.filter(league=league).count()
+        response = self.client.post(
+            reverse("reassign_team", kwargs={"league_id": league.id}),
+            data={"team_id": teams[-1].id},  # an otherwise-eligible worst-5 pick
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            reverse("season_dashboard", args=[open_season.id]),
+        )
+        self.assertEqual(Season.objects.filter(league=league).count(), before_count)
+        self.assertEqual(
+            Season.objects.filter(league=league).exclude(state="completed").count(),
+            1,
+        )
+        league.refresh_from_db()
+        self.assertEqual(league.current_team_id, before_team)
+
+    def test_draft_season_redirects_without_writing(self) -> None:
+        self._assert_guarded("draft", "GuardDraft")
+
+    def test_active_season_redirects_without_writing(self) -> None:
+        self._assert_guarded("active", "GuardActive")
+
+    def test_guard_runs_before_team_id_validation(self) -> None:
+        league, open_season, teams = self._league_with_open_season(
+            "draft", "GuardNoBody"
+        )
+        response = self.client.post(
+            reverse("reassign_team", kwargs={"league_id": league.id}),
+            data={"team_id": teams[0].id},  # out of the eligible set
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            reverse("season_dashboard", args=[open_season.id]),
+        )
+
+    def test_non_career_still_400_before_guard(self) -> None:
+        league, _open_season, teams = self._league_with_open_season("draft", "GuardMp")
+        league.mode = "multiplayer"
+        league.save(update_fields=["mode"])
+        response = self.client.post(
+            reverse("reassign_team", kwargs={"league_id": league.id}),
+            data={"team_id": teams[-1].id},
+        )
+        self.assertEqual(response.status_code, 400)
