@@ -45,6 +45,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   target >> tmp && cp tmp target` — which also preserves the surrounding file's
   CRLF line endings.
 
+## Browser Sessions (Chrome DevTools MCP)
+
+- **Leave no stray tabs behind.** Chrome starts with one tab already open, and
+  `close_page` refuses to close the last open page, so every extra `new_page`
+  tends to leave a tab behind after the session ends.
+- **Start with `list_pages` and reuse the existing tab** — drive it with
+  `navigate_page` / `select_page`. Only call `new_page` when you genuinely need
+  two pages open at once (e.g. a cross-Account isolation check).
+- **Close every page you opened with `new_page`** via `close_page` as soon as you
+  are done with it, and again before you report results (also when the pass
+  fails or is cut short). Finish with `list_pages` to confirm only the original
+  tab remains, then `navigate_page` it to `about:blank` so it doesn't keep
+  polling the dev server.
+
 ## Commands
 
 All commands run from the `laserforce_simulator/` subdirectory (where `manage.py` lives):
@@ -188,7 +202,11 @@ conventions** in [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator
 Shared Team/Player write logic (plus the HX-01 / HX-02 career + benchmark builders) lives in
 `teams/services.py`; sandbox Match/Round creation, batch-team resolution and the round / head-to-head
 analytics builders shared by the HTML views and the API live in `matches/services.py` (ANG-01b);
+League create / next-season rollover / reassign / teardown, the League + Season read builders
+(dashboard, history, standings, schedule, awards, owner evaluation) and the Conference replace behind
+`/api/leagues/` + `/api/seasons/` live in `matches/league_services.py` (ANG-01d-1 — moved helpers are
+re-exported from `league_views.py`, so patch `matches.league_services.*`, not `league_views`);
 the map-editor logic (upload, Season-based delete guard, zones, sight lines, requester-scoped
 multi-round heatmap) shared by the HTML map views and the now-writable `/api/maps/` lives in
-`core/services.py` (ANG-01c — maps stay unfiltered shared data). Remaining API slices are ANG-01d..g
-in `PLAN.md`.
+`core/services.py` (ANG-01c — maps stay unfiltered shared data). Remaining API slices are ANG-01d-2
+(the League play loop) and ANG-01e..g in `PLAN.md`.
