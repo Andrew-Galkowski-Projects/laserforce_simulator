@@ -1,3 +1,28 @@
+# Web testing — ANG-01c (Map editor API)
+
+Date: 2026-10-15
+Branch: `ang-01c-map-editor-api`
+Scope: scoped pass, server on port **8001**. One fresh Account; map `ChromeTest Arena` (map 1, a
+400x400 canvas-drawn PNG with a border + centre bar) uploaded via the API; guard League 6 / Season 6
+created via the shell. All test data deleted afterwards (map via the API, League + Account via shell).
+
+## Summary — ANG-01c
+| Area | Result |
+|---|---|
+| `POST /api/maps/` multipart -> 201, `img_width`/`img_height` 400x400, `has_confirmed_config` false | OK |
+| `GET /api/maps/1/zones/?zone_size=50` -> 8x8 grid; `PUT zone-config/` (zones + red/blue bases) -> 200 with the saved-state key set | OK |
+| `POST sight-lines/compute/` -> 28 keys; `ranked-cells` 28, `strong-spots` 7 (top quarter), `spawn-cells` 16 red auto-computed, `sight-lines/cell/` 12 visible | OK |
+| `PATCH sight-lines/` merge 200; `PUT strong-spots/` round-trips `[[1,1]]` | OK |
+| Strict errors: elevation `[[11]]` -> 400 `invalid` "Elevation value out of range [0.0, 10.0]: 11"; `zone_size=5` -> 400 `min_value` | OK |
+| `heatmap/` -> `{cell_occupancy: {}, zone_size, rows: 8, cols: 8, round_count: 0}`; `processed-image/` 200 `image/png` (not enveloped) | OK |
+| HTML `/maps/1/editor/` loads; its AJAX (`zones`, `processed-image`, `spawn-cells`) 200; **Save Configuration** button -> `POST /maps/1/save/` 200 | OK |
+| HTML compute + batched save (replace 10 keys, then merge 18) -> `{"status": "ok"}` x2, stored 28 keys; malformed zones -> 400 `{"status": "error", "message": "zones must be ..."}` | OK |
+| Delete guard: draft Season pool references the map -> API `DELETE` 409 `map_in_use`; HTML delete redirects to `/maps/` with "Cannot delete map “ChromeTest Arena”: it is used by a Season that is not completed."; map survives | OK |
+| After the Season is completed -> API `DELETE` 204, map 404, image file 404 | OK |
+| Console: no errors / warnings / issues on the editor or map list | OK |
+
+No findings.
+
 # Web testing — ANG-01b (Match / Round actions + analytics API)
 
 Date: 2026-10-15

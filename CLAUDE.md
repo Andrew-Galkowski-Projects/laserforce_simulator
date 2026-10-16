@@ -187,6 +187,8 @@ allowlists; cross-Account rows are 404, anonymous is 403 until ANG-03 JWT. Full 
 conventions** in [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
 Shared Team/Player write logic (plus the HX-01 / HX-02 career + benchmark builders) lives in
 `teams/services.py`; sandbox Match/Round creation, batch-team resolution and the round / head-to-head
-analytics builders shared by the HTML views and the API live in `matches/services.py` (ANG-01b).
-Remaining API slices are ANG-01c..g in
-`PLAN.md`.
+analytics builders shared by the HTML views and the API live in `matches/services.py` (ANG-01b);
+the map-editor logic (upload, Season-based delete guard, zones, sight lines, requester-scoped
+multi-round heatmap) shared by the HTML map views and the now-writable `/api/maps/` lives in
+`core/services.py` (ANG-01c — maps stay unfiltered shared data). Remaining API slices are ANG-01d..g
+in `PLAN.md`.
