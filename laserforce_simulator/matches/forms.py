@@ -772,3 +772,30 @@ class ReassignTeamForm(forms.Form):
     ) -> None:
         super().__init__(*args, **kwargs)
         self.fields["team_id"].choices = [(i, str(i)) for i in eligible_team_ids]
+
+
+MEMBER_NIGHT_NO_SITES_ERROR = "Pick at least one Site for the member night."
+
+
+class MemberNightSetupForm(forms.Form):
+    """ANG-01d-2 — the Sites to draw member-night games for (HTML + API).
+
+    ``sites`` is a multiple choice over the Season's VIABLE Sites (``>=
+    member_night.MIN_POOL`` available players). An empty selection is
+    ``required``; a non-viable / unknown Site is ``invalid_choice``.
+    """
+
+    sites = forms.MultipleChoiceField(
+        choices=(), error_messages={"required": MEMBER_NIGHT_NO_SITES_ERROR}
+    )
+
+    def __init__(self, *args: object, season: Season, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        # Lazy: ``league_play_services`` imports models / simulation; importing
+        # it at module load would create a ``forms`` -> services edge.
+        from .league_play_services import _viable_member_night_sites
+
+        self.season = season
+        self.fields["sites"].choices = [
+            (site, site) for site, _count in _viable_member_night_sites(season)
+        ]

@@ -23,7 +23,7 @@ from django.db import transaction
 from matches import finance, injury, member_night
 from matches.development import STAT_FIELDS
 from matches.league_services import _playoff_cursor_keys, is_career_league
-from matches.models import GameRound, Match, Season
+from matches.models import GameRound, Match, Season, SeasonPhase
 from matches.season_dashboard import select_play_fixtures
 from matches.simulation import BatchSimulator
 from matches.views import _celery_state_to_job_status
@@ -796,6 +796,183 @@ def play_live(season: Season) -> LivePlayResult:
     # played-keys / find-next-playable-node checks.
     job_id = enqueue_play_run(season, play_season_task, max_matchdays=1)
     return LivePlayResult(kind=kind, round_ids=round_ids, job_id=job_id)
+
+
+# ---------------------------------------------------------------------------
+# Member nights (LG-07a) -- setup, play-all, single, live
+# ---------------------------------------------------------------------------
+
+# Drawn-Team names encode the Site: ``MN <site> G<n> A`` / ``... B``.
+_MN_TEAM_PREFIX = "MN "
+
+
+def _viable_member_night_sites(season: Season) -> list[tuple[str, int]]:
+    """``(site, available-player count)`` for every viable Site, sorted."""
+    return sorted(
+        (site, len(pool))
+        for site, pool in season._member_night_pool_by_site().items()
+        if len(pool) >= member_night.MIN_POOL
+    )
+
+
+def _site_of_drawn_team(name: str) -> str | None:
+    """The Site encoded in a drawn Team's ``MN <site> G<n> A`` name."""
+    if not name.startswith(_MN_TEAM_PREFIX) or " G" not in name:
+        return None
+    return name[len(_MN_TEAM_PREFIX) :].rsplit(" G", 1)[0]
+
+
+_NO_MEMBER_NIGHT_TO_SET_UP = "No member night to set up."
+_NO_MEMBER_NIGHT_GAME = "No member-night game to play."
+
+
+def _require_member_night(
+    season: Season, wrong_phase_message: str = _NO_MEMBER_NIGHT_GAME
+) -> SeasonPhase:
+    """The current ``member_night`` phase of an active, idle Season.
+
+    Raises ``SeasonNotActiveError``, ``PlayInProgressError`` or
+    ``WrongPhaseError`` (cursor not on a member night), in that order.
+    """
+    _require_active(season)
+    _require_no_live_run(season)
+    phase = season.current_phase()
+    if phase is None or phase.phase_type != "member_night":
+        raise WrongPhaseError(wrong_phase_message)
+    return phase
+
+
+def _next_member_night_shell(season: Season) -> tuple[SeasonPhase, Match]:
+    """The member-night phase + its first unplayed game shell.
+
+    Raises the ``_require_member_night`` errors, then
+    ``NoMemberNightGamesError`` when every shell is played (or none exist).
+    """
+    phase = _require_member_night(season)
+    shell = Match.objects.filter(season_phase=phase, is_completed=False).first()
+    if shell is None:
+        raise NoMemberNightGamesError(_NO_MEMBER_NIGHT_GAME)
+    return phase, shell
+
+
+def setup_member_night(season: Season, sites: list[str], *, manager: Any = None) -> int:
+    """Draw member-night games for ``sites``; return how many were drawn.
+
+    Creates two ``is_draw_team`` Teams per game (roles fixed once, onto the
+    drawn Teams' ``slot_*`` FKs, stamped ``manager``) plus the unplayed
+    ``Match`` shell stamped ``season`` + ``season_phase`` (build-then-drain).
+    The draw consumes a FRESH ``random.Random()`` (outside the SIM seed
+    chain). A repeat call APPENDS more games. ``sites`` is pre-validated by
+    ``MemberNightSetupForm``. Raises the ``_require_member_night`` errors.
+    """
+    phase = _require_member_night(season, _NO_MEMBER_NIGHT_TO_SET_UP)
+    full_pool = season._member_night_pool_by_site()
+    pool_by_site = {site: full_pool.get(site, []) for site in sites}
+
+    with transaction.atomic():
+        games = member_night.draw_member_night_games(pool_by_site, random.Random())
+        for game in games:
+            base_name = f"{_MN_TEAM_PREFIX}{game.site} G{game.game_index + 1}"
+            drawn = []
+            for suffix, roles in (("A", game.team_a), ("B", game.team_b)):
+                team = Team.objects.create(
+                    name=f"{base_name} {suffix}", is_draw_team=True, manager=manager
+                )
+                for slot, player_id in roles.items():
+                    setattr(team, f"slot_{slot}_id", player_id)
+                team.save()
+                drawn.append(team)
+            Match.objects.create(
+                season=season,
+                season_phase=phase,
+                team_red=drawn[0],
+                team_blue=drawn[1],
+                is_completed=False,
+            )
+    return len(games)
+
+
+def play_member_night_run(season: Season) -> str:
+    """Start a ``play_member_night_task`` run draining every unplayed game.
+
+    Raises the ``_next_member_night_shell`` errors (incl.
+    ``NoMemberNightGamesError``) before anything is enqueued.
+    """
+    from matches.tasks import play_member_night_task
+
+    _next_member_night_shell(season)
+    return enqueue_play_run(season, play_member_night_task)
+
+
+def _play_member_night_shell(
+    season: Season, phase: SeasonPhase, shell: Match, *, fidelity: str = "scores"
+) -> list[int]:
+    """Play both Rounds of one member-night shell; return their Round ids."""
+    round_ids = [
+        BatchSimulator()
+        .simulate_scheduled_round(
+            season,
+            shell.team_red,
+            shell.team_blue,
+            round_number,
+            season_phase=phase,
+            fidelity=fidelity,
+        )
+        .id
+        for round_number in (1, 2)
+    ]
+    season.complete_if_finished()
+    return round_ids
+
+
+def play_member_night_single(season: Season) -> None:
+    """Play ONE unplayed member-night game (both Rounds, default fidelity)."""
+    phase, shell = _next_member_night_shell(season)
+    _play_member_night_shell(season, phase, shell)
+
+
+def play_member_night_live(season: Season) -> LivePlayResult:
+    """Play ONE member-night game at full fidelity for a live replay.
+
+    No background run is started (``job_id`` is ``None``).
+    """
+    phase, shell = _next_member_night_shell(season)
+    round_ids = _play_member_night_shell(season, phase, shell, fidelity="full")
+    return LivePlayResult(kind="member_night", round_ids=round_ids, job_id=None)
+
+
+def build_member_night_state(season: Season) -> dict:
+    """The member-night setup state for ``season``.
+
+    ``phase_active`` is whether the cursor sits on a ``member_night`` phase;
+    ``sites`` lists the viable Sites as ``{site, count, games}`` (``count`` =
+    available players, ``games`` = games drawn for that Site so far in the
+    current phase); ``games_total`` / ``games_unplayed`` count the phase's
+    game shells. All empty / zero off a member-night cursor.
+    """
+    phase = season.current_phase()
+    if phase is None or phase.phase_type != "member_night":
+        return {
+            "phase_active": False,
+            "sites": [],
+            "games_total": 0,
+            "games_unplayed": 0,
+        }
+    shells = list(Match.objects.filter(season_phase=phase).select_related("team_red"))
+    games_by_site: dict[str, int] = {}
+    for shell in shells:
+        site = _site_of_drawn_team(shell.team_red.name) if shell.team_red_id else None
+        if site is not None:
+            games_by_site[site] = games_by_site.get(site, 0) + 1
+    return {
+        "phase_active": True,
+        "sites": [
+            {"site": site, "count": count, "games": games_by_site.get(site, 0)}
+            for site, count in _viable_member_night_sites(season)
+        ],
+        "games_total": len(shells),
+        "games_unplayed": sum(1 for shell in shells if not shell.is_completed),
+    }
 
 
 # ---------------------------------------------------------------------------

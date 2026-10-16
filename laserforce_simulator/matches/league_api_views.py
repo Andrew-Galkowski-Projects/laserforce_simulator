@@ -46,6 +46,7 @@ from matches.forms import (
     ConferencePartitionForm,
     CreateLeagueForm,
     LeagueTemplateForm,
+    MemberNightSetupForm,
     ReassignTeamForm,
 )
 from matches.league_services import (
@@ -75,18 +76,25 @@ from matches.league_services import (
 )
 from matches.league_play_services import (
     NoLiveCursorError,
+    NoMemberNightGamesError,
     PlayInProgressError,
     SeasonNotActiveError,
     SeasonNotDraftError,
     WrongPhaseError,
+    build_member_night_state,
     build_play_controls,
     build_play_job_status,
     play_live,
+    play_member_night_live,
+    play_member_night_run,
+    play_member_night_single,
     play_playoffs_run,
     play_season_run,
     request_play_cancel,
 )
+from matches.league_play_services import _require_member_night
 from matches.league_play_services import play_single_round as play_single_round_svc
+from matches.league_play_services import setup_member_night as setup_member_night_svc
 from matches.league_play_services import play_week as play_week_svc
 from matches.league_play_services import start_season as start_season_svc
 from matches.league_templates import LEAGUE_TEMPLATES, LEAGUE_TEMPLATES_BY_KEY
@@ -301,6 +309,8 @@ def _start_play_run(start: Callable[[], str]) -> str:
         raise SeasonNotActive(str(exc)) from exc
     except WrongPhaseError as exc:
         raise WrongPhase(str(exc)) from exc
+    except NoMemberNightGamesError as exc:
+        raise NoMemberNightGames(str(exc)) from exc
 
 
 _T = TypeVar("_T")
@@ -317,6 +327,8 @@ def _run_sync_play(play: Callable[[], _T]) -> _T:
         return play()
     except NoLiveCursorError as exc:
         raise NoLiveCursor(str(exc)) from exc
+    except NoMemberNightGamesError as exc:
+        raise NoMemberNightGames(str(exc)) from exc
     except SeasonNotDraftError as exc:
         raise SeasonNotDraft(str(exc)) from exc
     except PlayInProgressError as exc:
@@ -822,6 +834,80 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
         job = _job_ref(season, result.job_id) if result.job_id else None
         return Response(
             {"kind": result.kind, "round_ids": result.round_ids, "job": job}
+        )
+
+    # --- ANG-01d-2 T4: member nights ------------------------------------
+
+    @action(
+        detail=True, methods=["get"], url_path="member-night", url_name="member-night"
+    )
+    def member_night(self, request: Request, pk: str | None = None) -> Response:
+        """The member-night Sites state (viable Sites + games drawn)."""
+        season = self.get_object()
+        return Response(
+            {"season": season_ref(season), **build_member_night_state(season)}
+        )
+
+    @member_night.mapping.post
+    def setup_member_night(self, request: Request, pk: str | None = None) -> Response:
+        """Draw games for the chosen Sites (repeat appends); 200 dashboard.
+
+        The state guards run before the Form so a wrong-phase / busy / inactive
+        Season is a 409 even when ``sites`` is also invalid.
+        """
+        season = self.get_object()
+        _run_sync_play(lambda: _require_member_night(season))
+        form = MemberNightSetupForm(
+            data=plain_form_data(MemberNightSetupForm, request.data), season=season
+        )
+        validate_form_or_raise(form)
+        _run_sync_play(
+            lambda: setup_member_night_svc(
+                season, form.cleaned_data["sites"], manager=request.user
+            )
+        )
+        season.refresh_from_db()
+        return Response(_season_dashboard_body(season))
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="member-night/play",
+        url_name="member-night-play",
+    )
+    def member_night_play(self, request: Request, pk: str | None = None) -> Response:
+        """Play every unplayed member-night game as the Active play run."""
+        season = self.get_object()
+        job_id = _start_play_run(lambda: play_member_night_run(season))
+        return Response(_job_ref(season, job_id))
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="member-night/play-single",
+        url_name="member-night-play-single",
+    )
+    def member_night_play_single(
+        self, request: Request, pk: str | None = None
+    ) -> Response:
+        """Play one member-night game synchronously; 200 dashboard."""
+        return self._play_then_dashboard(play_member_night_single)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="member-night/play-live",
+        url_name="member-night-play-live",
+    )
+    def member_night_play_live(
+        self, request: Request, pk: str | None = None
+    ) -> Response:
+        """Play one member-night game at full fidelity; 200 ``{kind, round_ids,
+        job}`` (``job`` is always null -- no background run)."""
+        season = self.get_object()
+        result = _run_sync_play(lambda: play_member_night_live(season))
+        return Response(
+            {"kind": result.kind, "round_ids": result.round_ids, "job": None}
         )
 
     @action(

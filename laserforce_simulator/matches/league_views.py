@@ -8,8 +8,9 @@ callables here; URL names are unchanged.
 """
 
 import random
+from collections.abc import Callable
 from datetime import date
-from typing import Optional
+from typing import Optional, TypeVar
 
 from celery.result import AsyncResult
 from django.contrib import messages
@@ -37,15 +38,20 @@ from .development import STAT_FIELDS
 from .forms import (
     ConferencePartitionForm,
     CreateLeagueForm,
+    MemberNightSetupForm,
     _maps_with_confirmed_config,
 )
 from .league_play_services import (
+    _NO_MEMBER_NIGHT_TO_SET_UP,
     NoLiveCursorError,
+    NoMemberNightGamesError,
     PlayInProgressError,
     SeasonNotActiveError,
     SeasonNotDraftError,
     WrongPhaseError,
     _job_status_fields,
+    _require_member_night,
+    play_member_night_run,
     play_playoffs_run,
     play_season_run,
     request_play_cancel,
@@ -69,7 +75,12 @@ from .league_play_services import (  # noqa: F401 - re-exports
     resolve_injuries_for_fixture,
     restore_after_fixture,
 )
+from .league_play_services import play_member_night_live as _play_member_night_live
+from .league_play_services import (
+    play_member_night_single as _play_member_night_single,
+)
 from .league_play_services import play_single_round as _play_single_round
+from .league_play_services import setup_member_night as _setup_member_night
 from .league_play_services import play_week as _play_week
 from .league_play_services import start_season as _start_season
 from .league_templates import (
@@ -94,7 +105,7 @@ from .season_dashboard import (
 )
 from .simulation import BatchSimulator
 from .standings import StandingsRow, compute_standings
-from .tasks import play_member_night_task, play_season_task
+from .tasks import play_season_task
 
 # ANG-01d-1 — the League / Season lifecycle + read helpers now live in
 # ``matches.league_services`` (shared with the REST API). Every moved name is
@@ -1420,6 +1431,11 @@ def member_night_setup(request, season_id: int) -> HttpResponse:
     build-then-drain race-free step), then 302-redirects to the dashboard. The
     draw consumes a FRESH ``random.Random()`` (non-deterministic by design,
     outside the SIM-07/08 seed chain). Re-running setup APPENDS more games.
+
+    ANG-01d-2 — binds ``MemberNightSetupForm`` and delegates to
+    ``league_play_services.setup_member_night``. A non-active Season, a cursor
+    not on a member night, or an invalid ``sites`` selection re-renders the 400
+    dashboard; a live Active play run redirects back with a ``play_error``.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1427,47 +1443,21 @@ def member_night_setup(request, season_id: int) -> HttpResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    phase = season.current_phase()
-    if phase is None or phase.phase_type != "member_night":
-        return _render_season_dashboard_error(
-            request, season, "No member night to set up."
+    try:
+        # The state guards run before the Form (the API's order too).
+        _require_member_night(season, _NO_MEMBER_NIGHT_TO_SET_UP)
+        form = MemberNightSetupForm(request.POST, season=season)
+        if not form.is_valid():
+            return _render_season_dashboard_error(
+                request, season, form.errors["sites"][0]
+            )
+        _setup_member_night(
+            season, form.cleaned_data["sites"], manager=manager_or_none(request)
         )
-
-    chosen = request.POST.getlist("sites")
-    if not chosen:
-        return _render_season_dashboard_error(
-            request, season, "Pick at least one Site for the member night."
-        )
-    full_pool = season._member_night_pool_by_site()
-    pool_by_site = {s: full_pool.get(s, []) for s in chosen}
-
-    with transaction.atomic():
-        games = member_night.draw_member_night_games(pool_by_site, random.Random())
-        for game in games:
-            base_name = f"MN {game.site} G{game.game_index + 1}"
-            team_a = Team.objects.create(
-                name=f"{base_name} A",
-                is_draw_team=True,
-                manager=manager_or_none(request),
-            )
-            for suffix, player_id in game.team_a.items():
-                setattr(team_a, f"slot_{suffix}_id", player_id)
-            team_a.save()
-            team_b = Team.objects.create(
-                name=f"{base_name} B",
-                is_draw_team=True,
-                manager=manager_or_none(request),
-            )
-            for suffix, player_id in game.team_b.items():
-                setattr(team_b, f"slot_{suffix}_id", player_id)
-            team_b.save()
-            Match.objects.create(
-                season=season,
-                season_phase=phase,
-                team_red=team_a,
-                team_blue=team_b,
-                is_completed=False,
-            )
+    except (SeasonNotActiveError, WrongPhaseError) as exc:
+        return _render_season_dashboard_error(request, season, str(exc))
+    except PlayInProgressError as exc:
+        return _redirect_with_play_error(season, request, str(exc))
 
     return redirect("season_dashboard", season_id=season.id)
 
@@ -1477,10 +1467,11 @@ def play_member_night(request, season_id: int) -> JsonResponse:
 
     Requires the cursor be on a member_night phase with >= 1 unplayed
     member-night Match; otherwise 409 JSON ``{"error": ...}`` (the
-    ``play_playoffs`` async-guard precedent). Happy path enqueues
-    ``play_member_night_task.delay(season_id)`` and returns
-    ``JsonResponse({"job_id", "season_id"}, status=202)``. Polling REUSES the
-    ``play_status`` view verbatim (same URL, same 5-base-key + PLAY-01 JSON).
+    ``play_playoffs`` async-guard precedent). Happy path starts
+    ``play_member_night_task`` through ``enqueue_play_run`` (ANG-01d-2) and
+    returns ``JsonResponse({"job_id", "season_id"}, status=202)``. A non-active
+    Season re-renders the 400 dashboard; a live run is a 409 ``play_in_progress``.
+    Polling REUSES the ``play_status`` view verbatim.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1488,32 +1479,35 @@ def play_member_night(request, season_id: int) -> JsonResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    phase = season.current_phase()
-    if (
-        phase is None
-        or phase.phase_type != "member_night"
-        or not Match.objects.filter(season_phase=phase, is_completed=False).exists()
-    ):
+    try:
+        job_id = play_member_night_run(season)
+    except SeasonNotActiveError as exc:
+        return _render_season_dashboard_error(request, season, str(exc))
+    except PlayInProgressError as exc:
+        return _play_in_progress_response(exc)
+    except (WrongPhaseError, NoMemberNightGamesError):
         return JsonResponse({"error": "No member night to play."}, status=409)
-
-    result = play_member_night_task.delay(season.id)
-    season.active_play_job_id = result.id
-    season.play_cancel_requested = False
-    season.save(update_fields=["active_play_job_id", "play_cancel_requested"])
-    return JsonResponse({"job_id": result.id, "season_id": season.id}, status=202)
+    return JsonResponse({"job_id": job_id, "season_id": season.id}, status=202)
 
 
-def _next_member_night_shell(season: "Season") -> "tuple[SeasonPhase, Match] | None":
-    """LG-07a — the current member_night phase + its first unplayed game shell,
-    or ``None`` when the cursor is not on a member_night phase / nothing unplayed.
+_T = TypeVar("_T")
+
+
+def _member_night_play_guarded(
+    request: HttpRequest, season: Season, play: Callable[[Season], _T]
+) -> tuple[_T | None, HttpResponse | None]:
+    """Run a synchronous member-night play service on ``season``.
+
+    Returns ``(result, None)``, or ``(None, error_response)``: a non-active
+    Season / no member night / nothing unplayed re-renders the 400 dashboard; a
+    live Active play run redirects back with a ``play_error``.
     """
-    phase = season.current_phase()
-    if phase is None or phase.phase_type != "member_night":
-        return None
-    shell = Match.objects.filter(season_phase=phase, is_completed=False).first()
-    if shell is None:
-        return None
-    return phase, shell
+    try:
+        return play(season), None
+    except (SeasonNotActiveError, WrongPhaseError, NoMemberNightGamesError) as exc:
+        return None, _render_season_dashboard_error(request, season, str(exc))
+    except PlayInProgressError as exc:
+        return None, _redirect_with_play_error(season, request, str(exc))
 
 
 def play_member_night_single(request, season_id: int) -> HttpResponse:
@@ -1531,19 +1525,11 @@ def play_member_night_single(request, season_id: int) -> HttpResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    resolved = _next_member_night_shell(season)
-    if resolved is None:
-        return _render_season_dashboard_error(
-            request, season, "No member-night game to play."
-        )
-    phase, shell = resolved
-    BatchSimulator().simulate_scheduled_round(
-        season, shell.team_red, shell.team_blue, 1, season_phase=phase
+    _result, error = _member_night_play_guarded(
+        request, season, _play_member_night_single
     )
-    BatchSimulator().simulate_scheduled_round(
-        season, shell.team_red, shell.team_blue, 2, season_phase=phase
-    )
-    season.complete_if_finished()
+    if error is not None:
+        return error
     return redirect("season_dashboard", season_id=season.id)
 
 
@@ -1563,23 +1549,13 @@ def play_member_night_live(request, season_id: int) -> HttpResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    resolved = _next_member_night_shell(season)
-    if resolved is None:
-        return _render_season_dashboard_error(
-            request, season, "No member-night game to play."
-        )
-    phase, shell = resolved
-    round_1 = BatchSimulator().simulate_scheduled_round(
-        season, shell.team_red, shell.team_blue, 1, season_phase=phase, fidelity="full"
-    )
-    round_2 = BatchSimulator().simulate_scheduled_round(
-        season, shell.team_red, shell.team_blue, 2, season_phase=phase, fidelity="full"
-    )
-    season.complete_if_finished()
+    result, error = _member_night_play_guarded(request, season, _play_member_night_live)
+    if error is not None:
+        return error
     request.session["live_watch"] = {
         "season_id": season.id,
-        "kind": "member_night",
-        "round_ids": [round_1.id, round_2.id],
+        "kind": result.kind,
+        "round_ids": result.round_ids,
     }
     request.session.modified = True
     return redirect("play_week_live_watch", season_id=season.id)

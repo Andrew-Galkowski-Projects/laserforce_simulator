@@ -538,3 +538,104 @@ class TestMemberNightScoreboard(TestCase):
         # Both drawn sides show their 6 borrowed Players (not 0).
         self.assertEqual(len(r.context["red_players"]), 6)
         self.assertEqual(len(r.context["blue_players"]), 6)
+
+
+# ===========================================================================
+# ANG-01d-2 T4 — shared guards (active Season, single run) + the setup Form
+# ===========================================================================
+
+
+def _draft_member_night_season(prefix: str) -> Season:
+    """A DRAFT Season (never started) composed of a member-night phase."""
+    league = League.objects.create(name=f"{prefix} League")
+    season = Season.objects.create(
+        league=league, name="S1", start_date=date(2026, 1, 1)
+    )
+    for i in range(2):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        season.teams.add(t)
+    SeasonPhase.objects.create(season=season, ordinal=1, phase_type="member_night")
+    return season
+
+
+_PLAY_VIEWS = ("play_member_night_single", "play_member_night_live")
+
+
+class TestMemberNightGuards(TestCase):
+    """The HTML member-night views delegate to ``league_play_services``: a
+    non-active Season re-renders the 400 dashboard; a live Active play run gives
+    a 409 ``play_in_progress`` JSON (play-all) or a ``play_error`` redirect."""
+
+    def _busy(self, season: Season) -> None:
+        Season.objects.filter(pk=season.pk).update(active_play_job_id="busy")
+
+    def _assert_play_error_redirect(self, response, season: Season) -> None:
+        self.assertRedirects(
+            response,
+            reverse("season_dashboard", args=[season.id]),
+            fetch_redirect_response=False,
+        )
+        self.assertTrue(self.client.session.get("play_error"))
+
+    def test_non_active_season_is_a_400_dashboard_on_every_view(self) -> None:
+        season = _draft_member_night_season("MnGuardDraft")
+        for name in ("member_night_setup", "play_member_night", *_PLAY_VIEWS):
+            r = self.client.post(reverse(name, args=[season.id]), {"sites": ["A"]})
+            self.assertEqual(r.status_code, 400, name)
+            self.assertTemplateUsed(r, "seasons/dashboard.html")
+        self.assertFalse(Match.objects.filter(season=season).exists())
+
+    def test_setup_while_a_run_is_live_redirects_with_play_error(self) -> None:
+        _league, season, _teams, mn = _member_night_active_season("MnGuardSetBusy")
+        self._busy(season)
+        r = _post_setup(self.client, season)
+        self._assert_play_error_redirect(r, season)
+        self.assertFalse(Match.objects.filter(season_phase=mn).exists())
+
+    def test_play_all_while_a_run_is_live_is_409_play_in_progress(self) -> None:
+        _league, season, _teams, _mn = _member_night_active_season("MnGuardAllBusy")
+        _post_setup(self.client, season)
+        self._busy(season)
+        r = self.client.post(reverse("play_member_night", args=[season.id]))
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.json()["code"], "play_in_progress")
+        self.assertEqual(r.json()["job_id"], "busy")
+
+    def test_single_and_live_while_a_run_is_live_redirect_with_play_error(
+        self,
+    ) -> None:
+        _league, season, _teams, mn = _member_night_active_season("MnGuardOneBusy")
+        _post_setup(self.client, season)
+        self._busy(season)
+        for name in _PLAY_VIEWS:
+            r = self.client.post(reverse(name, args=[season.id]))
+            self._assert_play_error_redirect(r, season)
+        self.assertFalse(
+            Match.objects.filter(season_phase=mn, is_completed=True).exists()
+        )
+
+    def test_play_all_records_the_run_before_enqueueing(self) -> None:
+        _league, season, _teams, _mn = _member_night_active_season("MnGuardAllJob")
+        _post_setup(self.client, season)
+        with patch("matches.tasks.play_member_night_task.apply_async") as enqueue:
+            r = self.client.post(reverse("play_member_night", args=[season.id]))
+        self.assertEqual(r.status_code, 202)
+        season.refresh_from_db()
+        self.assertEqual(season.active_play_job_id, r.json()["job_id"])
+        self.assertEqual(enqueue.call_args.kwargs["task_id"], r.json()["job_id"])
+
+    def test_setup_with_a_non_viable_site_is_a_400_dashboard(self) -> None:
+        _league, season, _teams, mn = _member_night_active_season("MnGuardBadSite")
+        r = _post_setup(self.client, season, sites=("Nowhere",))
+        self.assertEqual(r.status_code, 400)
+        self.assertTemplateUsed(r, "seasons/dashboard.html")
+        self.assertFalse(Match.objects.filter(season_phase=mn).exists())
+
+    def test_setup_with_no_site_is_a_400_dashboard_with_the_pick_message(self) -> None:
+        _league, season, _teams, mn = _member_night_active_season("MnGuardNoSite")
+        r = _post_setup(self.client, season, sites=())
+        self.assertEqual(r.status_code, 400)
+        self.assertContains(
+            r, "Pick at least one Site for the member night.", status_code=400
+        )
+        self.assertFalse(Match.objects.filter(season_phase=mn).exists())
