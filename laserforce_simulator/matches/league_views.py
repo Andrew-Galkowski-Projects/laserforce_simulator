@@ -42,12 +42,29 @@ from .forms import (
 from .league_play_services import (
     PlayInProgressError,
     SeasonNotActiveError,
+    SeasonNotDraftError,
     WrongPhaseError,
     _job_status_fields,
     play_playoffs_run,
     play_season_run,
     request_play_cancel,
 )
+
+# ANG-01d-2 T2 — the Start Season / sync play logic and the FIN-04 per-fixture
+# injury resolver live in ``matches.league_play_services`` (shared with the
+# API); re-exported here under their old names so existing imports
+# (``tasks.play_season_task``, tests) keep resolving. Patch the service module.
+from .league_play_services import (  # noqa: F401 - re-exports
+    _INJURY_SLOT_FIELDS,
+    _apply_play_hurt,
+    _pick_substitute,
+    _resolve_injuries_for_team,
+    resolve_injuries_for_fixture,
+    restore_after_fixture,
+)
+from .league_play_services import play_single_round as _play_single_round
+from .league_play_services import play_week as _play_week
+from .league_play_services import start_season as _start_season
 from .league_templates import (
     LEAGUE_TEMPLATES,
     LEAGUE_TEMPLATES_BY_KEY,
@@ -1438,7 +1455,8 @@ def season_dashboard(request, season_id: int) -> HttpResponse:
         **body,
         "sidebar_active": None,
         "sidebar_links": sidebar_links,
-        "play_error": None,
+        # ANG-01d-2 — a sync play view refused by a live run flashes here.
+        "play_error": request.session.pop("play_error", None),
         "play_job_id": None,
     }
     return render(request, "seasons/dashboard.html", context)
@@ -1471,12 +1489,12 @@ def _render_season_dashboard_error(
 def start_season(request, season_id: int) -> HttpResponse:
     """LG-01d — POST entry point for the ``draft → active`` transition.
 
-    POST only. Idempotent on the "already active" double-submit race —
-    a ``ValidationError`` whose message contains the substring
-    ``"non-completed"`` (the LG-01 ``Season.clean()`` wording) is
-    swallowed and the user is redirected to the dashboard. Any other
-    ``ValidationError`` re-renders the Season dashboard with
-    ``play_error`` populated and HTTP 400.
+    POST only. ANG-01d-2 — delegates to ``league_play_services.start_season``:
+    a non-draft Season (active or completed) keeps the idempotent double-submit
+    302 to the dashboard but is never re-snapshotted or reopened. A
+    ``ValidationError`` whose message contains ``"non-completed"`` (the LG-01
+    ``Season.clean()`` wording) also redirects; any other ``ValidationError``
+    re-renders the Season dashboard with ``play_error`` populated and HTTP 400.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1485,7 +1503,9 @@ def start_season(request, season_id: int) -> HttpResponse:
     request.session["last_league_id"] = season.league_id
 
     try:
-        season.start_season()
+        _start_season(season)
+    except SeasonNotDraftError:
+        return redirect("season_dashboard", season_id=season.id)
     except ValidationError as exc:
         messages_list = getattr(exc, "messages", None) or [str(exc)]
         joined = " ".join(messages_list)
@@ -1497,13 +1517,21 @@ def start_season(request, season_id: int) -> HttpResponse:
     return redirect("season_dashboard", season_id=season.id)
 
 
+def _redirect_with_play_error(season: Season, request, message: str) -> HttpResponse:
+    """ANG-01d-2 — redirect a sync play view back to the dashboard, flashing
+    ``message`` into the dashboard's ``play_error`` banner (popped on render)."""
+    request.session["play_error"] = message
+    return redirect("season_dashboard", season_id=season.id)
+
+
 def play_week(request, season_id: int) -> HttpResponse:
     """LG-01d — POST entry point for Play One Week (one matchday).
 
-    Sync, single ``@transaction.atomic`` wrapping every Round in the
-    next unplayed matchday. On a Season already finished (no unplayed
-    fixtures) ⇒ idempotent 302 redirect. On a non-``active`` Season ⇒
-    400 + ``play_error``.
+    Delegates to ``league_play_services.play_week`` (whole-matchday atomic, or
+    one bracket stage on a playoff cursor). On a Season already finished ⇒
+    idempotent 302 redirect. On a non-``active`` Season ⇒ 400 + ``play_error``.
+    ANG-01d-2 — while an Active play run is live ⇒ 302 back to the dashboard
+    with a ``play_error``.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1511,118 +1539,12 @@ def play_week(request, season_id: int) -> HttpResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    if season.state != "active":
-        return _render_season_dashboard_error(
-            request,
-            season,
-            f"Season must be active to play; got state={season.state!r}",
-        )
-
-    # LG-02-Part2c-3f — weekly playoff pacing. When the cursor sits on a
-    # built+active tournament phase, "One Week" drains exactly ONE bracket
-    # STAGE (the lowest incomplete (bracket_type, bracket_round) group) and
-    # then crowns the Season champion if the final node resolved. Otherwise
-    # the RR matchday path below runs unchanged. play_next_bracket_round
-    # carries its own per-Match atomicity, so the playoff branch needs no
-    # transaction.atomic wrapper.
-    #
-    # CONF-02 — "One Week" advances EVERY bracket of the phase by one stage
-    # (ADR-0035): California and Nevada play their semifinals in the same week,
-    # not one after the other. ``tournaments_for_phase`` returns the single
-    # Season-wide bracket for a 0/1-Conference Season, so that path is
-    # unchanged.
-    # CONF-04 — build the Worlds bracket BEFORE the cursor read (ADR-0037).
-    # The playoff branch below is guarded on ``bool(tournaments)``, and the
-    # cursor sitting on an unbuilt Worlds phase resolves to ``[]`` — so without
-    # this the click falls through to the round-robin path, finds no unplayed
-    # fixture and redirects having done nothing. That is the same DEAD CLICK
-    # CONF-03 closed for ``play_single_round``, one phase later. Idempotent:
-    # returns False and does nothing when the field is not ready or the bracket
-    # already exists.
-    season.build_pending_worlds_bracket()
-
-    phase = season.current_phase()
-    tournaments = season.tournaments_for_phase(phase) if phase is not None else []
-    if phase is not None and phase.phase_type == "tournament" and bool(tournaments):
-        from matches.tournament_engine import play_next_bracket_round
-
-        for tournament in tournaments:
-            play_next_bracket_round(tournament)
-        season.complete_if_finished()
-        return redirect("season_dashboard", season_id=season.id)
-
     try:
-        with transaction.atomic():
-            # LG-01j — deferred import of ArenaMap + the per-fixture
-            # map-resolver helper. Mirrors the ``play_season_task``
-            # pattern: ``in_bulk`` runs ONCE outside the per-fixture
-            # loop, the helper is called per fixture.
-            from core.models import ArenaMap
-            from matches.tasks import _fixture_map_ids, _resolve_fixture_map
-
-            # LG-02-Part2c-2 — by-phase fixtures (global-continuous matchday
-            # offset already applied) + phase-aware played_keys.
-            # LG-02-Part2c-3c — barrier-aware: the RR loop halts at an
-            # incomplete tournament phase so a mid-season bracket drains first.
-            by_phase = season.playable_fixtures_by_phase()
-            phase_by_id = {phase.id: phase for phase, _ in by_phase}
-            fixtures = [
-                (phase.id, fixture)
-                for phase, phase_fixtures in by_phase
-                for fixture in phase_fixtures
-            ]
-            # LG-02-Part2c-3a — played_keys gain ``leg`` so a double_round_robin
-            # phase's two legs are distinct.
-            played_keys = {
-                (
-                    gr.match.season_phase_id,
-                    frozenset({gr.match.team_red_id, gr.match.team_blue_id}),
-                    gr.round_number,
-                    gr.match.leg,
-                )
-                for gr in GameRound.objects.filter(match__season=season).select_related(
-                    "match"
-                )
-            }
-            to_play = select_play_fixtures(fixtures, played_keys, 1)
-            if not to_play:
-                return redirect("season_dashboard", season_id=season.id)
-            team_ids = {f.team_a_id for _pid, f in to_play} | {
-                f.team_b_id for _pid, f in to_play
-            }
-            team_by_id = Team.objects.in_bulk(team_ids)
-            # CONF-01 — build the team→Conference map ONCE outside the loop.
-            # CONF-06 — built BEFORE the bulk-load: the per-Conference rotation
-            # snapshots are part of the resolvable id union.
-            conf_by_team = season.conference_by_team_id()
-            # LG-01j — bulk-load the frozen-snapshot map pool once.
-            # SUB-01 — UNION the pool snapshot with the rotation snapshot so the
-            # ``rotate_by_matchday`` mode resolves its maps from the same load.
-            pool_by_id: dict[int, ArenaMap] = ArenaMap.objects.in_bulk(
-                _fixture_map_ids(season, conf_by_team)
-            )
-            for phase_id, fixture in to_play:
-                team_a = team_by_id[fixture.team_a_id]
-                team_b = team_by_id[fixture.team_b_id]
-                arena_map = _resolve_fixture_map(
-                    season, fixture, pool_by_id, conf_by_team=conf_by_team
-                )
-                # FIN-04 — roll injuries / resolve rosters in memory before the
-                # round sims, then restore the temporary roster afterwards.
-                token = resolve_injuries_for_fixture(season, team_a, team_b)
-                try:
-                    BatchSimulator().simulate_scheduled_round(
-                        season,
-                        team_a,
-                        team_b,
-                        fixture.round_number,
-                        arena_map=arena_map,
-                        season_phase=phase_by_id.get(phase_id),
-                        leg=fixture.leg,
-                        conference=conf_by_team.get(fixture.team_a_id),
-                    )
-                finally:
-                    restore_after_fixture(token)
+        _play_week(season)
+    except SeasonNotActiveError as exc:
+        return _render_season_dashboard_error(request, season, str(exc))
+    except PlayInProgressError as exc:
+        return _redirect_with_play_error(season, request, str(exc))
     except (ValidationError, ValueError) as exc:
         return _render_season_dashboard_error(request, season, str(exc))
 
@@ -1675,12 +1597,12 @@ def play_single_round(request, season_id: int) -> HttpResponse:
     """LG-02-Part2c-1 — POST entry point for Play Single Round (one playoff
     Match).
 
-    Sync. POST only (405 on GET). Requires the cursor be on a built + active
-    tournament phase; otherwise re-renders the Season dashboard with a
-    ``play_error`` (HTTP 400, the LG-01d ``play_error`` pattern). Plays
-    exactly one playoff Match via ``play_next_node``, then
-    ``complete_if_finished()`` crowns the Season when the final node
-    resolves. 302 redirect to the dashboard on success.
+    Sync. POST only (405 on GET). Delegates to
+    ``league_play_services.play_single_round``. A cursor that is not on a built
+    + active tournament phase re-renders the Season dashboard with a
+    ``play_error`` (HTTP 400); ANG-01d-2 — so does a non-active Season, and a
+    live Active play run redirects back with a ``play_error``. 302 redirect to
+    the dashboard on success.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1688,56 +1610,12 @@ def play_single_round(request, season_id: int) -> HttpResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    phase = season.current_phase()
-    tournaments = (
-        season.tournaments_for_phase(phase)
-        if phase is not None and phase.phase_type == "tournament"
-        else []
-    )
-    if not tournaments:
-        return _render_season_dashboard_error(
-            request, season, "No active playoff bracket to play."
-        )
-
-    from matches.tournament_engine import play_next_node
-
-    # CONF-02 — play ONE node, from the first bracket that still has a playable
-    # one. For a 0/1-Conference Season ``tournaments`` is ``[phase.tournament]``
-    # so this is byte-identical to the single ``play_next_node`` call it
-    # replaces; for a regional phase it walks the Conferences in ordinal order,
-    # keeping "Play Single Round" a single-node step across the whole phase.
-    progressed = False
-    for tournament in tournaments:
-        if play_next_node(tournament) is not None:
-            progressed = True
-            break
-    # CONF-03 — seed UNCONDITIONALLY after the click (idempotent, returns 0 when
-    # nothing is ready). This is what stops "Play Single Round" from becoming a
-    # DEAD CLICK: the click that resolves a Regional playoff's final node leaves
-    # that bracket ``completed`` and its Last-chance sibling ``setup``, so the
-    # dashboard would read neither "active" nor "completed" and hide the control.
-    # Seeding here flips the sibling to ``active`` before the redirect renders.
-    seeded = season.seed_pending_last_chance_brackets(phase)
-    if not progressed and seeded:
-        # Nothing was playable this click, but seeding just made something
-        # playable — play one node so the click is never wasted. ``tournaments``
-        # was resolved BEFORE the seed and already contains the eager row, so it
-        # sees the newly-seeded bracket; do not re-resolve.
-        for tournament in tournaments:
-            if play_next_node(tournament) is not None:
-                break
-    # CONF-04 — build the Worlds bracket if the click just finished the last
-    # Regional playoff (ADR-0037). Without this the regionals-finishing click
-    # would leave the cursor on an unbuilt Worlds phase, whose
-    # ``tournaments_for_phase`` is ``[]`` — so the NEXT click would 400 with
-    # "No active playoff bracket to play." and the user could never start Worlds.
-    # The return value is discarded and this click deliberately does NOT play a
-    # Worlds node: it already played its regional node, and the next click finds
-    # ``current_phase()`` on a built Worlds phase and drains it normally. The
-    # ``phase`` / ``tournaments`` locals above are stale afterwards; nothing
-    # below re-reads them, so do NOT re-resolve.
-    season.build_pending_worlds_bracket()
-    season.complete_if_finished()
+    try:
+        _play_single_round(season)
+    except (SeasonNotActiveError, WrongPhaseError) as exc:
+        return _render_season_dashboard_error(request, season, str(exc))
+    except PlayInProgressError as exc:
+        return _redirect_with_play_error(season, request, str(exc))
     return redirect("season_dashboard", season_id=season.id)
 
 
@@ -2374,153 +2252,6 @@ def league_delete(request: HttpRequest, league_id: int) -> HttpResponse:
         "leagues/league_confirm_delete.html",
         {"league": league, "delete_summary": delete_summary},
     )
-
-
-# FIN-04 — the 6 (slot field, role) pairs of the active roster, in slot order.
-_INJURY_SLOT_FIELDS = (
-    ("slot_commander", "commander"),
-    ("slot_heavy", "heavy"),
-    ("slot_scout_1", "scout"),
-    ("slot_scout_2", "scout"),
-    ("slot_medic", "medic"),
-    ("slot_ammo", "ammo"),
-)
-
-
-def _resolve_injuries_for_team(season: Season, team: Team, token: dict) -> None:
-    """FIN-04 — resolve injuries for ONE Team of a fixture, in-memory.
-
-    Steps (LOCKED order): the subjects are the 6 active-roster STARTERS only
-    (the ``slot_*`` players BEFORE substitution); an unavailable starter
-    decrements by 1 (no re-roll); a healthy starter who fields rolls a NEW
-    injury (fresh ``random.Random()`` per fixture, never the SIM seed chain) and
-    on a hit draws ``N = injury.draw_duration(...)`` from the LIVE current
-    ``Team.budget_health``; each now-unavailable starter resolves via the Team's
-    ``injury_policy`` (``auto_sub`` → bench → free-agent pool, ``play_hurt`` the
-    universal no-sub fallback). Stages the in-memory ``slot_*`` / 19-stat
-    mutations into ``token`` for ``restore_after_fixture`` and persists only the
-    ``games_unavailable`` change (``bulk_update`` with ``update_fields``).
-    """
-    # Snapshot the starters as they stood BEFORE any substitution (the
-    # subjects — fill-ins are never injury subjects, avoiding orphan injuries).
-    starters: list[tuple[str, "Player"]] = []
-    for slot_field, _role in _INJURY_SLOT_FIELDS:
-        player = getattr(team, slot_field)
-        if player is not None:
-            starters.append((slot_field, player))
-
-    rng = random.Random()  # FRESH per fixture — never the SIM seed chain.
-    health_effect = finance.health_effect(team.budget_health)
-
-    persisted: list[Player] = []  # players whose games_unavailable changed
-    for _slot_field, player in starters:
-        if player.games_unavailable > 0:
-            # DECREMENT an already-unavailable starter (whether sub'd out or
-            # playing hurt) — does NOT re-roll.
-            player.games_unavailable -= 1
-            persisted.append(player)
-        else:
-            # ROLL a healthy starter who actually fields.
-            age = player.age if player.age is not None else 25
-            if injury.roll_injury(age, rng):
-                n = injury.draw_duration(health_effect, age, rng)
-                player.games_unavailable = n
-                persisted.append(player)
-
-    if persisted:
-        Player.objects.bulk_update(persisted, ["games_unavailable"])
-
-    # RESOLVE the roster to a valid 6 for each now-unavailable starter.
-    bench_pool = list(team.bench_players)
-    league = season.league
-    free_agent_pool = (
-        list(league.free_agent_pool.players.all())
-        if league.free_agent_pool is not None
-        else []
-    )
-    used_sub_pks: set[int] = set()
-
-    for slot_field, player in starters:
-        if player.games_unavailable == 0:
-            continue  # this starter is fine — fields normally
-
-        if team.injury_policy == "auto_sub":
-            sub = _pick_substitute(bench_pool, free_agent_pool, used_sub_pks)
-            if sub is not None:
-                used_sub_pks.add(sub.pk)
-                # In-memory slot rewrite — restore records the ORIGINAL FK.
-                token["slot_restore"].append((team, slot_field, player))
-                setattr(team, slot_field, sub)
-                continue
-            # No available sub ⇒ play_hurt is the universal no-sub fallback.
-
-        # play_hurt (explicit policy OR the auto_sub no-sub fallback): rewrite
-        # the injured Player's 19 stat fields down by the penalty (clamp 0..100).
-        _apply_play_hurt(player, token)
-
-
-def _pick_substitute(
-    bench_pool: list, free_agent_pool: list, used_sub_pks: set
-) -> "Player | None":
-    """FIN-04 — pick an available substitute (``games_unavailable == 0``),
-    bench first then the League free-agent pool, never re-using one already
-    picked this fixture. Returns ``None`` when none is available."""
-    for source in (bench_pool, free_agent_pool):
-        for candidate in source:
-            if candidate.pk in used_sub_pks:
-                continue
-            if candidate.games_unavailable == 0:
-                return candidate
-    return None
-
-
-def _apply_play_hurt(player: "Player", token: dict) -> None:
-    """FIN-04 — subtract the flat play-hurt penalty from the injured Player's
-    19 stat fields in memory (clamped ``[0, 100]``), staging the originals into
-    ``token`` for restore. Never ``.save()``."""
-    penalty = injury.play_hurt_penalty()
-    originals: dict[str, int] = {}
-    for name in STAT_FIELDS:
-        current = getattr(player, name)
-        originals[name] = current
-        setattr(player, name, max(0, min(100, current - penalty)))
-    token["stat_restore"].append((player, originals))
-
-
-def resolve_injuries_for_fixture(
-    season: Season, team_red: Team, team_blue: Team
-) -> dict:
-    """FIN-04 — the single per-fixture injury resolver.
-
-    Called by every play path BEFORE ``simulate_scheduled_round(...)``. Returns
-    a RESTORE TOKEN (an opaque dict the caller hands to
-    ``restore_after_fixture(token)``). First-line GATE — a no-op ``{}`` when not
-    ``_is_career_league AND finance_enabled`` ⇒ byte-identical OFF. Operates on
-    the two in-memory Team objects the play loop already holds: rolls / decrements
-    availability (the only persisted write), substitutes or plays-hurt in memory.
-    """
-    league = season.league
-    if not (_is_career_league(league) and league.finance_enabled):
-        return {}
-
-    token: dict = {"slot_restore": [], "stat_restore": []}
-    _resolve_injuries_for_team(season, team_red, token)
-    _resolve_injuries_for_team(season, team_blue, token)
-    return token
-
-
-def restore_after_fixture(token: dict) -> None:
-    """FIN-04 — undo every in-memory mutation ``resolve_injuries_for_fixture``
-    applied (Team ``slot_*`` FKs and injured-Player 19-stat fields), restoring
-    the pre-fixture in-memory state. NEVER ``.save()`` — the only persisted
-    writes are the ``games_unavailable`` decrement/set done explicitly above."""
-    if not token:
-        return
-    for team, slot_field, original_player in token.get("slot_restore", []):
-        setattr(team, slot_field, original_player)
-    for player, originals in token.get("stat_restore", []):
-        for name, value in originals.items():
-            setattr(player, name, value)
 
 
 @transaction.atomic

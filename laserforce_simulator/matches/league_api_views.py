@@ -17,20 +17,25 @@ from collections.abc import Callable
 from dataclasses import asdict, fields
 
 from django.contrib.auth.decorators import login_not_required
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import QuerySet
 from django.urls import reverse
 from django.utils.decorators import method_decorator
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import APIException, NotFound
+from rest_framework.exceptions import APIException, NotFound, ValidationError
 from rest_framework.parsers import JSONParser
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.serializers import Serializer
 
 from accounts.permissions import get_owned_or_404, owned_queryset
-from laserforce_simulator.api.exceptions import validate_form_or_raise
+from laserforce_simulator.api.exceptions import (
+    EnvelopeValidationError,
+    django_validation_error_to_envelope,
+    validate_form_or_raise,
+)
 from laserforce_simulator.api.forms import plain_form_data
 from laserforce_simulator.api.viewsets import ListOnlyFilterMixin
 from matches.api_forms import StandingsParamsForm
@@ -70,12 +75,16 @@ from matches.league_services import (
 from matches.league_play_services import (
     PlayInProgressError,
     SeasonNotActiveError,
+    SeasonNotDraftError,
     WrongPhaseError,
     build_play_job_status,
     play_playoffs_run,
     play_season_run,
     request_play_cancel,
 )
+from matches.league_play_services import play_single_round as play_single_round_svc
+from matches.league_play_services import play_week as play_week_svc
+from matches.league_play_services import start_season as start_season_svc
 from matches.league_templates import LEAGUE_TEMPLATES, LEAGUE_TEMPLATES_BY_KEY
 from matches.models import League, Season
 from matches.season_awards import ROLE_KEYS, AwardWinner
@@ -288,6 +297,38 @@ def _start_play_run(start: Callable[[], str]) -> str:
         raise SeasonNotActive(str(exc)) from exc
     except WrongPhaseError as exc:
         raise WrongPhase(str(exc)) from exc
+
+
+def _run_sync_play(play: Callable[[], None]) -> None:
+    """Run a Start Season / synchronous play service, mapping its errors.
+
+    The service domain errors become 409s; a model ``ValidationError`` (e.g.
+    starting a Season with fewer than 2 teams) and a simulator ``ValueError``
+    become 400s.
+    """
+    try:
+        play()
+    except SeasonNotDraftError as exc:
+        raise SeasonNotDraft(str(exc)) from exc
+    except PlayInProgressError as exc:
+        raise PlayInProgress(exc.job_id) from exc
+    except SeasonNotActiveError as exc:
+        raise SeasonNotActive(str(exc)) from exc
+    except WrongPhaseError as exc:
+        raise WrongPhase(str(exc)) from exc
+    except DjangoValidationError as exc:
+        raise EnvelopeValidationError(django_validation_error_to_envelope(exc)) from exc
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+
+
+def _season_dashboard_body(season: Season) -> dict:
+    """The ``GET /api/seasons/<id>/dashboard/`` body for ``season``."""
+    return {
+        "season": season_ref(season),
+        "league": league_ref(season.league),
+        **_dashboard_payload(season, season.state),
+    }
 
 
 def _season_detail(season: Season) -> Season:
@@ -530,14 +571,36 @@ class SeasonViewSet(ListOnlyFilterMixin, viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=["get"], url_path="dashboard", url_name="dashboard")
     def dashboard(self, request: Request, pk: str | None = None) -> Response:
         """The Season dashboard body (mode = the Season's state)."""
+        return Response(_season_dashboard_body(self.get_object()))
+
+    # --- ANG-01d-2 T2: Start Season + synchronous play ------------------
+
+    def _play_then_dashboard(self, play: Callable[[Season], None]) -> Response:
+        """Run a sync play service on this Season; 200 the refreshed dashboard."""
         season = self.get_object()
-        return Response(
-            {
-                "season": season_ref(season),
-                "league": league_ref(season.league),
-                **_dashboard_payload(season, season.state),
-            }
-        )
+        _run_sync_play(lambda: play(season))
+        season.refresh_from_db()
+        return Response(_season_dashboard_body(season))
+
+    @action(detail=True, methods=["post"], url_path="start", url_name="start")
+    def start(self, request: Request, pk: str | None = None) -> Response:
+        """Start a draft Season; 409 ``season_not_draft`` otherwise."""
+        return self._play_then_dashboard(start_season_svc)
+
+    @action(detail=True, methods=["post"], url_path="play-week", url_name="play-week")
+    def play_week(self, request: Request, pk: str | None = None) -> Response:
+        """Play the next matchday (or one bracket stage) synchronously."""
+        return self._play_then_dashboard(play_week_svc)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="play-single-round",
+        url_name="play-single-round",
+    )
+    def play_single_round(self, request: Request, pk: str | None = None) -> Response:
+        """Play one bracket round node synchronously."""
+        return self._play_then_dashboard(play_single_round_svc)
 
     @action(detail=True, methods=["get"], url_path="standings", url_name="standings")
     def standings(self, request: Request, pk: str | None = None) -> Response:
