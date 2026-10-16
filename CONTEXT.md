@@ -349,7 +349,8 @@ _Avoid_: calling an in-process thread driving any of the above flows a "Job" (pr
 
 **Job id**:
 The opaque string returned by the POST endpoint and used to poll a **Job**'s status. A Celery task id (UUID) in production; the same string lives in the URL of `GET /matches/simulate-batch/status/<job_id>/` and `GET /api/simulate-batch/<job_id>/`. Expires from the result backend after **1 hour** (`CELERY_RESULT_EXPIRES = 3600`); polling an expired Job id resolves to **Job status** `running` (the Celery `PENDING` fallback for unknown ids — indistinguishable from "never submitted").
-_Avoid_: deriving a Job id from inputs (it is random); persisting one (it is ephemeral, lost on backend expiry).
+A Job id is a **capability token**, not an owned row: it carries no **Account**, and any authenticated Account holding the id may poll it. Ownership is enforced on the *inputs* instead — the Teams a Job is launched against must be the Account's own (or **Unmanaged**).
+_Avoid_: deriving a Job id from inputs (it is random); persisting one (it is ephemeral, lost on backend expiry); treating a Job as an **Ownership root** (there is no row to scope — a foreign Job id is not a 404 case).
 
 **Job status**:
 One of `running` | `complete` | `error`. The canonical surface across both the UI polling JSON and the REST polling JSON. **Mapped from Celery's native task states at the view boundary**: `PENDING` / `STARTED` / `PROGRESS` → `running`; `SUCCESS` → `complete`; `FAILURE` / `REVOKED` → `error`. The mapped vocabulary predates API-03 (SIM-10's `_BATCH_JOBS` dict used the same three values) and is preserved deliberately so the existing polling UI JS keeps working unchanged.

@@ -1555,8 +1555,9 @@ resolve through `resolve_import_teams` (own + Unmanaged Teams only, highest id w
 names, never `get_or_create`); a miss creates a **new Team stamped with the importer**. Same fix at the
 **tournament participant import** (`matches/tournament_views.py`), whose created Teams are now stamped.
 **Invariants:** **no migration, no simulation change, no Score Calibration re-baseline**, models /
-serializers / HTML templates / URL names unchanged. **Follow-up (out of scope):** the batch POST's
-`SimulateBatchRequestSerializer` team lookup is still not ownership-scoped. New tests:
+serializers / HTML templates / URL names unchanged. **Follow-up (closed by ANG-01b):** the batch
+POST's `SimulateBatchRequestSerializer` team lookup was not ownership-scoped; ANG-01b routes it
+through `matches.services.resolve_batch_teams` (a foreign id is now "Team {id} does not exist."). New tests:
 `laserforce_simulator/api/tests/` (envelope, form errors), `teams/tests/test_api_writes.py`,
 `test_api_filters.py`, `test_services.py`, `test_roster_import_ownership.py`,
 `matches/tests/test_api_filters.py`, `core/test_maps_api.py`; existing API tests migrated to the
@@ -1564,7 +1565,7 @@ envelope. See the seam contract
 [`.claude/worktrees/ang-01a-seam-contract.md`](.claude/worktrees/ang-01a-seam-contract.md),
 ADR-0039, and the **REST API** sections of the `teams` / `matches` / `core` CLAUDE.md files.
 
-#### ANG-01b · Match / Round actions + analytics API
+#### ANG-01b · [DONE] Match / Round actions + analytics API
 
 Expose the sandbox Match and Round surfaces that are still HTML-only: create a 2-round Match and a
 single standalone Round (binding the existing create Forms, stamping `manager`), batch simulate +
@@ -1573,6 +1574,64 @@ lookup), the RES-03 missile log, RES-04 per-round heatmap data, RV-01 compare-ro
 HX-04 player head-to-head, HX-01 career stats, HX-02 role benchmarks, and the RV-03 round report PDF
 download (a raw-file exemption like the roster CSV). Read endpoints are pure re-uses of the existing
 pure aggregation modules; no simulation change.
+
+**[DONE] Shipped (2026-10-15).** **Creates** — `POST /api/matches/` and `POST /api/rounds/` are a
+`create` method on the still-`ReadOnlyModelViewSet` (the TeamViewSet precedent, no
+`CreateModelMixin`, so PUT / PATCH / DELETE stay **405**); they bind `MatchSetupForm` /
+`SingleRoundSetupForm` with `user=request.user`, simulate **synchronously** and return **201** with the
+detail serializer, `manager` = the requesting Account. `match_type` is required. Errors: missing field ⇒
+`required`; foreign / unknown / Free Agents / invalid-roster team, bad `match_type`, unconfirmed
+`arena_map` ⇒ `invalid_choice`; same team ⇒ `invalid` "A team cannot play against itself!"
+(`field` null); a simulator `ValueError` ⇒ 400 `invalid`. **GameRound actions** —
+`GET /api/rounds/<pk>/missile-log/` (`{round_id, fired, hit, efficiency, rows}`, **upgrades the round to
+`combat` fidelity**), `/heatmap/` (`{round_id, has_map, arena_map: {id, name} | null, zone_size,
+processed_image_url, cell_occupancy_json, player_roster}`, **upgrades to `full`**), `/report/` (raw
+`application/pdf` attachment, `round-<pk>-<red>-vs-<blue>.pdf`, **not enveloped**, **no** fidelity
+upgrade) and `GET /api/rounds/compare/?round_a=&round_b=` (`{round_a, round_b, stat_keys, team_ids,
+points_series, deltas}`; no shared team ⇒ 400 `invalid`). **Fidelity fix:** the ANG-01a
+`/api/rounds/<pk>/events/` now calls `ensure_fidelity(round, "full")` before reading events (a
+`scores`-fidelity round previously returned an empty log). **Head-to-head / career / benchmarks** —
+`GET /api/teams/head-to-head/?team_a=&team_b=[&provenance=&from=&to=]`,
+`GET /api/players/head-to-head/?player_a=&player_b=[&role=&provenance=&from=&to=]`,
+`GET /api/players/<pk>/career/[?threshold=&display=]` and `GET /api/players/benchmarks/` (the
+builder dict minus the template-only `benchmarks_by_role`). Model instances are flattened to
+`{id, name}` refs; builder output is passed through verbatim (incl. `detail_list[*].detail_url`). Query
+params are **strict** param Forms — `matches/api_forms.py` (`CompareRoundsParamsForm`,
+`TeamH2HParamsForm`, `PlayerH2HParamsForm`, shared `_add_date_range` for the `from` / `to` keywords)
+and `teams/api_forms.py` (`BenchmarkParamsForm`, defaults `threshold` 5 / `display` "mean") — so a bad
+id / date / choice / negative threshold is a **400** (`required` / `invalid` / `min_value` /
+`invalid_choice`; same id twice ⇒ `invalid`, field null, checked before the 404 lookup), while the HTML
+pages keep their lenient parsing. Unknown / cross-Account ids ⇒ 404. **Batch save** —
+`POST /api/simulate-batch/<job_id>/save/` binds the new API-only `SaveBatchGamesForm` (`team_red`,
+`team_blue`, optional `arena_map`, `game_type` avg / outlier, strict `n` 1..10), resolves teams through
+`resolve_batch_teams`, and returns **200** `{job_id}`; it is **job-keyed with teams in the body — no
+session**. The batch Job id is a **capability token** (no owner check; ownership is enforced on the
+inputs). Job not `SUCCESS` (incl. unknown id) ⇒ **409 `job_not_complete`** (new `JobNotComplete`
+`APIException`); no seeds ⇒ 400 "No saved seeds for this category.".
+`GET /api/simulate-batch/save/<save_job_id>/` returns `{status, error, round_ids}` byte-identical to the
+HTML `save_batch_status` JSON (never 4xx). `save_games_task(..., *, manager_id=None)` stamps every saved
+round — **behaviour change: the HTML save stamps too, so batch-saved rounds are now owned by the saver,
+not Unmanaged**. **Services** — new `matches/services.py`: `MatchSetupError`, `check_matchup`,
+`resolve_batch_teams`, `create_sandbox_match`, `create_sandbox_round`, `shared_team_ids`,
+`build_round_comparison`, `build_team_h2h`, `build_player_h2h`, `build_missile_log`, `build_heatmap`,
+`build_round_report_data`, `round_report_filename`, plus the moved RV-01 / HX-03 / HX-04 private
+helpers (re-exported from `matches/views.py`); `teams/services.py` gains `build_career_stats` /
+`build_role_benchmarks` and the moved HX-01 / HX-02 helpers (re-exported from `teams/views.py`).
+`build_save_status_response` is now public (old underscore alias kept). HTML output of every
+delegating view is byte-identical. **Ownership fixes** — `MatchSetupForm` / `SingleRoundSetupForm` /
+`BatchSimulateForm` take a keyword-only `user` and scope `team_red` / `team_blue` to owned + Unmanaged
+**regular** Teams with a valid roster (HTML and API); the HTML compare-rounds, team head-to-head and
+player head-to-head pickers (and their preselect lookups — closes a team-name leak) are scoped the same
+way; the batch POST closes the ANG-01a follow-up. **Invariants:** **no migration, no simulation change,
+no Score Calibration re-baseline, no ADR**; pure aggregation modules untouched. Deferred (see Deferred
+Items): H2H / career / benchmark corpora are not ownership-filtered; HTML save trusts session team ids.
+New tests: `matches/tests/test_api_match_create.py`, `test_api_round_analytics.py`,
+`test_api_compare_rounds.py`, `test_api_h2h.py`, `test_api_batch_save.py`, `test_services.py`,
+`test_setup_form_scoping.py`, `teams/tests/test_api_career.py`; extended `test_batch_tasks.py`,
+`teams/tests/test_services.py`; `test_apis.py` write-method tests rewritten (POST {} ⇒ 400 `required`).
+See the seam contract
+[`.claude/worktrees/ang-01b-seam-contract.md`](.claude/worktrees/ang-01b-seam-contract.md) and the
+**REST API** sections of the `teams` / `matches` CLAUDE.md files.
 
 #### ANG-01c · Map editor API
 
@@ -1808,6 +1867,17 @@ The following were explicitly scoped out and should not be implemented until re-
   a JS-patched leaders card mid-run (it returns on reload). Fix by passing `request=` (or the
   `self_insert_player_id` key) into that `render_to_string` call, checking the poll endpoint's query
   budget
+- **Ownership-filtered head-to-head / career / benchmark corpora** (ANG-01b follow-up) — the HX-03 /
+  HX-04 round sets (`_h2h_matches_qs`, `_h2h_rounds_qs`, `_player_h2h_rounds_qs`), the HX-01 career
+  round set and the HX-02 benchmark population are **not ownership-filtered**, in HTML or the API: a
+  foreign Account's Match between two Unmanaged Teams can appear in `detail_list` (scores plus round
+  ids, which then 404). Fixing it means passing `user` into the `matches.services` /
+  `teams.services` builders and filtering by `owned_match_q` / `owned_game_round_q`; it changes HTML
+  output, so it was held back to keep ANG-01b's byte-identical guarantee
+- **HTML batch save trusts session team ids** (ANG-01b follow-up) — the HTML `save_batch_games` reads
+  the team ids the status poll wrote into the session from its query params, with no ownership check.
+  The API save is unaffected (teams in the body, resolved by `resolve_batch_teams`); the HTML path
+  could reuse `resolve_batch_teams` the same way
 
 ---
 

@@ -251,8 +251,18 @@ Action weights live in `matches/sim_helpers/weights.py` and shift dynamically ba
 | `/api/teams/import/` | POST (multipart `csv_file`) to import a roster CSV; `/api/teams/import/template/` downloads the template |
 | `/api/players/` | Player list (paginated JSON; `?team=`, `?name=`, `?ordering=`) |
 | `/api/players/<id>/` | Player detail / PATCH to edit / DELETE |
-| `/api/matches/` | Match list (`?team=`, `?season=`, `?match_type=`, `?date_played_after=` / `_before=`) |
+| `/api/players/<id>/career/` | Career stats for a player (`?threshold=`, `?display=mean\|median`) |
+| `/api/players/benchmarks/` | Per-role stat benchmarks (`?threshold=`, `?display=`) |
+| `/api/players/head-to-head/` | Player head-to-head (`?player_a=&player_b=`, optional `?role=`, `?provenance=`, `?from=` / `?to=`) |
+| `/api/teams/head-to-head/` | Team head-to-head (`?team_a=&team_b=`, optional `?provenance=`, `?from=` / `?to=`) |
+| `/api/matches/` | Match list (`?team=`, `?season=`, `?match_type=`, `?date_played_after=` / `_before=`) / POST to create and simulate a 2-round match |
 | `/api/matches/<id>/` | Match detail with round ID list |
+| `/api/rounds/` | Round list / POST to create and simulate a standalone round |
 | `/api/rounds/<id>/` | Round detail with player states |
 | `/api/rounds/<id>/events/` | Paginated event log for a round (`?event_type=`, `?actor=`, `?target=`, `?timestamp_min=` / `_max=`) |
+| `/api/rounds/<id>/missile-log/` | Missile usage log for a round |
+| `/api/rounds/<id>/heatmap/` | Movement heatmap data for a round |
+| `/api/rounds/<id>/report/` | Round report PDF download |
+| `/api/rounds/compare/` | Side-by-side round comparison (`?round_a=&round_b=`) |
+| `/api/simulate-batch/` | POST to start a batch simulation; `/api/simulate-batch/<job_id>/` polls it, `/api/simulate-batch/<job_id>/save/` (POST) saves its average / outlier games, `/api/simulate-batch/save/<save_job_id>/` polls the save |
 | `/api/maps/` | Arena map list / detail (shared across accounts) |

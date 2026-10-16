@@ -1,3 +1,41 @@
+# Web testing — ANG-01b (Match / Round actions + analytics API)
+
+Date: 2026-10-15
+Branch: `ang-01b-match-round-analytics-api`
+Scope: scoped pass, server on port **8001** with `LF_CELERY_EAGER=1` (batch + save run inline).
+Account A (`chrometest-a-ang01b@`): Teams 30/31/32 (`/api/teams/generate/`), Match 28 (HTML create),
+Match 29 + standalone Round 44 (API creates), batch-saved Rounds 40/41 (HTML) and 45 (API).
+Account B (`chrometest-b-ang01b@`, isolated context): Teams 33/34, Match 27 (Rounds 36/37), Player 467.
+
+## Summary — ANG-01b
+| Area | Result |
+|---|---|
+| HTML `/matches/create/` picker lists only A's teams (B's 33/34 absent); submit redirects to Match 28 | OK |
+| Forged HTML POST to `/matches/single-round/create/` with B's team 33 -> 200 form error "valid choice", B's team name not echoed | OK |
+| HTML batch (10 runs) -> status `complete` -> save avg n=2 -> Rounds 40/41 stamped `manager` = A; B gets 404 on `/api/rounds/40/` | OK |
+| `POST /api/matches/` 201 (Match 29, manager = A); `POST /api/rounds/` 201 with 12 nested `player_states` (Round 44 manager = A in DB) | OK |
+| `GET /api/rounds/38/events/` on a `scores`-tier Match round -> 1296 events (fidelity fix: was empty before ANG-01b) | OK |
+| `missile-log/` + `heatmap/` 200 with contract key sets; `report/` 200 `application/pdf`, `attachment; filename="round-38-nova-wolves-vs-astral-bandits.pdf"`, body `%PDF`, not enveloped | OK |
+| `/api/rounds/compare/` 200; same id -> 400 `invalid` / `field: null` | OK |
+| `/api/teams/head-to-head/` 200; `provenance=bogus` -> 400 `invalid_choice` / `field: "provenance"`; same team -> 400; B's team -> 404 `not_found` | OK |
+| `/api/players/head-to-head/`, `/api/players/449/career/`, `/api/players/benchmarks/?display=median` 200; B's Player 467 career -> 404 | OK |
+| API batch (n=6) -> `/api/simulate-batch/<job>/save/` outlier n=1 -> poll `/api/simulate-batch/save/<id>/` `complete`, `round_ids: [45]` | OK |
+| Unknown job id save -> 409 `job_not_complete`; foreign Team 33 on batch POST and on save -> 400 "Team 33 does not exist." | OK |
+| HTML `/matches/h2h/`, `/matches/h2h/player/`, `/matches/compare/` pickers exclude B's rows (compare also lists Unmanaged sandbox Rounds 15-20 — correct); results render; missile log / heatmap / export / career / benchmarks HTML 200 | OK |
+| Console: no errors / warnings / issues | OK |
+
+No findings in scope. Note (not a bug): `GameRoundSerializer` does not expose `manager` (pre-existing explicit field list), so a created Round's ownership is only visible via the DB / cross-Account 404.
+
+## Deferred (logged, out of ANG-01b scope — see PLAN.md Deferred Items)
+- **ANG01b-D1 · H2H / career / benchmark corpora not ownership-filtered.** `matches/services.py`
+  `_h2h_matches_qs` / `_h2h_rounds_qs` / `_player_h2h_rounds_qs`, the career round set and the HX-02
+  benchmark population read every row. A foreign Account's Match between two Unmanaged Teams can
+  appear in a head-to-head `detail_list` (its round link then 404s). Fix = thread `user` into the
+  builders and filter by `owned_match_q` / `owned_game_round_q` (changes HTML output).
+- **ANG01b-D2 · HTML `save_batch_games` trusts session team ids.** `matches/views.py::save_batch_games`
+  reads `team_red_id` / `team_blue_id` from `request.session["batch_seeds"]`, which the status poll
+  copies from its query params without an ownership check. Could reuse `services.resolve_batch_teams`.
+
 # Web testing — ANG-01a (REST API foundation + Team/Player writes)
 
 Date: 2026-10-14

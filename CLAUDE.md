@@ -185,5 +185,8 @@ Match (2 rounds, winner by rounds then points)
 (serializers are output-only; views raise, never build a 4xx `Response`); explicit `django-filter`
 allowlists; cross-Account rows are 404, anonymous is 403 until ANG-03 JWT. Full rules: **API
 conventions** in [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
-Shared Team/Player write logic lives in `teams/services.py`. Remaining API slices are ANG-01b..g in
+Shared Team/Player write logic (plus the HX-01 / HX-02 career + benchmark builders) lives in
+`teams/services.py`; sandbox Match/Round creation, batch-team resolution and the round / head-to-head
+analytics builders shared by the HTML views and the API live in `matches/services.py` (ANG-01b).
+Remaining API slices are ANG-01c..g in
 `PLAN.md`.
