@@ -459,6 +459,25 @@ class TestPlayMemberNightLive(TestCase):
         self.assertEqual(watch["kind"], "member_night")
         self.assertEqual(len(watch["round_ids"]), 2)
 
+    def test_watch_page_emits_the_playback_data_for_both_rounds(self) -> None:
+        """L-4: the watch page after a member-night Live play renders the
+        json_script blocks its playback script reads (both Rounds + toggle)."""
+        _league, season, _teams, _mn = _member_night_active_season("MnLiveWatch")
+        _post_setup(self.client, season)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            self.client.post(reverse("play_member_night_live", args=[season.id]))
+        r = self.client.get(reverse("play_week_live_watch", args=[season.id]))
+        self.assertEqual(r.status_code, 200)
+        html = r.content.decode()
+        for dom_id in (
+            "events-data-1",
+            "players-data-1",
+            "events-data-2",
+            "players-data-2",
+            "play-week-live-round-toggle",
+        ):
+            self.assertIn(f'id="{dom_id}"', html)
+
 
 # ===========================================================================
 # Schedule surfaces — League schedule + Team schedule member-night sections

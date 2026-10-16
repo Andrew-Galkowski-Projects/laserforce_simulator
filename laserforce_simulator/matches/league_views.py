@@ -1750,9 +1750,14 @@ def play_week_live_watch(request, season_id: int) -> HttpResponse:
             request, season, "No live game to watch — start one from the Play menu."
         )
 
+    cursor_kind = watch.get("kind", "rr")
+    if cursor_kind == "member_night":
+        # A member-night game is one 2-Round Match: replay it like a playoff
+        # Match (both Rounds + toggle); one Round falls back to the RR path.
+        cursor_kind = "playoff" if len(rounds) > 1 else "rr"
     context = {
         "season": season,
-        "cursor_kind": watch.get("kind", "rr"),
+        "cursor_kind": cursor_kind,
         "preview_round": rounds[0],
         "preview_round_2": rounds[1] if len(rounds) > 1 else None,
         "sidebar_active": None,
