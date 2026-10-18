@@ -142,6 +142,24 @@ def enqueue_play_run(season: Season, task: Task, **task_kwargs: Any) -> str:
     return job_id
 
 
+def _ensure_broker_reachable(task: Task) -> None:
+    """Raise ``BrokerUnavailableError`` unless ``task``'s broker accepts a
+    connection.
+
+    A play path that commits a game before enqueueing (live play) probes
+    first, so a down broker fails the request with nothing played rather than
+    half a week (L-7). Eager Celery runs tasks in-process and never touches
+    the broker, so the probe is a no-op there.
+    """
+    if task.app.conf.task_always_eager:
+        return
+    try:
+        with task.app.connection_for_write() as conn:
+            conn.ensure_connection(max_retries=1)
+    except OperationalError as exc:
+        raise BrokerUnavailableError() from exc
+
+
 def _is_broker_failure(task: Task, exc: Exception) -> bool:
     """True when ``apply_async`` failed on the broker / result backend.
 
@@ -811,8 +829,9 @@ def _commit_live_playoff_match(cursor: dict) -> list[int]:
 def play_live(season: Season) -> LivePlayResult:
     """One Week (Live): commit the manager's game, then run the rest of the week.
 
-    Raises ``SeasonNotActiveError``, ``PlayInProgressError`` (checked BEFORE
-    anything is committed) or ``NoLiveCursorError``. On a manager bye only the
+    Raises ``SeasonNotActiveError``, ``PlayInProgressError``,
+    ``NoLiveCursorError`` or ``BrokerUnavailableError`` (all checked BEFORE
+    anything is committed). On a manager bye only the
     background run starts. A ``ValidationError`` / ``ValueError`` from the
     simulator propagates with no run started.
     """
@@ -823,6 +842,9 @@ def play_live(season: Season) -> LivePlayResult:
     cursor = resolve_live_cursor(season)
     if cursor is None:
         raise NoLiveCursorError("No live game to play for your team.")
+    # L-7: probe the broker before committing the manager's game, so a down
+    # broker can't leave the week half-played.
+    _ensure_broker_reachable(play_season_task)
     if cursor["kind"] == "rr_bye":
         round_ids: list[int] = []
         kind = "rr"

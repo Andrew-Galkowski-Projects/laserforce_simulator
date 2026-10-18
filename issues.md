@@ -21,7 +21,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ~~L-4~~ | ~~🔴~~ | ~~Member night Live replay~~ | ~~The "Single Members Game (Live)" watch page renders no playback data and throws a JS TypeError (pre-existing, not a regression)~~ _(fixed (d375f22, browser gate skipped))_ |
 | ~~L-5~~ | ~~🟠~~ | ~~Active play run guard~~ | ~~A stale `active_play_job_id` blocks every sync play control, and Cancel cannot clear it, so nothing in the UI recovers the Season~~ _(fixed (ba76e66, browser gate skipped))_ |
 | ~~L-6~~ | ~~🟡~~ | ~~Async play endpoints~~ | ~~With the broker down, Two Months / Until End / Playoffs / One Week (Live) all return a 500 HTML page (pre-existing)~~ _(fixed (browser gate skipped))_ |
-| L-7 | 🟡 | One Week (Live), broker down | The manager's game commits before the enqueue 500s, leaving the week half-played and the Live entry hidden (pre-existing) |
+| ~~L-7~~ | ~~🟡~~ | ~~One Week (Live), broker down~~ | ~~The manager's game commits before the enqueue 500s, leaving the week half-played and the Live entry hidden (pre-existing)~~ _(fixed (browser gate skipped))_ |
 | L-8 | 🟡 | Play poll JS | The 500 ms `setInterval` keeps firing while earlier polls are still pending, so slow or failing polls pile up |
 | L-9 | ℹ️ | Error re-renders | A sync play error re-renders the dashboard at the POST URL (for example `/seasons/13/member-night/setup/`) |
 | L-10 | 🟡 | Delete League | Member-night drawn Teams (`MN <site> G<n> A/B`) survive the League teardown as orphans |
@@ -111,7 +111,7 @@ backend` → Django 500 page, and the topnav JS then fails to parse JSON. `tourn
 already handles this case with `retry=False` and a 503 JSON response. `main` behaved the same (it
 called `.delay()` directly), so this is not a regression. The UX is still poor.
 
-### 🟡 L-7 — One Week (Live) commits the manager's game before the enqueue fails (pre-existing)
+### ~~🟡 L-7 — One Week (Live) commits the manager's game before the enqueue fails (pre-existing)~~ _(fixed (browser gate skipped))_
 `play_live` commits the manager's Round first, then enqueues (`league_play_services.py:788-797`). With
 the broker down: 500, 5 rounds in the DB (matchday 3 half-played), no watch page. The Live entry then
 disappears until One Week finishes the matchday, because `_resolve_live_cursor` finds no manager game
