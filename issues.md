@@ -22,7 +22,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ~~L-5~~ | ~~🟠~~ | ~~Active play run guard~~ | ~~A stale `active_play_job_id` blocks every sync play control, and Cancel cannot clear it, so nothing in the UI recovers the Season~~ _(fixed (ba76e66, browser gate skipped))_ |
 | ~~L-6~~ | ~~🟡~~ | ~~Async play endpoints~~ | ~~With the broker down, Two Months / Until End / Playoffs / One Week (Live) all return a 500 HTML page (pre-existing)~~ _(fixed (browser gate skipped))_ |
 | ~~L-7~~ | ~~🟡~~ | ~~One Week (Live), broker down~~ | ~~The manager's game commits before the enqueue 500s, leaving the week half-played and the Live entry hidden (pre-existing)~~ _(fixed (browser gate skipped))_ |
-| L-8 | 🟡 | Play poll JS | The 500 ms `setInterval` keeps firing while earlier polls are still pending, so slow or failing polls pile up |
+| ~~L-8~~ | ~~🟡~~ | ~~Play poll JS~~ | ~~The 500 ms `setInterval` keeps firing while earlier polls are still pending, so slow or failing polls pile up~~ _(fixed (browser gate skipped; node harness verified))_ |
 | L-9 | ℹ️ | Error re-renders | A sync play error re-renders the dashboard at the POST URL (for example `/seasons/13/member-night/setup/`) |
 | L-10 | 🟡 | Delete League | Member-night drawn Teams (`MN <site> G<n> A/B`) survive the League teardown as orphans |
 
@@ -117,7 +117,7 @@ the broker down: 500, 5 rounds in the DB (matchday 3 half-played), no watch page
 disappears until One Week finishes the matchday, because `_resolve_live_cursor` finds no manager game
 on the half-played matchday. Recoverable, but confusing.
 
-### 🟡 L-8 — Play-status polls pile up
+### ~~🟡 L-8 — Play-status polls pile up~~ _(fixed (browser gate skipped; node harness verified))_
 `templates/_partials/topnav_play_script.html:108` polls with `setInterval(…, 500)` and no in-flight
 guard. A failing job (500s) or slow responses produce a stack of `[pending]` requests (8+ seen within
 seconds). Fix idea: chain `setTimeout` after each response.

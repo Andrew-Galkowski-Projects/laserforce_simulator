@@ -529,6 +529,7 @@ yields the locked tournament-node-swiss-{bracket_round}-{position} ids).
     var errorEl = null;
 
     var pollTimer = null;
+    var pollJobId = null;
 
     function ensureErrorEl() {
         if (errorEl) return errorEl;
@@ -574,8 +575,9 @@ yields the locked tournament-node-swiss-{bracket_round}-{position} ids).
     }
 
     function clearPolling() {
+        pollJobId = null;
         if (pollTimer !== null) {
-            clearInterval(pollTimer);
+            clearTimeout(pollTimer);
             pollTimer = null;
         }
     }
@@ -589,25 +591,40 @@ yields the locked tournament-node-swiss-{bracket_round}-{position} ids).
         el.textContent = msg;
     }
 
+    // L-8: each poll schedules the next only after it answers, so slow or
+    // failing polls never pile up. pollJobId guards an in-flight poll that
+    // lands after clearPolling() from rescheduling.
+    function schedulePoll(jobId) {
+        pollTimer = setTimeout(function() { pollOnce(jobId); }, POLL_INTERVAL_MS);
+    }
+
+    function pollOnce(jobId) {
+        pollTimer = null;
+        var url = STATUS_URL_TEMPLATE.replace("JOB", jobId);
+        fetch(url + "?tournament_id={{ tournament.id }}", {credentials: "same-origin"})
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (pollJobId !== jobId) { return; }
+                showProgress(data.completed || 0, data.total || 0);
+                if (data.status === "complete") {
+                    clearPolling();
+                    window.location.reload();
+                } else if (data.status === "error") {
+                    failStart(data.error || "The Play All job failed. See the server logs.");
+                } else {
+                    schedulePoll(jobId);
+                }
+            })
+            .catch(function() {
+                // Network blip — keep polling.
+                if (pollJobId === jobId) { schedulePoll(jobId); }
+            });
+    }
+
     function startPolling(jobId) {
         showProgress(0, 0);
-        pollTimer = setInterval(function() {
-            var url = STATUS_URL_TEMPLATE.replace("JOB", jobId);
-            fetch(url + "?tournament_id={{ tournament.id }}", {credentials: "same-origin"})
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    showProgress(data.completed || 0, data.total || 0);
-                    if (data.status === "complete") {
-                        clearPolling();
-                        window.location.reload();
-                    } else if (data.status === "error") {
-                        failStart(data.error || "The Play All job failed. See the server logs.");
-                    }
-                })
-                .catch(function() {
-                    // Network blip — keep polling.
-                });
-        }, POLL_INTERVAL_MS);
+        pollJobId = jobId;
+        schedulePoll(jobId);
     }
 
     if (form) {

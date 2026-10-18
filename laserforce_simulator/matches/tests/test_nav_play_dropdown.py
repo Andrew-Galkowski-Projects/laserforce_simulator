@@ -436,6 +436,17 @@ class TestNavPlayDropdownPollPath(TestCase):
         )
         self.assertIn(status_url, body)
 
+    def test_poll_chains_timeouts_not_an_interval(self) -> None:
+        # L-8: a fixed setInterval fired while earlier polls were still
+        # pending, so slow or failing polls piled up. Each poll must schedule
+        # the next only after it answers.
+        _league, season, _teams = _make_active_season("NavPollChain", n_teams=2)
+        body = self.client.get(
+            reverse("league_dashboard", args=[season.league_id])
+        ).content.decode()
+        self.assertNotIn("setInterval(", body)
+        self.assertIn("setTimeout(", body)
+
 
 # ---------------------------------------------------------------------------
 # Off-league absence
