@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from celery.result import AsyncResult
 from django.db import transaction
+from kombu.exceptions import OperationalError
 
 from matches import finance, injury, member_night
 from matches.development import STAT_FIELDS
@@ -69,6 +70,20 @@ class NoLiveCursorError(Exception):
     """There is no game for the manager's team to play live."""
 
 
+BROKER_UNAVAILABLE_MESSAGE = (
+    "Couldn't start the play run: the background task queue is unavailable. "
+    "Start a Celery worker + broker, or run the server with LF_CELERY_EAGER=1 "
+    "for local play."
+)
+
+
+class BrokerUnavailableError(Exception):
+    """The Celery broker / result backend refused the play-run enqueue."""
+
+    def __init__(self) -> None:
+        super().__init__(BROKER_UNAVAILABLE_MESSAGE)
+
+
 # ---------------------------------------------------------------------------
 # Active play run
 # ---------------------------------------------------------------------------
@@ -108,14 +123,36 @@ def enqueue_play_run(season: Season, task: Task, **task_kwargs: Any) -> str:
     season.active_play_job_id = job_id
     season.play_cancel_requested = False
     try:
-        task.apply_async(kwargs={"season_id": season.pk, **task_kwargs}, task_id=job_id)
-    except Exception:
+        # retry=False: an unreachable broker fails after one bounded attempt
+        # (the tournament Play All precedent) instead of hanging the request.
+        task.apply_async(
+            kwargs={"season_id": season.pk, **task_kwargs},
+            task_id=job_id,
+            retry=False,
+        )
+    except Exception as exc:
         # The task never ran (or failed eagerly): release the run if we hold it.
         Season.objects.filter(pk=season.pk, active_play_job_id=job_id).update(
             active_play_job_id=None
         )
+        season.active_play_job_id = None
+        if _is_broker_failure(task, exc):
+            raise BrokerUnavailableError() from exc
         raise
     return job_id
+
+
+def _is_broker_failure(task: Task, exc: Exception) -> bool:
+    """True when ``apply_async`` failed on the broker / result backend.
+
+    ``OperationalError`` is kombu's broker-down error. The Redis result
+    backend raises a bare ``RuntimeError`` once its reconnect retries run out;
+    that only counts when not eager, because an eager run executes the task
+    body inside ``apply_async`` and its own errors must propagate unchanged.
+    """
+    if isinstance(exc, OperationalError):
+        return True
+    return isinstance(exc, RuntimeError) and not task.app.conf.task_always_eager
 
 
 #: Celery states of a job a worker is executing. ``STARTED`` needs

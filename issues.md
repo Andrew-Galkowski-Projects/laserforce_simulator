@@ -1,3 +1,192 @@
+# Web testing — ANG-01d-2 (League play loop on a shared service + Active-play-run guards)
+
+Date: 2026-10-16
+Branch: `ang-01d-2`
+Scope: scoped pass over the HTML play loop only, server on port **8001**. One fresh Account
+(`chrometest-ang01d2@example.com`). League 8 `ChromeTest ANG01d2 League` (4-Team Quick, Seasons 9-12)
+and League 9 `ChromeTest ANG01d2 MN League` (8-Team Member Nights, Season 13). Team / match / batch /
+auth / isolation flows were not run.
+
+Celery: `settings.py:205` makes `CELERY_TASK_ALWAYS_EAGER` true only under pytest or with
+`LF_CELERY_EAGER=1`. No Redis and no worker were running. The first half of the pass used the default
+dev server (not eager, no broker), so the async paths failed (see M-1 / E-1). The server was then
+restarted with `LF_CELERY_EAGER=1` and every async control was exercised for real.
+
+Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
+
+## Summary — ANG-01d-2
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| L-4 | 🔴 | Member night Live replay | The "Single Members Game (Live)" watch page renders no playback data and throws a JS TypeError (pre-existing, not a regression) |
+| L-5 | 🟠 | Active play run guard | A stale `active_play_job_id` blocks every sync play control, and Cancel cannot clear it, so nothing in the UI recovers the Season |
+| ~~L-6~~ | ~~🟡~~ | ~~Async play endpoints~~ | ~~With the broker down, Two Months / Until End / Playoffs / One Week (Live) all return a 500 HTML page (pre-existing)~~ _(fixed (browser gate skipped))_ |
+| L-7 | 🟡 | One Week (Live), broker down | The manager's game commits before the enqueue 500s, leaving the week half-played and the Live entry hidden (pre-existing) |
+| L-8 | 🟡 | Play poll JS | The 500 ms `setInterval` keeps firing while earlier polls are still pending, so slow or failing polls pile up |
+| L-9 | ℹ️ | Error re-renders | A sync play error re-renders the dashboard at the POST URL (for example `/seasons/13/member-night/setup/`) |
+| L-10 | 🟡 | Delete League | Member-night drawn Teams (`MN <site> G<n> A/B`) survive the League teardown as orphans |
+
+**Overall:** the ANG-01d-2 work behaves as specified. Re-POSTing Start Season on an active Season
+returns 302 and does not re-snapshot (verified with a canary: a Team removed from the Season M2M stayed
+in `starting_team_ids_json`). Re-POSTing it on a completed Season returns 302 and does not reopen the
+Season. The Active-play-run guard works on every entry point: sync controls redirect with the
+"in progress" banner, the async ones return 409 `play_in_progress`, and Cancel returns
+`{"cancelled": true}` only while a run is live. With eager Celery, One Week (Live) (RR and playoff),
+Two Months, Until End, Through Playoffs and member-night Play All all completed and cleared
+`active_play_job_id`. The topnav Play dropdown showed the right controls in every phase. No console
+errors anywhere except the L-4 page.
+
+---
+
+## Play loop (4-Team Quick, Seasons 9-12)
+
+### ✅ Start Season + idempotent re-POST — works
+Draft dropdown = `topbar-play-start-season` only. Start Season → 302 → `active`, snapshot `[44,45,46,47]`.
+Removed Team 47 from `season.teams` (canary), re-POSTed `/seasons/9/start-season/` → 302 (opaqueredirect),
+snapshot still `[44,45,46,47]`, no play_error. Restored the M2M. Completed Season 10 re-POST → 302, state
+stays `completed`, champion unchanged.
+
+### ✅ Topnav Play dropdown per phase — works
+- Draft: Start Season.
+- Active RR: One Week / Two Months / Until Playoffs / One Week (Live).
+- Live run present: `topbar-play-stop` (→ `play-cancel/`), dropdown hidden, Live entry hidden.
+- Playoff cursor: Play Single Round / Play Two Months / Through Playoffs / Play Single Round (Live).
+- Member-night cursor: setup form (All Sites + 10 per-Site boxes); after setup, Single / Live / Play All.
+- Completed: Start Next Season (→ owner evaluation, career mode).
+
+### ✅ Play One Week (sync) — works
+Two clicks → 302 → `Rounds played: 2 / 12`, then `4 / 12`; no console errors; every request 2xx/3xx.
+
+### ✅ One Week (Live), RR and playoff (eager) — works
+RR: 302 → `/seasons/9/play-week-live/watch/`, 1314 events, scoreboard + timeline render, step/play
+advance the clock (00:00 → 00:13 → 00:14) and the score updates. The background run played the rest of
+the matchday (8 rounds total) and `active_play_job_id` was cleared. Playoff (Season 10): the watch page
+shows the round toggle with `events-data-1` / `-2`, Round 2 replays, and the other semifinal resolved
+in the background.
+
+### ✅ Async controls (eager) — work
+Season 9 Through Playoffs → 202 → one `play-status` 200 → reload → COMPLETED. Season 11 Two Months from
+matchday 0 → 202 → COMPLETED (6 RR matchdays + 2 bracket stages = budget 8, as Part2c-3f specifies).
+Season 12 Until End → 202 → `play-status` reports `complete 2/2` (stage counts) with live-panel
+fragments.
+
+### ✅ Active-play-run guard (stale job simulated in the DB) — works
+Set `active_play_job_id='chrometest-fake-job-0001'` on Season 9:
+- Sync Play One Week → 302 back to the dashboard with the banner "The Season already has a play run in
+  progress."; rounds stayed at 5.
+- `play-two-months` / `play-until-end` → 409 `{"code":"play_in_progress","job_id":...}`.
+- `play-week-live` → 302 with the same banner; nothing committed.
+- `play-cancel` → 200 `{"cancelled": true}` and `play_cancel_requested=True`, but the job id stays set
+  (see L-5). I cleared it by hand to continue.
+
+### ✅ Playoffs by Single Round (sync) — works
+Season 10: after the Live semifinal, one Play Single Round played the final → COMPLETED, champion 44.
+Single Round, Play One Week, Two Months and Live on a completed Season → 400 "Season must be active to
+play"; `play-playoffs` → 409; GET `play-week` → 405.
+
+### 🟠 L-5 — A stale Active play run locks the Season and the UI cannot release it
+ANG-01d-2 now makes the sync controls check `active_play_job_id`
+(`matches/league_play_services.py:193-201`, `_require_no_live_run`). When a run's task never clears the
+column, every play control is blocked: the worker was killed, or the broker accepted the message but no
+worker is running. The only UI action is Stop/Cancel, and that just sets the flag:
+
+```python
+updated = Season.objects.filter(
+    pk=season.pk, active_play_job_id__isnull=False
+).update(play_cancel_requested=True)
+```
+(`league_play_services.py:111-113`). Only the task's own `finally` ever clears the id
+(`matches/tasks.py:526-527`). Repro: set the id to any string, then try One Week (banner), Two Months
+(409) and Cancel (`cancelled: true`, still locked). Before this branch, the sync controls ignored the
+column. Fix idea: have Cancel (or the guard) release the column when `AsyncResult(job_id)` is
+terminal, or when no worker acknowledged it within N seconds. At minimum add an admin/UI "force
+release" action.
+
+### ~~🟡 L-6 — The async endpoints 500 when the broker is unreachable (pre-existing)~~ _(fixed (browser gate skipped))_
+On the default dev server (no Redis), Two Months / Until End / Through Playoffs / Play All and the
+One Week (Live) enqueue raise from `enqueue_play_run` → `task.apply_async(...)`
+(`league_play_services.py:98-105`). The function releases the job id and re-raises, and no view catches
+it. Observed: `RuntimeError: Retry limit exceeded while trying to reconnect to the Celery result store
+backend` → Django 500 page, and the topnav JS then fails to parse JSON. `tournament_views.py:881-884`
+already handles this case with `retry=False` and a 503 JSON response. `main` behaved the same (it
+called `.delay()` directly), so this is not a regression. The UX is still poor.
+
+### 🟡 L-7 — One Week (Live) commits the manager's game before the enqueue fails (pre-existing)
+`play_live` commits the manager's Round first, then enqueues (`league_play_services.py:788-797`). With
+the broker down: 500, 5 rounds in the DB (matchday 3 half-played), no watch page. The Live entry then
+disappears until One Week finishes the matchday, because `_resolve_live_cursor` finds no manager game
+on the half-played matchday. Recoverable, but confusing.
+
+### 🟡 L-8 — Play-status polls pile up
+`templates/_partials/topnav_play_script.html:108` polls with `setInterval(…, 500)` and no in-flight
+guard. A failing job (500s) or slow responses produce a stack of `[pending]` requests (8+ seen within
+seconds). Fix idea: chain `setTimeout` after each response.
+
+### ℹ️ L-9 — Error re-render URL
+`_render_season_dashboard_error` returns the dashboard with status 400 at the POST URL, so the address
+bar shows `/seasons/13/member-night/setup/` and a reload re-POSTs. Unchanged from before.
+
+---
+
+## Member night (8-Team Member Nights, Season 13)
+
+Member nights are reachable through the template `8_team_member_nights`
+(`"round_robin,member_night,tournament"`). `4_team_quick` is `"round_robin,tournament"`
+(`matches/league_templates.py`), so it has no member-night phase. Until End (eager) played all 56 RR
+rounds and stopped at the member-night barrier.
+
+### ✅ Setup validation + valid setup — works
+Empty selection (UI form with every box unchecked, and a fetch) → 400 banner "Pick at least one Site
+for the member night." A bogus Site → 400 "Select a valid choice. Nowhere Site is not one of the
+available choices." Detroit + San Marcos → 302, 13 unplayed shells (`MN Detroit …` / `MN San Marcos …`),
+and the dropdown switches to Single / Live / Play All.
+
+### ✅ Play single + Play All (eager) — works
+Single → 302, 1 game completed. Play All → 202 → polls → 13/13 complete, cursor moves to the tournament
+phase (bracket built), job id cleared. Afterwards setup / single / Play All → 400 / 400 / 409
+("No member night to set up." / "No member-night game to play." / "No member night to play.").
+
+### 🔴 L-4 — The member-night Live watch page is broken
+Repro: on a member-night cursor with unplayed games, click **Single Members Game (Live)**. You land on
+`/seasons/13/play-week-live/watch/` (200), but there is no scoreboard data, no Round toggle and no
+`json_script` blocks, and the console shows `Uncaught TypeError: Cannot read properties of null
+(reading 'textContent')`. The game itself did commit (2 games complete). Cause: the session handoff
+stores `kind="member_night"` (`league_play_services.py:941`, and `main` did the same at
+`league_views.py:1977`). `templates/seasons/play_week_live.html` only branches on `"rr"` and
+`"playoff"`:
+
+```django
+{% if cursor_kind == "rr" %}            {# line 35 #}
+...
+{% elif cursor_kind == "playoff" %}     {# line 38 — member_night falls through, nothing emitted #}
+```
+The JS `else` branch (line 125ff) then reads `getElementById('events-data-1').textContent` on a
+missing element. The bug predates this branch (LG-07a); no test covers rendering the watch page with
+`kind="member_night"`. Fix: treat `member_night` like `playoff` (two Rounds) at lines 38 and 45, or key
+off `preview_round_2`.
+
+---
+
+## Cleanup observation
+
+### 🟡 L-10 — Delete League leaves the member-night drawn Teams behind
+After deleting League 9 from its dashboard (the summary said "Teams 9"), 26 `is_draw_team=True` Teams
+named `MN Detroit G1 A` … `MN San Marcos G… B` were still in the DB, with no Matches left referencing
+them. `_league_teardown_targets` (`matches/league_services.py:1941-1966`) collects only enrolled Teams,
+`current_team`, `free_agent_pool` and tournament drawn Teams. Member-night Teams are never enrolled in
+the Season, so they are never candidates. Players are borrowed, so no Player rows leak. This is the
+same family as the bracket-orphan note further down (CONF-era), but a different cause. Fix idea:
+before the Match delete, also collect `Team.objects.filter(is_draw_team=True)` among the
+`team_red` / `team_blue` of the League's member-night Matches.
+
+## Environment
+
+### ℹ️ E-1 — Dev server is not eager
+Without Redis + a worker, or `LF_CELERY_EAGER=1`, every async play control 500s (L-6). Start the
+server with `LF_CELERY_EAGER=1` to test the async play loop locally.
+
+---
+
 # Web testing — ANG-01d-1 (League lifecycle + reads API, league_services extraction)
 
 Date: 2026-10-16

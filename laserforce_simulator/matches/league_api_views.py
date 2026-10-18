@@ -77,6 +77,7 @@ from matches.league_services import (
 )
 from matches import league_play_services as play_services
 from matches.league_play_services import (
+    BrokerUnavailableError,
     NoLiveCursorError,
     NoMemberNightGamesError,
     PlayInProgressError,
@@ -200,6 +201,14 @@ class NoLiveCursor(APIException):
     default_detail = "No live game to play for your team."
 
 
+class BrokerUnavailable(APIException):
+    """503 — the Celery broker refused a play-run enqueue (nothing started)."""
+
+    status_code = 503
+    default_code = "broker_unavailable"
+    default_detail = "The background task queue is unavailable."
+
+
 # ---------------------------------------------------------------------------
 # Row flatteners — builder output → plain JSON-able dicts.
 # ---------------------------------------------------------------------------
@@ -295,6 +304,7 @@ _SERVICE_ERRORS: dict[type[Exception], Callable[[Any], APIException]] = {
     WrongPhaseError: lambda exc: WrongPhase(str(exc)),
     NoMemberNightGamesError: lambda exc: NoMemberNightGames(str(exc)),
     NoLiveCursorError: lambda exc: NoLiveCursor(str(exc)),
+    BrokerUnavailableError: lambda exc: BrokerUnavailable(str(exc)),
 }
 
 

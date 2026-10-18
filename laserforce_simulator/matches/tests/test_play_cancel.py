@@ -366,6 +366,7 @@ class TestEnqueueSetsRunState(TestCase):
         apply_async.assert_called_once_with(
             kwargs={"season_id": season.id, "max_matchdays": 8},
             task_id=payload["job_id"],
+            retry=False,
         )
         season.refresh_from_db()
         self.assertEqual(season.active_play_job_id, payload["job_id"])
@@ -382,7 +383,9 @@ class TestEnqueueSetsRunState(TestCase):
         self.assertEqual(response.status_code, 202)
         job_id = json.loads(response.content.decode())["job_id"]
         apply_async.assert_called_once_with(
-            kwargs={"season_id": season.id, "max_matchdays": None}, task_id=job_id
+            kwargs={"season_id": season.id, "max_matchdays": None},
+            task_id=job_id,
+            retry=False,
         )
         season.refresh_from_db()
         self.assertEqual(season.active_play_job_id, job_id)
@@ -401,7 +404,9 @@ class TestEnqueueSetsRunState(TestCase):
         payload = json.loads(response.content.decode())
         self.assertEqual(payload["season_id"], season.id)
         apply_async.assert_called_once_with(
-            kwargs={"season_id": season.id}, task_id=payload["job_id"]
+            kwargs={"season_id": season.id},
+            task_id=payload["job_id"],
+            retry=False,
         )
         season.refresh_from_db()
         self.assertEqual(season.active_play_job_id, payload["job_id"])

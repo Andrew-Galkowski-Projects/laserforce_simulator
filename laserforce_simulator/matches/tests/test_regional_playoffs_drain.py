@@ -397,7 +397,9 @@ class TestRegionalUiEntryPointsReachTheBrackets(TestCase):
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json()["season_id"], self.season.id)
         apply_async.assert_called_once_with(
-            kwargs={"season_id": self.season.id}, task_id=response.json()["job_id"]
+            kwargs={"season_id": self.season.id},
+            task_id=response.json()["job_id"],
+            retry=False,
         )
 
     def test_play_single_round_resolves_exactly_one_node(self) -> None:

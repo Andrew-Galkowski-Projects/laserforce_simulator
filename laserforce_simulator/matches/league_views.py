@@ -39,6 +39,7 @@ from .forms import (
     _maps_with_confirmed_config,
 )
 from .league_play_services import (
+    BrokerUnavailableError,
     NoLiveCursorError,
     NoMemberNightGamesError,
     PlayInProgressError,
@@ -1171,7 +1172,7 @@ def season_dashboard(request, season_id: int) -> HttpResponse:
 
 
 def _render_season_dashboard_error(
-    request: HttpRequest, season: Season, play_error: str
+    request: HttpRequest, season: Season, play_error: str, *, status: int = 400
 ) -> HttpResponse:
     """LG-01d — re-render the Season dashboard with ``play_error`` set."""
     season_mode = season.state
@@ -1186,7 +1187,7 @@ def _render_season_dashboard_error(
         "play_error": play_error,
         "play_job_id": None,
     }
-    return render(request, "seasons/dashboard.html", context, status=400)
+    return render(request, "seasons/dashboard.html", context, status=status)
 
 
 def start_season(request, season_id: int) -> HttpResponse:
@@ -1262,6 +1263,12 @@ def _play_in_progress_response(exc: PlayInProgressError) -> JsonResponse:
     )
 
 
+def _broker_unavailable_response(exc: BrokerUnavailableError) -> JsonResponse:
+    """L-6 — the HTML async endpoints' 503 when the Celery broker is down
+    (the ``tournament_play_all`` JSON shape)."""
+    return JsonResponse({"error": str(exc)}, status=503)
+
+
 def _play_season_run_view(
     request: HttpRequest, season_id: int, max_matchdays: int | None
 ) -> HttpResponse:
@@ -1283,6 +1290,8 @@ def _play_season_run_view(
         return _render_season_dashboard_error(request, season, str(exc))
     except PlayInProgressError as exc:
         return _play_in_progress_response(exc)
+    except BrokerUnavailableError as exc:
+        return _broker_unavailable_response(exc)
     return JsonResponse({"job_id": job_id, "season_id": season.id}, status=202)
 
 
@@ -1344,6 +1353,8 @@ def play_playoffs(request, season_id: int) -> JsonResponse:
         return JsonResponse({"error": "No active playoff bracket to play."}, status=409)
     except PlayInProgressError as exc:
         return _play_in_progress_response(exc)
+    except BrokerUnavailableError as exc:
+        return _broker_unavailable_response(exc)
     return JsonResponse({"job_id": job_id, "season_id": season.id}, status=202)
 
 
@@ -1437,6 +1448,8 @@ def play_member_night(request, season_id: int) -> JsonResponse:
         return _play_in_progress_response(exc)
     except (WrongPhaseError, NoMemberNightGamesError):
         return JsonResponse({"error": "No member night to play."}, status=409)
+    except BrokerUnavailableError as exc:
+        return _broker_unavailable_response(exc)
     return JsonResponse({"job_id": job_id, "season_id": season.id}, status=202)
 
 
@@ -1670,6 +1683,8 @@ def play_week_live(request, season_id: int) -> HttpResponse:
         result = play_services.play_live(season)
     except PlayInProgressError as exc:
         return _redirect_with_play_error(season, request, str(exc))
+    except BrokerUnavailableError as exc:
+        return _render_season_dashboard_error(request, season, str(exc), status=503)
     except (
         SeasonNotActiveError,
         NoLiveCursorError,
