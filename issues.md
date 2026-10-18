@@ -18,8 +18,8 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
-| L-4 | 🔴 | Member night Live replay | The "Single Members Game (Live)" watch page renders no playback data and throws a JS TypeError (pre-existing, not a regression) |
-| L-5 | 🟠 | Active play run guard | A stale `active_play_job_id` blocks every sync play control, and Cancel cannot clear it, so nothing in the UI recovers the Season |
+| ~~L-4~~ | ~~🔴~~ | ~~Member night Live replay~~ | ~~The "Single Members Game (Live)" watch page renders no playback data and throws a JS TypeError (pre-existing, not a regression)~~ _(fixed (d375f22, browser gate skipped))_ |
+| ~~L-5~~ | ~~🟠~~ | ~~Active play run guard~~ | ~~A stale `active_play_job_id` blocks every sync play control, and Cancel cannot clear it, so nothing in the UI recovers the Season~~ _(fixed (ba76e66, browser gate skipped))_ |
 | ~~L-6~~ | ~~🟡~~ | ~~Async play endpoints~~ | ~~With the broker down, Two Months / Until End / Playoffs / One Week (Live) all return a 500 HTML page (pre-existing)~~ _(fixed (browser gate skipped))_ |
 | L-7 | 🟡 | One Week (Live), broker down | The manager's game commits before the enqueue 500s, leaving the week half-played and the Live entry hidden (pre-existing) |
 | L-8 | 🟡 | Play poll JS | The 500 ms `setInterval` keeps firing while earlier polls are still pending, so slow or failing polls pile up |
@@ -84,7 +84,7 @@ Season 10: after the Live semifinal, one Play Single Round played the final → 
 Single Round, Play One Week, Two Months and Live on a completed Season → 400 "Season must be active to
 play"; `play-playoffs` → 409; GET `play-week` → 405.
 
-### 🟠 L-5 — A stale Active play run locks the Season and the UI cannot release it
+### ~~🟠 L-5 — A stale Active play run locks the Season and the UI cannot release it~~ _(fixed (ba76e66, browser gate skipped))_
 ANG-01d-2 now makes the sync controls check `active_play_job_id`
 (`matches/league_play_services.py:193-201`, `_require_no_live_run`). When a run's task never clears the
 column, every play control is blocked: the worker was killed, or the broker accepted the message but no
@@ -146,7 +146,7 @@ Single → 302, 1 game completed. Play All → 202 → polls → 13/13 complete,
 phase (bracket built), job id cleared. Afterwards setup / single / Play All → 400 / 400 / 409
 ("No member night to set up." / "No member-night game to play." / "No member night to play.").
 
-### 🔴 L-4 — The member-night Live watch page is broken
+### ~~🔴 L-4 — The member-night Live watch page is broken~~ _(fixed (d375f22, browser gate skipped))_
 Repro: on a member-night cursor with unplayed games, click **Single Members Game (Live)**. You land on
 `/seasons/13/play-week-live/watch/` (200), but there is no scoreboard data, no Round toggle and no
 `json_script` blocks, and the console shows `Uncaught TypeError: Cannot read properties of null
