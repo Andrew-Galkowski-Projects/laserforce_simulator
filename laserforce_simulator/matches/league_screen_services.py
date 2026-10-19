@@ -284,3 +284,378 @@ def build_watch_list_rows(
     rows = zero_fill_watched(rows, watched_ids, identity_by_id)
     rows = apply_rate(rows, rate)
     return sort_player_stats(rows, sort, direction)
+
+
+# --- feats + playoffs (T6) ---------------------------------------------------
+# Imports kept inside this block so sibling tickets' edits to the header never
+# collide with it.
+
+from collections import defaultdict  # noqa: E402
+
+from matches import stat_feats  # noqa: E402
+from matches.models import GameEvent, GameRound, Match  # noqa: E402
+from teams.models import Team  # noqa: E402
+
+# LG-06e -- every Statistical Feats column is sortable: the descriptor /
+# identity columns plus the 13 box-score columns. Default ``round`` desc.
+FEATS_SORT_KEYS: frozenset[str] = frozenset(
+    {
+        # descriptors / identity
+        "name",
+        "role",
+        "team",
+        "opp",
+        "result",
+        "season",
+        "round",
+        "feat",
+        # box-score columns (13)
+        "points_scored",
+        "mvp",
+        "tags_made",
+        "times_tagged",
+        "accuracy",
+        "final_lives",
+        "resupplies_given",
+        "missiles_landed",
+        "specials_used",
+        "follow_up_shots",
+        "reaction_shots",
+        "combo_resupply_count",
+        "nuke_detonations",
+    }
+)
+
+
+def is_nuke_detonation(event: GameEvent) -> bool:
+    """A `special` GameEvent that is a nuke DETONATION (not activation).
+
+    RV-02 / EventLog: nuke detonation is the ``special`` row carrying
+    ``metadata["targets"]`` with ``points_awarded == 500``. The activation
+    row (``points_awarded == 0`` + ``metadata["fires_at"]``) is excluded.
+    """
+    if event.event_type != "special":
+        return False
+    if event.points_awarded != 500:
+        return False
+    metadata = event.metadata or {}
+    return "targets" in metadata
+
+
+def feat_row_sort_value(row: stat_feats.FeatRow, key: str) -> str | int | float:
+    """Extract the sort value for ``row`` under sort ``key`` (LG-06e section 3.4).
+
+    String descriptor keys sort case-insensitively; ``result`` sorts lexically
+    ("L" < "T" < "W"); the box-score keys sort numerically; ``feat`` sorts on a
+    stable join of the row's badge kinds. No key may raise on a ``None`` (the
+    dataclass defaults descriptors to ``""``).
+    """
+    if key == "name":
+        return row.player_name.lower()
+    if key == "role":
+        return row.role
+    if key == "team":
+        return row.team_name.lower()
+    if key == "opp":
+        return row.opp_team_name.lower()
+    if key == "result":
+        return row.result
+    if key == "season":
+        return row.season_name.lower()
+    if key == "round":
+        return row.round_id
+    if key == "feat":
+        return ",".join(sorted(b.kind for b in row.feats))
+    # Any box-score key.
+    return row.stats.get(key, 0.0)
+
+
+def feats_enrolled_teams(displayed_season: Season | None) -> list[Team]:
+    """The Statistical Feats team-filter options: the displayed Season's
+    enrolled Teams (live M2M) by name; ``[]`` when the League has no Season."""
+    if displayed_season is None:
+        return []
+    return list(displayed_season.teams.order_by("name"))
+
+
+def _feats_player_rounds(prs_filter: dict) -> list[dict]:
+    """The EXTENDED per-(player, round) ``stat_feats`` seam dicts."""
+    # Per-Round nuke-detonation counts, keyed (round_id, actor_id).
+    detonations: dict[tuple[int, int], int] = defaultdict(int)
+    events_qs = GameEvent.objects.filter(
+        event_type="special",
+        points_awarded=500,
+        **prs_filter,
+    ).only("game_round_id", "actor_id", "event_type", "points_awarded", "metadata")
+    for event in events_qs:
+        if is_nuke_detonation(event):
+            detonations[(event.game_round_id, event.actor_id)] += 1
+
+    prs_qs = (
+        PlayerRoundState.objects.filter(**prs_filter)
+        .select_related(
+            "player",
+            "game_round",
+            "game_round__match",
+            "game_round__match__season",
+            "game_round__team_red",
+            "game_round__team_blue",
+        )
+        .order_by("id")
+    )
+    player_rounds: list[dict] = []
+    for prs in prs_qs:
+        game_round = prs.game_round
+        # Own team + opponent team for this Round, from the player's side.
+        if prs.team_color == "red":
+            own_team = game_round.team_red
+            opp_team = game_round.team_blue
+            own_points = game_round.red_points
+            opp_points = game_round.blue_points
+        elif prs.team_color == "blue":
+            own_team = game_round.team_blue
+            opp_team = game_round.team_red
+            own_points = game_round.blue_points
+            opp_points = game_round.red_points
+        else:
+            own_team = None
+            opp_team = None
+            own_points = 0
+            opp_points = 0
+
+        # Per-ROUND result (own vs opp points in THIS GameRound -- NOT the
+        # Match winner).
+        if own_points > opp_points:
+            result = "W"
+        elif own_points < opp_points:
+            result = "L"
+        else:
+            result = "T"
+
+        match = game_round.match
+        season = match.season if match is not None else None
+
+        player_rounds.append(
+            {
+                # identity / deep-link
+                "round_id": game_round.id,
+                "match_id": game_round.match_id,
+                "player_id": prs.player_id,
+                "player_name": prs.player.name,
+                "role": prs.role,
+                "team_id": own_team.id if own_team is not None else None,
+                "team_name": own_team.name if own_team is not None else "",
+                # descriptor columns
+                "opp_team_name": opp_team.name if opp_team is not None else "",
+                "result": result,
+                "season_id": season.id if season is not None else None,
+                "season_name": season.name if season is not None else "",
+                # box-score line (13 BOX_SCORE_KEYS, per-round values).
+                # ``get_mvp`` / ``get_accuracy`` are @properties (no parens).
+                "points_scored": prs.points_scored,
+                "mvp": float(prs.get_mvp),
+                "tags_made": prs.tags_made,
+                "times_tagged": prs.times_tagged,
+                "accuracy": float(prs.get_accuracy),
+                "final_lives": prs.final_lives,
+                "resupplies_given": prs.resupplies_given,
+                "missiles_landed": prs.missiles_landed,
+                "specials_used": prs.specials_used,
+                "follow_up_shots": prs.follow_up_shots,
+                "reaction_shots": prs.reaction_shots,
+                "combo_resupply_count": prs.combo_resupply_count,
+                "nuke_detonations": detonations.get((game_round.id, prs.player_id), 0),
+                # predicate-only field (NOT a box-score column)
+                "shots_missed": prs.shots_missed,
+            }
+        )
+    return player_rounds
+
+
+def _feats_matches(round_filter: dict) -> list[dict]:
+    """The per-Match ``stat_feats`` seam dicts (comeback win)."""
+    match_filter = {k[len("match__") :]: v for k, v in round_filter.items()}
+    round2_by_match: dict[int, int] = {}
+    for gr in GameRound.objects.filter(round_number=2, **round_filter).only(
+        "id", "match_id"
+    ):
+        if gr.match_id is not None:
+            round2_by_match[gr.match_id] = gr.id
+
+    matches: list[dict] = []
+    matches_qs = (
+        Match.objects.filter(is_completed=True, **match_filter)
+        .select_related("team_red", "team_blue", "winner")
+        .order_by("id")
+    )
+    for match in matches_qs:
+        matches.append(
+            {
+                "match_id": match.id,
+                "round_id": round2_by_match.get(match.id),
+                "winner_team_id": match.winner_id,
+                "winner_team_name": (
+                    match.winner.name if match.winner is not None else ""
+                ),
+                "red_team_id": match.team_red_id,
+                "blue_team_id": match.team_blue_id,
+                "red_round1_points": match.red_round1_points,
+                "blue_round1_points": match.blue_round1_points,
+            }
+        )
+    return matches
+
+
+def build_statistical_feats(
+    scope: SeasonScope,
+    *,
+    team_id: int | None,
+    sort: str,
+    direction: str,
+) -> tuple[list[stat_feats.FeatRow], list[stat_feats.TeamFeatRecord]]:
+    """The Statistical Feats screen: ``(feat_rows, team_feats)``.
+
+    ``feat_rows`` -- one row per (Player, Round) that achieved a feat over
+    ``scope``, limited to ``team_id`` when given, sorted by ``sort`` /
+    ``direction`` with the deterministic secondary tiebreak (round_id desc,
+    player_id asc). ``team_feats`` -- the comeback-win records. Both empty in
+    the empty state (``scope.round_filter is None``).
+    """
+    if scope.round_filter is None:
+        return [], []
+    prs_filter = {f"game_round__{k}": v for k, v in scope.round_filter.items()}
+    player_rounds = _feats_player_rounds(prs_filter)
+    matches = _feats_matches(scope.round_filter)
+
+    # LG-06b -- apply the team filter to both seam inputs before scanning.
+    if team_id is not None:
+        player_rounds = [pr for pr in player_rounds if pr["team_id"] == team_id]
+        matches = [
+            m for m in matches if team_id in {m["red_team_id"], m["blue_team_id"]}
+        ]
+
+    feat_rows, team_feats = stat_feats.scan_feats(player_rounds, matches)
+
+    # LG-06c -- sort by the secondary key first (stable), then by the primary
+    # so equal-primary rows keep the secondary order. ``reverse`` only flips
+    # the PRIMARY pass.
+    feat_rows.sort(key=lambda r: (-r.round_id, r.player_id))
+    feat_rows.sort(
+        key=lambda r: feat_row_sort_value(r, sort), reverse=(direction == "desc")
+    )
+    return feat_rows, team_feats
+
+
+@dataclass(frozen=True)
+class PlayoffsScreen:
+    """The Playoffs screen for one Season.
+
+    - ``brackets``: one dict per bracket section, in phase-ordinal then
+      Conference order -- ``phase``, ``tournament`` (or ``None`` while the
+      phase is unbuilt), ``name``, ``rounds`` (``_build_rounds(t)["winners"]``),
+      ``champion``, ``pending``, ``conference``, ``key`` (the DOM-id
+      discriminator), ``stage`` and ``stage_label`` (CONF-02/03/04).
+    - ``worlds_qualifiers``: ``Season.worlds_qualifiers()`` (``[]`` until
+      qualification completes, and for a 0/1-Conference Season).
+    """
+
+    brackets: list[dict]
+    worlds_qualifiers: list
+
+
+def build_playoffs(season: Season | None) -> PlayoffsScreen:
+    """Derive the Playoffs screen for ``season``; empty for ``None`` or a
+    Season with no ``tournament`` phase.
+
+    Embedded season tournaments are single-elimination, so every node lives in
+    the ``"winners"`` slice of ``matches.tournament_views._build_rounds``.
+    """
+    if season is None:
+        return PlayoffsScreen(brackets=[], worlds_qualifiers=[])
+    # Deferred import -- keep the import graph shallow and dodge any
+    # tournament_views <-> views/tasks import-order surprise at load time.
+    from matches.tournament_views import _build_rounds
+
+    brackets: list[dict] = []
+    phases = (
+        season.phases.filter(phase_type="tournament")
+        .select_related("tournament")
+        .order_by("ordinal")
+    )
+    for phase in phases:
+        # CONF-02 -- a phase may hold N regional brackets, one per Conference
+        # (ADR-0035). A 0/1-Conference Season yields the single Season-wide
+        # bracket.
+        tournaments = season.tournaments_for_phase(phase)
+        is_worlds = phase.tournament_mode == "worlds"
+        if not tournaments:
+            # Phase exists but its bracket has not been built yet: a pending
+            # stub. CONF-04 -- the stub gets the same Worlds treatment as the
+            # built entry, so a phase's DOM id is stable across the unbuilt ->
+            # built transition; its heading mirrors the built Tournament's
+            # name (``"<season> Worlds"``) so the badge is not echoed.
+            brackets.append(
+                {
+                    "phase": phase,
+                    "tournament": None,
+                    "name": f"{season.name} Worlds" if is_worlds else "Playoffs",
+                    "rounds": [],
+                    "champion": None,
+                    "pending": True,
+                    "conference": None,
+                    "key": (
+                        f"{phase.ordinal}-worlds" if is_worlds else str(phase.ordinal)
+                    ),
+                    "stage": "worlds" if is_worlds else "",
+                    "stage_label": "Worlds" if is_worlds else "",
+                }
+            )
+            continue
+        for tournament in tournaments:
+            rounds = _build_rounds(tournament)["winners"]
+            conference = tournament.conference
+            # ``key`` is the DOM-id discriminator: ``str(phase.ordinal)`` for a
+            # Season-wide bracket (every pre-CONF-02 id unchanged), a
+            # ``-<conf>`` regional suffix (CONF-02), ``-lc`` for Last chance
+            # (CONF-03), ``-worlds`` for Worlds (CONF-04). The Worlds branch is
+            # first: the Worlds Tournament's ``conference`` is ``None``.
+            # ``is_worlds`` asks the PHASE flavour, ``is_last_chance`` the
+            # BRACKET stage.
+            is_last_chance = tournament.qualifier_stage == "last_chance"
+            if is_worlds:
+                key = f"{phase.ordinal}-worlds"
+                stage = "worlds"
+            elif conference is None:
+                key = str(phase.ordinal)
+                stage = ""
+            elif is_last_chance:
+                key = f"{phase.ordinal}-{conference.ordinal}-lc"
+                stage = "last_chance"
+            else:
+                key = f"{phase.ordinal}-{conference.ordinal}"
+                stage = "regional_playoff"
+            # Deliberately EMPTY for a Season-wide and a regional bracket.
+            if is_worlds:
+                stage_label = "Worlds"
+            elif is_last_chance:
+                stage_label = "Last Chance Qualifier"
+            else:
+                stage_label = ""
+            brackets.append(
+                {
+                    "phase": phase,
+                    "tournament": tournament,
+                    "name": tournament.name,
+                    "rounds": rounds,
+                    "champion": tournament.champion,
+                    # Only an unseeded Last-chance bracket is still ``setup``.
+                    "pending": tournament.state == "setup",
+                    "conference": conference,
+                    "key": key,
+                    "stage": stage,
+                    "stage_label": stage_label,
+                }
+            )
+    return PlayoffsScreen(
+        brackets=brackets, worlds_qualifiers=season.worlds_qualifiers()
+    )
