@@ -103,9 +103,12 @@
                         <div id="team-finances-form-errors" class="alert alert-danger">
                             Expense settings not saved:
                             <ul class="mb-0">
-                                {% for field, errors in form.errors.items %}
-                                    {% for error in errors %}
-                                        <li>{{ field }}: {{ error }}</li>
+                                {% for error in form.non_field_errors %}
+                                    <li>{{ error }}</li>
+                                {% endfor %}
+                                {% for field in form %}
+                                    {% for error in field.errors %}
+                                        <li>{{ field.label }}: {{ error }}</li>
                                     {% endfor %}
                                 {% endfor %}
                             </ul>

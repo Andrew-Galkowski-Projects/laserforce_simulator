@@ -600,3 +600,23 @@ class TestTeamFinancesPostFormErrors(TestCase):
         self.assertIn("budget_scouting", response.context["form"].errors)
         team.refresh_from_db()
         self.assertEqual((team.budget_scouting, team.budget_coaching), before)
+
+    def test_form_errors_show_human_labels_not_field_names(self) -> None:
+        league = _make_league("TfLblL")
+        _make_active_season(league)
+        url = reverse("team_finances", kwargs={"league_id": league.id})
+        response = self.client.post(
+            url,
+            data=_full_post(
+                budget_scouting="0", ticket_price="-1", injury_policy="nonsense"
+            ),
+        )
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        start = content.index('id="team-finances-form-errors"')
+        errors_html = content[start : content.index("</ul>", start)]
+        self.assertIn("<li>Scouting: ", errors_html)
+        self.assertIn("<li>Ticket price: ", errors_html)
+        self.assertIn("<li>Injury policy: ", errors_html)
+        for name in ("budget_scouting", "ticket_price", "injury_policy"):
+            self.assertNotIn(name, errors_html)
