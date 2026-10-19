@@ -799,3 +799,39 @@ class MemberNightSetupForm(forms.Form):
         self.fields["sites"].choices = [
             (site, site) for site, _count in viable_member_night_sites(season)
         ]
+
+
+# --- finances (T5) ---
+
+
+def _budget_level_field() -> forms.IntegerField:
+    from .finance import MAX_LEVEL
+
+    return forms.IntegerField(min_value=1, max_value=MAX_LEVEL)
+
+
+class TeamFinancesForm(forms.ModelForm):
+    """ANG-01e T5 — the managed Team's budgets, ticket price and injury policy.
+
+    Bound by the HTML Team Finances POST and the API PATCH (via
+    ``merged_form_data``). Out-of-range values are rejected, never clamped:
+    budgets are integers ``1..finance.MAX_LEVEL``, ``ticket_price`` is ``>= 0``,
+    ``injury_policy`` is one of ``Team.INJURY_POLICY_CHOICES``.
+    """
+
+    budget_scouting = _budget_level_field()
+    budget_coaching = _budget_level_field()
+    budget_facilities = _budget_level_field()
+    budget_health = _budget_level_field()
+    ticket_price = forms.FloatField(min_value=0)
+
+    class Meta:
+        model = Team
+        fields = [
+            "budget_scouting",
+            "budget_coaching",
+            "budget_facilities",
+            "budget_health",
+            "injury_policy",
+            "ticket_price",
+        ]

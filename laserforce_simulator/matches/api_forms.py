@@ -18,14 +18,13 @@ from django import forms
 from matches.league_services import STANDINGS_SORT_KEYS
 from matches.models import League
 from matches.season_player_stats import DERIVED_KEYS, STAT_KEYS
+from teams.views import _SORT_KEYS as _TEAMS_SORT_KEYS  # T2 player list screens
 
 # --- team screens (T4) imports ---
 from matches.league_screen_services import (
     GAME_LOG_SORT_KEYS,
     TEAM_HISTORY_PLAYERS_SORT_KEYS,
-    enrolled_team,
 )
-from matches.league_services import pick_displayed_season
 from matches.power_rankings_logic import SORT_KEYS as POWER_RANKINGS_SORT_KEYS
 from matches.team_stats_logic import SORT_KEYS as TEAM_STATS_SORT_KEYS
 
@@ -234,6 +233,131 @@ class WatchListParamsForm(LeagueScreenParamsForm):
     )
 
 
+# --- feats + playoffs (T6) ---------------------------------------------------
+
+
+class StatisticalFeatsParamsForm(LeagueScreenParamsForm):
+    """ANG-01e T6 -- ``?season=&team_id=&ordering=`` for ``statistical-feats/``.
+
+    ``team_id`` must be a Team enrolled in the displayed Season (the HTML
+    filter's option set); anything else is a 400 ``invalid_choice``.
+    """
+
+    ordering_default = "-round"
+
+    season = forms.CharField(required=False)
+    team_id = forms.IntegerField(required=False)
+    ordering = forms.ChoiceField(required=False)
+
+    def __init__(self, *args: Any, league: League, **kwargs: Any) -> None:
+        super().__init__(*args, league=league, **kwargs)
+        # Deferred: league_screen_services imports the ORM-heavy modules.
+        from matches.league_screen_services import FEATS_SORT_KEYS
+
+        self.fields["ordering"].choices = ordering_choices(sorted(FEATS_SORT_KEYS))
+
+    def clean_team_id(self) -> int | None:
+        from matches.league_screen_services import feats_enrolled_teams
+        from matches.league_services import pick_displayed_season
+
+        team_id = self.cleaned_data.get("team_id")
+        if team_id is None:
+            return None
+        enrolled = {
+            t.id for t in feats_enrolled_teams(pick_displayed_season(self.league))
+        }
+        if team_id not in enrolled:
+            raise forms.ValidationError(
+                "Select a valid choice. %(value)s is not one of the available choices.",
+                code="invalid_choice",
+                params={"value": team_id},
+            )
+        return team_id
+
+
+# ---------------------------------------------------------------------------
+# --- player list screens (T2) ---
+# ---------------------------------------------------------------------------
+
+
+class _DisplayedSeasonTeamParamMixin:
+    """``team_id``: blank -> ``None``; else a Team enrolled in the League's
+    displayed Season (the HTML team picker's set), or a 400 ``invalid_choice``.
+    """
+
+    league: League
+    cleaned_data: dict[str, Any]
+
+    def clean_team_id(self) -> int | None:
+        team_id = self.cleaned_data.get("team_id")
+        if team_id is None:
+            return None
+        from matches.league_services import pick_displayed_season
+
+        displayed_season = pick_displayed_season(self.league)
+        if (
+            displayed_season is None
+            or not displayed_season.teams.filter(pk=team_id).exists()
+        ):
+            raise forms.ValidationError(
+                "Select a valid choice. %(value)s is not one of the available choices.",
+                code="invalid_choice",
+                params={"value": team_id},
+            )
+        return team_id
+
+
+class PlayoffsParamsForm(LeagueScreenParamsForm):
+    """ANG-01e T6 -- ``?season=`` for ``playoffs/``; no ``career`` option (a
+    bracket has no cross-Season aggregate), so ``career`` is a 400."""
+
+    allow_career = False
+
+    season = forms.CharField(required=False)
+
+
+class PlayerStatsParamsForm(_DisplayedSeasonTeamParamMixin, LeagueScreenParamsForm):
+    """ANG-01e -- ``?season=&rate=&team_id=&ordering=`` for ``GET player-stats/``."""
+
+    ordering_default = "-points_scored"
+
+    season = forms.CharField(required=False)
+    rate = forms.ChoiceField(choices=RATE_CHOICES, required=False)
+    team_id = forms.IntegerField(required=False)
+    ordering = forms.ChoiceField(
+        choices=ordering_choices(PLAYER_STAT_SORT_KEYS), required=False
+    )
+
+
+# The Player Ratings / Free Agents sort keys the HTML screens allow: the LG-00c
+# ``teams.views._SORT_KEYS`` plus the Python-sorted ``preferred_roles``.
+PLAYER_RATING_SORT_KEYS: tuple[str, ...] = (*_TEAMS_SORT_KEYS, "preferred_roles")
+
+
+class FreeAgentsParamsForm(LeagueScreenParamsForm):
+    """ANG-01e -- ``?ordering=`` for ``GET free-agents/`` (default ``team``)."""
+
+    ordering_default = "team"
+
+    ordering = forms.ChoiceField(
+        choices=ordering_choices(PLAYER_RATING_SORT_KEYS), required=False
+    )
+
+
+class PlayerRatingsParamsForm(_DisplayedSeasonTeamParamMixin, FreeAgentsParamsForm):
+    """ANG-01e -- ``?team_id=&ordering=`` for ``GET player-ratings/``.
+
+    Live ratings: no ``season`` param."""
+
+    team_id = forms.IntegerField(required=False)
+
+
+class LeadersParamsForm(LeagueScreenParamsForm):
+    """ANG-01e -- ``?season=`` for ``GET leaders/`` (boards have no sort params)."""
+
+    season = forms.CharField(required=False)
+
+
 # --- team screens (T4) ---
 
 
@@ -269,7 +393,7 @@ class PowerRankingsParamsForm(LeagueScreenParamsForm):
     )
 
 
-class GameLogParamsForm(LeagueScreenParamsForm):
+class GameLogParamsForm(_DisplayedSeasonTeamParamMixin, LeagueScreenParamsForm):
     """ANG-01e -- ``?season=&team_id=&ordering=`` for ``GET game-log/``.
 
     ``team_id`` must be a Team enrolled in the displayed Season (the HTML
@@ -283,16 +407,3 @@ class GameLogParamsForm(LeagueScreenParamsForm):
     ordering = forms.ChoiceField(
         choices=ordering_choices(GAME_LOG_SORT_KEYS), required=False
     )
-
-    def clean_team_id(self) -> int | None:
-        team_id = self.cleaned_data.get("team_id")
-        if team_id is None:
-            return None
-        displayed_season = pick_displayed_season(self.league)
-        if enrolled_team(displayed_season, team_id) is None:
-            raise forms.ValidationError(
-                "Select a valid choice. %(value)s is not one of the available choices.",
-                code="invalid_choice",
-                params={"value": team_id},
-            )
-        return team_id

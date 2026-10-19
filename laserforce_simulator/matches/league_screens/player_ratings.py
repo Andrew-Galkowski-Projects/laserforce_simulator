@@ -29,11 +29,11 @@ for a single player and confirms the rating-attribute set.
 from __future__ import annotations
 
 from django.core.paginator import Paginator
-from django.db.models import F, QuerySet
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import render
 
 from accounts.permissions import get_owned_or_404
+from matches.league_screen_services import build_player_ratings_queryset
 from matches.league_views import (
     RATING_SORT_KEYS_DISPLAY,
     _build_league_sidebar_links,
@@ -43,44 +43,7 @@ from matches.league_views import (
     _LG01F_PER_PAGE_OPTIONS,
 )
 from matches.models import League
-from teams.models import Player
-from teams.views import _coerce_dir, _coerce_sort, _SORT_KEYS
-
-
-def _enrolled_player_queryset(displayed_season) -> "QuerySet[Player]":
-    """Players on Teams enrolled in ``displayed_season``.
-
-    The queryset is annotated with ``overall_rating_db`` (mean of the 19
-    stats) so the LG-00c ``overall_rating`` sort key has an ORM target
-    (mirrors the ``teams.views.player_list`` annotation byte-for-byte,
-    including the intentional capital-O ``Offensive_synergy``).
-    """
-    enrolled_ids = set(displayed_season.teams.values_list("id", flat=True))
-    qs = Player.objects.select_related("team").filter(team_id__in=enrolled_ids)
-    return qs.annotate(
-        overall_rating_db=(
-            F("player_awareness")
-            + F("game_awareness")
-            + F("resource_awareness")
-            + F("decision_making")
-            + F("positioning")
-            + F("stamina")
-            + F("speed")
-            + F("flexibility")
-            + F("adaptability")
-            + F("communication")
-            + F("teamwork")
-            + F("Offensive_synergy")
-            + F("defensive_synergy")
-            + F("midfield_synergy")
-            + F("resupply_synergy")
-            + F("resupply_efficiency")
-            + F("accuracy")
-            + F("survival")
-            + F("special_usage")
-        )
-        / 19.0
-    )
+from teams.views import _coerce_dir, _coerce_sort
 
 
 def player_ratings(request: HttpRequest, league_id: int) -> HttpResponse:
@@ -140,34 +103,15 @@ def player_ratings(request: HttpRequest, league_id: int) -> HttpResponse:
     context["enrolled_teams"] = enrolled_teams
     context["selected_team_id"] = selected_team_id
 
-    qs = _enrolled_player_queryset(displayed_season)
-
-    # Apply the team filter before the sort split so it covers both the
-    # ORM-order branch and the preferred_roles python-list branch.
-    if selected_team_id is not None:
-        qs = qs.filter(team_id=selected_team_id)
-
-    if sort == "preferred_roles":
-        rows = list(qs)
-        rows.sort(
-            key=lambda p: (",".join(p.preferred_roles or []), p.name),
-            reverse=(direction == "desc"),
-        )
-        paginator = Paginator(rows, per_page)
-    elif sort == "potential":
-        # potential is nullable — sort nulls last in BOTH directions so a
-        # player with no potential never floats to the top.
-        ordering = (
-            F("potential").desc(nulls_last=True)
-            if direction == "desc"
-            else F("potential").asc(nulls_last=True)
-        )
-        qs = qs.order_by(ordering, "name")
-        paginator = Paginator(qs, per_page)
-    else:
-        prefix = "" if direction == "asc" else "-"
-        qs = qs.order_by(prefix + _SORT_KEYS[sort], "name")
-        paginator = Paginator(qs, per_page)
+    # ANG-01e -- the shared builder (team filter, then the LG-00c sort:
+    # ``preferred_roles`` in Python, ``potential`` nulls last both ways).
+    rows = build_player_ratings_queryset(
+        displayed_season,
+        team_id=selected_team_id,
+        sort=sort,
+        direction=direction,
+    )
+    paginator = Paginator(rows, per_page)
 
     page_obj = paginator.get_page(_coerce_page(request.GET.get("page")))
 
