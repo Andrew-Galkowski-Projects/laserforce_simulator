@@ -263,10 +263,10 @@ class LeagueFinancesTests(LeagueApiTestCase):
         self.assertEqual(empty["cash"], teams[0].cash)
         self.assert_session_untouched()
 
-    def test_finances_off_has_no_rows_section(self) -> None:
+    def test_finances_off_has_empty_rows(self) -> None:
         league, _season, _teams = _finance_league("LFOff", self.user_a, enabled=False)
         data = self.ok(self.api.get(_league_url(league.id)))
-        self.assertEqual(data, {"finance_enabled": False})
+        self.assertEqual(data, {"finance_enabled": False, "rows": []})
 
     def test_league_with_no_season_has_empty_rows(self) -> None:
         from matches.tests.league_api_fixtures import make_league

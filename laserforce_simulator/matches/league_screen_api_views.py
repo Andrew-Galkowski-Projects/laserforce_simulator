@@ -616,10 +616,10 @@ class LeagueScreensMixin:
     @action(detail=True, methods=["get"], url_path="finances", url_name="finances")
     def league_finances(self, request: Request, pk: str | None = None) -> Response:
         """Every enrolled Team's cash + displayed-Season revenue / profit /
-        payroll (``null`` without a snapshot); finances off => no ``rows``."""
+        payroll (``null`` without a snapshot); finances off => empty ``rows``."""
         league = self.get_object()
         if not league.finance_enabled:
-            return Response({"finance_enabled": False})
+            return Response({"finance_enabled": False, "rows": []})
         season = pick_displayed_season(league)
         rows = build_league_finances(season) if season is not None else []
         return Response(
