@@ -18,6 +18,7 @@ from django import forms
 from matches.league_services import STANDINGS_SORT_KEYS
 from matches.models import League
 from matches.season_player_stats import DERIVED_KEYS, STAT_KEYS
+from teams.views import _SORT_KEYS as _TEAMS_SORT_KEYS  # T2 player list screens
 
 _PROVENANCE_CHOICES = [("all", "all"), ("real", "real"), ("sim", "sim")]
 _ROLE_CHOICES = [
@@ -266,10 +267,84 @@ class StatisticalFeatsParamsForm(LeagueScreenParamsForm):
         return team_id
 
 
+# ---------------------------------------------------------------------------
+# --- player list screens (T2) ---
+# ---------------------------------------------------------------------------
+
+
+class _DisplayedSeasonTeamParamMixin:
+    """``team_id``: blank -> ``None``; else a Team enrolled in the League's
+    displayed Season (the HTML team picker's set), or a 400 ``invalid_choice``.
+    """
+
+    league: League
+    cleaned_data: dict[str, Any]
+
+    def clean_team_id(self) -> int | None:
+        team_id = self.cleaned_data.get("team_id")
+        if team_id is None:
+            return None
+        from matches.league_services import pick_displayed_season
+
+        displayed_season = pick_displayed_season(self.league)
+        if (
+            displayed_season is None
+            or not displayed_season.teams.filter(pk=team_id).exists()
+        ):
+            raise forms.ValidationError(
+                "Select a valid choice. %(value)s is not one of the available choices.",
+                code="invalid_choice",
+                params={"value": team_id},
+            )
+        return team_id
+
+
 class PlayoffsParamsForm(LeagueScreenParamsForm):
     """ANG-01e T6 -- ``?season=`` for ``playoffs/``; no ``career`` option (a
     bracket has no cross-Season aggregate), so ``career`` is a 400."""
 
     allow_career = False
+
+    season = forms.CharField(required=False)
+
+
+class PlayerStatsParamsForm(_DisplayedSeasonTeamParamMixin, LeagueScreenParamsForm):
+    """ANG-01e -- ``?season=&rate=&team_id=&ordering=`` for ``GET player-stats/``."""
+
+    ordering_default = "-points_scored"
+
+    season = forms.CharField(required=False)
+    rate = forms.ChoiceField(choices=RATE_CHOICES, required=False)
+    team_id = forms.IntegerField(required=False)
+    ordering = forms.ChoiceField(
+        choices=ordering_choices(PLAYER_STAT_SORT_KEYS), required=False
+    )
+
+
+# The Player Ratings / Free Agents sort keys the HTML screens allow: the LG-00c
+# ``teams.views._SORT_KEYS`` plus the Python-sorted ``preferred_roles``.
+PLAYER_RATING_SORT_KEYS: tuple[str, ...] = (*_TEAMS_SORT_KEYS, "preferred_roles")
+
+
+class FreeAgentsParamsForm(LeagueScreenParamsForm):
+    """ANG-01e -- ``?ordering=`` for ``GET free-agents/`` (default ``team``)."""
+
+    ordering_default = "team"
+
+    ordering = forms.ChoiceField(
+        choices=ordering_choices(PLAYER_RATING_SORT_KEYS), required=False
+    )
+
+
+class PlayerRatingsParamsForm(_DisplayedSeasonTeamParamMixin, FreeAgentsParamsForm):
+    """ANG-01e -- ``?team_id=&ordering=`` for ``GET player-ratings/``.
+
+    Live ratings: no ``season`` param."""
+
+    team_id = forms.IntegerField(required=False)
+
+
+class LeadersParamsForm(LeagueScreenParamsForm):
+    """ANG-01e -- ``?season=`` for ``GET leaders/`` (boards have no sort params)."""
 
     season = forms.CharField(required=False)

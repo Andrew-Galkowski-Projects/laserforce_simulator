@@ -45,9 +45,49 @@ from matches.models import League, Season
 from matches.season_player_stats import PlayerStatRow
 from teams.models import Player
 
+# --- player list screens (T2) imports ---
+from dataclasses import asdict
+
+from matches.api_forms import (
+    FreeAgentsParamsForm,
+    LeadersParamsForm,
+    PlayerRatingsParamsForm,
+    PlayerStatsParamsForm,
+)
+from matches.development import STAT_FIELDS
+from matches.league_screen_services import (
+    build_free_agents_queryset,
+    build_leaderboards,
+    build_player_ratings_queryset,
+    build_player_stats,
+)
+
 # --- league player page (T3) imports ---
 from matches import development
 from matches.league_screen_services import PlayerDetail, build_player_detail
+
+
+def player_rating_rows(players: list[Player], *, watched_ids: set[int]) -> list[dict]:
+    """The Player Ratings / Free Agents row shape: ``{player, watched,
+    preferred_roles, overall_rating, potential, age, height, home_site,
+    started_playing_age, total_games, stats: {19}}``."""
+    return [
+        {
+            "player": player_ref(player),
+            "watched": player.id in watched_ids,
+            "preferred_roles": list(player.preferred_roles or []),
+            "overall_rating": player.overall_rating,
+            "potential": player.potential,
+            "age": player.age,
+            "height": player.height,
+            "home_site": player.home_site,
+            "started_playing_age": player.started_playing_age,
+            "total_games": player.total_games,
+            "stats": {field: getattr(player, field) for field in STAT_FIELDS},
+        }
+        for player in players
+    ]
+
 
 # ---------------------------------------------------------------------------
 # Errors (named codes; the envelope handler shapes them)
@@ -418,6 +458,105 @@ class LeagueScreensMixin:
         """Clear the Account's watch list for this League."""
         league = self.get_object()
         return Response({"removed": clear_watch_list(request.user, league)})
+
+    # --- player list screens (T2) ----------------------------------------
+
+    @action(
+        detail=True, methods=["get"], url_path="player-stats", url_name="player-stats"
+    )
+    def player_stats(self, request: Request, pk: str | None = None) -> Response:
+        """The Player Stats screen: per-player performance over a Season scope."""
+        league = self.get_object()
+        params = self.screen_params(PlayerStatsParamsForm, league)
+        scope = resolve_season_scope(
+            league, pick_displayed_season(league), params["season"]
+        )
+        sort, direction = parse_ordering(params["ordering"])
+        rows = build_player_stats(
+            scope,
+            rate=params["rate"],
+            team_id=params["team_id"],
+            sort=sort,
+            direction=direction,
+        )
+        watched_ids = watched_player_ids(request.user, league)
+        return self.paginated_rows(
+            rows,
+            lambda page: player_stat_rows(page, watched_ids=watched_ids),
+            extra_meta={"season_scope": season_scope_meta(scope)},
+        )
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="player-ratings",
+        url_name="player-ratings",
+    )
+    def player_ratings(self, request: Request, pk: str | None = None) -> Response:
+        """The Player Ratings screen: live ratings of the enrolled Teams' Players."""
+        league = self.get_object()
+        params = self.screen_params(PlayerRatingsParamsForm, league)
+        sort, direction = parse_ordering(params["ordering"])
+        rows = build_player_ratings_queryset(
+            pick_displayed_season(league),
+            team_id=params["team_id"],
+            sort=sort,
+            direction=direction,
+        )
+        watched_ids = watched_player_ids(request.user, league)
+        return self.paginated_rows(
+            rows, lambda page: player_rating_rows(page, watched_ids=watched_ids)
+        )
+
+    @action(detail=True, methods=["get"], url_path="leaders", url_name="leaders")
+    def leaders(self, request: Request, pk: str | None = None) -> Response:
+        """The League Leaders screen: four top-10 boards in default rank order."""
+        league = self.get_object()
+        params = self.screen_params(LeadersParamsForm, league)
+        scope = resolve_season_scope(
+            league, pick_displayed_season(league), params["season"]
+        )
+        boards = build_leaderboards(scope)
+        players = Player.objects.select_related("team").in_bulk(
+            {row.player_id for rows in boards.values() for row in rows}
+        )
+        watched_ids = watched_player_ids(request.user, league)
+        data = {
+            board: [
+                {
+                    **asdict(row),
+                    "player": (
+                        player_ref(players[row.player_id])
+                        if row.player_id in players
+                        else {
+                            "id": row.player_id,
+                            "name": row.player_name,
+                            "team": None,
+                        }
+                    ),
+                    "watched": row.player_id in watched_ids,
+                }
+                for row in rows
+            ]
+            for board, rows in boards.items()
+        }
+        return self.scoped_response(data, scope)
+
+    @action(
+        detail=True, methods=["get"], url_path="free-agents", url_name="free-agents"
+    )
+    def free_agents(self, request: Request, pk: str | None = None) -> Response:
+        """The Free Agents screen: the League's free-agent pool with ratings."""
+        league = self.get_object()
+        params = self.screen_params(FreeAgentsParamsForm, league)
+        sort, direction = parse_ordering(params["ordering"])
+        rows = build_free_agents_queryset(
+            league, pick_displayed_season(league), sort=sort, direction=direction
+        )
+        watched_ids = watched_player_ids(request.user, league)
+        return self.paginated_rows(
+            rows, lambda page: player_rating_rows(page, watched_ids=watched_ids)
+        )
 
     # --- league player page (T3) ------------------------------------------
 
