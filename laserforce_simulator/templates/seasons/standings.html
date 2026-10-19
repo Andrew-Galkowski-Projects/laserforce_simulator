@@ -42,7 +42,7 @@
                     <thead>
                         <tr>
                             {% for key, label in sort_keys %}
-                                <th id="season-standings-th-{{ key }}">
+                                <th id="season-standings-th-{{ key }}{% if group.conference %}-{{ group.conference.id }}{% endif %}">
                                     {% if key == sort %}
                                         {% if dir == "asc" %}
                                             <a href="?{{ querystring_without_sort_dir }}{% if querystring_without_sort_dir %}&{% endif %}sort={{ key }}&dir=desc">{{ label }} ↑</a>

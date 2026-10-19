@@ -204,7 +204,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
 | ~~L-1~~ | ~~🟠~~ | ~~League History (HTML + new API)~~ | ~~Multi-Conference RR-final Season shows a cross-Conference "Champion" although `champion_team` is NULL~~ _(fixed)_ |
-| L-2 | 🟡 | Season standings | `season-standings-th-*` ids duplicated once per Conference table |
+| ~~L-2~~ | ~~🟡~~ | ~~Season standings~~ | ~~`season-standings-th-*` ids duplicated once per Conference table~~ _(fixed)_ |
 | L-3 | ℹ️ | League History | Draft in-progress row shows a Runner-Up / 1st-3rd from all-zero standings |
 
 **Overall:** every flow in scope works. Advanced create with 2 conferences lands on Manage
@@ -318,7 +318,7 @@ consumers inherit it.
 
 ## Season standings
 
-### 🟡 L-2 — Duplicate sort-header DOM ids across Conference tables
+### ~~🟡 L-2 — Duplicate sort-header DOM ids across Conference tables~~ _(fixed)_
 On a 2-Conference Season every `season-standings-th-<key>` id (17 of them) appears twice, once per
 Conference table. Invalid HTML and ambiguous for `getElementById` / tests.
 **Root cause:** `laserforce_simulator/templates/seasons/standings.html:45`
