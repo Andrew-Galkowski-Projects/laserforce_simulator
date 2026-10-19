@@ -293,6 +293,12 @@ DRF endpoints registered under `/api/`, enveloped per **API conventions** above.
 | `GET /api/seasons/<id>/` | `SeasonSerializer` | **ANG-01d-1.** Nested `phases` / `conferences`; no play-state fields |
 | `GET /api/seasons/<id>/dashboard/` · `/standings/` · `/schedule/` · `/awards/` · `/owner-evaluation/` | — (builder dicts) | **ANG-01d-1.** Reads; standings takes `?sort=&dir=` |
 | `GET` / `PUT /api/seasons/<id>/conferences/` | — (state dict) | **ANG-01d-1.** PUT = full replace via `ConferencePartitionForm`; non-draft ⇒ 409 `season_not_draft` |
+| `GET` / `DELETE /api/leagues/<id>/watch-list/`; `PUT` / `DELETE …/watch-list/<player_id>/` | — (builder rows) | **ANG-01e.** Paginated Player-Stats rows (`?season=&rate=&ordering=`); DELETE clears ⇒ `{removed}`; PUT / DELETE one ⇒ `{player, watched}`; 400 `player_not_in_league` |
+| `GET /api/leagues/<id>/player-stats/` · `/player-ratings/` · `/free-agents/` | — (builder rows) | **ANG-01e.** Paginated; `?ordering=`, plus `season` / `rate` / `team_id` (stats), `team_id` (ratings) |
+| `GET /api/leagues/<id>/leaders/` · `/team-stats/` · `/power-rankings/` · `/game-log/` · `/statistical-feats/` · `/playoffs/` | — (builder dicts) | **ANG-01e.** `?season=<id>\|career` (playoffs: no career); feats paginated |
+| `GET /api/leagues/<id>/players/<player_id>/` | — (builder dict) | **ANG-01e.** League player page, lenient (404 only for a missing / foreign League or Player) |
+| `GET /api/leagues/<id>/teams/<team_id>/roster/` · `/history/` · `/history/players/` | — (builder dicts) | **ANG-01e.** Team must be enrolled in the displayed Season, else 404; history players paginated |
+| `GET` / `PATCH /api/leagues/<id>/teams/<team_id>/finances/`; `GET /api/leagues/<id>/finances/` | — (builder dicts) | **ANG-01e.** PATCH binds `TeamFinancesForm`; 409 `finance_disabled` / `team_not_editable` before 400 |
 
 HX-03 / HX-04 head-to-head, HX-01 career and HX-02 benchmark endpoints live on the `teams` viewsets
 (`/api/teams/head-to-head/`, `/api/players/head-to-head/`, `/api/players/<id>/career/`,
@@ -551,6 +557,109 @@ since `Season.objects.create` bypasses `Season.clean`). Still no fired check.
 accepts any owned Team; the history API does not pin the in-progress row; `LeagueSerializer.active_season`
 is per-row.
 
+## ANG-01e league screens API
+
+Spec: GitHub issue #180 (tickets #181-#186); grill decisions 1-19 in `PLAN.md`. All **15**
+`league_screens/*` surfaces are exposed under `/api/leagues/<id>/…`. **One migration**
+(`0063_watchedplayer`, no `RunPython`); no simulation change, no Score Calibration re-baseline, no ADR.
+The API **never writes `request.session["last_league_id"]`** and builds no sidebar links.
+
+**`matches/league_screen_services.py` (new)** — the builders behind every League screen, called by
+both the `league_screens/*` HTML views and the API (the views no longer hold screen logic). Reads no
+request; must **not** import `matches.league_views` or `matches.league_screens`. **Patch
+`matches.league_screen_services.*`** — the old private helpers were deleted, not re-exported (the
+plan's re-export decision was dropped).
+- **Season scope:** `CAREER = "career"`; frozen `SeasonScope(seasons, selected: Season | "career" |
+  None, options, round_filter)` (+ `selected_id`, the legacy HTML value); `resolve_season_scope(league,
+  displayed_season, raw_season, *, allow_career=True)` raises `ValueError` on a foreign / bad id. The
+  HTML wraps it forgivingly (`league_views._lenient_season_scope` falls back to the default;
+  `_resolve_season_scope` keeps its 4-tuple); the API rejects it in the param Form.
+- **Shared lookups:** `build_round_dicts(prs_filter, *, extra_fields=None)` (one dict per
+  `PlayerRoundState`; `extra_fields(prs) -> dict` adds keys, used by Statistical Feats);
+  `rating_stats(player | PlayerSeasonRating)` = the 19 stats keyed **lowercase**
+  (`offensive_synergy`, though the field is `Offensive_synergy`).
+- **Enrolment — the single definition:** `enrolled_team_ids(season)` = the activation snapshot
+  `starting_team_ids_json`, falling back to the live `season.teams` M2M only for a draft (snapshot
+  `None`). `enrolled_teams(season | None)` (by name), `enrolled_team(season, team_id)`,
+  `parse_team_id(raw)`, `resolve_league_team(league, displayed_season, team_id)` (HTML picker chain:
+  `?team_id=` → `current_team` → first enrolled). Every screen, team picker and `team_id` allowlist
+  reads enrolment through these (before, some read the live M2M, so a Team added after the start
+  leaked in).
+- **Watch list:** `watched_player_ids(account, league | league_id) -> set[int]` (anonymous ⇒
+  `set()`), `add_watch` (raises `PlayerNotInLeague` unless the Player is on an enrolled Team of the
+  displayed Season or in `league.free_agent_pool`), `remove_watch`, `clear_watch_list -> int`
+  (removed count) — all idempotent; `build_watch_list_rows(scope, watched_ids, *, rate, sort,
+  direction)`.
+- **Screens:** `build_player_stats`, `build_player_ratings_queryset`, `build_free_agents_queryset`,
+  `LEADER_BOARDS` / `build_leaderboards(scope)`, `PlayerDetail` / `build_player_detail(league,
+  player)`, `TeamRoster` / `build_team_roster`, `TeamHistory` / `team_history_seasons` /
+  `build_team_history` / `build_team_history_players`, `build_team_stats`, `build_power_rankings`,
+  `build_game_log`, `FEATS_SORT_KEYS` / `is_nuke_detonation` / `feat_row_sort_value` /
+  `build_statistical_feats`, `PlayoffsScreen` / `build_playoffs`.
+- **Finances:** `TeamFinances` / `build_team_finances(season, team)`, `build_league_finances(season)`
+  (`[{team, finance | None}]` per enrolled Team), `update_team_finances(league, team, form)` — raises
+  `FinanceDisabled`, then `TeamNotEditable` unless `team` is `league.current_team`, **before** looking
+  at the form; an invalid form saves nothing (caller reads `form.errors`).
+
+**`WatchedPlayer` model (new).** `account` (FK `AUTH_USER_MODEL`), `league`, `player` (all CASCADE),
+`created_at`; `UniqueConstraint(account, league, player)` `uniq_account_league_watched_player`. No
+ownership axis of its own — always filtered by `account`. Replaces the LG-06f session store; session
+lists were dropped, not migrated (ADR-0004).
+
+**Forms.** `matches/forms.py::TeamFinancesForm` (ModelForm over the four `budget_*`, `injury_policy`,
+`ticket_price`) **rejects, never clamps**: budgets `1..finance.MAX_LEVEL`, `ticket_price >= 0`, policy
+in `Team.INJURY_POLICY_CHOICES`; labels Scouting / Coaching / Facilities / Health / Injury policy /
+Ticket price (the HTML error list shows `label: message`; the API keeps field names). Both callers bind
+`merged_form_data(TeamFinancesForm, team, data)`, so absent fields keep the saved value.
+`matches/api_forms.py`: `LeagueScreenParamsForm` (bind with `league=`; `clean_season` blank ⇒ `None`,
+this League's Season id, or `"career"` when `allow_career`, else 400 `invalid_choice`; `rate` default
+`total`; `ordering` default `ordering_default`), `RATE_CHOICES`, `PLAYER_STAT_SORT_KEYS`,
+`ordering_choices(keys)`, `parse_ordering(value) -> (key, "asc" | "desc")`, a shared `team_id` mixin
+(must be enrolled in the displayed Season), and one Form per screen (`WatchListParamsForm`,
+`PlayerStatsParamsForm`, `PlayerRatingsParamsForm`, `FreeAgentsParamsForm`, `LeadersParamsForm`,
+`StatisticalFeatsParamsForm`, `PlayoffsParamsForm` (`allow_career = False`),
+`TeamHistoryPlayersParamsForm`, `TeamStatsParamsForm`, `PowerRankingsParamsForm`, `GameLogParamsForm`).
+
+**Endpoint behaviour** (`matches/league_screen_api_views.py::LeagueScreensMixin`, mixed into
+`LeagueViewSet`; every action starts with `self.get_object()` ⇒ cross-Account 404, anonymous 403).
+- **Params** are strict (bad `season` / `rate` / `ordering` / `team_id` ⇒ 400). Paging is the shared
+  `EnvelopePagination` (`page`, `page_size`), not the HTML `per_page`. Sorting is `?ordering=<key>` /
+  `-<key>` over the HTML's keys with each screen's HTML default.
+- **`meta.season_scope`** = `{selected: season_ref | "career" | null, options: [season_ref]}` on every
+  Season-scoped screen, merged beside the page keys via the new
+  `EnvelopePagination.get_paginated_response(data, extra_meta=None)` (non-paginated screens set
+  `response.envelope_meta`).
+- **Every Player row carries `watched`** for the requesting Account; rating rows carry the 19
+  lowercase `stats`.
+- **Team-scoped paths** (`teams/<team_id>/…`) use `enrolled_team_or_404` — no displayed Season or a
+  Team not enrolled in it ⇒ 404. No current-team fallback (HTML-only).
+- **League player** is lenient (decision 17): 404 only for a missing / foreign League or Player; one
+  response with bio, overall, 19 stats, per-Season + Career rows, awards and ratings history.
+- **`leaders/`** returns all four boards (top 10), no sort params. **`playoffs/`** rejects `career`.
+- **Watch list writes:** `PUT` / `DELETE watch-list/<player_id>/` ⇒ `{player, watched}`, idempotent;
+  `DELETE watch-list/` ⇒ `{removed: n}`. Player not in the League ⇒ **400 `player_not_in_league`**
+  (field `player_id`).
+- **Finances:** `GET teams/<team_id>/finances/` — finances off ⇒ only `{finance_enabled, team,
+  editable}`. `PATCH` order: 404 (not enrolled) → **409 `finance_disabled`** → **409
+  `team_not_editable`** (not `current_team`, or none) → 400 form errors → the GET payload. `GET
+  finances/` — finances off ⇒ `{finance_enabled: false, rows: []}`; else one row per enrolled Team
+  `{team, cash, revenue, profit, payroll}` (money `null` without a snapshot).
+- Service exceptions map through `translate_screen_errors()` to `PlayerNotInLeagueError` /
+  `FinanceDisabledError` / `TeamNotEditableError` (`APIException`s in the mixin module).
+
+**HTML views changed.** All `league_screens/*` views call the builders (output unchanged except the
+enrolment fix). **Team Finances POST** binds `TeamFinancesForm` against `league.current_team` only (a
+posted `team_id` is ignored), re-renders 200 with `team-finances-form-errors` on bad values, and
+redirects on success / when finances are off; viewing another Team disables the form
+(`<fieldset disabled>`) with `team-finances-readonly-notice`. This fixes a bug where the POST saved any
+enrolled Team's budgets. **Watch list:** the toggle now returns 400 `{"error": "player not in league"}`
+for a Player outside the League; **Remove All** is a POST form (`watch-list-remove-all-form`) to the
+new `watch_list_clear` URL (`GET ?action=clear` removed); the `core.context_processors.watch_list`
+processor reads `watched_player_ids(request.user, league_id)`.
+
+**Known follow-ups (`issues.md`).** ANG01e-D1 player-page awards recompute whole Seasons; ANG01e-D2
+Team History scans every Season of every League; ANG01e-D3 long builders mix querying with assembly.
+
 ## URLs
 
 ```
@@ -599,6 +708,23 @@ is per-row.
 /api/seasons/<id>/awards/            → ANG-01d-1 ("season-awards")
 /api/seasons/<id>/owner-evaluation/  → ANG-01d-1 ("season-owner-evaluation")
 /api/seasons/<id>/conferences/       → ANG-01d-1 GET / PUT full replace ("season-conferences")
+/api/leagues/<id>/watch-list/        → ANG-01e GET rows / DELETE clear ("league-watch-list")
+/api/leagues/<id>/watch-list/<player_id>/ → ANG-01e PUT / DELETE one ("league-watch-player")
+/api/leagues/<id>/player-stats/      → ANG-01e ("league-player-stats")
+/api/leagues/<id>/player-ratings/    → ANG-01e ("league-player-ratings")
+/api/leagues/<id>/free-agents/       → ANG-01e ("league-free-agents")
+/api/leagues/<id>/leaders/           → ANG-01e four boards ("league-leaders")
+/api/leagues/<id>/players/<player_id>/ → ANG-01e League player page ("league-league-player")
+/api/leagues/<id>/teams/<team_id>/roster/ → ANG-01e ("league-team-roster")
+/api/leagues/<id>/teams/<team_id>/history/ → ANG-01e Overall + Seasons ("league-team-history")
+/api/leagues/<id>/teams/<team_id>/history/players/ → ANG-01e ("league-team-history-players")
+/api/leagues/<id>/team-stats/        → ANG-01e ("league-team-stats")
+/api/leagues/<id>/power-rankings/    → ANG-01e ("league-power-rankings")
+/api/leagues/<id>/game-log/          → ANG-01e ("league-game-log")
+/api/leagues/<id>/statistical-feats/ → ANG-01e ("league-statistical-feats")
+/api/leagues/<id>/playoffs/          → ANG-01e ("league-playoffs")
+/api/leagues/<id>/teams/<team_id>/finances/ → ANG-01e GET / PATCH ("league-team-finances")
+/api/leagues/<id>/finances/          → ANG-01e ("league-finances")
 ```
 
 The `simulate-batch/` extra paths in `api_urls.py` are ordered as above: the save-status path sits
@@ -1195,8 +1321,9 @@ _build_league_sidebar_links(league, displayed_season, sidebar_active="<key>")`
 `<key>-empty-notice` with the substring `"No Season"`. **Watch List** is the
 one exception to GET-only: a `?action=add|remove&player_id=<id>` GET toggle
 mutates `request.session["watch_list"]` (a list of int ids) then redirects to
-the bare URL — a browser-session-local convenience list (no model, migrates to
-per-user when UX-01 lands).
+the bare URL — a browser-session-local convenience list at the time. *(Superseded:
+LG-06f replaced the GET toggle with a POST flag; ANG-01e moved the list to the
+per-Account `WatchedPlayer` model — see **ANG-01e league screens API**.)*
 
 **Pure logic modules** (NEW, top-level `matches/`, frozen `dataclasses` /
 `typing` / `collections` import allowlist, each with a `TestNoDjangoImportsLeaked`
@@ -1216,7 +1343,9 @@ derived from `PlayerRoundState` history vs current `Player.team`), and
 `stat_feats.py` (9 feat predicates → `FeatRecord`s, deep-linking to the Round).
 Screens with trivial aggregation (Game Log, Player Ratings, Free Agents, Team
 Roster, Watch List) keep their logic in the view and reuse the LG-00c sort
-helpers (`teams.views._coerce_sort` / `_coerce_dir` / `_SORT_KEYS`).
+helpers (`teams.views._coerce_sort` / `_coerce_dir` / `_SORT_KEYS`). *(ANG-01e:
+every screen's query + row building now lives in
+`matches/league_screen_services.py`; the views only parse params and render.)*
 
 **Central wiring** (`matches/league_urls.py` + `matches/league_views.py::
 _build_league_sidebar_links` + `matches/views.py::_FEATURE_REGISTRY`): each
@@ -1261,8 +1390,10 @@ validator `league_views._coerce_team_id(raw, enrolled_ids)` (mirrors
 `_coerce_per_page`; the single source for all three) returning the int id iff it
 parses **and** is enrolled, else `None` (All Teams). Each view adds
 `enrolled_teams` (`displayed_season.teams.order_by("name")`) + `selected_team_id`.
-Filter points differ: Ratings filters the queryset (`qs.filter(team_id=…)` after
-`_enrolled_player_queryset`), Stats filters rows post-`aggregate_player_stats` on
+*(ANG-01e: enrolment is now `league_screen_services.enrolled_teams` /
+`enrolled_team_ids` — the activation snapshot, live M2M only for a draft.)*
+Filter points differ: Ratings filters the queryset (`qs.filter(team_id=…)`, now
+inside `build_player_ratings_queryset`), Stats filters rows post-`aggregate_player_stats` on
 `PlayerStatRow.team_id`, Feats filters the seam **inputs** before
 `stat_feats.scan_feats` (`player_rounds` by `team_id`, `matches` by red/blue id)
 — `stat_feats.py` untouched. `team_id` carries in both querystring helpers + a
@@ -1373,7 +1504,8 @@ outcome), `mvp = float(prs.get_mvp)` (property) and
 detonation pass — then layers **LG-06a pagination** (`Paginator` AFTER sort,
 `_LG01F_PER_PAGE_OPTIONS`) and **expanded LG-06c sort** over the full box-score
 column set (`_FEATS_SORT_KEYS` frozenset of every descriptor + 13 box-score keys,
-`_FEATS_SORT_KEYS_DISPLAY`, the `_feat_row_sort_value` extractor,
+`_FEATS_SORT_KEYS_DISPLAY`, the `feat_row_sort_value` extractor — ANG-01e moved it,
+`is_nuke_detonation` and `FEATS_SORT_KEYS` to `league_screen_services.py`,
 `teams.views._coerce_dir` reused) with **default sort = most recent first**
 (`("round", "desc")`) and a `(round_id desc, player_id asc)` secondary tiebreak;
 the Team-feats list is not paginated. Coexists with the LG-06b `?team_id=` filter
@@ -1401,6 +1533,17 @@ re-baseline** (GLOSSARY.md gained the **Watch list** + **Watch flag** terms; no
 ADR). Seam contract:
 [`.claude/worktrees/lg-06f-seam-contract.md`](../../.claude/worktrees/lg-06f-seam-contract.md).
 
+> **Superseded in part by ANG-01e.** The watch list is no longer in the session: it is the
+> `WatchedPlayer` model, one row per (Account, League, Player), read and written only through
+> `league_screen_services` (`watched_player_ids` / `add_watch` / `remove_watch` /
+> `clear_watch_list`). `league_views._watched_player_ids(request, league_id)` is now a thin wrapper
+> (anonymous ⇒ `set()`); the context processor imports `league_screen_services.watched_player_ids`
+> directly. The toggle also returns **400 `{"error": "player not in league"}`** for a Player on no
+> enrolled Team of the displayed Season and not in the free-agent pool. **Remove All** is a POST to
+> `watch_list_clear` (`/leagues/<id>/players/watch-list/clear/`); `GET ?action=clear` is gone. The
+> screen runs `build_watch_list_rows` (the pipeline below, moved). The session-store details below are
+> history.
+
 **Per-League session store.** `request.session["watch_lists"]: dict[str,
 list[int]]` keyed by `str(league_id)`, value an ordered list of watched Player
 ids (e.g. `{"3": [12, 47], "8": [12]}`). The pre-LG-06f global singular
@@ -1414,7 +1557,8 @@ each entry to int (silently dropping non-ints), never raises (missing key ⇒
 
 **Context processor.** `core.context_processors.watch_list(request) ->
 {"watched_player_ids": set[int]}` (alongside `league_nav` / `app_mode`,
-lazy-importing `_watched_player_ids` to dodge the `core ↔ matches` apps cycle)
+lazy-importing `league_screen_services.watched_player_ids` since ANG-01e, to dodge
+the `core ↔ matches` apps cycle)
 resolves `league_id` from `request.resolver_match.kwargs` defensively — no
 `resolver_match` or no `league_id` kwarg (off-League, a pre-resolution 404, or a
 `RequestFactory()` request) ⇒ `{"watched_player_ids": set()}`. **Registered
@@ -1431,7 +1575,8 @@ request, league_id) -> JsonResponse` — **POST-only** (`HttpResponseNotAllowed(
 League)` → coerce `player_id` from POST (invalid ⇒ 400 `{"error": "invalid
 player_id"}`) → `Player.objects.filter(pk=...).exists()` (unknown ⇒ 400 `{"error":
 "unknown player_id"}`, a locked decision — not a silent no-op) → flip membership
-in `watch_lists[str(league_id)]` → `session.modified = True` → return `{"watched":
+(ANG-01e: `remove_watch` / `add_watch`, the latter 400 `player not in league`;
+originally `watch_lists[str(league_id)]` + `session.modified = True`) → return `{"watched":
 bool, "player_id": int}` (`watched` is the NEW post-flip state). Per-League
 isolation falls out of the `str(league_id)` key — toggling in League A never
 touches League B's list.
@@ -1449,13 +1594,13 @@ first (incoming order), then zero rows in **ascending player-id order**
 (`sorted(missing_ids)`) — deterministic for the unit test even though downstream
 `apply_rate` / `sort_player_stats` may re-order.
 
-**Rewritten screen view.** `watch_list(request, league_id)` is GET-only EXCEPT
-the retained `?action=clear` branch (now clears `watch_lists[str(league_id)]`,
-sets `session.modified = True`, redirects to the bare URL). The legacy
+**Rewritten screen view.** `watch_list(request, league_id)` was GET-only EXCEPT
+the retained `?action=clear` branch (ANG-01e: removed — it is now GET-only and Remove
+All POSTs to `watch_list_clear`). The legacy
 `?action=add|remove` branches and the add-form are GONE. The view reuses the
-player_stats machinery — `_build_round_dicts` is **imported from**
-`matches.league_screens.player_stats` — with the **locked pipeline**
-`_build_round_dicts → aggregate_player_stats → zero_fill_watched → apply_rate →
+player_stats machinery — since ANG-01e via `league_screen_services.build_watch_list_rows`
+over `build_round_dicts` — with the **locked pipeline**
+`build_round_dicts → aggregate_player_stats → zero_fill_watched → apply_rate →
 sort_player_stats → Paginator` (`zero_fill_watched` runs BEFORE `apply_rate` so
 zero rows take the same rate pass-through, where the `games <= 0 ⇒ 0.0` guard
 leaves zeros as zeros). `identity_by_id` is built view-side from
@@ -1468,8 +1613,9 @@ sortable columns via `coerce_sort` / `coerce_dir` / `sort_player_stats` — with
 new DOM ids `watch-list-{per-page,season-filter,rate}-{form,select}` /
 `watch-list-th-{key}` / `watch-list-pagination` mirroring `player-stats-*`,
 preserving `watch-list-table`, `watch-list-empty-notice` (the `"No Season"`
-substring branch retained) and `watch-list-remove-all` (Remove All →
-`?action=clear`), and `sidebar_active="watch_list"`. **Removed ids:**
+substring branch retained) and `watch-list-remove-all` (Remove All; ANG-01e made
+it the submit button of the POST form `watch-list-remove-all-form`), and
+`sidebar_active="watch_list"`. **Removed ids:**
 `watch-list-add` / `-select` / `watch-list-row-{id}` (add-form + old 3-column rows
 gone); a per-row flag replaces the per-row Remove control.
 
@@ -1595,7 +1741,10 @@ of `league-player-rs-stats-table`; the header, Potential placeholder, and all 5
 stubs still render (a current free agent with no League Rounds is a 200, not a
 404).
 
-**RS aggregation is VIEW-SIDE — no new pure module.** Reuse, by import,
+**RS aggregation is VIEW-SIDE — no new pure module.** *(ANG-01e moved it into
+`league_screen_services.build_player_detail(league, player) -> PlayerDetail`, shared with
+`GET /api/leagues/<id>/players/<player_id>/`; `_build_round_dicts` is now the public
+`build_round_dicts`.)* Reuse, by import,
 `_build_round_dicts` from `matches.league_screens.player_stats` and
 `aggregate_player_stats` (+ `PlayerStatRow`) from
 `matches.season_player_stats`. Per-Season rows: for each `season in
@@ -5940,7 +6089,10 @@ vocabulary. Seam contract:
 **Locked names (NEW / CHANGED).**
 - `matches/league_screens/team_history.py::_build_overall_context(team)` —
   **CHANGED** (the ONLY code edit for sub-feature A): widen the round corpus, fill
-  `playoff_appearances`, add the `Tournament` import (see below).
+  `playoff_appearances`, add the `Tournament` import (see below). *(ANG-01e deleted the
+  three `team_history._build_{overall,seasons,players}_context` helpers; the same logic is
+  now `league_screen_services._team_overall_record` / `_team_season_rows` /
+  `build_team_history_players`, behind `build_team_history`.)*
 - `matches/tournament_engine.py::play_next_bracket_round(tournament: Tournament) -> int`
   — **NEW**: drain the lowest incomplete `(bracket_type, bracket_round)` STAGE to
   clinch; return the NODES-clinched count; `0` when nothing playable.
@@ -6199,7 +6351,7 @@ ranked: `.exclude(season_phase__phase_type="member_night")` on a `Match` queryse
 `league_views.season_standings` (the Match query AND the LG-06g side-split `GameRound`
 query), `_build_dashboard_context`, `_build_history_row` (an **in-Python** skip to preserve
 the `season.matches` prefetch, NOT a queryset `.exclude`), `league_screens/team_history.py::
-_build_seasons_context`, and `league_screens/power_rankings.py` (win% component — member
+_build_seasons_context` (since ANG-01e `league_screen_services._team_season_rows`), and `league_screens/power_rankings.py` (win% component — member
 nights must not move power rankings either). **PLAY-01 live polling needs no separate edit**
 — `_build_play_status_response` → `_render_live_play_panels` → `_build_dashboard_context`
 recomputes through the SAME excluded query, so the live poll is covered transitively.
@@ -6336,7 +6488,8 @@ balanced 6/6 over a 12–18 pool); NO re-roll / cleanup of drawn Teams.
   `_is_finished`, `current_phase`; `_final_standings_for_phase` gains only the `.exclude`.
 - **Standings exclusion** — `.exclude(season_phase__phase_type="member_night")` at
   `_final_standings_for_phase`, `season_standings` (Match + GameRound), `_build_dashboard_context`,
-  `_build_history_row` (in-Python skip), `team_history._build_seasons_context`,
+  `_build_history_row` (in-Python skip), `team_history._build_seasons_context` (now
+  `league_screen_services._team_season_rows`),
   `power_rankings`. PLAY-01 live poll covered transitively.
 - **Game shape** — 2-Round Match via `simulate_scheduled_round(season, team_a, team_b,
   round_number, *, season_phase=<mn phase>)` VERBATIM; setup pre-creates `Match(season,
@@ -6462,7 +6615,8 @@ include). It `get_object_or_404(Season, …)` (404 on missing), LOCKS a GET-only
 _build_league_sidebar_links(league, displayed_season, sidebar_active=None)` (no sidebar
 entry matches the awards page, the `player_detail` precedent). It resolves teams via
 `team_color` against `game_round.team_red`/`team_blue`, mirroring
-`matches.league_screens.player_stats._build_round_dicts`. **LOCKED DOM ids:**
+`matches.league_screens.player_stats._build_round_dicts` (now
+`league_screen_services.build_round_dicts`). **LOCKED DOM ids:**
 `season-awards-table` (outer table, present when ≥ 1 winner), `season-awards-most-points`,
 `season-awards-best-accuracy`, `season-awards-kd-{role}` (the 5 — `kd-commander`/`kd-heavy`/
 `kd-scout`/`kd-medic`/`kd-ammo`), `season-awards-best-medic`,
@@ -6930,7 +7084,7 @@ The finance epic CAR-02 deferred — it **lights up the dormant *money* mood fac
 
 **Create form.** `matches.forms.CreateLeagueForm` gains `finance_enabled = forms.BooleanField(required=False, initial=False, label="Enable team finances", widget=CheckboxInput(attrs={"id": "league-create-finance-enabled"}))` (appended after the LG-01j `map_pool` field, 9→10 fields; DOM id **`league-create-finance-enabled`**). `league_create` passes `finance_enabled=form.cleaned_data["finance_enabled"]` into `League.objects.create(...)` inside the existing `@transaction.atomic`; `templates/leagues/create.html` renders one `{{ form.finance_enabled }}` row.
 
-**UI — two screens (flip the LG-01h placeholders live, the LG-01z pattern).** Two NEW view modules in `matches/league_screens/`, both re-exported from `__init__.py` and both following the shared LG-01z contract (405 GET-guard first line, `get_object_or_404(League)`, `request.session["last_league_id"] = league.id`, `displayed_season = league.active_season or league.seasons.filter(state="completed").order_by("-id").first()`, `_build_league_sidebar_links(...)`, empty-state notice when no Season, and a **"Finances are disabled for this League" notice (DOM id `*-disabled-notice`)** in place of the body when `not finance_enabled`): **`team_finances.py`** → `team_finances(request, league_id)` (GET + a budget-edit POST branch; **keyed on `current_team`** via the LG-01g resolver chain — default `league.current_team`, optional `?team_id=` override, like `team_roster` / `team_stats`; renders the managed Team's `TeamSeasonFinance` history + current budget levels + ticket price + cash + live luxury-tax/min-payroll/payroll figures; the **budget-edit POST handler** writes `Team.budget_scouting/coaching/facilities` + `ticket_price` clamped `[1, MAX_LEVEL]` for levels, then redirects to the bare URL — the LG-01z `watch_list_toggle` POST-then-redirect precedent; finance OFF ⇒ the edit form is hidden/inert) and **`league_finances.py`** → `league_finances(request, league_id)` (GET-only, the league-wide revenue/profit/cash/payroll-per-enrolled-Team table from the `displayed_season`'s `TeamSeasonFinance` rows). **URL names + paths** (`matches/league_urls.py`, after the LG-01z live-screen block): `path("<int:league_id>/finances/", league_screens.league_finances, name="league_finances")` (replaces the placeholder `coming_soon_finances`) + `path("<int:league_id>/team/finances/", league_screens.team_finances, name="team_finances")` (replaces `coming_soon_team_finances`). **`_FEATURE_REGISTRY` drops 2 entries** — `"league_finances"` (~L1870) + `"team_finances"` (~L1880) both flip live, so their blocker entries are deleted (`players_trade` / `players_trading_block` keep their "needs the salary/contract model" blocker copy — FIN-01 adds salary but NOT contracts/cap-space). **Sidebar/topbar repoint** (`_build_league_sidebar_links`, the single source for BOTH the LG-01f sidebar AND the LG-01k topbar — both flip at once, the LG-01z precedent): LEAGUE > Finances (~L1706) `_cs("coming_soon_finances")` → `_cs("league_finances")`; TEAM > Finances (~L1717) `_cs("coming_soon_team_finances")` → `_cs("team_finances")`. **Templates** `templates/leagues/team_finances.html` / `league_finances.html` (the `d-flex` + `_partials/league_sidebar.html` shell). **LOCKED DOM ids:** Team Finances — `team-finances-table`, `team-finances-budget-form` / `team-finances-budget-scouting` / `team-finances-budget-coaching` / `team-finances-budget-facilities` / `team-finances-ticket-price` / `team-finances-budget-save`, `team-finances-empty-notice`, `team-finances-disabled-notice`; League Finances — `league-finances-table`, `league-finances-empty-notice`, `league-finances-disabled-notice`. **ZenGM-style Team Finances layout** (modelled on `Screenshots_and_video_examples/league_team_finances_view.png`): the rendered `team is not None` branch surfaces a `${{ live_payroll }}k` **payroll headline** (id `team-finances-payroll-headline`) + the hype→revenue explainer, a `team-finances-metrics` tile row (**Wins** record / **Hype** bar / **Revenue** / **Expenses** / **Cash**), the budget form restyled as an **Expense Settings** table (each of the three levels annotated with its `level_to_amount` `$`/season cost via the `budget_costs` context dict + the neutral-`DEFAULT_LEVEL` hint; the LOCKED ids above are preserved on the inputs/save button, the save label reads "Save Expense Settings"), and a `team-finances-salaries-table` **Player Salaries** table (per-active-roster `salary_for_overall` + a Total row) — all additive presentational ids/context (`roster_salaries` / `roster_salary_total` / `budget_costs` / `wins` / `losses` / `current_hype` / `latest_finance` / `default_level`); the budget model stays 1–100 levels (no dollar-input model change) and the screen reuses the league-views `_team_wins_games_for_season` helper for the record tile.
+**UI — two screens (flip the LG-01h placeholders live, the LG-01z pattern).** Two NEW view modules in `matches/league_screens/`, both re-exported from `__init__.py` and both following the shared LG-01z contract (405 GET-guard first line, `get_object_or_404(League)`, `request.session["last_league_id"] = league.id`, `displayed_season = league.active_season or league.seasons.filter(state="completed").order_by("-id").first()`, `_build_league_sidebar_links(...)`, empty-state notice when no Season, and a **"Finances are disabled for this League" notice (DOM id `*-disabled-notice`)** in place of the body when `not finance_enabled`): **`team_finances.py`** → `team_finances(request, league_id)` (GET + a budget-edit POST branch; **keyed on `current_team`** via the LG-01g resolver chain — default `league.current_team`, optional `?team_id=` override, like `team_roster` / `team_stats`; renders the managed Team's `TeamSeasonFinance` history + current budget levels + ticket price + cash + live luxury-tax/min-payroll/payroll figures; the **budget-edit POST handler** writes `Team.budget_scouting/coaching/facilities` + `ticket_price` clamped `[1, MAX_LEVEL]` for levels, then redirects to the bare URL — the LG-01z `watch_list_toggle` POST-then-redirect precedent; finance OFF ⇒ the edit form is hidden/inert. *(Superseded by ANG-01e: the POST binds `TeamFinancesForm` via `merged_form_data` against `league.current_team` **only** (a posted `team_id` is ignored — before, it saved any enrolled Team), **rejects** out-of-range values with a 200 re-render (`team-finances-form-errors`, `label: message`) instead of clamping, and the form is disabled with `team-finances-readonly-notice` when another Team is displayed.)*) and **`league_finances.py`** → `league_finances(request, league_id)` (GET-only, the league-wide revenue/profit/cash/payroll-per-enrolled-Team table from the `displayed_season`'s `TeamSeasonFinance` rows). **URL names + paths** (`matches/league_urls.py`, after the LG-01z live-screen block): `path("<int:league_id>/finances/", league_screens.league_finances, name="league_finances")` (replaces the placeholder `coming_soon_finances`) + `path("<int:league_id>/team/finances/", league_screens.team_finances, name="team_finances")` (replaces `coming_soon_team_finances`). **`_FEATURE_REGISTRY` drops 2 entries** — `"league_finances"` (~L1870) + `"team_finances"` (~L1880) both flip live, so their blocker entries are deleted (`players_trade` / `players_trading_block` keep their "needs the salary/contract model" blocker copy — FIN-01 adds salary but NOT contracts/cap-space). **Sidebar/topbar repoint** (`_build_league_sidebar_links`, the single source for BOTH the LG-01f sidebar AND the LG-01k topbar — both flip at once, the LG-01z precedent): LEAGUE > Finances (~L1706) `_cs("coming_soon_finances")` → `_cs("league_finances")`; TEAM > Finances (~L1717) `_cs("coming_soon_team_finances")` → `_cs("team_finances")`. **Templates** `templates/leagues/team_finances.html` / `league_finances.html` (the `d-flex` + `_partials/league_sidebar.html` shell). **LOCKED DOM ids:** Team Finances — `team-finances-table`, `team-finances-budget-form` / `team-finances-budget-scouting` / `team-finances-budget-coaching` / `team-finances-budget-facilities` / `team-finances-ticket-price` / `team-finances-budget-save`, `team-finances-empty-notice`, `team-finances-disabled-notice`; League Finances — `league-finances-table`, `league-finances-empty-notice`, `league-finances-disabled-notice`. **ZenGM-style Team Finances layout** (modelled on `Screenshots_and_video_examples/league_team_finances_view.png`): the rendered `team is not None` branch surfaces a `${{ live_payroll }}k` **payroll headline** (id `team-finances-payroll-headline`) + the hype→revenue explainer, a `team-finances-metrics` tile row (**Wins** record / **Hype** bar / **Revenue** / **Expenses** / **Cash**), the budget form restyled as an **Expense Settings** table (each of the three levels annotated with its `level_to_amount` `$`/season cost via the `budget_costs` context dict + the neutral-`DEFAULT_LEVEL` hint; the LOCKED ids above are preserved on the inputs/save button, the save label reads "Save Expense Settings"), and a `team-finances-salaries-table` **Player Salaries** table (per-active-roster `salary_for_overall` + a Total row) — all additive presentational ids/context (`roster_salaries` / `roster_salary_total` / `budget_costs` / `wins` / `losses` / `current_hype` / `latest_finance` / `default_level`); the budget model stays 1–100 levels (no dollar-input model change) and the screen reuses the league-views `_team_wins_games_for_season` helper for the record tile.
 
 **Scope-out (LOCKED).** **Cost-only this slice** — scouting & coaching buy NO gameplay edge yet (wiring the coaching budget into LG-04 development = **FIN-02**, the scouting budget into LG-05 potential = **FIN-03**). **Health budget + injury/availability = FIN-04** (the fourth ZenGM budget; only three ship here). **Tax redistribution SKIPPED** (luxury tax is charged but not paid back out to under-cap teams). **Luxury-tax challenge-mode firing DEFERRED to FIN-05** (the term is written, no toggle). **No contracts / free agency / cap space** (salary is derived from `overall_rating`; `players_trade` / `players_trading_block` stay blocked). **Fixed single market** (no `pop` / popRank / per-game gauss variance). **Determinism / no re-baseline:** finances consume no RNG, are outside SIM-07/08, change no simulation mechanic ⇒ **NO Score Calibration re-baseline**, and LG-04/LG-05 develop output is byte-identical toggle ON or OFF. **No new GLOSSARY.md term** (the `### Finance` glossary + the two "money dormant" caveat edits were finalised at the grill).
 
@@ -6992,7 +7146,7 @@ The **fourth ZenGM budget** — the one FIN-01 deferred and the only one of the 
 
 **Gating + `_ensure_team_finances` change (byte-identical OFF).** `resolve_injuries_for_fixture` AND the health-cost write are gated FIRST-LINE on `_is_career_league(season.league) and season.league.finance_enabled` ⇒ OFF (or sandbox / multiplayer) means no rolls, no roster mutation, no `games_unavailable` change, byte-identical to today. The `_ensure_team_finances` writer already early-returns when `not _is_career_league(league) or not league.finance_enabled`, so the new thread is inside that gate: the `compute_team_finance(...)` call gains `health_level=team.budget_health`, and the `TeamSeasonFinance.objects.get_or_create(... defaults={...})` block gains `"health_cost": result.expense_lines.health`.
 
-**UI — Team Finances screen (`matches/league_screens/team_finances.py::team_finances` + `templates/leagues/team_finances.html`, both already FIN-01-live).** The budget-edit POST handler reads + clamps `request.POST.get("budget_health")` via the existing `_coerce_level(...)` into `team.budget_health`, reads `request.POST.get("injury_policy")` (accept only `"auto_sub"` / `"play_hurt"`, else keep current) into `team.injury_policy`, and adds `"budget_health"` / `"injury_policy"` to the `team.save(update_fields=[...])` list (inert when finance OFF or no Team). Context adds `budget_costs["health"] = finance.level_to_amount(team.budget_health)`, `injury_policy=team.injury_policy`, and `availability` — a `list[{name, games_remaining}]` of the Team's players with `games_unavailable > 0` (by `games_unavailable` desc; `[]` when none). **LOCKED DOM ids:** `team-finances-budget-health` (the `<input>` for `budget_health`, in `team-finances-budget-form` alongside the existing scouting/coaching/facilities inputs), `team-finances-injury-policy` (the `<select name="injury_policy">` toggle, `auto_sub` / `play_hurt`, in the same form), `team-finances-availability` (the availability-display container rendered from `availability`) with a `team-finances-availability-empty` notice when the list is empty. Manager-editable (FIN-01 pattern); all existing FIN-01 DOM ids (`team-finances-budget-form` / `-budget-scouting` / `-budget-coaching` / `-budget-facilities` / `-ticket-price` / `-budget-save` / `-disabled-notice` / `-empty-notice` / `-table` / `-salaries-table` / `-metrics`) are **PRESERVED unchanged**.
+**UI — Team Finances screen (`matches/league_screens/team_finances.py::team_finances` + `templates/leagues/team_finances.html`, both already FIN-01-live).** The budget-edit POST handler reads + clamps `request.POST.get("budget_health")` via the existing `_coerce_level(...)` into `team.budget_health`, reads `request.POST.get("injury_policy")` (accept only `"auto_sub"` / `"play_hurt"`, else keep current) into `team.injury_policy`, and adds `"budget_health"` / `"injury_policy"` to the `team.save(update_fields=[...])` list (inert when finance OFF or no Team). *(Superseded by ANG-01e: `_coerce_level` is gone; `TeamFinancesForm` validates `budget_health` (`1..MAX_LEVEL`) and `injury_policy` (the two choices) and rejects bad values; an absent field keeps its saved value; only `league.current_team` is saved — see **ANG-01e league screens API**.)* Context adds `budget_costs["health"] = finance.level_to_amount(team.budget_health)`, `injury_policy=team.injury_policy`, and `availability` — a `list[{name, games_remaining}]` of the Team's players with `games_unavailable > 0` (by `games_unavailable` desc; `[]` when none). **LOCKED DOM ids:** `team-finances-budget-health` (the `<input>` for `budget_health`, in `team-finances-budget-form` alongside the existing scouting/coaching/facilities inputs), `team-finances-injury-policy` (the `<select name="injury_policy">` toggle, `auto_sub` / `play_hurt`, in the same form), `team-finances-availability` (the availability-display container rendered from `availability`) with a `team-finances-availability-empty` notice when the list is empty. Manager-editable (FIN-01 pattern); all existing FIN-01 DOM ids (`team-finances-budget-form` / `-budget-scouting` / `-budget-coaching` / `-budget-facilities` / `-ticket-price` / `-budget-save` / `-disabled-notice` / `-empty-notice` / `-table` / `-salaries-table` / `-metrics`) are **PRESERVED unchanged**.
 
 **Scope-out (verbatim).** **tournaments/playoffs untouched, no injury-type taxonomy, no in-sim injuries, no frequency-from-health, no Stat-driven probability, FIN-05 deferred, NO Score Calibration re-baseline.**
 

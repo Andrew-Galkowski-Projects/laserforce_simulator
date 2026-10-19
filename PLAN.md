@@ -1792,9 +1792,24 @@ Celery tasks in `matches/tasks.py` and the enveloped Job-polling shape; builds o
 `LeagueViewSet` / `SeasonViewSet` and `matches/league_services.py`. None of the play views,
 `_build_play_controls_context` or `tasks.py` moved in ANG-01d-1.
 
-#### ANG-01e · League stats / finance / players screens API
+#### ANG-01e · [DONE] League stats / finance / players screens API
 
 Spec: #180
+
+**[DONE] Shipped (2026-10-19).** All 15 League screens are exposed under `/api/leagues/<id>/…` on a
+shared `matches/league_screen_services.py`, so the `league_screens/*` HTML views and the API run the
+same builders (the old private helpers were deleted rather than re-exported, so decision 10's
+re-export shims were dropped). The watch list moved from the browser session to the per-Account
+`WatchedPlayer` model (migration `0063`). The work found that the screens disagreed on what
+"enrolled" means: there is now one definition, the Season's activation snapshot
+(`starting_team_ids_json`, live M2M only for a draft). It also fixed the HTML finances POST, which
+saved any enrolled Team (an AI team's budgets could be edited); it now saves only `current_team`
+through the new `TeamFinancesForm`, which rejects bad values instead of clamping. Deviations: the HTML
+finances POST binds merged form data (absent fields keep their saved values); `GET finances/` with
+finances off returns `rows: []` and the team GET returns only its header keys (not null sections);
+the finances `PATCH` returns 409 (`finance_disabled` / `team_not_editable`) before any 400 form error.
+Follow-ups ANG01e-D1..D3 are in `issues.md`. See the **ANG-01e league screens API** section of
+`laserforce_simulator/matches/CLAUDE.md`.
 
 The read-mostly `league_screens/*` surfaces: League leaders, player stats and ratings history,
 free agents and watch list, team history, finances (budgets, ticket price, injury policy), and
