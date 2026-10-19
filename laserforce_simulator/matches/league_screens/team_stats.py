@@ -25,6 +25,7 @@ from matches.league_views import (
     _resolve_season_scope,
     _season_param,
 )
+from matches.league_screen_services import enrolled_team_ids as _enrolled_team_ids
 from matches.models import GameEvent, GameRound, League, PlayerRoundState
 from matches.team_stats_logic import (
     SORT_KEYS_DISPLAY,
@@ -34,18 +35,6 @@ from matches.team_stats_logic import (
     sort_team_stats,
 )
 from teams.models import Team
-
-
-def _enrolled_team_ids(displayed_season) -> list[int]:
-    """Team ids enrolled in the displayed Season.
-
-    Prefers the frozen ``starting_team_ids_json`` snapshot (active /
-    completed Seasons); falls back to the live M2M for draft Seasons where
-    the snapshot is still ``None`` (mirrors the LG-01 standings precedent).
-    """
-    if displayed_season.starting_team_ids_json is not None:
-        return list(displayed_season.starting_team_ids_json)
-    return sorted(t.id for t in displayed_season.teams.all())
 
 
 def team_stats(request: HttpRequest, league_id: int) -> HttpResponse:

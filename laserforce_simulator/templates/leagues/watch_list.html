@@ -10,9 +10,8 @@
         <h1 class="mb-3">{{ league.name }} — Watch List</h1>
 
         <p class="text-muted small">
-            This watch list is stored in your browser session only — it is
-            local to this browser and this League, not shared across devices,
-            users, or other Leagues. Click the &#9733; flag on any player to
+            This watch list is saved to your account for this League, so it
+            follows you across browsers; each League keeps its own list. Click the &#9733; flag on any player to
             add or remove them.
         </p>
 
@@ -59,8 +58,10 @@
         {% else %}
             <div class="d-flex justify-content-between align-items-center mb-2">
                 <p class="text-muted mb-0">{{ paginator.count }} player{{ paginator.count|pluralize }}</p>
-                <a id="watch-list-remove-all" class="btn btn-sm btn-outline-danger"
-                   href="?action=clear">Remove All</a>
+                <form id="watch-list-remove-all-form" method="post" action="{% url 'watch_list_clear' league.id %}" class="d-inline">
+                    {% csrf_token %}
+                    <button id="watch-list-remove-all" type="submit" class="btn btn-sm btn-outline-danger">Remove All</button>
+                </form>
             </div>
 
             <form id="watch-list-per-page-form" method="get" class="d-inline-block mb-3">

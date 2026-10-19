@@ -47,6 +47,7 @@ from matches.league_views import (
     _LG01F_PER_PAGE_OPTIONS,
     _resolve_current_team_for_sidebar,
 )
+from matches.league_screen_services import enrolled_team_ids as _enrolled_team_ids
 from matches.models import GameRound, League, PlayerRoundState, Season, Tournament
 from matches.standings import compute_standings
 from matches.team_history_logic import (
@@ -139,17 +140,6 @@ def _th_players_sort_value(row, key: str):
         return row.stats.get(key, 0)
     # ``name`` / ``games_played``
     return getattr(row, key)
-
-
-def _enrolled_team_ids(season: Season) -> list[int]:
-    """Team ids enrolled in ``season`` — snapshot first, live M2M fallback.
-
-    Active / completed Seasons read the frozen ``starting_team_ids_json``
-    snapshot; draft Seasons (snapshot still ``None``) read the live M2M.
-    """
-    if season.starting_team_ids_json is not None:
-        return list(season.starting_team_ids_json)
-    return sorted(t.id for t in season.teams.all())
 
 
 def _completed_season_ids_for_team(team: Team) -> dict[int, Season]:

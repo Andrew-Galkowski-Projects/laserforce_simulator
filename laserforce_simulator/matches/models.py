@@ -2798,6 +2798,46 @@ class TeamSeasonFinance(models.Model):
         ]
 
 
+class WatchedPlayer(models.Model):
+    """ANG-01e -- one Player on an Account's watch list for one League.
+
+    Replaces the browser-session ``watch_lists`` dict, so a watch list follows
+    the Account across browsers and survives the move to JWT auth. Read and
+    written only through ``matches.league_screen_services`` (``add_watch`` /
+    ``remove_watch`` / ``clear_watch_list`` / ``watched_player_ids``), always
+    filtered by ``account`` -- the row has no ownership axis of its own.
+    """
+
+    account = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="watched_players",
+    )
+    league = models.ForeignKey(
+        "matches.League",
+        on_delete=models.CASCADE,
+        related_name="watched_players",
+    )
+    player = models.ForeignKey(
+        "teams.Player",
+        on_delete=models.CASCADE,
+        related_name="watched_by",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["account", "league", "player"],
+                name="uniq_account_league_watched_player",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"WatchedPlayer(account={self.account_id}, league={self.league_id}, player={self.player_id})"
+
+
 class SeasonPhase(models.Model):
     """LG-02-Part2a — one ordered phase within a Season's schedule.
 

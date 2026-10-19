@@ -30,12 +30,15 @@ import re
 from datetime import date
 from types import SimpleNamespace
 
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AnonymousUser
 from django.contrib.sessions.middleware import SessionMiddleware
 from django.test import RequestFactory, TestCase
 
+from conftest import get_shared_manager
 from core.context_processors import watch_list as watch_list_context
 from matches.league_screens.player_stats import player_stats
-from matches.models import League, Season
+from matches.models import League, Season, WatchedPlayer
 from matches.tests.conftest import make_team_with_slots
 from teams.models import Player
 
@@ -146,8 +149,11 @@ class TestWatchFlagPartialRender(TestCase):
     def _render(self, *watched_ids: int) -> str:
         path = f"/leagues/{self.league.id}/stats/player-stats/"
         request = _attach_session(RequestFactory().get(path))
-        request.session["watch_lists"] = {str(self.league.id): list(watched_ids)}
-        request.session.save()
+        request.user = get_shared_manager()
+        for player_id in watched_ids:
+            WatchedPlayer.objects.create(
+                account=request.user, league=self.league, player_id=player_id
+            )
         # The screen view renders through Django's template engine; the
         # context processor injects ``watched_player_ids``. The view's
         # render() runs context processors only when the request carries a
@@ -201,24 +207,34 @@ class TestWatchFlagPartialRender(TestCase):
 
 
 class TestWatchListContextProcessor(TestCase):
-    """Drive ``watch_list(request)`` directly with a stubbed resolver_match."""
+    """Drive ``watch_list(request)`` directly with a stubbed resolver_match.
+
+    ANG-01e: the set comes from the requesting Account's ``WatchedPlayer``
+    rows for the URL's League -- never from the browser session.
+    """
 
     def setUp(self) -> None:
+        self.account = get_shared_manager()
         self.league = _make_league()
         self.other_league = _make_league("OtherFlagLeague")
+        _, teams = _make_active_season(self.league, n_teams=2)
+        self.players = teams[0].active_players
+
+    def _watch(self, league: League, *players: Player, account=None) -> None:
+        for player in players:
+            WatchedPlayer.objects.create(
+                account=account or self.account, league=league, player=player
+            )
 
     def _request(
         self,
         *,
-        session_data: dict | None = None,
         resolver_kwargs=None,
         has_resolver: bool = True,
+        user=None,
     ):
         request = _attach_session(RequestFactory().get("/"))
-        if session_data is not None:
-            for k, v in session_data.items():
-                request.session[k] = v
-            request.session.save()
+        request.user = user if user is not None else self.account
         if has_resolver:
             request.resolver_match = SimpleNamespace(
                 kwargs=resolver_kwargs if resolver_kwargs is not None else {}
@@ -230,69 +246,69 @@ class TestWatchListContextProcessor(TestCase):
         result = watch_list_context(request)
         self.assertIn("watched_player_ids", result)
 
-    def test_resolves_per_league_set_from_session(self) -> None:
-        request = self._request(
-            session_data={"watch_lists": {str(self.league.id): [12, 47, 105]}},
-            resolver_kwargs={"league_id": self.league.id},
-        )
+    def test_resolves_per_league_set_from_account(self) -> None:
+        self._watch(self.league, self.players[0], self.players[1])
+        request = self._request(resolver_kwargs={"league_id": self.league.id})
         result = watch_list_context(request)
-        self.assertEqual(result["watched_player_ids"], {12, 47, 105})
+        self.assertEqual(
+            result["watched_player_ids"], {self.players[0].id, self.players[1].id}
+        )
 
     def test_returns_set_type(self) -> None:
-        request = self._request(
-            session_data={"watch_lists": {str(self.league.id): [1, 2]}},
-            resolver_kwargs={"league_id": self.league.id},
-        )
+        self._watch(self.league, self.players[0])
+        request = self._request(resolver_kwargs={"league_id": self.league.id})
         result = watch_list_context(request)
         self.assertIsInstance(result["watched_player_ids"], set)
 
     def test_only_this_leagues_ids_returned(self) -> None:
-        # League A watches {1,2}; League B watches {9}. Resolving for A must
-        # not leak B's ids.
+        self._watch(self.league, self.players[0])
+        self._watch(self.other_league, self.players[1])
+        request = self._request(resolver_kwargs={"league_id": self.league.id})
+        result = watch_list_context(request)
+        self.assertEqual(result["watched_player_ids"], {self.players[0].id})
+
+    def test_only_this_accounts_ids_returned(self) -> None:
+        other = get_user_model().objects.create_user(
+            email="flag-other@example.com", password="Str0ng-Passphrase-9"
+        )
+        self._watch(self.league, self.players[1], account=other)
+        self._watch(self.league, self.players[0])
+        request = self._request(resolver_kwargs={"league_id": self.league.id})
+        result = watch_list_context(request)
+        self.assertEqual(result["watched_player_ids"], {self.players[0].id})
+
+    def test_session_watch_lists_are_ignored(self) -> None:
+        request = self._request(resolver_kwargs={"league_id": self.league.id})
+        request.session["watch_lists"] = {str(self.league.id): [self.players[0].id]}
+        request.session.save()
+        result = watch_list_context(request)
+        self.assertEqual(result["watched_player_ids"], set())
+
+    def test_anonymous_gets_empty_set(self) -> None:
+        self._watch(self.league, self.players[0])
         request = self._request(
-            session_data={
-                "watch_lists": {
-                    str(self.league.id): [1, 2],
-                    str(self.other_league.id): [9],
-                }
-            },
-            resolver_kwargs={"league_id": self.league.id},
+            resolver_kwargs={"league_id": self.league.id}, user=AnonymousUser()
         )
         result = watch_list_context(request)
-        self.assertEqual(result["watched_player_ids"], {1, 2})
+        self.assertEqual(result["watched_player_ids"], set())
 
     def test_empty_set_when_no_resolver_match(self) -> None:
         # Off-League: a request without a resolver_match (e.g. a
         # RequestFactory-built request) resolves to an EMPTY set.
-        request = self._request(
-            session_data={"watch_lists": {str(self.league.id): [1, 2]}},
-            has_resolver=False,
-        )
+        self._watch(self.league, self.players[0])
+        request = self._request(has_resolver=False)
         result = watch_list_context(request)
         self.assertEqual(result["watched_player_ids"], set())
 
     def test_empty_set_when_no_league_id_kwarg(self) -> None:
         # Off-League: resolver_match exists but carries no league_id kwarg.
-        request = self._request(
-            session_data={"watch_lists": {str(self.league.id): [1, 2]}},
-            resolver_kwargs={"some_other": 5},
-        )
+        self._watch(self.league, self.players[0])
+        request = self._request(resolver_kwargs={"some_other": 5})
         result = watch_list_context(request)
         self.assertEqual(result["watched_player_ids"], set())
 
     def test_empty_set_when_league_has_no_watch_list(self) -> None:
-        # On-League but nothing watched for this League ⇒ empty set, no crash.
-        request = self._request(
-            session_data={"watch_lists": {}},
-            resolver_kwargs={"league_id": self.league.id},
-        )
-        result = watch_list_context(request)
-        self.assertEqual(result["watched_player_ids"], set())
-
-    def test_empty_set_when_no_watch_lists_key(self) -> None:
-        # On-League but the session has no watch_lists at all ⇒ empty set.
-        request = self._request(
-            resolver_kwargs={"league_id": self.league.id},
-        )
+        # On-League but nothing watched for this League => empty set, no crash.
+        request = self._request(resolver_kwargs={"league_id": self.league.id})
         result = watch_list_context(request)
         self.assertEqual(result["watched_player_ids"], set())

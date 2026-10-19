@@ -45,7 +45,10 @@ from matches.league_views import (
     _season_param,
     _LG01F_PER_PAGE_OPTIONS,
 )
-from matches.models import League, PlayerRoundState
+from matches.league_screen_services import (  # noqa: F401 - re-export
+    build_round_dicts as _build_round_dicts,
+)
+from matches.models import League
 from matches.season_player_stats import (
     STAT_KEYS,
     aggregate_player_stats,
@@ -89,70 +92,6 @@ _PLAYER_STATS_COLUMNS: tuple[tuple[str, str, bool], ...] = (
     ("reaction_shots", "Reaction", False),
     ("combo_resupply_count", "Combo Resup", False),
 )
-
-
-def _build_round_dicts(season_filter: dict) -> list[dict]:
-    """Build one plain dict per ``PlayerRoundState`` in the scoped Rounds.
-
-    ``season_filter`` is the LG-06d scope lookup dict applied via the
-    ``game_round__…`` join — ``{"game_round__match__season": <Season>}`` for a
-    single Season or ``{"game_round__match__season__league": <League>}`` for
-    Career. ``mvp`` / ``accuracy`` are read from the per-Round ``get_mvp`` /
-    ``get_accuracy`` properties here so the pure module never touches the MVP
-    formula or the ORM.
-
-    Team identity per row resolves from the Round's ``team_red`` /
-    ``team_blue`` keyed on the player's ``team_color`` (mirrors the
-    LG-01c dashboard-leaders precedent).
-    """
-    prs_qs = (
-        PlayerRoundState.objects.filter(**season_filter)
-        .select_related(
-            "player",
-            "game_round",
-            "game_round__match",
-            "game_round__team_red",
-            "game_round__team_blue",
-        )
-        .order_by("id")
-    )
-
-    rounds: list[dict] = []
-    for prs in prs_qs:
-        game_round = prs.game_round
-        if prs.team_color == "red":
-            team = game_round.team_red
-        elif prs.team_color == "blue":
-            team = game_round.team_blue
-        else:
-            team = None
-        rounds.append(
-            {
-                "player_id": prs.player_id,
-                "player_name": prs.player.name,
-                "team_id": team.id if team is not None else 0,
-                "team_name": team.name if team is not None else "",
-                "role": prs.role,
-                # 12 STAT_KEYS — mvp / accuracy pre-computed per round.
-                "points_scored": prs.points_scored,
-                "mvp": float(prs.get_mvp),
-                "tags_made": prs.tags_made,
-                "times_tagged": prs.times_tagged,
-                "accuracy": float(prs.get_accuracy),
-                # Derived survival seconds: elimination tick capped at the
-                # round length (1800), ÷2 to seconds at the display boundary
-                # (TIME-01). The pure module averages this across rounds.
-                "survival_seconds": min(prs.was_eliminated_at, 1800) / 2,
-                "final_lives": prs.final_lives,
-                "resupplies_given": prs.resupplies_given,
-                "missiles_landed": prs.missiles_landed,
-                "specials_used": prs.specials_used,
-                "follow_up_shots": prs.follow_up_shots,
-                "reaction_shots": prs.reaction_shots,
-                "combo_resupply_count": prs.combo_resupply_count,
-            }
-        )
-    return rounds
 
 
 def player_stats(request: HttpRequest, league_id: int) -> HttpResponse:

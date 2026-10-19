@@ -10,9 +10,14 @@ is always complete. Unlike the lenient HTML parsing, bad values are 400s
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import Any
+
 from django import forms
 
 from matches.league_services import STANDINGS_SORT_KEYS
+from matches.models import League
+from matches.season_player_stats import DERIVED_KEYS, STAT_KEYS
 
 _PROVENANCE_CHOICES = [("all", "all"), ("real", "real"), ("sim", "sim")]
 _ROLE_CHOICES = [
@@ -121,3 +126,99 @@ class StandingsParamsForm(forms.Form):
 
     def clean_dir(self) -> str:
         return self.cleaned_data.get("dir") or "asc"
+
+
+# ---------------------------------------------------------------------------
+# ANG-01e -- League screen params (``season`` / ``rate`` / ``ordering``)
+# ---------------------------------------------------------------------------
+
+RATE_CHOICES: list[tuple[str, str]] = [
+    ("total", "total"),
+    ("per_game", "per_game"),
+    ("per_10", "per_10"),
+]
+
+# The Player-Stats / Watch-List sort keys the HTML screens allow.
+PLAYER_STAT_SORT_KEYS: tuple[str, ...] = (
+    *STAT_KEYS,
+    *DERIVED_KEYS,
+    "name",
+    "team",
+    "games",
+)
+
+
+def ordering_choices(keys: Iterable[str]) -> list[tuple[str, str]]:
+    """``<key>`` and ``-<key>`` choices for an ``ordering`` ChoiceField."""
+    out: list[tuple[str, str]] = []
+    for key in keys:
+        out.append((key, key))
+        out.append((f"-{key}", f"-{key}"))
+    return out
+
+
+def parse_ordering(ordering: str) -> tuple[str, str]:
+    """Split a validated ``ordering`` value into ``(sort_key, "asc" | "desc")``."""
+    if ordering.startswith("-"):
+        return ordering[1:], "desc"
+    return ordering, "asc"
+
+
+class LeagueScreenParamsForm(forms.Form):
+    """Base for the League screen param Forms; bind with ``league=``.
+
+    Subclasses declare the fields they take, from ``season``, ``rate`` and
+    ``ordering`` (plus their own); the ``clean_<field>`` hooks here apply the
+    shared rules and defaults, so ``cleaned_data`` is always complete:
+
+    - ``season``: blank -> ``None`` (the displayed Season); a Season id of this
+      League -> that id as a string; ``"career"`` when ``allow_career``.
+      Anything else is a 400 ``invalid_choice``. The value feeds
+      ``league_screen_services.resolve_season_scope`` unchanged.
+    - ``rate``: blank -> ``"total"``.
+    - ``ordering``: blank -> ``ordering_default``; split it with
+      :func:`parse_ordering`.
+    """
+
+    allow_career: bool = True
+    ordering_default: str = ""
+
+    def __init__(self, *args: Any, league: League, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.league = league
+
+    def clean_season(self) -> str | None:
+        raw = (self.cleaned_data.get("season") or "").strip()
+        if not raw:
+            return None
+        if raw == "career" and self.allow_career:
+            return raw
+        try:
+            season_id = int(raw)
+        except ValueError:
+            season_id = None
+        if season_id is None or not self.league.seasons.filter(pk=season_id).exists():
+            raise forms.ValidationError(
+                "Select a valid choice. %(value)s is not one of the available choices.",
+                code="invalid_choice",
+                params={"value": raw},
+            )
+        return str(season_id)
+
+    def clean_rate(self) -> str:
+        return self.cleaned_data.get("rate") or "total"
+
+    def clean_ordering(self) -> str:
+        return self.cleaned_data.get("ordering") or self.ordering_default
+
+
+class WatchListParamsForm(LeagueScreenParamsForm):
+    """ANG-01e -- ``?season=&rate=&ordering=`` for ``GET watch-list/``."""
+
+    ordering_default = "-points_scored"
+
+    season = forms.CharField(required=False)
+    rate = forms.ChoiceField(choices=RATE_CHOICES, required=False)
+    ordering = forms.ChoiceField(
+        choices=ordering_choices(PLAYER_STAT_SORT_KEYS), required=False
+    )

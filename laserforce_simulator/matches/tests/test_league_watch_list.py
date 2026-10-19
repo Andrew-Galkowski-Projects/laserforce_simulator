@@ -4,10 +4,10 @@
 The Watch List screen (``matches.league_screens.watch_list.watch_list``) was
 reshaped from the LG-01z 3-column bookmark table into the **Player-Stats
 column set** filtered to watched players, with a **zero-fill** row for each
-watched player with no Round in scope. The per-League watch lists live in
-``request.session["watch_lists"]`` (``{str(league_id): [ids]}``); the per-row
-flag (``watch-flag`` button) replaces the old Remove control. ``?action=clear``
-is retained (now per-League) and redirects.
+watched player with no Round in scope. ANG-01e: the per-League watch lists
+are the Account's ``WatchedPlayer`` rows; the per-row flag (``watch-flag``
+button) replaces the old Remove control, and Remove All is a POST to
+``watch_list_clear`` (the GET ``?action=clear`` is gone).
 
 Two surfaces (seam contract §10 ``test_league_watch_list.py`` boundary):
 
@@ -35,9 +35,18 @@ from datetime import date
 from django.contrib.sessions.middleware import SessionMiddleware
 from django.http import Http404
 from django.test import RequestFactory, SimpleTestCase, TestCase
+from django.urls import reverse
 
+from conftest import get_shared_manager
 from matches.league_screens.watch_list import watch_list
-from matches.models import GameRound, League, Match, PlayerRoundState, Season
+from matches.models import (
+    GameRound,
+    League,
+    Match,
+    PlayerRoundState,
+    Season,
+    WatchedPlayer,
+)
 from matches.season_player_stats import (
     DERIVED_KEYS,
     STAT_KEYS,
@@ -66,10 +75,18 @@ def _get(league_id: int, *, query: str = "", watched=None):
     if query:
         path = f"{path}?{query}"
     request = _attach_session(RequestFactory().get(path))
+    request.user = get_shared_manager()
     if watched is not None:
-        request.session["watch_lists"] = {str(league_id): list(watched)}
-        request.session.save()
+        _watch(league_id, *watched)
     return request
+
+
+def _watch(league_id: int, *player_ids: int) -> None:
+    """Put ``player_ids`` on the shared manager's list for the League (ANG-01e)."""
+    for player_id in player_ids:
+        WatchedPlayer.objects.get_or_create(
+            account=get_shared_manager(), league_id=league_id, player_id=player_id
+        )
 
 
 def _make_league(name: str = "WatchLeague") -> League:
@@ -277,8 +294,7 @@ class TestWatchListKit(TestCase):
             for i in range(12)
         ]
         request = _get(self.league.id, query="per_page=10")
-        request.session["watch_lists"] = {str(self.league.id): ids + extra}
-        request.session.save()
+        _watch(self.league.id, *(ids + extra))
         content = watch_list(request, self.league.id).content.decode()
         self.assertIn("watch-list-pagination", content)
 
@@ -300,36 +316,69 @@ class TestWatchListClear(TestCase):
         self.season, teams = _make_active_season(self.league, n_teams=2)
         self.player = teams[0].active_players[0]
 
-    def test_clear_empties_this_league_and_redirects(self) -> None:
-        request = _get(self.league.id, query="action=clear")
-        request.session["watch_lists"] = {str(self.league.id): [self.player.id]}
-        request.session.save()
-        response = watch_list(request, self.league.id)
+    """ANG-01e: Remove All is a POST to ``watch_list_clear``; the old
+    ``GET ?action=clear`` no longer changes data."""
+
+    def _clear_url(self, league_id: int) -> str:
+        return reverse("watch_list_clear", args=[league_id])
+
+    def _watched(self, league: League) -> list[int]:
+        return list(
+            WatchedPlayer.objects.filter(
+                account=get_shared_manager(), league=league
+            ).values_list("player_id", flat=True)
+        )
+
+    def test_clear_url_reverses(self) -> None:
+        self.assertEqual(
+            self._clear_url(self.league.id),
+            f"/leagues/{self.league.id}/players/watch-list/clear/",
+        )
+
+    def test_post_clear_empties_this_league_and_redirects(self) -> None:
+        _watch(self.league.id, self.player.id)
+        response = self.client.post(self._clear_url(self.league.id))
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
             response["Location"], WATCH_LIST_PATH.format(lid=self.league.id)
         )
-        self.assertEqual(
-            request.session.get("watch_lists", {}).get(str(self.league.id), []),
-            [],
-        )
+        self.assertEqual(self._watched(self.league), [])
 
-    def test_clear_leaves_other_league_intact(self) -> None:
-        request = _get(self.league.id, query="action=clear")
-        request.session["watch_lists"] = {
-            str(self.league.id): [self.player.id],
-            str(self.other_league.id): [self.player.id],
-        }
-        request.session.save()
-        watch_list(request, self.league.id)
-        self.assertEqual(
-            request.session["watch_lists"].get(str(self.other_league.id)),
-            [self.player.id],
+    def test_post_clear_leaves_other_league_intact(self) -> None:
+        _watch(self.league.id, self.player.id)
+        _watch(self.other_league.id, self.player.id)
+        self.client.post(self._clear_url(self.league.id))
+        self.assertEqual(self._watched(self.other_league), [self.player.id])
+
+    def test_get_on_clear_url_is_405(self) -> None:
+        _watch(self.league.id, self.player.id)
+        response = self.client.get(self._clear_url(self.league.id))
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual(self._watched(self.league), [self.player.id])
+
+    def test_get_action_clear_no_longer_clears(self) -> None:
+        response = watch_list(
+            _get(self.league.id, query="action=clear", watched=[self.player.id]),
+            self.league.id,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._watched(self.league), [self.player.id])
+
+    def test_remove_all_control_is_a_post_form(self) -> None:
+        content = watch_list(
+            _get(self.league.id, watched=[self.player.id]), self.league.id
+        ).content.decode()
+        self.assertNotIn("action=clear", content)
+        self.assertRegex(
+            content,
+            r'<form[^>]*method="post"[^>]*action="'
+            + re.escape(self._clear_url(self.league.id))
+            + '"',
         )
 
     def test_clear_on_bad_league_404s(self) -> None:
-        with self.assertRaises(Http404):
-            watch_list(_get(999999, query="action=clear"), 999999)
+        response = self.client.post(self._clear_url(999999))
+        self.assertEqual(response.status_code, 404)
 
 
 # ===========================================================================
