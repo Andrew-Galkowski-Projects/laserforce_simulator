@@ -28,6 +28,14 @@ from matches.season_player_stats import (
 )
 from teams.models import Player
 
+# --- player list screens (T2) imports ---
+from django.db.models import F, QuerySet
+
+from matches.development import STAT_FIELDS
+from matches.league_leaders_logic import compute_leaderboards
+from matches.season_dashboard import LeaderRow
+from teams.views import _SORT_KEYS as RATING_SORT_KEYS
+
 CAREER: Literal["career"] = "career"
 
 # ---------------------------------------------------------------------------
@@ -284,3 +292,157 @@ def build_watch_list_rows(
     rows = zero_fill_watched(rows, watched_ids, identity_by_id)
     rows = apply_rate(rows, rate)
     return sort_player_stats(rows, sort, direction)
+
+
+# ---------------------------------------------------------------------------
+# --- player list screens (T2) ---
+# ---------------------------------------------------------------------------
+
+
+def build_player_stats(
+    scope: SeasonScope,
+    *,
+    rate: str,
+    team_id: int | None,
+    sort: str,
+    direction: str,
+) -> list[PlayerStatRow]:
+    """The Player Stats screen rows over ``scope``.
+
+    Pipeline order (LG-06d, locked): aggregate -> ``apply_rate`` -> team
+    filter -> sort (so the sort runs on the rate-adjusted values). Empty in
+    the empty state (``scope.round_filter is None``).
+    """
+    if scope.round_filter is None:
+        return []
+    prs_filter = {f"game_round__{k}": v for k, v in scope.round_filter.items()}
+    rows = aggregate_player_stats(build_round_dicts(prs_filter))
+    rows = apply_rate(rows, rate)
+    if team_id is not None:
+        rows = [r for r in rows if r.team_id == team_id]
+    return sort_player_stats(rows, sort, direction)
+
+
+def _annotate_overall_rating(qs: QuerySet[Player]) -> QuerySet[Player]:
+    """Annotate ``overall_rating_db`` (mean of the 19 stats) so the LG-00c
+    ``overall_rating`` sort key has an ORM target (mirrors
+    ``teams.views.player_list``, incl. the capital-O ``Offensive_synergy``)."""
+    total = F(STAT_FIELDS[0])
+    for field in STAT_FIELDS[1:]:
+        total = total + F(field)
+    return qs.annotate(overall_rating_db=total / 19.0)
+
+
+def _order_rated_players(
+    qs: QuerySet[Player], sort: str, direction: str
+) -> QuerySet[Player] | list[Player]:
+    """Order a ratings-screen queryset by an LG-00c sort key.
+
+    ``preferred_roles`` sorts in Python (a JSON list); ``potential`` is
+    nullable and sorts nulls last in BOTH directions; every other key is an
+    ORM sort through ``teams.views._SORT_KEYS``. ``name`` breaks ties.
+    """
+    if sort == "preferred_roles":
+        rows = list(qs)
+        rows.sort(
+            key=lambda p: (",".join(p.preferred_roles or []), p.name),
+            reverse=(direction == "desc"),
+        )
+        return rows
+    if sort == "potential":
+        ordering = (
+            F("potential").desc(nulls_last=True)
+            if direction == "desc"
+            else F("potential").asc(nulls_last=True)
+        )
+        return qs.order_by(ordering, "name")
+    prefix = "" if direction == "asc" else "-"
+    return qs.order_by(prefix + RATING_SORT_KEYS[sort], "name")
+
+
+def build_player_ratings_queryset(
+    displayed_season: Season | None,
+    *,
+    team_id: int | None,
+    sort: str,
+    direction: str,
+) -> QuerySet[Player] | list[Player]:
+    """The Player Ratings screen: Players on the displayed Season's Teams.
+
+    Live ratings (no Season scope); ``team_id`` narrows to one enrolled Team.
+    Empty (``[]``) when the League has no Season.
+    """
+    if displayed_season is None:
+        return []
+    enrolled_ids = set(displayed_season.teams.values_list("id", flat=True))
+    qs = Player.objects.select_related("team").filter(team_id__in=enrolled_ids)
+    if team_id is not None:
+        qs = qs.filter(team_id=team_id)
+    return _order_rated_players(_annotate_overall_rating(qs), sort, direction)
+
+
+def build_free_agents_queryset(
+    league: League,
+    displayed_season: Season | None,
+    *,
+    sort: str,
+    direction: str,
+) -> QuerySet[Player] | list[Player]:
+    """The Free Agents screen: Players on ``league.free_agent_pool``.
+
+    A League with no pool yields no rows (every Player has a team). Empty
+    (``[]``) when the League has no Season -- the HTML empty state.
+    """
+    if displayed_season is None:
+        return []
+    qs = Player.objects.select_related("team").filter(team_id=league.free_agent_pool_id)
+    return _order_rated_players(_annotate_overall_rating(qs), sort, direction)
+
+
+LEADER_BOARDS: tuple[str, ...] = ("avg_tags", "avg_score", "fewest_tagged", "tag_ratio")
+
+
+def build_leaderboards(scope: SeasonScope) -> dict[str, list[LeaderRow]]:
+    """The League Leaders screen: four top-10 boards over ``scope``'s Rounds,
+    each in the pure module's default rank order.
+
+    Every board is ``[]`` in the empty state (``scope.round_filter is None``).
+    """
+    if scope.round_filter is None:
+        return {board: [] for board in LEADER_BOARDS}
+    prs_filter = {f"game_round__{k}": v for k, v in scope.round_filter.items()}
+    # order_by("id") makes the "last row wins" defensive fallback in the pure
+    # module deterministic.
+    prs_qs = (
+        PlayerRoundState.objects.filter(**prs_filter)
+        .select_related(
+            "player",
+            "game_round",
+            "game_round__match",
+            "game_round__team_red",
+            "game_round__team_blue",
+        )
+        .order_by("id")
+    )
+    player_rounds: list[dict] = []
+    for prs in prs_qs:
+        game_round = prs.game_round
+        if prs.team_color == "red":
+            team = game_round.team_red
+        elif prs.team_color == "blue":
+            team = game_round.team_blue
+        else:
+            team = None
+        player_rounds.append(
+            {
+                "player_id": prs.player_id,
+                "player_name": prs.player.name,
+                "role": prs.role,
+                "team_id": team.id if team is not None else 0,
+                "team_name": team.name if team is not None else "",
+                "tags_made": prs.tags_made,
+                "times_tagged": prs.times_tagged,
+                "points_scored": prs.points_scored,
+            }
+        )
+    return compute_leaderboards(player_rounds, limit=10)
