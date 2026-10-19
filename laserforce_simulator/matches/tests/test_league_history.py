@@ -20,6 +20,7 @@ from django.urls import reverse
 
 from matches.models import (
     BracketNode,
+    Conference,
     GameRound,
     League,
     Match,
@@ -591,6 +592,52 @@ class TestLeagueHistoryChampionFallback(TestCase):
         )
         rows = response.context["completed_rows"]
         self.assertEqual(rows[0]["champion"], teams[1])
+
+    def test_multi_conference_null_champion_does_not_fall_back(self) -> None:
+        # L-1: a >= 2-Conference Season with no Worlds crowns nobody
+        # (CONF-01); whole-Season standings across disjoint Conference
+        # schedules must not invent a champion, runner-up or top three.
+        league = _make_league("ConfNull")
+        teams = _make_teams("CF", 4)
+        season = _make_completed_season(
+            league, team_ids=[t.id for t in teams], champion_team=None
+        )
+        for ordinal, members in enumerate((teams[:2], teams[2:]), start=1):
+            conf = Conference.objects.create(
+                season=season,
+                name=f"C{ordinal}",
+                ordinal=ordinal,
+                starting_team_ids_json=sorted(t.id for t in members),
+            )
+            conf.teams.add(*members)
+        _make_completed_match(season, teams[0], teams[1], red_pts=300)
+        _make_completed_match(season, teams[2], teams[3], red_pts=200)
+        response = self.client.get(
+            reverse("league_history", kwargs={"league_id": league.id})
+        )
+        row = response.context["completed_rows"][0]
+        self.assertIsNone(row["champion"])
+        self.assertIsNone(row["runner_up"])
+        self.assertEqual(row["top_three"], [None, None, None])
+
+    def test_multi_conference_stamped_worlds_champion_is_shown(self) -> None:
+        league = _make_league("ConfWorlds")
+        teams = _make_teams("CW", 4)
+        season = _make_completed_season(
+            league, team_ids=[t.id for t in teams], champion_team=teams[3]
+        )
+        for ordinal, members in enumerate((teams[:2], teams[2:]), start=1):
+            conf = Conference.objects.create(
+                season=season,
+                name=f"C{ordinal}",
+                ordinal=ordinal,
+                starting_team_ids_json=sorted(t.id for t in members),
+            )
+            conf.teams.add(*members)
+        response = self.client.get(
+            reverse("league_history", kwargs={"league_id": league.id})
+        )
+        self.assertEqual(response.context["completed_rows"][0]["champion"], teams[3])
 
 
 # ---------------------------------------------------------------------------

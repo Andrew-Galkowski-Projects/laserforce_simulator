@@ -1608,6 +1608,10 @@ def build_history_row(
         enrolled_teams.append((tid, team_obj.name if team_obj is not None else ""))
 
     standings = compute_standings(matches_list_in, enrolled_teams)
+    # L-1 — a >= 2-Conference Season plays disjoint schedules, so whole-Season
+    # placings compare nothing (CONF-01); only a stamped (Worlds) champion shows.
+    if len(season.conferences.all()) >= 2:
+        standings = []
 
     top_three: list = [
         teams_by_id.get(standings[i].team_id) if i < len(standings) else None
@@ -2824,7 +2828,7 @@ def history_seasons(
         # LG-07a — prefetch ``matches__season_phase`` so the member-night
         # in-Python skip in ``build_history_row`` reads the FK off the cache
         # (no per-Match N+1 on ``match.season_phase``).
-        .prefetch_related("matches", "matches__season_phase", "teams")
+        .prefetch_related("matches", "matches__season_phase", "teams", "conferences")
         .filter(state__in=["active", "draft", "completed"])
         .order_by("-id")
     )

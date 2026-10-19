@@ -203,7 +203,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
-| L-1 | 🟠 | League History (HTML + new API) | Multi-Conference RR-final Season shows a cross-Conference "Champion" although `champion_team` is NULL |
+| ~~L-1~~ | ~~🟠~~ | ~~League History (HTML + new API)~~ | ~~Multi-Conference RR-final Season shows a cross-Conference "Champion" although `champion_team` is NULL~~ _(fixed)_ |
 | L-2 | 🟡 | Season standings | `season-standings-th-*` ids duplicated once per Conference table |
 | L-3 | ℹ️ | League History | Draft in-progress row shows a Runner-Up / 1st-3rd from all-zero standings |
 
@@ -290,7 +290,7 @@ honoured), `/conferences/` (`editable: false` once active), `/owner-evaluation/`
 
 ## League History
 
-### 🟠 L-1 — Multi-Conference RR-final Season shows a cross-Conference champion
+### ~~🟠 L-1 — Multi-Conference RR-final Season shows a cross-Conference champion~~ _(fixed)_
 **Repro:** 2-Conference League, single round-robin phase (no tournament), play to completion.
 `Season.champion_team` is correctly NULL (CONF-01: no cross-Conference champion without Worlds), and
 `/api/seasons/7/` reports `"champion_team": null` — but `/leagues/7/history/` renders
