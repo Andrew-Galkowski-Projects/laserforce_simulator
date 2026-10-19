@@ -1501,7 +1501,7 @@ each other and each depends only on 01a. Locked across all of them: **one envelo
 `django-filter` allowlists + `OrderingFilter`; cross-Account access is **404, never 403**
 (ADR-0038); anonymous stays **403 `not_authenticated`** until ANG-03 swaps in JWT. Login / JWT
 token endpoints stay ANG-03, not ANG-01g. **ANG-01d re-sliced (grill, 2026-10-16)** into
-**ANG-01d-1** (League lifecycle + reads — done) and **ANG-01d-2** (the play loop — not started),
+**ANG-01d-1** (League lifecycle + reads — done) and **ANG-01d-2** (the play loop — done),
 so the full set is now ANG-01a..c, 01d-1, 01d-2, 01e..g.
 
 #### ANG-01a · [DONE] API foundation + core CRUD
@@ -1771,11 +1771,19 @@ Items): no fired check on candidates / reassign; team schedule accepts any owned
 [`.claude/worktrees/ang-01d-1-seam-contract.md`](.claude/worktrees/ang-01d-1-seam-contract.md) and
 the **ANG-01d-1** section of `laserforce_simulator/matches/CLAUDE.md`.
 
-#### ANG-01d-2 · League play-loop API
+#### ANG-01d-2 · [DONE] League play-loop API
 
 Spec: #173
 
-**[NOT STARTED]** The play half split out of ANG-01d (grill, 2026-10-16): start Season (draft ⇒
+**[DONE] Shipped (2026-10-18, PR #178).** The play loop is exposed over `/api/seasons/` (start
+Season, sync play, async play runs, live play, play controls, member nights) on a shared
+`matches/league_play_services.py`, so the HTML views and the API run the same logic. Only one active
+play run per Season ([ADR-0040](docs/adr/0040-single-active-play-run-per-season.md)): sync controls
+redirect with an "in progress" banner, async endpoints return 409 `play_in_progress`, and Cancel
+clears a stale run. Web-test fixes L-4 / L-5 / L-6 shipped with it; L-7 / L-8 / L-10 / L-1 / L-2
+were fixed on the same branch afterwards.
+
+*Original scope:* The play half split out of ANG-01d (grill, 2026-10-16): start Season (draft ⇒
 active), play week / play two months / play until end / play playoffs / play a single round, the One
 Week (Live) watch feed, Job status + cancel (the `Season.active_play_job_id` /
 `play_cancel_requested` state ANG-01d-1 deliberately keeps out of `SeasonSerializer`), member-night
@@ -1874,6 +1882,31 @@ Once each Angular view is verified, delete the corresponding Django template fil
 HTML-serving view function. Keep the API endpoint. Update URL routing to remove the old path.
 The app should have zero `.html` template files by the end of this phase, except Django Admin
 (which is a permanent exception and stays indefinitely).
+
+### ANG-09 · [NOT STARTED] Investigate a standalone single-player executable
+
+**Investigation only — no shipped code.** Find out whether single-player mode (sandbox + single-player
+`league` / career mode) can be handed out as one downloadable executable that runs locally, with no
+hosted server. The deliverable is a spike plus a go / no-go ADR. If the answer is go, the ADR names the
+follow-up tasks. Starts after ANG-08, so the frontend is the built Angular SPA and Django is API-only.
+
+Questions to answer:
+- **Packaging:** PyInstaller, Briefcase or Nuitka for the Django + DRF backend and its native
+  dependencies. Measure binary size and cold-start time.
+- **Background jobs:** batch runs and the Season play loop use Celery + Redis (ADR-0013 / ADR-0016).
+  Find an in-process replacement (a thread / process pool or an eager mode), so the user doesn't have to
+  run a broker.
+- **Shell:** a native window (pywebview, Tauri or Electron) vs. opening the default browser to a
+  localhost port. How do the built Angular static files get served (Django + whitenoise, or the shell)?
+- **Database:** an embedded SQLite file in the user's app-data folder. This conflicts with ADR-0025
+  (PostgreSQL canonical, SQLite dev-only). Decide whether a desktop-only SQLite exception is acceptable,
+  and how `migrate` runs on first launch and on upgrade (ADR-0004: simulation data is disposable).
+- **Auth:** a single local Account created and signed in automatically. ANG-03 JWT vs. a local bypass.
+  Hide the `multiplayer` mode and the Account screens.
+- **Runtime:** simulation parallelism under a frozen binary (`multiprocessing.freeze_support`, process
+  pools), the bundled map / media files, and where logs go.
+- **Distribution:** Windows first. Cover code signing / SmartScreen, auto-update vs. manual download,
+  and macOS / Linux feasibility.
 
 ## Parked — deferred Tournament work
 

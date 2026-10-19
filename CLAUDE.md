@@ -239,5 +239,6 @@ League create / next-season rollover / reassign / teardown, the League + Season 
 re-exported from `league_views.py`, so patch `matches.league_services.*`, not `league_views`);
 the map-editor logic (upload, Season-based delete guard, zones, sight lines, requester-scoped
 multi-round heatmap) shared by the HTML map views and the now-writable `/api/maps/` lives in
-`core/services.py` (ANG-01c — maps stay unfiltered shared data). Remaining API slices are ANG-01d-2
-(the League play loop) and ANG-01e..g in `PLAN.md`.
+`core/services.py` (ANG-01c — maps stay unfiltered shared data). The League play loop
+(ANG-01d-2) lives in `matches/league_play_services.py`, shared by the HTML play views and the
+`/api/seasons/` play endpoints. Remaining API slices are ANG-01e..g in `PLAN.md`.

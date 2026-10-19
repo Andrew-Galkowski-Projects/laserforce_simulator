@@ -412,8 +412,9 @@ Seam contract: [`.claude/worktrees/ang-01d-1-seam-contract.md`](../../.claude/wo
 `league_urls.py`, `season_urls.py`, `tasks.py`, `league_screens/*` and `core/*` unchanged. ANG-01d was
 re-sliced: this is the **lifecycle + reads** half; the **play loop** (start Season, play week / two
 months / until end / playoffs / single round, live watch, Job status + cancel, member nights, the
-topnav play-control keys) is **ANG-01d-2, not started** — `_build_play_controls_context`, the play
-views and `tasks.py` did not move. The API **never writes or pops `request.session["last_league_id"]`**.
+topnav play-control keys) is **ANG-01d-2** (shipped separately, PR #178, in
+`matches/league_play_services.py`) — `_build_play_controls_context`, the play views and `tasks.py`
+did not move in ANG-01d-1. The API **never writes or pops `request.session["last_league_id"]`**.
 
 **`matches/league_services.py` (new)** — shared by the HTML views and the API; must **not** import
 `matches.league_views` (views import services); imports `CreateLeagueForm` under `TYPE_CHECKING`
