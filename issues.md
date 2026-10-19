@@ -1,3 +1,42 @@
+# Code review follow-ups — ANG-01e (League screens API)
+
+Date: 2026-10-19
+Branch: `ang-01e`
+Scope: out-of-scope findings from the ANG-01e two-axis code review (spec #180). Logged, not fixed on
+the branch: none changes behaviour, and each needs its own query design.
+
+Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
+
+## Summary — ANG-01e follow-ups
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| ANG01e-D1 | 🟡 | League player page | The awards section recomputes the full Season award set for every Season the Player appeared in |
+| ANG01e-D2 | 🟡 | Team History | The Team History builders scan every Season of every League to find the Team's enrolments |
+| ANG01e-D3 | ℹ️ | Screen builders | `build_team_stats`, `build_power_rankings` and `build_playoffs` mix querying with row assembly |
+
+### 🟡 ANG01e-D1 — League player page recomputes whole-Season awards per Season (perf)
+`matches/league_screen_services.py::build_player_detail` calls `compute_season_award_set(season)` for
+every Season the Player has a Round in, then keeps only that Player's labels. Each call aggregates the
+whole Season's `PlayerRoundState` corpus, so a long-career Player's page (HTML and
+`GET /api/leagues/<id>/players/<player_id>/`) costs one full award computation per Season. Fix idea:
+cache / persist the per-Season award set once the Season is completed, or compute only the awards the
+Player can win.
+
+### 🟡 ANG01e-D2 — Team History scans Seasons across every League (perf)
+`matches/league_screen_services.py::team_history_seasons` (used by `build_team_history` and
+`build_team_history_players`) walks `Season.objects.all()` and reads each Season's enrolment snapshot
+in Python to find the Team's Seasons. Cost grows with every Season in the
+database, not with the Team's own history, on both the HTML Team History tabs and
+`GET /api/leagues/<id>/teams/<team_id>/history/` (+ `/players/`). Fix idea: filter in the database (the
+`teams` M2M for drafts plus a JSON-contains lookup on `starting_team_ids_json`), or store enrolment rows.
+
+### ℹ️ ANG01e-D3 — Long screen builders mix querying with row assembly (refactor)
+`build_team_stats`, `build_power_rankings` and `build_playoffs` in
+`matches/league_screen_services.py` each run several queries and assemble the rows in one long function.
+Split candidates: a query step that returns plain dicts and a pure assembly step (the
+`team_stats_logic` / `power_rankings_logic` pattern), so the assembly is unit-testable without the ORM.
+
 # Web testing — ANG-01d-2 (League play loop on a shared service + Active-play-run guards)
 
 Date: 2026-10-16
