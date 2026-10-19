@@ -548,3 +548,55 @@ class TestTeamFinancesAvailabilityDisplay(TestCase):
         # that nobody is out.
         self.assertIn("team-finances-availability", body)
         self.assertIn("team-finances-availability-empty", body)
+
+
+# ===========================================================================
+# ANG-01e T5 -- the POST saves only league.current_team; bad values re-render
+# ===========================================================================
+
+
+def _full_post(**overrides) -> dict:
+    data = {
+        "budget_scouting": "50",
+        "budget_coaching": "50",
+        "budget_facilities": "50",
+        "budget_health": "50",
+        "injury_policy": "auto_sub",
+        "ticket_price": "10.0",
+    }
+    data.update(overrides)
+    return data
+
+
+class TestTeamFinancesPostCurrentTeamOnly(TestCase):
+    def test_posted_ai_team_id_does_not_change_that_team(self) -> None:
+        league = _make_league("TfAiL")
+        _season, teams = _make_active_season(league)
+        ai_team = teams[1]
+        before = ai_team.budget_scouting
+        url = reverse("team_finances", kwargs={"league_id": league.id})
+        self.client.post(
+            url, data=_full_post(team_id=str(ai_team.id), budget_scouting="97")
+        )
+        ai_team.refresh_from_db()
+        self.assertEqual(ai_team.budget_scouting, before)
+
+
+class TestTeamFinancesPostFormErrors(TestCase):
+    def test_out_of_range_level_rerenders_with_error_and_saves_nothing(self) -> None:
+        from matches.finance import MAX_LEVEL
+
+        league = _make_league("TfErrL")
+        _season, teams = _make_active_season(league)
+        team = teams[0]
+        before = (team.budget_scouting, team.budget_coaching)
+        url = reverse("team_finances", kwargs={"league_id": league.id})
+        response = self.client.post(
+            url,
+            data=_full_post(budget_scouting=str(MAX_LEVEL + 1), budget_coaching="77"),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("team-finances-form-errors", response.content.decode())
+        self.assertIn("budget_scouting", response.context["form"].errors)
+        team.refresh_from_db()
+        self.assertEqual((team.budget_scouting, team.budget_coaching), before)

@@ -284,3 +284,121 @@ def build_watch_list_rows(
     rows = zero_fill_watched(rows, watched_ids, identity_by_id)
     rows = apply_rate(rows, rate)
     return sort_player_stats(rows, sort, direction)
+
+
+# --- finances (T5) ---
+# Imports kept local to this block so sibling tickets' edits to the module
+# header don't conflict.
+from django import forms as _forms  # noqa: E402
+
+from matches import finance  # noqa: E402
+from matches.league_services import _team_wins_games_for_season  # noqa: E402
+from matches.models import TeamSeasonFinance  # noqa: E402
+from teams.models import Team  # noqa: E402
+
+
+class FinanceDisabled(Exception):
+    """The League's finance toggle is off; finance edits are refused."""
+
+
+class TeamNotEditable(Exception):
+    """Only ``league.current_team`` may have its finances edited."""
+
+
+@dataclass(frozen=True)
+class TeamFinances:
+    """Everything the Team Finances screen shows for one enrolled Team."""
+
+    team: Team
+    budget_costs: dict[str, float]
+    live_payroll: float
+    live_luxury_tax: float
+    live_min_payroll_penalty: float
+    wins: int
+    losses: int
+    games: int
+    current_hype: float
+    latest_finance: TeamSeasonFinance | None
+    roster_salaries: list[dict]
+    availability: list[dict]
+    history: list[TeamSeasonFinance]
+
+
+def build_team_finances(season: Season, team: Team) -> TeamFinances:
+    """The Team Finances screen data for ``team`` in the displayed ``season``.
+
+    ``history`` is newest Season first; ``roster_salaries`` / ``availability``
+    rows are ``{"player": Player, "salary" | "games_remaining": ...}``.
+    """
+    history = list(
+        TeamSeasonFinance.objects.filter(team=team)
+        .select_related("season")
+        .order_by("-season_id")
+    )
+    roster_salaries = [
+        {"player": p, "salary": finance.salary_for_overall(p.overall_rating)}
+        for p in team.active_players
+    ]
+    live_payroll = sum(r["salary"] for r in roster_salaries)
+    availability = [
+        {"player": p, "games_remaining": p.games_unavailable}
+        for p in sorted(
+            team.players.filter(games_unavailable__gt=0),
+            key=lambda p: p.games_unavailable,
+            reverse=True,
+        )
+    ]
+    wins, games = _team_wins_games_for_season(season, team.id)
+    latest_finance = history[0] if history else None
+    return TeamFinances(
+        team=team,
+        budget_costs={
+            "scouting": finance.level_to_amount(team.budget_scouting),
+            "coaching": finance.level_to_amount(team.budget_coaching),
+            "facilities": finance.level_to_amount(team.budget_facilities),
+            "health": finance.level_to_amount(team.budget_health),
+        },
+        live_payroll=live_payroll,
+        live_luxury_tax=finance.luxury_tax(live_payroll),
+        live_min_payroll_penalty=finance.min_payroll_penalty(live_payroll),
+        wins=wins,
+        losses=games - wins,
+        games=games,
+        current_hype=latest_finance.hype if latest_finance else 0.0,
+        latest_finance=latest_finance,
+        roster_salaries=roster_salaries,
+        availability=availability,
+        history=history,
+    )
+
+
+def build_league_finances(season: Season) -> list[dict]:
+    """One ``{"team", "finance"}`` row per enrolled Team (by name); ``finance``
+    is the Team's ``TeamSeasonFinance`` for ``season`` or ``None``."""
+    finance_by_team = {
+        f.team_id: f for f in TeamSeasonFinance.objects.filter(season=season)
+    }
+    return [
+        {"team": team, "finance": finance_by_team.get(team.id)}
+        for team in season.teams.order_by("name")
+    ]
+
+
+def update_team_finances(league: League, team: Team, form: _forms.ModelForm) -> Team:
+    """Save ``form`` (a bound ``TeamFinancesForm``) onto ``team``.
+
+    Raises ``FinanceDisabled`` when the League's finances are off and
+    ``TeamNotEditable`` unless ``team`` is ``league.current_team`` -- both
+    before the form is looked at. An invalid form saves nothing: the caller
+    reads ``form.errors``. Saves through ``update_fields``.
+    """
+    if not league.finance_enabled:
+        raise FinanceDisabled
+    if league.current_team_id is None or team.id != league.current_team_id:
+        raise TeamNotEditable
+    if not form.is_valid():
+        return team
+    for field, value in form.cleaned_data.items():
+        setattr(team, field, value)
+    team.save(update_fields=list(form.cleaned_data))
+    return team

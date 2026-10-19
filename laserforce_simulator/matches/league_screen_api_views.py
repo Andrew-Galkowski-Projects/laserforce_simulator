@@ -111,6 +111,128 @@ def player_stat_rows(
     return out
 
 
+# --- finances (T5) ---
+# Imports kept local to this block so sibling tickets' header edits don't clash.
+from django.shortcuts import get_object_or_404  # noqa: E402
+from rest_framework.exceptions import NotFound  # noqa: E402
+
+from laserforce_simulator.api.forms import merged_form_data  # noqa: E402
+from matches.api_refs import team_ref  # noqa: E402
+from matches.forms import TeamFinancesForm  # noqa: E402
+from matches.league_screen_services import (  # noqa: E402
+    FinanceDisabled,
+    TeamNotEditable,
+    build_league_finances,
+    build_team_finances,
+    enrolled_team_ids,
+    update_team_finances,
+)
+from teams.models import Team  # noqa: E402
+
+
+class FinanceDisabledError(APIException):
+    """409 -- the League's finances are switched off."""
+
+    status_code = 409
+    default_code = "finance_disabled"
+    default_detail = "Finances are disabled for this League."
+
+
+class TeamNotEditableError(APIException):
+    """409 -- only the League's ``current_team`` may have its finances edited."""
+
+    status_code = 409
+    default_code = "team_not_editable"
+    default_detail = "Only the League's current team's finances can be edited."
+
+
+_SCREEN_SERVICE_ERRORS.update(
+    {
+        FinanceDisabled: lambda exc: FinanceDisabledError(),
+        TeamNotEditable: lambda exc: TeamNotEditableError(),
+    }
+)
+
+
+def team_finances_payload(league: League, season: Season | None, team: Team) -> dict:
+    """The ``teams/<team_id>/finances/`` ``data``; finances off => the three
+    header keys only."""
+    editable = league.finance_enabled and team.id == league.current_team_id
+    header = {
+        "finance_enabled": league.finance_enabled,
+        "team": team_ref(team),
+        "editable": editable,
+    }
+    if not league.finance_enabled or season is None:
+        return header
+    data = build_team_finances(season, team)
+    return {
+        **header,
+        "budgets": {
+            "scouting": team.budget_scouting,
+            "coaching": team.budget_coaching,
+            "facilities": team.budget_facilities,
+            "health": team.budget_health,
+        },
+        "budget_costs": data.budget_costs,
+        "ticket_price": team.ticket_price,
+        "cash": team.cash,
+        "injury_policy": team.injury_policy,
+        "live_payroll": data.live_payroll,
+        "live_luxury_tax": data.live_luxury_tax,
+        "live_min_payroll_penalty": data.live_min_payroll_penalty,
+        "record": {"wins": data.wins, "losses": data.losses, "games": data.games},
+        "current_hype": data.current_hype,
+        "roster_salaries": [
+            {"player": player_ref(r["player"]), "salary": r["salary"]}
+            for r in data.roster_salaries
+        ],
+        "availability": [
+            {"player": player_ref(r["player"]), "games_remaining": r["games_remaining"]}
+            for r in data.availability
+        ],
+        "history": [_finance_line(row) for row in data.history],
+    }
+
+
+_FINANCE_LINE_FIELDS = (
+    "ticket",
+    "national_tv",
+    "local_tv",
+    "sponsor",
+    "merch",
+    "payroll",
+    "scouting_cost",
+    "coaching_cost",
+    "facilities_cost",
+    "health_cost",
+    "luxury_tax",
+    "min_payroll_penalty",
+    "revenue",
+    "expenses",
+    "profit",
+    "hype",
+)
+
+
+def _finance_line(row: Any) -> dict:
+    """One ``TeamSeasonFinance`` snapshot: its money lines + ``season``."""
+    return {
+        "season": season_ref(row.season),
+        **{field: getattr(row, field) for field in _FINANCE_LINE_FIELDS},
+    }
+
+
+def finance_team_or_404(league: League, team_id: str | None) -> tuple[Season, Team]:
+    """The displayed Season and the enrolled Team ``team_id``; 404 when the
+    League has no Season or the Team is not enrolled in it."""
+    season = pick_displayed_season(league)
+    if season is None:
+        raise NotFound("No Season in this League.")
+    team = get_object_or_404(Team, pk=team_id, id__in=enrolled_team_ids(season))
+    return season, team
+
+
 @contextmanager
 def translate_screen_errors() -> Iterator[None]:
     """Re-raise a ``league_screen_services`` error as its API error."""
@@ -226,3 +348,61 @@ class LeagueScreensMixin:
         """Clear the Account's watch list for this League."""
         league = self.get_object()
         return Response({"removed": clear_watch_list(request.user, league)})
+
+    # --- finances (T5) ---------------------------------------------------
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"teams/(?P<team_id>[0-9]+)/finances",
+        url_name="team-finances",
+    )
+    def team_finances(
+        self, request: Request, pk: str | None = None, team_id: str | None = None
+    ) -> Response:
+        """One enrolled Team's finances in the displayed Season."""
+        league = self.get_object()
+        season, team = finance_team_or_404(league, team_id)
+        return Response(team_finances_payload(league, season, team))
+
+    @team_finances.mapping.patch
+    def update_finances(
+        self, request: Request, pk: str | None = None, team_id: str | None = None
+    ) -> Response:
+        """Change the current Team's budgets / ticket price / injury policy;
+        only the sent fields change. Returns the GET payload."""
+        league = self.get_object()
+        season, team = finance_team_or_404(league, team_id)
+        form = TeamFinancesForm(
+            merged_form_data(TeamFinancesForm, team, request.data), instance=team
+        )
+        with translate_screen_errors():
+            team = update_team_finances(league, team, form)
+        validate_form_or_raise(form)
+        team.refresh_from_db()
+        return Response(team_finances_payload(league, season, team))
+
+    @action(detail=True, methods=["get"], url_path="finances", url_name="finances")
+    def league_finances(self, request: Request, pk: str | None = None) -> Response:
+        """Every enrolled Team's cash + displayed-Season revenue / profit /
+        payroll (``null`` without a snapshot); finances off => no ``rows``."""
+        league = self.get_object()
+        if not league.finance_enabled:
+            return Response({"finance_enabled": False})
+        season = pick_displayed_season(league)
+        rows = build_league_finances(season) if season is not None else []
+        return Response(
+            {
+                "finance_enabled": True,
+                "rows": [
+                    {
+                        "team": team_ref(row["team"]),
+                        "cash": row["team"].cash,
+                        "revenue": row["finance"].revenue if row["finance"] else None,
+                        "profit": row["finance"].profit if row["finance"] else None,
+                        "payroll": row["finance"].payroll if row["finance"] else None,
+                    }
+                    for row in rows
+                ],
+            }
+        )
