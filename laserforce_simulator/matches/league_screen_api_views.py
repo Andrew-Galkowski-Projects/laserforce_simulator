@@ -45,6 +45,10 @@ from matches.models import League, Season
 from matches.season_player_stats import PlayerStatRow
 from teams.models import Player
 
+# --- league player page (T3) imports ---
+from matches import development
+from matches.league_screen_services import PlayerDetail, build_player_detail
+
 # ---------------------------------------------------------------------------
 # Errors (named codes; the envelope handler shapes them)
 # ---------------------------------------------------------------------------
@@ -109,6 +113,72 @@ def player_stat_rows(
             }
         )
     return out
+
+
+# --- league player page (T3) ---
+
+
+def _season_row_ref(row: dict) -> dict:
+    """``{"id", "name"}`` (``season_ref``'s shape) from a builder row dict."""
+    return {"id": row["season_id"], "name": row["season_name"]}
+
+
+def _stat_row_payload(row: dict) -> dict:
+    """``{team, games, stats}`` from a ``PlayerDetail`` RS / Career row."""
+    return {
+        "team": (
+            {"id": row["team_id"], "name": row["team_name"]} if row["team_id"] else None
+        ),
+        "games": row["games"],
+        "stats": dict(row["stats"]),
+    }
+
+
+def league_player_payload(
+    player: Player, detail: PlayerDetail, *, watched: bool
+) -> dict:
+    """The ``players/<player_id>/`` ``data`` (spec #180)."""
+    return {
+        "player": player_ref(player),
+        "watched": watched,
+        "overall_rating": player.overall_rating,
+        "potential": player.potential,
+        "bio": {
+            "age": player.age,
+            "height": player.height,
+            "home_site": player.home_site,
+            "started_playing_age": player.started_playing_age,
+            "total_games": player.total_games,
+            "preferred_roles": list(player.preferred_roles or []),
+        },
+        "stats": {name: getattr(player, name) for name in development.STAT_FIELDS},
+        "seasons": [
+            {
+                "season": {"id": row["season_id"], "name": row["year"]},
+                **_stat_row_payload(row),
+            }
+            for row in detail.rs_rows
+        ],
+        "career": (
+            _stat_row_payload(detail.career_row)
+            if detail.career_row is not None
+            else None
+        ),
+        "awards": [
+            {"season": _season_row_ref(a), "award_labels": list(a["award_labels"])}
+            for a in detail.player_awards
+        ],
+        "ratings_history": [
+            {
+                "season": _season_row_ref(r),
+                "age": r["age"],
+                "overall_rating": r["overall_rating"],
+                "potential": r["potential"],
+                "stats": dict(r["stats"]),
+            }
+            for r in detail.ratings_history
+        ],
+    }
 
 
 @contextmanager
@@ -226,6 +296,33 @@ class LeagueScreensMixin:
         """Clear the Account's watch list for this League."""
         league = self.get_object()
         return Response({"removed": clear_watch_list(request.user, league)})
+
+    # --- league player page (T3) ------------------------------------------
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"players/(?P<player_id>[0-9]+)",
+        url_name="league-player",
+    )
+    def league_player(
+        self, request: Request, pk: str | None = None, player_id: str | None = None
+    ) -> Response:
+        """The League player page in one response. Lenient: a Player with no
+        games in this League is a 200 with empty sections; only another
+        Account's / a missing League or Player is a 404."""
+        league = self.get_object()
+        player = get_owned_or_404(
+            Player.objects.select_related("team"), request, pk=player_id
+        )
+        detail = build_player_detail(league, player)
+        return Response(
+            league_player_payload(
+                player,
+                detail,
+                watched=player.id in watched_player_ids(request.user, league),
+            )
+        )
 
     # --- feats + playoffs (T6) -------------------------------------------
 
