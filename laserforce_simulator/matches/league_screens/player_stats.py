@@ -45,10 +45,7 @@ from matches.league_views import (
     _season_param,
     _LG01F_PER_PAGE_OPTIONS,
 )
-from matches.league_screen_services import (  # noqa: F401 - re-export
-    build_round_dicts as _build_round_dicts,
-)
-from matches.league_screen_services import build_player_stats
+from matches.league_screen_services import build_player_stats, enrolled_teams
 from matches.models import League
 from matches.season_player_stats import (
     STAT_KEYS,
@@ -165,14 +162,10 @@ def player_stats(request: HttpRequest, league_id: int) -> HttpResponse:
     # forgiving ``?team_id=`` coercion against the enrolment set. The picker
     # lists the displayed Season's enrolment even under a Career / past-Season
     # scope (the displayed Season is the League's current roster).
-    enrolled_teams = (
-        list(displayed_season.teams.order_by("name"))
-        if displayed_season is not None
-        else []
-    )
-    enrolled_ids = {t.id for t in enrolled_teams}
+    team_options = enrolled_teams(displayed_season)
+    enrolled_ids = {t.id for t in team_options}
     selected_team_id = _coerce_team_id(request.GET.get("team_id"), enrolled_ids)
-    context["enrolled_teams"] = enrolled_teams
+    context["enrolled_teams"] = team_options
     context["selected_team_id"] = selected_team_id
 
     # ANG-01e -- the shared builder (aggregate -> apply_rate -> team filter ->

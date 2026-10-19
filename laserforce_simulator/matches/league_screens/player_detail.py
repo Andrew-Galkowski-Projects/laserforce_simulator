@@ -27,10 +27,7 @@ from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import render
 
 from accounts.permissions import get_owned_or_404
-from matches.league_screen_services import (
-    _row_from_stat_row,  # noqa: F401 -- moved; re-exported under the old name
-    build_player_detail,
-)
+from matches.league_screen_services import build_player_detail
 from matches.league_screens.player_stats import _PLAYER_STATS_COLUMNS
 from matches.league_views import _build_league_sidebar_links
 from matches.models import League

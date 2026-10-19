@@ -22,9 +22,7 @@ from accounts.permissions import get_owned_or_404
 from matches.league_screen_services import (
     FEATS_SORT_KEYS as _FEATS_SORT_KEYS,
     build_statistical_feats,
-    feat_row_sort_value as _feat_row_sort_value,  # noqa: F401 -- re-export
-    feats_enrolled_teams,
-    is_nuke_detonation as _is_nuke_detonation,  # noqa: F401 -- re-export
+    enrolled_teams,
 )
 from matches.league_views import (
     _build_league_sidebar_links,
@@ -41,9 +39,8 @@ from matches.models import League
 from teams.views import _coerce_dir
 
 # LG-06e — the sortable Statistical Feats columns (``_FEATS_SORT_KEYS``), the
-# nuke-detonation predicate and the sort extractor moved to
-# ``matches.league_screen_services`` (ANG-01e T6); re-exported above under
-# their old names.
+# nuke-detonation predicate and the sort extractor live in
+# ``matches.league_screen_services`` (shared with the API).
 
 # Ordered (key, label) pairs for the descriptor / identity sort headers (the
 # box-score headers render from ``box_score_columns`` below). The Feats column
@@ -141,10 +138,10 @@ def statistical_feats(request: HttpRequest, league_id: int) -> HttpResponse:
         return render(request, "leagues/statistical_feats.html", base_context)
 
     # LG-06b — team filter.
-    enrolled_teams = feats_enrolled_teams(displayed_season)
-    enrolled_ids = {t.id for t in enrolled_teams}
+    team_options = enrolled_teams(displayed_season)
+    enrolled_ids = {t.id for t in team_options}
     selected_team_id = _coerce_team_id(request.GET.get("team_id"), enrolled_ids)
-    base_context["enrolled_teams"] = enrolled_teams
+    base_context["enrolled_teams"] = team_options
     base_context["selected_team_id"] = selected_team_id
 
     # ANG-01e T6 — the feat scan + sort is the shared builder (the API calls

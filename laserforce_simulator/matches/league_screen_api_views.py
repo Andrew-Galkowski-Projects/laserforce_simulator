@@ -14,78 +14,69 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import asdict
 from typing import Any
 
 from rest_framework.decorators import action
-from rest_framework.exceptions import APIException
+from rest_framework.exceptions import APIException, NotFound
 from rest_framework.request import Request
 from rest_framework.response import Response
 
 from accounts.permissions import get_owned_or_404
 from laserforce_simulator.api.exceptions import validate_form_or_raise
-from laserforce_simulator.api.forms import plain_form_data
+from laserforce_simulator.api.forms import merged_form_data, plain_form_data
 from matches.api_forms import (
+    FreeAgentsParamsForm,
+    GameLogParamsForm,
+    LeadersParamsForm,
     LeagueScreenParamsForm,
+    PlayerRatingsParamsForm,
+    PlayerStatsParamsForm,
+    PlayoffsParamsForm,
+    PowerRankingsParamsForm,
+    StatisticalFeatsParamsForm,
+    TeamHistoryPlayersParamsForm,
+    TeamStatsParamsForm,
     WatchListParamsForm,
     parse_ordering,
 )
-from matches.api_refs import player_ref, season_ref, team_ref
+from matches.api_refs import conference_ref, player_ref, round_ref, season_ref, team_ref
+from matches.development import STAT_FIELDS
+from matches.forms import TeamFinancesForm
 from matches.league_screen_services import (
+    FinanceDisabled,
+    PlayerDetail,
     PlayerNotInLeague,
     SeasonScope,
+    TeamNotEditable,
     add_watch,
-    build_watch_list_rows,
-    clear_watch_list,
-    remove_watch,
-    resolve_season_scope,
-    watched_player_ids,
-)
-from matches.league_services import pick_displayed_season
-from matches.models import League, Season
-from matches.season_player_stats import PlayerStatRow
-from teams.models import Player
-
-# --- player list screens (T2) imports ---
-from dataclasses import asdict
-
-from matches.api_forms import (
-    FreeAgentsParamsForm,
-    LeadersParamsForm,
-    PlayerRatingsParamsForm,
-    PlayerStatsParamsForm,
-)
-from matches.development import STAT_FIELDS
-from matches.league_screen_services import (
     build_free_agents_queryset,
+    build_game_log,
     build_leaderboards,
+    build_league_finances,
+    build_player_detail,
     build_player_ratings_queryset,
     build_player_stats,
-)
-
-# --- league player page (T3) imports ---
-from matches import development
-from matches.league_screen_services import PlayerDetail, build_player_detail
-
-# --- team screens (T4) imports ---
-from django.http import Http404
-
-from matches.api_forms import (
-    GameLogParamsForm,
-    PowerRankingsParamsForm,
-    TeamHistoryPlayersParamsForm,
-    TeamStatsParamsForm,
-)
-from matches.api_refs import round_ref
-from matches.league_screen_services import (
-    build_game_log,
+    build_playoffs,
     build_power_rankings,
+    build_statistical_feats,
+    build_team_finances,
     build_team_history,
     build_team_history_players,
     build_team_roster,
     build_team_stats,
+    build_watch_list_rows,
+    clear_watch_list,
     enrolled_team,
+    remove_watch,
+    resolve_season_scope,
+    update_team_finances,
+    watched_player_ids,
 )
-from teams.models import Team
+from matches.league_services import pick_displayed_season
+from matches.models import GameRound, League, Season
+from matches.season_player_stats import PlayerStatRow
+from teams.models import Player, Team
 
 
 def player_rating_rows(players: list[Player], *, watched_ids: set[int]) -> list[dict]:
@@ -126,11 +117,40 @@ class PlayerNotInLeagueError(APIException):
         super().__init__(detail={"player_id": self.default_detail})
 
 
-# Service exception -> APIException factory. Later tickets add their entries
-# (e.g. ``FinanceDisabled`` / ``TeamNotEditable``).
+class FinanceDisabledError(APIException):
+    """409 -- the League's finances are switched off."""
+
+    status_code = 409
+    default_code = "finance_disabled"
+    default_detail = "Finances are disabled for this League."
+
+
+class TeamNotEditableError(APIException):
+    """409 -- only the League's ``current_team`` may have its finances edited."""
+
+    status_code = 409
+    default_code = "team_not_editable"
+    default_detail = "Only the League's current team's finances can be edited."
+
+
+# Service exception -> APIException factory.
 _SCREEN_SERVICE_ERRORS: dict[type[Exception], Callable[[Exception], APIException]] = {
     PlayerNotInLeague: lambda exc: PlayerNotInLeagueError(),
+    FinanceDisabled: lambda exc: FinanceDisabledError(),
+    TeamNotEditable: lambda exc: TeamNotEditableError(),
 }
+
+
+def enrolled_team_or_404(league: League, team_id: str | None) -> tuple[Season, Team]:
+    """The displayed Season and its enrolled Team ``team_id`` (the path
+    kwarg); 404 when the League has no Season or the Team is not enrolled."""
+    season = pick_displayed_season(league)
+    if season is None:
+        raise NotFound("No Season in this League.")
+    team = enrolled_team(season, int(team_id or 0))
+    if team is None:
+        raise NotFound("Team is not enrolled in the displayed Season.")
+    return season, team
 
 
 def season_scope_meta(scope: SeasonScope) -> dict:
@@ -176,47 +196,9 @@ def player_stat_rows(
     return out
 
 
-# --- finances (T5) ---
-# Imports kept local to this block so sibling tickets' header edits don't clash.
-from django.shortcuts import get_object_or_404  # noqa: E402
-from rest_framework.exceptions import NotFound  # noqa: E402
-
-from laserforce_simulator.api.forms import merged_form_data  # noqa: E402
-from matches.api_refs import team_ref  # noqa: E402
-from matches.forms import TeamFinancesForm  # noqa: E402
-from matches.league_screen_services import (  # noqa: E402
-    FinanceDisabled,
-    TeamNotEditable,
-    build_league_finances,
-    build_team_finances,
-    enrolled_team_ids,
-    update_team_finances,
-)
-from teams.models import Team  # noqa: E402
-
-
-class FinanceDisabledError(APIException):
-    """409 -- the League's finances are switched off."""
-
-    status_code = 409
-    default_code = "finance_disabled"
-    default_detail = "Finances are disabled for this League."
-
-
-class TeamNotEditableError(APIException):
-    """409 -- only the League's ``current_team`` may have its finances edited."""
-
-    status_code = 409
-    default_code = "team_not_editable"
-    default_detail = "Only the League's current team's finances can be edited."
-
-
-_SCREEN_SERVICE_ERRORS.update(
-    {
-        FinanceDisabled: lambda exc: FinanceDisabledError(),
-        TeamNotEditable: lambda exc: TeamNotEditableError(),
-    }
-)
+# ---------------------------------------------------------------------------
+# Finances payloads
+# ---------------------------------------------------------------------------
 
 
 def team_finances_payload(league: League, season: Season | None, team: Team) -> dict:
@@ -288,17 +270,9 @@ def _finance_line(row: Any) -> dict:
     }
 
 
-def finance_team_or_404(league: League, team_id: str | None) -> tuple[Season, Team]:
-    """The displayed Season and the enrolled Team ``team_id``; 404 when the
-    League has no Season or the Team is not enrolled in it."""
-    season = pick_displayed_season(league)
-    if season is None:
-        raise NotFound("No Season in this League.")
-    team = get_object_or_404(Team, pk=team_id, id__in=enrolled_team_ids(season))
-    return season, team
-
-
-# --- league player page (T3) ---
+# ---------------------------------------------------------------------------
+# League player page payload
+# ---------------------------------------------------------------------------
 
 
 def _season_row_ref(row: dict) -> dict:
@@ -334,7 +308,7 @@ def league_player_payload(
             "total_games": player.total_games,
             "preferred_roles": list(player.preferred_roles or []),
         },
-        "stats": {name: getattr(player, name) for name in development.STAT_FIELDS},
+        "stats": {name: getattr(player, name) for name in STAT_FIELDS},
         "seasons": [
             {
                 "season": {"id": row["season_id"], "name": row["year"]},
@@ -480,7 +454,7 @@ class LeagueScreensMixin:
         league = self.get_object()
         return Response({"removed": clear_watch_list(request.user, league)})
 
-    # --- player list screens (T2) ----------------------------------------
+    # --- player list screens ---------------------------------------------
 
     @action(
         detail=True, methods=["get"], url_path="player-stats", url_name="player-stats"
@@ -579,7 +553,7 @@ class LeagueScreensMixin:
             rows, lambda page: player_rating_rows(page, watched_ids=watched_ids)
         )
 
-    # --- league player page (T3) ------------------------------------------
+    # --- league player page ---------------------------------------------
 
     @action(
         detail=True,
@@ -606,7 +580,7 @@ class LeagueScreensMixin:
             )
         )
 
-    # --- finances (T5) ---------------------------------------------------
+    # --- finances -------------------------------------------------------
 
     @action(
         detail=True,
@@ -619,7 +593,7 @@ class LeagueScreensMixin:
     ) -> Response:
         """One enrolled Team's finances in the displayed Season."""
         league = self.get_object()
-        season, team = finance_team_or_404(league, team_id)
+        season, team = enrolled_team_or_404(league, team_id)
         return Response(team_finances_payload(league, season, team))
 
     @team_finances.mapping.patch
@@ -629,7 +603,7 @@ class LeagueScreensMixin:
         """Change the current Team's budgets / ticket price / injury policy;
         only the sent fields change. Returns the GET payload."""
         league = self.get_object()
-        season, team = finance_team_or_404(league, team_id)
+        season, team = enrolled_team_or_404(league, team_id)
         form = TeamFinancesForm(
             merged_form_data(TeamFinancesForm, team, request.data), instance=team
         )
@@ -664,7 +638,7 @@ class LeagueScreensMixin:
             }
         )
 
-    # --- feats + playoffs (T6) -------------------------------------------
+    # --- statistical feats + playoffs -----------------------------------
 
     @action(
         detail=True,
@@ -674,9 +648,6 @@ class LeagueScreensMixin:
     )
     def statistical_feats(self, request: Request, pk: str | None = None) -> Response:
         """Statistical Feats: paged per-(Player, Round) feat rows + team feats."""
-        from matches.api_forms import StatisticalFeatsParamsForm
-        from matches.league_screen_services import build_statistical_feats
-
         league = self.get_object()
         params = self.screen_params(StatisticalFeatsParamsForm, league)
         scope = resolve_season_scope(
@@ -700,11 +671,6 @@ class LeagueScreensMixin:
     @action(detail=True, methods=["get"], url_path="playoffs", url_name="playoffs")
     def playoffs(self, request: Request, pk: str | None = None) -> Response:
         """Playoffs: the Season's brackets + Worlds qualifiers (no Career)."""
-        from dataclasses import asdict
-
-        from matches.api_forms import PlayoffsParamsForm
-        from matches.league_screen_services import build_playoffs
-
         league = self.get_object()
         params = self.screen_params(PlayoffsParamsForm, league)
         scope = resolve_season_scope(
@@ -727,14 +693,7 @@ class LeagueScreensMixin:
             scope,
         )
 
-    # --- team screens (T4) -----------------------------------------------
-
-    def screen_team(self, league: League, team_id: str | None) -> Team:
-        """The path's Team, enrolled in the displayed Season; else 404."""
-        team = enrolled_team(pick_displayed_season(league), int(team_id or 0))
-        if team is None:
-            raise Http404("Team is not enrolled in the displayed Season.")
-        return team
+    # --- team screens ---------------------------------------------------
 
     @action(
         detail=True,
@@ -747,7 +706,8 @@ class LeagueScreensMixin:
     ) -> Response:
         """A Team's starters by role plus the bench."""
         league = self.get_object()
-        roster = build_team_roster(self.screen_team(league, team_id))
+        _, team = enrolled_team_or_404(league, team_id)
+        roster = build_team_roster(team)
         watched = watched_player_ids(request.user, league)
 
         def row(player: Player) -> dict:
@@ -774,7 +734,8 @@ class LeagueScreensMixin:
     ) -> Response:
         """A Team's Overall record and Seasons table (year descending)."""
         league = self.get_object()
-        history = build_team_history(self.screen_team(league, team_id))
+        _, team = enrolled_team_or_404(league, team_id)
+        history = build_team_history(team)
         overall = history.overall
         return Response(
             {
@@ -811,7 +772,7 @@ class LeagueScreensMixin:
     ) -> Response:
         """Team History's Players tab: every Player who appeared for the Team."""
         league = self.get_object()
-        team = self.screen_team(league, team_id)
+        _, team = enrolled_team_or_404(league, team_id)
         params = self.screen_params(TeamHistoryPlayersParamsForm, league)
         sort, direction = parse_ordering(params["ordering"])
         rows = build_team_history_players(team, sort=sort, direction=direction)
@@ -925,9 +886,8 @@ class LeagueScreensMixin:
         return self.scoped_response(data, scope)
 
 
-def _team_or_none(team: Any) -> dict | None:
-    from matches.api_refs import team_ref
-
+def _team_ref_or_none(team: Team | None) -> dict | None:
+    """``team_ref(team)``, or ``None`` for no Team."""
     return team_ref(team) if team is not None else None
 
 
@@ -935,8 +895,6 @@ def bracket_payload(bracket: dict) -> dict:
     """One ``build_playoffs`` bracket as refs: ``{key, name, stage,
     stage_label, conference, champion, pending, rounds: [{bracket_round,
     nodes}]}`` (the ``phase`` / ``tournament`` instances are dropped)."""
-    from matches.api_refs import conference_ref
-
     conference = bracket["conference"]
     return {
         "key": bracket["key"],
@@ -944,7 +902,7 @@ def bracket_payload(bracket: dict) -> dict:
         "stage": bracket["stage"],
         "stage_label": bracket["stage_label"],
         "conference": conference_ref(conference) if conference is not None else None,
-        "champion": _team_or_none(bracket["champion"]),
+        "champion": _team_ref_or_none(bracket["champion"]),
         "pending": bracket["pending"],
         "rounds": [
             {
@@ -952,15 +910,15 @@ def bracket_payload(bracket: dict) -> dict:
                 "nodes": [
                     {
                         "position": node["position"],
-                        "team_a": _team_or_none(node["team_a"]),
-                        "team_b": _team_or_none(node["team_b"]),
+                        "team_a": _team_ref_or_none(node["team_a"]),
+                        "team_b": _team_ref_or_none(node["team_b"]),
                         "seed_a": node["seed_a"],
                         "seed_b": node["seed_b"],
                         "is_bye": node["is_bye"],
                         "wins_a": node["wins_a"],
                         "wins_b": node["wins_b"],
                         "series_length": node["series_length"],
-                        "winner": _team_or_none(node["winner"]),
+                        "winner": _team_ref_or_none(node["winner"]),
                         "games": [dict(game) for game in node["games"]],
                     }
                     for node in bracket_round["nodes"]
@@ -973,8 +931,6 @@ def bracket_payload(bracket: dict) -> dict:
 
 def feat_rows_payload(rows: list, *, watched_ids: set[int]) -> list[dict]:
     """``FeatRow`` flattened (``asdict``) plus ``player`` (ref) and ``watched``."""
-    from dataclasses import asdict
-
     players = Player.objects.select_related("team").in_bulk(
         [row.player_id for row in rows]
     )
@@ -1002,9 +958,6 @@ def team_feats_payload(team_feats: list) -> list[dict]:
     ``TeamFeatRecord`` carries only the winner's name (Team names are not
     unique), so the ref resolves from the record's Round's Match winner.
     """
-    from matches.api_refs import team_ref
-    from matches.models import GameRound
-
     rounds = GameRound.objects.select_related("match__winner").in_bulk(
         [r.round_id for r in team_feats if r.round_id is not None]
     )

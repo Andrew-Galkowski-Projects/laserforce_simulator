@@ -68,16 +68,6 @@ from .league_play_services import (  # noqa: F401 - re-exports
 from .league_play_services import (  # noqa: F401 - re-exports
     resolve_live_cursor as _resolve_live_cursor,
 )
-
-# ANG-01e -- the League screen builders live in ``matches.league_screen_services``
-# (shared with the API); the moved private names are re-exported here under
-# their old spellings. Patch the service module.
-from .league_screen_services import (  # noqa: F401 - re-exports
-    build_round_dicts as _build_round_dicts,
-)
-from .league_screen_services import (  # noqa: F401 - re-exports
-    enrolled_team_ids as _enrolled_team_ids,
-)
 from .league_screen_services import (
     SeasonScope,
     resolve_season_scope,

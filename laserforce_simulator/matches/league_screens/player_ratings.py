@@ -33,7 +33,10 @@ from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import render
 
 from accounts.permissions import get_owned_or_404
-from matches.league_screen_services import build_player_ratings_queryset
+from matches.league_screen_services import (
+    build_player_ratings_queryset,
+    enrolled_teams,
+)
 from matches.league_views import (
     RATING_SORT_KEYS_DISPLAY,
     _build_league_sidebar_links,
@@ -97,10 +100,10 @@ def player_ratings(request: HttpRequest, league_id: int) -> HttpResponse:
 
     # LG-06b — team filter. Enrolled teams (the picker options) + the
     # forgiving ``?team_id=`` coercion against the enrolment set.
-    enrolled_teams = list(displayed_season.teams.order_by("name"))
-    enrolled_ids = {t.id for t in enrolled_teams}
+    team_options = enrolled_teams(displayed_season)
+    enrolled_ids = {t.id for t in team_options}
     selected_team_id = _coerce_team_id(request.GET.get("team_id"), enrolled_ids)
-    context["enrolled_teams"] = enrolled_teams
+    context["enrolled_teams"] = team_options
     context["selected_team_id"] = selected_team_id
 
     # ANG-01e -- the shared builder (team filter, then the LG-00c sort:

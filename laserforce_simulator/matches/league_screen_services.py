@@ -6,45 +6,54 @@ this module reads a request: callers pass the League, the resolved Season
 scope and the screen's already-validated params.
 
 Must not import ``matches.league_views`` or ``matches.league_screens`` (they
-import this module). ``league_views`` re-exports the moved private names under
-their old spellings; tests patch ``matches.league_screen_services.*``.
+import this module); tests patch ``matches.league_screen_services.*``.
 """
 
 from __future__ import annotations
 
-from django.contrib.auth.base_user import AbstractBaseUser
-
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
-from matches.league_services import pick_displayed_season
-from matches.models import League, PlayerRoundState, Season, WatchedPlayer
+from django import forms
+from django.contrib.auth.base_user import AbstractBaseUser
+from django.db.models import F, Q, QuerySet
 
-# --- league player page (T3) imports ---
-from matches import development
-from matches.league_services import _player_award_labels, compute_season_award_set
-from matches.models import PlayerSeasonRating
+from matches import finance, stat_feats
+from matches.development import STAT_FIELDS
+from matches.league_leaders_logic import compute_leaderboards
+from matches.league_services import (
+    _player_award_labels,
+    _team_wins_games_for_season,
+    compute_season_award_set,
+    pick_displayed_season,
+)
+from matches.models import (
+    GameEvent,
+    GameRound,
+    League,
+    Match,
+    PlayerRoundState,
+    PlayerSeasonRating,
+    Season,
+    TeamSeasonFinance,
+    Tournament,
+    WatchedPlayer,
+)
+from matches.power_rankings_logic import (
+    PowerRankingInput,
+    PowerRankingRow,
+    compute_power_rankings,
+    sort_power_rankings,
+)
+from matches.season_dashboard import LeaderRow
 from matches.season_player_stats import (
     PlayerStatRow,
     aggregate_player_stats,
     apply_rate,
     sort_player_stats,
     zero_fill_watched,
-)
-from teams.models import Player, Team
-
-# --- team screens (T4) imports ---
-from collections import defaultdict
-from typing import Any
-
-from django.db.models import Q
-
-from matches.models import GameEvent, GameRound, Match, Tournament
-from matches.power_rankings_logic import (
-    PowerRankingInput,
-    PowerRankingRow,
-    compute_power_rankings,
-    sort_power_rankings,
 )
 from matches.standings import compute_standings
 from matches.team_history_logic import (
@@ -57,13 +66,8 @@ from matches.team_history_logic import (
     round_outcome,
 )
 from matches.team_stats_logic import TeamStatRow, aggregate_team_stats, sort_team_stats
-
-# --- player list screens (T2) imports ---
-from django.db.models import F, QuerySet
-
-from matches.development import STAT_FIELDS
-from matches.league_leaders_logic import compute_leaderboards
-from matches.season_dashboard import LeaderRow
+from matches.tournament_views import _build_rounds
+from teams.models import Player, Team
 from teams.views import _SORT_KEYS as RATING_SORT_KEYS
 
 CAREER: Literal["career"] = "career"
@@ -150,7 +154,11 @@ def resolve_season_scope(
 # ---------------------------------------------------------------------------
 
 
-def build_round_dicts(prs_filter: dict) -> list[dict]:
+def build_round_dicts(
+    prs_filter: dict,
+    *,
+    extra_fields: Callable[[PlayerRoundState], dict] | None = None,
+) -> list[dict]:
     """Build one plain dict per ``PlayerRoundState`` matching ``prs_filter``.
 
     ``prs_filter`` is a ``PlayerRoundState`` lookup, usually a Season scope's
@@ -160,7 +168,9 @@ def build_round_dicts(prs_filter: dict) -> list[dict]:
     the ORM.
 
     Team identity per row resolves from the Round's ``team_red`` /
-    ``team_blue`` keyed on the player's ``team_color``.
+    ``team_blue`` keyed on the player's ``team_color``. ``extra_fields`` (one
+    ``PlayerRoundState`` -> dict) adds or overrides keys per row, for a caller
+    that needs more than the shared stat line (Statistical Feats).
     """
     prs_qs = (
         PlayerRoundState.objects.filter(**prs_filter)
@@ -168,6 +178,7 @@ def build_round_dicts(prs_filter: dict) -> list[dict]:
             "player",
             "game_round",
             "game_round__match",
+            "game_round__match__season",
             "game_round__team_red",
             "game_round__team_blue",
         )
@@ -176,51 +187,78 @@ def build_round_dicts(prs_filter: dict) -> list[dict]:
 
     rounds: list[dict] = []
     for prs in prs_qs:
-        game_round = prs.game_round
-        if prs.team_color == "red":
-            team = game_round.team_red
-        elif prs.team_color == "blue":
-            team = game_round.team_blue
-        else:
-            team = None
-        rounds.append(
-            {
-                "player_id": prs.player_id,
-                "player_name": prs.player.name,
-                "team_id": team.id if team is not None else 0,
-                "team_name": team.name if team is not None else "",
-                "role": prs.role,
-                # 12 STAT_KEYS -- mvp / accuracy pre-computed per round.
-                "points_scored": prs.points_scored,
-                "mvp": float(prs.get_mvp),
-                "tags_made": prs.tags_made,
-                "times_tagged": prs.times_tagged,
-                "accuracy": float(prs.get_accuracy),
-                # Derived survival seconds: elimination tick capped at the
-                # round length (1800), /2 to seconds at the display boundary
-                # (TIME-01). The pure module averages this across rounds.
-                "survival_seconds": min(prs.was_eliminated_at, 1800) / 2,
-                "final_lives": prs.final_lives,
-                "resupplies_given": prs.resupplies_given,
-                "missiles_landed": prs.missiles_landed,
-                "specials_used": prs.specials_used,
-                "follow_up_shots": prs.follow_up_shots,
-                "reaction_shots": prs.reaction_shots,
-                "combo_resupply_count": prs.combo_resupply_count,
-            }
-        )
+        team = _own_team(prs)
+        row = {
+            "player_id": prs.player_id,
+            "player_name": prs.player.name,
+            "team_id": team.id if team is not None else 0,
+            "team_name": team.name if team is not None else "",
+            "role": prs.role,
+            # 12 STAT_KEYS -- mvp / accuracy pre-computed per round.
+            "points_scored": prs.points_scored,
+            "mvp": float(prs.get_mvp),
+            "tags_made": prs.tags_made,
+            "times_tagged": prs.times_tagged,
+            "accuracy": float(prs.get_accuracy),
+            # Derived survival seconds: elimination tick capped at the
+            # round length (1800), /2 to seconds at the display boundary
+            # (TIME-01). The pure module averages this across rounds.
+            "survival_seconds": min(prs.was_eliminated_at, 1800) / 2,
+            "final_lives": prs.final_lives,
+            "resupplies_given": prs.resupplies_given,
+            "missiles_landed": prs.missiles_landed,
+            "specials_used": prs.specials_used,
+            "follow_up_shots": prs.follow_up_shots,
+            "reaction_shots": prs.reaction_shots,
+            "combo_resupply_count": prs.combo_resupply_count,
+        }
+        if extra_fields is not None:
+            row.update(extra_fields(prs))
+        rounds.append(row)
     return rounds
+
+
+def _own_team(prs: PlayerRoundState) -> Team | None:
+    """The Team ``prs`` played for in its Round (by ``team_color``)."""
+    if prs.team_color == "red":
+        return prs.game_round.team_red
+    if prs.team_color == "blue":
+        return prs.game_round.team_blue
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Enrolment
+# ---------------------------------------------------------------------------
 
 
 def enrolled_team_ids(season: Season) -> list[int]:
     """Team ids enrolled in ``season`` -- snapshot first, live M2M fallback.
 
-    Active / completed Seasons read the frozen ``starting_team_ids_json``
-    snapshot; draft Seasons (snapshot still ``None``) read the live M2M.
+    The single definition of "enrolled" for every League screen: active /
+    completed Seasons read the frozen ``starting_team_ids_json`` snapshot
+    (a Team added to the M2M after the start is NOT enrolled); draft Seasons
+    (snapshot still ``None``) read the live M2M.
     """
     if season.starting_team_ids_json is not None:
         return list(season.starting_team_ids_json)
     return sorted(t.id for t in season.teams.all())
+
+
+def enrolled_teams(season: Season | None) -> list[Team]:
+    """The Teams enrolled in ``season`` (:func:`enrolled_team_ids`), by name --
+    the team-picker options and the ``team_id`` allowlist; ``[]`` for no Season."""
+    if season is None:
+        return []
+    return list(Team.objects.filter(id__in=enrolled_team_ids(season)).order_by("name"))
+
+
+def enrolled_team(season: Season | None, team_id: int) -> Team | None:
+    """The enrolled Team ``team_id`` of ``season``, or ``None`` when it isn't
+    enrolled (or there is no Season)."""
+    if season is None or team_id not in enrolled_team_ids(season):
+        return None
+    return Team.objects.filter(pk=team_id).first()
 
 
 # ---------------------------------------------------------------------------
@@ -324,15 +362,9 @@ def build_watch_list_rows(
     return sort_player_stats(rows, sort, direction)
 
 
-# --- finances (T5) ---
-# Imports kept local to this block so sibling tickets' edits to the module
-# header don't conflict.
-from django import forms as _forms  # noqa: E402
-
-from matches import finance  # noqa: E402
-from matches.league_services import _team_wins_games_for_season  # noqa: E402
-from matches.models import TeamSeasonFinance  # noqa: E402
-from teams.models import Team  # noqa: E402
+# ---------------------------------------------------------------------------
+# Finances
+# ---------------------------------------------------------------------------
 
 
 class FinanceDisabled(Exception):
@@ -418,11 +450,11 @@ def build_league_finances(season: Season) -> list[dict]:
     }
     return [
         {"team": team, "finance": finance_by_team.get(team.id)}
-        for team in season.teams.order_by("name")
+        for team in enrolled_teams(season)
     ]
 
 
-def update_team_finances(league: League, team: Team, form: _forms.ModelForm) -> Team:
+def update_team_finances(league: League, team: Team, form: forms.ModelForm) -> Team:
     """Save ``form`` (a bound ``TeamFinancesForm``) onto ``team``.
 
     Raises ``FinanceDisabled`` when the League's finances are off and
@@ -443,7 +475,7 @@ def update_team_finances(league: League, team: Team, form: _forms.ModelForm) -> 
 
 
 # ---------------------------------------------------------------------------
-# --- player list screens (T2) ---
+# Player list screens
 # ---------------------------------------------------------------------------
 
 
@@ -522,8 +554,9 @@ def build_player_ratings_queryset(
     """
     if displayed_season is None:
         return []
-    enrolled_ids = set(displayed_season.teams.values_list("id", flat=True))
-    qs = Player.objects.select_related("team").filter(team_id__in=enrolled_ids)
+    qs = Player.objects.select_related("team").filter(
+        team_id__in=enrolled_team_ids(displayed_season)
+    )
     if team_id is not None:
         qs = qs.filter(team_id=team_id)
     return _order_rated_players(_annotate_overall_rating(qs), sort, direction)
@@ -559,44 +592,14 @@ def build_leaderboards(scope: SeasonScope) -> dict[str, list[LeaderRow]]:
     if scope.round_filter is None:
         return {board: [] for board in LEADER_BOARDS}
     prs_filter = {f"game_round__{k}": v for k, v in scope.round_filter.items()}
-    # order_by("id") makes the "last row wins" defensive fallback in the pure
-    # module deterministic.
-    prs_qs = (
-        PlayerRoundState.objects.filter(**prs_filter)
-        .select_related(
-            "player",
-            "game_round",
-            "game_round__match",
-            "game_round__team_red",
-            "game_round__team_blue",
-        )
-        .order_by("id")
-    )
-    player_rounds: list[dict] = []
-    for prs in prs_qs:
-        game_round = prs.game_round
-        if prs.team_color == "red":
-            team = game_round.team_red
-        elif prs.team_color == "blue":
-            team = game_round.team_blue
-        else:
-            team = None
-        player_rounds.append(
-            {
-                "player_id": prs.player_id,
-                "player_name": prs.player.name,
-                "role": prs.role,
-                "team_id": team.id if team is not None else 0,
-                "team_name": team.name if team is not None else "",
-                "tags_made": prs.tags_made,
-                "times_tagged": prs.times_tagged,
-                "points_scored": prs.points_scored,
-            }
-        )
-    return compute_leaderboards(player_rounds, limit=10)
+    # build_round_dicts orders by id, which makes the "last row wins"
+    # defensive fallback in the pure module deterministic.
+    return compute_leaderboards(build_round_dicts(prs_filter), limit=10)
 
 
-# --- league player page (T3) ---
+# ---------------------------------------------------------------------------
+# League player page
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -693,7 +696,7 @@ def build_player_detail(league: League, player: Player) -> PlayerDetail:
             "age": r.age,
             "overall_rating": r.overall_rating,
             "potential": r.potential,
-            "stats": {name: getattr(r, name) for name in development.STAT_FIELDS},
+            "stats": {name: getattr(r, name) for name in STAT_FIELDS},
         }
         for r in PlayerSeasonRating.objects.filter(player=player, season__league=league)
         .select_related("season")
@@ -708,15 +711,9 @@ def build_player_detail(league: League, player: Player) -> PlayerDetail:
     )
 
 
-# --- feats + playoffs (T6) ---------------------------------------------------
-# Imports kept inside this block so sibling tickets' edits to the header never
-# collide with it.
-
-from collections import defaultdict  # noqa: E402
-
-from matches import stat_feats  # noqa: E402
-from matches.models import GameEvent, GameRound, Match  # noqa: E402
-from teams.models import Team  # noqa: E402
+# ---------------------------------------------------------------------------
+# Statistical Feats + Playoffs
+# ---------------------------------------------------------------------------
 
 # LG-06e -- every Statistical Feats column is sortable: the descriptor /
 # identity columns plus the 13 box-score columns. Default ``round`` desc.
@@ -792,16 +789,9 @@ def feat_row_sort_value(row: stat_feats.FeatRow, key: str) -> str | int | float:
     return row.stats.get(key, 0.0)
 
 
-def feats_enrolled_teams(displayed_season: Season | None) -> list[Team]:
-    """The Statistical Feats team-filter options: the displayed Season's
-    enrolled Teams (live M2M) by name; ``[]`` when the League has no Season."""
-    if displayed_season is None:
-        return []
-    return list(displayed_season.teams.order_by("name"))
-
-
 def _feats_player_rounds(prs_filter: dict) -> list[dict]:
-    """The EXTENDED per-(player, round) ``stat_feats`` seam dicts."""
+    """The EXTENDED per-(player, round) ``stat_feats`` seam dicts: the shared
+    :func:`build_round_dicts` stat line plus the feats-only keys."""
     # Per-Round nuke-detonation counts, keyed (round_id, actor_id).
     detonations: dict[tuple[int, int], int] = defaultdict(int)
     events_qs = GameEvent.objects.filter(
@@ -813,85 +803,44 @@ def _feats_player_rounds(prs_filter: dict) -> list[dict]:
         if is_nuke_detonation(event):
             detonations[(event.game_round_id, event.actor_id)] += 1
 
-    prs_qs = (
-        PlayerRoundState.objects.filter(**prs_filter)
-        .select_related(
-            "player",
-            "game_round",
-            "game_round__match",
-            "game_round__match__season",
-            "game_round__team_red",
-            "game_round__team_blue",
-        )
-        .order_by("id")
-    )
-    player_rounds: list[dict] = []
-    for prs in prs_qs:
+    def feats_fields(prs: PlayerRoundState) -> dict:
         game_round = prs.game_round
-        # Own team + opponent team for this Round, from the player's side.
+        own_team = _own_team(prs)
+        # Opponent + per-ROUND result (own vs opp points in THIS GameRound --
+        # NOT the Match winner), from the player's side.
         if prs.team_color == "red":
-            own_team = game_round.team_red
             opp_team = game_round.team_blue
-            own_points = game_round.red_points
-            opp_points = game_round.blue_points
+            own_points, opp_points = game_round.red_points, game_round.blue_points
         elif prs.team_color == "blue":
-            own_team = game_round.team_blue
             opp_team = game_round.team_red
-            own_points = game_round.blue_points
-            opp_points = game_round.red_points
+            own_points, opp_points = game_round.blue_points, game_round.red_points
         else:
-            own_team = None
             opp_team = None
-            own_points = 0
-            opp_points = 0
-
-        # Per-ROUND result (own vs opp points in THIS GameRound -- NOT the
-        # Match winner).
+            own_points = opp_points = 0
         if own_points > opp_points:
             result = "W"
         elif own_points < opp_points:
             result = "L"
         else:
             result = "T"
-
         match = game_round.match
         season = match.season if match is not None else None
+        return {
+            # identity / deep-link
+            "round_id": game_round.id,
+            "match_id": game_round.match_id,
+            "team_id": own_team.id if own_team is not None else None,
+            # descriptor columns
+            "opp_team_name": opp_team.name if opp_team is not None else "",
+            "result": result,
+            "season_id": season.id if season is not None else None,
+            "season_name": season.name if season is not None else "",
+            "nuke_detonations": detonations.get((game_round.id, prs.player_id), 0),
+            # predicate-only field (NOT a box-score column)
+            "shots_missed": prs.shots_missed,
+        }
 
-        player_rounds.append(
-            {
-                # identity / deep-link
-                "round_id": game_round.id,
-                "match_id": game_round.match_id,
-                "player_id": prs.player_id,
-                "player_name": prs.player.name,
-                "role": prs.role,
-                "team_id": own_team.id if own_team is not None else None,
-                "team_name": own_team.name if own_team is not None else "",
-                # descriptor columns
-                "opp_team_name": opp_team.name if opp_team is not None else "",
-                "result": result,
-                "season_id": season.id if season is not None else None,
-                "season_name": season.name if season is not None else "",
-                # box-score line (13 BOX_SCORE_KEYS, per-round values).
-                # ``get_mvp`` / ``get_accuracy`` are @properties (no parens).
-                "points_scored": prs.points_scored,
-                "mvp": float(prs.get_mvp),
-                "tags_made": prs.tags_made,
-                "times_tagged": prs.times_tagged,
-                "accuracy": float(prs.get_accuracy),
-                "final_lives": prs.final_lives,
-                "resupplies_given": prs.resupplies_given,
-                "missiles_landed": prs.missiles_landed,
-                "specials_used": prs.specials_used,
-                "follow_up_shots": prs.follow_up_shots,
-                "reaction_shots": prs.reaction_shots,
-                "combo_resupply_count": prs.combo_resupply_count,
-                "nuke_detonations": detonations.get((game_round.id, prs.player_id), 0),
-                # predicate-only field (NOT a box-score column)
-                "shots_missed": prs.shots_missed,
-            }
-        )
-    return player_rounds
+    return build_round_dicts(prs_filter, extra_fields=feats_fields)
 
 
 def _feats_matches(round_filter: dict) -> list[dict]:
@@ -994,9 +943,6 @@ def build_playoffs(season: Season | None) -> PlayoffsScreen:
     """
     if season is None:
         return PlayoffsScreen(brackets=[], worlds_qualifiers=[])
-    # Deferred import -- keep the import graph shallow and dodge any
-    # tournament_views <-> views/tasks import-order surprise at load time.
-    from matches.tournament_views import _build_rounds
 
     brackets: list[dict] = []
     phases = (
@@ -1083,23 +1029,10 @@ def build_playoffs(season: Season | None) -> PlayoffsScreen:
     )
 
 
-# --- team screens (T4) ---
-# Team resolution shared by Team History / Roster / Finances, plus the Team
-# History, Roster, Team Stats, Power Rankings and Game Log builders.
-
-
-def enrolled_teams(season: Season) -> list[Team]:
-    """The Teams enrolled in ``season`` (live M2M), by name -- the team-picker
-    options and the allowlist for a ``team_id`` on the team screens."""
-    return list(season.teams.order_by("name"))
-
-
-def enrolled_team(season: Season | None, team_id: int) -> Team | None:
-    """The enrolled Team ``team_id`` of ``season``, or ``None`` when it isn't
-    enrolled (or there is no Season). The API turns ``None`` into a 404."""
-    if season is None:
-        return None
-    return season.teams.filter(pk=team_id).first()
+# ---------------------------------------------------------------------------
+# Team screens: Team resolution (Team History / Roster / Finances), then the
+# Team History, Roster, Team Stats, Power Rankings and Game Log builders.
+# ---------------------------------------------------------------------------
 
 
 def parse_team_id(raw: str | None) -> int | None:

@@ -15,18 +15,18 @@ from typing import Any
 
 from django import forms
 
-from matches.league_services import STANDINGS_SORT_KEYS
-from matches.models import League
-from matches.season_player_stats import DERIVED_KEYS, STAT_KEYS
-from teams.views import _SORT_KEYS as _TEAMS_SORT_KEYS  # T2 player list screens
-
-# --- team screens (T4) imports ---
 from matches.league_screen_services import (
+    FEATS_SORT_KEYS,
     GAME_LOG_SORT_KEYS,
     TEAM_HISTORY_PLAYERS_SORT_KEYS,
+    enrolled_team_ids,
 )
+from matches.league_services import STANDINGS_SORT_KEYS, pick_displayed_season
+from matches.models import League
 from matches.power_rankings_logic import SORT_KEYS as POWER_RANKINGS_SORT_KEYS
+from matches.season_player_stats import DERIVED_KEYS, STAT_KEYS
 from matches.team_stats_logic import SORT_KEYS as TEAM_STATS_SORT_KEYS
+from teams.views import _SORT_KEYS as _TEAMS_SORT_KEYS
 
 _PROVENANCE_CHOICES = [("all", "all"), ("real", "real"), ("sim", "sim")]
 _ROLE_CHOICES = [
@@ -233,56 +233,10 @@ class WatchListParamsForm(LeagueScreenParamsForm):
     )
 
 
-# --- feats + playoffs (T6) ---------------------------------------------------
-
-
-class StatisticalFeatsParamsForm(LeagueScreenParamsForm):
-    """ANG-01e T6 -- ``?season=&team_id=&ordering=`` for ``statistical-feats/``.
-
-    ``team_id`` must be a Team enrolled in the displayed Season (the HTML
-    filter's option set); anything else is a 400 ``invalid_choice``.
-    """
-
-    ordering_default = "-round"
-
-    season = forms.CharField(required=False)
-    team_id = forms.IntegerField(required=False)
-    ordering = forms.ChoiceField(required=False)
-
-    def __init__(self, *args: Any, league: League, **kwargs: Any) -> None:
-        super().__init__(*args, league=league, **kwargs)
-        # Deferred: league_screen_services imports the ORM-heavy modules.
-        from matches.league_screen_services import FEATS_SORT_KEYS
-
-        self.fields["ordering"].choices = ordering_choices(sorted(FEATS_SORT_KEYS))
-
-    def clean_team_id(self) -> int | None:
-        from matches.league_screen_services import feats_enrolled_teams
-        from matches.league_services import pick_displayed_season
-
-        team_id = self.cleaned_data.get("team_id")
-        if team_id is None:
-            return None
-        enrolled = {
-            t.id for t in feats_enrolled_teams(pick_displayed_season(self.league))
-        }
-        if team_id not in enrolled:
-            raise forms.ValidationError(
-                "Select a valid choice. %(value)s is not one of the available choices.",
-                code="invalid_choice",
-                params={"value": team_id},
-            )
-        return team_id
-
-
-# ---------------------------------------------------------------------------
-# --- player list screens (T2) ---
-# ---------------------------------------------------------------------------
-
-
 class _DisplayedSeasonTeamParamMixin:
     """``team_id``: blank -> ``None``; else a Team enrolled in the League's
-    displayed Season (the HTML team picker's set), or a 400 ``invalid_choice``.
+    displayed Season (``enrolled_team_ids``, the HTML team picker's set), or a
+    400 ``invalid_choice``.
     """
 
     league: League
@@ -292,12 +246,9 @@ class _DisplayedSeasonTeamParamMixin:
         team_id = self.cleaned_data.get("team_id")
         if team_id is None:
             return None
-        from matches.league_services import pick_displayed_season
-
         displayed_season = pick_displayed_season(self.league)
-        if (
-            displayed_season is None
-            or not displayed_season.teams.filter(pk=team_id).exists()
+        if displayed_season is None or team_id not in enrolled_team_ids(
+            displayed_season
         ):
             raise forms.ValidationError(
                 "Select a valid choice. %(value)s is not one of the available choices.",
@@ -307,8 +258,26 @@ class _DisplayedSeasonTeamParamMixin:
         return team_id
 
 
+class StatisticalFeatsParamsForm(
+    _DisplayedSeasonTeamParamMixin, LeagueScreenParamsForm
+):
+    """ANG-01e -- ``?season=&team_id=&ordering=`` for ``statistical-feats/``.
+
+    ``team_id`` must be a Team enrolled in the displayed Season (the HTML
+    filter's option set); anything else is a 400 ``invalid_choice``.
+    """
+
+    ordering_default = "-round"
+
+    season = forms.CharField(required=False)
+    team_id = forms.IntegerField(required=False)
+    ordering = forms.ChoiceField(
+        choices=ordering_choices(sorted(FEATS_SORT_KEYS)), required=False
+    )
+
+
 class PlayoffsParamsForm(LeagueScreenParamsForm):
-    """ANG-01e T6 -- ``?season=`` for ``playoffs/``; no ``career`` option (a
+    """ANG-01e -- ``?season=`` for ``playoffs/``; no ``career`` option (a
     bracket has no cross-Season aggregate), so ``career`` is a 400."""
 
     allow_career = False
@@ -356,9 +325,6 @@ class LeadersParamsForm(LeagueScreenParamsForm):
     """ANG-01e -- ``?season=`` for ``GET leaders/`` (boards have no sort params)."""
 
     season = forms.CharField(required=False)
-
-
-# --- team screens (T4) ---
 
 
 class TeamHistoryPlayersParamsForm(LeagueScreenParamsForm):
