@@ -1,4 +1,4 @@
-"""ANG-01d-1 â€” League lifecycle + read REST API (``/api/leagues/``, ``/api/seasons/``).
+"""ANG-01d-1 — League lifecycle + read REST API (``/api/leagues/``, ``/api/seasons/``).
 
 Follows ADR-0039: one envelope, Form-bound writes, output-only serializers,
 views RAISE (never hand-build a 4xx ``Response``). Every League / Season /
@@ -107,7 +107,7 @@ _SEASON_DETAIL_PREFETCH = ("phases", "conferences__teams", "teams", "map_pool")
 
 
 class SeasonInProgress(APIException):
-    """409 â€” the League already has a non-completed Season.
+    """409 — the League already has a non-completed Season.
 
     The detail is keyed ``season:<id>`` so the envelope ``field`` points at the
     in-progress Season (the ``roster_invalid`` ``row:<n>`` precedent).
@@ -122,7 +122,7 @@ class SeasonInProgress(APIException):
 
 
 class ManagerFired(APIException):
-    """409 â€” the Manager was fired and must reassign before rolling."""
+    """409 — the Manager was fired and must reassign before rolling."""
 
     status_code = 409
     default_code = "manager_fired"
@@ -132,7 +132,7 @@ class ManagerFired(APIException):
 
 
 class SeasonNotDraft(APIException):
-    """409 â€” Conferences are editable only while the Season is draft."""
+    """409 — Conferences are editable only while the Season is draft."""
 
     status_code = 409
     default_code = "season_not_draft"
@@ -140,7 +140,7 @@ class SeasonNotDraft(APIException):
 
 
 class NoCompletedSeason(APIException):
-    """409 â€” the League has no completed Season to roll / pick from."""
+    """409 — the League has no completed Season to roll / pick from."""
 
     status_code = 409
     default_code = "no_completed_season"
@@ -148,7 +148,7 @@ class NoCompletedSeason(APIException):
 
 
 class NotCareerLeague(APIException):
-    """409 â€” the action exists only for career (``mode="league"``) Leagues."""
+    """409 — the action exists only for career (``mode="league"``) Leagues."""
 
     status_code = 409
     default_code = "not_career_league"
@@ -156,7 +156,7 @@ class NotCareerLeague(APIException):
 
 
 class PlayInProgress(APIException):
-    """409 â€” the Season already has an Active play run (ADR-0040).
+    """409 — the Season already has an Active play run (ADR-0040).
 
     The detail is keyed ``job:<id>`` so the envelope ``field`` names the live
     Job the client should poll instead.
@@ -171,7 +171,7 @@ class PlayInProgress(APIException):
 
 
 class SeasonNotActive(APIException):
-    """409 â€” a play action on a Season that is not active."""
+    """409 — a play action on a Season that is not active."""
 
     status_code = 409
     default_code = "season_not_active"
@@ -179,7 +179,7 @@ class SeasonNotActive(APIException):
 
 
 class WrongPhase(APIException):
-    """409 â€” the play action does not apply to the Season's current phase."""
+    """409 — the play action does not apply to the Season's current phase."""
 
     status_code = 409
     default_code = "wrong_phase"
@@ -187,7 +187,7 @@ class WrongPhase(APIException):
 
 
 class NoMemberNightGames(APIException):
-    """409 â€” the member-night phase has no unplayed game."""
+    """409 — the member-night phase has no unplayed game."""
 
     status_code = 409
     default_code = "no_member_night_games"
@@ -195,7 +195,7 @@ class NoMemberNightGames(APIException):
 
 
 class NoLiveCursor(APIException):
-    """409 â€” there is no game for the manager's team to play live."""
+    """409 — there is no game for the manager's team to play live."""
 
     status_code = 409
     default_code = "no_live_cursor"
@@ -203,7 +203,7 @@ class NoLiveCursor(APIException):
 
 
 class BrokerUnavailable(APIException):
-    """503 â€” the Celery broker refused a play-run enqueue (nothing started)."""
+    """503 — the Celery broker refused a play-run enqueue (nothing started)."""
 
     status_code = 503
     default_code = "broker_unavailable"
@@ -211,7 +211,7 @@ class BrokerUnavailable(APIException):
 
 
 # ---------------------------------------------------------------------------
-# Row flatteners â€” builder output â†’ plain JSON-able dicts.
+# Row flatteners — builder output → plain JSON-able dicts.
 # ---------------------------------------------------------------------------
 
 
@@ -243,7 +243,7 @@ def _snippet_row(row_dict: dict, team: Team | None) -> dict:
 
 
 def _dashboard_payload(displayed_season: Season | None, season_mode: str) -> dict:
-    """The read-only dashboard body (no play-control keys â€” those are 01d-2)."""
+    """The read-only dashboard body (no play-control keys — those are 01d-2)."""
     body = build_dashboard_context(displayed_season, season_mode)
     return {
         "displayed_season": (
@@ -369,7 +369,7 @@ def _season_detail(season: Season) -> Season:
 # ---------------------------------------------------------------------------
 
 
-# UX-01 â€” exempt from `LoginRequiredMiddleware` so an anonymous request gets
+# UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
 # DRF's 403 JSON; the settings-level `IsAuthenticated` is what gates it. No
 # `update` / `partial_update`, so PUT / PATCH on the detail stay 405.
 @method_decorator(login_not_required, name="dispatch")
