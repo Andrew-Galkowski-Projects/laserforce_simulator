@@ -6,8 +6,8 @@ Read-only view rendering a selected Team's starting six
 player links to their career page. A team-picker dropdown lists the
 enrolled Teams; the selected Team is read from ``?team_id=`` (validated
 against the displayed Season's enrolment) and defaults to
-``league.current_team`` (falling back to
-``_resolve_current_team_for_sidebar``).
+``league.current_team`` (falling back to the first enrolled Team) via the
+shared ``league_screen_services.resolve_league_team``.
 
 Follows the shared LG-01z view contract (§2 of the seam contract):
 GET-only, ``get_owned_or_404(League)``, session write, displayed-Season
@@ -22,12 +22,14 @@ from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import render
 
 from accounts.permissions import get_owned_or_404
-from matches.league_views import (
-    _build_league_sidebar_links,
-    _resolve_current_team_for_sidebar,
+from matches.league_screen_services import (
+    build_team_roster,
+    enrolled_teams as _enrolled_teams,
+    parse_team_id as _parse_team_id,
+    resolve_league_team,
 )
+from matches.league_views import _build_league_sidebar_links
 from matches.models import League
-from teams.models import Team
 
 
 def team_roster(request: HttpRequest, league_id: int) -> HttpResponse:
@@ -62,29 +64,13 @@ def team_roster(request: HttpRequest, league_id: int) -> HttpResponse:
         return render(request, "leagues/team_roster.html", context)
 
     # Teams enrolled in the displayed Season (the team-picker options).
-    enrolled_teams = list(displayed_season.teams.order_by("name"))
-    enrolled_ids = {t.id for t in enrolled_teams}
+    enrolled_teams = _enrolled_teams(displayed_season)
 
-    # Team selection: ?team_id= must be enrolled; invalid → default.
-    team: Team | None = None
-    raw_team_id = request.GET.get("team_id")
-    if raw_team_id is not None:
-        try:
-            requested_id = int(raw_team_id)
-        except (TypeError, ValueError):
-            requested_id = None
-        if requested_id is not None and requested_id in enrolled_ids:
-            team = next((t for t in enrolled_teams if t.id == requested_id), None)
-
-    # Default: league.current_team if enrolled, else the sidebar resolver.
-    if team is None:
-        current_team_id = league.current_team_id
-        if current_team_id is not None and current_team_id in enrolled_ids:
-            team = next((t for t in enrolled_teams if t.id == current_team_id), None)
-    if team is None:
-        resolved = _resolve_current_team_for_sidebar(league, displayed_season)
-        if resolved is not None and resolved.id in enrolled_ids:
-            team = next((t for t in enrolled_teams if t.id == resolved.id), None)
+    # Team selection: ?team_id= must be enrolled; invalid → default
+    # (league.current_team if enrolled, else the first enrolled Team).
+    team = resolve_league_team(
+        league, displayed_season, _parse_team_id(request.GET.get("team_id"))
+    )
 
     if team is None:
         # No resolvable Team — render the no-team notice (sidebar still shows).
@@ -101,8 +87,9 @@ def team_roster(request: HttpRequest, league_id: int) -> HttpResponse:
         return render(request, "leagues/team_roster.html", context)
 
     # Starting six: (role, player) tuples for filled slots.
-    starting_roster = team.active_roster
-    bench_players = team.bench_players
+    roster = build_team_roster(team)
+    starting_roster = roster.starters
+    bench_players = roster.bench
 
     context = {
         "league": league,

@@ -19,6 +19,16 @@ from matches.league_services import STANDINGS_SORT_KEYS
 from matches.models import League
 from matches.season_player_stats import DERIVED_KEYS, STAT_KEYS
 
+# --- team screens (T4) imports ---
+from matches.league_screen_services import (
+    GAME_LOG_SORT_KEYS,
+    TEAM_HISTORY_PLAYERS_SORT_KEYS,
+    enrolled_team,
+)
+from matches.league_services import pick_displayed_season
+from matches.power_rankings_logic import SORT_KEYS as POWER_RANKINGS_SORT_KEYS
+from matches.team_stats_logic import SORT_KEYS as TEAM_STATS_SORT_KEYS
+
 _PROVENANCE_CHOICES = [("all", "all"), ("real", "real"), ("sim", "sim")]
 _ROLE_CHOICES = [
     ("commander", "commander"),
@@ -222,3 +232,67 @@ class WatchListParamsForm(LeagueScreenParamsForm):
     ordering = forms.ChoiceField(
         choices=ordering_choices(PLAYER_STAT_SORT_KEYS), required=False
     )
+
+
+# --- team screens (T4) ---
+
+
+class TeamHistoryPlayersParamsForm(LeagueScreenParamsForm):
+    """ANG-01e -- ``?ordering=`` for ``GET teams/<id>/history/players/``."""
+
+    ordering_default = "name"
+
+    ordering = forms.ChoiceField(
+        choices=ordering_choices(TEAM_HISTORY_PLAYERS_SORT_KEYS), required=False
+    )
+
+
+class TeamStatsParamsForm(LeagueScreenParamsForm):
+    """ANG-01e -- ``?season=&ordering=`` for ``GET team-stats/``."""
+
+    ordering_default = "team"
+
+    season = forms.CharField(required=False)
+    ordering = forms.ChoiceField(
+        choices=ordering_choices(TEAM_STATS_SORT_KEYS), required=False
+    )
+
+
+class PowerRankingsParamsForm(LeagueScreenParamsForm):
+    """ANG-01e -- ``?season=&ordering=`` for ``GET power-rankings/``."""
+
+    ordering_default = "rank"
+
+    season = forms.CharField(required=False)
+    ordering = forms.ChoiceField(
+        choices=ordering_choices(POWER_RANKINGS_SORT_KEYS), required=False
+    )
+
+
+class GameLogParamsForm(LeagueScreenParamsForm):
+    """ANG-01e -- ``?season=&team_id=&ordering=`` for ``GET game-log/``.
+
+    ``team_id`` must be a Team enrolled in the displayed Season (the HTML
+    picker's allowlist); blank -> ``None`` (every Team).
+    """
+
+    ordering_default = "date_played"
+
+    season = forms.CharField(required=False)
+    team_id = forms.IntegerField(required=False)
+    ordering = forms.ChoiceField(
+        choices=ordering_choices(GAME_LOG_SORT_KEYS), required=False
+    )
+
+    def clean_team_id(self) -> int | None:
+        team_id = self.cleaned_data.get("team_id")
+        if team_id is None:
+            return None
+        displayed_season = pick_displayed_season(self.league)
+        if enrolled_team(displayed_season, team_id) is None:
+            raise forms.ValidationError(
+                "Select a valid choice. %(value)s is not one of the available choices.",
+                code="invalid_choice",
+                params={"value": team_id},
+            )
+        return team_id

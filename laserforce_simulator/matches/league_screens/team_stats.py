@@ -14,8 +14,6 @@ the event-type → column mapping documented in ``team_stats_logic`` /
 
 from __future__ import annotations
 
-from collections import defaultdict
-
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import render
 
@@ -25,16 +23,9 @@ from matches.league_views import (
     _resolve_season_scope,
     _season_param,
 )
-from matches.league_screen_services import enrolled_team_ids as _enrolled_team_ids
-from matches.models import GameEvent, GameRound, League, PlayerRoundState
-from matches.team_stats_logic import (
-    SORT_KEYS_DISPLAY,
-    aggregate_team_stats,
-    coerce_dir,
-    coerce_sort,
-    sort_team_stats,
-)
-from teams.models import Team
+from matches.league_screen_services import build_team_stats
+from matches.models import League
+from matches.team_stats_logic import SORT_KEYS_DISPLAY, coerce_dir, coerce_sort
 
 
 def team_stats(request: HttpRequest, league_id: int) -> HttpResponse:
@@ -99,116 +90,9 @@ def team_stats(request: HttpRequest, league_id: int) -> HttpResponse:
         context["rows"] = []
         return render(request, "leagues/team_stats.html", context)
 
-    # Enrolled teams come from the displayed Season (the League's current
-    # roster) even under a Career / past-Season scope.
-    team_ids = (
-        _enrolled_team_ids(displayed_season) if displayed_season is not None else []
+    rows = build_team_stats(
+        displayed_season, season_filter, sort=sort, direction=direction
     )
-    teams_by_id: dict[int, Team] = Team.objects.in_bulk(team_ids)
-    enrolled_teams = [
-        (tid, teams_by_id[tid].name if tid in teams_by_id else "") for tid in team_ids
-    ]
-
-    # Re-point the LG-06d scope onto the two join shapes: GameRound joins via
-    # ``match__season…`` (the season_filter shape verbatim); PRS / GameEvent
-    # via ``game_round__match__season…``.
-    prs_filter = {f"game_round__{k}": v for k, v in season_filter.items()}
-
-    # --- Per-round dicts (one per Team appearance in a Round) -------------
-    rounds_qs = GameRound.objects.filter(**season_filter)
-
-    # Per-(round, color) survivor + tag/tagged sums from PlayerRoundState.
-    prs_qs = PlayerRoundState.objects.filter(**prs_filter).values(
-        "game_round_id", "team_color", "final_lives", "tags_made", "times_tagged"
-    )
-    survivors: dict[tuple[int, str], int] = defaultdict(int)
-    tags_landed: dict[tuple[int, str], int] = defaultdict(int)
-    times_tagged: dict[tuple[int, str], int] = defaultdict(int)
-    for prs in prs_qs:
-        key = (prs["game_round_id"], prs["team_color"])
-        if prs["final_lives"] > 0:
-            survivors[key] += 1
-        tags_landed[key] += prs["tags_made"]
-        times_tagged[key] += prs["times_tagged"]
-
-    team_rounds: list[dict] = []
-    for gr in rounds_qs:
-        for color, team_id, points_for, points_against in (
-            ("red", gr.team_red_id, gr.red_points, gr.blue_points),
-            ("blue", gr.team_blue_id, gr.blue_points, gr.red_points),
-        ):
-            if team_id is None:
-                continue
-            key = (gr.id, color)
-            team_rounds.append(
-                {
-                    "team_id": team_id,
-                    "points_for": points_for,
-                    "points_against": points_against,
-                    "survivors": survivors[key],
-                    "tags_landed": tags_landed[key],
-                    "times_tagged": times_tagged[key],
-                }
-            )
-
-    # --- Per-event dicts (one per relevant GameEvent) ---------------------
-    # Resolve each event's actor team_id via the actor's PlayerRoundState in
-    # that Round (team_color → team_red/team_blue). Build the lookup once.
-    actor_team_by_key: dict[tuple[int, int], int] = {}
-    color_prs = PlayerRoundState.objects.filter(**prs_filter).values(
-        "game_round_id", "player_id", "team_color"
-    )
-    round_sides: dict[int, tuple[int | None, int | None]] = {
-        gr.id: (gr.team_red_id, gr.team_blue_id) for gr in rounds_qs
-    }
-    for row in color_prs:
-        red_id, blue_id = round_sides.get(row["game_round_id"], (None, None))
-        if row["team_color"] == "red":
-            team_id = red_id
-        elif row["team_color"] == "blue":
-            team_id = blue_id
-        else:
-            team_id = None
-        if team_id is not None:
-            actor_team_by_key[(row["game_round_id"], row["player_id"])] = team_id
-
-    events_qs = GameEvent.objects.filter(
-        event_type__in=["base_capture", "missiled", "special", "nuke_cancelled"],
-        **prs_filter,
-    ).values(
-        "game_round_id",
-        "actor_id",
-        "event_type",
-        "points_awarded",
-        "metadata",
-    )
-
-    team_events: list[dict] = []
-    for ev in events_qs:
-        team_id = actor_team_by_key.get((ev["game_round_id"], ev["actor_id"]))
-        if team_id is None:
-            continue
-        etype = ev["event_type"]
-        meta = ev["metadata"] or {}
-        if etype == "base_capture":
-            team_events.append({"team_id": team_id, "kind": "base_capture"})
-        elif etype == "missiled":
-            team_events.append(
-                {
-                    "team_id": team_id,
-                    "kind": "missiled",
-                    "hit": meta.get("result") == "hit",
-                }
-            )
-        elif etype == "nuke_cancelled":
-            team_events.append({"team_id": team_id, "kind": "nuke_cancelled"})
-        elif etype == "special":
-            # Only nuke detonations count (activation rows are skipped).
-            if ev["points_awarded"] == 500 and "targets" in meta:
-                team_events.append({"team_id": team_id, "kind": "nuke_detonation"})
-
-    rows = aggregate_team_stats(team_rounds, team_events, enrolled_teams)
-    rows = sort_team_stats(rows, sort, direction)
 
     context["rows"] = rows
     return render(request, "leagues/team_stats.html", context)
