@@ -232,9 +232,10 @@ def watch_list(request: HttpRequest) -> dict:
     ``RequestFactory()``-built request). Off-League (no ``resolver_match``, or
     no ``"league_id"`` kwarg) ⇒ ``{"watched_player_ids": set()}``.
 
-    Reuses ``matches.league_views._watched_player_ids`` for the read (lazy
-    import to avoid the ``core`` ↔ ``matches`` apps-loading cycle — mirrors the
-    ``league_nav`` precedent).
+    ANG-01e: reads the requesting Account's watch list for that League via
+    ``matches.league_screen_services.watched_player_ids`` (anonymous => empty;
+    the browser session is never read). Lazy import to avoid the ``core`` <->
+    ``matches`` apps-loading cycle -- mirrors the ``league_nav`` precedent.
     """
     resolver_match = getattr(request, "resolver_match", None)
     if resolver_match is None:
@@ -248,6 +249,10 @@ def watch_list(request: HttpRequest) -> dict:
     except (TypeError, ValueError):
         return {"watched_player_ids": set()}
 
-    from matches.league_views import _watched_player_ids
+    from matches.league_screen_services import watched_player_ids
 
-    return {"watched_player_ids": _watched_player_ids(request, league_id_int)}
+    return {
+        "watched_player_ids": watched_player_ids(
+            getattr(request, "user", None), league_id_int
+        )
+    }

@@ -85,6 +85,7 @@ from matches.league_play_services import (
     SeasonNotDraftError,
     WrongPhaseError,
 )
+from matches.league_screen_api_views import LeagueScreensMixin
 from matches.league_templates import LEAGUE_TEMPLATES, LEAGUE_TEMPLATES_BY_KEY
 from matches.models import League, Season
 from matches.season_awards import ROLE_KEYS, AwardWinner
@@ -373,6 +374,7 @@ def _season_detail(season: Season) -> Season:
 # `update` / `partial_update`, so PUT / PATCH on the detail stay 405.
 @method_decorator(login_not_required, name="dispatch")
 class LeagueViewSet(
+    LeagueScreensMixin,
     ListOnlyFilterMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,

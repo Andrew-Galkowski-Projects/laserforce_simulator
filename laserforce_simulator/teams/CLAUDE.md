@@ -78,7 +78,9 @@ are **ZenGM 1–100 budget levels** (`matches.finance.DEFAULT_LEVEL = 34` is the
 mid-range cost, zero effect) converted to dollars via `finance.level_to_amount`; `ticket_price` /
 `cash` (`FloatField(default=0.0)`) are dollar amounts (`cash` accumulates each Season's profit and
 carries across the rollover). **No choices, no validators** — the per-League `finance_enabled` toggle
-+ AI defaults keep the levels in band and the Team Finances form clamps user input to `[1, MAX_LEVEL]`.
++ AI defaults keep the levels in band, and `matches.forms.TeamFinancesForm` (ANG-01e, shared by the
+HTML POST and `PATCH /api/leagues/<id>/teams/<team_id>/finances/`) rejects out-of-range input
+(levels `1..MAX_LEVEL`, `ticket_price >= 0`) instead of clamping it.
 
 **FIN-04 health budget + injury/availability** lands the **fourth budget** — `budget_health`
 (`PositiveSmallIntegerField(default=34)`, the same ZenGM 1–100 level on the `finance.DEFAULT_LEVEL = 34`

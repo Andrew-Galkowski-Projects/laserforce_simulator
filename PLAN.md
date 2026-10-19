@@ -1501,7 +1501,7 @@ each other and each depends only on 01a. Locked across all of them: **one envelo
 `django-filter` allowlists + `OrderingFilter`; cross-Account access is **404, never 403**
 (ADR-0038); anonymous stays **403 `not_authenticated`** until ANG-03 swaps in JWT. Login / JWT
 token endpoints stay ANG-03, not ANG-01g. **ANG-01d re-sliced (grill, 2026-10-16)** into
-**ANG-01d-1** (League lifecycle + reads — done) and **ANG-01d-2** (the play loop — not started),
+**ANG-01d-1** (League lifecycle + reads — done) and **ANG-01d-2** (the play loop — done),
 so the full set is now ANG-01a..c, 01d-1, 01d-2, 01e..g.
 
 #### ANG-01a · [DONE] API foundation + core CRUD
@@ -1771,11 +1771,19 @@ Items): no fired check on candidates / reassign; team schedule accepts any owned
 [`.claude/worktrees/ang-01d-1-seam-contract.md`](.claude/worktrees/ang-01d-1-seam-contract.md) and
 the **ANG-01d-1** section of `laserforce_simulator/matches/CLAUDE.md`.
 
-#### ANG-01d-2 · League play-loop API
+#### ANG-01d-2 · [DONE] League play-loop API
 
 Spec: #173
 
-**[NOT STARTED]** The play half split out of ANG-01d (grill, 2026-10-16): start Season (draft ⇒
+**[DONE] Shipped (2026-10-18, PR #178).** The play loop is exposed over `/api/seasons/` (start
+Season, sync play, async play runs, live play, play controls, member nights) on a shared
+`matches/league_play_services.py`, so the HTML views and the API run the same logic. Only one active
+play run per Season ([ADR-0040](docs/adr/0040-single-active-play-run-per-season.md)): sync controls
+redirect with an "in progress" banner, async endpoints return 409 `play_in_progress`, and Cancel
+clears a stale run. Web-test fixes L-4 / L-5 / L-6 shipped with it; L-7 / L-8 / L-10 / L-1 / L-2
+were fixed on the same branch afterwards.
+
+*Original scope:* The play half split out of ANG-01d (grill, 2026-10-16): start Season (draft ⇒
 active), play week / play two months / play until end / play playoffs / play a single round, the One
 Week (Live) watch feed, Job status + cancel (the `Season.active_play_job_id` /
 `play_cancel_requested` state ANG-01d-1 deliberately keeps out of `SeasonSerializer`), member-night
@@ -1784,12 +1792,75 @@ Celery tasks in `matches/tasks.py` and the enveloped Job-polling shape; builds o
 `LeagueViewSet` / `SeasonViewSet` and `matches/league_services.py`. None of the play views,
 `_build_play_controls_context` or `tasks.py` moved in ANG-01d-1.
 
-#### ANG-01e · League stats / finance / players screens API
+#### ANG-01e · [DONE] League stats / finance / players screens API
+
+Spec: #180
+
+**[DONE] Shipped (2026-10-19).** All 15 League screens are exposed under `/api/leagues/<id>/…` on a
+shared `matches/league_screen_services.py`, so the `league_screens/*` HTML views and the API run the
+same builders (the old private helpers were deleted rather than re-exported, so decision 10's
+re-export shims were dropped). The watch list moved from the browser session to the per-Account
+`WatchedPlayer` model (migration `0063`). The work found that the screens disagreed on what
+"enrolled" means: there is now one definition, the Season's activation snapshot
+(`starting_team_ids_json`, live M2M only for a draft). It also fixed the HTML finances POST, which
+saved any enrolled Team (an AI team's budgets could be edited); it now saves only `current_team`
+through the new `TeamFinancesForm`, which rejects bad values instead of clamping. Deviations: the HTML
+finances POST binds merged form data (absent fields keep their saved values); `GET finances/` with
+finances off returns `rows: []` and the team GET returns only its header keys (not null sections);
+the finances `PATCH` returns 409 (`finance_disabled` / `team_not_editable`) before any 400 form error.
+Follow-ups ANG01e-D1..D3 are in `issues.md`. See the **ANG-01e league screens API** section of
+`laserforce_simulator/matches/CLAUDE.md`.
 
 The read-mostly `league_screens/*` surfaces: League leaders, player stats and ratings history,
-free agents and watch list, team history, finances (budgets, ticket price, injury policy — writes
-bind the existing Team Finances form), and League player detail. Primarily output serializers over
-the existing screen helpers; finance writes stay gated on `finance_enabled`.
+free agents and watch list, team history, finances (budgets, ticket price, injury policy), and
+League player detail. Primarily output serializers over the existing screen helpers; finance writes
+stay gated on `finance_enabled`.
+
+**Grill (2026-10-19), round 1 — settled:**
+1. **Scope: all 15 `league_screens/*` surfaces**, not just the 9 named above. Game log, power
+   rankings, statistical feats, team roster, team stats and playoffs are in too; no other ANG-01
+   slice covers them and ANG-06 needs them.
+2. **Watch list moves to a per-Account model** (Account, League, Player; unique together) behind both
+   the HTML and the API. The session lists are dropped, not migrated (ADR-0004).
+3. **Only the League's `current_team` is editable** on finances, in the API and the HTML alike. Any
+   other Team, or a League with no `current_team`, is 409 `team_not_editable`. This fixes the HTML
+   POST, which saved any enrolled Team (contradicts ADR-0027/0028); it gets a regression test.
+4. **A new `TeamFinancesForm`** (the PLAN's "existing Team Finances form" never existed): a ModelForm
+   over the four budgets, `injury_policy` and `ticket_price` that **rejects** bad values (budgets 1..
+   `MAX_LEVEL`, price >= 0, policy in the two choices) instead of clamping. Both the API (`PATCH`, each
+   field optional, 400 with field errors) and the HTML page (re-renders with errors) bind it.
+5. **`finance_enabled` off:** finance GETs return 200 with `finance_enabled: false` and null finance
+   sections; the `PATCH` is 409 `finance_disabled`.
+6. **URLs** live under `/api/leagues/<id>/…` with explicit ids (`leaders/`, `player-stats/`,
+   `player-ratings/`, `free-agents/`, `watch-list/`, `players/<player_id>/`,
+   `teams/<team_id>/history/`, `teams/<team_id>/finances/`, `finances/`, `teams/<team_id>/roster/`,
+   and the same shape for the extra screens). The HTML's current-team fallback stays HTML-only.
+7. **`?season=<id>|career`**, defaulting to the displayed Season, with the resolved scope and the
+   Season options echoed in `meta`. Strict: an unknown Season is a 400.
+8. **Watch list writes:** `PUT` / `DELETE watch-list/<player_id>/`, `DELETE watch-list/` to clear. A
+   Player not on an enrolled Team or in the free-agent pool is 400 `player_not_in_league`. The HTML
+   toggle gets the same League check, and its clear becomes a POST.
+9. **Team history** splits into `teams/<id>/history/` (Overall + Seasons) and a paginated
+   `teams/<id>/history/players/`.
+10. **Shared logic moves to `matches/league_screen_services.py`**, re-exported from `league_views`
+    under the old names (the ANG-01d-1 pattern).
+11. **Performance stays as is** (player-detail awards recompute, cross-League Season scan); logged in
+    `issues.md`, out of scope.
+
+**Round 2 — settled:**
+12. **Paging** uses the shared API paginator (`page`, `page_size`, default 20, max 100), not the
+    HTML's `per_page`.
+13. **Sorting** is `?ordering=<key>` / `-<key>` over the same keys the HTML allows, with each screen's
+    HTML default order; an unknown key is a 400. In-Python screens sort through the existing pure sort
+    helpers.
+14. **`leaders/`** returns all four boards (top 10, default ranking) with no sort params.
+15. **`?rate=total|per_game|per_10`** (default `total`, strict) on player stats and the watch list.
+16. **Every Player row carries `watched`** for the requesting Account.
+17. **League player detail stays lenient**: 404 only for a foreign or missing League or Player, never
+    for "not in this League". The `player_not_in_league` check (8) does not apply here.
+18. **Player detail is one response**: bio, overall, the 19 stats, per-Season rows plus the
+    Career-in-League row, awards and ratings history. No separate ratings-history endpoint.
+19. **No HTML side effects in the API**: no `session["last_league_id"]` write, no sidebar links.
 
 #### ANG-01f · Tournaments API
 
@@ -1874,6 +1945,31 @@ Once each Angular view is verified, delete the corresponding Django template fil
 HTML-serving view function. Keep the API endpoint. Update URL routing to remove the old path.
 The app should have zero `.html` template files by the end of this phase, except Django Admin
 (which is a permanent exception and stays indefinitely).
+
+### ANG-09 · [NOT STARTED] Investigate a standalone single-player executable
+
+**Investigation only — no shipped code.** Find out whether single-player mode (sandbox + single-player
+`league` / career mode) can be handed out as one downloadable executable that runs locally, with no
+hosted server. The deliverable is a spike plus a go / no-go ADR. If the answer is go, the ADR names the
+follow-up tasks. Starts after ANG-08, so the frontend is the built Angular SPA and Django is API-only.
+
+Questions to answer:
+- **Packaging:** PyInstaller, Briefcase or Nuitka for the Django + DRF backend and its native
+  dependencies. Measure binary size and cold-start time.
+- **Background jobs:** batch runs and the Season play loop use Celery + Redis (ADR-0013 / ADR-0016).
+  Find an in-process replacement (a thread / process pool or an eager mode), so the user doesn't have to
+  run a broker.
+- **Shell:** a native window (pywebview, Tauri or Electron) vs. opening the default browser to a
+  localhost port. How do the built Angular static files get served (Django + whitenoise, or the shell)?
+- **Database:** an embedded SQLite file in the user's app-data folder. This conflicts with ADR-0025
+  (PostgreSQL canonical, SQLite dev-only). Decide whether a desktop-only SQLite exception is acceptable,
+  and how `migrate` runs on first launch and on upgrade (ADR-0004: simulation data is disposable).
+- **Auth:** a single local Account created and signed in automatically. ANG-03 JWT vs. a local bypass.
+  Hide the `multiplayer` mode and the Account screens.
+- **Runtime:** simulation parallelism under a frozen binary (`multiprocessing.freeze_support`, process
+  pools), the bundled map / media files, and where logs go.
+- **Distribution:** Windows first. Cover code signing / SmartScreen, auto-update vs. manual download,
+  and macOS / Linux feasibility.
 
 ## Parked — deferred Tournament work
 

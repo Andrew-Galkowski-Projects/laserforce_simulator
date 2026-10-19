@@ -18,7 +18,8 @@ from django.shortcuts import render
 
 from accounts.permissions import get_owned_or_404
 from matches.league_views import _build_league_sidebar_links
-from matches.models import League, TeamSeasonFinance
+from matches.league_screen_services import build_league_finances
+from matches.models import League
 
 
 def league_finances(request: HttpRequest, league_id: int) -> HttpResponse:
@@ -53,13 +54,7 @@ def league_finances(request: HttpRequest, league_id: int) -> HttpResponse:
 
     # One row per enrolled Team, pairing the Team with its displayed-Season
     # finance snapshot (None when finance is OFF or no row was written yet).
-    finance_by_team = {
-        f.team_id: f for f in TeamSeasonFinance.objects.filter(season=displayed_season)
-    }
-    enrolled_teams = list(displayed_season.teams.order_by("name"))
-    rows = []
-    for team in enrolled_teams:
-        rows.append({"team": team, "finance": finance_by_team.get(team.id)})
+    rows = build_league_finances(displayed_season)
 
     context = {**base_context, "rows": rows}
     return render(request, "leagues/league_finances.html", context)

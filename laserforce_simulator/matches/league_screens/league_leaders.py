@@ -14,14 +14,14 @@ from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import render
 
 from accounts.permissions import get_owned_or_404
-from matches.league_leaders_logic import compute_leaderboards
+from matches.league_screen_services import build_leaderboards
 from matches.league_views import (
     _build_league_sidebar_links,
     _coerce_sort_key,
-    _resolve_season_scope,
+    _lenient_season_scope,
     _season_param,
 )
-from matches.models import League, PlayerRoundState
+from matches.models import League
 from teams.views import _coerce_dir
 
 # LG-06c — the four League Leaders boards. Each gets its own namespaced
@@ -90,9 +90,16 @@ def league_leaders(request: HttpRequest, league_id: int) -> HttpResponse:
 
     # LG-06d — season selector. Picker options + the forgiving ``?season=``
     # coercion (defaults to displayed_season — fully backward-compatible).
-    seasons, selected_season, season_options, season_filter = _resolve_season_scope(
-        request, league, displayed_season
-    )
+    scope = _lenient_season_scope(request, league, displayed_season)
+    selected_season = scope.selected_id
+    season_options = [
+        {
+            "id": s.id,
+            "name": s.name,
+            "year": s.start_date.year if s.start_date is not None else None,
+        }
+        for s in scope.options
+    ]
 
     # LG-06c — per-board namespaced sort/dir coercion. Default ``rank`` asc on
     # every board reproduces the pure module's natural metric order.
@@ -137,59 +144,13 @@ def league_leaders(request: HttpRequest, league_id: int) -> HttpResponse:
             board
         ]
 
-    if season_filter is None:
-        # Empty-state per §2 — no Season scope; render the notice instead of
-        # the body. The sidebar still renders.
-        context["leaderboards"] = {
-            "avg_tags": [],
-            "avg_score": [],
-            "fewest_tagged": [],
-            "tag_ratio": [],
-        }
+    # ANG-01e -- the shared builder: four boards in default rank order, every
+    # board empty in the empty state (no Season scope; the sidebar still
+    # renders).
+    leaderboards = build_leaderboards(scope)
+    if scope.round_filter is None:
+        context["leaderboards"] = leaderboards
         return render(request, "leagues/league_leaders.html", context)
-
-    # Re-point the LG-06d scope onto the PlayerRoundState ``game_round__…`` join.
-    prs_filter = {f"game_round__{k}": v for k, v in season_filter.items()}
-
-    # Materialise one dict per PlayerRoundState row across the scoped Rounds
-    # (mirrors the LG-01c season-dashboard player-round dict shape).
-    # order_by("id") makes the "last row wins" defensive fallback in the pure
-    # module deterministic.
-    prs_qs = (
-        PlayerRoundState.objects.filter(**prs_filter)
-        .select_related(
-            "player",
-            "game_round",
-            "game_round__match",
-            "game_round__team_red",
-            "game_round__team_blue",
-        )
-        .order_by("id")
-    )
-
-    player_rounds: list[dict] = []
-    for prs in prs_qs:
-        game_round = prs.game_round
-        if prs.team_color == "red":
-            team = game_round.team_red
-        elif prs.team_color == "blue":
-            team = game_round.team_blue
-        else:
-            team = None
-        player_rounds.append(
-            {
-                "player_id": prs.player_id,
-                "player_name": prs.player.name,
-                "role": prs.role,
-                "team_id": team.id if team is not None else 0,
-                "team_name": team.name if team is not None else "",
-                "tags_made": prs.tags_made,
-                "times_tagged": prs.times_tagged,
-                "points_scored": prs.points_scored,
-            }
-        )
-
-    leaderboards = compute_leaderboards(player_rounds, limit=10)
 
     # LG-06c — sort each board's rows in-memory with its own namespaced
     # sort/dir. The pure module's ``rank`` field is preserved (not recomputed).

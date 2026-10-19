@@ -24,11 +24,11 @@ the pagination helpers (``_coerce_per_page`` / ``_coerce_page``) from
 from __future__ import annotations
 
 from django.core.paginator import Paginator
-from django.db.models import F, QuerySet
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import render
 
 from accounts.permissions import get_owned_or_404
+from matches.league_screen_services import build_free_agents_queryset
 from matches.league_views import (
     RATING_SORT_KEYS_DISPLAY,
     _build_league_sidebar_links,
@@ -37,48 +37,7 @@ from matches.league_views import (
     _LG01F_PER_PAGE_OPTIONS,
 )
 from matches.models import League
-from teams.models import Player
-from teams.views import _coerce_dir, _coerce_sort, _SORT_KEYS
-
-
-def _free_agent_queryset(league: League) -> "QuerySet[Player]":
-    """Players who are free agents in ``league`` — on **no** competitive Team.
-
-    A free agent is a Player on this League's dedicated free-agent pool
-    Team (``league.free_agent_pool``). Each League owns its own pool, so a
-    Player only appears for the League whose pool they belong to. Players
-    on any competitive Team are NOT free agents (they have a team).
-    Filtering on ``league.free_agent_pool_id`` (``None`` when the League has
-    no pool — e.g. legacy Leagues) yields an empty queryset, since every
-    Player has a non-null team. The queryset is annotated with
-    ``overall_rating_db`` (mean of the 19 stats) so the LG-00c
-    ``overall_rating`` sort key has an ORM target.
-    """
-    qs = Player.objects.select_related("team").filter(team_id=league.free_agent_pool_id)
-    return qs.annotate(
-        overall_rating_db=(
-            F("player_awareness")
-            + F("game_awareness")
-            + F("resource_awareness")
-            + F("decision_making")
-            + F("positioning")
-            + F("stamina")
-            + F("speed")
-            + F("flexibility")
-            + F("adaptability")
-            + F("communication")
-            + F("teamwork")
-            + F("Offensive_synergy")
-            + F("defensive_synergy")
-            + F("midfield_synergy")
-            + F("resupply_synergy")
-            + F("resupply_efficiency")
-            + F("accuracy")
-            + F("survival")
-            + F("special_usage")
-        )
-        / 19.0
-    )
+from teams.views import _coerce_dir, _coerce_sort
 
 
 def free_agents(request: HttpRequest, league_id: int) -> HttpResponse:
@@ -127,29 +86,12 @@ def free_agents(request: HttpRequest, league_id: int) -> HttpResponse:
         context["querystring_without_sort_dir_page"] = ""
         return render(request, "leagues/free_agents.html", context)
 
-    qs = _free_agent_queryset(league)
-
-    if sort == "preferred_roles":
-        rows = list(qs)
-        rows.sort(
-            key=lambda p: (",".join(p.preferred_roles or []), p.name),
-            reverse=(direction == "desc"),
-        )
-        paginator = Paginator(rows, per_page)
-    elif sort == "potential":
-        # potential is nullable — sort nulls last in BOTH directions so a
-        # player with no potential never floats to the top.
-        ordering = (
-            F("potential").desc(nulls_last=True)
-            if direction == "desc"
-            else F("potential").asc(nulls_last=True)
-        )
-        qs = qs.order_by(ordering, "name")
-        paginator = Paginator(qs, per_page)
-    else:
-        prefix = "" if direction == "asc" else "-"
-        qs = qs.order_by(prefix + _SORT_KEYS[sort], "name")
-        paginator = Paginator(qs, per_page)
+    # ANG-01e -- the shared builder (the League's free-agent pool, LG-00c
+    # sort: ``preferred_roles`` in Python, ``potential`` nulls last both ways).
+    rows = build_free_agents_queryset(
+        league, displayed_season, sort=sort, direction=direction
+    )
+    paginator = Paginator(rows, per_page)
 
     page_obj = paginator.get_page(_coerce_page(request.GET.get("page")))
 

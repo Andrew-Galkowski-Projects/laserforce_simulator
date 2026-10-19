@@ -99,9 +99,29 @@
                 {# ---- Expense Settings (the editable budget form) ---- #}
                 <div class="col-lg-7">
                     <h2 class="h5">Expense Settings</h2>
+                    {% if form and form.errors %}
+                        <div id="team-finances-form-errors" class="alert alert-danger">
+                            Expense settings not saved:
+                            <ul class="mb-0">
+                                {% for error in form.non_field_errors %}
+                                    <li>{{ error }}</li>
+                                {% endfor %}
+                                {% for field in form %}
+                                    {% for error in field.errors %}
+                                        <li>{{ field.label }}: {{ error }}</li>
+                                    {% endfor %}
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    {% endif %}
+                    {% if not editable %}
+                        <p id="team-finances-readonly-notice" class="text-muted small">
+                            Only your own team's expense settings can be changed.
+                        </p>
+                    {% endif %}
                     <form method="post" id="team-finances-budget-form">
                         {% csrf_token %}
-                        <input type="hidden" name="team_id" value="{{ team.id }}">
+                        <fieldset{% if not editable %} disabled{% endif %}>
                         <table class="table table-sm align-middle">
                             <tbody>
                                 <tr>
@@ -178,6 +198,7 @@
                         <button type="submit" id="team-finances-budget-save" class="btn btn-primary">
                             Save Expense Settings
                         </button>
+                        </fieldset>
                         <div class="form-text">
                             Budget levels are 1–{{ max_level }} ({{ default_level }} = neutral).
                             Scouting &amp; coaching are cost-only for now; facilities also feeds revenue.

@@ -14,57 +14,33 @@ See ``.claude/worktrees/lg-06e-seam-contract.md``.
 
 from __future__ import annotations
 
-from collections import defaultdict
-
 from django.core.paginator import Paginator
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import render
 
 from accounts.permissions import get_owned_or_404
-from matches import stat_feats
+from matches.league_screen_services import (
+    FEATS_SORT_KEYS as _FEATS_SORT_KEYS,
+    build_statistical_feats,
+    enrolled_teams,
+)
 from matches.league_views import (
     _build_league_sidebar_links,
     _coerce_page,
     _coerce_per_page,
     _coerce_sort_key,
     _coerce_team_id,
+    _lenient_season_scope,
     _resolve_season_scope,
     _season_param,
     _LG01F_PER_PAGE_OPTIONS,
 )
-from matches.models import GameEvent, GameRound, League, Match, PlayerRoundState
+from matches.models import League
 from teams.views import _coerce_dir
 
-# LG-06e — sortable Statistical Feats columns. EVERY column is sortable: the
-# descriptor / identity columns plus the 13 box-score columns. Default
-# ``round`` desc (most recent first).
-_FEATS_SORT_KEYS: frozenset[str] = frozenset(
-    {
-        # descriptors / identity
-        "name",
-        "role",
-        "team",
-        "opp",
-        "result",
-        "season",
-        "round",
-        "feat",
-        # box-score columns (13)
-        "points_scored",
-        "mvp",
-        "tags_made",
-        "times_tagged",
-        "accuracy",
-        "final_lives",
-        "resupplies_given",
-        "missiles_landed",
-        "specials_used",
-        "follow_up_shots",
-        "reaction_shots",
-        "combo_resupply_count",
-        "nuke_detonations",
-    }
-)
+# LG-06e — the sortable Statistical Feats columns (``_FEATS_SORT_KEYS``), the
+# nuke-detonation predicate and the sort extractor live in
+# ``matches.league_screen_services`` (shared with the API).
 
 # Ordered (key, label) pairs for the descriptor / identity sort headers (the
 # box-score headers render from ``box_score_columns`` below). The Feats column
@@ -97,49 +73,6 @@ _BOX_SCORE_COLUMNS: tuple[tuple[str, str, bool], ...] = (
     ("combo_resupply_count", "Combo Resup", False),
     ("nuke_detonations", "Nukes", False),
 )
-
-
-def _is_nuke_detonation(event: GameEvent) -> bool:
-    """A `special` GameEvent that is a nuke DETONATION (not activation).
-
-    RV-02 / EventLog: nuke detonation is the ``special`` row carrying
-    ``metadata["targets"]`` with ``points_awarded == 500``. The activation
-    row (``points_awarded == 0`` + ``metadata["fires_at"]``) is excluded.
-    """
-    if event.event_type != "special":
-        return False
-    if event.points_awarded != 500:
-        return False
-    metadata = event.metadata or {}
-    return "targets" in metadata
-
-
-def _feat_row_sort_value(row: "stat_feats.FeatRow", key: str):
-    """Extract the sort value for ``row`` under sort ``key`` (LG-06e §3.4).
-
-    String descriptor keys sort case-insensitively; ``result`` sorts lexically
-    ("L" < "T" < "W"); the box-score keys sort numerically; ``feat`` sorts on a
-    stable join of the row's badge kinds. No key may raise on a ``None`` (the
-    dataclass defaults descriptors to ``""``).
-    """
-    if key == "name":
-        return row.player_name.lower()
-    if key == "role":
-        return row.role
-    if key == "team":
-        return row.team_name.lower()
-    if key == "opp":
-        return row.opp_team_name.lower()
-    if key == "result":
-        return row.result
-    if key == "season":
-        return row.season_name.lower()
-    if key == "round":
-        return row.round_id
-    if key == "feat":
-        return ",".join(sorted(b.kind for b in row.feats))
-    # Any box-score key.
-    return row.stats.get(key, 0.0)
 
 
 def statistical_feats(request: HttpRequest, league_id: int) -> HttpResponse:
@@ -204,170 +137,19 @@ def statistical_feats(request: HttpRequest, league_id: int) -> HttpResponse:
     if season_filter is None:
         return render(request, "leagues/statistical_feats.html", base_context)
 
-    # Re-point the LG-06d scope onto the two join shapes used below: PRS /
-    # GameEvent filter via ``game_round__…``; Match filters directly (strip the
-    # leading ``match__``).
-    prs_filter = {f"game_round__{k}": v for k, v in season_filter.items()}
-    match_filter = {k[len("match__") :]: v for k, v in season_filter.items()}
-
     # LG-06b — team filter.
-    enrolled_teams = (
-        list(displayed_season.teams.order_by("name"))
-        if displayed_season is not None
-        else []
-    )
-    enrolled_ids = {t.id for t in enrolled_teams}
+    team_options = enrolled_teams(displayed_season)
+    enrolled_ids = {t.id for t in team_options}
     selected_team_id = _coerce_team_id(request.GET.get("team_id"), enrolled_ids)
-    base_context["enrolled_teams"] = enrolled_teams
+    base_context["enrolled_teams"] = team_options
     base_context["selected_team_id"] = selected_team_id
 
-    # --- Per-Round nuke-detonation counts, keyed (round_id, actor_id) -----
-    detonations: dict[tuple[int, int], int] = defaultdict(int)
-    events_qs = GameEvent.objects.filter(
-        event_type="special",
-        points_awarded=500,
-        **prs_filter,
-    ).only("game_round_id", "actor_id", "event_type", "points_awarded", "metadata")
-    for event in events_qs:
-        if _is_nuke_detonation(event):
-            detonations[(event.game_round_id, event.actor_id)] += 1
-
-    # --- Extended per-(player, round) seam dicts --------------------------
-    prs_qs = (
-        PlayerRoundState.objects.filter(**prs_filter)
-        .select_related(
-            "player",
-            "game_round",
-            "game_round__match",
-            "game_round__match__season",
-            "game_round__team_red",
-            "game_round__team_blue",
-        )
-        .order_by("id")
-    )
-    player_rounds: list[dict] = []
-    for prs in prs_qs:
-        game_round = prs.game_round
-        # Own team + opponent team for this Round, from the player's side.
-        if prs.team_color == "red":
-            own_team = game_round.team_red
-            opp_team = game_round.team_blue
-            own_points = game_round.red_points
-            opp_points = game_round.blue_points
-        elif prs.team_color == "blue":
-            own_team = game_round.team_blue
-            opp_team = game_round.team_red
-            own_points = game_round.blue_points
-            opp_points = game_round.red_points
-        else:
-            own_team = None
-            opp_team = None
-            own_points = 0
-            opp_points = 0
-
-        # Per-ROUND result (own vs opp points in THIS GameRound — NOT the Match
-        # winner).
-        if own_points > opp_points:
-            result = "W"
-        elif own_points < opp_points:
-            result = "L"
-        else:
-            result = "T"
-
-        # Season (view-computed) from the Round's Match.
-        match = game_round.match
-        season = match.season if match is not None else None
-
-        player_rounds.append(
-            {
-                # identity / deep-link
-                "round_id": game_round.id,
-                "match_id": game_round.match_id,
-                "player_id": prs.player_id,
-                "player_name": prs.player.name,
-                "role": prs.role,
-                "team_id": own_team.id if own_team is not None else None,
-                "team_name": own_team.name if own_team is not None else "",
-                # descriptor columns (view-computed)
-                "opp_team_name": opp_team.name if opp_team is not None else "",
-                "result": result,
-                "season_id": season.id if season is not None else None,
-                "season_name": season.name if season is not None else "",
-                # box-score line (13 BOX_SCORE_KEYS, per-round values)
-                "points_scored": prs.points_scored,
-                # ``get_mvp`` is a @property (no parens). ``get_accuracy`` is
-                # ALSO a @property on PlayerRoundState (verified against
-                # matches/models.py) — read WITHOUT parens. See the deviation
-                # note in the PR summary: the seam contract pinned a ``()`` call
-                # but the model defines get_accuracy as a property, so calling
-                # it would raise TypeError.
-                "mvp": float(prs.get_mvp),
-                "tags_made": prs.tags_made,
-                "times_tagged": prs.times_tagged,
-                "accuracy": float(prs.get_accuracy),
-                "final_lives": prs.final_lives,
-                "resupplies_given": prs.resupplies_given,
-                "missiles_landed": prs.missiles_landed,
-                "specials_used": prs.specials_used,
-                "follow_up_shots": prs.follow_up_shots,
-                "reaction_shots": prs.reaction_shots,
-                "combo_resupply_count": prs.combo_resupply_count,
-                "nuke_detonations": detonations.get((game_round.id, prs.player_id), 0),
-                # predicate-only field (NOT a box-score column)
-                "shots_missed": prs.shots_missed,
-            }
-        )
-
-    # --- Per-Match seam dicts (comeback win) ------------------------------
-    round2_by_match: dict[int, int] = {}
-    for gr in GameRound.objects.filter(round_number=2, **season_filter).only(
-        "id", "match_id"
-    ):
-        if gr.match_id is not None:
-            round2_by_match[gr.match_id] = gr.id
-
-    matches: list[dict] = []
-    matches_qs = (
-        Match.objects.filter(is_completed=True, **match_filter)
-        .select_related("team_red", "team_blue", "winner")
-        .order_by("id")
-    )
-    for match in matches_qs:
-        matches.append(
-            {
-                "match_id": match.id,
-                "round_id": round2_by_match.get(match.id),
-                "winner_team_id": match.winner_id,
-                "winner_team_name": (
-                    match.winner.name if match.winner is not None else ""
-                ),
-                "red_team_id": match.team_red_id,
-                "blue_team_id": match.team_blue_id,
-                "red_round1_points": match.red_round1_points,
-                "blue_round1_points": match.blue_round1_points,
-            }
-        )
-
-    # LG-06b — apply the team filter to both seam inputs before scanning.
-    if selected_team_id is not None:
-        player_rounds = [
-            pr for pr in player_rounds if pr["team_id"] == selected_team_id
-        ]
-        matches = [
-            m
-            for m in matches
-            if selected_team_id in {m["red_team_id"], m["blue_team_id"]}
-        ]
-
-    feat_rows, team_feats = stat_feats.scan_feats(player_rounds, matches)
-
-    # LG-06c — view-side sort with the always-appended deterministic secondary
-    # tiebreak (round_id desc, player_id asc). Sort by the secondary key first
-    # (stable), then by the primary so equal-primary rows keep the secondary
-    # order. ``reverse`` only flips the PRIMARY pass.
-    feat_rows.sort(key=lambda r: (-r.round_id, r.player_id))
-    feat_rows.sort(
-        key=lambda r: _feat_row_sort_value(r, sort), reverse=(direction == "desc")
+    # ANG-01e T6 — the feat scan + sort is the shared builder (the API calls
+    # it too), fed the same forgiving Season scope ``_resolve_season_scope``
+    # flattened above.
+    scope = _lenient_season_scope(request, league, displayed_season)
+    feat_rows, team_feats = build_statistical_feats(
+        scope, team_id=selected_team_id, sort=sort, direction=direction
     )
 
     # LG-06a — sort FIRST (above), THEN paginate.

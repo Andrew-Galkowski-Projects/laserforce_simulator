@@ -41,18 +41,16 @@ from matches.league_views import (
     _coerce_per_page,
     _coerce_rate,
     _coerce_team_id,
-    _resolve_season_scope,
+    _lenient_season_scope,
     _season_param,
     _LG01F_PER_PAGE_OPTIONS,
 )
-from matches.models import League, PlayerRoundState
+from matches.league_screen_services import build_player_stats, enrolled_teams
+from matches.models import League
 from matches.season_player_stats import (
     STAT_KEYS,
-    aggregate_player_stats,
-    apply_rate,
     coerce_dir,
     coerce_sort,
-    sort_player_stats,
 )
 
 # LG-06d — the three rate-toggle options, ``(value, label)`` pairs (the
@@ -91,70 +89,6 @@ _PLAYER_STATS_COLUMNS: tuple[tuple[str, str, bool], ...] = (
 )
 
 
-def _build_round_dicts(season_filter: dict) -> list[dict]:
-    """Build one plain dict per ``PlayerRoundState`` in the scoped Rounds.
-
-    ``season_filter`` is the LG-06d scope lookup dict applied via the
-    ``game_round__…`` join — ``{"game_round__match__season": <Season>}`` for a
-    single Season or ``{"game_round__match__season__league": <League>}`` for
-    Career. ``mvp`` / ``accuracy`` are read from the per-Round ``get_mvp`` /
-    ``get_accuracy`` properties here so the pure module never touches the MVP
-    formula or the ORM.
-
-    Team identity per row resolves from the Round's ``team_red`` /
-    ``team_blue`` keyed on the player's ``team_color`` (mirrors the
-    LG-01c dashboard-leaders precedent).
-    """
-    prs_qs = (
-        PlayerRoundState.objects.filter(**season_filter)
-        .select_related(
-            "player",
-            "game_round",
-            "game_round__match",
-            "game_round__team_red",
-            "game_round__team_blue",
-        )
-        .order_by("id")
-    )
-
-    rounds: list[dict] = []
-    for prs in prs_qs:
-        game_round = prs.game_round
-        if prs.team_color == "red":
-            team = game_round.team_red
-        elif prs.team_color == "blue":
-            team = game_round.team_blue
-        else:
-            team = None
-        rounds.append(
-            {
-                "player_id": prs.player_id,
-                "player_name": prs.player.name,
-                "team_id": team.id if team is not None else 0,
-                "team_name": team.name if team is not None else "",
-                "role": prs.role,
-                # 12 STAT_KEYS — mvp / accuracy pre-computed per round.
-                "points_scored": prs.points_scored,
-                "mvp": float(prs.get_mvp),
-                "tags_made": prs.tags_made,
-                "times_tagged": prs.times_tagged,
-                "accuracy": float(prs.get_accuracy),
-                # Derived survival seconds: elimination tick capped at the
-                # round length (1800), ÷2 to seconds at the display boundary
-                # (TIME-01). The pure module averages this across rounds.
-                "survival_seconds": min(prs.was_eliminated_at, 1800) / 2,
-                "final_lives": prs.final_lives,
-                "resupplies_given": prs.resupplies_given,
-                "missiles_landed": prs.missiles_landed,
-                "specials_used": prs.specials_used,
-                "follow_up_shots": prs.follow_up_shots,
-                "reaction_shots": prs.reaction_shots,
-                "combo_resupply_count": prs.combo_resupply_count,
-            }
-        )
-    return rounds
-
-
 def player_stats(request: HttpRequest, league_id: int) -> HttpResponse:
     """LG-01z-o — Player Stats (performance) page for a League's Season.
 
@@ -185,9 +119,16 @@ def player_stats(request: HttpRequest, league_id: int) -> HttpResponse:
 
     # LG-06d — season selector. Picker options + the forgiving ``?season=``
     # coercion (defaults to displayed_season — fully backward-compatible).
-    seasons, selected_season, season_options, season_filter = _resolve_season_scope(
-        request, league, displayed_season
-    )
+    scope = _lenient_season_scope(request, league, displayed_season)
+    selected_season = scope.selected_id
+    season_options = [
+        {
+            "id": s.id,
+            "name": s.name,
+            "year": s.start_date.year if s.start_date is not None else None,
+        }
+        for s in scope.options
+    ]
 
     context = {
         "league": league,
@@ -208,7 +149,7 @@ def player_stats(request: HttpRequest, league_id: int) -> HttpResponse:
 
     # Empty-state per §2 — no Season scope (the League has no Season); render
     # the notice instead of the body. The sidebar still renders.
-    if season_filter is None:
+    if scope.round_filter is None:
         context["enrolled_teams"] = []
         context["selected_team_id"] = None
         context["page_obj"] = None
@@ -221,27 +162,21 @@ def player_stats(request: HttpRequest, league_id: int) -> HttpResponse:
     # forgiving ``?team_id=`` coercion against the enrolment set. The picker
     # lists the displayed Season's enrolment even under a Career / past-Season
     # scope (the displayed Season is the League's current roster).
-    enrolled_teams = (
-        list(displayed_season.teams.order_by("name"))
-        if displayed_season is not None
-        else []
-    )
-    enrolled_ids = {t.id for t in enrolled_teams}
+    team_options = enrolled_teams(displayed_season)
+    enrolled_ids = {t.id for t in team_options}
     selected_team_id = _coerce_team_id(request.GET.get("team_id"), enrolled_ids)
-    context["enrolled_teams"] = enrolled_teams
+    context["enrolled_teams"] = team_options
     context["selected_team_id"] = selected_team_id
 
-    # Re-point the PRS scope from the ``match__season…`` shape onto the
-    # ``game_round__match__season…`` join used by PlayerRoundState.
-    prs_filter = {f"game_round__{key}": value for key, value in season_filter.items()}
-    round_dicts = _build_round_dicts(prs_filter)
-    rows = aggregate_player_stats(round_dicts)
-    # LG-06d pipeline order (locked): aggregate → apply_rate → team filter →
-    # sort → paginate. Sort runs on the rate-adjusted values.
-    rows = apply_rate(rows, rate)
-    if selected_team_id is not None:
-        rows = [r for r in rows if r.team_id == selected_team_id]
-    rows = sort_player_stats(rows, sort, direction)
+    # ANG-01e -- the shared builder (aggregate -> apply_rate -> team filter ->
+    # sort); the view only paginates.
+    rows = build_player_stats(
+        scope,
+        rate=rate,
+        team_id=selected_team_id,
+        sort=sort,
+        direction=direction,
+    )
 
     paginator = Paginator(rows, per_page)
     page_obj = paginator.get_page(_coerce_page(request.GET.get("page")))

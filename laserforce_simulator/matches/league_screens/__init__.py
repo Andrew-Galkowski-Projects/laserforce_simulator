@@ -23,7 +23,7 @@ from .team_finances import team_finances
 from .team_history import team_history
 from .team_roster import team_roster
 from .team_stats import team_stats
-from .watch_list import watch_list, watch_list_toggle
+from .watch_list import watch_list, watch_list_clear, watch_list_toggle
 
 __all__ = [
     "free_agents",
@@ -41,5 +41,6 @@ __all__ = [
     "team_roster",
     "team_stats",
     "watch_list",
+    "watch_list_clear",
     "watch_list_toggle",
 ]

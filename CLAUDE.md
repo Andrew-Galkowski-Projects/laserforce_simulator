@@ -239,5 +239,10 @@ League create / next-season rollover / reassign / teardown, the League + Season 
 re-exported from `league_views.py`, so patch `matches.league_services.*`, not `league_views`);
 the map-editor logic (upload, Season-based delete guard, zones, sight lines, requester-scoped
 multi-round heatmap) shared by the HTML map views and the now-writable `/api/maps/` lives in
-`core/services.py` (ANG-01c — maps stay unfiltered shared data). Remaining API slices are ANG-01d-2
-(the League play loop) and ANG-01e..g in `PLAN.md`.
+`core/services.py` (ANG-01c — maps stay unfiltered shared data). The League play loop
+(ANG-01d-2) lives in `matches/league_play_services.py`, shared by the HTML play views and the
+`/api/seasons/` play endpoints. The builders for all 15 League screens (ANG-01e — stats, ratings,
+leaders, watch list, team history / roster / stats, power rankings, game log, feats, playoffs,
+finances) live in `matches/league_screen_services.py`, shared by `league_screens/*` and
+`/api/leagues/<id>/…` (patch `matches.league_screen_services.*`); the watch list is the per-Account
+`WatchedPlayer` model. Remaining API slices are ANG-01f..g in `PLAN.md`.

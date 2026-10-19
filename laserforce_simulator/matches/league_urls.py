@@ -86,6 +86,11 @@ urlpatterns = [
         name="watch_list_toggle",
     ),
     path(
+        "<int:league_id>/players/watch-list/clear/",
+        league_screens.watch_list_clear,
+        name="watch_list_clear",
+    ),
+    path(
         "<int:league_id>/players/<int:player_id>/",
         league_screens.player_detail,
         name="league_player_detail",

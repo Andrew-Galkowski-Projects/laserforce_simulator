@@ -1268,7 +1268,10 @@ class TestTeamHistoryOverallPlayoffRounds(TestCase):
         season2, _t2 = _make_active_season(self.league, name="S2", n_teams=2)
         # Re-enroll team_a / team_b into season2 so the participant rows reuse
         # the SAME teams (playoff_appearances is team-global / all-leagues).
+        # Enrolment is the activation snapshot, so re-enroll there too.
         season2.teams.add(self.team_a, self.team_b)
+        season2.starting_team_ids_json = sorted(t.id for t in season2.teams.all())
+        season2.save(update_fields=["starting_team_ids_json"])
         _embedded_playoff_tournament(self.season, [self.team_a, self.team_b], name="P1")
         _embedded_playoff_tournament(season2, [self.team_a, self.team_b], name="P2")
         self.assertEqual(_playoff_appearances(self._content()), 2)

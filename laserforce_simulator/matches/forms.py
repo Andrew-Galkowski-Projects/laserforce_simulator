@@ -6,6 +6,7 @@ from django.db.models import QuerySet
 from django.utils import timezone
 from accounts.permissions import owned_queryset
 from teams.models import Team
+from .finance import MAX_LEVEL
 from .league_templates import LEAGUE_TEMPLATES
 from .models import MIN_BRACKET_PARTICIPANTS, League, Match, Season
 from .phase_composer import parse_phase_composition
@@ -799,3 +800,36 @@ class MemberNightSetupForm(forms.Form):
         self.fields["sites"].choices = [
             (site, site) for site, _count in viable_member_night_sites(season)
         ]
+
+
+def _budget_level_field(label: str) -> forms.IntegerField:
+    return forms.IntegerField(min_value=1, max_value=MAX_LEVEL, label=label)
+
+
+class TeamFinancesForm(forms.ModelForm):
+    """ANG-01e — the managed Team's budgets, ticket price and injury policy.
+
+    Bound by the HTML Team Finances POST and the API PATCH (via
+    ``merged_form_data``). Out-of-range values are rejected, never clamped:
+    budgets are integers ``1..finance.MAX_LEVEL``, ``ticket_price`` is ``>= 0``,
+    ``injury_policy`` is one of ``Team.INJURY_POLICY_CHOICES``. Field labels are
+    the human names the HTML error list shows (the API keeps field names).
+    """
+
+    budget_scouting = _budget_level_field("Scouting")
+    budget_coaching = _budget_level_field("Coaching")
+    budget_facilities = _budget_level_field("Facilities")
+    budget_health = _budget_level_field("Health")
+    ticket_price = forms.FloatField(min_value=0, label="Ticket price")
+
+    class Meta:
+        model = Team
+        fields = [
+            "budget_scouting",
+            "budget_coaching",
+            "budget_facilities",
+            "budget_health",
+            "injury_policy",
+            "ticket_price",
+        ]
+        labels = {"injury_policy": "Injury policy"}

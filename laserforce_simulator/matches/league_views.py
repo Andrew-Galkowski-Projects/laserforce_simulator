@@ -68,6 +68,11 @@ from .league_play_services import (  # noqa: F401 - re-exports
 from .league_play_services import (  # noqa: F401 - re-exports
     resolve_live_cursor as _resolve_live_cursor,
 )
+from .league_screen_services import (
+    SeasonScope,
+    resolve_season_scope,
+    watched_player_ids,
+)
 from .league_templates import (
     LEAGUE_TEMPLATES,
     LEAGUE_TEMPLATES_BY_KEY,
@@ -766,95 +771,57 @@ def _season_param(selected_season: int | str | None) -> str:
     return str(selected_season)
 
 
+def _lenient_season_scope(
+    request: HttpRequest, league: League, displayed_season: Season | None
+) -> SeasonScope:
+    """ANG-01e -- ``resolve_season_scope`` over ``?season=``, HTML-forgiving.
+
+    A value the service rejects (``ValueError``) falls back to the default
+    scope (``displayed_season``), as the HTML pages always have.
+    """
+    try:
+        return resolve_season_scope(league, displayed_season, request.GET.get("season"))
+    except ValueError:
+        return resolve_season_scope(league, displayed_season, None)
+
+
 def _resolve_season_scope(
     request: HttpRequest, league: League, displayed_season: Season | None
 ) -> tuple[list[Season], int | str | None, list[dict], dict | None]:
-    """LG-06d — resolve the ``?season=`` selector into a scope for a screen.
+    """LG-06d -- the HTML wrapper over ``league_screen_services.resolve_season_scope``.
 
-    Single source for the six LG-06d season-selector screens. Builds the
-    Season picker options (newest-first by ``start_date`` then ``id``),
-    coerces ``?season=`` via :func:`_coerce_season` defaulting to
-    ``displayed_season`` (fully backward-compatible), and derives the
-    round/match queryset filter for the chosen scope.
+    Reads ``?season=`` forgivingly: a value the service rejects falls back to
+    ``displayed_season`` (only the API is strict). Returns the legacy 4-tuple
+    ``(seasons, selected_season, season_options, season_filter)``:
 
-    Returns a 4-tuple ``(seasons, selected_season, season_options, season_filter)``:
-
-    - ``seasons`` — ``list[Season]`` newest-first (the materialised picker
-      source; reused by the view to resolve a picked Season id without an
-      extra query).
-    - ``selected_season`` — ``"career"`` | ``int`` Season id | ``None`` (the
+    - ``seasons`` -- ``list[Season]`` newest-first.
+    - ``selected_season`` -- ``"career"`` | ``int`` Season id | ``None`` (the
       empty-state, when the League has no Season).
-    - ``season_options`` — ``list[dict]`` of ``{"id", "name", "year"}``
+    - ``season_options`` -- ``list[dict]`` of ``{"id", "name", "year"}``
       newest-first; the template appends the "Career" entry.
-    - ``season_filter`` — the ORM lookup dict to apply to a round / match
-      queryset (joined via ``match__season…``): ``{"match__season__league":
+    - ``season_filter`` -- the scope's ``round_filter``: ``{"match__season__league":
       league}`` for Career, ``{"match__season": <Season>}`` for a single
       Season, or ``None`` in the empty-state.
     """
-    seasons = list(league.seasons.order_by("-start_date", "-id"))
-    valid_ids = {s.id for s in seasons}
-    default_id = displayed_season.id if displayed_season is not None else None
-    selected_season = _coerce_season(request.GET.get("season"), valid_ids, default_id)
-
+    scope = _lenient_season_scope(request, league, displayed_season)
     season_options = [
         {
             "id": s.id,
             "name": s.name,
             "year": s.start_date.year if s.start_date is not None else None,
         }
-        for s in seasons
+        for s in scope.options
     ]
-
-    if selected_season == "career":
-        season_filter: dict | None = {"match__season__league": league}
-    elif selected_season is None:
-        season_filter = None
-    else:
-        season_obj = next((s for s in seasons if s.id == selected_season), None)
-        season_filter = (
-            {"match__season": season_obj} if season_obj is not None else None
-        )
-
-    return seasons, selected_season, season_options, season_filter
+    return scope.seasons, scope.selected_id, season_options, scope.round_filter
 
 
 def _watched_player_ids(request: HttpRequest, league_id: int) -> set[int]:
-    """LG-06f — the per-League watched-player id set for this browser session.
+    """LG-06f / ANG-01e -- the requesting Account's watched Player ids for a League.
 
-    Single source: reads ``request.session["watch_lists"].get(str(league_id),
-    [])``, coerces each entry to int (silently dropping non-ints), returns a
-    ``set[int]``. Consumed by BOTH ``core.context_processors.watch_list`` AND
-    ``matches.league_screens.watch_list.watch_list``. Never raises; a missing
-    key ⇒ ``set()``.
-
-    Coercion rule: an entry already ``int`` passes; a ``str`` that
-    ``int()``-parses passes; anything else (``None``, non-numeric str, float,
-    dict) is dropped. De-dup is implicit via ``set``.
+    Thin wrapper over ``league_screen_services.watched_player_ids`` (the
+    browser session is no longer read); anonymous => ``set()``.
     """
-    session = getattr(request, "session", None)
-    if session is None:
-        return set()
-    lists = session.get("watch_lists", {})
-    if not isinstance(lists, dict):
-        return set()
-    raw_ids = lists.get(str(league_id), [])
-    if not isinstance(raw_ids, (list, tuple)):
-        return set()
-    out: set[int] = set()
-    for entry in raw_ids:
-        if isinstance(entry, bool):
-            # bool is an int subclass — exclude defensively (a stray True/False
-            # is not a real player id).
-            continue
-        if isinstance(entry, int):
-            out.add(entry)
-            continue
-        if isinstance(entry, str):
-            try:
-                out.add(int(entry))
-            except (TypeError, ValueError):
-                continue
-    return out
+    return watched_player_ids(getattr(request, "user", None), league_id)
 
 
 def _coerce_team_id(raw: str | None, enrolled_ids: set[int]) -> int | None:

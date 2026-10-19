@@ -1,22 +1,23 @@
-"""FIN-01 — Team Finances (league-context) screen.
+"""FIN-01 -- Team Finances (league-context) screen.
 
-Read-only-plus-budget-edit view rendering the managed Team's
-``TeamSeasonFinance`` history + current budget levels + ticket price + cash +
-live luxury-tax / min-payroll / payroll figures, inside the displayed Season of
-a League. Keyed on ``current_team`` (the LG-01g resolver chain — default
+Read-only-plus-budget-edit view rendering a Team's ``TeamSeasonFinance``
+history + current budget levels + ticket price + cash + live luxury-tax /
+min-payroll / payroll figures, inside the displayed Season of a League. The
+displayed Team follows the LG-01g resolver chain (default
 ``league.current_team``, optional ``?team_id=`` override), exactly like
 ``team_roster`` / ``team_stats``.
 
-A budget-edit POST branch writes ``Team.budget_scouting / coaching / facilities``
-+ ``ticket_price`` (budget levels clamped ``[1, MAX_LEVEL]``) then redirects to
-the bare URL (the LG-01z ``watch_list_toggle`` POST-then-redirect precedent);
-finance OFF ⇒ the edit form is hidden/inert.
+ANG-01e T5: the budget-edit POST binds ``TeamFinancesForm`` and saves only
+``league.current_team`` through ``update_team_finances`` (a posted ``team_id``
+is ignored for writes). Invalid values re-render the page with the form errors
+(200) instead of being clamped; a valid save redirects to the bare URL. The
+edit form is shown only while the current Team is displayed. Finance OFF => the
+edit form is hidden and a POST is inert.
 
-Follows the shared LG-01z view contract: 405 GET-guard on non-GET/POST,
+Follows the shared LG-01z view contract: 405 on non-GET/POST,
 ``get_owned_or_404(League)``, session write, displayed-Season pick, sidebar
 links with ``sidebar_active="finances_team"``, render
-``leagues/team_finances.html``. Finance-disabled League ⇒ a "Finances are
-disabled for this League" notice in place of the body.
+``leagues/team_finances.html``.
 """
 
 from __future__ import annotations
@@ -29,65 +30,34 @@ from django.http import (
 from django.shortcuts import redirect, render
 
 from accounts.permissions import get_owned_or_404
+from laserforce_simulator.api.forms import merged_form_data
 from matches import finance
-from matches.league_views import (
-    _build_league_sidebar_links,
-    _resolve_current_team_for_sidebar,
-    _team_wins_games_for_season,
+from matches.forms import TeamFinancesForm
+from matches.league_screen_services import (
+    FinanceDisabled,
+    TeamNotEditable,
+    build_team_finances,
+    enrolled_teams as _enrolled_teams,
+    parse_team_id,
+    resolve_league_team,
+    update_team_finances,
 )
-from matches.models import League, TeamSeasonFinance
+from matches.league_views import _build_league_sidebar_links
+from matches.models import League
 from teams.models import Team
 
 
 def _resolve_team(league: League, displayed_season, raw_team_id):
-    """Pick the Team this screen renders — ``?team_id=`` (must be enrolled)
-    then ``league.current_team`` then the LG-01g resolver, all gated on the
-    displayed Season's enrolment. Returns ``(team, enrolled_teams)``."""
-    enrolled_teams = list(displayed_season.teams.order_by("name"))
-    enrolled_ids = {t.id for t in enrolled_teams}
-
-    team: Team | None = None
-    if raw_team_id is not None:
-        try:
-            requested_id = int(raw_team_id)
-        except (TypeError, ValueError):
-            requested_id = None
-        if requested_id is not None and requested_id in enrolled_ids:
-            team = next((t for t in enrolled_teams if t.id == requested_id), None)
-
-    if team is None:
-        current_team_id = league.current_team_id
-        if current_team_id is not None and current_team_id in enrolled_ids:
-            team = next((t for t in enrolled_teams if t.id == current_team_id), None)
-    if team is None:
-        resolved = _resolve_current_team_for_sidebar(league, displayed_season)
-        if resolved is not None and resolved.id in enrolled_ids:
-            team = next((t for t in enrolled_teams if t.id == resolved.id), None)
-
-    return team, enrolled_teams
-
-
-def _coerce_level(raw, default: int) -> int:
-    """Clamp a posted budget level to ``[1, finance.MAX_LEVEL]``; invalid →
-    the team's current value (``default``)."""
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return default
-    return max(1, min(finance.MAX_LEVEL, value))
-
-
-def _coerce_price(raw, default: float) -> float:
-    """Clamp a posted ticket price to ``>= 0``; invalid → current value."""
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return default
-    return max(0.0, value)
+    """Pick the Team this screen renders -- ``?team_id=`` (must be enrolled)
+    then ``league.current_team`` then the first enrolled Team, all gated on the
+    displayed Season's enrolment (the shared ``resolve_league_team``).
+    Returns ``(team, enrolled_teams)``."""
+    team = resolve_league_team(league, displayed_season, parse_team_id(raw_team_id))
+    return team, _enrolled_teams(displayed_season)
 
 
 def team_finances(request: HttpRequest, league_id: int) -> HttpResponse:
-    """FIN-01 — Team Finances (league-context) page."""
+    """FIN-01 -- Team Finances (league-context) page."""
     if request.method not in ("GET", "POST"):
         return HttpResponseNotAllowed(["GET", "POST"])
 
@@ -111,7 +81,7 @@ def team_finances(request: HttpRequest, league_id: int) -> HttpResponse:
         "finance_enabled": league.finance_enabled,
     }
 
-    # No Season ⇒ empty-state (the sidebar still renders).
+    # No Season => empty-state (the sidebar still renders).
     if displayed_season is None:
         context = {
             **base_context,
@@ -121,46 +91,31 @@ def team_finances(request: HttpRequest, league_id: int) -> HttpResponse:
         }
         return render(request, "leagues/team_finances.html", context)
 
-    raw_team_id = request.POST.get("team_id") or request.GET.get("team_id")
-    team, enrolled_teams = _resolve_team(league, displayed_season, raw_team_id)
+    # A posted ``team_id`` only ever selected the Team to write; it is ignored.
+    team, enrolled_teams = _resolve_team(
+        league, displayed_season, request.GET.get("team_id")
+    )
 
-    # Budget-edit POST — write Team budgets + ticket price, then redirect to
-    # the bare URL (POST-then-redirect). Inert when finance is OFF or no Team.
+    form: TeamFinancesForm | None = None
     if request.method == "POST":
-        if league.finance_enabled and team is not None:
-            team.budget_scouting = _coerce_level(
-                request.POST.get("budget_scouting"), team.budget_scouting
-            )
-            team.budget_coaching = _coerce_level(
-                request.POST.get("budget_coaching"), team.budget_coaching
-            )
-            team.budget_facilities = _coerce_level(
-                request.POST.get("budget_facilities"), team.budget_facilities
-            )
-            # FIN-04 — the fourth budget + the injury-resolution policy toggle.
-            team.budget_health = _coerce_level(
-                request.POST.get("budget_health"), team.budget_health
-            )
-            posted_policy = request.POST.get("injury_policy")
-            if posted_policy in ("auto_sub", "play_hurt"):
-                team.injury_policy = posted_policy
-            team.ticket_price = _coerce_price(
-                request.POST.get("ticket_price"), team.ticket_price
-            )
-            team.save(
-                update_fields=[
-                    "budget_scouting",
-                    "budget_coaching",
-                    "budget_facilities",
-                    "budget_health",
-                    "injury_policy",
-                    "ticket_price",
-                ]
-            )
-        # POST-then-redirect to the bare URL (the LG-01z watch_list_toggle
-        # precedent); the bare URL resolves back to current_team, the one
-        # editable Team.
-        return redirect(f"/leagues/{league.id}/team/finances/")
+        editable_team = league.current_team
+        if editable_team is None:
+            return redirect(f"/leagues/{league.id}/team/finances/")
+        # Absent fields keep the Team's current values (the FIN-01 form posts
+        # every field; older clients may omit the FIN-04 ones).
+        form = TeamFinancesForm(
+            merged_form_data(TeamFinancesForm, editable_team, request.POST),
+            instance=editable_team,
+        )
+        try:
+            update_team_finances(league, editable_team, form)
+        except (FinanceDisabled, TeamNotEditable):
+            return redirect(f"/leagues/{league.id}/team/finances/")
+        if not form.errors:
+            return redirect(f"/leagues/{league.id}/team/finances/")
+        # Re-render the current Team with the errors; reload it so the
+        # inputs show the saved values, not the rejected ones.
+        team = Team.objects.get(pk=editable_team.pk)
 
     if team is None:
         context = {
@@ -171,75 +126,40 @@ def team_finances(request: HttpRequest, league_id: int) -> HttpResponse:
         }
         return render(request, "leagues/team_finances.html", context)
 
-    # Per-Season finance history (newest-first) for this Team.
-    history = list(
-        TeamSeasonFinance.objects.filter(team=team)
-        .select_related("season")
-        .order_by("-season_id")
-    )
-
-    # Live figures from the current roster (independent of any persisted row).
-    active = list(team.active_players)
+    data = build_team_finances(displayed_season, team)
     roster_salaries = [
-        {
-            "name": p.name,
-            "salary": finance.salary_for_overall(p.overall_rating),
-            "player_id": p.id,  # UX-02 - "You" badge
-        }
-        for p in active
+        {"name": r["player"].name, "salary": r["salary"], "player_id": r["player"].id}
+        for r in data.roster_salaries
     ]
-    live_payroll = sum(r["salary"] for r in roster_salaries)
-    live_luxury_tax = finance.luxury_tax(live_payroll)
-    live_min_payroll_penalty = finance.min_payroll_penalty(live_payroll)
-
-    # Per-level dollar costs of the three budgets (ZenGM Expense Settings).
-    budget_costs = {
-        "scouting": finance.level_to_amount(team.budget_scouting),
-        "coaching": finance.level_to_amount(team.budget_coaching),
-        "facilities": finance.level_to_amount(team.budget_facilities),
-        # FIN-04 — the fourth budget cost line.
-        "health": finance.level_to_amount(team.budget_health),
-    }
-
-    # FIN-04 — currently-unavailable players (newest-first by games remaining).
     availability = [
         {
-            "name": p.name,
-            "games_remaining": p.games_unavailable,
-            "player_id": p.id,  # UX-02 - "You" badge
+            "name": r["player"].name,
+            "games_remaining": r["games_remaining"],
+            "player_id": r["player"].id,
         }
-        for p in sorted(
-            team.players.filter(games_unavailable__gt=0),
-            key=lambda p: p.games_unavailable,
-            reverse=True,
-        )
+        for r in data.availability
     ]
-
-    # Headline metrics: this-Season record + the latest finance snapshot tiles.
-    wins, games = _team_wins_games_for_season(displayed_season, team.id)
-    losses = games - wins
-    latest_finance = history[0] if history else None  # history is newest-first
-    current_hype = latest_finance.hype if latest_finance else 0.0
 
     context = {
         **base_context,
         "team": team,
         "enrolled_teams": enrolled_teams,
-        "history": history,
-        "live_payroll": live_payroll,
-        "live_luxury_tax": live_luxury_tax,
-        "live_min_payroll_penalty": live_min_payroll_penalty,
+        "editable": team.id == league.current_team_id,
+        "form": form,
+        "history": data.history,
+        "live_payroll": data.live_payroll,
+        "live_luxury_tax": data.live_luxury_tax,
+        "live_min_payroll_penalty": data.live_min_payroll_penalty,
         "max_level": finance.MAX_LEVEL,
         "default_level": finance.DEFAULT_LEVEL,
         "roster_salaries": roster_salaries,
-        "roster_salary_total": live_payroll,
-        "budget_costs": budget_costs,
-        "wins": wins,
-        "losses": losses,
-        "games": games,
-        "current_hype": current_hype,
-        "latest_finance": latest_finance,
-        # FIN-04 — health budget + injury policy + availability display.
+        "roster_salary_total": data.live_payroll,
+        "budget_costs": data.budget_costs,
+        "wins": data.wins,
+        "losses": data.losses,
+        "games": data.games,
+        "current_hype": data.current_hype,
+        "latest_finance": data.latest_finance,
         "injury_policy": team.injury_policy,
         "availability": availability,
     }

@@ -671,6 +671,16 @@ class TestPlayerDetailRatingsHistoryContext(TestCase):
         for entry in response.context["ratings_history"]:
             self.assertIsNone(entry["potential"])
 
+    def test_ratings_history_renders_offensive_synergy(self) -> None:
+        _Lg04PlayerSeasonRating.objects.filter(season=self.s1).update(
+            Offensive_synergy=87
+        )
+        response = self.client.get(self.url)
+        self.assertEqual(
+            response.context["ratings_history"][0]["stats"]["offensive_synergy"], 87
+        )
+        self.assertContains(response, "<td>87</td>", html=True)
+
 
 class TestPlayerDetailRatingsHistoryDom(TestCase):
     """The rendered page exposes the live DOM ids and drops the old ``-stub``."""

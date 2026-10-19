@@ -18,10 +18,14 @@ class EnvelopePagination(PageNumberPagination):
     page_size_query_param = "page_size"
     max_page_size = 100
 
-    def get_paginated_response(self, data: list) -> Response:
+    def get_paginated_response(
+        self, data: list, extra_meta: dict | None = None
+    ) -> Response:
+        """``extra_meta`` (ANG-01e, e.g. ``season_scope``) sits beside the page keys."""
         response = Response(data)
         paginator = self.page.paginator
         response.envelope_meta = {
+            **(extra_meta or {}),
             "page": self.page.number,
             "page_size": paginator.per_page,
             "count": paginator.count,

@@ -5,27 +5,30 @@ League's displayed Season (chronological), with an optional ``?team_id=``
 Team filter. See ``.claude/worktrees/lg-01z-seam-contract.md`` §2 / §4-l.
 """
 
-from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import render
 
 from accounts.permissions import get_owned_or_404
+from matches.league_screen_services import (
+    GAME_LOG_SORT_KEYS,
+    build_game_log,
+    enrolled_teams as _enrolled_teams,
+    parse_team_id as _parse_team_id,
+)
 from matches.league_views import (
     _build_league_sidebar_links,
     _coerce_sort_key,
     _resolve_season_scope,
     _season_param,
 )
-from matches.models import GameRound, League
+from matches.models import League
 from teams.views import _coerce_dir
 
 # LG-06c — sortable Game Log columns. Whitelist derived from the rendered
 # columns; default is ``date_played`` asc (reproduces the current
 # chronological-by-id order, with ``round_id`` as the always-appended
 # secondary tiebreak).
-_GAME_LOG_SORT_KEYS: frozenset[str] = frozenset(
-    {"matchday", "date_played", "team_red", "team_blue", "score", "winner"}
-)
+_GAME_LOG_SORT_KEYS: frozenset[str] = frozenset(GAME_LOG_SORT_KEYS)
 _GAME_LOG_SORT_KEYS_DISPLAY: tuple[tuple[str, str], ...] = (
     ("matchday", "Matchday"),
     ("date_played", "Date"),
@@ -34,23 +37,6 @@ _GAME_LOG_SORT_KEYS_DISPLAY: tuple[tuple[str, str], ...] = (
     ("score", "Score"),
     ("winner", "Winner"),
 )
-
-
-def _game_log_sort_value(row: dict, key: str):
-    """Sort-value extraction per the LG-06c contract (None-safe via tuple)."""
-    if key == "matchday":
-        return row["matchday"]
-    if key == "date_played":
-        date_played = row["date_played"]
-        return (date_played is None, date_played)
-    if key == "team_red":
-        return row["team_red"].name if row["team_red"] else ""
-    if key == "team_blue":
-        return row["team_blue"].name if row["team_blue"] else ""
-    if key == "score":
-        return row["red_points"] + row["blue_points"]
-    # key == "winner"
-    return row["winner"].name if row["winner"] else ""
 
 
 def game_log(request: HttpRequest, league_id: int) -> HttpResponse:
@@ -113,53 +99,16 @@ def game_log(request: HttpRequest, league_id: int) -> HttpResponse:
     # picker lists the displayed Season's enrolment even under a Career /
     # past-Season scope.
     team_options = (
-        list(displayed_season.teams.order_by("name"))
-        if displayed_season is not None
-        else []
+        _enrolled_teams(displayed_season) if displayed_season is not None else []
     )
     enrolled_ids = {t.id for t in team_options}
 
     # Optional ?team_id= filter — silently ignore a bad / non-enrolled id.
-    selected_team_id: int | None = None
-    raw_team_id = request.GET.get("team_id")
-    if raw_team_id is not None:
-        try:
-            candidate: int | None = int(raw_team_id)
-        except (TypeError, ValueError):
-            candidate = None
-        if candidate is not None and candidate in enrolled_ids:
-            selected_team_id = candidate
+    candidate = _parse_team_id(request.GET.get("team_id"))
+    selected_team_id: int | None = candidate if candidate in enrolled_ids else None
 
-    rounds_qs = (
-        GameRound.objects.filter(**season_filter)
-        .select_related("match", "team_red", "team_blue", "winner")
-        .order_by("id")
-    )
-    if selected_team_id is not None:
-        rounds_qs = rounds_qs.filter(
-            Q(team_red_id=selected_team_id) | Q(team_blue_id=selected_team_id)
-        )
-
-    rows: list[dict] = []
-    for game_round in rounds_qs:
-        rows.append(
-            {
-                "round_id": game_round.id,
-                "matchday": game_round.round_number,
-                "date_played": game_round.date_played,
-                "team_red": game_round.team_red,
-                "team_blue": game_round.team_blue,
-                "red_points": game_round.red_points,
-                "blue_points": game_round.blue_points,
-                "winner": game_round.winner,
-            }
-        )
-
-    # LG-06c — in-memory sort with ``round_id`` as the always-appended stable
-    # secondary tiebreak (so equal dates keep id order = current behaviour).
-    rows.sort(
-        key=lambda row: (_game_log_sort_value(row, sort), row["round_id"]),
-        reverse=(direction == "desc"),
+    rows = build_game_log(
+        season_filter, team_id=selected_team_id, sort=sort, direction=direction
     )
 
     # COERCE-BEFORE-QUERYSTRING: build the header href carry from the coerced
