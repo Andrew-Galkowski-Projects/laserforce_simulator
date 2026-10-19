@@ -1794,10 +1794,58 @@ Celery tasks in `matches/tasks.py` and the enveloped Job-polling shape; builds o
 
 #### ANG-01e · League stats / finance / players screens API
 
+Spec: #180
+
 The read-mostly `league_screens/*` surfaces: League leaders, player stats and ratings history,
-free agents and watch list, team history, finances (budgets, ticket price, injury policy — writes
-bind the existing Team Finances form), and League player detail. Primarily output serializers over
-the existing screen helpers; finance writes stay gated on `finance_enabled`.
+free agents and watch list, team history, finances (budgets, ticket price, injury policy), and
+League player detail. Primarily output serializers over the existing screen helpers; finance writes
+stay gated on `finance_enabled`.
+
+**Grill (2026-10-19), round 1 — settled:**
+1. **Scope: all 15 `league_screens/*` surfaces**, not just the 9 named above. Game log, power
+   rankings, statistical feats, team roster, team stats and playoffs are in too; no other ANG-01
+   slice covers them and ANG-06 needs them.
+2. **Watch list moves to a per-Account model** (Account, League, Player; unique together) behind both
+   the HTML and the API. The session lists are dropped, not migrated (ADR-0004).
+3. **Only the League's `current_team` is editable** on finances, in the API and the HTML alike. Any
+   other Team, or a League with no `current_team`, is 409 `team_not_editable`. This fixes the HTML
+   POST, which saved any enrolled Team (contradicts ADR-0027/0028); it gets a regression test.
+4. **A new `TeamFinancesForm`** (the PLAN's "existing Team Finances form" never existed): a ModelForm
+   over the four budgets, `injury_policy` and `ticket_price` that **rejects** bad values (budgets 1..
+   `MAX_LEVEL`, price >= 0, policy in the two choices) instead of clamping. Both the API (`PATCH`, each
+   field optional, 400 with field errors) and the HTML page (re-renders with errors) bind it.
+5. **`finance_enabled` off:** finance GETs return 200 with `finance_enabled: false` and null finance
+   sections; the `PATCH` is 409 `finance_disabled`.
+6. **URLs** live under `/api/leagues/<id>/…` with explicit ids (`leaders/`, `player-stats/`,
+   `player-ratings/`, `free-agents/`, `watch-list/`, `players/<player_id>/`,
+   `teams/<team_id>/history/`, `teams/<team_id>/finances/`, `finances/`, `teams/<team_id>/roster/`,
+   and the same shape for the extra screens). The HTML's current-team fallback stays HTML-only.
+7. **`?season=<id>|career`**, defaulting to the displayed Season, with the resolved scope and the
+   Season options echoed in `meta`. Strict: an unknown Season is a 400.
+8. **Watch list writes:** `PUT` / `DELETE watch-list/<player_id>/`, `DELETE watch-list/` to clear. A
+   Player not on an enrolled Team or in the free-agent pool is 400 `player_not_in_league`. The HTML
+   toggle gets the same League check, and its clear becomes a POST.
+9. **Team history** splits into `teams/<id>/history/` (Overall + Seasons) and a paginated
+   `teams/<id>/history/players/`.
+10. **Shared logic moves to `matches/league_screen_services.py`**, re-exported from `league_views`
+    under the old names (the ANG-01d-1 pattern).
+11. **Performance stays as is** (player-detail awards recompute, cross-League Season scan); logged in
+    `issues.md`, out of scope.
+
+**Round 2 — settled:**
+12. **Paging** uses the shared API paginator (`page`, `page_size`, default 20, max 100), not the
+    HTML's `per_page`.
+13. **Sorting** is `?ordering=<key>` / `-<key>` over the same keys the HTML allows, with each screen's
+    HTML default order; an unknown key is a 400. In-Python screens sort through the existing pure sort
+    helpers.
+14. **`leaders/`** returns all four boards (top 10, default ranking) with no sort params.
+15. **`?rate=total|per_game|per_10`** (default `total`, strict) on player stats and the watch list.
+16. **Every Player row carries `watched`** for the requesting Account.
+17. **League player detail stays lenient**: 404 only for a foreign or missing League or Player, never
+    for "not in this League". The `player_not_in_league` check (8) does not apply here.
+18. **Player detail is one response**: bio, overall, the 19 stats, per-Season rows plus the
+    Career-in-League row, awards and ratings history. No separate ratings-history endpoint.
+19. **No HTML side effects in the API**: no `session["last_league_id"]` write, no sidebar links.
 
 #### ANG-01f · Tournaments API
 
