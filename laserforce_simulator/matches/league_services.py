@@ -1964,6 +1964,16 @@ def _league_teardown_targets(league: League) -> tuple[list[int], set[int]]:
             drawn_player_entries__tournament_id__in=tournament_ids
         ).values_list("id", flat=True)
     )
+    # L-10: member-night drawn Teams are never enrolled in the Season; they are
+    # reachable only through the League's (season-attached) Matches.
+    candidate_team_ids.update(
+        Team.objects.filter(is_draw_team=True)
+        .filter(
+            Q(red_matches__season__league=league)
+            | Q(blue_matches__season__league=league)
+        )
+        .values_list("id", flat=True)
+    )
     return tournament_ids, candidate_team_ids
 
 

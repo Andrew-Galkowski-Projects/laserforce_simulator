@@ -24,7 +24,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ~~L-7~~ | ~~🟡~~ | ~~One Week (Live), broker down~~ | ~~The manager's game commits before the enqueue 500s, leaving the week half-played and the Live entry hidden (pre-existing)~~ _(fixed (browser gate skipped))_ |
 | ~~L-8~~ | ~~🟡~~ | ~~Play poll JS~~ | ~~The 500 ms `setInterval` keeps firing while earlier polls are still pending, so slow or failing polls pile up~~ _(fixed (browser gate skipped; node harness verified))_ |
 | L-9 | ℹ️ | Error re-renders | A sync play error re-renders the dashboard at the POST URL (for example `/seasons/13/member-night/setup/`) |
-| L-10 | 🟡 | Delete League | Member-night drawn Teams (`MN <site> G<n> A/B`) survive the League teardown as orphans |
+| ~~L-10~~ | ~~🟡~~ | ~~Delete League~~ | ~~Member-night drawn Teams (`MN <site> G<n> A/B`) survive the League teardown as orphans~~ _(fixed (browser gate skipped))_ |
 
 **Overall:** the ANG-01d-2 work behaves as specified. Re-POSTing Start Season on an active Season
 returns 302 and does not re-snapshot (verified with a canary: a Team removed from the Season M2M stayed
@@ -169,7 +169,7 @@ off `preview_round_2`.
 
 ## Cleanup observation
 
-### 🟡 L-10 — Delete League leaves the member-night drawn Teams behind
+### ~~🟡 L-10 — Delete League leaves the member-night drawn Teams behind~~ _(fixed (browser gate skipped))_
 After deleting League 9 from its dashboard (the summary said "Teams 9"), 26 `is_draw_team=True` Teams
 named `MN Detroit G1 A` … `MN San Marcos G… B` were still in the DB, with no Matches left referencing
 them. `_league_teardown_targets` (`matches/league_services.py:1941-1966`) collects only enrolled Teams,
