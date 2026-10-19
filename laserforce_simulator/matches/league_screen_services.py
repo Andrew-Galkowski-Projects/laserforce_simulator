@@ -227,6 +227,13 @@ def _own_team(prs: PlayerRoundState) -> Team | None:
     return None
 
 
+def rating_stats(source: Player | PlayerSeasonRating) -> dict[str, int]:
+    """The 19 rating stats of a ``Player`` / ``PlayerSeasonRating`` keyed by
+    their lowercase API names -- ``offensive_synergy``, matching the
+    ``?ordering=`` keys, though the model field is ``Offensive_synergy``."""
+    return {name.lower(): getattr(source, name) for name in STAT_FIELDS}
+
+
 # ---------------------------------------------------------------------------
 # Enrolment
 # ---------------------------------------------------------------------------
@@ -696,7 +703,7 @@ def build_player_detail(league: League, player: Player) -> PlayerDetail:
             "age": r.age,
             "overall_rating": r.overall_rating,
             "potential": r.potential,
-            "stats": {name: getattr(r, name) for name in STAT_FIELDS},
+            "stats": rating_stats(r),
         }
         for r in PlayerSeasonRating.objects.filter(player=player, season__league=league)
         .select_related("season")

@@ -62,7 +62,7 @@ RATING_STATS_KEYS = {
     "adaptability",
     "communication",
     "teamwork",
-    "Offensive_synergy",
+    "offensive_synergy",
     "defensive_synergy",
     "midfield_synergy",
     "resupply_synergy",
@@ -99,7 +99,7 @@ class _RatingsScreenMixin:
         player = self.players[0]
         row = by_id[player.id]
         self.assertAlmostEqual(row["overall_rating"], player.overall_rating)
-        self.assertEqual(row["stats"]["Offensive_synergy"], player.Offensive_synergy)
+        self.assertEqual(row["stats"]["offensive_synergy"], player.Offensive_synergy)
         self.assertEqual(row["preferred_roles"], player.preferred_roles)
 
     def test_watched_flag(self) -> None:

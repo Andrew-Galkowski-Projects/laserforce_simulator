@@ -41,7 +41,6 @@ from matches.api_forms import (
     parse_ordering,
 )
 from matches.api_refs import conference_ref, player_ref, round_ref, season_ref, team_ref
-from matches.development import STAT_FIELDS
 from matches.forms import TeamFinancesForm
 from matches.league_screen_services import (
     FinanceDisabled,
@@ -69,6 +68,7 @@ from matches.league_screen_services import (
     clear_watch_list,
     enrolled_team,
     remove_watch,
+    rating_stats,
     resolve_season_scope,
     update_team_finances,
     watched_player_ids,
@@ -95,7 +95,7 @@ def player_rating_rows(players: list[Player], *, watched_ids: set[int]) -> list[
             "home_site": player.home_site,
             "started_playing_age": player.started_playing_age,
             "total_games": player.total_games,
-            "stats": {field: getattr(player, field) for field in STAT_FIELDS},
+            "stats": rating_stats(player),
         }
         for player in players
     ]
@@ -308,7 +308,7 @@ def league_player_payload(
             "total_games": player.total_games,
             "preferred_roles": list(player.preferred_roles or []),
         },
-        "stats": {name: getattr(player, name) for name in STAT_FIELDS},
+        "stats": rating_stats(player),
         "seasons": [
             {
                 "season": {"id": row["season_id"], "name": row["year"]},

@@ -64,7 +64,12 @@ class LeaguePlayerPageTests(LeagueApiTestCase):
         self.assertFalse(data["watched"])
         self.assertEqual(set(data["bio"]), _BIO_KEYS)
         self.assertEqual(data["bio"]["age"], self.player.age)
-        self.assertEqual(set(data["stats"]), set(development.STAT_FIELDS))
+        self.assertEqual(
+            set(data["stats"]), {n.lower() for n in development.STAT_FIELDS}
+        )
+        self.assertEqual(
+            data["stats"]["offensive_synergy"], self.player.Offensive_synergy
+        )
         self.assertEqual(len(data["stats"]), 19)
         self.assertAlmostEqual(data["overall_rating"], self.player.overall_rating)
 
@@ -138,6 +143,8 @@ class LeaguePlayerPageTests(LeagueApiTestCase):
             set(history[0]), {"season", "age", "overall_rating", "potential", "stats"}
         )
         self.assertEqual(len(history[0]["stats"]), 19)
+        self.assertEqual(history[0]["stats"]["offensive_synergy"], 50)
+        self.assertNotIn("Offensive_synergy", history[0]["stats"])
 
     def test_player_with_no_games_here_is_lenient_200(self) -> None:
         free_agent = make_teams("LPPFree", 1)[0].slot_commander
