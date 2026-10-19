@@ -21,6 +21,7 @@
     var progressLabel = progressContainer ? progressContainer.querySelector(".play-progress-label") : null;
 
     var pollTimer = null;
+    var pollJobId = null;
 
     // PLAY-01 — patch the dashboard standings + 3 leaders panels each poll from
     // the live-recomputed server fragments. Existence-guarded: off-dashboard
@@ -89,8 +90,9 @@
     }
 
     function clearPolling() {
+        pollJobId = null;
         if (pollTimer !== null) {
-            clearInterval(pollTimer);
+            clearTimeout(pollTimer);
             pollTimer = null;
         }
         // Restore: Play dropdown back IN, Stop + progress block back OUT.
@@ -102,30 +104,45 @@
         }
     }
 
+    // L-8: each poll schedules the next only after it answers, so slow or
+    // failing polls never pile up. pollJobId guards an in-flight poll that
+    // lands after clearPolling() from rescheduling.
+    function schedulePoll(jobId) {
+        pollTimer = setTimeout(function() { pollOnce(jobId); }, POLL_INTERVAL_MS);
+    }
+
+    function pollOnce(jobId) {
+        pollTimer = null;
+        var url = STATUS_URL_TEMPLATE.replace("JOB", jobId);
+        fetch(url + "?season_id=" + SEASON_ID, {credentials: "same-origin"})
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (pollJobId !== jobId) { return; }
+                showProgress(data.completed || 0, data.total || 0);
+                patchPanels(data);
+                if (data.status === "complete") {
+                    clearPolling();
+                    window.location.reload();
+                } else if (data.status === "error") {
+                    clearPolling();
+                    setDropdownDisabled(false);
+                    var el = ensureErrorEl();
+                    el.textContent = data.error || "Play job failed.";
+                } else {
+                    schedulePoll(jobId);
+                }
+            })
+            .catch(function() {
+                // Network blip — keep polling.
+                if (pollJobId === jobId) { schedulePoll(jobId); }
+            });
+    }
+
     function startPolling(jobId) {
         setDropdownDisabled(true);
         showProgress(0, 0);
-        pollTimer = setInterval(function() {
-            var url = STATUS_URL_TEMPLATE.replace("JOB", jobId);
-            fetch(url + "?season_id=" + SEASON_ID, {credentials: "same-origin"})
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    showProgress(data.completed || 0, data.total || 0);
-                    patchPanels(data);
-                    if (data.status === "complete") {
-                        clearPolling();
-                        window.location.reload();
-                    } else if (data.status === "error") {
-                        clearPolling();
-                        setDropdownDisabled(false);
-                        var el = ensureErrorEl();
-                        el.textContent = data.error || "Play job failed.";
-                    }
-                })
-                .catch(function() {
-                    // Network blip — keep polling.
-                });
-        }, POLL_INTERVAL_MS);
+        pollJobId = jobId;
+        schedulePoll(jobId);
     }
 
     function interceptAsync(form) {

@@ -29,7 +29,7 @@ from teams.player_generator import draw_preferred_roles, draw_stats
 from teams.roster_importer import RosterImportError, parse_roster_csv
 from teams.views import _apply_roster, _check_db_slot_collisions, _generate_teams
 
-from matches.views import _celery_state_to_job_status
+from matches.job_status import celery_state_to_job_status as _celery_state_to_job_status
 
 from .bracket import (
     advance_winner,

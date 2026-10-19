@@ -223,8 +223,13 @@ class TestPlaySeasonTaskCancel(TestCase):
         season.play_cancel_requested = True
         season.save(update_fields=["active_play_job_id", "play_cancel_requested"])
 
+        # ANG-01d-2 (ADR-0040): the finally clears only the task's OWN job id,
+        # so run the task under the id the enqueue recorded.
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            play_season_task.delay(season.id, max_matchdays=None)
+            play_season_task.apply_async(
+                kwargs={"season_id": season.id, "max_matchdays": None},
+                task_id="stale-job-id",
+            )
 
         season.refresh_from_db()
         self.assertIsNone(season.active_play_job_id)
@@ -247,8 +252,12 @@ class TestPlayPlayoffsTaskCancel(TestCase):
         season.active_play_job_id = "pf-job"
         season.save(update_fields=["play_cancel_requested", "active_play_job_id"])
 
+        # ANG-01d-2 (ADR-0040): run under the recorded id -- the finally clears
+        # only the task's OWN job id.
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            async_result = play_playoffs_task.delay(season.id)
+            async_result = play_playoffs_task.apply_async(
+                kwargs={"season_id": season.id}, task_id="pf-job"
+            )
 
         self.assertEqual(async_result.state, "SUCCESS")
         payload = async_result.result
@@ -273,6 +282,8 @@ class TestPlayCancelView(TestCase):
 
     def test_post_returns_200_cancelled_true_and_persists_flag(self) -> None:
         season, _teams = _active_season("PCView", n_teams=2)
+        # ANG-01d-2: the flag is only set while a run is live.
+        Season.objects.filter(pk=season.pk).update(active_play_job_id="live-run")
         response = self.client.post(reverse("play_cancel", args=[season.id]))
         self.assertEqual(response.status_code, 200)
         payload = json.loads(response.content.decode())
@@ -291,13 +302,15 @@ class TestPlayCancelView(TestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_post_on_idle_season_is_harmless(self) -> None:
-        """Setting the flag on an idle Season is harmless (no active-run
-        guard) — still 200 + the flag set."""
+        """ANG-01d-2 (approved fix): cancel on an idle Season is a no-op --
+        still 200, but ``cancelled`` is False and NO stale flag is written
+        (a leftover flag used to make the next run stop immediately)."""
         season, _teams = _active_season("PCIdle", n_teams=2)
         response = self.client.post(reverse("play_cancel", args=[season.id]))
         self.assertEqual(response.status_code, 200)
+        self.assertFalse(json.loads(response.content.decode())["cancelled"])
         season.refresh_from_db()
-        self.assertTrue(season.play_cancel_requested)
+        self.assertFalse(season.play_cancel_requested)
 
 
 # ===========================================================================
@@ -328,67 +341,75 @@ class TestEnqueueSetsRunState(TestCase):
         season.refresh_from_db()
         # Cancel flag cleared at enqueue.
         self.assertFalse(season.play_cancel_requested)
-        # active_play_job_id recorded as the returned job id. (Under EAGER the
-        # task's finally clears it again, so assert at minimum it is NOT the
-        # pre-enqueue None-with-stale-flag state by checking the cleared flag;
-        # the job-id record is pinned in the dedicated test below with a
-        # patched .delay to avoid the EAGER finally clearing it.)
+        # ANG-01d-2: the job id is written BEFORE the eager task runs, so the
+        # task's own-id finally clears it -- no stale finished id is left.
+        self.assertIsNone(season.active_play_job_id)
+
+    # ANG-01d-2 (ADR-0040): the enqueue contract changed -- ``enqueue_play_run``
+    # makes up the job id, writes it, then calls ``apply_async(task_id=...)``.
+    # These tests patch ``apply_async`` (not ``.delay``) so the task body never
+    # runs and the recorded id can be pinned to the id the task was given.
 
     def test_play_two_months_active_play_job_id_set_at_enqueue(self) -> None:
         """Pin ``active_play_job_id == job_id`` at enqueue time by patching
-        ``play_season_task.delay`` to return a fake result WITHOUT running the
-        task body (so the ``finally`` clear never fires)."""
+        ``play_season_task.apply_async`` so the task body never runs (the
+        ``finally`` clear never fires)."""
+        from matches.tasks import play_season_task
+
         season, _teams = _active_season("EnqJobId", n_teams=2)
 
-        class _FakeResult:
-            id = "fake-job-id-123"
-
-        with patch(
-            "matches.league_views.play_season_task.delay", return_value=_FakeResult()
-        ):
+        with patch.object(play_season_task, "apply_async") as apply_async:
             response = self.client.post(reverse("play_two_months", args=[season.id]))
 
         self.assertEqual(response.status_code, 202)
         payload = json.loads(response.content.decode())
-        self.assertEqual(payload["job_id"], "fake-job-id-123")
+        apply_async.assert_called_once_with(
+            kwargs={"season_id": season.id, "max_matchdays": 8},
+            task_id=payload["job_id"],
+            retry=False,
+        )
         season.refresh_from_db()
-        self.assertEqual(season.active_play_job_id, "fake-job-id-123")
+        self.assertEqual(season.active_play_job_id, payload["job_id"])
         self.assertFalse(season.play_cancel_requested)
 
     def test_play_until_end_records_job_id(self) -> None:
+        from matches.tasks import play_season_task
+
         season, _teams = _active_season("EnqPUE", n_teams=2)
 
-        class _FakeResult:
-            id = "pue-job"
-
-        with patch(
-            "matches.league_views.play_season_task.delay", return_value=_FakeResult()
-        ):
+        with patch.object(play_season_task, "apply_async") as apply_async:
             response = self.client.post(reverse("play_until_end", args=[season.id]))
 
         self.assertEqual(response.status_code, 202)
+        job_id = json.loads(response.content.decode())["job_id"]
+        apply_async.assert_called_once_with(
+            kwargs={"season_id": season.id, "max_matchdays": None},
+            task_id=job_id,
+            retry=False,
+        )
         season.refresh_from_db()
-        self.assertEqual(season.active_play_job_id, "pue-job")
+        self.assertEqual(season.active_play_job_id, job_id)
 
     def test_play_playoffs_records_job_id(self) -> None:
+        from matches.tasks import play_playoffs_task
+
         season, teams = _rr_tournament_season("EnqPF", n_teams=4)
         _play_rr(season, teams)
         season.refresh_from_db()
 
-        class _FakeResult:
-            id = "pf-enqueue-job"
-
-        with patch(
-            "matches.league_views.play_playoffs_task.delay", return_value=_FakeResult()
-        ):
+        with patch.object(play_playoffs_task, "apply_async") as apply_async:
             response = self.client.post(reverse("play_playoffs", args=[season.id]))
 
         self.assertEqual(response.status_code, 202)
         payload = json.loads(response.content.decode())
-        self.assertEqual(payload["job_id"], "pf-enqueue-job")
         self.assertEqual(payload["season_id"], season.id)
+        apply_async.assert_called_once_with(
+            kwargs={"season_id": season.id},
+            task_id=payload["job_id"],
+            retry=False,
+        )
         season.refresh_from_db()
-        self.assertEqual(season.active_play_job_id, "pf-enqueue-job")
+        self.assertEqual(season.active_play_job_id, payload["job_id"])
 
 
 # ===========================================================================

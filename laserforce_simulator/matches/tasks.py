@@ -521,7 +521,11 @@ def play_season_task(
         # The cancel flag is NOT cleared here (the next enqueue clears it).
         from matches.models import Season
 
-        Season.objects.filter(id=season_id).update(active_play_job_id=None)
+        # ANG-01d-2 (ADR-0040) -- clear ONLY while the column still holds this
+        # task's own id, so a finishing run never clears another run's id.
+        Season.objects.filter(id=season_id, active_play_job_id=self.request.id).update(
+            active_play_job_id=None
+        )
         django.db.close_old_connections()
 
 
@@ -647,7 +651,11 @@ def play_playoffs_task(self, season_id: int) -> dict:
         # PLAY-01 — clear the active-run marker on success / cancel / failure.
         from matches.models import Season
 
-        Season.objects.filter(id=season_id).update(active_play_job_id=None)
+        # ANG-01d-2 (ADR-0040) -- clear ONLY while the column still holds this
+        # task's own id, so a finishing run never clears another run's id.
+        Season.objects.filter(id=season_id, active_play_job_id=self.request.id).update(
+            active_play_job_id=None
+        )
         django.db.close_old_connections()
 
 
@@ -715,7 +723,11 @@ def play_member_night_task(self, season_id: int) -> dict:
         # PLAY-01 — clear the active-run marker on success / cancel / failure.
         from matches.models import Season
 
-        Season.objects.filter(id=season_id).update(active_play_job_id=None)
+        # ANG-01d-2 (ADR-0040) -- clear ONLY while the column still holds this
+        # task's own id, so a finishing run never clears another run's id.
+        Season.objects.filter(id=season_id, active_play_job_id=self.request.id).update(
+            active_play_job_id=None
+        )
         django.db.close_old_connections()
 
 

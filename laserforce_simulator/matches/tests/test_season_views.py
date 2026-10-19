@@ -707,6 +707,16 @@ class TestConf01SeasonStandingsConferences(TestCase):
             # The Conference's name is rendered in its header.
             self.assertContains(r, conf.name)
 
+    def test_two_conferences_sort_header_ids_are_unique(self) -> None:
+        # L-2: each Conference table repeated the same
+        # ``season-standings-th-<key>`` ids; they must be unique per page.
+        season, confs = _active_conf_standings_season("ConfIds", [2, 2])
+        r = self.client.get(reverse("season_standings", args=[season.id]))
+        html = r.content.decode()
+        for conf in confs:
+            self.assertEqual(html.count(f'id="season-standings-th-rank-{conf.id}"'), 1)
+        self.assertNotIn('id="season-standings-th-rank"', html)
+
     def test_two_conferences_each_lists_only_its_own_teams(self) -> None:
         season, confs = _active_conf_standings_season("ConfTeams", [2, 2])
         r = self.client.get(reverse("season_standings", args=[season.id]))

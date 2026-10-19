@@ -4,14 +4,14 @@ The LOCKED seam contract is ``.claude/worktrees/nav-01-seam-contract.md``.
 NAV-01 RELOCATES the league-advancement Play controls out of both dashboards
 into a single ``Play ▾`` dropdown in the league branch of ``base.html``, driven
 by the 9 play keys ``core.context_processors.league_nav`` adds (sourced from the
-shared helper ``matches.league_views._build_play_controls_context``).
+shared helper ``matches.league_play_services.build_play_controls``).
 
 This file asserts on:
 
 * The league-branch ``base.html`` Play-dropdown DOM ids across the STATE MATRIX
   (§3 nav-id table) — rendered against a ``/leagues/<id>/`` (and a
   ``/seasons/<id>/`` via ``last_league_id`` session pin) page.
-* The pure helper ``_build_play_controls_context(league, displayed_season)``
+* The pure helper ``build_play_controls(league, displayed_season)``
   returning the 9-key dict across the state matrix (§1 table).
 * Off-league pages NOT rendering any ``play-nav-link`` / ``topbar-play-*`` ids
   (§2 — the play keys are absent off-league, and the dropdown only renders in
@@ -36,7 +36,7 @@ from unittest.mock import patch
 from django.test import TestCase
 from django.urls import reverse
 
-from matches.league_views import _build_play_controls_context
+from matches.league_play_services import build_play_controls
 from matches.models import BracketNode, League, Season, SeasonPhase
 from matches.simulation import BatchSimulator
 from matches.tests.conftest import make_team_with_slots
@@ -436,6 +436,17 @@ class TestNavPlayDropdownPollPath(TestCase):
         )
         self.assertIn(status_url, body)
 
+    def test_poll_chains_timeouts_not_an_interval(self) -> None:
+        # L-8: a fixed setInterval fired while earlier polls were still
+        # pending, so slow or failing polls piled up. Each poll must schedule
+        # the next only after it answers.
+        _league, season, _teams = _make_active_season("NavPollChain", n_teams=2)
+        body = self.client.get(
+            reverse("league_dashboard", args=[season.league_id])
+        ).content.decode()
+        self.assertNotIn("setInterval(", body)
+        self.assertIn("setTimeout(", body)
+
 
 # ---------------------------------------------------------------------------
 # Off-league absence
@@ -467,7 +478,7 @@ class TestNavPlayDropdownOffLeague(TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Pure helper — `_build_play_controls_context(league, displayed_season)`
+# Pure helper — `build_play_controls(league, displayed_season)`
 # ---------------------------------------------------------------------------
 
 
@@ -498,12 +509,12 @@ class TestBuildPlayControlsContext(TestCase):
 
     def test_returns_exactly_the_thirteen_keys(self) -> None:
         league = _make_none_league("HelperKeys")
-        result = _build_play_controls_context(league, None)
+        result = build_play_controls(league, None)
         self.assertEqual(set(result.keys()), set(self._KEYS))
 
     def test_none_state(self) -> None:
         league = _make_none_league("HelperNone")
-        result = _build_play_controls_context(league, None)
+        result = build_play_controls(league, None)
         self.assertEqual(result["action_button_state"], "none")
         self.assertEqual(result["action_button_label"], "No Season")
         self.assertFalse(result["playoff_phase_active"])
@@ -512,19 +523,19 @@ class TestBuildPlayControlsContext(TestCase):
 
     def test_start_season_state(self) -> None:
         league, season, _teams = _make_draft_season("HelperDraft")
-        result = _build_play_controls_context(league, season)
+        result = build_play_controls(league, season)
         self.assertEqual(result["action_button_state"], "start_season")
         self.assertEqual(result["action_button_label"], "Start Season")
 
     def test_play_next_state(self) -> None:
         league, season, _teams = _make_active_season("HelperActive")
-        result = _build_play_controls_context(league, season)
+        result = build_play_controls(league, season)
         self.assertEqual(result["action_button_state"], "play_next")
         self.assertEqual(result["action_button_label"], "Play Next")
 
     def test_start_next_season_state(self) -> None:
         league, season = _make_completed_season("HelperCompleted")
-        result = _build_play_controls_context(league, season)
+        result = build_play_controls(league, season)
         self.assertEqual(result["action_button_state"], "start_next_season")
         self.assertEqual(result["action_button_label"], "Start Next Season")
 
@@ -532,21 +543,21 @@ class TestBuildPlayControlsContext(TestCase):
         league, season = _make_completed_season("HelperCareer")
         league.mode = "league"
         league.save(update_fields=["mode"])
-        result = _build_play_controls_context(league, season)
+        result = build_play_controls(league, season)
         self.assertTrue(result["is_career_mode"])
 
     def test_is_career_mode_false_for_multiplayer(self) -> None:
         league, season = _make_completed_season("HelperMulti")
         league.mode = "multiplayer"
         league.save(update_fields=["mode"])
-        result = _build_play_controls_context(league, season)
+        result = build_play_controls(league, season)
         self.assertFalse(result["is_career_mode"])
 
     def test_has_following_tournament_phase_true_for_rr_then_tournament(
         self,
     ) -> None:
         league, season, _teams = _rr_tournament_season("HelperFollowing")
-        result = _build_play_controls_context(league, season)
+        result = build_play_controls(league, season)
         self.assertTrue(result["has_following_tournament_phase"])
 
     def test_playoff_phase_active_true_once_tournament_built(self) -> None:
@@ -555,7 +566,7 @@ class TestBuildPlayControlsContext(TestCase):
         season.refresh_from_db()
         tournament_phase = season.phases.get(phase_type="tournament")
         tournament_phase.refresh_from_db()
-        result = _build_play_controls_context(league, season)
+        result = build_play_controls(league, season)
         self.assertTrue(result["playoff_phase_active"])
         self.assertEqual(
             result["playoff_tournament_id"], tournament_phase.tournament_id
@@ -570,7 +581,7 @@ class TestBuildPlayControlsContext(TestCase):
         tournament_phase.refresh_from_db()
         _drain_tournament(tournament_phase.tournament)
         season.refresh_from_db()
-        result = _build_play_controls_context(league, season)
+        result = build_play_controls(league, season)
         self.assertFalse(result["playoff_phase_active"])
         self.assertTrue(result["playoff_completed"])
         self.assertEqual(
@@ -583,9 +594,9 @@ class TestBuildPlayControlsContext(TestCase):
 # ===========================================================================
 #
 # Seam contract ``.claude/worktrees/lg-07-member-night-seam-contract.md`` §7:
-# ``_build_play_controls_context`` appends 3 member-night keys —
+# ``build_play_controls`` appends 3 member-night keys —
 # ``member_night_phase_active`` (bool), ``member_night_sites`` (viable
-# ``[(site, count)]``), ``member_night_has_unplayed`` (bool). On a member_night
+# ``[{"site", "count"}]``), ``member_night_has_unplayed`` (bool). On a member_night
 # cursor the topnav SUPPRESSES the RR One Week / Two Months / Until End trio and
 # renders ``topbar-play-member-night-setup`` (POST form + an
 # ``topbar-play-member-night-all`` master toggle and per-Site
@@ -621,25 +632,25 @@ def _add_member_night_shell(season):
 
 
 class TestNavPlayMemberNightContext(TestCase):
-    """``_build_play_controls_context`` member-night keys across the gating."""
+    """``build_play_controls`` member-night keys across the gating."""
 
     def test_active_with_viable_site_and_no_unplayed(self) -> None:
         league, season, _teams = _member_night_active_season("NavMnCtxA")
-        result = _build_play_controls_context(league, season)
+        result = build_play_controls(league, season)
         self.assertTrue(result["member_night_phase_active"])
-        self.assertEqual(result["member_night_sites"], [("SiteA", 12)])
+        self.assertEqual(result["member_night_sites"], [{"site": "SiteA", "count": 12}])
         self.assertFalse(result["member_night_has_unplayed"])
 
     def test_has_unplayed_true_with_shell(self) -> None:
         league, season, _teams = _member_night_active_season("NavMnCtxB")
         _add_member_night_shell(season)
-        result = _build_play_controls_context(league, season)
+        result = build_play_controls(league, season)
         self.assertTrue(result["member_night_has_unplayed"])
 
     def test_keys_inactive_off_member_night(self) -> None:
         # An RR-cursor Season ⇒ the member-night keys are inactive / empty.
         _league, season, _teams = _make_active_season("NavMnCtxOff", n_teams=2)
-        result = _build_play_controls_context(season.league, season)
+        result = build_play_controls(season.league, season)
         self.assertFalse(result["member_night_phase_active"])
         self.assertEqual(result["member_night_sites"], [])
         self.assertFalse(result["member_night_has_unplayed"])

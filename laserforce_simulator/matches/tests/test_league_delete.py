@@ -46,6 +46,10 @@ from matches.models import (
     Tournament,
 )
 from matches.tests.conftest import make_team_with_slots
+from matches.tests.test_member_night_views import (
+    _member_night_active_season,
+    _post_setup,
+)
 from teams.models import Player, Team
 
 # ---------------------------------------------------------------------------
@@ -421,6 +425,22 @@ class TestLeagueDeleteTournamentTeardown(TestCase):
 # ---------------------------------------------------------------------------
 # 5. Mode gate — non-career League → 400, nothing deleted
 # ---------------------------------------------------------------------------
+
+
+class TestLeagueDeleteMemberNightTeams(TestCase):
+    """L-10 -- the drawn Teams a member night creates (``is_draw_team=True``,
+    never enrolled in the Season) are torn down with the League."""
+
+    def test_member_night_drawn_teams_are_deleted(self) -> None:
+        league, season, _teams, _mn = _member_night_active_season("DelMN")
+        _post_setup(self.client, season)
+        self.assertTrue(Team.objects.filter(is_draw_team=True).exists())
+
+        response = self.client.post(reverse("league_delete", args=[league.id]))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(League.objects.filter(pk=league.id).exists())
+        self.assertFalse(Team.objects.filter(is_draw_team=True).exists())
 
 
 class TestLeagueDeleteModeGate(TestCase):

@@ -1834,7 +1834,9 @@ class TestLg05DevelopRngIndependentOfPotentialRng(TestCase):
             instances.append(inst)
             return inst
 
-        with patch("matches.league_views.random.Random", side_effect=_tracking_random):
+        with patch(
+            "matches.league_services.random.Random", side_effect=_tracking_random
+        ):
             league, _prev, _teams, _fa = _lg04_developing_setup("TwoRngL")
             self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
 
@@ -2172,7 +2174,7 @@ class TestCar03MultiplayerNextSeason(TestCase):
 # ``Sum(level*games)/Sum(games)`` over the team's completed-Season finance rows.
 #
 # These integration tests pin the develop RNG by patching the
-# ``matches.league_views.random.Random`` construction to a fixed seed (the
+# ``matches.league_services.random.Random`` construction to a fixed seed (the
 # develop loop builds a fresh unseeded Random per rollover — LG-05 precedent),
 # and assert DIRECTION / seeded-equality / the helper return — NEVER raw
 # unseeded stat values. Appended as NEW classes; no existing class is modified.
@@ -2187,7 +2189,7 @@ from matches.models import TeamSeasonFinance as _Fin02TeamSeasonFinance  # noqa:
 
 
 def _fin02_seeded_random_patch(seed: int = 12345):
-    """Patch ``matches.league_views.random.Random`` so every fresh Random() the
+    """Patch ``matches.league_services.random.Random`` so every fresh Random() the
     develop loop builds is seeded deterministically — makes two otherwise-
     identical rollovers develop reproducibly. Returns a ``patch`` context
     manager (mirrors the LG-05 tracking-Random patch)."""
@@ -2199,7 +2201,7 @@ def _fin02_seeded_random_patch(seed: int = 12345):
         # Ignore the (typically empty) production args; force a fixed seed.
         return real_cls(seed)
 
-    return patch("matches.league_views.random.Random", side_effect=_seeded)
+    return patch("matches.league_services.random.Random", side_effect=_seeded)
 
 
 def _fin02_finance_league(name: str, *, n_teams: int = 2):

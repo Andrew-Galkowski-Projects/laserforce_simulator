@@ -126,10 +126,10 @@
                         <label class="d-block small fw-bold">
                             <input type="checkbox" id="topbar-play-member-night-all"> All Sites
                         </label>
-                        {% for site, count in member_night_sites %}
+                        {% for entry in member_night_sites %}
                         <label class="d-block small">
-                            <input type="checkbox" class="topbar-play-member-night-site-cb" name="sites" value="{{ site }}">
-                            {% if site %}{{ site }}{% else %}(no site){% endif %} ({{ count }})
+                            <input type="checkbox" class="topbar-play-member-night-site-cb" name="sites" value="{{ entry.site }}">
+                            {% if entry.site %}{{ entry.site }}{% else %}(no site){% endif %} ({{ entry.count }})
                         </label>
                         {% empty %}
                         <span class="small text-muted">No Site has enough players (need 12+).</span>

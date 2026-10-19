@@ -1591,6 +1591,17 @@ class TestDetailRoundRobinCrosstable(TestCase):
         start = body.index('id="tournament-rr-standings"')
         self.assertIn("Match Pts", body[start : start + 600])
 
+    def test_play_all_poll_chains_timeouts_not_an_interval(self) -> None:
+        # L-8: the Play All poll must schedule the next request only after the
+        # previous one answers, so slow or failing polls cannot pile up.
+        t = _rr_active_tournament(4)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn('id="tournament-play-all-form"', body)
+        self.assertNotIn("setInterval(", body)
+        self.assertIn("setTimeout(", body)
+
     def test_shared_controls_and_champion_banner_path_present(self) -> None:
         # The play-next + play-all controls render on an active RR Tournament
         # (shared verbatim across formats).

@@ -391,12 +391,16 @@ class TestRegionalUiEntryPointsReachTheBrackets(TestCase):
 
     def test_play_playoffs_enqueues_instead_of_409(self) -> None:
         """The regression this fix exists for: the enqueue view used to 409."""
-        with patch("matches.league_views.play_playoffs_task.delay") as delay:
-            delay.return_value.id = "job-regional-1"
+        # ANG-01d-2: the enqueue path is ``enqueue_play_run`` -> ``apply_async``.
+        with patch("matches.tasks.play_playoffs_task.apply_async") as apply_async:
             response = self.client.post(reverse("play_playoffs", args=[self.season.id]))
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json()["season_id"], self.season.id)
-        delay.assert_called_once_with(self.season.id)
+        apply_async.assert_called_once_with(
+            kwargs={"season_id": self.season.id},
+            task_id=response.json()["job_id"],
+            retry=False,
+        )
 
     def test_play_single_round_resolves_exactly_one_node(self) -> None:
         before = sum(_resolved_by_tournament(self.phase).values())
@@ -449,8 +453,8 @@ class TestZeroConferenceUiEntryPointsUnchanged(TestCase):
         self.season, self.teams, self.phase = _built_flat_season("UiFlat")
 
     def test_play_playoffs_still_enqueues(self) -> None:
-        with patch("matches.league_views.play_playoffs_task.delay") as delay:
-            delay.return_value.id = "job-flat-1"
+        # ANG-01d-2: the enqueue path is ``enqueue_play_run`` -> ``apply_async``.
+        with patch("matches.tasks.play_playoffs_task.apply_async"):
             response = self.client.post(reverse("play_playoffs", args=[self.season.id]))
         self.assertEqual(response.status_code, 202)
 
@@ -1031,16 +1035,16 @@ class TestWorldsDrainCrossesThePhaseBoundary(TestCase):
         )
         self.assertIsNone(_conf04_worlds_phase(self.season).tournament_id)
 
-        with patch("matches.league_views.play_playoffs_task.delay") as delay:
-            delay.return_value.id = "job-conf04-worlds"
+        # ANG-01d-2: the enqueue path is ``enqueue_play_run`` -> ``apply_async``.
+        with patch("matches.tasks.play_playoffs_task.apply_async"):
             response = self.client.post(reverse("play_playoffs", args=[self.season.id]))
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json()["season_id"], self.season.id)
 
     def test_the_409_post_leaves_a_built_and_active_worlds_bracket(self) -> None:
         _conf04_stamp_regionals_completed(self.phase, self.conferences, self.groups)
-        with patch("matches.league_views.play_playoffs_task.delay") as delay:
-            delay.return_value.id = "job-conf04-worlds-2"
+        # ANG-01d-2: the enqueue path is ``enqueue_play_run`` -> ``apply_async``.
+        with patch("matches.tasks.play_playoffs_task.apply_async"):
             self.client.post(reverse("play_playoffs", args=[self.season.id]))
 
         worlds = _conf04_worlds_tournament(self.season)

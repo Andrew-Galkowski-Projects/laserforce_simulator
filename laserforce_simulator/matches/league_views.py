@@ -7,9 +7,8 @@ schedule pages, league history) in one file. URL configs in
 callables here; URL names are unchanged.
 """
 
-import random
-from datetime import date
-from typing import Optional
+from collections.abc import Callable
+from typing import Optional, TypeVar
 
 from celery.result import AsyncResult
 from django.contrib import messages
@@ -32,37 +31,53 @@ from accounts.permissions import get_owned_or_404, manager_or_none, owned_querys
 from teams.models import Player, Team
 from teams.views import _coerce_dir
 
-from . import finance, injury, member_night
-from .development import STAT_FIELDS
+from . import league_play_services as play_services
 from .forms import (
     ConferencePartitionForm,
     CreateLeagueForm,
+    MemberNightSetupForm,
     _maps_with_confirmed_config,
+)
+from .league_play_services import (
+    BrokerUnavailableError,
+    NoLiveCursorError,
+    NoMemberNightGamesError,
+    PlayInProgressError,
+    SeasonNotActiveError,
+    SeasonNotDraftError,
+    WrongPhaseError,
+)
+
+# ANG-01d-2 T2/T3 — the Start Season / sync play logic, the live cursor +
+# play-controls helpers and the FIN-04 per-fixture injury resolver live in
+# ``matches.league_play_services`` (shared with the API); re-exported here
+# under their old names so existing imports (``tasks.play_season_task``,
+# ``core.context_processors``, tests) keep resolving. Patch the service module.
+from .league_play_services import (  # noqa: F401 - re-exports
+    _INJURY_SLOT_FIELDS,
+    _apply_play_hurt,
+    _next_matchday_to_play,
+    _pick_substitute,
+    _resolve_injuries_for_team,
+    resolve_injuries_for_fixture,
+    restore_after_fixture,
+)
+from .league_play_services import (  # noqa: F401 - re-exports
+    alive_playoff_node as _alive_playoff_node,
+)
+from .league_play_services import (  # noqa: F401 - re-exports
+    resolve_live_cursor as _resolve_live_cursor,
 )
 from .league_templates import (
     LEAGUE_TEMPLATES,
     LEAGUE_TEMPLATES_BY_KEY,
-    LeagueTemplate,
 )
 from .models import (
-    Conference,
     GameRound,
     League,
     Match,
-    PlayerRoundState,
     Season,
-    SeasonPhase,
 )
-from .season_dashboard import (
-    compute_leaders,
-    find_next_fixture,
-    round_progress,
-    select_play_fixtures,
-)
-from .simulation import BatchSimulator
-from .standings import StandingsRow, compute_standings
-from .tasks import play_member_night_task, play_playoffs_task, play_season_task
-from .views import _celery_state_to_job_status
 
 # ANG-01d-1 — the League / Season lifecycle + read helpers now live in
 # ``matches.league_services`` (shared with the REST API). Every moved name is
@@ -643,292 +658,6 @@ def league_create_advanced(request) -> HttpResponse:
 
 
 # ---------------------------------------------------------------------------
-# LG-01i — "One Week (Live)" cursor resolution
-# ---------------------------------------------------------------------------
-
-
-def _alive_playoff_node(tournament, team) -> "BracketNode | None":
-    """LG-01i §5a — the manager team's next undecided, non-bye bracket node it
-    currently occupies, or ``None``.
-
-    A node qualifies when: ``winner_id is None``, ``is_bye is False``, both team
-    slots filled, and (``team_a_id == team.id`` or ``team_b_id == team.id``). Of
-    the qualifying nodes, the one with the lowest
-    ``(_BRACKET_RANK[bracket_type], bracket_round, position)`` is the next
-    playable node for that team. Pin to a Series that has NOT started
-    (``series_matches.count() == 0``) so the watched Match is game 1.
-
-    ``None`` ⇒ the team is eliminated, not a participant, or has no undecided
-    node it occupies ⇒ no live entry.
-    """
-    from .bracket import _BRACKET_RANK
-
-    candidates = []
-    for node in tournament.nodes.select_related("team_a", "team_b").all():
-        if node.winner_id is not None or node.is_bye:
-            continue
-        if node.team_a_id is None or node.team_b_id is None:
-            continue
-        if node.team_a_id != team.id and node.team_b_id != team.id:
-            continue
-        candidates.append(node)
-
-    if not candidates:
-        return None
-
-    candidates.sort(
-        key=lambda n: (
-            _BRACKET_RANK.get(n.bracket_type, 0),
-            n.bracket_round,
-            n.position,
-        )
-    )
-    node = candidates[0]
-
-    # Pin to a Series that has not started so the watched Match is game 1.
-    if node.series_matches.count() != 0:
-        return None
-    return node
-
-
-def _next_matchday_to_play(season) -> tuple[list, dict]:
-    """LG-01i — the next unplayed matchday's fixtures for ``season``.
-
-    Returns ``(to_play, phase_by_id)`` where ``to_play`` is the
-    ``list[(phase_id, ScheduleFixture)]`` of the next single unplayed matchday
-    (the ``play_week`` RR machinery — by-phase fixtures + Side-agnostic
-    ``played_keys``) and ``phase_by_id`` maps each phase id to its
-    ``SeasonPhase``. Shared by ``_resolve_live_cursor`` and the RR commit so the
-    fixture/played-key computation lives in one place.
-    """
-    by_phase = season.playable_fixtures_by_phase()
-    phase_by_id = {phase.id: phase for phase, _ in by_phase}
-    fixtures = [
-        (phase.id, fixture)
-        for phase, phase_fixtures in by_phase
-        for fixture in phase_fixtures
-    ]
-    played_keys = {
-        (
-            gr.match.season_phase_id,
-            frozenset({gr.match.team_red_id, gr.match.team_blue_id}),
-            gr.round_number,
-            gr.match.leg,
-        )
-        for gr in GameRound.objects.filter(match__season=season).select_related("match")
-    }
-    return select_play_fixtures(fixtures, played_keys, 1), phase_by_id
-
-
-def _resolve_live_cursor(season: "Season") -> Optional[dict]:
-    """LG-01i §5 — resolve the manager's watchable live cursor for ``season``.
-
-    Returns a cursor descriptor, the ``{"kind": "rr_bye"}`` degrade marker, or
-    ``None`` (no live entry). Algorithm (LOCKED order):
-
-      1. ``team = season.league.current_team``; ``None`` ⇒ ``None``.
-      2. ``phase = season.current_phase()``.
-         * **Playoff cursor** — a built + active tournament phase: resolve the
-           team's ``_alive_playoff_node``; found ⇒ a ``{"kind": "playoff", ...}``
-           descriptor; else ``None``.
-         * **RR cursor** — an RR phase (or the implicit fallback): compute the
-           next unplayed matchday's fixtures via the ``play_week`` machinery and
-           find the fixture whose Side-agnostic pair contains the team; found ⇒
-           ``{"kind": "rr", ...}``; bye ⇒ ``{"kind": "rr_bye"}``.
-      3. Anything else ⇒ ``None``.
-    """
-    team = season.league.current_team
-    if team is None:
-        return None
-
-    phase = season.current_phase()
-    if phase is None:
-        return None
-
-    # --- Playoff cursor ----------------------------------------------------
-    if (
-        phase.phase_type == "tournament"
-        and phase.tournament_id is not None
-        and phase.tournament.state == "active"
-    ):
-        node = _alive_playoff_node(phase.tournament, team)
-        if node is None:
-            return None
-        return {
-            "kind": "playoff",
-            "node": node,
-            "tournament": phase.tournament,
-            "cursor": {
-                "type": "playoff",
-                "tournament_id": phase.tournament_id,
-                "bracket_type": node.bracket_type,
-                "bracket_round": node.bracket_round,
-                "position": node.position,
-            },
-            "red_team": node.team_a,
-            "blue_team": node.team_b,
-        }
-
-    # --- RR cursor ---------------------------------------------------------
-    if phase.phase_type == "round_robin":
-        to_play, phase_by_id = _next_matchday_to_play(season)
-
-        watched = None
-        watched_phase_id = None
-        for phase_id, fixture in to_play:
-            if team.id in (fixture.team_a_id, fixture.team_b_id):
-                watched = fixture
-                watched_phase_id = phase_id
-                break
-
-        if watched is None:
-            # Manager has a bye this matchday ⇒ degrade to a plain commit.
-            return {"kind": "rr_bye"}
-
-        watched_phase = phase_by_id.get(watched_phase_id)
-        team_by_id = Team.objects.in_bulk([watched.team_a_id, watched.team_b_id])
-        team_a = team_by_id.get(watched.team_a_id)
-        team_b = team_by_id.get(watched.team_b_id)
-        return {
-            "kind": "rr",
-            "fixture": watched,
-            "season_phase": watched_phase,
-            "phase_id": watched_phase_id,
-            "cursor": {
-                "type": "rr",
-                "season_id": season.id,
-                "season_phase_id": watched_phase_id,
-                "matchday": watched.matchday,
-                "pair": sorted([watched.team_a_id, watched.team_b_id]),
-                "round_number": watched.round_number,
-                "leg": watched.leg,
-            },
-            "red_team": team_a,
-            "blue_team": team_b,
-        }
-
-    return None
-
-
-# ---------------------------------------------------------------------------
-# LG-01c — League / Season dashboard
-# ---------------------------------------------------------------------------
-
-
-def _build_play_controls_context(
-    league: League, displayed_season: Optional[Season]
-) -> dict:
-    """NAV-01 §1 — the 9 play-control keys for the league-mode ``Play ▾`` topnav.
-
-    Factored OUT of ``_build_dashboard_context`` — this is the SINGLE source of
-    the league-advancement Play controls, consumed by
-    ``core.context_processors.league_nav`` (which merges these 9 keys plus
-    ``play_displayed_season_id`` / ``play_league_id`` into the topnav context).
-
-    The helper takes the **resolved** ``displayed_season`` (already chosen by
-    ``league_nav``'s session-pin → single-League → fallback chain), so it does
-    NOT re-implement the resolution. ``season_mode`` is derived from
-    ``displayed_season.state`` (or ``"none"`` when ``displayed_season is None``)
-    mirroring the current view logic.
-
-    Returns the 9 keys (contract §1 table):
-
-    * ``action_button_label`` / ``action_button_state`` — the placeholder
-      action-button label / state machine ("No Season" / "Start Season" /
-      "Play Next" / "Start Next Season").
-    * ``playoff_phase_active`` / ``playoff_tournament_id`` / ``playoff_completed``
-      / ``has_following_tournament_phase`` / ``following_tournament_is_final`` —
-      the ``_playoff_cursor_keys`` tuple.
-    * ``live_preview_available`` — the LG-01i "One Week (Live)" gate.
-    * ``is_career_mode`` — the CAR-03 career-mode gate.
-    """
-    # season_mode derivation (mirrors the dashboard views): None ⇒ "none",
-    # else the Season's state (draft / active / completed).
-    if displayed_season is None:
-        season_mode = "none"
-    else:
-        season_mode = displayed_season.state
-
-    # Action-button label / state machine.
-    if season_mode == "none":
-        action_button_label = "No Season"
-        action_button_state = "none"
-    elif season_mode == "draft":
-        action_button_label = "Start Season"
-        action_button_state = "start_season"
-    elif season_mode == "active":
-        action_button_label = "Play Next"
-        action_button_state = "play_next"
-    else:  # completed
-        action_button_label = "Start Next Season"
-        action_button_state = "start_next_season"
-
-    # LG-02-Part2c-1 — playoff-cursor keys.
-    (
-        playoff_phase_active,
-        playoff_tournament_id,
-        playoff_completed,
-        has_following_tournament_phase,
-        following_tournament_is_final,
-    ) = _playoff_cursor_keys(displayed_season)
-
-    # LG-01i — "One Week (Live)" gate. True iff the manager
-    # (League.current_team) has a watchable RR or playoff cursor.
-    live_preview_available = False
-    if displayed_season is not None and season_mode == "active":
-        cursor = _resolve_live_cursor(displayed_season)
-        live_preview_available = cursor is not None and cursor.get("kind") in (
-            "rr",
-            "playoff",
-        )
-
-    # LG-07a — member-night topnav controls. Gated on the cursor being a
-    # member_night phase. ``member_night_sites`` are the VIABLE Sites only
-    # (>= MIN_POOL), sorted by Site name; ``member_night_has_unplayed`` gates
-    # the drain button.
-    member_night_phase_active = False
-    member_night_sites: list[tuple[str, int]] = []
-    member_night_has_unplayed = False
-    if displayed_season is not None:
-        mn_phase = displayed_season.current_phase()
-        if mn_phase is not None and mn_phase.phase_type == "member_night":
-            member_night_phase_active = True
-            pool_by_site = displayed_season._member_night_pool_by_site()
-            member_night_sites = sorted(
-                (site, len(pool))
-                for site, pool in pool_by_site.items()
-                if len(pool) >= member_night.MIN_POOL
-            )
-            member_night_has_unplayed = Match.objects.filter(
-                season_phase=mn_phase, is_completed=False
-            ).exists()
-
-    return {
-        "action_button_label": action_button_label,
-        "action_button_state": action_button_state,
-        "playoff_phase_active": playoff_phase_active,
-        "playoff_tournament_id": playoff_tournament_id,
-        "playoff_completed": playoff_completed,
-        "has_following_tournament_phase": has_following_tournament_phase,
-        "following_tournament_is_final": following_tournament_is_final,
-        "live_preview_available": live_preview_available,
-        "is_career_mode": _is_career_league(league),
-        # LG-07a — member-night topnav controls.
-        "member_night_phase_active": member_night_phase_active,
-        "member_night_sites": member_night_sites,
-        "member_night_has_unplayed": member_night_has_unplayed,
-        # PLAY-01 — the Celery job id of the in-flight async run on the
-        # resolved displayed Season (else None). Drives the topnav resume-on-load
-        # + Play/Stop swap. league_nav merges this key via result.update(...).
-        "active_play_job_id": (
-            displayed_season.active_play_job_id
-            if displayed_season is not None
-            else None
-        ),
-    }
-
-
-# ---------------------------------------------------------------------------
 # LG-01f — League history + sidebar helpers
 # ---------------------------------------------------------------------------
 
@@ -1430,7 +1159,8 @@ def season_dashboard(request, season_id: int) -> HttpResponse:
         **body,
         "sidebar_active": None,
         "sidebar_links": sidebar_links,
-        "play_error": None,
+        # ANG-01d-2 — a sync play view refused by a live run flashes here.
+        "play_error": request.session.pop("play_error", None),
         "play_job_id": None,
     }
     return render(request, "seasons/dashboard.html", context)
@@ -1442,7 +1172,7 @@ def season_dashboard(request, season_id: int) -> HttpResponse:
 
 
 def _render_season_dashboard_error(
-    request: HttpRequest, season: Season, play_error: str
+    request: HttpRequest, season: Season, play_error: str, *, status: int = 400
 ) -> HttpResponse:
     """LG-01d — re-render the Season dashboard with ``play_error`` set."""
     season_mode = season.state
@@ -1457,18 +1187,18 @@ def _render_season_dashboard_error(
         "play_error": play_error,
         "play_job_id": None,
     }
-    return render(request, "seasons/dashboard.html", context, status=400)
+    return render(request, "seasons/dashboard.html", context, status=status)
 
 
 def start_season(request, season_id: int) -> HttpResponse:
     """LG-01d — POST entry point for the ``draft → active`` transition.
 
-    POST only. Idempotent on the "already active" double-submit race —
-    a ``ValidationError`` whose message contains the substring
-    ``"non-completed"`` (the LG-01 ``Season.clean()`` wording) is
-    swallowed and the user is redirected to the dashboard. Any other
-    ``ValidationError`` re-renders the Season dashboard with
-    ``play_error`` populated and HTTP 400.
+    POST only. ANG-01d-2 — delegates to ``league_play_services.start_season``:
+    a non-draft Season (active or completed) keeps the idempotent double-submit
+    302 to the dashboard but is never re-snapshotted or reopened. A
+    ``ValidationError`` whose message contains ``"non-completed"`` (the LG-01
+    ``Season.clean()`` wording) also redirects; any other ``ValidationError``
+    re-renders the Season dashboard with ``play_error`` populated and HTTP 400.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1477,7 +1207,9 @@ def start_season(request, season_id: int) -> HttpResponse:
     request.session["last_league_id"] = season.league_id
 
     try:
-        season.start_season()
+        play_services.start_season(season)
+    except SeasonNotDraftError:
+        return redirect("season_dashboard", season_id=season.id)
     except ValidationError as exc:
         messages_list = getattr(exc, "messages", None) or [str(exc)]
         joined = " ".join(messages_list)
@@ -1489,13 +1221,21 @@ def start_season(request, season_id: int) -> HttpResponse:
     return redirect("season_dashboard", season_id=season.id)
 
 
+def _redirect_with_play_error(season: Season, request, message: str) -> HttpResponse:
+    """ANG-01d-2 — redirect a sync play view back to the dashboard, flashing
+    ``message`` into the dashboard's ``play_error`` banner (popped on render)."""
+    request.session["play_error"] = message
+    return redirect("season_dashboard", season_id=season.id)
+
+
 def play_week(request, season_id: int) -> HttpResponse:
     """LG-01d — POST entry point for Play One Week (one matchday).
 
-    Sync, single ``@transaction.atomic`` wrapping every Round in the
-    next unplayed matchday. On a Season already finished (no unplayed
-    fixtures) ⇒ idempotent 302 redirect. On a non-``active`` Season ⇒
-    400 + ``play_error``.
+    Delegates to ``league_play_services.play_week`` (whole-matchday atomic, or
+    one bracket stage on a playoff cursor). On a Season already finished ⇒
+    idempotent 302 redirect. On a non-``active`` Season ⇒ 400 + ``play_error``.
+    ANG-01d-2 — while an Active play run is live ⇒ 302 back to the dashboard
+    with a ``play_error``.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1503,130 +1243,40 @@ def play_week(request, season_id: int) -> HttpResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    if season.state != "active":
-        return _render_season_dashboard_error(
-            request,
-            season,
-            f"Season must be active to play; got state={season.state!r}",
-        )
-
-    # LG-02-Part2c-3f — weekly playoff pacing. When the cursor sits on a
-    # built+active tournament phase, "One Week" drains exactly ONE bracket
-    # STAGE (the lowest incomplete (bracket_type, bracket_round) group) and
-    # then crowns the Season champion if the final node resolved. Otherwise
-    # the RR matchday path below runs unchanged. play_next_bracket_round
-    # carries its own per-Match atomicity, so the playoff branch needs no
-    # transaction.atomic wrapper.
-    #
-    # CONF-02 — "One Week" advances EVERY bracket of the phase by one stage
-    # (ADR-0035): California and Nevada play their semifinals in the same week,
-    # not one after the other. ``tournaments_for_phase`` returns the single
-    # Season-wide bracket for a 0/1-Conference Season, so that path is
-    # unchanged.
-    # CONF-04 — build the Worlds bracket BEFORE the cursor read (ADR-0037).
-    # The playoff branch below is guarded on ``bool(tournaments)``, and the
-    # cursor sitting on an unbuilt Worlds phase resolves to ``[]`` — so without
-    # this the click falls through to the round-robin path, finds no unplayed
-    # fixture and redirects having done nothing. That is the same DEAD CLICK
-    # CONF-03 closed for ``play_single_round``, one phase later. Idempotent:
-    # returns False and does nothing when the field is not ready or the bracket
-    # already exists.
-    season.build_pending_worlds_bracket()
-
-    phase = season.current_phase()
-    tournaments = season.tournaments_for_phase(phase) if phase is not None else []
-    if phase is not None and phase.phase_type == "tournament" and bool(tournaments):
-        from matches.tournament_engine import play_next_bracket_round
-
-        for tournament in tournaments:
-            play_next_bracket_round(tournament)
-        season.complete_if_finished()
-        return redirect("season_dashboard", season_id=season.id)
-
     try:
-        with transaction.atomic():
-            # LG-01j — deferred import of ArenaMap + the per-fixture
-            # map-resolver helper. Mirrors the ``play_season_task``
-            # pattern: ``in_bulk`` runs ONCE outside the per-fixture
-            # loop, the helper is called per fixture.
-            from core.models import ArenaMap
-            from matches.tasks import _fixture_map_ids, _resolve_fixture_map
-
-            # LG-02-Part2c-2 — by-phase fixtures (global-continuous matchday
-            # offset already applied) + phase-aware played_keys.
-            # LG-02-Part2c-3c — barrier-aware: the RR loop halts at an
-            # incomplete tournament phase so a mid-season bracket drains first.
-            by_phase = season.playable_fixtures_by_phase()
-            phase_by_id = {phase.id: phase for phase, _ in by_phase}
-            fixtures = [
-                (phase.id, fixture)
-                for phase, phase_fixtures in by_phase
-                for fixture in phase_fixtures
-            ]
-            # LG-02-Part2c-3a — played_keys gain ``leg`` so a double_round_robin
-            # phase's two legs are distinct.
-            played_keys = {
-                (
-                    gr.match.season_phase_id,
-                    frozenset({gr.match.team_red_id, gr.match.team_blue_id}),
-                    gr.round_number,
-                    gr.match.leg,
-                )
-                for gr in GameRound.objects.filter(match__season=season).select_related(
-                    "match"
-                )
-            }
-            to_play = select_play_fixtures(fixtures, played_keys, 1)
-            if not to_play:
-                return redirect("season_dashboard", season_id=season.id)
-            team_ids = {f.team_a_id for _pid, f in to_play} | {
-                f.team_b_id for _pid, f in to_play
-            }
-            team_by_id = Team.objects.in_bulk(team_ids)
-            # CONF-01 — build the team→Conference map ONCE outside the loop.
-            # CONF-06 — built BEFORE the bulk-load: the per-Conference rotation
-            # snapshots are part of the resolvable id union.
-            conf_by_team = season.conference_by_team_id()
-            # LG-01j — bulk-load the frozen-snapshot map pool once.
-            # SUB-01 — UNION the pool snapshot with the rotation snapshot so the
-            # ``rotate_by_matchday`` mode resolves its maps from the same load.
-            pool_by_id: dict[int, ArenaMap] = ArenaMap.objects.in_bulk(
-                _fixture_map_ids(season, conf_by_team)
-            )
-            for phase_id, fixture in to_play:
-                team_a = team_by_id[fixture.team_a_id]
-                team_b = team_by_id[fixture.team_b_id]
-                arena_map = _resolve_fixture_map(
-                    season, fixture, pool_by_id, conf_by_team=conf_by_team
-                )
-                # FIN-04 — roll injuries / resolve rosters in memory before the
-                # round sims, then restore the temporary roster afterwards.
-                token = resolve_injuries_for_fixture(season, team_a, team_b)
-                try:
-                    BatchSimulator().simulate_scheduled_round(
-                        season,
-                        team_a,
-                        team_b,
-                        fixture.round_number,
-                        arena_map=arena_map,
-                        season_phase=phase_by_id.get(phase_id),
-                        leg=fixture.leg,
-                        conference=conf_by_team.get(fixture.team_a_id),
-                    )
-                finally:
-                    restore_after_fixture(token)
+        play_services.play_week(season)
+    except SeasonNotActiveError as exc:
+        return _render_season_dashboard_error(request, season, str(exc))
+    except PlayInProgressError as exc:
+        return _redirect_with_play_error(season, request, str(exc))
     except (ValidationError, ValueError) as exc:
         return _render_season_dashboard_error(request, season, str(exc))
 
     return redirect("season_dashboard", season_id=season.id)
 
 
-def play_two_months(request, season_id: int) -> HttpResponse:
-    """LG-01d — POST entry point for the Play Two Months async run.
+def _play_in_progress_response(exc: PlayInProgressError) -> JsonResponse:
+    """ANG-01d-2 — the HTML async endpoints' 409 while a run is live."""
+    return JsonResponse(
+        {"error": str(exc), "code": "play_in_progress", "job_id": exc.job_id},
+        status=409,
+    )
 
-    Validates the Season is ``active`` (else 400 + ``play_error``), then
-    enqueues ``play_season_task.delay(season_id, max_matchdays=8)`` and
-    returns ``JsonResponse({"job_id", "season_id"}, status=202)``.
+
+def _broker_unavailable_response(exc: BrokerUnavailableError) -> JsonResponse:
+    """L-6 — the HTML async endpoints' 503 when the Celery broker is down
+    (the ``tournament_play_all`` JSON shape)."""
+    return JsonResponse({"error": str(exc)}, status=503)
+
+
+def _play_season_run_view(
+    request: HttpRequest, season_id: int, max_matchdays: int | None
+) -> HttpResponse:
+    """LG-01d — shared body of the two ``play_season_task`` async endpoints.
+
+    Non-active ⇒ 400 + ``play_error``; a live run ⇒ 409 ``play_in_progress``;
+    else enqueue through ``enqueue_play_run`` and return 202
+    ``{"job_id", "season_id"}``.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1634,52 +1284,37 @@ def play_two_months(request, season_id: int) -> HttpResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    if season.state != "active":
-        return _render_season_dashboard_error(
-            request,
-            season,
-            f"Season must be active to play; got state={season.state!r}",
-        )
+    try:
+        job_id = play_services.play_season_run(season, max_matchdays=max_matchdays)
+    except SeasonNotActiveError as exc:
+        return _render_season_dashboard_error(request, season, str(exc))
+    except PlayInProgressError as exc:
+        return _play_in_progress_response(exc)
+    except BrokerUnavailableError as exc:
+        return _broker_unavailable_response(exc)
+    return JsonResponse({"job_id": job_id, "season_id": season.id}, status=202)
 
-    result = play_season_task.delay(season.id, max_matchdays=8)
-    season.active_play_job_id = result.id
-    season.play_cancel_requested = False
-    season.save(update_fields=["active_play_job_id", "play_cancel_requested"])
-    return JsonResponse({"job_id": result.id, "season_id": season.id}, status=202)
+
+def play_two_months(request, season_id: int) -> HttpResponse:
+    """LG-01d — POST entry point for the Play Two Months async run (8 matchdays)."""
+    return _play_season_run_view(request, season_id, 8)
 
 
 def play_until_end(request, season_id: int) -> HttpResponse:
     """LG-01d — POST entry point for the Play Until End of Season async run."""
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
-
-    season = get_owned_or_404(Season, request, pk=season_id)
-    request.session["last_league_id"] = season.league_id
-
-    if season.state != "active":
-        return _render_season_dashboard_error(
-            request,
-            season,
-            f"Season must be active to play; got state={season.state!r}",
-        )
-
-    result = play_season_task.delay(season.id, max_matchdays=None)
-    season.active_play_job_id = result.id
-    season.play_cancel_requested = False
-    season.save(update_fields=["active_play_job_id", "play_cancel_requested"])
-    return JsonResponse({"job_id": result.id, "season_id": season.id}, status=202)
+    return _play_season_run_view(request, season_id, None)
 
 
 def play_single_round(request, season_id: int) -> HttpResponse:
     """LG-02-Part2c-1 — POST entry point for Play Single Round (one playoff
     Match).
 
-    Sync. POST only (405 on GET). Requires the cursor be on a built + active
-    tournament phase; otherwise re-renders the Season dashboard with a
-    ``play_error`` (HTTP 400, the LG-01d ``play_error`` pattern). Plays
-    exactly one playoff Match via ``play_next_node``, then
-    ``complete_if_finished()`` crowns the Season when the final node
-    resolves. 302 redirect to the dashboard on success.
+    Sync. POST only (405 on GET). Delegates to
+    ``league_play_services.play_single_round``. A cursor that is not on a built
+    + active tournament phase re-renders the Season dashboard with a
+    ``play_error`` (HTTP 400); ANG-01d-2 — so does a non-active Season, and a
+    live Active play run redirects back with a ``play_error``. 302 redirect to
+    the dashboard on success.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1687,56 +1322,12 @@ def play_single_round(request, season_id: int) -> HttpResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    phase = season.current_phase()
-    tournaments = (
-        season.tournaments_for_phase(phase)
-        if phase is not None and phase.phase_type == "tournament"
-        else []
-    )
-    if not tournaments:
-        return _render_season_dashboard_error(
-            request, season, "No active playoff bracket to play."
-        )
-
-    from matches.tournament_engine import play_next_node
-
-    # CONF-02 — play ONE node, from the first bracket that still has a playable
-    # one. For a 0/1-Conference Season ``tournaments`` is ``[phase.tournament]``
-    # so this is byte-identical to the single ``play_next_node`` call it
-    # replaces; for a regional phase it walks the Conferences in ordinal order,
-    # keeping "Play Single Round" a single-node step across the whole phase.
-    progressed = False
-    for tournament in tournaments:
-        if play_next_node(tournament) is not None:
-            progressed = True
-            break
-    # CONF-03 — seed UNCONDITIONALLY after the click (idempotent, returns 0 when
-    # nothing is ready). This is what stops "Play Single Round" from becoming a
-    # DEAD CLICK: the click that resolves a Regional playoff's final node leaves
-    # that bracket ``completed`` and its Last-chance sibling ``setup``, so the
-    # dashboard would read neither "active" nor "completed" and hide the control.
-    # Seeding here flips the sibling to ``active`` before the redirect renders.
-    seeded = season.seed_pending_last_chance_brackets(phase)
-    if not progressed and seeded:
-        # Nothing was playable this click, but seeding just made something
-        # playable — play one node so the click is never wasted. ``tournaments``
-        # was resolved BEFORE the seed and already contains the eager row, so it
-        # sees the newly-seeded bracket; do not re-resolve.
-        for tournament in tournaments:
-            if play_next_node(tournament) is not None:
-                break
-    # CONF-04 — build the Worlds bracket if the click just finished the last
-    # Regional playoff (ADR-0037). Without this the regionals-finishing click
-    # would leave the cursor on an unbuilt Worlds phase, whose
-    # ``tournaments_for_phase`` is ``[]`` — so the NEXT click would 400 with
-    # "No active playoff bracket to play." and the user could never start Worlds.
-    # The return value is discarded and this click deliberately does NOT play a
-    # Worlds node: it already played its regional node, and the next click finds
-    # ``current_phase()`` on a built Worlds phase and drains it normally. The
-    # ``phase`` / ``tournaments`` locals above are stale afterwards; nothing
-    # below re-reads them, so do NOT re-resolve.
-    season.build_pending_worlds_bracket()
-    season.complete_if_finished()
+    try:
+        play_services.play_single_round(season)
+    except (SeasonNotActiveError, WrongPhaseError) as exc:
+        return _render_season_dashboard_error(request, season, str(exc))
+    except PlayInProgressError as exc:
+        return _redirect_with_play_error(season, request, str(exc))
     return redirect("season_dashboard", season_id=season.id)
 
 
@@ -1744,9 +1335,11 @@ def play_playoffs(request, season_id: int) -> JsonResponse:
     """LG-02-Part2c-1 — POST entry point for the Play Playoffs async run.
 
     POST only (405 on GET). Requires the cursor be on a built + active
-    tournament phase; otherwise 409 JSON ``{"error": ...}``. Happy path
-    enqueues ``play_playoffs_task.delay(season_id)`` and returns
-    ``JsonResponse({"job_id", "season_id"}, status=202)``.
+    tournament phase; otherwise 409 JSON ``{"error": ...}``. A live run ⇒ 409
+    ``play_in_progress``. Happy path enqueues ``play_playoffs_task`` through
+    ``enqueue_play_run`` and returns ``JsonResponse({"job_id", "season_id"},
+    status=202)``. The CONF-04 Worlds build-before-cursor-read and the CONF-02
+    ``tournaments_for_phase`` guard live in ``play_playoffs_run``.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1754,45 +1347,27 @@ def play_playoffs(request, season_id: int) -> JsonResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    # CONF-04 — build BEFORE the cursor read (ADR-0037). The cursor may already
-    # be parked on an unbuilt Worlds phase, whose ``tournaments_for_phase`` is
-    # ``[]`` — the guard below would 409 "No active playoff bracket to play." and
-    # the drain could never be started. The call MUST precede the
-    # ``current_phase()`` read, not merely the ``if``:
-    # ``build_pending_worlds_bracket`` writes ``phase.tournament`` on its OWN
-    # freshly-loaded ``SeasonPhase`` instance, so a ``phase`` object read before
-    # the build carries a stale ``tournament_id is None`` — and
-    # ``tournaments_for_phase`` reads exactly that attribute.
-    season.build_pending_worlds_bracket()
-
-    phase = season.current_phase()
-    # CONF-02 — guard through the ``tournaments_for_phase`` seam. A regional
-    # phase carries a NULL ``tournament_id`` (its N brackets hang off
-    # ``regional_tournaments``), so the old ``tournament_id is None`` guard
-    # returned 409 and made the already-generalised ``play_playoffs_task``
-    # unreachable for a >= 2-Conference Season. Byte-identical for 0/1.
-    if (
-        phase is None
-        or phase.phase_type != "tournament"
-        or not season.tournaments_for_phase(phase)
-    ):
+    try:
+        job_id = play_services.play_playoffs_run(season)
+    except (SeasonNotActiveError, WrongPhaseError):
         return JsonResponse({"error": "No active playoff bracket to play."}, status=409)
-
-    result = play_playoffs_task.delay(season.id)
-    season.active_play_job_id = result.id
-    season.play_cancel_requested = False
-    season.save(update_fields=["active_play_job_id", "play_cancel_requested"])
-    return JsonResponse({"job_id": result.id, "season_id": season.id}, status=202)
+    except PlayInProgressError as exc:
+        return _play_in_progress_response(exc)
+    except BrokerUnavailableError as exc:
+        return _broker_unavailable_response(exc)
+    return JsonResponse({"job_id": job_id, "season_id": season.id}, status=202)
 
 
 def play_cancel(request, season_id: int) -> JsonResponse:
     """PLAY-01 — POST-only cooperative cancel for an in-flight async run.
 
-    Sets ``Season.play_cancel_requested = True`` and returns
-    ``JsonResponse({"cancelled": True, "season_id": ...})`` (HTTP 200).
-    No active-run guard — a stale flag is cleared by the next enqueue.
-    The task reads the flag (top + between fixtures), stops cleanly, and
-    returns NORMALLY (Celery SUCCESS, mapped to ``"complete"``).
+    ANG-01d-2 — sets ``Season.play_cancel_requested`` only while an Active
+    play run is live (``request_play_cancel``) and returns
+    ``JsonResponse({"cancelled": <bool>, "season_id": ...})`` (HTTP 200).
+    ``cancelled`` is ``False`` and nothing is written when no run is live, so
+    a late click cannot leave a stale flag that kills the next run. The task
+    reads the flag (top + between fixtures), stops cleanly, and returns
+    NORMALLY (Celery SUCCESS, mapped to ``"complete"``).
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1800,9 +1375,8 @@ def play_cancel(request, season_id: int) -> JsonResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    season.play_cancel_requested = True
-    season.save(update_fields=["play_cancel_requested"])
-    return JsonResponse({"cancelled": True, "season_id": season.id})
+    cancelled = play_services.request_play_cancel(season)
+    return JsonResponse({"cancelled": cancelled, "season_id": season.id})
 
 
 def member_night_setup(request, season_id: int) -> HttpResponse:
@@ -1816,6 +1390,11 @@ def member_night_setup(request, season_id: int) -> HttpResponse:
     build-then-drain race-free step), then 302-redirects to the dashboard. The
     draw consumes a FRESH ``random.Random()`` (non-deterministic by design,
     outside the SIM-07/08 seed chain). Re-running setup APPENDS more games.
+
+    ANG-01d-2 — binds ``MemberNightSetupForm`` and delegates to
+    ``league_play_services.setup_member_night``. A non-active Season, a cursor
+    not on a member night, or an invalid ``sites`` selection re-renders the 400
+    dashboard; a live Active play run redirects back with a ``play_error``.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1823,47 +1402,23 @@ def member_night_setup(request, season_id: int) -> HttpResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    phase = season.current_phase()
-    if phase is None or phase.phase_type != "member_night":
-        return _render_season_dashboard_error(
-            request, season, "No member night to set up."
+    try:
+        # The state guards run before the Form (the API's order too).
+        play_services.require_member_night(
+            season, play_services.NO_MEMBER_NIGHT_TO_SET_UP
         )
-
-    chosen = request.POST.getlist("sites")
-    if not chosen:
-        return _render_season_dashboard_error(
-            request, season, "Pick at least one Site for the member night."
+        form = MemberNightSetupForm(request.POST, season=season)
+        if not form.is_valid():
+            return _render_season_dashboard_error(
+                request, season, form.errors["sites"][0]
+            )
+        play_services.setup_member_night(
+            season, form.cleaned_data["sites"], manager=manager_or_none(request)
         )
-    full_pool = season._member_night_pool_by_site()
-    pool_by_site = {s: full_pool.get(s, []) for s in chosen}
-
-    with transaction.atomic():
-        games = member_night.draw_member_night_games(pool_by_site, random.Random())
-        for game in games:
-            base_name = f"MN {game.site} G{game.game_index + 1}"
-            team_a = Team.objects.create(
-                name=f"{base_name} A",
-                is_draw_team=True,
-                manager=manager_or_none(request),
-            )
-            for suffix, player_id in game.team_a.items():
-                setattr(team_a, f"slot_{suffix}_id", player_id)
-            team_a.save()
-            team_b = Team.objects.create(
-                name=f"{base_name} B",
-                is_draw_team=True,
-                manager=manager_or_none(request),
-            )
-            for suffix, player_id in game.team_b.items():
-                setattr(team_b, f"slot_{suffix}_id", player_id)
-            team_b.save()
-            Match.objects.create(
-                season=season,
-                season_phase=phase,
-                team_red=team_a,
-                team_blue=team_b,
-                is_completed=False,
-            )
+    except (SeasonNotActiveError, WrongPhaseError) as exc:
+        return _render_season_dashboard_error(request, season, str(exc))
+    except PlayInProgressError as exc:
+        return _redirect_with_play_error(season, request, str(exc))
 
     return redirect("season_dashboard", season_id=season.id)
 
@@ -1873,10 +1428,11 @@ def play_member_night(request, season_id: int) -> JsonResponse:
 
     Requires the cursor be on a member_night phase with >= 1 unplayed
     member-night Match; otherwise 409 JSON ``{"error": ...}`` (the
-    ``play_playoffs`` async-guard precedent). Happy path enqueues
-    ``play_member_night_task.delay(season_id)`` and returns
-    ``JsonResponse({"job_id", "season_id"}, status=202)``. Polling REUSES the
-    ``play_status`` view verbatim (same URL, same 5-base-key + PLAY-01 JSON).
+    ``play_playoffs`` async-guard precedent). Happy path starts
+    ``play_member_night_task`` through ``enqueue_play_run`` (ANG-01d-2) and
+    returns ``JsonResponse({"job_id", "season_id"}, status=202)``. A non-active
+    Season re-renders the 400 dashboard; a live run is a 409 ``play_in_progress``.
+    Polling REUSES the ``play_status`` view verbatim.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1884,32 +1440,37 @@ def play_member_night(request, season_id: int) -> JsonResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    phase = season.current_phase()
-    if (
-        phase is None
-        or phase.phase_type != "member_night"
-        or not Match.objects.filter(season_phase=phase, is_completed=False).exists()
-    ):
+    try:
+        job_id = play_services.play_member_night_run(season)
+    except SeasonNotActiveError as exc:
+        return _render_season_dashboard_error(request, season, str(exc))
+    except PlayInProgressError as exc:
+        return _play_in_progress_response(exc)
+    except (WrongPhaseError, NoMemberNightGamesError):
         return JsonResponse({"error": "No member night to play."}, status=409)
-
-    result = play_member_night_task.delay(season.id)
-    season.active_play_job_id = result.id
-    season.play_cancel_requested = False
-    season.save(update_fields=["active_play_job_id", "play_cancel_requested"])
-    return JsonResponse({"job_id": result.id, "season_id": season.id}, status=202)
+    except BrokerUnavailableError as exc:
+        return _broker_unavailable_response(exc)
+    return JsonResponse({"job_id": job_id, "season_id": season.id}, status=202)
 
 
-def _next_member_night_shell(season: "Season") -> "tuple[SeasonPhase, Match] | None":
-    """LG-07a — the current member_night phase + its first unplayed game shell,
-    or ``None`` when the cursor is not on a member_night phase / nothing unplayed.
+_T = TypeVar("_T")
+
+
+def _member_night_play_guarded(
+    request: HttpRequest, season: Season, play: Callable[[Season], _T]
+) -> tuple[_T | None, HttpResponse | None]:
+    """Run a synchronous member-night play service on ``season``.
+
+    Returns ``(result, None)``, or ``(None, error_response)``: a non-active
+    Season / no member night / nothing unplayed re-renders the 400 dashboard; a
+    live Active play run redirects back with a ``play_error``.
     """
-    phase = season.current_phase()
-    if phase is None or phase.phase_type != "member_night":
-        return None
-    shell = Match.objects.filter(season_phase=phase, is_completed=False).first()
-    if shell is None:
-        return None
-    return phase, shell
+    try:
+        return play(season), None
+    except (SeasonNotActiveError, WrongPhaseError, NoMemberNightGamesError) as exc:
+        return None, _render_season_dashboard_error(request, season, str(exc))
+    except PlayInProgressError as exc:
+        return None, _redirect_with_play_error(season, request, str(exc))
 
 
 def play_member_night_single(request, season_id: int) -> HttpResponse:
@@ -1927,19 +1488,11 @@ def play_member_night_single(request, season_id: int) -> HttpResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    resolved = _next_member_night_shell(season)
-    if resolved is None:
-        return _render_season_dashboard_error(
-            request, season, "No member-night game to play."
-        )
-    phase, shell = resolved
-    BatchSimulator().simulate_scheduled_round(
-        season, shell.team_red, shell.team_blue, 1, season_phase=phase
+    _result, error = _member_night_play_guarded(
+        request, season, play_services.play_member_night_single
     )
-    BatchSimulator().simulate_scheduled_round(
-        season, shell.team_red, shell.team_blue, 2, season_phase=phase
-    )
-    season.complete_if_finished()
+    if error is not None:
+        return error
     return redirect("season_dashboard", season_id=season.id)
 
 
@@ -1959,23 +1512,15 @@ def play_member_night_live(request, season_id: int) -> HttpResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    resolved = _next_member_night_shell(season)
-    if resolved is None:
-        return _render_season_dashboard_error(
-            request, season, "No member-night game to play."
-        )
-    phase, shell = resolved
-    round_1 = BatchSimulator().simulate_scheduled_round(
-        season, shell.team_red, shell.team_blue, 1, season_phase=phase, fidelity="full"
+    result, error = _member_night_play_guarded(
+        request, season, play_services.play_member_night_live
     )
-    round_2 = BatchSimulator().simulate_scheduled_round(
-        season, shell.team_red, shell.team_blue, 2, season_phase=phase, fidelity="full"
-    )
-    season.complete_if_finished()
+    if error is not None:
+        return error
     request.session["live_watch"] = {
         "season_id": season.id,
-        "kind": "member_night",
-        "round_ids": [round_1.id, round_2.id],
+        "kind": result.kind,
+        "round_ids": result.round_ids,
     }
     request.session.modified = True
     return redirect("play_week_live_watch", season_id=season.id)
@@ -2003,37 +1548,17 @@ def _build_play_status_response(
     poll (running OR complete). ``season`` is resolved by the caller and passed
     in; when absent (defensive) the live fragments fall back to empty strings.
     """
-    state = async_result.state
-    status = _celery_state_to_job_status(state)
-
-    completed = 0
-    total = 0
-    error: str | None = None
-    cancelled = False
-
-    if state == "PROGRESS":
-        info = async_result.info or {}
-        if isinstance(info, dict):
-            completed = int(info.get("completed", 0) or 0)
-            total = int(info.get("total", 0) or 0)
-    elif state == "SUCCESS":
-        result = async_result.result or {}
-        if isinstance(result, dict):
-            completed = int(result.get("completed", 0) or 0)
-            total = int(result.get("total", 0) or 0)
-            cancelled = bool(result.get("cancelled", False))
-    elif state in ("FAILURE", "REVOKED"):
-        info = async_result.info
-        if info is not None:
-            error = str(info)
+    # ANG-01d-2 — the Celery-state mapping is shared with the API's structured
+    # Job poll (``build_play_job_status``).
+    job = play_services.job_status_fields(async_result)
 
     panels = _render_live_play_panels(season)
 
     return {
-        "status": status,
-        "completed": completed,
-        "total": total,
-        "error": error,
+        "status": job["status"],
+        "completed": job["completed"],
+        "total": job["total"],
+        "error": job["error"],
         "season_id": season_id,
         "standings": panels["standings"],
         "leaders": panels["leaders"],
@@ -2041,7 +1566,7 @@ def _build_play_status_response(
         # update per poll (they change per Round, unlike Match-keyed standings).
         "next_round": panels["next_round"],
         "round_count": panels["round_count"],
-        "cancelled": cancelled,
+        "cancelled": job["cancelled"],
     }
 
 
@@ -2139,11 +1664,13 @@ def play_status(request, season_id: int, job_id: str) -> JsonResponse:
 def play_week_live(request, season_id: int) -> HttpResponse:
     """POST: play (commit) the manager's game for this week NOW, kick off the
     rest of the matchday / bracket stage in the BACKGROUND, then redirect to the
-    live-watch page. Results are final the moment it runs — there is no preview
+    live-watch page. Results are final the moment it runs -- there is no preview
     and no discard.
 
-    405 on non-POST; 400 dashboard re-render on a non-active Season / no live
-    game; a manager bye just runs the week in the background and returns to the
+    Delegates to ``league_play_services.play_live``. 405 on non-POST; 400
+    dashboard re-render on a non-active Season, no live game, or a simulator
+    error; a live play run ⇒ 302 back to the dashboard with a ``play_error``;
+    a manager bye just runs the week in the background and returns to the
     dashboard.
     """
     if request.method != "POST":
@@ -2152,98 +1679,30 @@ def play_week_live(request, season_id: int) -> HttpResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    if season.state != "active":
-        return _render_season_dashboard_error(
-            request,
-            season,
-            f"Season must be active to play; got state={season.state!r}",
-        )
-
-    cursor = _resolve_live_cursor(season)
-
-    # Manager has a bye this matchday: nothing to watch — just run the week in
-    # the background and return to the dashboard.
-    if cursor is not None and cursor.get("kind") == "rr_bye":
-        play_season_task.delay(season.id, max_matchdays=1)
-        return redirect("season_dashboard", season_id=season.id)
-
-    if cursor is None or cursor.get("kind") not in ("rr", "playoff"):
-        return _render_season_dashboard_error(
-            request, season, "No live game to play for your team."
-        )
-
     try:
-        if cursor["kind"] == "rr":
-            # Resolve the fixture's arena map (deterministic by fixture identity
-            # over the frozen pool snapshot) and play the manager's Round now.
-            from core.models import ArenaMap
-            from matches.tasks import _fixture_map_ids, _resolve_fixture_map
-
-            # CONF-01 — resolve the fixture's Conference for the Match stamp.
-            # CONF-06 — built BEFORE the bulk-load: the per-Conference rotation
-            # snapshots are part of the resolvable id union.
-            conf_by_team = season.conference_by_team_id()
-            # SUB-01 — UNION pool + rotation snapshots for the map resolver.
-            pool_by_id = ArenaMap.objects.in_bulk(
-                _fixture_map_ids(season, conf_by_team)
-            )
-            arena_map = _resolve_fixture_map(
-                season, cursor["fixture"], pool_by_id, conf_by_team=conf_by_team
-            )
-            # FIN-04 — roll injuries / resolve rosters in memory before the
-            # round sims, then restore the temporary roster afterwards.
-            token = resolve_injuries_for_fixture(
-                season, cursor["red_team"], cursor["blue_team"]
-            )
-            try:
-                game_round = BatchSimulator().simulate_scheduled_round(
-                    season,
-                    cursor["red_team"],
-                    cursor["blue_team"],
-                    cursor["fixture"].round_number,
-                    arena_map=arena_map,
-                    season_phase=cursor["season_phase"],
-                    leg=cursor["fixture"].leg,
-                    conference=conf_by_team.get(cursor["fixture"].team_a_id),
-                    fidelity="full",
-                )
-            finally:
-                restore_after_fixture(token)
-            round_ids = [game_round.id]
-        else:  # playoff — play the manager's bracket node (its 2-round Match)
-            from matches.tournament_engine import play_specific_node
-
-            node = cursor["node"]
-            play_specific_node(node, fidelity="full")
-            node.refresh_from_db()
-            latest = (
-                node.series_matches.select_related("match")
-                .order_by("-game_number")
-                .first()
-            )
-            round_ids = (
-                list(
-                    latest.match.game_rounds.order_by("round_number").values_list(
-                        "id", flat=True
-                    )
-                )
-                if latest is not None and latest.match_id is not None
-                else []
-            )
-    except (ValidationError, ValueError) as exc:
+        result = play_services.play_live(season)
+    except PlayInProgressError as exc:
+        return _redirect_with_play_error(season, request, str(exc))
+    except BrokerUnavailableError as exc:
+        return _render_season_dashboard_error(request, season, str(exc), status=503)
+    except (
+        SeasonNotActiveError,
+        NoLiveCursorError,
+        ValidationError,
+        ValueError,
+    ) as exc:
         return _render_season_dashboard_error(request, season, str(exc))
 
-    # Play the REST of the matchday / drain the rest of the bracket stage in the
-    # background (it skips the manager's just-played game via the played-keys /
-    # find-next-playable-node checks).
-    play_season_task.delay(season.id, max_matchdays=1)
+    # Manager bye: nothing to watch -- the week runs in the background.
+    if not result.round_ids:
+        return redirect("season_dashboard", season_id=season.id)
 
-    # Hand the watched round id(s) to the watch page — just "what to show" (the
+    # Hand the watched round id(s) to the watch page -- just "what to show" (the
     # game is already committed, so this is NOT a retry pin).
     request.session["live_watch"] = {
         "season_id": season.id,
-        "kind": cursor["kind"],
-        "round_ids": round_ids,
+        "kind": result.kind,
+        "round_ids": result.round_ids,
     }
     request.session.modified = True
     return redirect("play_week_live_watch", season_id=season.id)
@@ -2306,9 +1765,14 @@ def play_week_live_watch(request, season_id: int) -> HttpResponse:
             request, season, "No live game to watch — start one from the Play menu."
         )
 
+    cursor_kind = watch.get("kind", "rr")
+    if cursor_kind == "member_night":
+        # A member-night game is one 2-Round Match: replay it like a playoff
+        # Match (both Rounds + toggle); one Round falls back to the RR path.
+        cursor_kind = "playoff" if len(rounds) > 1 else "rr"
     context = {
         "season": season,
-        "cursor_kind": watch.get("kind", "rr"),
+        "cursor_kind": cursor_kind,
         "preview_round": rounds[0],
         "preview_round_2": rounds[1] if len(rounds) > 1 else None,
         "sidebar_active": None,
@@ -2412,153 +1876,6 @@ def league_delete(request: HttpRequest, league_id: int) -> HttpResponse:
         "leagues/league_confirm_delete.html",
         {"league": league, "delete_summary": delete_summary},
     )
-
-
-# FIN-04 — the 6 (slot field, role) pairs of the active roster, in slot order.
-_INJURY_SLOT_FIELDS = (
-    ("slot_commander", "commander"),
-    ("slot_heavy", "heavy"),
-    ("slot_scout_1", "scout"),
-    ("slot_scout_2", "scout"),
-    ("slot_medic", "medic"),
-    ("slot_ammo", "ammo"),
-)
-
-
-def _resolve_injuries_for_team(season: Season, team: Team, token: dict) -> None:
-    """FIN-04 — resolve injuries for ONE Team of a fixture, in-memory.
-
-    Steps (LOCKED order): the subjects are the 6 active-roster STARTERS only
-    (the ``slot_*`` players BEFORE substitution); an unavailable starter
-    decrements by 1 (no re-roll); a healthy starter who fields rolls a NEW
-    injury (fresh ``random.Random()`` per fixture, never the SIM seed chain) and
-    on a hit draws ``N = injury.draw_duration(...)`` from the LIVE current
-    ``Team.budget_health``; each now-unavailable starter resolves via the Team's
-    ``injury_policy`` (``auto_sub`` → bench → free-agent pool, ``play_hurt`` the
-    universal no-sub fallback). Stages the in-memory ``slot_*`` / 19-stat
-    mutations into ``token`` for ``restore_after_fixture`` and persists only the
-    ``games_unavailable`` change (``bulk_update`` with ``update_fields``).
-    """
-    # Snapshot the starters as they stood BEFORE any substitution (the
-    # subjects — fill-ins are never injury subjects, avoiding orphan injuries).
-    starters: list[tuple[str, "Player"]] = []
-    for slot_field, _role in _INJURY_SLOT_FIELDS:
-        player = getattr(team, slot_field)
-        if player is not None:
-            starters.append((slot_field, player))
-
-    rng = random.Random()  # FRESH per fixture — never the SIM seed chain.
-    health_effect = finance.health_effect(team.budget_health)
-
-    persisted: list[Player] = []  # players whose games_unavailable changed
-    for _slot_field, player in starters:
-        if player.games_unavailable > 0:
-            # DECREMENT an already-unavailable starter (whether sub'd out or
-            # playing hurt) — does NOT re-roll.
-            player.games_unavailable -= 1
-            persisted.append(player)
-        else:
-            # ROLL a healthy starter who actually fields.
-            age = player.age if player.age is not None else 25
-            if injury.roll_injury(age, rng):
-                n = injury.draw_duration(health_effect, age, rng)
-                player.games_unavailable = n
-                persisted.append(player)
-
-    if persisted:
-        Player.objects.bulk_update(persisted, ["games_unavailable"])
-
-    # RESOLVE the roster to a valid 6 for each now-unavailable starter.
-    bench_pool = list(team.bench_players)
-    league = season.league
-    free_agent_pool = (
-        list(league.free_agent_pool.players.all())
-        if league.free_agent_pool is not None
-        else []
-    )
-    used_sub_pks: set[int] = set()
-
-    for slot_field, player in starters:
-        if player.games_unavailable == 0:
-            continue  # this starter is fine — fields normally
-
-        if team.injury_policy == "auto_sub":
-            sub = _pick_substitute(bench_pool, free_agent_pool, used_sub_pks)
-            if sub is not None:
-                used_sub_pks.add(sub.pk)
-                # In-memory slot rewrite — restore records the ORIGINAL FK.
-                token["slot_restore"].append((team, slot_field, player))
-                setattr(team, slot_field, sub)
-                continue
-            # No available sub ⇒ play_hurt is the universal no-sub fallback.
-
-        # play_hurt (explicit policy OR the auto_sub no-sub fallback): rewrite
-        # the injured Player's 19 stat fields down by the penalty (clamp 0..100).
-        _apply_play_hurt(player, token)
-
-
-def _pick_substitute(
-    bench_pool: list, free_agent_pool: list, used_sub_pks: set
-) -> "Player | None":
-    """FIN-04 — pick an available substitute (``games_unavailable == 0``),
-    bench first then the League free-agent pool, never re-using one already
-    picked this fixture. Returns ``None`` when none is available."""
-    for source in (bench_pool, free_agent_pool):
-        for candidate in source:
-            if candidate.pk in used_sub_pks:
-                continue
-            if candidate.games_unavailable == 0:
-                return candidate
-    return None
-
-
-def _apply_play_hurt(player: "Player", token: dict) -> None:
-    """FIN-04 — subtract the flat play-hurt penalty from the injured Player's
-    19 stat fields in memory (clamped ``[0, 100]``), staging the originals into
-    ``token`` for restore. Never ``.save()``."""
-    penalty = injury.play_hurt_penalty()
-    originals: dict[str, int] = {}
-    for name in STAT_FIELDS:
-        current = getattr(player, name)
-        originals[name] = current
-        setattr(player, name, max(0, min(100, current - penalty)))
-    token["stat_restore"].append((player, originals))
-
-
-def resolve_injuries_for_fixture(
-    season: Season, team_red: Team, team_blue: Team
-) -> dict:
-    """FIN-04 — the single per-fixture injury resolver.
-
-    Called by every play path BEFORE ``simulate_scheduled_round(...)``. Returns
-    a RESTORE TOKEN (an opaque dict the caller hands to
-    ``restore_after_fixture(token)``). First-line GATE — a no-op ``{}`` when not
-    ``_is_career_league AND finance_enabled`` ⇒ byte-identical OFF. Operates on
-    the two in-memory Team objects the play loop already holds: rolls / decrements
-    availability (the only persisted write), substitutes or plays-hurt in memory.
-    """
-    league = season.league
-    if not (_is_career_league(league) and league.finance_enabled):
-        return {}
-
-    token: dict = {"slot_restore": [], "stat_restore": []}
-    _resolve_injuries_for_team(season, team_red, token)
-    _resolve_injuries_for_team(season, team_blue, token)
-    return token
-
-
-def restore_after_fixture(token: dict) -> None:
-    """FIN-04 — undo every in-memory mutation ``resolve_injuries_for_fixture``
-    applied (Team ``slot_*`` FKs and injured-Player 19-stat fields), restoring
-    the pre-fixture in-memory state. NEVER ``.save()`` — the only persisted
-    writes are the ``games_unavailable`` decrement/set done explicitly above."""
-    if not token:
-        return
-    for team, slot_field, original_player in token.get("slot_restore", []):
-        setattr(team, slot_field, original_player)
-    for player, originals in token.get("stat_restore", []):
-        for name, value in originals.items():
-            setattr(player, name, value)
 
 
 @transaction.atomic

@@ -9,7 +9,7 @@ the views only parse requests and render.
 Must NOT import ``matches.league_views`` (the views import this module and
 re-export every moved name for back-compat). Randomness goes through
 ``import random`` + ``random.Random()`` so a test patch on
-``matches.league_views.random.Random`` (the global ``random`` module) still
+``matches.league_services.random.Random`` (the global ``random`` module) still
 reaches the moved code.
 """
 
@@ -1100,8 +1100,8 @@ def build_dashboard_context(
 
     # LG-02-Part2c-1 — playoff-cursor keys. NAV-01 factored the 9 play keys
     # (action button + playoff group + One-Week-Live gate + career flag) OUT
-    # of this body into ``_build_play_controls_context`` (the topnav ``Play ▾``
-    # dropdown source). ``build_dashboard_context`` KEEPS ``playoff_tournament_id``
+    # of this body into ``league_play_services.build_play_controls`` (the
+    # topnav ``Play ▾`` dropdown source). ``build_dashboard_context`` KEEPS ``playoff_tournament_id``
     # ONLY — the read-only "View bracket" dashboard link still needs it (§4).
     (
         _playoff_phase_active,
@@ -1608,6 +1608,10 @@ def build_history_row(
         enrolled_teams.append((tid, team_obj.name if team_obj is not None else ""))
 
     standings = compute_standings(matches_list_in, enrolled_teams)
+    # L-1 — a >= 2-Conference Season plays disjoint schedules, so whole-Season
+    # placings compare nothing (CONF-01); only a stamped (Worlds) champion shows.
+    if len(season.conferences.all()) >= 2:
+        standings = []
 
     top_three: list = [
         teams_by_id.get(standings[i].team_id) if i < len(standings) else None
@@ -1963,6 +1967,16 @@ def _league_teardown_targets(league: League) -> tuple[list[int], set[int]]:
         Team.objects.filter(
             drawn_player_entries__tournament_id__in=tournament_ids
         ).values_list("id", flat=True)
+    )
+    # L-10: member-night drawn Teams are never enrolled in the Season; they are
+    # reachable only through the League's (season-attached) Matches.
+    candidate_team_ids.update(
+        Team.objects.filter(is_draw_team=True)
+        .filter(
+            Q(red_matches__season__league=league)
+            | Q(blue_matches__season__league=league)
+        )
+        .values_list("id", flat=True)
     )
     return tournament_ids, candidate_team_ids
 
@@ -2814,7 +2828,7 @@ def history_seasons(
         # LG-07a — prefetch ``matches__season_phase`` so the member-night
         # in-Python skip in ``build_history_row`` reads the FK off the cache
         # (no per-Match N+1 on ``match.season_phase``).
-        .prefetch_related("matches", "matches__season_phase", "teams")
+        .prefetch_related("matches", "matches__season_phase", "teams", "conferences")
         .filter(state__in=["active", "draft", "completed"])
         .order_by("-id")
     )

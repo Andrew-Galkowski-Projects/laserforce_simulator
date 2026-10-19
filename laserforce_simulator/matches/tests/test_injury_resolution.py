@@ -190,7 +190,9 @@ class TestGateOff(TestCase):
     def test_finance_disabled_returns_empty_token_and_no_mutation(self) -> None:
         _league, season, red, blue = self._two_teams_season(finance_enabled=False)
         # Even under a forced always-injure RNG, the gate short-circuits.
-        with mock.patch("matches.league_views.random.Random", _AlwaysInjureRandom):
+        with mock.patch(
+            "matches.league_play_services.random.Random", _AlwaysInjureRandom
+        ):
             token = resolve_injuries_for_fixture(season, red, blue)
         self.assertEqual(token, {})
         for team in (red, blue):
@@ -235,7 +237,9 @@ class TestRollSetsGamesUnavailable(TestCase):
         from matches.injury import DURATION_MAX_GAMES, DURATION_MIN_GAMES
 
         _league, season, red, blue = self._setup()
-        with mock.patch("matches.league_views.random.Random", _AlwaysInjureRandom):
+        with mock.patch(
+            "matches.league_play_services.random.Random", _AlwaysInjureRandom
+        ):
             token = resolve_injuries_for_fixture(season, red, blue)
         # At least one starter on each team is now unavailable; every set value
         # is within the duration clamp.
@@ -254,7 +258,9 @@ class TestRollSetsGamesUnavailable(TestCase):
 
     def test_never_injure_leaves_counter_zero(self) -> None:
         _league, season, red, blue = self._setup()
-        with mock.patch("matches.league_views.random.Random", _NeverInjureRandom):
+        with mock.patch(
+            "matches.league_play_services.random.Random", _NeverInjureRandom
+        ):
             token = resolve_injuries_for_fixture(season, red, blue)
         for team in (red, blue):
             for player in team.active_players:
@@ -281,7 +287,9 @@ class TestStarterOnlySubjects(TestCase):
         _set_starter_ages(blue, 45)
         # A bench player on red (not in any slot).
         bench = _add_bench_player(red, "Benchy")
-        with mock.patch("matches.league_views.random.Random", _AlwaysInjureRandom):
+        with mock.patch(
+            "matches.league_play_services.random.Random", _AlwaysInjureRandom
+        ):
             token = resolve_injuries_for_fixture(season, red, blue)
         bench.refresh_from_db()
         # Even under an always-injure RNG the bench player is never a subject.
@@ -297,7 +305,9 @@ class TestStarterOnlySubjects(TestCase):
         _set_starter_ages(blue, 45)
         # A free-agent-pool player.
         fa = Player.objects.create(team=league.free_agent_pool, name="Freebie")
-        with mock.patch("matches.league_views.random.Random", _AlwaysInjureRandom):
+        with mock.patch(
+            "matches.league_play_services.random.Random", _AlwaysInjureRandom
+        ):
             token = resolve_injuries_for_fixture(season, red, blue)
         fa.refresh_from_db()
         self.assertEqual(fa.games_unavailable, 0)
@@ -325,7 +335,9 @@ class TestDecrementUnavailableStarter(TestCase):
         starter.games_unavailable = 4
         starter.save(update_fields=["games_unavailable"])
         # Use a never-injure RNG so the OTHER healthy starters don't muddy this.
-        with mock.patch("matches.league_views.random.Random", _NeverInjureRandom):
+        with mock.patch(
+            "matches.league_play_services.random.Random", _NeverInjureRandom
+        ):
             token = resolve_injuries_for_fixture(season, red, blue)
         starter.refresh_from_db()
         # Decremented by exactly 1 — and NOT re-rolled to a fresh duration.
@@ -342,7 +354,9 @@ class TestDecrementUnavailableStarter(TestCase):
         starter = red.active_players[0]
         starter.games_unavailable = 1
         starter.save(update_fields=["games_unavailable"])
-        with mock.patch("matches.league_views.random.Random", _NeverInjureRandom):
+        with mock.patch(
+            "matches.league_play_services.random.Random", _NeverInjureRandom
+        ):
             token = resolve_injuries_for_fixture(season, red, blue)
         starter.refresh_from_db()
         self.assertEqual(starter.games_unavailable, 0)
@@ -378,7 +392,9 @@ class TestAutoSubRoster(TestCase):
 
     def test_roster_stays_valid_six_after_resolution(self) -> None:
         _league, season, red, blue = self._setup_with_bench()
-        with mock.patch("matches.league_views.random.Random", _AlwaysInjureRandom):
+        with mock.patch(
+            "matches.league_play_services.random.Random", _AlwaysInjureRandom
+        ):
             token = resolve_injuries_for_fixture(season, red, blue)
         # In-memory the roster the simulator will read must still be 6 starters.
         self.assertEqual(len(red.active_players), 6)
@@ -395,7 +411,9 @@ class TestAutoSubRoster(TestCase):
             "medic": red.slot_medic_id,
             "ammo": red.slot_ammo_id,
         }
-        with mock.patch("matches.league_views.random.Random", _AlwaysInjureRandom):
+        with mock.patch(
+            "matches.league_play_services.random.Random", _AlwaysInjureRandom
+        ):
             token = resolve_injuries_for_fixture(season, red, blue)
         restore_after_fixture(token)
         after = {
@@ -420,7 +438,9 @@ class TestAutoSubRoster(TestCase):
                 "slot_ammo_id",
             )
         )
-        with mock.patch("matches.league_views.random.Random", _AlwaysInjureRandom):
+        with mock.patch(
+            "matches.league_play_services.random.Random", _AlwaysInjureRandom
+        ):
             token = resolve_injuries_for_fixture(season, red, blue)
         restore_after_fixture(token)
         db_after = list(
@@ -468,7 +488,9 @@ class TestPlayHurtStats(TestCase):
 
     def test_in_memory_stats_dropped_by_penalty(self) -> None:
         _league, season, red, blue = self._setup_play_hurt()
-        with mock.patch("matches.league_views.random.Random", _AlwaysInjureRandom):
+        with mock.patch(
+            "matches.league_play_services.random.Random", _AlwaysInjureRandom
+        ):
             token = resolve_injuries_for_fixture(season, red, blue)
         # Some in-memory red starter has every stat at most 60 - penalty (it was
         # rewritten down for the play-hurt sim).
@@ -486,7 +508,9 @@ class TestPlayHurtStats(TestCase):
 
     def test_stats_restored_after_fixture(self) -> None:
         _league, season, red, blue = self._setup_play_hurt()
-        with mock.patch("matches.league_views.random.Random", _AlwaysInjureRandom):
+        with mock.patch(
+            "matches.league_play_services.random.Random", _AlwaysInjureRandom
+        ):
             token = resolve_injuries_for_fixture(season, red, blue)
         restore_after_fixture(token)
         for player in red.active_players:
@@ -497,7 +521,9 @@ class TestPlayHurtStats(TestCase):
 
     def test_db_stats_unchanged_never_saved(self) -> None:
         _league, season, red, blue = self._setup_play_hurt()
-        with mock.patch("matches.league_views.random.Random", _AlwaysInjureRandom):
+        with mock.patch(
+            "matches.league_play_services.random.Random", _AlwaysInjureRandom
+        ):
             token = resolve_injuries_for_fixture(season, red, blue)
         restore_after_fixture(token)
         # Re-read every red starter's stats straight from the DB — unchanged.
@@ -533,7 +559,9 @@ class TestNoSubFallbackToPlayHurt(TestCase):
         blue.injury_policy = "auto_sub"
         blue.save(update_fields=["injury_policy"])
         # NO bench players added, and the free-agent pool is empty ⇒ no subs.
-        with mock.patch("matches.league_views.random.Random", _AlwaysInjureRandom):
+        with mock.patch(
+            "matches.league_play_services.random.Random", _AlwaysInjureRandom
+        ):
             token = resolve_injuries_for_fixture(season, red, blue)
         # Even with every starter injured and no sub source, the in-memory
         # roster is still a valid 6.
@@ -567,7 +595,9 @@ class TestGamesUnavailablePersisted(TestCase):
                 for name in _STAT_FIELDS:
                     setattr(player, name, 50)
                 player.save()
-        with mock.patch("matches.league_views.random.Random", _AlwaysInjureRandom):
+        with mock.patch(
+            "matches.league_play_services.random.Random", _AlwaysInjureRandom
+        ):
             token = resolve_injuries_for_fixture(season, red, blue)
         restore_after_fixture(token)
         # In the DB: stats unchanged (50), but games_unavailable may be > 0.
