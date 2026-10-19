@@ -503,3 +503,168 @@ class LeagueScreensMixin:
                 ],
             }
         )
+
+    # --- feats + playoffs (T6) -------------------------------------------
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="statistical-feats",
+        url_name="statistical-feats",
+    )
+    def statistical_feats(self, request: Request, pk: str | None = None) -> Response:
+        """Statistical Feats: paged per-(Player, Round) feat rows + team feats."""
+        from matches.api_forms import StatisticalFeatsParamsForm
+        from matches.league_screen_services import build_statistical_feats
+
+        league = self.get_object()
+        params = self.screen_params(StatisticalFeatsParamsForm, league)
+        scope = resolve_season_scope(
+            league, pick_displayed_season(league), params["season"]
+        )
+        sort, direction = parse_ordering(params["ordering"])
+        feat_rows, team_feats = build_statistical_feats(
+            scope, team_id=params["team_id"], sort=sort, direction=direction
+        )
+        page = self.paginate_queryset(feat_rows)
+        data = {
+            "feats": feat_rows_payload(
+                page, watched_ids=watched_player_ids(request.user, league)
+            ),
+            "team_feats": team_feats_payload(team_feats),
+        }
+        return self.paginator.get_paginated_response(
+            data, extra_meta={"season_scope": season_scope_meta(scope)}
+        )
+
+    @action(detail=True, methods=["get"], url_path="playoffs", url_name="playoffs")
+    def playoffs(self, request: Request, pk: str | None = None) -> Response:
+        """Playoffs: the Season's brackets + Worlds qualifiers (no Career)."""
+        from dataclasses import asdict
+
+        from matches.api_forms import PlayoffsParamsForm
+        from matches.league_screen_services import build_playoffs
+
+        league = self.get_object()
+        params = self.screen_params(PlayoffsParamsForm, league)
+        scope = resolve_season_scope(
+            league,
+            pick_displayed_season(league),
+            params["season"],
+            allow_career=False,
+        )
+        season = scope.selected if isinstance(scope.selected, Season) else None
+        screen = build_playoffs(season)
+        return self.scoped_response(
+            {
+                "season": season_ref(season) if season is not None else None,
+                "brackets": [bracket_payload(b) for b in screen.brackets],
+                "worlds_qualifiers": [
+                    {**asdict(q), "provenance_label": q.provenance_label}
+                    for q in screen.worlds_qualifiers
+                ],
+            },
+            scope,
+        )
+
+
+def _team_or_none(team: Any) -> dict | None:
+    from matches.api_refs import team_ref
+
+    return team_ref(team) if team is not None else None
+
+
+def bracket_payload(bracket: dict) -> dict:
+    """One ``build_playoffs`` bracket as refs: ``{key, name, stage,
+    stage_label, conference, champion, pending, rounds: [{bracket_round,
+    nodes}]}`` (the ``phase`` / ``tournament`` instances are dropped)."""
+    from matches.api_refs import conference_ref
+
+    conference = bracket["conference"]
+    return {
+        "key": bracket["key"],
+        "name": bracket["name"],
+        "stage": bracket["stage"],
+        "stage_label": bracket["stage_label"],
+        "conference": conference_ref(conference) if conference is not None else None,
+        "champion": _team_or_none(bracket["champion"]),
+        "pending": bracket["pending"],
+        "rounds": [
+            {
+                "bracket_round": bracket_round["bracket_round"],
+                "nodes": [
+                    {
+                        "position": node["position"],
+                        "team_a": _team_or_none(node["team_a"]),
+                        "team_b": _team_or_none(node["team_b"]),
+                        "seed_a": node["seed_a"],
+                        "seed_b": node["seed_b"],
+                        "is_bye": node["is_bye"],
+                        "wins_a": node["wins_a"],
+                        "wins_b": node["wins_b"],
+                        "series_length": node["series_length"],
+                        "winner": _team_or_none(node["winner"]),
+                        "games": [dict(game) for game in node["games"]],
+                    }
+                    for node in bracket_round["nodes"]
+                ],
+            }
+            for bracket_round in bracket["rounds"]
+        ],
+    }
+
+
+def feat_rows_payload(rows: list, *, watched_ids: set[int]) -> list[dict]:
+    """``FeatRow`` flattened (``asdict``) plus ``player`` (ref) and ``watched``."""
+    from dataclasses import asdict
+
+    players = Player.objects.select_related("team").in_bulk(
+        [row.player_id for row in rows]
+    )
+    out: list[dict] = []
+    for row in rows:
+        player = players.get(row.player_id)
+        out.append(
+            {
+                **asdict(row),
+                "stats": dict(row.stats),
+                "player": (
+                    player_ref(player)
+                    if player is not None
+                    else {"id": row.player_id, "name": row.player_name, "team": None}
+                ),
+                "watched": row.player_id in watched_ids,
+            }
+        )
+    return out
+
+
+def team_feats_payload(team_feats: list) -> list[dict]:
+    """``{kind, label, team: team_ref | None, round_id}`` per team feat.
+
+    ``TeamFeatRecord`` carries only the winner's name (Team names are not
+    unique), so the ref resolves from the record's Round's Match winner.
+    """
+    from matches.api_refs import team_ref
+    from matches.models import GameRound
+
+    rounds = GameRound.objects.select_related("match__winner").in_bulk(
+        [r.round_id for r in team_feats if r.round_id is not None]
+    )
+    out: list[dict] = []
+    for record in team_feats:
+        game_round = rounds.get(record.round_id)
+        winner = (
+            game_round.match.winner
+            if game_round is not None and game_round.match is not None
+            else None
+        )
+        out.append(
+            {
+                "kind": record.kind,
+                "label": record.label,
+                "team": team_ref(winner) if winner is not None else None,
+                "round_id": record.round_id,
+            }
+        )
+    return out

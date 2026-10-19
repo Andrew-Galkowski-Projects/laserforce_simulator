@@ -222,3 +222,54 @@ class WatchListParamsForm(LeagueScreenParamsForm):
     ordering = forms.ChoiceField(
         choices=ordering_choices(PLAYER_STAT_SORT_KEYS), required=False
     )
+
+
+# --- feats + playoffs (T6) ---------------------------------------------------
+
+
+class StatisticalFeatsParamsForm(LeagueScreenParamsForm):
+    """ANG-01e T6 -- ``?season=&team_id=&ordering=`` for ``statistical-feats/``.
+
+    ``team_id`` must be a Team enrolled in the displayed Season (the HTML
+    filter's option set); anything else is a 400 ``invalid_choice``.
+    """
+
+    ordering_default = "-round"
+
+    season = forms.CharField(required=False)
+    team_id = forms.IntegerField(required=False)
+    ordering = forms.ChoiceField(required=False)
+
+    def __init__(self, *args: Any, league: League, **kwargs: Any) -> None:
+        super().__init__(*args, league=league, **kwargs)
+        # Deferred: league_screen_services imports the ORM-heavy modules.
+        from matches.league_screen_services import FEATS_SORT_KEYS
+
+        self.fields["ordering"].choices = ordering_choices(sorted(FEATS_SORT_KEYS))
+
+    def clean_team_id(self) -> int | None:
+        from matches.league_screen_services import feats_enrolled_teams
+        from matches.league_services import pick_displayed_season
+
+        team_id = self.cleaned_data.get("team_id")
+        if team_id is None:
+            return None
+        enrolled = {
+            t.id for t in feats_enrolled_teams(pick_displayed_season(self.league))
+        }
+        if team_id not in enrolled:
+            raise forms.ValidationError(
+                "Select a valid choice. %(value)s is not one of the available choices.",
+                code="invalid_choice",
+                params={"value": team_id},
+            )
+        return team_id
+
+
+class PlayoffsParamsForm(LeagueScreenParamsForm):
+    """ANG-01e T6 -- ``?season=`` for ``playoffs/``; no ``career`` option (a
+    bracket has no cross-Season aggregate), so ``career`` is a 400."""
+
+    allow_career = False
+
+    season = forms.CharField(required=False)
