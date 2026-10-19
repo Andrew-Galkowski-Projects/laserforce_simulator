@@ -1,0 +1,219 @@
+---
+name: next-feature
+description: >
+  Runs the next laserforce_simulator PLAN.md task through Matt Pocock's
+  pipeline: pick it, grill-with-docs in rounds (prototype for what talking
+  can't settle), to-spec as a GitHub spec issue with agreed seams, to-tickets
+  as sub-issues with blocked-by edges, implement-spec with one test-first agent
+  per ticket on an integration branch, then the full suite, a browser check,
+  two-axis code-review, a PR with a merge-danger body, and a retro. Use when
+  the user says "next feature", "next task", "pick up the next thing" in this
+  repo, or invokes /next-feature.
+---
+
+# next-feature
+
+The engineering skills come from the `mattpocock-skills` plugin (marketplace
+`mattpocock`). Two kinds:
+
+- **Callable** through the Skill tool, by full name so `code-review` doesn't
+  resolve to the built-in reviewer: `mattpocock-skills:grilling`,
+  `domain-modeling`, `prototype`, `tdd`, `code-review`, `pr`,
+  `writing-for-agents`.
+- **User-invoked** (`disable-model-invocation`), which the Skill tool refuses:
+  `grill-with-docs`, `to-spec`, `to-tickets`, `implement-spec`, `retro`. Read
+  their `SKILL.md` and follow it in place:
+  `~/.claude/plugins/cache/mattpocock/mattpocock-skills/<version>/skills/engineering/<skill>/SKILL.md`
+  (`grilling` and `writing-for-agents` sit under `productivity/` instead).
+
+A session sees the plugin only if it was installed before the session
+started. "Unknown skill" for a callable one means a stale session: read it from
+the path above.
+
+The roadmap is `PLAN.md`; specs and tickets are GitHub Issues:
+`docs/agents/issue-tracker.md`. Glossary and ADRs: `docs/agents/domain.md`.
+Review standards: `CODING_STANDARDS.md`. Everything in `CLAUDE.md` still
+holds. In particular: PowerShell, no `cd` or `-C` before git, never `git add
+-A` or a folder pathspec, and ASCII-only console output.
+
+## Step 1: Pick the task
+
+Read `PLAN.md`. The target is the first task heading (`### ID` or `#### ID`),
+top to bottom, not marked `[DONE]`, `[DEFERRED]` or sitting under a *Parked*
+section. If the user named a task, use that one. A task whose PR has already
+merged (check `git log main --oneline` for its ID) but isn't marked `[DONE]`
+is bookkeeping, not the next feature: say so and offer to close it out.
+
+Print its ID, title and one sentence, and confirm with the user before going
+on. Read its PLAN.md section in full, plus the app `CLAUDE.md` for the area.
+
+If the section already has `Spec: #<n>`, read that issue and skip to Step 4's
+end; if the spec already has ticket sub-issues, skip to Step 6.
+
+## Step 2: Worktree
+
+Enter a worktree (`EnterWorktree`), named for the task in kebab case (e.g.
+`ang-01e-league-stats-api`), and `git merge --ff-only main`. A worktree has no
+`db.sqlite3`: run `python laserforce_simulator/manage.py migrate` in it before
+any server or management command, and run any server on `--port 8001` so the
+owner's 8000 stays theirs.
+
+## Step 3: Grill
+
+`grill-with-docs` is just two skills together, and both can be called:
+call the Skill tool twice, for `mattpocock-skills:grilling` and
+`mattpocock-skills:domain-modeling`, on the task. Grilling asks in **rounds**:
+every frontier question at once, numbered, each with a recommended answer
+worded so "yes" accepts it. `AskUserQuestion` takes at most four questions, so
+a bigger round goes as numbered text in chat and the owner answers there.
+Facts come from subagents reading the code; decisions come from the owner.
+Terms go into `GLOSSARY.md` as they settle; rulings that are hard to reverse
+become ADRs in `docs/adr/` (next free number).
+
+The PLAN.md section often already holds answers the owner gave earlier. Read
+them and don't re-ask; put them in the first round as settled.
+
+Cover, in the same rounds:
+
+- **Ownership.** Which Account sees and edits what, and where the `manager`
+  seam (`accounts/permissions.py`) filters it. Cross-Account rows are 404.
+- **Data model.** New models or columns and their migrations.
+- **Simulation.** Whether it touches the engine, RNG or ordering. If so, the
+  determinism story (seeds, serial-vs-parallel test).
+- **API vs HTML.** Whether it lands in the HTML views, `/api/` (ADR-0039
+  envelope, Form-bound writes), or both through a shared `*services.py`.
+- **Scope.** What is out, written down so nobody builds it.
+
+For a question talking can't settle (a screen layout, a play-loop interaction),
+call `mattpocock-skills:prototype`, let the owner pick, and feed the answer
+back into the grilling.
+
+Done when the frontier is empty and the owner confirms you understand each
+other. Save settled answers under the task's PLAN.md section as you go, so a
+crash loses nothing.
+
+## Step 4: Spec
+
+Follow `to-spec`. Agree the **seams** with the owner first: prefer existing
+ones, fewest possible, ideally one. In this app that is usually a service
+function in a `*services.py` module, or a DRF endpoint tested through the API
+client. Every new public name, signature and return shape at the seam goes in
+the spec's Implementation Decisions.
+
+Publish it as a GitHub issue titled `<TASK-ID>: <title>`, labelled
+`ready-for-agent`. Add `Spec: #<n>` under the task's heading in `PLAN.md`.
+Commit the grill's docs (PLAN.md, GLOSSARY.md, ADRs) on the worktree branch,
+each path named.
+
+## Step 5: Tickets
+
+Follow `to-tickets` on the spec. Vertical tracer-bullet slices (model,
+service, view/endpoint, tests), each sized for one fresh session: estimated
+tokens / 150k is the ticket count. A task small enough for one session gets
+one ticket. Don't pad.
+
+Create each ticket as a sub-issue of the spec with native blocked-by edges,
+using the `gh api` fallbacks in `docs/agents/issue-tracker.md` (installed `gh`
+predates `--parent`).
+
+**The owner's approval of the breakdown authorises local commits** on this
+task's integration and ticket branches (the `CLAUDE.md` exception). Say so
+when asking.
+
+## Step 6: Implement
+
+The worktree's branch is the **integration branch**. Follow `implement-spec`
+against the spec issue. Implementers run in their own worktrees branched from
+the integration branch, started one at a time: a worktree created while
+another agent is still committing can branch from a stale tip, so confirm
+each one's base before starting the next. Point each one at the spec issue and its ticket issue rather
+than pasting them. Add these constraints to every implementer prompt:
+
+- Follow `mattpocock-skills:tdd` at the spec's agreed seams: one failing
+  test, then just enough code, one slice at a time. Tests and code for a
+  ticket come from the **same** agent. Test placement is in `CLAUDE.md`.
+- Run only your own test files. The full suite is the orchestrator's job.
+- Write files with Write and Edit, never a heredoc. Glob before creating a
+  file, in case the name is taken.
+- PowerShell. No `cd` or `-C` before git. Enumerate every path you stage: no
+  `git add -A`, `.`, `-a` or folders. No `git stash`, `reset`, `restore` or
+  `checkout` outside your own worktree.
+- Run `python -m black` on the files you touched. Run `makemigrations` for
+  model changes and commit the migration with the model.
+- Ownership is filtered on the server through the `manager` seam.
+- If you need a server, it goes on a free port, never 8000.
+- Commit only on your ticket branch. Merge the integration tip into it before
+  reporting done. Comment the commit hash on your ticket issue.
+
+## Step 7: Verify
+
+Confirm every ticket landed on the integration branch
+(`git log main..HEAD --oneline`, `git status`). Then check the agents' work by
+hand (`CLAUDE.md`, *Sub-Agent Delegation*): off-by-one in tick math, constant
+mismatches, field-name drift between spec and code, missing seam methods.
+
+1. **Full suite**, once: `python -m pytest laserforce_simulator`, plus
+   `python laserforce_simulator/manage.py makemigrations --check --dry-run`.
+   Triage every failure:
+   - a **regression** from this task: fix the code;
+   - a test that encoded the **old contract** on purpose: update it honestly,
+     with a comment on why the invariant still holds. Never quietly weaken a
+     guard;
+   - **pre-existing**: confirm it fails on `main` too, and say so.
+   Repeat until 0 failed. Report the exact counts.
+2. **Mutation-test** the test that matters most: put the bug back on purpose
+   and check the test catches it.
+3. **Browser check** through Chrome DevTools MCP when anything a person sees
+   changed, following `CLAUDE.md`'s *Browser Sessions* rules (reuse the
+   existing tab, close what you open, end on `about:blank`). Server on 8001.
+   Assert on `innerText` or the API response body, not a status code. Check
+   from a second Account when ownership changed. An API-only task checks the
+   endpoints in the browsable API or with the test client instead, and says
+   which. Clean up the test data the pass created.
+
+## Step 8: Review
+
+Call `mattpocock-skills:code-review` with fixed point `main`. The Spec axis
+reads the spec issue and its tickets; the Standards axis reads
+`CODING_STANDARDS.md` plus Fowler's smells. Show both reports. Fix the
+findings the owner agrees with in one implementer pass, re-run the affected
+tests, and review again only if a fix changed behaviour.
+
+## Step 9: PR
+
+Run `/update-docs` so the app `CLAUDE.md` files, `PLAN.md` (`[DONE] Shipped
+(<date>).` plus what the work found) and `IMPLEMENTED_FEATURES.md` match the
+branch. Then `/pr-ready` for its checks, and write the body with
+`mattpocock-skills:pr`:
+
+```markdown
+## Summary
+<the smallest picture of the change: call tree, file tree, mermaid, or diff sketch>
+
+## Evidence
+- **Before:** <what happened before, or the failing test>
+- **After:** <what happens now>; full suite: <N passed, 0 failed>; browser: <what was read off the page>
+
+## Merge Danger
+**Door:** <one-way or two-way>. <migrations? AUTH/ownership changes? determinism?>
+**Blast radius:** <one word or phrase>
+
+Closes #<spec>
+Closes #<ticket> (one line per ticket)
+```
+
+A migration that drops or rewrites data is a one-way door. Say so plainly.
+
+**Stop and show the owner the commit summary and PR body.** Commit, push and
+`gh pr create --body-file` only on their "go" (`CLAUDE.md`, *Git Workflow*).
+Then stop again: the owner reviews and says when to merge. After the merge,
+remove the implementer worktrees and their branches, then the integration
+worktree, and `git pull --ff-only` in the main checkout.
+
+## Step 10: Retro
+
+Before the owner clears the session, offer `retro`. It only **suggests**
+changes to the setup: a navigation pointer, a check instead of a rule, a
+`CLAUDE.md` line to cut or move to `CODING_STANDARDS.md`. The owner picks
+which to keep, and the kept ones land as their own small PR. Never apply a
+retro finding unasked.
