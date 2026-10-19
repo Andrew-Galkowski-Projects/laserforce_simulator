@@ -19,6 +19,11 @@ from typing import Literal
 
 from matches.league_services import pick_displayed_season
 from matches.models import League, PlayerRoundState, Season, WatchedPlayer
+
+# --- league player page (T3) imports ---
+from matches import development
+from matches.league_services import _player_award_labels, compute_season_award_set
+from matches.models import PlayerSeasonRating
 from matches.season_player_stats import (
     PlayerStatRow,
     aggregate_player_stats,
@@ -402,3 +407,115 @@ def update_team_finances(league: League, team: Team, form: _forms.ModelForm) -> 
         setattr(team, field, value)
     team.save(update_fields=list(form.cleaned_data))
     return team
+
+
+# --- league player page (T3) ---
+
+
+@dataclass(frozen=True)
+class PlayerDetail:
+    """The League player page sections (LG-06h / LG-03 / LG-04).
+
+    The row dicts keep the HTML template's shapes:
+
+    - ``rs_rows``: per-Season ``{year, season_id, team_name, team_id, games,
+      stats}``, newest first; only Seasons the Player has Rounds in.
+    - ``career_row``: the same shape (``year="Career"``, ``season_id=None``),
+      or ``None`` when the Player has no Rounds in this League.
+    - ``player_awards``: ``{season_id, season_name, award_labels}``, newest
+      first; only Seasons with >= 1 award.
+    - ``ratings_history``: ``{season_id, season_name, age, overall_rating,
+      potential, stats}``, oldest first.
+    """
+
+    rs_rows: list[dict]
+    career_row: dict | None
+    player_awards: list[dict]
+    ratings_history: list[dict]
+
+
+def _row_from_stat_row(
+    stat_row: PlayerStatRow, year: str, season_id: int | None
+) -> dict:
+    """Build a per-Season / Career row dict from an aggregated PlayerStatRow."""
+    return {
+        "year": year,
+        "season_id": season_id,
+        "team_name": stat_row.team_name,
+        "team_id": stat_row.team_id,
+        "games": stat_row.games,
+        "stats": stat_row.stats,
+    }
+
+
+def build_player_detail(league: League, player: Player) -> PlayerDetail:
+    """The League player page for ``player`` in ``league``.
+
+    Lenient: a Player with no Rounds in this League gets empty ``rs_rows`` /
+    ``player_awards`` and ``career_row=None`` -- never an error.
+    """
+    seasons = list(league.seasons.order_by("-id"))
+
+    # Per-Season rows -- one aggregation pass per Season the Player has
+    # Rounds in (newest first).
+    rs_rows: list[dict] = []
+    for season in seasons:
+        round_dicts = build_round_dicts(
+            {"game_round__match__season": season, "player_id": player.id}
+        )
+        if not round_dicts:
+            continue
+        agg = aggregate_player_stats(round_dicts)
+        if agg:
+            rs_rows.append(_row_from_stat_row(agg[0], season.name, season.id))
+
+    # Career-in-League row -- one League-wide aggregation pass.
+    career_row: dict | None = None
+    career_dicts = build_round_dicts(
+        {"game_round__match__season__league": league, "player_id": player.id}
+    )
+    if career_dicts:
+        career_agg = aggregate_player_stats(career_dicts)
+        if career_agg:
+            career_row = _row_from_stat_row(career_agg[0], "Career", None)
+
+    # LG-03 -- per-Season awards (newest first). Seasons the Player never
+    # appeared in are pruned by a cheap existence check before the
+    # O(PlayerRoundState) award computation.
+    player_awards: list[dict] = []
+    for season in seasons:
+        if not PlayerRoundState.objects.filter(
+            game_round__match__season=season, player_id=player.id
+        ).exists():
+            continue
+        labels = _player_award_labels(compute_season_award_set(season), player.id)
+        if labels:
+            player_awards.append(
+                {
+                    "season_id": season.id,
+                    "season_name": season.name,
+                    "award_labels": labels,
+                }
+            )
+
+    # LG-04 -- per-Season ratings history in THIS League, oldest first.
+    ratings_history = [
+        {
+            "season_id": r.season_id,
+            "season_name": r.season.name,
+            "age": r.age,
+            "overall_rating": r.overall_rating,
+            "potential": r.potential,
+            "stats": {name: getattr(r, name) for name in development.STAT_FIELDS},
+        }
+        for r in PlayerSeasonRating.objects.filter(player=player, season__league=league)
+        .select_related("season")
+        .order_by("season_id")
+    ]
+
+    return PlayerDetail(
+        rs_rows=rs_rows,
+        career_row=career_row,
+        player_awards=player_awards,
+        ratings_history=ratings_history,
+    )
