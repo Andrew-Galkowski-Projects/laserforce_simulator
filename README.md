@@ -38,6 +38,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - `whitenoise` for production static file serving directly from Django (no separate nginx required)
 - `django-storages` + `boto3` for Cloudflare R2 media storage in production (set `R2_*` env vars to activate; falls back to local disk when unset)
 - `djangorestframework` + `django-filter` for the JSON API at `/api/`
+- `django-cors-headers` so the Angular dev server (`http://localhost:4200`) can call `/api/` cross-origin. Set `CORS_ALLOWED_ORIGINS` (comma-separated) to change the allowed origins; the default is the dev server under `DEBUG` and none otherwise.
 - `psycopg2-binary` for PostgreSQL support in production (CI runs tests against `postgres:16`)
 - pytest + pytest-django for testing, with Codecov coverage reporting
 - Docker (multi-stage `python:3.11-slim`); `docker-compose.yml` for local dev with PostgreSQL; deployed to Fly.io via CI on push to `main`
