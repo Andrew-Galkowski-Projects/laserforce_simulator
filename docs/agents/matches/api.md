@@ -53,8 +53,10 @@ settings, **not per view**. New API slices (ANG-01b..g) must follow it. Seam con
   Every viewset mixes in `ListOnlyFilterMixin` first, so filters apply to `list` only and query params
   never 404 / 400 a detail or write lookup.
 - **Ownership.** `get_queryset()` is built on `owned_queryset` / `owned_match_q` /
-  `owned_game_round_q`, and DRF `get_object()` does the rest ⇒ 404 cross-Account. All viewsets keep
-  `@method_decorator(login_not_required, name="dispatch")` + settings-level `IsAuthenticated`.
+  `owned_game_round_q`, and DRF `get_object()` does the rest ⇒ 404 cross-Account. Authentication is
+  the settings-level `IsAuthenticated`. DRF 3.15+ exempts every DRF view from the login middleware
+  itself, so the `login_not_required` decorators are redundant. Any anonymous-allowed view must go on
+  the allowlist in `accounts/tests/test_login_exempt_surfaces.py`.
   `ArenaMap` is the deliberate exception (shared reference data — see `core/CLAUDE.md`): since
   **ANG-01c** `/api/maps/` is a full read / write map-editor API (upload, delete with a 409
   `map_in_use` guard, zones, zone-config, sight lines, ranked cells, strong spots, spawn cells,

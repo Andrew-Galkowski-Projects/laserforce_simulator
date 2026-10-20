@@ -170,28 +170,26 @@ names**, not paths, so they survive a mount change), plus
 `REST_FRAMEWORK["DEFAULT_PERMISSION_CLASSES"] = ["rest_framework.permissions.IsAuthenticated"]`
 (was `AllowAny`).
 
-**Exactly twenty-one surfaces carry `@login_not_required`** (eleven at UX-01; **ANG-01a** added
-`ArenaMapViewSet`, ANG-01b..f the save-batch, League, Season and Tournament API views, and
-**ANG-01g** the four Accounts API views). Nothing else is exempt —
-including every HTML `/maps/` route:
+**The exemptions are guarded by `accounts/tests/test_login_exempt_surfaces.py`**, which walks the
+live URLconf. Adding an exemption means adding it to that test's allowlist, a deliberate security
+decision. There are two kinds:
 
-| Surface | Form |
-|---|---|
-| `login`, `logout`, `password_change`, `password_change_done` | `login_not_required(SomeView.as_view(...))` in `accounts/urls.py` |
-| `accounts.views.register` | plain `@login_not_required` decorator |
-| `TeamViewSet`, `PlayerViewSet` (`teams/api_views.py`); `MatchViewSet`, `GameRoundViewSet`, `SimulateBatchAPIView`, `SimulateBatchStatusAPIView`, `SaveBatchGamesAPIView`, `SaveBatchStatusAPIView` (`matches/api_views.py`); `LeagueViewSet`, `SeasonViewSet` (`matches/league_api_views.py`); `TournamentViewSet` (`matches/tournament_api_views/base.py`); `ArenaMapViewSet` (`core/api_views.py`, ANG-01a); `MeAPIView`, `RegisterAPIView`, `PasswordChangeAPIView`, `SelfInsertAPIView` (`accounts/api_views.py`, ANG-01g) | `@method_decorator(login_not_required, name="dispatch")` |
-
-Of the API surfaces only `RegisterAPIView` is truly anonymous-allowed (`permission_classes =
-[AllowAny]`); every other one is still gated by the settings-level `IsAuthenticated`.
+- **HTML views** are exempt only through an explicit `login_not_required`. Today these are Django's
+  `login`, `logout`, `password_change`, `password_change_done` and the admin login, plus
+  `accounts.views.register`. Every other HTML route stays gated, including every `/maps/` route.
+- **Every DRF view is exempt automatically.** DRF 3.15+ `APIView.as_view()` sets
+  `login_required = False` itself. The API is gated instead by the settings-level `IsAuthenticated`,
+  which returns a **403 JSON** body rather than the middleware's HTML **302** to the login page.
+  Logging out of the browser session still locks the API. Only `RegisterAPIView`
+  (`permission_classes = [AllowAny]`) is anonymous-allowed. The
+  `@method_decorator(login_not_required, name="dispatch")` lines on the API views are redundant
+  under DRF 3.15+.
 
 `process_view` receives the **resolved** view, so an `include()` cannot be wrapped. Both CBV forms
 work because `View.as_view()` copies `dispatch.__dict__` onto the returned callable.
 
-**Why the API is exempt from the *middleware* but not from auth:** DRF's `IsAuthenticated` then
-returns a **403 JSON** body instead of the middleware's HTML **302** to the login page, which is what
-an API client needs. Logging out of the browser session still locks the API. All four viewsets also
-gain a manager-scoped `get_queryset()` while **keeping** their class-level `queryset` attribute (the
-DRF router needs it for basename introspection).
+All four ANG-01a viewsets have a manager-scoped `get_queryset()` and still **keep** their
+class-level `queryset` attribute, because the DRF router needs it for basename introspection.
 
 **API ownership after ANG-01a** ([ADR-0039](../../docs/adr/0039-rest-api-envelope-and-form-bound-writes.md)).
 The anonymous 403 is now enveloped — `{"errors": [{"code": "not_authenticated", ...}], "meta": {}}` —
@@ -377,9 +375,8 @@ not part of it. Exactly four public functions:
 ### Link / unlink views (`accounts/views.py`, `accounts/urls.py`)
 
 Both are **POST-only** (`@require_POST` ⇒ any other method **405**) and are **not**
-`@login_not_required` — the eleven exempt surfaces stayed eleven at UX-02 (see
-[The global login gate](#the-global-login-gate) for today's list); an anonymous POST is 302'd to
-`LOGIN_URL` by the middleware.
+`@login_not_required` (see [The global login gate](#the-global-login-gate)). An anonymous POST is
+302'd to `LOGIN_URL` by the middleware.
 
 | URL name | Path | View |
 |---|---|---|

@@ -20,7 +20,10 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
 
 ## REST API (ADR-0039)
 
-- Writes bind the existing Django `Form`. Serializers are output-only.
+- Writes bind the existing Django `Form`. Serializers are output-only. When no HTML
+  Form exists (the HTML route takes the value from its URL), the write binds a small
+  params Form in `<app>/api_forms.py` the same way, as `ZoneSizeParamsForm` and
+  `SelfInsertParamsForm` do. Hand-rolled body validation is a finding.
 - Views raise errors; they never build a 4xx `Response` by hand.
 - Filters use an explicit `django-filter` allowlist.
 - A row owned by another Account returns 404. An anonymous request returns 403.

@@ -36,8 +36,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   (`+--+`, `|`, `+--+`) instead of `┌─┐│└─┘`.
 - PowerShell 5.1 strips inner quotes from native-command arguments and adds a
   BOM to text it pipes or `Set-Content`s. So: run a script through the **Bash
-  tool** (`python laserforce_simulator/manage.py shell < tmp.py`), commit with
-  `git commit -F <message-file>`, and edit source files with Write / Edit.
+  tool** with `python laserforce_simulator/manage.py shell -c "exec(open(r'<path>').read())"`.
+  Commit with `git commit -F <message-file>`, and edit source files with Write / Edit.
+  `shell < tmp.py` runs only one statement at a time on Windows, because Django skips
+  piped stdin on win32. Any function or `try` block in the script breaks, and the earlier
+  statements still run.
 - **Do not push large content through a shell heredoc.** Past roughly a few tens
   of KB the call fails with `ENAMETOOLONG: name too long, uv_spawn`, because the
   whole command arrives as one process argument. This bites when adding a long
