@@ -20,8 +20,12 @@ from teams.models import Team
 DEV_ORIGIN = "http://localhost:4200"
 OTHER_ORIGIN = "http://evil.example"
 
+dev_origin_only = override_settings(
+    CORS_ALLOWED_ORIGINS=[DEV_ORIGIN], CSRF_TRUSTED_ORIGINS=[DEV_ORIGIN]
+)
 
-@override_settings(CORS_ALLOWED_ORIGINS=[DEV_ORIGIN], CSRF_TRUSTED_ORIGINS=[DEV_ORIGIN])
+
+@dev_origin_only
 class TestCorsOnApi(TestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -55,7 +59,7 @@ class TestCorsOnApi(TestCase):
         self.assertNotIn("Access-Control-Allow-Credentials", response)
 
 
-@override_settings(CORS_ALLOWED_ORIGINS=[DEV_ORIGIN], CSRF_TRUSTED_ORIGINS=[DEV_ORIGIN])
+@dev_origin_only
 class TestAnonymousPreflight(TestCase):
     """The browser's preflight carries no cookie; it must not hit the login
     redirect (LoginRequiredMiddleware) or DRF's 403."""
@@ -74,11 +78,11 @@ class TestAnonymousPreflight(TestCase):
         self.assertIn("x-csrftoken", response["Access-Control-Allow-Headers"])
 
 
-@override_settings(CORS_ALLOWED_ORIGINS=[DEV_ORIGIN], CSRF_TRUSTED_ORIGINS=[DEV_ORIGIN])
-class TestCrossOriginWritePassesCsrf(TestCase):
+@dev_origin_only
+class TestCrossOriginWriteCsrf(TestCase):
     """A logged-in, CSRF-enforcing client writing from the dev origin with a
     valid token is accepted; the same write from an untrusted origin is a
-    CSRF 403 for an untrusted Origin."""
+    CSRF 403."""
 
     TOKEN = "a" * 32
 
