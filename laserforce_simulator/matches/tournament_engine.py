@@ -52,7 +52,7 @@ def _apply_role_assignment(team, slot_to_player: dict[str, int]) -> None:
 
 
 def _build_role_hook(tournament: Tournament):
-    """LG-02x-1 — build the ``before_round_hook`` closure for a Random-Draw
+    """LG-02x-1 — build the ``before_round_hook`` closure for a Player-pool draw
     Tournament.
 
     The closure ``(round_number, team_red, team_blue)`` re-assigns BOTH drawn
@@ -134,9 +134,9 @@ def play_specific_node(
 
     # 1-3. Simulate ONE Match (team_a plays red, team_b plays blue) and resolve
     # this Match's decisive winner (tie-break on a true tie). LG-02x-1 —
-    # Random-Draw tournaments re-assign drawn-Team role slots every Round via a
+    # Player-pool draw tournaments re-assign drawn-Team role slots every Round via a
     # before_round_hook; the preset path stays byte-identical (no hook).
-    if tournament.team_assembly == "random_draw":
+    if tournament.team_assembly == "player_pool":
         hook = _build_role_hook(tournament)
         match = BatchSimulator().simulate_match(
             node.team_a,

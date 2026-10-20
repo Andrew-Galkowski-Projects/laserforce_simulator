@@ -8,10 +8,18 @@ with an unparseable value is a 400.
 
 from __future__ import annotations
 
-from django.db.models import Q, QuerySet
+from django.db.models import Exists, OuterRef, Q, QuerySet
 from django_filters import rest_framework as filters
 
-from matches.models import GameEvent, GameRound, League, Match, Season
+from matches.models import (
+    GameEvent,
+    GameRound,
+    League,
+    Match,
+    Season,
+    SeasonPhase,
+    Tournament,
+)
 
 
 class MatchFilterSet(filters.FilterSet):
@@ -74,3 +82,26 @@ class SeasonFilterSet(filters.FilterSet):
     class Meta:
         model = Season
         fields = ["league", "state"]
+
+
+class TournamentFilterSet(filters.FilterSet):
+    """ANG-01f — ``?state=`` / ``?format=`` / ``?team_assembly=`` (bad choice ⇒
+    400) and ``?embedded=true|false`` (in-League vs sandbox; junk ignored)."""
+
+    state = filters.ChoiceFilter(choices=Tournament.STATE_CHOICES)
+    format = filters.ChoiceFilter(choices=Tournament.FORMAT_CHOICES)
+    team_assembly = filters.ChoiceFilter(choices=Tournament.TEAM_ASSEMBLY_CHOICES)
+    embedded = filters.BooleanFilter(method="filter_embedded")
+
+    class Meta:
+        model = Tournament
+        fields = ["state", "format", "team_assembly", "embedded"]
+
+    def filter_embedded(
+        self, queryset: QuerySet[Tournament], name: str, value: bool
+    ) -> QuerySet[Tournament]:
+        """Embedded = referenced by a SeasonPhase or carrying a season_phase."""
+        embedded_q = Q(season_phase__isnull=False) | Exists(
+            SeasonPhase.objects.filter(tournament=OuterRef("pk"))
+        )
+        return queryset.filter(embedded_q) if value else queryset.exclude(embedded_q)

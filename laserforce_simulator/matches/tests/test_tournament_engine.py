@@ -1432,7 +1432,7 @@ class TestPlayNextNodeSwiss(TestCase):
 # ``.claude/worktrees/lg-02x-1-seam-contract.md`` §4 / §7.
 #
 # ``play_next_node`` branches on ``tournament.team_assembly``: for
-# "random_draw" it builds the role closure via the module-level
+# "player_pool" it builds the role closure via the module-level
 # ``_build_role_hook(tournament)`` and passes it as the
 # ``before_round_hook=`` kwarg into ``simulate_match``; for "preset" it makes
 # the byte-identical no-hook call. We patch ``simulate_match`` to a fake that
@@ -1454,7 +1454,7 @@ def _draw_se_tournament(n: int, *, team_assembly: str, name: str) -> Tournament:
     """
     t = Tournament.objects.create(name=name, team_assembly=team_assembly)
     for seed, team in enumerate(_make_teams(n), start=1):
-        if team_assembly == "random_draw":
+        if team_assembly == "player_pool":
             team.is_draw_team = True
             team.save(update_fields=["is_draw_team"])
         TournamentParticipant.objects.create(tournament=t, team=team, seed=seed)
@@ -1484,7 +1484,7 @@ class TestPlayNextNodeRandomDrawRoutesHook(TestCase):
     def test_random_draw_passes_a_before_round_hook(self) -> None:
         from matches.tournament_engine import play_next_node
 
-        t = _draw_se_tournament(4, team_assembly="random_draw", name="DrawHookOn")
+        t = _draw_se_tournament(4, team_assembly="player_pool", name="DrawHookOn")
         captured: dict = {}
 
         def _fake(sim_self, team_red, team_blue, *args, **kwargs):
@@ -1507,7 +1507,7 @@ class TestPlayNextNodeRandomDrawRoutesHook(TestCase):
         from matches import tournament_engine
         from matches.tournament_engine import play_next_node
 
-        t = _draw_se_tournament(4, team_assembly="random_draw", name="DrawHookBuild")
+        t = _draw_se_tournament(4, team_assembly="player_pool", name="DrawHookBuild")
 
         sentinel_calls: list = []
 

@@ -10,7 +10,9 @@ from matches.models import (
     PlayerRoundState,
     Season,
     SeasonPhase,
+    Tournament,
 )
+from matches.tournament_services.detail import format_label, is_embedded
 
 _GAME_ROUND_FIELDS = [
     "id",
@@ -192,3 +194,57 @@ class SeasonSerializer(SeasonListSerializer):
             "phases",
             "conferences",
         ]
+
+
+class TournamentSerializer(serializers.ModelSerializer):
+    """ANG-01f — a Tournament's own fields (output only).
+
+    ``format_label`` is the derived display label ("Random Draw" for a
+    Player-pool draw played as RR->DE); ``embedded`` is true for an in-League
+    Tournament, whose ``season`` ref is set (null for a sandbox Tournament).
+    ``active_play_job_id`` is play-run state and is not exposed here.
+    """
+
+    format_label = serializers.SerializerMethodField()
+    champion = serializers.SerializerMethodField()
+    embedded = serializers.SerializerMethodField()
+    season = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Tournament
+        fields = [
+            "id",
+            "name",
+            "format",
+            "format_label",
+            "state",
+            "team_assembly",
+            "role_assignment_mode",
+            "champion",
+            "embedded",
+            "season",
+            "final_series_length",
+            "semifinal_series_length",
+            "quarterfinal_series_length",
+            "earlier_series_length",
+            "wb_advancers",
+            "lb_advancers",
+            "swiss_rounds",
+            "manager",
+            "created_at",
+        ]
+
+    def get_format_label(self, obj: Tournament) -> str:
+        return format_label(obj)
+
+    def get_champion(self, obj: Tournament) -> dict | None:
+        return team_ref(obj.champion) if obj.champion_id is not None else None
+
+    def get_embedded(self, obj: Tournament) -> bool:
+        return is_embedded(obj)
+
+    def get_season(self, obj: Tournament) -> dict | None:
+        if obj.season_phase_id is not None:
+            return season_ref(obj.season_phase.season)
+        phase = obj.season_phases.select_related("season").first()
+        return season_ref(phase.season) if phase is not None else None

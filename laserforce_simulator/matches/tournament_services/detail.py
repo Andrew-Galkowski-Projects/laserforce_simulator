@@ -6,15 +6,48 @@ layer (ANG-01f-1) so the HTML views, the League playoffs screen and the API all
 build them from one place. This module imports no view module.
 """
 
-from teams.forms import RosterImportForm
-from teams.models import Player
+from dataclasses import asdict
 
-from matches.models import BracketNode, Tournament, count_series_wins
+from django.db.models import QuerySet
+
+from teams.forms import RosterImportForm
+from teams.models import Player, Team
+
+from matches.api_refs import team_ref
+from matches.models import (
+    BracketNode,
+    Tournament,
+    TournamentPlayerEntry,
+    count_series_wins,
+)
 from matches.schedule_generator import generate_schedule
 from matches.standings import match_score
 
 # The three elimination sub-brackets the detail tree always renders, in order.
 _ELIM_BRACKET_TYPES: tuple[str, ...] = ("winners", "losers", "grand_final")
+
+# ANG-01f — the derived name of a Player-pool draw played as RR->DE.
+_RANDOM_DRAW_LABEL = "Random Draw"
+
+
+def format_label(tournament: Tournament) -> str:
+    """The Tournament's display format: "Random Draw" for a Player-pool draw
+    played as RR->DE, otherwise the format's choice label."""
+    if (
+        tournament.team_assembly == "player_pool"
+        and tournament.format == "round_robin_double_elim"
+    ):
+        return _RANDOM_DRAW_LABEL
+    return tournament.get_format_display()
+
+
+def is_embedded(tournament: Tournament) -> bool:
+    """True for an in-League Tournament: referenced by any ``SeasonPhase``
+    (the Season-wide bracket) or carrying a ``season_phase`` (regional /
+    Worlds). A sandbox Tournament is neither."""
+    if tournament.season_phase_id is not None:
+        return True
+    return tournament.season_phases.exists()
 
 
 def _series_games(node: BracketNode, series_matches: list) -> list:
@@ -152,7 +185,7 @@ def _build_rr_crosstable(tournament: Tournament, rows: list) -> list:
     team_by_id = {p.team_id: p.team for p in participants}
     team_ids = [p.team_id for p in participants]
 
-    # A crosstable needs at least 2 teams. A random_draw Tournament sits in
+    # A crosstable needs at least 2 teams. A player_pool Tournament sits in
     # `setup` with NO participants until the draw runs, so the detail page is
     # rendered (pool stage) before any team exists — short-circuit to an empty
     # crosstable rather than letting `generate_schedule([])` raise.
@@ -372,8 +405,8 @@ def build_detail_context(tournament: Tournament) -> dict:
     else:
         swiss_rounds_view = []
         swiss_standings = []
-    # LG-02x-1 — Random-Draw pool / draw surface. Empty / defaulted for preset.
-    if tournament.team_assembly == "random_draw":
+    # LG-02x-1 — Player-pool draw pool / draw surface. Empty / defaulted for preset.
+    if tournament.team_assembly == "player_pool":
         pool_entries = list(
             tournament.player_entries.select_related("player", "drawn_team").order_by(
                 "tier", "player_id"
@@ -387,6 +420,7 @@ def build_detail_context(tournament: Tournament) -> dict:
         all_players = []
     return {
         "tournament": tournament,
+        "format_label": format_label(tournament),
         "participants": participants,
         "rounds": rounds,
         "next_node": next_node,
@@ -400,7 +434,7 @@ def build_detail_context(tournament: Tournament) -> dict:
         "cut_labels": cut_labels,
         "swiss_rounds_view": swiss_rounds_view,
         "swiss_standings": swiss_standings,
-        # LG-02x-1 — Random-Draw keys.
+        # LG-02x-1 — Player-pool draw keys.
         "team_assembly": tournament.team_assembly,
         "role_assignment_mode": tournament.role_assignment_mode,
         "pool_entries": pool_entries,
@@ -410,3 +444,122 @@ def build_detail_context(tournament: Tournament) -> dict:
         "pool_import_form": RosterImportForm(),
         "pool_import_row_errors": [],
     }
+
+
+# ---------------------------------------------------------------------------
+# ANG-01f — the API detail payload.
+# ---------------------------------------------------------------------------
+
+# The payload's bracket groups, in render order (RR / Swiss stages first, then
+# the elimination tree). Empty groups are omitted.
+_PAYLOAD_BRACKET_TYPES: tuple[str, ...] = (
+    "round_robin",
+    "swiss",
+    "winners",
+    "losers",
+    "grand_final",
+)
+
+
+def _team_ref_or_none(team: Team | None) -> dict | None:
+    return team_ref(team) if team is not None else None
+
+
+def _node_payload(node: dict) -> dict:
+    """A node-card view dict as refs, with the ANG-01e ``bracket_payload``
+    node keys."""
+    return {
+        "position": node["position"],
+        "team_a": _team_ref_or_none(node["team_a"]),
+        "team_b": _team_ref_or_none(node["team_b"]),
+        "seed_a": node["seed_a"],
+        "seed_b": node["seed_b"],
+        "is_bye": node["is_bye"],
+        "wins_a": node["wins_a"],
+        "wins_b": node["wins_b"],
+        "series_length": node["series_length"],
+        "winner": _team_ref_or_none(node["winner"]),
+        "games": [dict(game) for game in node["games"]],
+    }
+
+
+def _brackets_payload(tournament: Tournament) -> list[dict]:
+    """``[{bracket_type, rounds: [{bracket_round, nodes}]}]`` for every
+    non-empty sub-bracket, in ``_PAYLOAD_BRACKET_TYPES`` order."""
+    rounds_by_type = _build_all_rounds(tournament)
+    return [
+        {
+            "bracket_type": bracket_type,
+            "rounds": [
+                {
+                    "bracket_round": section["bracket_round"],
+                    "nodes": [_node_payload(node) for node in section["nodes"]],
+                }
+                for section in rounds_by_type[bracket_type]
+            ],
+        }
+        for bracket_type in _PAYLOAD_BRACKET_TYPES
+        if rounds_by_type.get(bracket_type)
+    ]
+
+
+def _standings_payload(rows: list, team_by_id: dict) -> list[dict]:
+    """``StandingsRow`` fields plus a ``team`` ref per row."""
+    return [
+        {**asdict(row), "team": _team_ref_or_none(team_by_id.get(row.team_id))}
+        for row in rows
+    ]
+
+
+def build_tournament_detail(tournament: Tournament) -> dict:
+    """The ``GET /api/tournaments/<id>/`` payload (JSON-ready).
+
+    ``TournamentSerializer`` fields plus ``participants`` (``[{team, seed}]``
+    by seed), ``brackets``, ``rr_standings``, ``swiss_standings``, ``stage``,
+    ``cut_labels`` (``{team_id (str): "wb" | "lb" | "out"}``, RR->DE seeding
+    stage only), ``pool_size`` and ``is_drawn``.
+    """
+    # Imported here: ``matches.serializers`` imports this module's labels.
+    from matches.serializers import TournamentSerializer
+
+    participants = list(tournament.participants.select_related("team").order_by("seed"))
+    team_by_id = {p.team_id: p.team for p in participants}
+    has_finals = tournament.nodes.exclude(bracket_type="round_robin").exists()
+    stage = _tournament_stage(tournament, has_finals)
+
+    rr_standings: list[dict] = []
+    cut_labels: dict[str, str] = {}
+    if tournament.format in ("round_robin", "round_robin_double_elim"):
+        rr_rows = tournament.round_robin_standings()
+        rr_standings = _standings_payload(rr_rows, team_by_id)
+        if tournament.format == "round_robin_double_elim" and stage == "seeding":
+            cut_labels = {
+                str(team_id): label
+                for team_id, label in _rrde_cut_labels(tournament, rr_rows).items()
+            }
+    swiss_standings: list[dict] = []
+    if tournament.format == "swiss":
+        swiss_standings = _standings_payload(tournament.swiss_standings(), team_by_id)
+
+    entries = tournament.player_entries
+    return {
+        **TournamentSerializer(tournament).data,
+        "participants": [
+            {"team": team_ref(p.team), "seed": p.seed} for p in participants
+        ],
+        "brackets": _brackets_payload(tournament),
+        "rr_standings": rr_standings,
+        "swiss_standings": swiss_standings,
+        "stage": stage,
+        "cut_labels": cut_labels,
+        "pool_size": entries.count(),
+        "is_drawn": entries.filter(drawn_team__isnull=False).exists(),
+    }
+
+
+def pool_entries(tournament: Tournament) -> QuerySet[TournamentPlayerEntry]:
+    """The Tournament's Player-pool entries by tier then Player, with the
+    Player (and their Team) and drawn Team joined."""
+    return tournament.player_entries.select_related(
+        "player__team", "drawn_team"
+    ).order_by("tier", "player_id")

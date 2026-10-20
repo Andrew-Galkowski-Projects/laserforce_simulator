@@ -2455,7 +2455,7 @@ def _random_draw_tournament(*, name: str) -> Tournament:
     return Tournament.objects.create(
         name=name,
         format="round_robin_double_elim",
-        team_assembly="random_draw",
+        team_assembly="player_pool",
         role_assignment_mode="random",
         wb_advancers=4,
         lb_advancers=0,
@@ -2499,12 +2499,12 @@ class TestCreateFormTeamAssembly(TestCase):
                 "generate_count": "0",
                 "generate_ppt": "6",
                 "format": "round_robin_double_elim",
-                "team_assembly": "random_draw",
+                "team_assembly": "player_pool",
                 "role_assignment_mode": "per_tier",
             },
         )
         t = Tournament.objects.get(name="Draw Cup")
-        self.assertEqual(t.team_assembly, "random_draw")
+        self.assertEqual(t.team_assembly, "player_pool")
         self.assertEqual(t.role_assignment_mode, "per_tier")
 
     def test_post_default_is_preset(self) -> None:
@@ -2872,7 +2872,7 @@ class TestRandomDrawLockReusesTournamentLock(TestCase):
 
 class TestRandomDrawDetailContextAndDom(TestCase):
     """``_detail_context`` adds the random_draw keys and the detail page renders
-    the pool + draw DOM ids when team_assembly == 'random_draw'."""
+    the pool + draw DOM ids when team_assembly == 'player_pool'."""
 
     def test_detail_context_has_random_draw_keys(self) -> None:
         t = _random_draw_tournament(name="DrawCtxCup")

@@ -15,6 +15,7 @@ from teams.views import _generate_teams
 
 from matches.bracket import default_seed_order
 from matches.models import Tournament, TournamentParticipant
+from matches.tournament_services.detail import format_label
 
 # LG-02c (RR->DE) — the 6 locked (wb, lb) advancer shape combos, in select order.
 # value string format "wb/lb" (e.g. "4/0"). lb is 0 or wb//2.
@@ -70,7 +71,13 @@ def _team_mean_rating(team: Team) -> float:
 
 def tournament_list(request: HttpRequest) -> HttpResponse:
     """List all Tournaments newest-first."""
-    tournaments = owned_queryset(Tournament.objects.all(), request.user).order_by("-id")
+    tournaments = list(
+        owned_queryset(Tournament.objects.all(), request.user).order_by("-id")
+    )
+    # ANG-01f — the list shows the derived label ("Random Draw" for a
+    # Player-pool draw played as RR->DE), not the raw format choice.
+    for tournament in tournaments:
+        tournament.format_label = format_label(tournament)
     return render(
         request,
         "matches/tournament_list.html",
@@ -111,11 +118,11 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
     selected_ids = request.POST.getlist("teams")
 
     # LG-02x-1 — orthogonal team-assembly axis. Parse early so the preset-only
-    # participant-selection validation can be skipped for random_draw (a
-    # random_draw Tournament is created in setup with an EMPTY pool — the user
+    # participant-selection validation can be skipped for player_pool (a
+    # player_pool Tournament is created in setup with an EMPTY pool — the user
     # fills the pool + runs the draw on the detail page).
     team_assembly = request.POST.get("team_assembly")
-    if team_assembly not in ("preset", "random_draw"):
+    if team_assembly not in ("preset", "player_pool"):
         team_assembly = "preset"
 
     try:
@@ -231,7 +238,7 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
     # create (harmless — only read at lock when format == "swiss").
     swiss_rounds = _parse_swiss_rounds(request.POST.get("swiss_rounds"))
 
-    # LG-02x-1 — role-assignment mode (meaningful only for random_draw).
+    # LG-02x-1 — role-assignment mode (meaningful only for player_pool).
     # Forgiving fallback to the default.
     role_assignment_mode = request.POST.get("role_assignment_mode")
     if role_assignment_mode not in ("random", "per_tier"):
@@ -254,7 +261,7 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
         manager=manager_or_none(request),
     )
 
-    # Default Seeding via mean active-player overall_rating. For random_draw the
+    # Default Seeding via mean active-player overall_rating. For player_pool the
     # pool is empty at create — participants are seeded by the draw, not here.
     if team_assembly == "preset":
         team_ratings = [(t.id, _team_mean_rating(t)) for t in teams]
