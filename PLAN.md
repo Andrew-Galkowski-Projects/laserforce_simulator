@@ -85,7 +85,7 @@ drift its replay (map context is re-derived from the `arena_map` FK, not snapsho
 GLOSSARY.md **Persistence fidelity** term, the seam contract
 [`.claude/worktrees/gen-01-seam-contract.md`](.claude/worktrees/gen-01-seam-contract.md),
 and the **GEN-01 persistence-fidelity tiers** subsection in
-[`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+[`docs/agents/matches/simulation-engine.md`](docs/agents/matches/simulation-engine.md).
 
 ### GEN-02 · [DEFERRED to bottom — see "Parked — deferred compute-tier work" (2026-06-26)]
 
@@ -167,7 +167,7 @@ re-baseline**. See
 [ADR-0030](docs/adr/0030-play-controls-relocated-to-topnav.md), the seam contract
 [`.claude/worktrees/nav-01-seam-contract.md`](.claude/worktrees/nav-01-seam-contract.md),
 and the **NAV-01** subsection in
-[`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+[`docs/agents/matches/nav-and-play.md`](docs/agents/matches/nav-and-play.md).
 
 ### PLAY-01 · [DONE] Live incremental stats + Stop/Cancel for multi-game runs
 
@@ -243,7 +243,7 @@ the ADR-0013 / ADR-0016 cancel scope-out — the `revoke` rejection stands), the
 contract
 [`.claude/worktrees/play-01-seam-contract.md`](.claude/worktrees/play-01-seam-contract.md),
 and the **PLAY-01** subsection in
-[`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+[`docs/agents/matches/nav-and-play.md`](docs/agents/matches/nav-and-play.md).
 
 ### DEL-01 · [DONE] Delete League button
 
@@ -285,7 +285,7 @@ See [ADR-0032](docs/adr/0032-delete-league-full-teardown.md), the GLOSSARY.md
 **Team** / **Player** one-context ownership invariant, the seam contract
 [`.claude/worktrees/del-01-seam-contract.md`](.claude/worktrees/del-01-seam-contract.md),
 and the **DEL-01 delete league** subsection in
-[`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+[`docs/agents/matches/league-lifecycle.md`](docs/agents/matches/league-lifecycle.md).
 
 ### CRE-01 · [DONE] League template chooser + Advanced screen + Difficulty
 
@@ -408,7 +408,7 @@ contract
 [`.claude/worktrees/cre-01-seam-contract.md`](.claude/worktrees/cre-01-seam-contract.md),
 the GLOSSARY.md **League template** / **League difficulty** terms, and the **CRE-01
 league templates + difficulty** subsection in
-[`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+[`docs/agents/matches/league-lifecycle.md`](docs/agents/matches/league-lifecycle.md).
 
 ### CRE-02 · [DONE] Tiered expected-finish team generation
 
@@ -518,7 +518,7 @@ the GLOSSARY.md **League spread** term (and the amended **League difficulty** en
 the **CRE-02 tiered generation** subsection in
 [`laserforce_simulator/teams/CLAUDE.md`](laserforce_simulator/teams/CLAUDE.md), and the
 **CRE-02 league spread** subsection in
-[`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+[`docs/agents/matches/league-lifecycle.md`](docs/agents/matches/league-lifecycle.md).
 
 ---
 
@@ -690,7 +690,7 @@ shipped) and is most useful alongside **CAR-03** manager-mode career play.
   [ADR-0034](docs/adr/0034-conference-partition.md), the seam contract
   [`.claude/worktrees/conf-01-seam-contract.md`](.claude/worktrees/conf-01-seam-contract.md),
   and the **CONF-01** subsection in
-  [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+  [`docs/agents/matches/conferences.md`](docs/agents/matches/conferences.md).
 
 - **CONF-02 · Per-Conference regional playoffs. [DONE] Shipped (2026-09-02).** After each
   Conference's regular season completes, that Conference gets **its own** seeded playoff
@@ -761,7 +761,7 @@ shipped) and is most useful alongside **CAR-03** manager-mode career play.
   [ADR-0035](docs/adr/0035-regional-playoffs-one-tournament-per-conference.md), the seam contract
   [`.claude/worktrees/conf-02-seam-contract.md`](.claude/worktrees/conf-02-seam-contract.md), the
   GLOSSARY.md **Regional playoff** / **Conference champion** terms, and the **CONF-02** subsection
-  in [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+  in [`docs/agents/matches/conferences.md`](docs/agents/matches/conferences.md).
 
 - **CONF-03 · Worlds qualification. [DONE] Shipped (2026-09-03).** The slice that settles **who
   goes to Worlds**, and the one that retires the old "top-N-per-Conference" framing: the grill
@@ -882,7 +882,7 @@ shipped) and is most useful alongside **CAR-03** manager-mode career play.
   [`.claude/worktrees/conf-03-seam-contract.md`](.claude/worktrees/conf-03-seam-contract.md), the
   GLOSSARY.md **Worlds** / **Worlds qualifier** / **Last-chance qualifier** terms, and the **CONF-03**
   subsection in
-  [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+  [`docs/agents/matches/worlds.md`](docs/agents/matches/worlds.md).
 
 - **CONF-04 · The Worlds Tournament phase. [DONE] Shipped (2026-09-03).** The slice that closes
   the epic competitively: a Season with **two or more** Conferences grows a **derived,
@@ -1069,7 +1069,7 @@ shipped) and is most useful alongside **CAR-03** manager-mode career play.
   [ADR-0037](docs/adr/0037-worlds-is-a-derived-season-phase.md), the seam contract
   [`.claude/worktrees/conf-04-seam-contract.md`](.claude/worktrees/conf-04-seam-contract.md), the
   GLOSSARY.md **Worlds** / **Worlds phase** / **Season phase** terms, and the **CONF-04** subsection
-  in [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+  in [`docs/agents/matches/worlds.md`](docs/agents/matches/worlds.md).
 
 - **CONF-05 · [DONE] Shipped (2026-06-30) — draft-Season Manage Conferences page.**
   An in-app authoring surface (not Django admin) for partitioning a draft Season's enrolled
@@ -1104,7 +1104,7 @@ shipped) and is most useful alongside **CAR-03** manager-mode career play.
   `test_league_create.py` (the `number_of_conferences` form rule + create→pre-split→redirect).
   See the
   **CONF-05 manage conferences** subsection in
-  [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+  [`docs/agents/matches/conferences.md`](docs/agents/matches/conferences.md).
 
 - **CONF-06 · Per-Conference rotating map pools. [DONE] Shipped (2026-09-03).** The epic's closing
   slice and the map lens the CONF-01 grill sketched: a **5th `Season.map_mode` value**
@@ -1200,7 +1200,7 @@ shipped) and is most useful alongside **CAR-03** manager-mode career play.
   [`.claude/worktrees/conf-06-seam-contract.md`](.claude/worktrees/conf-06-seam-contract.md), the
   GLOSSARY.md **Map mode** / **Map pool** / **Per-fixture map resolution** / **Conference** terms, and
   the **CONF-06** subsection in
-  [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+  [`docs/agents/matches/conferences.md`](docs/agents/matches/conferences.md).
 
 ---
 
@@ -1390,7 +1390,7 @@ the seam contract
 entry, the new
 [`laserforce_simulator/accounts/CLAUDE.md`](laserforce_simulator/accounts/CLAUDE.md) app guide, and
 the **UX-01** subsection in
-[`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+[`docs/agents/matches/accounts-ownership.md`](docs/agents/matches/accounts-ownership.md).
 
 ### UX-02 · [DONE] User–player link
 
@@ -1467,7 +1467,7 @@ migration. Tests: new `accounts/tests/test_self_insert.py`, `teams/tests/test_se
 [`.claude/worktrees/ux-02-seam-contract.md`](.claude/worktrees/ux-02-seam-contract.md), the GLOSSARY.md
 **Self-insert** term, the **Self-insert (UX-02)** section of
 [`laserforce_simulator/accounts/CLAUDE.md`](laserforce_simulator/accounts/CLAUDE.md), and the
-**UX-02** section of [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
+**UX-02** section of [`docs/agents/matches/accounts-ownership.md`](docs/agents/matches/accounts-ownership.md).
 
 ---
 
@@ -1769,7 +1769,7 @@ Items): no fired check on candidates / reassign; team schedule accepts any owned
 `test_api_league_lifecycle.py`, `test_api_seasons.py`, `test_api_conferences.py`; regression in
 `test_reassign_team.py`. See the seam contract
 [`.claude/worktrees/ang-01d-1-seam-contract.md`](.claude/worktrees/ang-01d-1-seam-contract.md) and
-the **ANG-01d-1** section of `laserforce_simulator/matches/CLAUDE.md`.
+the **ANG-01d-1** section of `docs/agents/matches/api.md`.
 
 #### ANG-01d-2 · [DONE] League play-loop API
 
@@ -1809,7 +1809,7 @@ finances POST binds merged form data (absent fields keep their saved values); `G
 finances off returns `rows: []` and the team GET returns only its header keys (not null sections);
 the finances `PATCH` returns 409 (`finance_disabled` / `team_not_editable`) before any 400 form error.
 Follow-ups ANG01e-D1..D3 are in `issues.md`. See the **ANG-01e league screens API** section of
-`laserforce_simulator/matches/CLAUDE.md`.
+`docs/agents/matches/api.md`.
 
 The read-mostly `league_screens/*` surfaces: League leaders, player stats and ratings history,
 free agents and watch list, team history, finances (budgets, ticket price, injury policy), and
@@ -2303,7 +2303,7 @@ outcomes; folds into the `CAL-01` re-baseline (no separate obligation).
 
 **Prio: Medium (found 2026-06-25).** Rebase the map-model average scores toward the
 documented **Score Calibration Targets** (Commander 9,952 / Heavy 6,482 / Scout
-5,102 / Ammo 3,242 / Medic 2,282 — `matches/CLAUDE.md`). This is the long-pending
+5,102 / Ammo 3,242 / Medic 2,282 — `docs/agents/matches/simulation-engine.md`). This is the long-pending
 post-MOVE-01 re-baseline and **absorbs** the seeded-outcome deltas from MOVE-05 /
 MOVE-06 (and SIM-12) in a single pass — do **not** create separate re-baseline
 obligations for those. **Locked (grilled 2026-06-25):** **tune** the existing action
@@ -2494,7 +2494,7 @@ into a core slice (LG-07a, this item) plus a deferred player-stat-filter follow-
 (declared inert in `PHASE_TYPE_CHOICES` since LG-02-Part2a) is now **LIVE**: a
 casual/social play interlude run **per Site** (`Player.home_site`), embedded in a
 Season's phase flow (e.g. RR → member night → Tournament). Full implementation note
-in [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md)
+in [`docs/agents/matches/member-night.md`](docs/agents/matches/member-night.md)
 (**LG-07a member night (core slice)**); seam contract:
 [`.claude/worktrees/lg-07-member-night-seam-contract.md`](.claude/worktrees/lg-07-member-night-seam-contract.md).
 
@@ -2662,7 +2662,7 @@ distribution — see the calibration anchor below).
 
 **Big de-risk — the middle tier already exists and is the calibration baseline.** The
 3-zone fallback is live today (the `movement_ctx is None` path), and the **Score
-Calibration Targets** (Commander 9,952 / Heavy 6,482 / … — `matches/CLAUDE.md`) "were
+Calibration Targets** (Commander 9,952 / Heavy 6,482 / … — `docs/agents/matches/simulation-engine.md`) "were
 tuned against the non-spatial 3-zone fallback model." So `combat`-compute is mostly
 *deliberately reusing an already-calibrated path*, not new mechanics — the work there
 is the tier selector + skipping the event/movement collection, not a new simulator.

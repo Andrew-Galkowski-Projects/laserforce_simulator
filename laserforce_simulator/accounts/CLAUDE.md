@@ -490,7 +490,7 @@ the test's own transaction, so `pytest -n auto --dist worksteal` workers never c
   the rewritten **Manager** entry.
 - [`../teams/CLAUDE.md`](../teams/CLAUDE.md) — `Team.manager` and the `Team.managed_in_leagues`
   naming hazard.
-- [`../matches/CLAUDE.md`](../matches/CLAUDE.md) **UX-01** — the four matches-app roots and the
+- [`docs/agents/matches/accounts-ownership.md`](../../docs/agents/matches/accounts-ownership.md) **UX-01** — the four matches-app roots and the
   dormant `League.visibility`.
 - [`../core/CLAUDE.md`](../core/CLAUDE.md) — why `ArenaMap` is deliberately not owned.
 - PLAN.md **UX-01**.
