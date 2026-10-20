@@ -8,6 +8,9 @@ with an unparseable value is a 400.
 
 from __future__ import annotations
 
+from typing import Any
+
+from django import forms
 from django.db.models import Exists, OuterRef, Q, QuerySet
 from django_filters import rest_framework as filters
 
@@ -84,14 +87,42 @@ class SeasonFilterSet(filters.FilterSet):
         fields = ["league", "state"]
 
 
+_STRICT_BOOLEANS: dict[str, bool] = {
+    "true": True,
+    "1": True,
+    "false": False,
+    "0": False,
+}
+
+
+class StrictBooleanField(forms.Field):
+    """``true`` / ``false`` / ``1`` / ``0`` (case-insensitive); anything else
+    is an ``invalid`` error. Blank means "not filtered" (``None``)."""
+
+    def to_python(self, value: Any) -> bool | None:
+        if value in self.empty_values:
+            return None
+        parsed = _STRICT_BOOLEANS.get(str(value).strip().lower())
+        if parsed is None:
+            raise forms.ValidationError(
+                "Enter true or false.", code="invalid", params={"value": value}
+            )
+        return parsed
+
+
+class StrictBooleanFilter(filters.Filter):
+    field_class = StrictBooleanField
+
+
 class TournamentFilterSet(filters.FilterSet):
     """ANG-01f — ``?state=`` / ``?format=`` / ``?team_assembly=`` (bad choice ⇒
-    400) and ``?embedded=true|false`` (in-League vs sandbox; junk ignored)."""
+    400) and ``?embedded=true|false`` (in-League vs sandbox; also ``1`` / ``0``,
+    case-insensitive; any other value ⇒ 400 ``invalid`` on ``embedded``)."""
 
     state = filters.ChoiceFilter(choices=Tournament.STATE_CHOICES)
     format = filters.ChoiceFilter(choices=Tournament.FORMAT_CHOICES)
     team_assembly = filters.ChoiceFilter(choices=Tournament.TEAM_ASSEMBLY_CHOICES)
-    embedded = filters.BooleanFilter(method="filter_embedded")
+    embedded = StrictBooleanFilter(method="filter_embedded")
 
     class Meta:
         model = Tournament

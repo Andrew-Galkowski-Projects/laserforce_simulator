@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from django.db.models import QuerySet
 from django.urls import reverse
 
 from matches.models import Match, SeasonPhase, Tournament, TournamentParticipant
@@ -257,6 +258,75 @@ class PlayAllTests(LeagueApiTestCase):
         self.error(self.anon.post(_url(self.t, "play-all/")), 403, "not_authenticated")
         self.error(self.api.get(_url(foreign, "play-jobs/abc/")), 404, "not_found")
         self.assertFalse(Match.objects.exists())
+
+
+_real_update = QuerySet.update
+
+
+def _lose_claims(t: Tournament, winners: list[str | None]):
+    """Patch ``QuerySet.update`` so the next ``len(winners)`` play-run claims on
+    ``t`` claim 0 rows. Before each lost claim the column is set to that
+    winner's id (``None`` = the winner already finished and cleared it)."""
+    remaining = list(winners)
+
+    def fake_update(qs: QuerySet, **kwargs):
+        value = kwargs.get("active_play_job_id")
+        if qs.model is Tournament and isinstance(value, str) and remaining:
+            _real_update(
+                Tournament.objects.filter(pk=t.pk),
+                active_play_job_id=remaining.pop(0),
+            )
+            return 0
+        return _real_update(qs, **kwargs)
+
+    return patch.object(QuerySet, "update", fake_update)
+
+
+class LostClaimRaceTests(LeagueApiTestCase):
+    """ANG-01f review (P7): ``enqueue_play_all`` losing the guarded claim."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.t = _active("Race", manager=self.user_a)
+
+    def enqueue(self, winners: list[str | None]):
+        from matches.tournament_services.play import enqueue_play_all
+
+        with _lose_claims(self.t, winners), patch(
+            "matches.tournament_services.play.play_tournament_task.apply_async"
+        ) as apply_async:
+            return enqueue_play_all(self.t), apply_async
+
+    def column(self) -> str | None:
+        return Tournament.objects.get(pk=self.t.pk).active_play_job_id
+
+    def test_a_live_winner_is_reported(self) -> None:
+        from matches.tournament_services.errors import PlayInProgressError
+
+        with self.assertRaises(PlayInProgressError) as ctx:
+            self.enqueue(["winner-job"])
+        self.assertEqual(ctx.exception.job_id, "winner-job")
+        self.assertEqual(self.column(), "winner-job")
+
+    def test_a_finished_winner_means_one_retry_that_claims(self) -> None:
+        job_id, apply_async = self.enqueue([None])
+        self.assertEqual(self.column(), job_id)
+        apply_async.assert_called_once_with((self.t.pk,), task_id=job_id, retry=False)
+
+    def test_a_failed_retry_reports_the_current_id(self) -> None:
+        from matches.tournament_services.errors import PlayInProgressError
+
+        with self.assertRaises(PlayInProgressError) as ctx:
+            self.enqueue([None, "late-job"])
+        self.assertEqual(ctx.exception.job_id, "late-job")
+
+    def test_a_failed_retry_with_an_empty_column_reports_unknown(self) -> None:
+        from matches.tournament_services.errors import PlayInProgressError
+
+        with self.assertRaises(PlayInProgressError) as ctx:
+            self.enqueue([None, None])
+        self.assertEqual(ctx.exception.job_id, "unknown")
+        self.assertIsNone(self.column())
 
 
 class PlayJobTests(LeagueApiTestCase):

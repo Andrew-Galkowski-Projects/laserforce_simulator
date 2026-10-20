@@ -160,6 +160,21 @@ class ImportViewTests(_SetupViewTestCase):
         self.assertFalse(Team.objects.filter(name="Late").exists())
         self.assertEqual(t.participants.count(), 4)
 
+    def test_player_pool_flashes_and_imports_nothing(self) -> None:
+        # ANG-01f review (P1): a Player-pool Tournament adds Players, not Teams.
+        t = _tournament(n_teams=0)
+        t.team_assembly = "player_pool"
+        t.save(update_fields=["team_assembly"])
+        response = self.post(t, _csv("PoolImp"))
+        self.assert_flash_redirect(
+            response,
+            t,
+            "This Tournament uses a Player-pool draw; add Players to its pool "
+            "instead.",
+        )
+        self.assertFalse(Team.objects.filter(name="PoolImp").exists())
+        self.assertEqual(t.participants.count(), 0)
+
     def test_imported_teams_owned_by_requester(self) -> None:
         t = _tournament(n_teams=0)
         response = self.post(t, _csv("Mine"))

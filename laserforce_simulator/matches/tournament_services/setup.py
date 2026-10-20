@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from django import forms
+from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from matches.bracket import default_seed_order
@@ -29,6 +30,10 @@ from teams.services import _apply_roster, _check_db_slot_collisions
 
 if TYPE_CHECKING:
     from django.contrib.auth.base_user import AbstractBaseUser
+
+PLAYER_POOL_IMPORT_MESSAGE = (
+    "This Tournament uses a Player-pool draw; add Players to its pool instead."
+)
 
 # Added to every seed in the first phase of a two-phase seed write, so the
 # unique (tournament, seed) constraint never sees two rows on one seed.
@@ -147,9 +152,14 @@ def import_participants(
     (ANG-01a). Only the Teams the import CREATED become participants (appended
     Teams do not), then the whole field is re-seeded by talent. All-or-nothing:
     a ``RosterImportError`` propagates after its savepoint rolls back. Returns
-    the new participant Teams in CSV order.
+    the new participant Teams in CSV order. A Player-pool Tournament raises a
+    Django ``ValidationError`` (``PLAYER_POOL_IMPORT_MESSAGE``) with no writes.
     """
     require_setup(tournament)
+    if tournament.team_assembly == "player_pool":
+        # A drawn field holds only drawn Teams (an imported Team could survive
+        # a re-roll), so a Player-pool Tournament imports Players instead.
+        raise ValidationError(PLAYER_POOL_IMPORT_MESSAGE)
     if not form.is_valid():
         raise ValueError("import_participants needs a valid RosterImportForm.")
 

@@ -143,6 +143,15 @@ class TournamentListTests(LeagueApiTestCase):
             sorted(self.ids("?embedded=true")), sorted([season_wide.id, regional.id])
         )
         self.assertEqual(self.ids("?embedded=false"), [sandbox.id])
+        # ANG-01f review (P2): case-insensitive, and 1 / 0 are accepted too.
+        self.assertEqual(
+            sorted(self.ids("?embedded=TRUE")), sorted([season_wide.id, regional.id])
+        )
+        self.assertEqual(
+            sorted(self.ids("?embedded=1")), sorted([season_wide.id, regional.id])
+        )
+        self.assertEqual(self.ids("?embedded=False"), [sandbox.id])
+        self.assertEqual(self.ids("?embedded=0"), [sandbox.id])
 
     def test_bad_choice_filters_are_400_with_field(self) -> None:
         for param in ("state", "format", "team_assembly"):
@@ -152,6 +161,15 @@ class TournamentListTests(LeagueApiTestCase):
                     400,
                     "invalid_choice",
                     param,
+                )
+        # ANG-01f review (P2): a junk ``embedded`` is a 400 too, never ignored.
+        for junk in ("bogus", "yes", "2", "truee"):
+            with self.subTest(embedded=junk):
+                self.error(
+                    self.api.get(f"{LIST_URL}?embedded={junk}"),
+                    400,
+                    "invalid",
+                    "embedded",
                 )
 
     def test_old_random_draw_value_is_rejected(self) -> None:

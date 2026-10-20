@@ -15,6 +15,10 @@ from matches.tests.league_api_fixtures import LeagueApiTestCase, make_league, ma
 from teams.models import Team
 from teams.roster_importer import REQUIRED_COLUMNS
 
+PLAYER_POOL_IMPORT_MSG = (
+    "This Tournament uses a Player-pool draw; add Players to its pool instead."
+)
+
 
 def _url(tournament_id: int, action: str) -> str:
     return f"/api/tournaments/{tournament_id}/{action}/"
@@ -293,6 +297,16 @@ class ImportParticipantsApiTests(LeagueApiTestCase):
         _embed(t)
         self.error(self.post(t, _csv("Late")), 409, "tournament_embedded")
         self.assertFalse(Team.objects.filter(name="Late").exists())
+
+    def test_player_pool_is_400_invalid_and_imports_nothing(self) -> None:
+        # ANG-01f review (P1): a Player-pool Tournament adds Players, not Teams.
+        t = _tournament(
+            "Pool", manager=self.user_a, n_teams=0, team_assembly="player_pool"
+        )
+        err = self.error(self.post(t, _csv("PoolImp")), 400, "invalid", None)
+        self.assertEqual(err["message"], PLAYER_POOL_IMPORT_MSG)
+        self.assertFalse(Team.objects.filter(name="PoolImp").exists())
+        self.assertEqual(t.participants.count(), 0)
 
     def test_cross_account_is_404(self) -> None:
         t = _tournament("Foreign", manager=self.user_b)

@@ -53,7 +53,8 @@ SERIES_LENGTH_FIELDS: tuple[str, ...] = (
 
 MIN_PRESET_TEAMS = 4
 # A tournament Team must field a full 6-player roster, so generated Teams get
-# at least 6 players: a smaller request is raised to 6 (the LG-02a rule).
+# at least 6 players: a smaller request is a ``min_value`` error (ANG-01f
+# review; absent means 6).
 _MIN_GENERATED_PLAYERS = 6
 _GENERATED_MEAN = 50
 _GENERATED_STD_DEV = 15
@@ -85,7 +86,7 @@ class TournamentCreateForm(forms.Form):
     )
     teams = forms.ModelMultipleChoiceField(queryset=Team.objects.none(), required=False)
     generate_count = forms.IntegerField(min_value=0, required=False)
-    generate_ppt = forms.IntegerField(min_value=1, required=False)
+    generate_ppt = forms.IntegerField(min_value=_MIN_GENERATED_PLAYERS, required=False)
     rrde_combo = forms.ChoiceField(
         choices=[(value, value) for value, _, _ in RRDE_COMBOS], required=False
     )
@@ -127,7 +128,7 @@ class TournamentCreateForm(forms.Form):
 
     def clean_generate_ppt(self) -> int:
         value = self.cleaned_data["generate_ppt"]
-        return max(_MIN_GENERATED_PLAYERS, value or _MIN_GENERATED_PLAYERS)
+        return _MIN_GENERATED_PLAYERS if value is None else value
 
     def clean_swiss_rounds(self) -> int:
         return self.cleaned_data["swiss_rounds"] or 0

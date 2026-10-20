@@ -2302,8 +2302,9 @@ class TestTournamentCreateRosterEligibility(TestCase):
         t = Tournament.objects.get(name="Valid Roster Cup")
         self.assertEqual(t.participants.count(), 4)
 
-    def test_generate_ppt_below_six_clamped_to_valid_rosters(self) -> None:
-        # A user requesting 3 players/team must still get full, playable rosters.
+    def test_generate_ppt_below_six_rejected(self) -> None:
+        # ANG-01f review: bad values are rejected, never defaulted (spec #190).
+        # A user requesting 3 players/team gets a form error, not a silent 6.
         response = self.client.post(
             reverse("tournament_create"),
             {
@@ -2313,14 +2314,13 @@ class TestTournamentCreateRosterEligibility(TestCase):
                 "generate_ppt": "3",
             },
         )
-        self.assertEqual(response.status_code, 302)
-        t = Tournament.objects.get(name="Clamped Cup")
-        self.assertEqual(t.participants.count(), 4)
-        for p in t.participants.all():
-            self.assertTrue(
-                p.team.is_valid_roster,
-                f"{p.team.name} has an incomplete roster",
-            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("generate_ppt", response.context["form"].errors)
+        self.assertEqual(
+            response.context["form"].errors.as_data()["generate_ppt"][0].code,
+            "min_value",
+        )
+        self.assertFalse(Tournament.objects.filter(name="Clamped Cup").exists())
 
 
 # ===========================================================================

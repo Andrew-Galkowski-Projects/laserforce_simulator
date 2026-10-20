@@ -133,4 +133,7 @@ def tournament_import_participants(
         import_participants(tournament, form, user=manager_or_none(request))
     except RosterImportError as exc:
         return _render_error(exc.errors)
+    except ValidationError as exc:
+        # A Player-pool Tournament: nothing was written.
+        messages.error(request, "; ".join(exc.messages))
     return redirect("tournament_detail", tournament_id=tournament.id)

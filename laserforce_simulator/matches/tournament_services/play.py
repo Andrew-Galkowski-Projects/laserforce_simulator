@@ -87,23 +87,37 @@ def release_stale_run(tournament: Tournament) -> bool:
     return bool(released)
 
 
+def _claim(tournament: Tournament, job_id: str) -> bool:
+    """Write ``job_id`` to an empty ``active_play_job_id``; ``True`` on success."""
+    return bool(
+        Tournament.objects.filter(
+            pk=tournament.pk, active_play_job_id__isnull=True
+        ).update(active_play_job_id=job_id)
+    )
+
+
 def enqueue_play_all(tournament: Tournament) -> str:
     """Start ``play_tournament_task`` as the active play run; return its Job id.
 
     The Job id is made up and written to ``active_play_job_id`` BEFORE
     ``apply_async(task_id=...)`` so a fast or eager task can never clear the
-    column ahead of the write. A broker ``OperationalError`` releases the
-    claim and raises ``BrokerUnavailableError``.
+    column ahead of the write. A lost claim re-reads the column: a live id is
+    ``PlayInProgressError(<id>)``; an empty one (the winner already finished)
+    is retried once, and a failed retry reports the current id or
+    ``"unknown"``. A broker ``OperationalError`` releases the claim and raises
+    ``BrokerUnavailableError``.
     """
     require_active(tournament)
     _require_no_live_run(tournament)
     job_id = str(uuid.uuid4())
-    claimed = Tournament.objects.filter(
-        pk=tournament.pk, active_play_job_id__isnull=True
-    ).update(active_play_job_id=job_id)
-    if not claimed:
+    if not _claim(tournament, job_id):
         # Lost a race to another enqueue between the read and the write.
-        raise PlayInProgressError(_live_job_id(tournament) or "")
+        winner = _live_job_id(tournament)
+        if winner is not None:
+            raise PlayInProgressError(winner)
+        # The winner already finished and cleared the column: retry once.
+        if not _claim(tournament, job_id):
+            raise PlayInProgressError(_live_job_id(tournament) or "unknown")
     tournament.active_play_job_id = job_id
     try:
         # retry=False: an unreachable broker fails after one bounded attempt.

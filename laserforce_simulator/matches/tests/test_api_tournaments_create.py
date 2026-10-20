@@ -295,6 +295,22 @@ class TournamentCreateRejectionTests(LeagueApiTestCase):
     def test_negative_generate_count(self) -> None:
         self.error(self._post(generate_count=-1), 400, "min_value", "generate_count")
 
+    def test_generate_ppt_below_six_is_min_value(self) -> None:
+        # ANG-01f review (P4): rejected, never raised to 6.
+        for bad in (0, 3, 5):
+            with self.subTest(value=bad):
+                self.error(
+                    self._post(generate_count=2, generate_ppt=bad),
+                    400,
+                    "min_value",
+                    "generate_ppt",
+                )
+        self._assert_nothing_created()
+
+    def test_generate_ppt_six_or_absent_is_accepted(self) -> None:
+        self.ok(self._post(name="Six", generate_count=1, generate_ppt=6), 201)
+        self.ok(self._post(name="Absent", generate_count=1), 201)
+
     def test_missing_name(self) -> None:
         response = self.api.post(LIST_URL, {"teams": self.ids}, format="json")
         entry = self.error(response, 400, "required", "name")

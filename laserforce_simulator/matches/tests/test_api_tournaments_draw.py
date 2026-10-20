@@ -264,6 +264,43 @@ class DrawTests(LeagueApiTestCase):
         self.assertFalse(Team.objects.filter(id__in=first).exists())
         self.assertEqual(self.t.participants.count(), 4)
 
+    def test_participant_import_is_refused_so_a_reroll_keeps_only_drawn_teams(
+        self,
+    ) -> None:
+        # ANG-01f review (P1): an imported Team could once survive a re-roll in
+        # the drawn field; the import is now refused, so nothing is added.
+        _fill_pool(self.t, 24, "Imp")
+        self.ok(self.draw())
+        roster = ",".join(REQUIRED_COLUMNS)
+        rows = [
+            f"Sneak,Sneak-P{i},{role},28,16,100,Ultrazone Chicago,5'7\""
+            for i, role in enumerate(
+                ("commander", "heavy", "scout", "scout", "medic", "ammo")
+            )
+        ]
+        upload = SimpleUploadedFile(
+            "roster.csv", ("\n".join([roster, *rows]) + "\n").encode(), "text/csv"
+        )
+        self.error(
+            self.api.post(
+                _url(self.t, "import-participants/"),
+                {"csv_file": upload},
+                format="multipart",
+            ),
+            400,
+            "invalid",
+            None,
+        )
+        self.assertFalse(Team.objects.filter(name="Sneak").exists())
+        self.assertEqual(self.t.participants.count(), 4)
+
+        data = self.ok(self.draw())
+        team_ids = [p["team"]["id"] for p in data["participants"]]
+        self.assertEqual(len(team_ids), 4)
+        self.assertTrue(
+            all(t.is_draw_team for t in Team.objects.filter(id__in=team_ids))
+        )
+
     def test_bad_pool_size_is_400_with_the_rule(self) -> None:
         for n in (23, 18):
             with self.subTest(n=n):
