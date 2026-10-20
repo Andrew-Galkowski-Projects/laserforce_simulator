@@ -8,6 +8,7 @@ only in the httpOnly ``refresh_token`` cookie.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from django.contrib.auth import get_user_model
@@ -15,7 +16,9 @@ from django.contrib.sessions.models import Session
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
-from rest_framework_simplejwt.tokens import AccessToken
+from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
+
+from accounts.token_api_views import REFRESH_COOKIE_NAME, REFRESH_COOKIE_PATH
 
 User = get_user_model()
 
@@ -24,7 +27,7 @@ REFRESH_URL = reverse("api_token_refresh")
 LOGOUT_URL = reverse("api_token_logout")
 ME_URL = reverse("api_accounts_me")
 
-COOKIE = "refresh_token"
+COOKIE = REFRESH_COOKIE_NAME
 EMAIL = "jwt@example.com"
 PASSWORD = "Sturdy-Passw0rd-42"
 SEVEN_DAYS = 7 * 24 * 60 * 60
@@ -56,6 +59,12 @@ class _Base(TestCase):
         self.assertTrue(body["errors"])
         self.assertNotIn("data", body)
 
+    def _assert_refresh_cookie(self, cookie: Any) -> None:
+        self.assertTrue(cookie["httponly"])
+        self.assertEqual(cookie["samesite"], "Lax")
+        self.assertEqual(cookie["path"], REFRESH_COOKIE_PATH)
+        self.assertEqual(int(cookie["max-age"]), SEVEN_DAYS)
+
 
 class LoginTests(_Base):
     def test_login_returns_only_access_in_body(self) -> None:
@@ -74,10 +83,7 @@ class LoginTests(_Base):
     def test_refresh_cookie_attributes(self) -> None:
         cookie = self._login().cookies[COOKIE]
         self.assertTrue(cookie.value)
-        self.assertTrue(cookie["httponly"])
-        self.assertEqual(cookie["samesite"], "Lax")
-        self.assertEqual(cookie["path"], "/api/token/")
-        self.assertEqual(int(cookie["max-age"]), SEVEN_DAYS)
+        self._assert_refresh_cookie(cookie)
 
     @override_settings(DEBUG=False)
     def test_cookie_is_secure_outside_debug(self) -> None:
@@ -132,29 +138,26 @@ class LoginTests(_Base):
 class RefreshTests(_Base):
     def setUp(self) -> None:
         super().setUp()
-        self.old = self._login().cookies[COOKIE].value
+        self.old_refresh_cookie = self._login().cookies[COOKIE].value
 
     def test_refresh_returns_new_access_and_rotated_cookie(self) -> None:
-        response = self._refresh_with(self.old)
+        response = self._refresh_with(self.old_refresh_cookie)
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(set(response.json()["data"]), {"access"})
         self.assertNotIn("refresh", response.content.decode())
         cookie = response.cookies[COOKIE]
-        self.assertNotEqual(cookie.value, self.old)
-        self.assertTrue(cookie["httponly"])
-        self.assertEqual(cookie["samesite"], "Lax")
-        self.assertEqual(cookie["path"], "/api/token/")
-        self.assertEqual(int(cookie["max-age"]), SEVEN_DAYS)
+        self.assertNotEqual(cookie.value, self.old_refresh_cookie)
+        self._assert_refresh_cookie(cookie)
         access = response.json()["data"]["access"]
         self.assertEqual(self._me_with(access).status_code, 200)
 
     def test_new_cookie_refreshes_again(self) -> None:
-        new = self._refresh_with(self.old).cookies[COOKIE].value
+        new = self._refresh_with(self.old_refresh_cookie).cookies[COOKIE].value
         self.assertEqual(self._refresh_with(new).status_code, 200)
 
     def test_reused_cookie_is_401(self) -> None:
-        self.assertEqual(self._refresh_with(self.old).status_code, 200)
-        self._assert_error(self._refresh_with(self.old), 401)
+        self.assertEqual(self._refresh_with(self.old_refresh_cookie).status_code, 200)
+        self._assert_error(self._refresh_with(self.old_refresh_cookie), 401)
 
     def test_no_cookie_is_401(self) -> None:
         self._assert_error(self._refresh_with(None), 401)
@@ -162,14 +165,21 @@ class RefreshTests(_Base):
     def test_garbage_cookie_is_401(self) -> None:
         self._assert_error(self._refresh_with("not-a-jwt"), 401)
 
+    def test_expired_cookie_is_401(self) -> None:
+        expired = RefreshToken.for_user(self.user)
+        expired.set_exp(lifetime=-timedelta(seconds=1))
+        self._assert_error(self._refresh_with(str(expired)), 401)
+
     def test_refresh_in_body_is_ignored(self) -> None:
-        response = APIClient().post(REFRESH_URL, {"refresh": self.old}, format="json")
+        response = APIClient().post(
+            REFRESH_URL, {"refresh": self.old_refresh_cookie}, format="json"
+        )
         self._assert_error(response, 401)
 
     def test_refresh_needs_no_csrf_token(self) -> None:
         client = APIClient(enforce_csrf_checks=True)
         client.force_login(self.user)
-        client.cookies[COOKIE] = self.old
+        client.cookies[COOKIE] = self.old_refresh_cookie
         self.assertEqual(client.post(REFRESH_URL).status_code, 200)
 
 
@@ -183,9 +193,16 @@ class LogoutTests(_Base):
         self.assertEqual(response.content, b"")
         cookie = response.cookies[COOKIE]
         self.assertEqual(cookie.value, "")
-        self.assertEqual(cookie["path"], "/api/token/")
+        self.assertEqual(cookie["path"], REFRESH_COOKIE_PATH)
         self.assertEqual(int(cookie["max-age"]), 0)
         self._assert_error(self._refresh_with(old), 401)
+
+    def test_logout_twice_with_same_cookie_is_204_both_times(self) -> None:
+        old = self._login().cookies[COOKIE].value
+        for _ in range(2):
+            client = APIClient()
+            client.cookies[COOKIE] = old
+            self.assertEqual(client.post(LOGOUT_URL).status_code, 204)
 
     def test_logout_without_cookie_is_204(self) -> None:
         response = APIClient().post(LOGOUT_URL)

@@ -21,6 +21,10 @@ from django.http import Http404
 from rest_framework import exceptions
 from rest_framework.response import Response
 from rest_framework.settings import api_settings
+from rest_framework_simplejwt.exceptions import (
+    AuthenticationFailed as JWTAuthenticationFailed,
+)
+from rest_framework_simplejwt.exceptions import InvalidToken
 
 
 class ErrorEntry(TypedDict):
@@ -111,9 +115,11 @@ def envelope_exception_handler(exc: Exception, context: dict) -> Response | None
         errors = errors_from_detail(exc.detail)
     elif isinstance(exc, exceptions.APIException):
         detail = exc.detail
-        if isinstance(detail, dict) and "detail" in detail:
+        is_jwt_error = isinstance(exc, (InvalidToken, JWTAuthenticationFailed))
+        if is_jwt_error and isinstance(detail, dict) and "detail" in detail:
             # ANG-03 - simplejwt's ``{"detail", "code", "messages"}`` dict is
-            # one error, not one per key.
+            # one error, not one per key. Other APIExceptions' dicts still
+            # expand per key below.
             errors = [
                 {
                     "code": str(detail.get("code") or exc.default_code),

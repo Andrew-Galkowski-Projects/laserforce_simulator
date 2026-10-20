@@ -36,6 +36,10 @@ cookie, so in principle a request to them can be forged. We accept that:
 Requiring a CSRF token would make the client bootstrap a CSRF cookie first, which costs more than
 it protects.
 
+**The token endpoints validate input with simplejwt's serializers, not a Django `Form`.** They are
+exempt from ADR-0039's "writes bind the existing Django Form" rule: logging in, refreshing and
+logging out are an auth exchange, not a domain write, and no HTML form carries those fields.
+
 ## Considered options
 
 - **Session auth only, with Angular same-origin and CSRF.** Rejected: it ties the client to Django's

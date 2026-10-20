@@ -19,7 +19,7 @@ import json
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
-from rest_framework.exceptions import ErrorDetail
+from rest_framework.exceptions import ErrorDetail, PermissionDenied
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.test import APIClient, APIRequestFactory
@@ -29,6 +29,7 @@ from conftest import get_shared_manager
 from laserforce_simulator.api.exceptions import (
     EnvelopeValidationError,
     ErrorEntry,
+    envelope_exception_handler,
     errors_from_detail,
 )
 from laserforce_simulator.api.filters import AliasOrderingFilter
@@ -320,6 +321,20 @@ class TestEnvelopeValidationError(TestCase):
         exc = EnvelopeValidationError(errors)
         self.assertEqual(exc.status_code, 400)
         self.assertEqual(exc.errors, errors)
+
+
+class TestDictDetailHandling(TestCase):
+    def test_non_jwt_dict_detail_with_detail_key_is_expanded_per_key(self) -> None:
+        # ANG-03: only simplejwt's ``{"detail", "code", "messages"}`` collapses
+        # to one error; any other APIException's dict keeps one entry per key.
+        exc = PermissionDenied({"detail": "first", "other": "second"})
+        response = envelope_exception_handler(exc, {})
+        assert response is not None
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            [(e["field"], e["message"]) for e in response.data["errors"]],
+            [("detail", "first"), ("other", "second")],
+        )
 
 
 # ---------------------------------------------------------------------------

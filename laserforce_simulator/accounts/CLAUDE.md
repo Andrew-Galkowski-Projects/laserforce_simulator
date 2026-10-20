@@ -179,7 +179,8 @@ decision. There are two kinds:
   `accounts.views.register`. Every other HTML route stays gated, including every `/maps/` route.
 - **Every DRF view is exempt automatically.** DRF 3.15+ `APIView.as_view()` sets
   `login_required = False` itself. The API is gated instead by the settings-level `IsAuthenticated`,
-  which returns a **403 JSON** body rather than the middleware's HTML **302** to the login page.
+  which returns a **401 JSON** body (`WWW-Authenticate: Bearer`, ADR-0041) rather than the
+  middleware's HTML **302** to the login page.
   Logging out of the browser session still locks the API. Only `RegisterAPIView`
   (`permission_classes = [AllowAny]`) is anonymous-allowed. The
   `@method_decorator(login_not_required, name="dispatch")` lines on the API views are redundant
@@ -192,8 +193,8 @@ All four ANG-01a viewsets have a manager-scoped `get_queryset()` and still **kee
 class-level `queryset` attribute, because the DRF router needs it for basename introspection.
 
 **API ownership after ANG-01a** ([ADR-0039](../../docs/adr/0039-rest-api-envelope-and-form-bound-writes.md)).
-The anonymous 403 is now enveloped — `{"errors": [{"code": "not_authenticated", ...}], "meta": {}}` —
-and stays **403, not 401**, until ANG-03 adds JWT. The Team / Player viewsets gained writes (create,
+The anonymous response is enveloped — `{"errors": [{"code": "not_authenticated", ...}], "meta": {}}` —
+and is a **401** with `WWW-Authenticate: Bearer` since ANG-03 (ADR-0041; it was 403 before). The Team / Player viewsets gained writes (create,
 PATCH, slots PUT, add player, generate, roster import, player DELETE); every one resolves its target
 through the same owned `get_queryset()` + `get_object()`, so a write against another Account's row is
 **404 and leaves the row unchanged**, and every create path stamps `manager_or_none(request)`.
@@ -280,7 +281,7 @@ of `get_self_insert(user)` or `null` — the raw column is never serialized, so 
 `NOT_ELIGIBLE_MESSAGE` lives in `accounts/self_insert.py`; the HTML `self_insert_link` error flash and
 the API `not_eligible` error both import it, so the text is identical on both surfaces.
 
-Anonymous calls to everything except register are an enveloped 403 `not_authenticated`. The HTML
+Anonymous calls to everything except register are an enveloped 401 `not_authenticated`. The HTML
 `/accounts/` views are unchanged. Tests: `accounts/tests/test_api_accounts.py`.
 
 **CSRF.** DRF's `SessionAuthentication` enforces CSRF only for an *authenticated* session. An
@@ -488,7 +489,7 @@ Four files, no `RunPython` in any of them:
 `accounts/tests/` — `test_user_model.py` (`USERNAME_FIELD`, `REQUIRED_FIELDS`, `username is None`,
 email uniqueness, both `UserManager` creators and their `ValueError`s), `test_auth_views.py` (the
 five URL names, templates and DOM ids; the `username`-keyed login POST; anonymous → 302 to
-`LOGIN_URL`; anonymous API → 403 JSON), `test_permissions.py` (every public name in the seam;
+`LOGIN_URL`; anonymous API → 401 JSON), `test_permissions.py` (every public name in the seam;
 traversal *behaviour*, never `_PARENT_FIELD`; **404 never 403**; the Unmanaged read/write/list rule)
 and `test_claim_unmanaged.py` (the six output lines, the counts, `CommandError`, idempotency), and
 `test_self_insert.py` (**UX-02** — the field, `SET_NULL` on Player and Team delete, OneToOne
