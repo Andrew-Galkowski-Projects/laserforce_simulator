@@ -17,4 +17,4 @@ repos:
         name: check encoding (mojibake / non-UTF-8)
         entry: python scripts/check_encoding.py
         language: system
-        types_or: [python, markdown, html, text, yaml, toml, json, javascript, css]
+        types_or: [python, markdown, html, text, yaml, toml, json, javascript, css, ts, scss]

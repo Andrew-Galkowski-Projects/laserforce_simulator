@@ -129,6 +129,25 @@ docker compose up
 
 Then open http://localhost:8000/ in your browser.
 
+### Frontend (Angular, in progress)
+
+Phase 8 is moving the UI to an Angular 22 single-page app in [`frontend/`](frontend/) (see
+[ADR-0042](docs/adr/0042-angular-frontend-stack.md)). For now it is only an app shell: a toolbar
+and a placeholder home page. It needs **Node 24** (`frontend/.nvmrc`) and npm; the Angular CLI is
+a project dependency, so no global install is needed.
+
+```bash
+npm --prefix frontend ci          # install exact versions from package-lock.json
+npm --prefix frontend start       # dev server on http://localhost:4200
+npm --prefix frontend run test:ci # Vitest unit tests, single headless run
+npm --prefix frontend run lint    # ESLint (angular-eslint)
+npm --prefix frontend run format:check
+npm --prefix frontend run build   # production bundle in frontend/dist/
+```
+
+In dev the app calls the Django API directly at `http://localhost:8000/api` (CORS allows
+`http://localhost:4200`, not `127.0.0.1:4200`). See [`frontend/CLAUDE.md`](frontend/CLAUDE.md).
+
 ## Accounts & Ownership
 
 **The whole site is behind a login.** Every page except sign-in, registration and password-change redirects an anonymous visitor to `/accounts/login/`; the JSON API answers an anonymous request with a `401`, except `POST /api/accounts/register/`, which creates an account without signing you in, and the `/api/token/` sign-in endpoints. The API accepts either your browser session or a JWT: `POST /api/token/` with your email and password returns a 15-minute access token (send it as `Authorization: Bearer <token>`) and sets a 7-day refresh cookie that `POST /api/token/refresh/` trades for a new access token.

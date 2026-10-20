@@ -104,7 +104,11 @@ python manage.py claim_unmanaged --user <email>
 python manage.py changepassword <email>
 ```
 
-CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci.yml`). Python version is 3.11.
+**Frontend (Angular, ANG-04):** npm scripts in `frontend/`, run from the repo root with
+`npm --prefix frontend <script>` (`start`, `test:ci`, `lint`, `format:check`, `build`). See
+[`frontend/CLAUDE.md`](frontend/CLAUDE.md).
+
+CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci.yml`). Python version is 3.11. A parallel `frontend` job runs lint, Prettier, Vitest and the build; the `docker` deploy job waits on both.
 
 ## Database
 
@@ -224,6 +228,7 @@ Match (2 rounds, winner by rounds then points)
 - [`laserforce_simulator/teams/CLAUDE.md`](laserforce_simulator/teams/CLAUDE.md) — Team/Player models, roster rules, `/teams/` URLs
 - [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) — index for Match/GameRound, the simulation engine, Leagues, tournaments and the API; feature detail in `docs/agents/matches/`
 - [`laserforce_simulator/core/CLAUDE.md`](laserforce_simulator/core/CLAUDE.md) — Map editor, zone/LOS processing, `/maps/` URLs, read-only `/api/maps/`
+- [`frontend/CLAUDE.md`](frontend/CLAUDE.md) — the Angular 22 SPA (ANG-04, ADR-0042): npm commands, stack, the `apiBaseUrl` rule, the Windows BOM note
 
 ### REST API
 

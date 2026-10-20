@@ -42,6 +42,8 @@ TEXT_SUFFIXES: tuple[str, ...] = (
     ".json",
     ".js",
     ".css",
+    ".ts",
+    ".scss",
 )
 
 # Written as escapes so this file does not trip its own check.
