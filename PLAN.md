@@ -1482,7 +1482,9 @@ API-02 (REST API) to be complete and deployed (Phase 7) before starting.
 **Approach:** migrate one feature area at a time. Django templates remain live until the Angular
 equivalent is complete and verified. Django Admin is a permanent exception and is never migrated.
 
-### ANG-01 · Harden and complete the REST API (prerequisite)
+### ANG-01 · [DONE] Harden and complete the REST API (prerequisite)
+
+**[DONE] (2026-10-20).** All sub-items ANG-01a..c, 01d-1, 01d-2 and 01e..g have shipped.
 
 Before building Angular against it, ensure:
 
@@ -1975,9 +1977,25 @@ ANG-01a), play next / play all with Job status, and the draw. Uses the ANG-01a r
     `matches/tournament_views/` package** by the same areas (behaviour unchanged) so parallel tickets
     never share a file. Full names in the spec issue.
 
-#### ANG-01g · Accounts API
+#### ANG-01g · [DONE] Accounts API
 
 Spec: #199
+
+**[DONE] Shipped (2026-10-20).** Four plain `APIView`s in `accounts/api_views.py` and an output-only
+`MeSerializer`; tests are in `accounts/tests/test_api_accounts.py`. With it, all of ANG-01 is done.
+What the work found:
+
+- **The Self-insert `PUT` binds a small params Form.** `SelfInsertParamsForm` (`accounts/api_forms.py`)
+  is a review fix following the `ZoneSizeParamsForm` idiom, because no HTML Form exists for it (the
+  HTML route takes the id from the URL). An integer string (`"5"`) is accepted, matching DRF and the
+  HTML route. A JSON bool, `null`, a list or a fractional float is a 400 `invalid`.
+- **`NOT_ELIGIBLE_MESSAGE` now lives in `self_insert.py`.** The HTML flash and the API error both
+  import it.
+- **CSRF caveat for ANG-04.** `SessionAuthentication` enforces CSRF only for an authenticated session.
+  An anonymous register needs no token, but a logged-in browser must send it on every unsafe method,
+  including register. `APIClient` can't show this in tests. It is noted in `accounts/CLAUDE.md`.
+- **A stale doc count was fixed.** The `accounts/CLAUDE.md` list of `login_not_required` surfaces
+  said twelve but was really seventeen before this task. It now says twenty-one and lists them all.
 
 `GET /api/accounts/me/` (the Account + its resolved Self-insert), registration, password change, and
 the UX-02 Self-insert link / unlink, each binding the existing `accounts/forms.py` Forms and
