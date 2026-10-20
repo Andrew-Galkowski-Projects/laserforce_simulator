@@ -112,8 +112,6 @@ conflict in the last run.
 
 Publish it as a GitHub issue titled `<TASK-ID>: <title>`, labelled
 `ready-for-agent`. Add `Spec: #<n>` under the task's heading in `PLAN.md`.
-Commit the grill's docs (PLAN.md, GLOSSARY.md, ADRs) on the worktree branch,
-each path named.
 
 ## Step 5: Tickets
 
@@ -128,7 +126,8 @@ predates `--parent`).
 
 **The owner's approval of the breakdown authorises local commits** on this
 task's integration and ticket branches (the `CLAUDE.md` exception). Say so
-when asking.
+when asking. Once approved, commit the grill's docs (PLAN.md, GLOSSARY.md,
+ADRs) on the integration branch first, each path named.
 
 ## Step 6: Implement
 
@@ -136,7 +135,10 @@ The worktree's branch is the **integration branch**. Follow `implement-spec`
 against the spec issue. Implementers run in their own worktrees branched from
 the integration branch, started one at a time: a worktree created while
 another agent is still committing can branch from a stale tip, so confirm
-each one's base before starting the next. Point each one at the spec issue and its ticket issue rather
+each one's base before starting the next. Before starting tickets that run in
+parallel, grep the integration tip for every helper two of them will need,
+and move each into a neutral service module yourself; every new action goes
+in its own ticket's file. Point each one at the spec issue and its ticket issue rather
 than pasting them. Add these constraints to every implementer prompt:
 
 - **First step:** confirm your worktree is based on the integration branch,
@@ -197,8 +199,7 @@ tests, and review again only if a fix changed behaviour.
 ## Step 9: PR
 
 Run `/update-docs` so the `docs/agents/` feature docs, the app `CLAUDE.md` index pointers, `PLAN.md` (`[DONE] Shipped
-(<date>).` plus what the work found) and `IMPLEMENTED_FEATURES.md` match the
-branch. Then `/pr-ready` for its checks, and write the body with
+(<date>).` plus what the work found) and `README.md` match the branch. Then `/pr-ready` for its checks, and write the body with
 `mattpocock-skills:pr`:
 
 ```markdown
@@ -221,9 +222,13 @@ A migration that drops or rewrites data is a one-way door. Say so plainly.
 
 **Stop and show the owner the commit summary and PR body.** Commit, push and
 `gh pr create --body-file` only on their "go" (`CLAUDE.md`, *Git Workflow*).
-Then stop again: the owner reviews and says when to merge. After the merge,
-remove the implementer worktrees and their branches, then the integration
-worktree, and `git pull --ff-only` in the main checkout.
+Then stop again: the owner reviews and says when to merge. PRs are
+**squash-merged**, so after the merge confirm `git diff <integration tip>
+origin/main` is empty: the work is in `main` under a new hash. Then remove the
+implementer worktrees and `git branch -D` their branches, leave the
+integration worktree with `ExitWorktree` (`action: "remove"`,
+`discard_changes: true`), delete the remote branch, and `git pull --ff-only`
+in the main checkout.
 
 ## Step 10: Retro
 

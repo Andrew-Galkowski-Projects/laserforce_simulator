@@ -7,6 +7,7 @@ check catches that class of damage before it lands.
 
 A file fails when it contains:
 
+* a leading UTF-8 byte-order mark,
 * bytes that are not valid UTF-8, or
 * the mojibake lead-in ``\\u00e2\\u20ac`` (a mangled U+2010..U+206F character),
 * the mojibake lead-in ``\\u00e2\\u2020`` (a mangled U+2190..U+21FF arrow), or
@@ -45,12 +46,16 @@ TEXT_SUFFIXES: tuple[str, ...] = (
 
 # Written as escapes so this file does not trip its own check.
 BAD_SEQUENCES: dict[str, str] = {
-    "â€": "mojibake sequence U+00E2 U+20AC",
-    "â†": "mojibake sequence U+00E2 U+2020",
-    "�": "replacement character U+FFFD",
+    "\u00e2\u20ac": "mojibake sequence U+00E2 U+20AC",
+    "\u00e2\u2020": "mojibake sequence U+00E2 U+2020",
+    "\ufffd": "replacement character U+FFFD",
 }
 
 IGNORE_MARKER = "check-encoding: ignore"
+
+# PowerShell 5.1 ``Set-Content -Encoding utf8`` and its native-command pipe both
+# prepend one. It is valid UTF-8, so the checks above never see it.
+UTF8_BOM = b"\xef\xbb\xbf"
 
 
 def tracked_text_files() -> list[str]:
@@ -69,6 +74,8 @@ def check_file(path: str) -> list[str]:
         return [f"{path}:0: unreadable ({exc.strerror})"]
 
     problems: list[str] = []
+    if data.startswith(UTF8_BOM):
+        problems.append(f"{path}:1: UTF-8 BOM")
     for lineno, raw in enumerate(data.splitlines(), start=1):
         try:
             line = raw.decode("utf-8")
