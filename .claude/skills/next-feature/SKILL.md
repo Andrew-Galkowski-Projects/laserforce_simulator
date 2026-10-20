@@ -196,7 +196,10 @@ mismatches, field-name drift between spec and code, missing seam methods.
    Assert on `innerText` or the API response body, not a status code. Check
    from a second Account when ownership changed. An API-only task checks the
    endpoints in the browsable API or with the test client instead, and says
-   which. Clean up the test data the pass created.
+   which. A test-client script runs through `manage.py shell -c
+   "exec(open(r'<path>').read())"` with `APIClient(SERVER_NAME="localhost")`:
+   outside pytest the default host `testserver` is not in `ALLOWED_HOSTS`.
+   Clean up the test data the pass created.
 
 ## Step 8: Review
 

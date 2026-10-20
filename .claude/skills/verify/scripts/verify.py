@@ -16,7 +16,10 @@ python and every tool comes from that same environment.
 
 mypy runs with ``--follow-imports=silent`` (plus the pyproject.toml config,
 ``ignore_missing_imports = true``), so it reports only errors that are in the
-changed files themselves, not in every module they import.
+changed files themselves, not in every module they import. Its errors are then
+filtered to the lines changed vs HEAD: CI does not run mypy, so an error the
+change did not write is not this change's FAIL. A file with no diff hunks (new
+and untracked) keeps every error.
 
 Run from anywhere in the repo:
 
@@ -29,6 +32,7 @@ pass). The final block is the canonical VERIFY SUMMARY table.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 
@@ -113,12 +117,21 @@ def main() -> int:
     else:
         results["encoding"] = ("SKIP", "no changed text files")
 
-    # --- mypy (changed files only; imports followed silently) ---
+    # --- mypy (changed files only; errors on changed lines only) ---
     if py_files:
         code, out = _run(
             _tool("mypy", "--follow-imports=silent", *py_files), cwd=repo_root
         )
-        results["mypy"] = ("PASS", "") if code == 0 else ("FAIL", _tail(out))
+        if code == 0:
+            results["mypy"] = ("PASS", "")
+        else:
+            _, diff = _run(["git", "diff", "-U0", "HEAD", "--", *py_files], repo_root)
+            errors = _errors_on_changed_lines(out, _changed_lines(diff), repo_root)
+            results["mypy"] = (
+                ("FAIL", " | ".join(errors[-15:]))
+                if errors
+                else ("PASS", "pre-existing errors only")
+            )
     else:
         results["mypy"] = ("SKIP", "no changed .py files")
 
@@ -144,6 +157,42 @@ def main() -> int:
     print(f"OVERALL   {overall}")
 
     return 0 if overall == "PASS" else 1
+
+
+_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+# Lazy path match: an absolute Windows path carries a drive colon.
+_MYPY_ERROR = re.compile(r"^(?P<path>.+?\.py):(?P<line>\d+)(?::\d+)?: error:")
+
+
+def _changed_lines(diff: str) -> dict[str, set[int]]:
+    """``git diff -U0`` text -> {repo-relative path: new-side line numbers}."""
+    changed: dict[str, set[int]] = {}
+    current: set[int] | None = None
+    for line in diff.splitlines():
+        if line.startswith("+++ "):
+            path = line[4:].removeprefix("b/")
+            current = changed.setdefault(path, set())
+        elif current is not None and (match := _HUNK.match(line)):
+            start, count = int(match[1]), int(match[2] or "1")
+            current.update(range(start, start + count))
+    return changed
+
+
+def _errors_on_changed_lines(
+    mypy_out: str, changed: dict[str, set[int]], repo_root: str
+) -> list[str]:
+    """Keep the mypy errors on a changed line, or in a file with no hunks."""
+    kept = []
+    for line in mypy_out.splitlines():
+        match = _MYPY_ERROR.match(line)
+        if not match:
+            continue
+        absolute = os.path.join(repo_root, match["path"])  # no-op if absolute
+        path = os.path.relpath(absolute, repo_root).replace(os.sep, "/")
+        lines = changed.get(path)
+        if lines is None or int(match["line"]) in lines:
+            kept.append(line)
+    return kept
 
 
 def _ascii(text: str) -> str:
