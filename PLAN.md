@@ -2143,6 +2143,8 @@ Spec: #207 (ticket #208)
 
 ### ANG-04 · Angular project scaffold
 
+Spec: #211 (ticket #212)
+
 One-time setup in a `/frontend/` directory at the repo root.
 
 ```bash
@@ -2151,6 +2153,39 @@ ng new frontend --routing --style=scss --strict
 cd frontend
 ng add @angular/material
 ```
+
+**Grill (2026-10-20).** Settled answers ([ADR-0042](docs/adr/0042-angular-frontend-stack.md)):
+
+1. **Angular 22** (latest stable, 22.2.x), scaffolded with `npx -p @angular/cli@22 ng new frontend ...`.
+   No global CLI install; the CLI is a `devDependency` and is run as `npx ng` / npm scripts.
+2. **CLI defaults:** standalone components (no NgModules), zoneless change detection, signals.
+   **No SSR** (`--ssr=false`): a static SPA, served behind nginx in ANG-07.
+3. **Vitest** (the CLI default) as the unit-test runner, headless in CI.
+4. **ESLint** (`ng add angular-eslint`) plus a **Prettier** config. Both are checked in CI.
+5. **Direct calls to the API in dev**, the ANG-02 CORS-with-credentials contract. The base URL is
+   `apiBaseUrl` in `src/environments/`: `http://localhost:8000/api` in dev, `/api` in production.
+   No `ng serve` proxy. (`localhost:4200` and `localhost:8000` are the same site, so the
+   `SameSite=Lax` refresh cookie travels.)
+6. **App shell only:** a Material toolbar with the app name, one placeholder `home` route, a
+   wildcard route that redirects to it, and Material theming. No API calls or services and no login.
+7. **Material 3** theme with the CLI's default palette (azure/blue), light/dark following the OS
+   (`color-scheme: light dark`).
+8. **CI:** a parallel `frontend` job in `ci.yml` (`setup-node` from `.nvmrc`, `npm ci`, lint,
+   Prettier check, Vitest, `ng build`). The `docker` job waits on both `test` and `frontend`.
+9. **Node pinned:** `frontend/.nvmrc` = `24` and `engines` in `package.json`. npm, with
+   `package-lock.json` committed.
+10. **Ignore files:** keep the `frontend/.gitignore` that `ng new` writes. Add `frontend/` to
+    `.dockerignore` as a whole; the Django image doesn't need it until ANG-07.
+11. **Encoding check** covers `.ts` and `.scss` too: `scripts/check_encoding.py`, the `/verify`
+    skill's copy of the list, and the pre-commit `types_or`.
+12. **Tests, written first:** a shell spec (renders the app title, has a router outlet) and a routes
+    spec (`''` renders home, an unknown path redirects to home).
+13. **Docs:** a `frontend/CLAUDE.md` app guide (commands, the stack, the `apiBaseUrl` rule), linked
+    from the root `CLAUDE.md` *App Guides* and *Commands*, and a short `README.md` section.
+14. **ADR-0042** records the stack. **No glossary terms.**
+15. **Out of scope:** API services and the JWT interceptor (ANG-05), feature screens and the login UI
+    (ANG-06), Docker / nginx / Fly serving (ANG-07), template removal (ANG-08), E2E tests, i18n,
+    PWA. **One ticket.** No Django code, migration, ownership or simulation change.
 
 ### ANG-05 · Angular API services
 
