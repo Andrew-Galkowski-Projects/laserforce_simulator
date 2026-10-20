@@ -2082,11 +2082,49 @@ During development Angular runs on `http://localhost:4200` and Django runs on `h
 
 ### ANG-03 · JWT authentication
 
+Spec: #207 (ticket #208)
+
 - Add `djangorestframework-simplejwt` to `requirements.txt`
 - Add `/api/token/` (login) and `/api/token/refresh/` endpoints
 - **Access token** stored in memory (not localStorage — avoids XSS token theft)
 - **Refresh token** stored in an httpOnly cookie (survives page refresh without re-login)
 - Angular `HttpInterceptor` attaches `Authorization: Bearer <token>` to every API request automatically
+  (**moved to ANG-05** by the grill below)
+
+**Grill (2026-10-20).** Settled answers ([ADR-0041](docs/adr/0041-jwt-api-auth-with-httponly-refresh-cookie.md)):
+
+1. **Server side only.** The Angular `HttpInterceptor` and in-memory token storage move to ANG-05.
+2. **`JWTAuthentication` first, `SessionAuthentication` second** in `DEFAULT_AUTHENTICATION_CLASSES`.
+   Sessions keep the browsable API and the HTML views working. Because the first class sets
+   `WWW-Authenticate: Bearer`, an anonymous `/api/` request now gets **401, not 403**, the signal
+   ANG-05's interceptor refreshes on. The existing anonymous-403 assertions (about 29 API test files)
+   change to 401 with a comment citing ADR-0039 / ADR-0041; genuine permission 403s stay 403.
+3. **`POST /api/token/`** takes `{"email", "password"}` and returns `{"data": {"access": "<jwt>"}}`.
+   The refresh token goes **only** in the httpOnly cookie, never in the body. Bad credentials or an
+   inactive Account get 401 in the `{"errors"}` envelope.
+4. **`POST /api/token/refresh/`** has no body. It reads the cookie and returns a new `{"access"}`.
+   `ROTATE_REFRESH_TOKENS` and `BLACKLIST_AFTER_ROTATION` are on, so every refresh sets a new cookie
+   and blacklists the old token. This adds `rest_framework_simplejwt.token_blacklist` to
+   `INSTALLED_APPS` (third-party, additive migrations). A missing, expired or blacklisted cookie
+   gets 401.
+5. **`POST /api/token/logout/`** blacklists the cookie's refresh token (if any), deletes the cookie
+   and returns 204. It is login-exempt and idempotent: 204 with no cookie as well.
+6. **Cookie:** name `refresh_token`, `HttpOnly`, `SameSite=Lax`, `Secure = not DEBUG`,
+   `Path=/api/token/`, `Max-Age` = the refresh lifetime.
+7. **Lifetimes are constants** in `SIMPLE_JWT`: access 15 minutes, refresh 7 days.
+8. **No CSRF token on the token endpoints.** `SameSite=Lax` keeps the cookie off cross-site POSTs,
+   CORS stops unlisted origins reading the access token, a forced refresh only rotates the victim's
+   own cookie, and a forced logout is a nuisance. Reasoning is in ADR-0041.
+9. **Login issues tokens only** (no Django session) and `UPDATE_LAST_LOGIN = True`.
+10. **Register is unchanged:** it still does not log in; Angular calls `/api/token/` after it.
+11. **Revoking an Account's refresh tokens on password change is deferred** (Deferred Items).
+12. **Placement:** views in `accounts/token_api_views.py`, routed in `api_urls.py`; tests in
+    `accounts/tests/test_api_token.py`, plus the settings-level 401 test in
+    `laserforce_simulator/api/tests/test_jwt_auth.py`.
+13. **ADR-0041** records the scheme. **No glossary terms.**
+14. **Out of scope:** the Angular interceptor (ANG-05), login throttling, password-change revocation,
+    moving HTML views to JWT, and production cookie / HTTPS changes beyond `Secure = not DEBUG`.
+    **One ticket.** No simulation impact; the only migration is the third-party blacklist app's.
 
 ### ANG-04 · Angular project scaffold
 
@@ -2102,6 +2140,11 @@ ng add @angular/material
 ### ANG-05 · Angular API services
 
 One Angular service per Django API resource. Components never call `HttpClient` directly.
+
+**Auth (moved from ANG-03).** An `HttpInterceptor` keeps the access token in memory (never
+localStorage) and attaches `Authorization: Bearer <token>` to every `/api/` request. On a 401 it calls
+`POST /api/token/refresh/` once (`withCredentials: true`, so the httpOnly refresh cookie travels) and
+retries; a second 401 goes to login. On app start it tries one refresh to restore the session.
 
 ```
 TeamsService     → GET/POST/PATCH /api/teams/
@@ -2244,6 +2287,9 @@ The following were explicitly scoped out and should not be implemented until re-
 - **Per-stat-per-role weight tuning** (STAT-02 follow-up) — granular multipliers per stat per role;
   deferred until baseline simulation data exists to inform the values
 - **Google/OAuth social login** (UX-01) — deferred from Phase 6; email/password only for now
+- **Revoke refresh tokens on password change** (ANG-03) — a password change keeps the Account's
+  outstanding refresh tokens valid until they expire (7 days). Blacklisting every `OutstandingToken`
+  for the Account on change is the fix; access tokens already expire within 15 minutes
 - **Custom domain** — deferred until the project grows; fly.dev subdomain is sufficient for now
 - **Goal-recompute throttling** (MOVE-04) — behavioural perf lever (staler goals every *N* ticks);
   out of MOVE-02 scope, opened only if the MOVE-02 path cache alone is insufficient for the
