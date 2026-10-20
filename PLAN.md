@@ -520,7 +520,9 @@ the **CRE-02 tiered generation** subsection in
 **CRE-02 league spread** subsection in
 [`docs/agents/matches/league-lifecycle.md`](docs/agents/matches/league-lifecycle.md).
 
-### CI-01 · [NOT STARTED] Make the test suite green on PostgreSQL in CI
+### CI-01 · [IN PROGRESS] Make the test suite green on PostgreSQL in CI
+
+Spec: #215 (ticket #216)
 
 Found by ANG-04 (PR #213). ANG-04 fixed `ci.yml`, which GitHub had rejected since at least 2026-06,
 so the `test` job ran on CI's `postgres:16` service for the first time in months. It failed with
@@ -543,6 +545,28 @@ because it runs on SQLite. PostgreSQL is canonical (ADR-0025), so this is a real
 - **Deploy gate:** while `test` is red, the `docker` job (and the Fly deploy) is skipped. When it
   goes green, the first merge to `main` deploys. If the Fly Postgres predates UX-01, re-provision it
   first (`CLAUDE.md` *Database*, the `AUTH_USER_MODEL` hazard).
+
+**Grill (2026-10-20) -- settled.** Probes against a local `postgres:16` found exactly **two**
+causes, each enough alone to break the suite: (1) the six task `finally` blocks; (2) two tests
+(`core/test_map_views_html.py` `test_processed_image_png`, `core/test_maps_api_writes.py`
+`test_processed_image_is_raw_png`) that call `response.close()` after the test client already
+closed the streamed response, firing `request_finished` -> `close_old_connections()` inside the
+test transaction. Only (1) fixed: 1990 failed; only (2): 3517 failed; both: **7857 passed, 0
+failed**. Nothing else Postgres-only hides behind them.
+
+1. Delete the six `close_old_connections()` calls; Celery's Django worker fixup already closes
+   the connection after every non-eager task. One comment says so.
+2. The two tests drop `try/finally: response.close()`; read `streaming_content` first, then assert.
+3. Regression guard in the root `conftest.py`: `close()` on a connection while `in_atomic_block`
+   fails the test immediately, on any backend (so SQLite catches it locally). The guard has its own
+   test, and the old code must go red under it on SQLite.
+4. `CLAUDE.md` *Database* documents a throwaway `postgres:16` on port 5433 plus `DATABASE_URL`
+   for pytest. Compose unchanged.
+5. `/pr-ready` runs the full suite on Postgres when Docker is available and says so when skipped;
+   `/verify` stays SQLite.
+6. Deploy gate: the owner checks / re-provisions the Fly Postgres before merge; the PR flags it.
+7. Out: simulation, RNG, models, migrations, ownership, API/HTML behaviour, Postgres as local
+   default, Fly / infra. No ADR, no glossary terms. One ticket.
 
 ---
 
