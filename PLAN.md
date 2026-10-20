@@ -2141,9 +2141,27 @@ Spec: #207 (ticket #208)
     moving HTML views to JWT, and production cookie / HTTPS changes beyond `Secure = not DEBUG`.
     **One ticket.** No simulation impact; the only migration is the third-party blacklist app's.
 
-### ANG-04 · Angular project scaffold
+### ANG-04 · [DONE] Angular project scaffold
 
 Spec: #211 (ticket #212)
+
+**[DONE] Shipped (2026-10-20).** It shipped as specified: Angular 22.2.3, Material 22.2.3, Vitest 5,
+angular-eslint 22.6, TypeScript 6.0, with no zone.js and no SSR. Detail is in `frontend/CLAUDE.md`
+and ADR-0042. What the work found:
+
+- **CI had been rejected outright for months.** The deploy steps used `secrets.FLY_API_TOKEN` in a
+  step-level `if:`, which GitHub Actions does not allow, so every run since at least 2026-06 failed
+  as "a workflow file issue" and no job ran. The token is now job-level `env` and the `if:`s test
+  `env.FLY_API_TOKEN` (actionlint is clean apart from the codecov `path` input below).
+- **The encoding check would have failed on `main`.** The mojibake fixture line in
+  `test_check_encoding.py` had no `check-encoding: ignore` marker; the broken workflow hid this.
+- **Material 3 ignores `color="primary"`.** The toolbar takes the primary colour through
+  `mat.toolbar-overrides` in `app.scss` instead.
+- **Prettier needs `endOfLine: auto`** because `core.autocrlf` gives a Windows checkout CRLF endings.
+- **Plain `npm test` does a single run when `CI` is set**, but CI uses an explicit `test:ci`
+  (`ng test --watch=false`).
+- **Open:** actionlint reports that `codecov/codecov-action@v5` has no `path` input (it takes
+  `files`), so the coverage upload may be ignoring its path. This predates ANG-04.
 
 One-time setup in a `/frontend/` directory at the repo root.
 
