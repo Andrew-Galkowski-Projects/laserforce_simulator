@@ -138,10 +138,11 @@ This project follows TDD. Before implementing any new feature or fixing a bug:
 3. Repeat one slice at a time (one test, then just enough code to pass it). Refactoring belongs to review (`mattpocock-skills:code-review`), not to the red-green loop.
 
 **Test placement:**
-- `matches/tests/simulation_tests.py` — simulator logic, game events, round outcomes
-- `matches/tests.py` — match/round model behavior, views
-- `teams/tests.py` — team/player model behavior, views
-- `core/tests.py` — map processing, zone detection, sight line computation
+Put a test beside the existing tests for the module it covers. Glob first, because the folders are
+the record:
+- **Per-app:** `<app>/tests/` or `<app>/tests.py`. For example, `matches/tests/simulation_tests.py` holds
+  simulator logic and `matches/tests/test_api_*.py` holds the matches API.
+- **Project-wide API behaviour** (envelope, CORS, auth headers): `laserforce_simulator/api/tests/`.
 
 **What to test:**
 - Every new public function or method gets at least one test covering the happy path and one covering an edge case or failure mode.
