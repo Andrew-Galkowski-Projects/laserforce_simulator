@@ -186,9 +186,10 @@ class TeamFinancesPatchTests(LeagueApiTestCase):
             404,
         )
 
-    def test_anonymous_patch_is_403(self) -> None:
+    def test_anonymous_patch_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         response = self.anon.patch(self.url, {"budget_scouting": 90}, format="json")
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
 
 
 class TeamFinancesGuardTests(LeagueApiTestCase):
@@ -227,10 +228,11 @@ class TeamFinancesGuardTests(LeagueApiTestCase):
         foreign = self.foreign_league()
         self.errors(self.api.get(_team_url(foreign.id, teams[0].id)), 404)
 
-    def test_anonymous_get_is_403(self) -> None:
+    def test_anonymous_get_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         league, _season, teams = _finance_league("TFAnon", self.user_a)
         response = self.anon.get(_team_url(league.id, teams[0].id))
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
 
 
 def _league_url(league_id: int) -> str:
@@ -280,6 +282,7 @@ class LeagueFinancesTests(LeagueApiTestCase):
     def test_another_accounts_league_is_404(self) -> None:
         self.errors(self.api.get(_league_url(self.foreign_league().id)), 404)
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         league, _season, _teams = _finance_league("LFAnon", self.user_a)
-        self.assertEqual(self.anon.get(_league_url(league.id)).status_code, 403)
+        self.assertEqual(self.anon.get(_league_url(league.id)).status_code, 401)

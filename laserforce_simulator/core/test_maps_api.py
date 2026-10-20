@@ -174,9 +174,10 @@ class TestMapsSharedAndAuth(_MapsTestCase):
         self.assertEqual(mine, theirs)
         self.assertEqual(other_api.get(f"/api/maps/{self.alpha.pk}/").status_code, 200)
 
-    def test_anonymous_is_403_not_authenticated(self) -> None:
+    def test_anonymous_is_401_not_authenticated(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         response = APIClient().get("/api/maps/")
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["errors"][0]["code"], "not_authenticated")
 
     def test_detail_put_and_patch_are_405(self) -> None:

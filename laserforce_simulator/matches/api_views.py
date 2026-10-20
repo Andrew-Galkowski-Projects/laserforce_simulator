@@ -70,7 +70,7 @@ class JobNotComplete(APIException):
 
 
 # UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
-# DRF's 403 JSON rather than an HTML 302 to the login page; the settings-level
+# DRF's 401 JSON rather than an HTML 302 to the login page; the settings-level
 # `IsAuthenticated` is what actually gates it.
 #
 # ANG-01a — ordering comes from `AliasOrderingFilter` / `ordering` (with an
@@ -115,7 +115,7 @@ class MatchViewSet(ListOnlyFilterMixin, ReadOnlyModelViewSet):
 
 
 # UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
-# DRF's 403 JSON rather than an HTML 302 to the login page; the settings-level
+# DRF's 401 JSON rather than an HTML 302 to the login page; the settings-level
 # `IsAuthenticated` is what actually gates it.
 @method_decorator(login_not_required, name="dispatch")
 class GameRoundViewSet(ListOnlyFilterMixin, ReadOnlyModelViewSet):
@@ -264,7 +264,7 @@ class GameRoundViewSet(ListOnlyFilterMixin, ReadOnlyModelViewSet):
 
 
 # UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
-# DRF's 403 JSON rather than an HTML 302 to the login page; the settings-level
+# DRF's 401 JSON rather than an HTML 302 to the login page; the settings-level
 # `IsAuthenticated` is what actually gates it.
 @method_decorator(login_not_required, name="dispatch")
 class SimulateBatchAPIView(views.APIView):
@@ -316,7 +316,7 @@ class SimulateBatchAPIView(views.APIView):
 
 
 # UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
-# DRF's 403 JSON rather than an HTML 302 to the login page; the settings-level
+# DRF's 401 JSON rather than an HTML 302 to the login page; the settings-level
 # `IsAuthenticated` is what actually gates it.
 @method_decorator(login_not_required, name="dispatch")
 class SimulateBatchStatusAPIView(views.APIView):

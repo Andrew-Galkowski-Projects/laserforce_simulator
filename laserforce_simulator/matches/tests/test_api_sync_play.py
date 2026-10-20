@@ -4,7 +4,7 @@ Seam 1 (``/api/``, DRF ``APIClient``): ``POST /api/seasons/<id>/start/`` /
 ``play-week/`` / ``play-single-round/`` return 200 with the same body as
 ``GET .../dashboard/``. Errors are 409 ``season_not_draft`` /
 ``season_not_active`` / ``wrong_phase`` / ``play_in_progress``; cross-Account
-404, anonymous 403.
+404, anonymous 401 (ADR-0041).
 
 Runs against the real simulator (``ROUND_TICKS`` shortened); assertions are on
 status codes, envelope shape, Season state and persisted rows -- never on
@@ -78,11 +78,12 @@ class TestStartSeason(LeagueApiTestCase):
         season.refresh_from_db()
         self.assertEqual(season.state, "draft")
 
-    def test_cross_account_is_404_and_anonymous_is_403(self) -> None:
+    def test_cross_account_is_404_and_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         foreign = draft_season(self.foreign_league("StF"), make_teams("StF", 2))
         self.error(self.api.post(action(foreign.id, "start")), 404, "not_found")
         self.error(
-            self.anon.post(action(foreign.id, "start")), 403, "not_authenticated"
+            self.anon.post(action(foreign.id, "start")), 401, "not_authenticated"
         )
         foreign.refresh_from_db()
         self.assertEqual(foreign.state, "draft")
@@ -120,11 +121,12 @@ class TestPlayWeek(LeagueApiTestCase):
         )
         self.assertFalse(GameRound.objects.filter(match__season=season).exists())
 
-    def test_cross_account_is_404_and_anonymous_is_403(self) -> None:
+    def test_cross_account_is_404_and_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         foreign = active_season(self.foreign_league("PwF"), make_teams("PwF", 2))
         self.error(self.api.post(action(foreign.id, "play-week")), 404, "not_found")
         self.error(
-            self.anon.post(action(foreign.id, "play-week")), 403, "not_authenticated"
+            self.anon.post(action(foreign.id, "play-week")), 401, "not_authenticated"
         )
         self.assertFalse(GameRound.objects.exists())
 
@@ -175,13 +177,14 @@ class TestPlaySingleRound(LeagueApiTestCase):
         )
         self.assertEqual(GameRound.objects.count(), rounds)
 
-    def test_cross_account_is_404_and_anonymous_is_403(self) -> None:
+    def test_cross_account_is_404_and_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         foreign = active_season(self.foreign_league("PsrF"), make_teams("PsrF", 2))
         self.error(
             self.api.post(action(foreign.id, "play-single-round")), 404, "not_found"
         )
         self.error(
             self.anon.post(action(foreign.id, "play-single-round")),
-            403,
+            401,
             "not_authenticated",
         )

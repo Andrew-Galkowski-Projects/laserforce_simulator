@@ -229,11 +229,12 @@ class TestTeamH2H(_H2HTestCase):
         self.assertEqual(errors[0]["code"], "not_found")
         self.assertIsNone(errors[0]["field"])
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         response = APIClient().get(
             "/api/teams/head-to-head/", {"team_a": self.red.pk, "team_b": self.blue.pk}
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
 
 
 # ---------------------------------------------------------------------------

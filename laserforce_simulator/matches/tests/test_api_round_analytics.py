@@ -290,9 +290,10 @@ class TestRoundReport(_AnalyticsTestCase):
             self.api.post(f"/api/rounds/{game_round.pk}/report/", {}, format="json")
         )
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         game_round = GameRound.objects.create(
             round_number=1, team_red=self.red, team_blue=self.blue
         )
         response = APIClient().get(f"/api/rounds/{game_round.pk}/report/")
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)

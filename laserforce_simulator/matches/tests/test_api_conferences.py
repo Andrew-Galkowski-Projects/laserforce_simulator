@@ -129,8 +129,9 @@ class TestConferencesGet(_ConferencesTestCase):
             "not_found",
         )
 
-    def test_anonymous_is_403(self) -> None:
-        self.error(self.anon.get(self.url), 403, "not_authenticated")
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.error(self.anon.get(self.url), 401, "not_authenticated")
 
     def test_other_methods_are_405(self) -> None:
         for method in ("post", "patch", "delete"):

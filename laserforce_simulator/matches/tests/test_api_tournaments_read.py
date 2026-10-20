@@ -97,8 +97,9 @@ class TournamentListTests(LeagueApiTestCase):
         self.assertEqual({row["id"] for row in data}, {mine.id, unmanaged.id})
         self.assertEqual(meta["count"], 2)
 
-    def test_anonymous_is_403_not_authenticated(self) -> None:
-        self.error(self.anon.get(LIST_URL), 403, "not_authenticated")
+    def test_anonymous_is_401_not_authenticated(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.error(self.anon.get(LIST_URL), 401, "not_authenticated")
 
     def test_row_shape(self) -> None:
         t = _tournament(
@@ -371,9 +372,10 @@ class TournamentRetrieveTests(LeagueApiTestCase):
         t = _tournament("Foreign", manager=self.user_b)
         self.error(self.api.get(_detail_url(t.id)), 404, "not_found")
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         t = _tournament("Anon")
-        self.error(self.anon.get(_detail_url(t.id)), 403, "not_authenticated")
+        self.error(self.anon.get(_detail_url(t.id)), 401, "not_authenticated")
 
 
 class TournamentPoolTests(LeagueApiTestCase):
@@ -416,8 +418,9 @@ class TournamentPoolTests(LeagueApiTestCase):
         foreign = _tournament("ForeignPool", manager=self.user_b)
         self.error(self.api.get(self.url(foreign)), 404, "not_found")
 
-    def test_pool_anonymous_is_403(self) -> None:
-        self.error(self.anon.get(self.url(self.t)), 403, "not_authenticated")
+    def test_pool_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.error(self.anon.get(self.url(self.t)), 401, "not_authenticated")
 
 
 class TournamentMethodNotAllowedTests(LeagueApiTestCase):

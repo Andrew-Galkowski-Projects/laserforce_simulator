@@ -26,7 +26,8 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
   `SelfInsertParamsForm` do. Hand-rolled body validation is a finding.
 - Views raise errors; they never build a 4xx `Response` by hand.
 - Filters use an explicit `django-filter` allowlist.
-- A row owned by another Account returns 404. An anonymous request returns 403.
+- A row owned by another Account returns 404. An anonymous request returns 401
+  with `WWW-Authenticate: Bearer` (ADR-0041).
 
 ## Tests
 

@@ -118,11 +118,12 @@ class TestNextSeason(LeagueApiTestCase):
             self.api.get(url(league.id, "next-season")), 405, "method_not_allowed"
         )
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         league, _season, _teams = ranked_career_league("NsAnon", 4)
         self.error(
             self.anon.post(url(league.id, "next-season"), format="json"),
-            403,
+            401,
             "not_authenticated",
         )
 

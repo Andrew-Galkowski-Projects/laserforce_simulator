@@ -36,8 +36,9 @@ settings, **not per view**. New API slices (ANG-01b..g) must follow it. Seam con
 - **Status / code table.** 400 — the Form / serializer / filter error code verbatim (`required`,
   `invalid`, `invalid_choice`, `max_value`, …; `code=None` ⇒ `invalid`), `parse_error` (bad JSON),
   `roster_invalid` (`field = row:<n>[:<column>]`); 404 `not_found` — missing row, **cross-Account row
-  (never 403, ADR-0038)**, bad page; 403 `not_authenticated` (anonymous — stays 403, not 401, until
-  ANG-03's JWT) / `permission_denied` (CSRF on a session write); 405 `method_not_allowed` (keeps the
+  (never 403, ADR-0038)**, bad page; 401 `not_authenticated` (anonymous, with
+  `WWW-Authenticate: Bearer` since ANG-03 / ADR-0041; it was 403 before) / `token_not_valid` (bad,
+  expired or blacklisted JWT); 403 `permission_denied` (CSRF on a session write); 405 `method_not_allowed` (keeps the
   `Allow` header); 409 — a raised `APIException` subclass for a state conflict (ANG-01b
   `job_not_complete`, ANG-01c `map_in_use`, ANG-01d-1 `season_in_progress` / `manager_fired` /
   `season_not_draft` / `no_completed_season` / `not_career_league`, ANG-01f `tournament_embedded` /
@@ -429,7 +430,7 @@ this League's Season id, or `"career"` when `allow_career`, else 400 `invalid_ch
 `TeamHistoryPlayersParamsForm`, `TeamStatsParamsForm`, `PowerRankingsParamsForm`, `GameLogParamsForm`).
 
 **Endpoint behaviour** (`matches/league_screen_api_views.py::LeagueScreensMixin`, mixed into
-`LeagueViewSet`; every action starts with `self.get_object()` ⇒ cross-Account 404, anonymous 403).
+`LeagueViewSet`; every action starts with `self.get_object()` ⇒ cross-Account 404, anonymous 401).
 - **Params** are strict (bad `season` / `rate` / `ordering` / `team_id` ⇒ 400). Paging is the shared
   `EnvelopePagination` (`page`, `page_size`), not the HTML `per_page`. Sorting is `?ordering=<key>` /
   `-<key>` over the HTML's keys with each screen's HTML default.
@@ -543,7 +544,7 @@ a **present bad value is rejected**, never defaulted or clamped.
 - `DrawEntryForm` — `tier` 1..6 and / or `drawn_team` (one of **this** Tournament's drawn Teams, else
   `invalid_choice`); at least one is required.
 
-**Endpoints** (every action starts with `get_object()` ⇒ cross-Account 404, anonymous 403; then the
+**Endpoints** (every action starts with `get_object()` ⇒ cross-Account 404, anonymous 401; then the
 guards (409), then the Form (400), then the service — views raise, never build a 4xx).
 - **List** — owned + Unmanaged rows; `embedded` is annotated and Season phases prefetched, so a page
   runs a constant number of queries. `?format=` is the bracket-format filter: the viewset's content
@@ -646,7 +647,7 @@ cross-origin with cookies. Config only: `settings.py` plus `django-cors-headers`
   - `CSRF_TRUSTED_ORIGINS = list(CORS_ALLOWED_ORIGINS)`. A session write from an untrusted origin is a
     403 `permission_denied` ("CSRF Failed: Origin checking failed").
 - **Preflight.** An anonymous `OPTIONS` to `/api/` is answered with 200 by `CorsMiddleware`. It never
-  reaches the login redirect or DRF's 403.
+  reaches the login redirect or DRF's 401 (403 before ANG-03).
 - **Tests.** `laserforce_simulator/api/tests/test_cors.py` uses a shared `override_settings` that pins
   both lists. It covers six cases:
   - allowed and disallowed origins;
@@ -657,3 +658,43 @@ cross-origin with cookies. Config only: `settings.py` plus `django-cors-headers`
   - a CSRF-enforcing cross-origin write, trusted and untrusted.
 - **Out of scope.** JWT (ANG-03), cookie SameSite / Secure changes, HTTPS hardening, a production
   origin, and nginx (ANG-07).
+
+## ANG-03 JWT authentication
+
+Spec #207, ticket #208, [ADR-0041](../../adr/0041-jwt-api-auth-with-httponly-refresh-cookie.md).
+The API accepts a JWT as well as the session. `djangorestframework-simplejwt` (`>=5.3`) plus its
+`token_blacklist` app (third-party, additive migrations; none of ours).
+
+- **Auth classes.** `DEFAULT_AUTHENTICATION_CLASSES = [JWTAuthentication, SessionAuthentication]`.
+  DRF takes `WWW-Authenticate` from the first class, so an anonymous `/api/` request is **401**
+  (`WWW-Authenticate: Bearer realm="api"`) — the Angular client's signal to refresh. The session stays
+  second for the browsable API and the HTML site. Authenticated-but-forbidden 403s (CSRF) and
+  cross-Account 404s are unchanged.
+- **`SIMPLE_JWT`** (constants): access 15 minutes, refresh 7 days, `ROTATE_REFRESH_TOKENS`,
+  `BLACKLIST_AFTER_ROTATION`, `UPDATE_LAST_LOGIN`, `AUTH_HEADER_TYPES = ("Bearer",)`. Login reads
+  `USERNAME_FIELD`, so the body key is `email`.
+- **Endpoints** (`accounts/token_api_views.py`, routed in `api_urls.py`). All three are
+  `login_not_required`, `AllowAny`, `authentication_classes = []` (so no CSRF and no session), and
+  override `get_authenticate_header`, without which DRF turns their 401s into 403s.
+
+  | Method | Path | URL name | Behaviour |
+  |---|---|---|---|
+  | POST | `token/` | `api_token_obtain` | `{"email", "password"}` ⇒ 200 `{"data": {"access"}}` + refresh cookie. Bad credentials / inactive ⇒ 401 `no_active_account`; missing field ⇒ 400. No session; `last_login` updated. |
+  | POST | `token/refresh/` | `api_token_refresh` | No body; reads **only** the cookie ⇒ 200 `{"access"}` + a rotated cookie (the old token is blacklisted). No cookie ⇒ 401 `not_authenticated`; bad / expired / reused ⇒ 401 `token_not_valid`. |
+  | POST | `token/logout/` | `api_token_logout` | Blacklists a valid cookie's token, always deletes the cookie, 204 — also with no cookie, a bad one, or twice. |
+
+- **Refresh cookie.** `REFRESH_COOKIE_NAME = "refresh_token"`, `REFRESH_COOKIE_PATH = "/api/token/"`;
+  `HttpOnly`, `SameSite=Lax`, `Secure = not DEBUG` (read per request), `Max-Age` = the refresh
+  lifetime. The refresh token never appears in a response body.
+- **Envelope.** simplejwt's `InvalidToken` / `AuthenticationFailed` carry a
+  `{"detail", "code", "messages"}` dict; `envelope_exception_handler` collapses it to **one** error
+  entry for those two classes only. Any other `APIException` dict still expands per key.
+- **Not a Form write.** The token endpoints validate with simplejwt's serializers: an auth exchange,
+  exempt from ADR-0039's Form rule (recorded in ADR-0041).
+- **Tests.** `accounts/tests/test_api_token.py` (login, cookie attributes, rotation, reuse / expired /
+  garbage / missing cookie, logout incl. twice, no CSRF needed, `Secure` vs `DEBUG`, 15-minute access)
+  and `laserforce_simulator/api/tests/test_jwt_auth.py` (anonymous 401 + Bearer challenge, garbage
+  bearer 401, session still accepted). Every anonymous-403 assertion in the API tests became 401 with an
+  `ADR-0041` comment; the auth-order mutation (session first) turns four of them red.
+- **Out of scope.** The Angular interceptor (ANG-05), login throttling, revoking refresh tokens on
+  password change (PLAN.md Deferred Items), HTML views on JWT, scheduling `flushexpiredtokens`.

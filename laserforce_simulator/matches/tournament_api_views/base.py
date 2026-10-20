@@ -6,7 +6,7 @@ leaf module ``tournament_api_views.errors``.
 Follows ADR-0039: one envelope, Form-bound writes, output-only serializers,
 views raise (never hand-build a 4xx ``Response``). Every row resolves through
 ``owned_queryset`` so a cross-Account Tournament is a 404 and an anonymous
-request is DRF's 403. Write order inside every action: ``get_object()`` (404),
+request is DRF's 401. Write order inside every action: ``get_object()`` (404),
 then the guards (409), then the Form (400), then the service.
 """
 
@@ -68,7 +68,7 @@ class _FormatFilterNegotiation(DefaultContentNegotiation):
 
 
 # UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
-# DRF's 403 JSON; the settings-level `IsAuthenticated` gates it. No `update` /
+# DRF's 401 JSON; the settings-level `IsAuthenticated` gates it. No `update` /
 # `partial_update` / `destroy`, so PUT / PATCH / DELETE on the detail are 405.
 @method_decorator(login_not_required, name="dispatch")
 class TournamentViewSet(

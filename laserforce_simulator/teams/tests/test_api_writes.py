@@ -168,9 +168,10 @@ class TestTeamCreate(_ApiTestCase):
         self.assert_error_envelope(response, 400)
         self.assertEqual(_codes_fields(response), [("max_length", "name")])
 
-    def test_anonymous_create_is_403(self) -> None:
+    def test_anonymous_create_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         response = APIClient().post("/api/teams/", {"name": "Anon"}, format="json")
-        errors = self.assert_error_envelope(response, 403)
+        errors = self.assert_error_envelope(response, 401)
         self.assertEqual(errors[0]["code"], "not_authenticated")
         self.assertFalse(Team.objects.filter(name="Anon").exists())
 
@@ -642,9 +643,10 @@ class TestImportTemplate(_ApiTestCase):
         self.assertFalse(content.lstrip().startswith("{"))
         self.assertTrue(content.startswith(",".join(REQUIRED_COLUMNS[:2])))
 
-    def test_template_anonymous_is_403(self) -> None:
+    def test_template_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         errors = self.assert_error_envelope(
-            APIClient().get("/api/teams/import/template/"), 403
+            APIClient().get("/api/teams/import/template/"), 401
         )
         self.assertEqual(errors[0]["code"], "not_authenticated")
 

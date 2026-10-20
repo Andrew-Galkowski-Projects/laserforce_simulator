@@ -60,10 +60,11 @@ with every example: `docs/agents/matches/api.md`.
 
 - **Envelope.** `{"data", "meta"}` on success; paginated lists put `{page, page_size, count, total_pages}` in `meta`; errors are `{"errors": [{"code", "message", "field"}], "meta"}` with `field` null for non-field errors. Exempt: 204, raw file responses (`HttpResponse` / `FileResponse`), unhandled 500s.
 - **Writes bind the existing Django `Form`.** Serializers are output-only. POST binds `plain_form_data(...)`, PATCH `merged_form_data(...)` (merges over the instance), PUT a full dict; then `validate_form_or_raise(form)`. **Views raise; they never build a 4xx `Response`.** No HTML Form for a write ⇒ add an API-only Form, not a serializer. Validated query params bind a strict param Form (`api_forms.py`).
-- **Status codes.** 400 = the Form / filter error code verbatim (`parse_error` for bad JSON). 404 `not_found` for a missing row, **a cross-Account row (never 403)**, or a bad page. 403 for anonymous (until ANG-03 JWT) and CSRF. 405 keeps `Allow`. 409 = a raised `APIException` subclass for a state conflict. 415 for a wrong media type.
+- **Status codes.** 400 = the Form / filter error code verbatim (`parse_error` for bad JSON). 404 `not_found` for a missing row, **a cross-Account row (never 403)**, or a bad page. 401 for anonymous (`WWW-Authenticate: Bearer`, ADR-0041); 403 for CSRF. 405 keeps `Allow`. 409 = a raised `APIException` subclass for a state conflict. 415 for a wrong media type.
 - **Filtering.** `django-filter` with an explicit `filterset_class` per viewset plus `AliasOrderingFilter` (`?ordering=a,-b`, unknown terms dropped, tiebreak appended). A typed filter with a bad value ⇒ 400 with `field` = the param. Every viewset mixes in `ListOnlyFilterMixin` first.
 - **Ownership.** `get_queryset()` builds on `owned_queryset` / `owned_match_q` / `owned_game_round_q`; DRF `get_object()` then 404s cross-Account. Viewsets keep `login_not_required` on `dispatch` plus settings-level `IsAuthenticated`. `ArenaMap` is shared data, the one exception.
 - **CORS (ANG-02).** Only `/api/` answers cross-origin, with credentials, for `CORS_ALLOWED_ORIGINS`. That list comes from the env; it defaults to `http://localhost:4200` under `DEBUG` and is empty otherwise, and it is also `CSRF_TRUSTED_ORIGINS`. `CorsMiddleware` stays first in `MIDDLEWARE`.
+- **JWT (ANG-03).** `JWTAuthentication` is first and `SessionAuthentication` second, so either works; anonymous is 401. Login / refresh / logout live at `/api/token/` (`accounts/token_api_views.py`): the access token is in the body, the refresh token only in the httpOnly `refresh_token` cookie scoped to `/api/token/` ([ADR-0041](../../docs/adr/0041-jwt-api-auth-with-httponly-refresh-cookie.md)).
 
 ## Tests
 
@@ -77,7 +78,7 @@ Inventory: `docs/agents/matches/tests.md`.
 Paths below are relative to the repo root.
 
 - Engine, `BatchSimulator`, models' field history, TIME-01 ticks, roles, shot resolver, EventLog, Score Calibration, GEN-01 fidelity tiers — `docs/agents/matches/simulation-engine.md`
-- REST API endpoints, ANG-01b match/round actions, ANG-01d-1 league lifecycle API, ANG-01e league screens API, ANG-01f tournaments API, ANG-02 CORS, full API conventions — `docs/agents/matches/api.md`
+- REST API endpoints, ANG-01b match/round actions, ANG-01d-1 league lifecycle API, ANG-01e league screens API, ANG-01f tournaments API, ANG-02 CORS, ANG-03 JWT auth / token endpoints, full API conventions — `docs/agents/matches/api.md`
 - URL table (`/matches/`, `/api/`) — `docs/agents/matches/urls.md`
 - Celery, batch jobs, Job status, polling JSON (API-03) — `docs/agents/matches/async-celery.md`
 - Round pages, event log windowing, playback map, heatmap, round compare, highlights, PDF report, head-to-head — `docs/agents/matches/round-views-and-analytics.md`

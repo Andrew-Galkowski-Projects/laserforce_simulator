@@ -132,8 +132,9 @@ class TestSeasonList(LeagueApiTestCase):
         ids = self.ids({"ordering": "start_date"})
         self.assertEqual(ids[-1], self.s1.id)
 
-    def test_anonymous_is_403(self) -> None:
-        self.error(self.anon.get(LIST), 403, "not_authenticated")
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.error(self.anon.get(LIST), 401, "not_authenticated")
 
     def test_post_is_405(self) -> None:
         self.error(self.api.post(LIST, {}, format="json"), 405, "method_not_allowed")

@@ -310,7 +310,8 @@ class TestMatchCreate(_CreateTestCase):
             self.assertNotIn(method.upper(), response.headers["Allow"])
         self.assertTrue(Match.objects.filter(pk=match.pk).exists())
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         before = Match.objects.count()
         response = APIClient().post(
             "/api/matches/",
@@ -321,7 +322,7 @@ class TestMatchCreate(_CreateTestCase):
             },
             format="json",
         )
-        errors = self.assert_error_envelope(response, 403)
+        errors = self.assert_error_envelope(response, 401)
         self.assertEqual(errors[0]["code"], "not_authenticated")
         self.assertEqual(Match.objects.count(), before)
 
@@ -427,11 +428,12 @@ class TestRoundCreate(_CreateTestCase):
             self.assertEqual(errors[0]["code"], "method_not_allowed")
             self.assertIn("Allow", response.headers)
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         response = APIClient().post(
             "/api/rounds/",
             {"team_red": self.red.pk, "team_blue": self.blue.pk},
             format="json",
         )
-        errors = self.assert_error_envelope(response, 403)
+        errors = self.assert_error_envelope(response, 401)
         self.assertEqual(errors[0]["code"], "not_authenticated")

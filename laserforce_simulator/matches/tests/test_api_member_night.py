@@ -7,7 +7,7 @@ play-all Active play run (Job ref); ``member-night/play-single/`` plays one
 game (dashboard payload); ``member-night/play-live/`` plays one game at full
 fidelity (``{kind: "member_night", round_ids, job: null}``). Errors are 409
 ``season_not_active`` / ``wrong_phase`` / ``no_member_night_games`` /
-``play_in_progress``; cross-Account 404, anonymous 403.
+``play_in_progress``; cross-Account 404, anonymous 401 (ADR-0041).
 
 The draw uses a fresh ``random.Random()``, so tests assert game COUNTS against
 the locked ``MIN_GAMES..MAX_GAMES`` band, never identities or point totals.
@@ -103,10 +103,11 @@ class TestMemberNightState(MemberNightApiTestCase):
         self.assertFalse(data["phase_active"])
         self.assertEqual(data["sites"], [])
 
-    def test_cross_account_is_404_and_anonymous_is_403(self) -> None:
+    def test_cross_account_is_404_and_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         foreign = mn_season(self.foreign_league("MnForeign"), "MnF")
         self.error(self.api.get(mn_url(foreign.id)), 404, "not_found")
-        self.error(self.anon.get(mn_url(self.season.id)), 403, "not_authenticated")
+        self.error(self.anon.get(mn_url(self.season.id)), 401, "not_authenticated")
 
 
 class TestMemberNightPlayAll(MemberNightApiTestCase):
@@ -151,11 +152,12 @@ class TestMemberNightPlayAll(MemberNightApiTestCase):
             "job:busy",
         )
 
-    def test_cross_account_is_404_and_anonymous_is_403(self) -> None:
+    def test_cross_account_is_404_and_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         foreign = mn_season(self.foreign_league("MnAllForeign"), "MnAllF")
         self.error(self.api.post(mn_url(foreign.id, "play/")), 404, "not_found")
         self.error(
-            self.anon.post(mn_url(self.season.id, "play/")), 403, "not_authenticated"
+            self.anon.post(mn_url(self.season.id, "play/")), 401, "not_authenticated"
         )
 
 
@@ -195,12 +197,13 @@ class TestMemberNightPlaySingle(MemberNightApiTestCase):
         self.error(self.post_single(), 409, "play_in_progress", "job:busy")
         self.assertFalse(self.shells().filter(is_completed=True).exists())
 
-    def test_cross_account_is_404_and_anonymous_is_403(self) -> None:
+    def test_cross_account_is_404_and_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         foreign = mn_season(self.foreign_league("MnOneForeign"), "MnOneF")
         self.error(self.post_single(foreign), 404, "not_found")
         self.error(
             self.anon.post(mn_url(self.season.id, "play-single/")),
-            403,
+            401,
             "not_authenticated",
         )
 
@@ -230,12 +233,13 @@ class TestMemberNightPlayLive(MemberNightApiTestCase):
         Season.objects.filter(pk=self.season.pk).update(active_play_job_id="busy")
         self.error(self.post_live(), 409, "play_in_progress", "job:busy")
 
-    def test_cross_account_is_404_and_anonymous_is_403(self) -> None:
+    def test_cross_account_is_404_and_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         foreign = mn_season(self.foreign_league("MnLiveForeign"), "MnLiveF")
         self.error(self.api.post(mn_url(foreign.id, "play-live/")), 404, "not_found")
         self.error(
             self.anon.post(mn_url(self.season.id, "play-live/")),
-            403,
+            401,
             "not_authenticated",
         )
 
@@ -304,13 +308,14 @@ class TestMemberNightSetup(MemberNightApiTestCase):
         )
         self.assertFalse(self.shells().exists())
 
-    def test_cross_account_is_404_and_anonymous_is_403(self) -> None:
+    def test_cross_account_is_404_and_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         foreign = mn_season(self.foreign_league("MnSetForeign"), "MnSetF")
         self.error(
             self.api.post(mn_url(foreign.id), {"sites": ["SiteA"]}), 404, "not_found"
         )
         self.error(
             self.anon.post(mn_url(self.season.id), {"sites": ["SiteA"]}),
-            403,
+            401,
             "not_authenticated",
         )

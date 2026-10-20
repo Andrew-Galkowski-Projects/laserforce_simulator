@@ -170,8 +170,9 @@ class StatisticalFeatsTests(LeagueApiTestCase):
         foreign = self.foreign_league()
         self.errors(self.api.get(_feats_url(foreign.id)), 404)
 
-    def test_anonymous_is_403(self) -> None:
-        self.errors(self.anon.get(_feats_url(self.league.id)), 403)
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.errors(self.anon.get(_feats_url(self.league.id)), 401)
 
     def test_no_season_is_empty(self) -> None:
         empty = make_league("SFeatEmpty", manager=self.user_a)
@@ -353,9 +354,10 @@ class PlayoffsTests(LeagueApiTestCase):
         foreign = self.foreign_league()
         self.errors(self.api.get(_playoffs_url(foreign.id)), 404)
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         league, _season, _teams = ranked_career_league("PoAnon", 2, manager=self.user_a)
-        self.errors(self.anon.get(_playoffs_url(league.id)), 403)
+        self.errors(self.anon.get(_playoffs_url(league.id)), 401)
 
     def test_no_season_is_empty(self) -> None:
         empty = make_league("PoEmpty", manager=self.user_a)

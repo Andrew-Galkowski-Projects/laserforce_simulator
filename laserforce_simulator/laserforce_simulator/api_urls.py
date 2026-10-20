@@ -7,6 +7,11 @@ from accounts.api_views import (
     RegisterAPIView,
     SelfInsertAPIView,
 )
+from accounts.token_api_views import (
+    TokenLogoutAPIView,
+    TokenObtainAPIView,
+    TokenRefreshAPIView,
+)
 from core.api_views import ArenaMapViewSet
 from matches.api_views import (
     GameRoundViewSet,
@@ -50,6 +55,18 @@ urlpatterns = router.urls + [
         "accounts/me/self-insert/",
         SelfInsertAPIView.as_view(),
         name="api_accounts_self_insert",
+    ),
+    # ANG-03 (ADR-0041) - JWT login / refresh / logout.
+    path("token/", TokenObtainAPIView.as_view(), name="api_token_obtain"),
+    path(
+        "token/refresh/",
+        TokenRefreshAPIView.as_view(),
+        name="api_token_refresh",
+    ),
+    path(
+        "token/logout/",
+        TokenLogoutAPIView.as_view(),
+        name="api_token_logout",
     ),
     path(
         "simulate-batch/",

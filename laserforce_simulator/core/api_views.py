@@ -49,7 +49,7 @@ def _zone_size_param(request: Request) -> int:
 
 
 # UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
-# DRF's 403 JSON rather than an HTML 302 to the login page; the settings-level
+# DRF's 401 JSON rather than an HTML 302 to the login page; the settings-level
 # `IsAuthenticated` is what actually gates it.
 #
 # ANG-01a — ArenaMap is shared reference data (ADR-0038): NOT ownership

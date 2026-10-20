@@ -1,7 +1,7 @@
 """ANG-01g — the Accounts API (ADR-0039).
 
 Plain ``APIView`` classes, each ``login_not_required`` on ``dispatch`` so an
-anonymous request gets DRF's enveloped 403 JSON instead of the middleware's
+anonymous request gets DRF's enveloped 401 JSON instead of the middleware's
 HTML 302. The settings-level ``IsAuthenticated`` gates every view except
 ``RegisterAPIView`` (``AllowAny``).
 """

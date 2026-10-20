@@ -242,9 +242,10 @@ class TestCompareErrors(_CompareTestCase):
         response = self.api.post("/api/rounds/compare/", {}, format="json")
         self.assertEqual(response.status_code, 405)
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         response = APIClient().get(
             "/api/rounds/compare/",
             {"round_a": self.round_a.pk, "round_b": self.round_b.pk},
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)

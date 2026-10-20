@@ -88,7 +88,7 @@ roots — accepted behaviour, not a bug.
   `@action(url_path="events")` method unchanged; only the base queryset is wrapped. Router
   registration and every API URL name are untouched. `SimulateBatchAPIView` /
   `SimulateBatchStatusAPIView` take the same decorator. The middleware exemption is what makes DRF's
-  `IsAuthenticated` return a **403 JSON** body instead of an HTML **302** to the login page.
+  `IsAuthenticated` return a **401 JSON** body (403 before ANG-03) instead of an HTML **302** to the login page.
 
 **Stamping sites in this app (8 of the 13).** `_create_league_and_season` gained a keyword-only
 `manager: AbstractBaseUser | None = None` parameter (appended last; the helper takes no `request`, so

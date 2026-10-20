@@ -677,7 +677,7 @@ class TestMatchListScoping(TestCase):
 
 
 class TestApiQuerysetScoping(TestCase):
-    """§8.2 — the four viewsets are manager-scoped, and 403 while anonymous."""
+    """§8.2 — the four viewsets are manager-scoped, and 401 while anonymous (ADR-0041)."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -708,7 +708,8 @@ class TestApiQuerysetScoping(TestCase):
         self.assertIn(self.theirs.name, names)
         self.assertNotIn(self.mine.name, names)
 
-    def test_anonymous_api_access_is_403_not_302(self) -> None:
+    def test_anonymous_api_access_is_401_not_302(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         self.client.logout()
         response = self.client.get("/api/teams/")
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)

@@ -3,7 +3,7 @@
 Follows ADR-0039: one envelope, Form-bound writes, output-only serializers,
 views RAISE (never hand-build a 4xx ``Response``). Every League / Season /
 Team row resolves through ``owned_queryset`` / ``get_owned_or_404``, so a
-cross-Account row is a 404 and an anonymous request is DRF's 403. All
+cross-Account row is a 404 and an anonymous request is DRF's 401. All
 computation is shared with the HTML views via ``matches.league_services``; the
 API never reads or writes ``request.session["last_league_id"]``.
 
@@ -370,7 +370,7 @@ def _season_detail(season: Season) -> Season:
 
 
 # UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
-# DRF's 403 JSON; the settings-level `IsAuthenticated` is what gates it. No
+# DRF's 401 JSON; the settings-level `IsAuthenticated` is what gates it. No
 # `update` / `partial_update`, so PUT / PATCH on the detail stay 405.
 @method_decorator(login_not_required, name="dispatch")
 class LeagueViewSet(
