@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Run black, ruff, the encoding check (CI's lint step), mypy on changed lines, and pytest on changed files, and output a single pass/fail summary.
+description: Run black, ruff, the encoding check (CI's lint step), mypy on changed lines, pytest on changed files, and the frontend lint / Prettier / Vitest when frontend/ changed, and output a single pass/fail summary.
 ---
 
 Every step of this check is a fixed, repeatable operation — collecting changed
@@ -35,6 +35,10 @@ The script:
 3. Derives the pytest targets from the authoritative app→tests mapping in
    `changed_files.py` and runs `pytest -q` against them (full suite only if a
    change matched no mapping).
+3b. When anything under `frontend/` changed, runs `npm run lint`,
+   `format:check` and `test:ci` in `frontend/` as the `ng-lint`, `prettier`
+   and `vitest` rows (SKIP otherwise). A missing `frontend/node_modules` is a
+   FAIL that says to run `npm --prefix frontend ci`.
 4. Prints the canonical `VERIFY SUMMARY` table and exits non-zero iff OVERALL
    is FAIL.
 

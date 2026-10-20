@@ -60,8 +60,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Close every page you opened with `new_page`** via `close_page` as soon as you
   are done with it, and again before you report results (also when the pass
   fails or is cut short). Finish with `list_pages` to confirm only the original
-  tab remains, then `navigate_page` it to `about:blank` so it doesn't keep
-  polling the dev server.
+  tab remains.
+- **Close the browser when the pass is done:**
+  `powershell -NoProfile -File scripts/close_mcp_browser.ps1`. The MCP keeps
+  its Chrome open until the session ends, and that open browser blocks other
+  agents. The script closes only this session's MCP Chrome; the next MCP call
+  launches a fresh one.
 
 ## Commands
 
@@ -104,11 +108,9 @@ python manage.py claim_unmanaged --user <email>
 python manage.py changepassword <email>
 ```
 
-**Frontend (Angular, ANG-04):** npm scripts in `frontend/`, run from the repo root with
-`npm --prefix frontend run <script>` (`start`, `test:ci`, `lint`, `format:check`, `build`). See
-[`frontend/CLAUDE.md`](frontend/CLAUDE.md).
+Frontend commands: [`frontend/CLAUDE.md`](frontend/CLAUDE.md).
 
-CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci.yml`). Python version is 3.11. A parallel `frontend` job runs lint, Prettier, Vitest and the build; the `docker` deploy job waits on both.
+CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci.yml`). Python version is 3.11.
 
 ## Database
 

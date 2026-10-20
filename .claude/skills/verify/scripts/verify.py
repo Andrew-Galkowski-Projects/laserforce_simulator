@@ -1,8 +1,10 @@
 """Deterministic verify pipeline over the changed files.
 
 Steps, in order: black --check, ruff (the narrow F401/F811 set from
-pyproject.toml), the mojibake / UTF-8 encoding check, mypy, and pytest on the
-derived targets. It mirrors the CI lint step plus a scoped test run.
+pyproject.toml), the mojibake / UTF-8 encoding check, mypy, pytest on the
+derived targets, and -- when anything under frontend/ changed -- the Angular
+lint, Prettier check and Vitest run (CI's `frontend` job minus the build). It
+mirrors the CI lint step plus a scoped test run.
 
 Every step of the old `verify` skill was a fixed, repeatable operation with no
 judgement involved: collect changed files, run the tools against them, derive
@@ -31,30 +33,49 @@ pass). The final block is the canonical VERIFY SUMMARY table.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
+import shutil
 import subprocess
 import sys
+from pathlib import Path
+from types import ModuleType
 
 import changed_files as cf  # same directory
 
-STEPS: tuple[str, ...] = ("black", "ruff", "encoding", "mypy", "pytest")
-
-# Mirrors scripts/check_encoding.py TEXT_SUFFIXES.
-TEXT_SUFFIXES: tuple[str, ...] = (
-    ".py",
-    ".md",
-    ".html",
-    ".txt",
-    ".yml",
-    ".yaml",
-    ".toml",
-    ".json",
-    ".js",
-    ".css",
-    ".ts",
-    ".scss",
+STEPS: tuple[str, ...] = (
+    "black",
+    "ruff",
+    "encoding",
+    "mypy",
+    "pytest",
+    "ng-lint",
+    "prettier",
+    "vitest",
 )
+
+# CI's `frontend` job scripts, as (step, npm script). The build is left to
+# /pr-ready: it is slow and rarely fails where lint and tests pass.
+FRONTEND_STEPS: tuple[tuple[str, str], ...] = (
+    ("ng-lint", "lint"),
+    ("prettier", "format:check"),
+    ("vitest", "test:ci"),
+)
+
+
+def _load_check_encoding() -> ModuleType:
+    # scripts/ is not a package; load the CI script by path so its
+    # TEXT_SUFFIXES stays the single source of truth.
+    path = Path(__file__).resolve().parents[4] / "scripts" / "check_encoding.py"
+    spec = importlib.util.spec_from_file_location("check_encoding", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+TEXT_SUFFIXES: tuple[str, ...] = _load_check_encoding().TEXT_SUFFIXES
 
 
 def _run(cmd: list[str], cwd: str) -> tuple[int, str]:
@@ -147,6 +168,21 @@ def main() -> int:
         results["pytest"] = (
             ("PASS", scope) if code == 0 else ("FAIL", _pytest_tail(out))
         )
+
+    # --- frontend (only when frontend/ changed) ---
+    frontend_changed = any(p.startswith("frontend/") for p in data["changed"])
+    frontend_dir = os.path.join(repo_root, "frontend")
+    npm = shutil.which("npm")  # npm.cmd on Windows
+    for step, script in FRONTEND_STEPS:
+        if not frontend_changed:
+            results[step] = ("SKIP", "no changed frontend/ files")
+        elif npm is None:
+            results[step] = ("FAIL", "npm not on PATH")
+        elif not os.path.isdir(os.path.join(frontend_dir, "node_modules")):
+            results[step] = ("FAIL", "no node_modules: run npm --prefix frontend ci")
+        else:
+            code, out = _run([npm, "run", script], cwd=frontend_dir)
+            results[step] = ("PASS", "") if code == 0 else ("FAIL", _tail(out))
 
     overall = "FAIL" if any(v[0] == "FAIL" for v in results.values()) else "PASS"
 
