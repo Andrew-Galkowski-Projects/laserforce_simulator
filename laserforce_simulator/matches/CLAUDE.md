@@ -32,7 +32,7 @@ derives ownership from its parent (see `accounts-ownership.md`).
 - `views.py` — sandbox match / round / batch / analytics HTML views.
 - `league_views.py` — League + Season HTML views, play loop, rollover, owner evaluation.
 - `league_screens/` — one module per League sidebar screen (thin; logic in `league_screen_services.py`).
-- `tournament_views.py` / `tournament_engine.py` — standalone Tournaments and the bracket drain.
+- `tournament_views/` (one module per area: `list_create`, `detail`, `setup`, `draw`, `play`) / `tournament_services/` (shared HTML + API logic; `detail` holds the bracket / standings builders) / `tournament_engine.py` — standalone Tournaments and the bracket drain.
 - `tasks.py` — Celery tasks (batch, save, play season / playoffs / tournament / member night).
 - Pure modules (Django-free, `TestNoDjangoImportsLeaked`-guarded): `bracket.py`, `standings.py`, `schedule_generator.py`, `season_dashboard.py`, `phase_composer.py`, `draw.py`, `member_night.py`, `worlds.py`, `development.py`, `finance.py`, `injury.py`, `owner_mood.py`, `season_awards.py`, `h2h_stats.py`, `player_h2h_stats.py`, `stat_feats.py`, `*_logic.py`.
 - `api_views.py`, `league_api_views.py`, `league_screen_api_views.py`, `serializers.py`, `filters.py`, `api_forms.py`, `api_refs.py` — the REST API.

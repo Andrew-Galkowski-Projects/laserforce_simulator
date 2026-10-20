@@ -49,7 +49,7 @@ def playoffs(request: HttpRequest, league_id: int) -> HttpResponse:
     Renders each built ``tournament`` phase of the viewed Season as a
     single-elimination bracket (the embedded playoff / mid-season tournament is
     always ``single_elimination``, so every node lives in the ``"winners"``
-    slice of :func:`matches.tournament_views._build_rounds`). A tournament
+    bracket of :func:`matches.tournament_services.detail.build_rounds`). A tournament
     phase that exists but has not yet been seeded (the regular season is still
     in progress) renders a "not yet seeded" stub. A Season with no tournament
     phase — or no Season at all — renders the empty-state notice.

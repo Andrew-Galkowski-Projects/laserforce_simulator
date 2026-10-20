@@ -1,7 +1,7 @@
 """The public Job status vocabulary, mapped from Celery's native task states.
 
 Shared by the batch / save polling views (``matches.views``), the tournament
-play-all poll (``matches.tournament_views``) and the Season play-run status
+play-all poll (``matches.tournament_views.play``) and the Season play-run status
 (``matches.league_play_services``). Kept free of view imports so the service
 layer never has to import a views module.
 """

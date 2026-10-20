@@ -566,7 +566,7 @@ class TestTournamentPlayNextForcedTie(TestCase):
 from django.core.files.uploadedfile import SimpleUploadedFile  # noqa: E402
 
 from matches.bracket import default_seed_order  # noqa: E402
-from matches.tournament_views import _team_mean_rating  # noqa: E402
+from matches.tournament_views.list_create import _team_mean_rating  # noqa: E402
 from teams.roster_importer import REQUIRED_COLUMNS  # noqa: E402
 
 _REQUIRED_HEADER = ",".join(REQUIRED_COLUMNS)
@@ -762,7 +762,7 @@ class TestTournamentPlayAll(TestCase):
         t = _active_tournament(4, name="PlayAll202")
         # Patch the task's .delay so we assert the enqueue shape without running
         # the (EAGER) task body here — the task is covered in test_tournament_tasks.
-        with patch("matches.tournament_views.play_tournament_task") as task_mock:
+        with patch("matches.tournament_views.play.play_tournament_task") as task_mock:
             fake_result = task_mock.apply_async.return_value
             fake_result.id = "job-abc-123"
             response = self.client.post(reverse("tournament_play_all", args=[t.id]))
@@ -776,7 +776,7 @@ class TestTournamentPlayAll(TestCase):
 
     def test_play_all_on_non_active_returns_409(self) -> None:
         t = _setup_tournament(4, name="PlayAll409")  # setup state, not active
-        with patch("matches.tournament_views.play_tournament_task") as task_mock:
+        with patch("matches.tournament_views.play.play_tournament_task") as task_mock:
             response = self.client.post(reverse("tournament_play_all", args=[t.id]))
         self.assertEqual(response.status_code, 409)
         payload = response.json()
@@ -796,7 +796,7 @@ class TestTournamentPlayAll(TestCase):
         from kombu.exceptions import OperationalError
 
         t = _active_tournament(4, name="PlayAllBrokerDown")
-        with patch("matches.tournament_views.play_tournament_task") as task_mock:
+        with patch("matches.tournament_views.play.play_tournament_task") as task_mock:
             task_mock.apply_async.side_effect = OperationalError("broker unreachable")
             response = self.client.post(reverse("tournament_play_all", args=[t.id]))
         self.assertEqual(response.status_code, 503)

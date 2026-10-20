@@ -66,7 +66,7 @@ from matches.team_history_logic import (
     round_outcome,
 )
 from matches.team_stats_logic import TeamStatRow, aggregate_team_stats, sort_team_stats
-from matches.tournament_views import _build_rounds
+from matches.tournament_services.detail import build_rounds
 from teams.models import Player, Team
 from teams.views import _SORT_KEYS as RATING_SORT_KEYS
 
@@ -930,7 +930,7 @@ class PlayoffsScreen:
 
     - ``brackets``: one dict per bracket section, in phase-ordinal then
       Conference order -- ``phase``, ``tournament`` (or ``None`` while the
-      phase is unbuilt), ``name``, ``rounds`` (``_build_rounds(t)["winners"]``),
+      phase is unbuilt), ``name``, ``rounds`` (``build_rounds(t, "winners")``),
       ``champion``, ``pending``, ``conference``, ``key`` (the DOM-id
       discriminator), ``stage`` and ``stage_label`` (CONF-02/03/04).
     - ``worlds_qualifiers``: ``Season.worlds_qualifiers()`` (``[]`` until
@@ -946,7 +946,7 @@ def build_playoffs(season: Season | None) -> PlayoffsScreen:
     Season with no ``tournament`` phase.
 
     Embedded season tournaments are single-elimination, so every node lives in
-    the ``"winners"`` slice of ``matches.tournament_views._build_rounds``.
+    the ``"winners"`` bracket of ``matches.tournament_services.detail.build_rounds``.
     """
     if season is None:
         return PlayoffsScreen(brackets=[], worlds_qualifiers=[])
@@ -987,7 +987,7 @@ def build_playoffs(season: Season | None) -> PlayoffsScreen:
             )
             continue
         for tournament in tournaments:
-            rounds = _build_rounds(tournament)["winners"]
+            rounds = build_rounds(tournament, "winners")
             conference = tournament.conference
             # ``key`` is the DOM-id discriminator: ``str(phase.ordinal)`` for a
             # Season-wide bracket (every pre-CONF-02 id unchanged), a
