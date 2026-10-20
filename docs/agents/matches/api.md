@@ -624,3 +624,36 @@ rewrite) and `test_tournament_services_boundary.py` (no view imports).
 Unmanaged Free Agents Team; ANG01f5-D2 pool CSV import skips the DB slot-collision check; ANG01f-D3
 `build_detail_context` / `build_tournament_detail` mix several jobs. PLAN.md Deferred Items: the
 never-consumed `PENDING` play run.
+
+## ANG-02 CORS configuration
+
+Spec #203, ticket #204. The Angular dev server (`http://localhost:4200`) may call `/api/`
+cross-origin with cookies. Config only: `settings.py` plus `django-cors-headers` (`>=4.4`,
+`corsheaders` in `INSTALLED_APPS`). There is no new public name and no migration.
+
+- **Middleware.** `corsheaders.middleware.CorsMiddleware` is **first** in `MIDDLEWARE`. It must sit
+  above every middleware that can return a response itself. One example is `CommonMiddleware`, which
+  replaces a 404 with a redirect for `/api/teams` (no slash). The browser blocks that redirect if it
+  has no CORS headers. "Before `CommonMiddleware`" alone is not enough, because WhiteNoise sits
+  above it.
+- **Settings.**
+  - `CORS_ALLOWED_ORIGINS` is read from the env var of the same name (decouple `Csv()`). The default
+    is `http://localhost:4200` when `DEBUG` is on and empty when it is off. Production stays empty,
+    because ANG-07 serves Angular from the same origin.
+  - `CORS_ALLOW_CREDENTIALS = True`. The session cookie is sent because `localhost:4200` and `:8000`
+    are the same *site* under SameSite=Lax, and ANG-03's refresh cookie will need it too.
+  - `CORS_URLS_REGEX = r"^/api/.*$"`, so HTML, admin and static responses never carry CORS headers.
+  - `CSRF_TRUSTED_ORIGINS = list(CORS_ALLOWED_ORIGINS)`. A session write from an untrusted origin is a
+    403 `permission_denied` ("CSRF Failed: Origin checking failed").
+- **Preflight.** An anonymous `OPTIONS` to `/api/` is answered with 200 by `CorsMiddleware`. It never
+  reaches the login redirect or DRF's 403.
+- **Tests.** `laserforce_simulator/api/tests/test_cors.py` uses a shared `override_settings` that pins
+  both lists. It covers six cases:
+  - allowed and disallowed origins;
+  - the APPEND_SLASH redirect carrying CORS headers (mutation-checked: it fails with `CorsMiddleware`
+    below `CommonMiddleware`);
+  - a non-API path;
+  - an anonymous preflight;
+  - a CSRF-enforcing cross-origin write, trusted and untrusted.
+- **Out of scope.** JWT (ANG-03), cookie SameSite / Secure changes, HTTPS hardening, a production
+  origin, and nginx (ANG-07).

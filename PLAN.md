@@ -2029,9 +2029,22 @@ while `SessionAuthentication` is the only scheme, anonymous requests remain 403.
    deletion, password reset, and an eligible-Players list.
 7. **One ticket.** No migration and no simulation impact.
 
-### ANG-02 · CORS configuration
+### ANG-02 · [DONE] CORS configuration
 
 Spec: #203 (ticket #204)
+
+**[DONE] Shipped (2026-10-20).** It shipped as specified. What the work found:
+
+- **`CorsMiddleware` must be first, not just "before CommonMiddleware".** CommonMiddleware swaps a
+  404 for its APPEND_SLASH redirect during the response phase, so `/api/teams` (no slash) loses its
+  CORS headers whenever `CorsMiddleware` sits lower. A test pins this and was mutation-checked.
+- **Preflight placement is not tested by LoginRequiredMiddleware.** DRF views are already login-exempt,
+  so moving `CorsMiddleware` below it wouldn't break the preflight.
+- **`CSRF_TRUSTED_ORIGINS` is a copy of the CORS list** (`list(...)`), so the two settings can't be
+  changed together by accident.
+- **Browser check.** A real cross-origin `fetch` was made from a page on `localhost:4200` to Django on
+  `:8001`. A logged-in, CSRF-protected POST returned 201, and a fetch to an HTML page was blocked.
+- Detail: `docs/agents/matches/api.md` **ANG-02**.
 
 During development Angular runs on `http://localhost:4200` and Django runs on `http://localhost:8000`.
 
