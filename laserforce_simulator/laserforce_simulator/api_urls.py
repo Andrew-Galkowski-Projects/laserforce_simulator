@@ -1,6 +1,12 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
+from accounts.api_views import (
+    MeAPIView,
+    PasswordChangeAPIView,
+    RegisterAPIView,
+    SelfInsertAPIView,
+)
 from core.api_views import ArenaMapViewSet
 from matches.api_views import (
     GameRoundViewSet,
@@ -28,6 +34,23 @@ router.register("tournaments", TournamentViewSet, basename="tournament")
 # `simulate-batch/save/save/` matches both; Celery ids are UUIDs, so a batch
 # job id of literally "save" does not occur in practice.
 urlpatterns = router.urls + [
+    # ANG-01g — the Accounts API.
+    path("accounts/me/", MeAPIView.as_view(), name="api_accounts_me"),
+    path(
+        "accounts/register/",
+        RegisterAPIView.as_view(),
+        name="api_accounts_register",
+    ),
+    path(
+        "accounts/me/password/",
+        PasswordChangeAPIView.as_view(),
+        name="api_accounts_password",
+    ),
+    path(
+        "accounts/me/self-insert/",
+        SelfInsertAPIView.as_view(),
+        name="api_accounts_self_insert",
+    ),
     path(
         "simulate-batch/",
         SimulateBatchAPIView.as_view(),
