@@ -848,7 +848,8 @@ class TestSharedAndAnonymous(_MapsWriteTestCase):
         # ... and the first Account sees it (shared reference data).
         self.ok(self.api.get(self.url(pk=data["id"])))
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         anon = APIClient()
         cases = (
             ("post", reverse("arenamap-list"), {"name": "Anon"}, "multipart"),
@@ -863,7 +864,7 @@ class TestSharedAndAnonymous(_MapsWriteTestCase):
                 kwargs = {"format": fmt} if fmt else {}
                 args = (path, body) if body is not None else (path,)
                 response = getattr(anon, method)(*args, **kwargs)
-                self.error(response, 403, "not_authenticated")
+                self.error(response, 401, "not_authenticated")
         self.assertTrue(ArenaMap.objects.filter(pk=self.map.pk).exists())
         self.assertIsNone(self.map.latest_confirmed_config())
         self.assertFalse(ArenaMap.objects.filter(name="Anon").exists())

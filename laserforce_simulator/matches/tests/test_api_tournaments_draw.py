@@ -383,7 +383,7 @@ class DrawEntryEditTests(LeagueApiTestCase):
 
 class DrawWriteGuardTests(LeagueApiTestCase):
     """Every pool / draw write: 409 after lock, 409 embedded, 400 preset,
-    404 cross-Account, 403 anonymous -- each with no write."""
+    404 cross-Account, 401 anonymous -- each with no write."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -428,7 +428,8 @@ class DrawWriteGuardTests(LeagueApiTestCase):
         for label, response in self.writes(t, client):
             with self.subTest(write=label):
                 if code == "not_authenticated":
-                    self.assertEqual(response.status_code, 403, response.content)
+                    # ADR-0041: anonymous is 401 (was 403).
+                    self.assertEqual(response.status_code, status, response.content)
                     self.assertEqual(
                         response.json()["errors"][0]["code"], "not_authenticated"
                     )
@@ -461,6 +462,7 @@ class DrawWriteGuardTests(LeagueApiTestCase):
         t = _pool_tournament("Foreign", manager=self.user_b)
         self.assert_all(t, 404, "not_found")
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         t = _pool_tournament("Anon", manager=self.user_a)
-        self.assert_all(t, 403, "not_authenticated", client=self.anon)
+        self.assert_all(t, 401, "not_authenticated", client=self.anon)

@@ -77,8 +77,9 @@ class WatchPlayerPutTests(LeagueApiTestCase):
     def test_put_unknown_player_is_404(self) -> None:
         self.errors(self.api.put(_player_url(self.league.id, 999999)), 404)
 
-    def test_put_anonymous_is_403(self) -> None:
-        self.errors(self.anon.put(_player_url(self.league.id, self.player.id)), 403)
+    def test_put_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.errors(self.anon.put(_player_url(self.league.id, self.player.id)), 401)
 
     def test_put_leaves_session_untouched(self) -> None:
         self.ok(self.api.put(_player_url(self.league.id, self.player.id)))
@@ -125,8 +126,9 @@ class WatchPlayerDeleteTests(LeagueApiTestCase):
         foreign = self.foreign_league()
         self.errors(self.api.delete(_player_url(foreign.id, self.player.id)), 404)
 
-    def test_delete_anonymous_is_403(self) -> None:
-        self.errors(self.anon.delete(_player_url(self.league.id, self.player.id)), 403)
+    def test_delete_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.errors(self.anon.delete(_player_url(self.league.id, self.player.id)), 401)
 
     def test_clear_removes_only_this_accounts_list_for_this_league(self) -> None:
         other_league, _, other_teams = ranked_career_league(
@@ -160,8 +162,9 @@ class WatchPlayerDeleteTests(LeagueApiTestCase):
         foreign = self.foreign_league()
         self.errors(self.api.delete(f"/api/leagues/{foreign.id}/watch-list/"), 404)
 
-    def test_clear_anonymous_is_403(self) -> None:
-        self.errors(self.anon.delete(f"/api/leagues/{self.league.id}/watch-list/"), 403)
+    def test_clear_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.errors(self.anon.delete(f"/api/leagues/{self.league.id}/watch-list/"), 401)
 
 
 STAT_ROW_KEYS = {"player", "watched", "team", "role", "games", "stats"}
@@ -297,8 +300,9 @@ class WatchListGetTests(LeagueApiTestCase):
         foreign = self.foreign_league()
         self.errors(self.api.get(f"/api/leagues/{foreign.id}/watch-list/"), 404)
 
-    def test_anonymous_is_403(self) -> None:
-        self.errors(self.anon.get(self.url), 403)
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.errors(self.anon.get(self.url), 401)
 
     def test_does_not_touch_session(self) -> None:
         self.get()

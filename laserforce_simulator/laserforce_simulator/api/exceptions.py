@@ -111,7 +111,17 @@ def envelope_exception_handler(exc: Exception, context: dict) -> Response | None
         errors = errors_from_detail(exc.detail)
     elif isinstance(exc, exceptions.APIException):
         detail = exc.detail
-        if isinstance(detail, (dict, list)):
+        if isinstance(detail, dict) and "detail" in detail:
+            # ANG-03 - simplejwt's ``{"detail", "code", "messages"}`` dict is
+            # one error, not one per key.
+            errors = [
+                {
+                    "code": str(detail.get("code") or exc.default_code),
+                    "message": str(detail["detail"]),
+                    "field": None,
+                }
+            ]
+        elif isinstance(detail, (dict, list)):
             errors = errors_from_detail(detail, default_code=exc.default_code)
         else:
             errors = [

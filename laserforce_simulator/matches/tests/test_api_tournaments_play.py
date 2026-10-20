@@ -112,10 +112,11 @@ class PlayNextTests(LeagueApiTestCase):
         self.error(self.post(), 409, "tournament_embedded")
         self.assertFalse(Match.objects.exists())
 
-    def test_cross_account_is_404_and_anonymous_is_403(self) -> None:
+    def test_cross_account_is_404_and_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         foreign = _active("NextForeign", manager=self.user_b)
         self.error(self.post(foreign), 404, "not_found")
-        self.error(self.anon.post(_url(self.t, "play-next/")), 403, "not_authenticated")
+        self.error(self.anon.post(_url(self.t, "play-next/")), 401, "not_authenticated")
         self.assertFalse(Match.objects.exists())
 
 
@@ -252,10 +253,11 @@ class PlayAllTests(LeagueApiTestCase):
         self.error(self.post(), 409, "tournament_embedded")
         self.assertFalse(Match.objects.exists())
 
-    def test_cross_account_is_404_and_anonymous_is_403(self) -> None:
+    def test_cross_account_is_404_and_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         foreign = _active("AllForeign", manager=self.user_b)
         self.error(self.post(foreign), 404, "not_found")
-        self.error(self.anon.post(_url(self.t, "play-all/")), 403, "not_authenticated")
+        self.error(self.anon.post(_url(self.t, "play-all/")), 401, "not_authenticated")
         self.error(self.api.get(_url(foreign, "play-jobs/abc/")), 404, "not_found")
         self.assertFalse(Match.objects.exists())
 

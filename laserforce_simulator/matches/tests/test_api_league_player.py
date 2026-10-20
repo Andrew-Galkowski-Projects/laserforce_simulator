@@ -180,8 +180,9 @@ class LeaguePlayerPageTests(LeagueApiTestCase):
     def test_missing_league_is_404(self) -> None:
         self.errors(self.api.get(_url(999999, self.player.id)), 404)
 
-    def test_anonymous_is_403(self) -> None:
-        self.errors(self.anon.get(_url(self.league.id, self.player.id)), 403)
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.errors(self.anon.get(_url(self.league.id, self.player.id)), 401)
 
     def test_leaves_session_untouched(self) -> None:
         self.ok(self.api.get(_url(self.league.id, self.player.id)))

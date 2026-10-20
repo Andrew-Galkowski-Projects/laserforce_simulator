@@ -378,11 +378,12 @@ class TestBatchSaveErrors(_BatchSaveTestCase):
             errors[0]["message"].startswith(f"{fa.name} has an invalid roster")
         )
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         response = APIClient().post(
             self.save_url(_UNKNOWN_JOB), self.payload(), format="json"
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
 
 
 # ---------------------------------------------------------------------------

@@ -260,9 +260,10 @@ class TestExceptionHandlerMapping(TestCase):
             self.api.get(f"/api/teams/{theirs.pk}/"), 404, "not_found"
         )
 
-    def test_anonymous_is_403_not_authenticated(self) -> None:
+    def test_anonymous_is_401_not_authenticated(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         self._assert_single_error(
-            APIClient().get("/api/teams/"), 403, "not_authenticated"
+            APIClient().get("/api/teams/"), 401, "not_authenticated"
         )
 
     def test_method_not_allowed_is_405_with_allow_header(self) -> None:

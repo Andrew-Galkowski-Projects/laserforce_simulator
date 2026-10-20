@@ -32,6 +32,10 @@ HTML_EXEMPT_VIEWS = {
 
 ANONYMOUS_API_VIEWS = {
     "accounts.api_views.RegisterAPIView",
+    # ANG-03 (ADR-0041) - JWT login / refresh / logout must work while anonymous.
+    "accounts.token_api_views.TokenObtainAPIView",
+    "accounts.token_api_views.TokenRefreshAPIView",
+    "accounts.token_api_views.TokenLogoutAPIView",
 }
 
 

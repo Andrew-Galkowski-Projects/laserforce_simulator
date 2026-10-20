@@ -3,7 +3,7 @@
 List scoping + filters + ordering, retrieve, templates, both create paths
 (template / Advanced), DELETE (career-only teardown), the League dashboard,
 paginated history and the per-Team schedule. Every row resolves through the
-ownership seam: cross-Account => 404, anonymous => 403. The API never writes
+ownership seam: cross-Account => 404, anonymous => 401 (ADR-0041). The API never writes
 ``request.session["last_league_id"]``.
 
 League create runs the real (unseeded) generator, so only structure is
@@ -159,9 +159,10 @@ class TestLeagueList(LeagueApiTestCase):
         self.assertEqual(self.ids({"ordering": "name"}), [a.id, b.id, c.id])
         self.assertEqual(self.ids({"ordering": "-name"}), [c.id, b.id, a.id])
 
-    def test_anonymous_is_403(self) -> None:
-        self.error(self.anon.get(LIST), 403, "not_authenticated")
-        self.error(self.anon.post(LIST, {}, format="json"), 403, "not_authenticated")
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.error(self.anon.get(LIST), 401, "not_authenticated")
+        self.error(self.anon.post(LIST, {}, format="json"), 401, "not_authenticated")
 
     def test_list_does_not_touch_session(self) -> None:
         make_league("Sess", manager=self.user_a)
@@ -191,9 +192,10 @@ class TestLeagueDetail(LeagueApiTestCase):
         self.error(self.api.get(detail(self.foreign_league().id)), 404, "not_found")
         self.error(self.api.get(detail(999_999)), 404, "not_found")
 
-    def test_anonymous_retrieve_is_403(self) -> None:
+    def test_anonymous_retrieve_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         league = make_league("AnonRet")
-        self.error(self.anon.get(detail(league.id)), 403, "not_authenticated")
+        self.error(self.anon.get(detail(league.id)), 401, "not_authenticated")
 
     def test_put_and_patch_are_405(self) -> None:
         league = make_league("NoUpd", manager=self.user_a)

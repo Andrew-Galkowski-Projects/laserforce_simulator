@@ -71,7 +71,7 @@ def _full_clean_or_raise(player: Player) -> None:
 
 
 # UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
-# DRF's 403 JSON rather than an HTML 302 to the login page; the settings-level
+# DRF's 401 JSON rather than an HTML 302 to the login page; the settings-level
 # `IsAuthenticated` is what actually gates it. The class-level `queryset` stays
 # for the router's basename/model introspection.
 #

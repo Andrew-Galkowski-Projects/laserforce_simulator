@@ -72,8 +72,9 @@ class TeamRosterTests(LeagueApiTestCase):
         foreign = self.foreign_league()
         self.errors(self.api.get(self.roster_url(self.team.id, foreign.id)), 404)
 
-    def test_anonymous_is_403(self) -> None:
-        self.errors(self.anon.get(self.roster_url(self.team.id)), 403)
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.errors(self.anon.get(self.roster_url(self.team.id)), 401)
 
     def test_leaves_session_untouched(self) -> None:
         self.ok(self.api.get(self.roster_url(self.team.id)))
@@ -144,8 +145,9 @@ class TeamHistoryTests(LeagueApiTestCase):
         foreign = self.foreign_league()
         self.errors(self.api.get(self.history_url(self.team.id, foreign.id)), 404)
 
-    def test_history_anonymous_is_403(self) -> None:
-        self.errors(self.anon.get(self.history_url(self.team.id)), 403)
+    def test_history_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.errors(self.anon.get(self.history_url(self.team.id)), 401)
 
 
 class TeamHistoryPlayersTests(LeagueApiTestCase):
@@ -240,8 +242,9 @@ class TeamHistoryPlayersTests(LeagueApiTestCase):
             self.api.get(self.players_url(self.team.id, league_id=foreign.id)), 404
         )
 
-    def test_players_anonymous_is_403(self) -> None:
-        self.errors(self.anon.get(self.players_url(self.team.id)), 403)
+    def test_players_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.errors(self.anon.get(self.players_url(self.team.id)), 401)
 
 
 TEAM_STAT_KEYS = {
@@ -325,8 +328,9 @@ class SeasonScopedScreenMixin:
         foreign = self.foreign_league()
         self.errors(self.api.get(_url(foreign.id, self.path)), 404)
 
-    def test_anonymous_is_403(self) -> None:
-        self.errors(self.anon.get(_url(self.league.id, self.path)), 403)
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.errors(self.anon.get(_url(self.league.id, self.path)), 401)
 
     def test_leaves_session_untouched(self) -> None:
         self.get_body()

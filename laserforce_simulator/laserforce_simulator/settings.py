@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
@@ -46,6 +47,8 @@ INSTALLED_APPS = [
     "rest_framework",
     "django_filters",
     "corsheaders",
+    # ANG-03 (ADR-0041) - refresh-token rotation and logout blacklist.
+    "rest_framework_simplejwt.token_blacklist",
 ]
 
 MIDDLEWARE = [
@@ -188,11 +191,16 @@ MEDIA_ROOT = BASE_DIR / "media"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
+    # ANG-03 (ADR-0041) - JWT first: DRF takes `WWW-Authenticate` from the
+    # first class, so an anonymous request is a 401 (`Bearer`), the Angular
+    # client's signal to refresh. The session stays second for the browsable
+    # API and the HTML site.
     "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
     # UX-01 — the API viewsets are exempt from `LoginRequiredMiddleware` so an
-    # anonymous request gets DRF's 403 JSON rather than an HTML 302 to the
+    # anonymous request gets DRF's 401 JSON rather than an HTML 302 to the
     # login page; `IsAuthenticated` is what actually gates them.
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
@@ -211,6 +219,18 @@ REST_FRAMEWORK = {
         "django_filters.rest_framework.DjangoFilterBackend",
         "laserforce_simulator.api.filters.AliasOrderingFilter",
     ],
+}
+
+# ANG-03 (ADR-0041) - a 15-minute access token held in client memory and a
+# 7-day refresh token in an httpOnly cookie, rotated and blacklisted on every
+# refresh. Signing key and user-id claim stay simplejwt's defaults.
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "UPDATE_LAST_LOGIN": True,
+    "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
 # --- API-03: Celery + Redis (ADR-0013) ---

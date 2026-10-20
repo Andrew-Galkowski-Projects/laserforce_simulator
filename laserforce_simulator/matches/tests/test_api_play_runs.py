@@ -4,7 +4,7 @@ Seam 1 (``/api/``, DRF ``APIClient``): ``POST /api/seasons/<id>/play-two-months/
 / ``play-until-end/`` / ``play-playoffs/`` return a Job ref, ``play-cancel/``
 returns ``{cancel_requested}``, ``GET play-jobs/<job_id>/`` the structured Job
 status. Errors are 409 ``season_not_active`` / ``wrong_phase`` /
-``play_in_progress`` (``field = job:<id>``); cross-Account 404, anonymous 403.
+``play_in_progress`` (``field = job:<id>``); cross-Account 404, anonymous 401 (ADR-0041).
 
 Runs under eager Celery against the real simulator (``ROUND_TICKS`` shortened);
 assertions are on status codes, envelope shape, the Season's run-state columns
@@ -96,14 +96,15 @@ class TestPlayTwoMonths(LeagueApiTestCase):
         draft.refresh_from_db()
         self.assertIsNone(draft.active_play_job_id)
 
-    def test_cross_account_is_404_and_anonymous_is_403(self) -> None:
+    def test_cross_account_is_404_and_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         foreign = active_season(self.foreign_league("PtmF"), make_teams("PtmF", 2))
         self.error(
             self.api.post(action(foreign.id, "play-two-months")), 404, "not_found"
         )
         self.error(
             self.anon.post(action(self.season.id, "play-two-months")),
-            403,
+            401,
             "not_authenticated",
         )
         self.assertFalse(GameRound.objects.exists())
@@ -220,12 +221,13 @@ class TestPlayJobs(LeagueApiTestCase):
             },
         )
 
-    def test_anonymous_is_403_and_cross_account_is_404(self) -> None:
+    def test_anonymous_is_401_and_cross_account_is_404(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         foreign = active_season(self.foreign_league("PjF"), make_teams("PjF", 2))
         self.error(self.api.get(action(foreign.id, "play-jobs/abc")), 404, "not_found")
         self.error(
             self.anon.get(action(foreign.id, "play-jobs/abc")),
-            403,
+            401,
             "not_authenticated",
         )
 

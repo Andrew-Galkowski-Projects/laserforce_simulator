@@ -62,7 +62,7 @@ class TestCorsOnApi(TestCase):
 @dev_origin_only
 class TestAnonymousPreflight(TestCase):
     """The browser's preflight carries no cookie; it must not hit the login
-    redirect (LoginRequiredMiddleware) or DRF's 403."""
+    redirect (LoginRequiredMiddleware) or DRF's 401."""
 
     def test_anonymous_preflight_is_200_with_cors_headers(self) -> None:
         response = APIClient().options(

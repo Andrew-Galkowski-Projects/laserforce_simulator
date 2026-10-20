@@ -169,11 +169,12 @@ class SeedsApiTests(LeagueApiTestCase):
         self.error(self.put(t, {"seeds": _reversed_seeds(t)}), 404, "not_found")
         self.assertEqual(_seeds_of(t), before)
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         t = _tournament("Cup")
         self.error(
             self.put(t, {"seeds": _reversed_seeds(t)}, client=self.anon),
-            403,
+            401,
             "not_authenticated",
         )
 
@@ -239,9 +240,10 @@ class LockApiTests(LeagueApiTestCase):
         t.refresh_from_db()
         self.assertEqual(t.state, "setup")
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         t = _tournament("Cup")
-        self.error(self.post(t, client=self.anon), 403, "not_authenticated")
+        self.error(self.post(t, client=self.anon), 401, "not_authenticated")
 
 
 class ImportParticipantsApiTests(LeagueApiTestCase):
@@ -313,8 +315,9 @@ class ImportParticipantsApiTests(LeagueApiTestCase):
         self.error(self.post(t, _csv("Late")), 404, "not_found")
         self.assertFalse(Team.objects.filter(name="Late").exists())
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         t = _tournament("Cup")
         self.error(
-            self.post(t, _csv("Late"), client=self.anon), 403, "not_authenticated"
+            self.post(t, _csv("Late"), client=self.anon), 401, "not_authenticated"
         )

@@ -348,12 +348,13 @@ class TournamentCreateRejectionTests(LeagueApiTestCase):
             self.api.post(LIST_URL, [1, 2], format="json"), 400, "parse_error", None
         )
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         self.error(
             self.anon.post(
                 LIST_URL, {"name": "Anon", "teams": self.ids}, format="json"
             ),
-            403,
+            401,
             "not_authenticated",
             None,
         )

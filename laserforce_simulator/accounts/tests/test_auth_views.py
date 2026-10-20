@@ -523,7 +523,7 @@ class TestLoginGate(TestCase):
 
 
 class TestApiIsUnauthorisedNotRedirected(TestCase):
-    """§4.2 / §8.1 — an anonymous API call gets **403 JSON**, never a 302."""
+    """§4.2 / §8.1 — an anonymous API call gets **401 JSON** (ADR-0041), never a 302."""
 
     API_PATHS: tuple[str, ...] = (
         "/api/teams/",
@@ -537,11 +537,12 @@ class TestApiIsUnauthorisedNotRedirected(TestCase):
         super().setUp()
         self.client.logout()
 
-    def test_anonymous_api_get_returns_403(self) -> None:
+    def test_anonymous_api_get_returns_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         for path in self.API_PATHS:
             with self.subTest(path=path):
                 response = self.client.get(path)
-                self.assertEqual(response.status_code, 403)
+                self.assertEqual(response.status_code, 401)
 
     def test_anonymous_api_response_is_not_a_redirect(self) -> None:
         for path in self.API_PATHS:
@@ -553,8 +554,8 @@ class TestApiIsUnauthorisedNotRedirected(TestCase):
         self.assertEqual(response["Content-Type"].split(";")[0], "application/json")
 
     def test_anonymous_api_body_is_not_authenticated_envelope(self) -> None:
-        """ANG-01a — the 403 body is the error envelope with code
-        ``not_authenticated`` (SessionAuthentication: 403, never 401)."""
+        """ANG-01a — the 401 body is the error envelope with code
+        ``not_authenticated`` (ADR-0041: JWTAuthentication first, so 401)."""
         for path in self.API_PATHS:
             with self.subTest(path=path):
                 body = self.client.get(path).json()

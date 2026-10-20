@@ -94,7 +94,8 @@ class RegisterTests(TestCase):
         self.assertEqual(data["email"], "new@example.com")
         self.assertIsNone(data["self_insert"])
         self.assertTrue(new_user.check_password(_GOOD_PASSWORD))
-        self.assertEqual(self.api.get(ME_URL).status_code, 403)
+        # ADR-0041: still anonymous, so 401 (was 403).
+        self.assertEqual(self.api.get(ME_URL).status_code, 401)
 
     def test_duplicate_email_is_400_on_email(self) -> None:
         User.objects.create_user("new@example.com", "whatever-pass-1")
@@ -347,7 +348,8 @@ class SelfInsertDeleteTests(_Base):
 
 
 class AnonymousTests(TestCase):
-    def test_authenticated_endpoints_are_403_not_authenticated(self) -> None:
+    def test_authenticated_endpoints_are_401_not_authenticated(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         api = APIClient()
         calls = [
             ("get", ME_URL),
@@ -358,6 +360,6 @@ class AnonymousTests(TestCase):
         for method, url in calls:
             with self.subTest(method=method, url=url):
                 response = getattr(api, method)(url, {}, format="json")
-                self.assertEqual(response.status_code, 403)
+                self.assertEqual(response.status_code, 401)
                 errors = response.json()["errors"]
                 self.assertEqual(errors[0]["code"], "not_authenticated")

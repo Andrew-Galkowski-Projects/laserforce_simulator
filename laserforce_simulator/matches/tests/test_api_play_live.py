@@ -5,7 +5,7 @@ commits the manager's own game and returns ``{kind, round_ids, job}`` (``job`` a
 Job ref or null); the rest of the week runs as the Season's Active play run.
 ``GET /api/leagues/<id>/play-controls/`` returns the structured play controls
 for the displayed Season. Errors are 409 ``season_not_active`` /
-``play_in_progress`` / ``no_live_cursor``; cross-Account 404, anonymous 403.
+``play_in_progress`` / ``no_live_cursor``; cross-Account 404, anonymous 401 (ADR-0041).
 
 The manager's game runs against the real simulator (``ROUND_TICKS`` shortened).
 The background "rest of the week" Job is stubbed at ``apply_async`` where the
@@ -167,12 +167,13 @@ class TestPlayLiveRoundRobin(LeagueApiTestCase):
         self.error(self.post_live(), 409, "no_live_cursor")
         self.assertFalse(GameRound.objects.filter(match__season=self.season).exists())
 
-    def test_cross_account_is_404_and_anonymous_is_403(self) -> None:
+    def test_cross_account_is_404_and_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         foreign = active_season(
             self.foreign_league("LiveForeign"), make_teams("LiveF", 2)
         )
         self.error(self.api.post(live_url(foreign.id)), 404, "not_found")
-        self.error(self.anon.post(live_url(self.season.id)), 403, "not_authenticated")
+        self.error(self.anon.post(live_url(self.season.id)), 401, "not_authenticated")
 
     def test_get_is_405(self) -> None:
         self.error(self.api.get(live_url(self.season.id)), 405, "method_not_allowed")
@@ -289,11 +290,12 @@ class TestPlayControls(LeagueApiTestCase):
         self.assertTrue(data["member_night_phase_active"])
         self.assertEqual(data["member_night_sites"], [{"site": "SiteA", "count": 12}])
 
-    def test_cross_account_is_404_and_anonymous_is_403(self) -> None:
+    def test_cross_account_is_404_and_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         foreign = self.foreign_league("CtlForeign")
         self.error(self.api.get(controls_url(foreign.id)), 404, "not_found")
         self.error(
-            self.anon.get(controls_url(self.league.id)), 403, "not_authenticated"
+            self.anon.get(controls_url(self.league.id)), 401, "not_authenticated"
         )
 
 

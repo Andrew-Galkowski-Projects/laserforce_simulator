@@ -175,9 +175,10 @@ class TestPlayerCareer(_CareerTestCase):
         )
         self.assertEqual(response.status_code, 405)
 
-    def test_anonymous_is_403(self) -> None:
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
         response = APIClient().get(f"/api/players/{self.player.pk}/career/")
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
 
 
 # ---------------------------------------------------------------------------
@@ -239,5 +240,6 @@ class TestRoleBenchmarks(_CareerTestCase):
         response = self.api.get("/api/players/benchmarks/")
         self.assertEqual(response.status_code, 200, response.content)
 
-    def test_anonymous_is_403(self) -> None:
-        self.assertEqual(APIClient().get("/api/players/benchmarks/").status_code, 403)
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.assertEqual(APIClient().get("/api/players/benchmarks/").status_code, 401)

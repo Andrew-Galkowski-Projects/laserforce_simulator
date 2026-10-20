@@ -155,8 +155,9 @@ class _RatingsScreenMixin:
                     "ordering",
                 )
 
-    def test_anonymous_is_403(self) -> None:
-        self.errors(self.anon.get(self.url), 403)
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.errors(self.anon.get(self.url), 401)
 
     def test_does_not_touch_session(self) -> None:
         self.get()
@@ -327,8 +328,9 @@ class LeadersTests(LeagueApiTestCase):
         foreign = self.foreign_league()
         self.errors(self.api.get(f"/api/leagues/{foreign.id}/leaders/"), 404)
 
-    def test_anonymous_is_403(self) -> None:
-        self.errors(self.anon.get(self.url), 403)
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.errors(self.anon.get(self.url), 401)
 
     def test_does_not_touch_session(self) -> None:
         self.get()
@@ -426,8 +428,9 @@ class PlayerStatsTests(LeagueApiTestCase):
         foreign = self.foreign_league()
         self.errors(self.api.get(f"/api/leagues/{foreign.id}/player-stats/"), 404)
 
-    def test_anonymous_is_403(self) -> None:
-        self.errors(self.anon.get(self.url), 403)
+    def test_anonymous_is_401(self) -> None:
+        # ADR-0041: an anonymous /api/ request is 401 (was 403).
+        self.errors(self.anon.get(self.url), 401)
 
     def test_does_not_touch_session(self) -> None:
         self.get()
