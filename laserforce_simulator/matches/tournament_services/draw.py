@@ -141,9 +141,15 @@ class PoolGenerateForm(forms.Form):
 
 def _free_agent_name(free_agents: Team, base_name: str) -> str:
     """``base_name``, suffixed ``#k`` until unique on the Free Agents Team."""
+    # One query: every taken name this loop could collide with.
+    taken = set(
+        Player.objects.filter(team=free_agents, name__startswith=base_name).values_list(
+            "name", flat=True
+        )
+    )
     name = base_name
     k = 2
-    while Player.objects.filter(team=free_agents, name=name).exists():
+    while name in taken:
         name = f"{base_name} #{k}"
         k += 1
     return name
@@ -241,8 +247,8 @@ def run_draw(tournament: Tournament, *, user: "AbstractBaseUser | None") -> list
             entry = entry_by_player[player_id]
             entry.tier = tier
             entry.drawn_team = team
-            entry.save(update_fields=["tier", "drawn_team"])
         teams.append(team)
+    TournamentPlayerEntry.objects.bulk_update(entries, ["tier", "drawn_team"])
     return teams
 
 

@@ -17,7 +17,15 @@ from typing import Any
 
 from django.contrib.auth.decorators import login_not_required
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db.models import QuerySet
+from django.db.models import (
+    BooleanField,
+    Exists,
+    ExpressionWrapper,
+    OuterRef,
+    Prefetch,
+    Q,
+    QuerySet,
+)
 from django.utils.decorators import method_decorator
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
@@ -31,7 +39,7 @@ from accounts.permissions import owned_queryset
 from laserforce_simulator.api.viewsets import ListOnlyFilterMixin
 from matches.api_refs import player_ref, team_ref
 from matches.filters import TournamentFilterSet
-from matches.models import Tournament, TournamentPlayerEntry
+from matches.models import SeasonPhase, Tournament, TournamentPlayerEntry
 from matches.serializers import TournamentSerializer
 from matches.tournament_api_views.create import CreateActionsMixin
 from matches.tournament_api_views.draw import DrawActionsMixin
@@ -195,8 +203,23 @@ class TournamentViewSet(
     ordering_tiebreak = ("-id",)
 
     def get_queryset(self) -> QuerySet[Tournament]:
+        # ``embedded`` is annotated and the Season-wide phases prefetched so a
+        # list page runs a constant number of queries (TournamentSerializer
+        # reads both when present).
+        embedded = ExpressionWrapper(
+            Q(season_phase__isnull=False)
+            | Exists(SeasonPhase.objects.filter(tournament=OuterRef("pk"))),
+            output_field=BooleanField(),
+        )
         return owned_queryset(
-            Tournament.objects.select_related("champion", "season_phase__season"),
+            Tournament.objects.select_related("champion", "season_phase__season")
+            .prefetch_related(
+                Prefetch(
+                    "season_phases",
+                    queryset=SeasonPhase.objects.select_related("season"),
+                )
+            )
+            .annotate(annotated_embedded=embedded),
             self.request.user,
         )
 

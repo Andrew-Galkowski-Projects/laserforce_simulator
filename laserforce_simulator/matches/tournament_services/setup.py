@@ -22,7 +22,7 @@ from django.db import transaction
 from matches.bracket import default_seed_order
 from matches.models import Tournament, TournamentParticipant
 from matches.tournament_services.errors import require_setup
-from matches.tournament_services.seeding import team_mean_rating
+from matches.tournament_services.seeding import mean_ratings_by_team
 from teams.forms import RosterImportForm
 from teams.models import Team
 from teams.roster_importer import parse_roster_csv
@@ -183,9 +183,10 @@ def import_participants(
             next_seed += 1
 
         # Re-seed the WHOLE field by talent.
-        participants = list(tournament.participants.select_related("team"))
+        participants = list(tournament.participants.all())
+        rating_by_id = mean_ratings_by_team(p.team_id for p in participants)
         seed_order = default_seed_order(
-            [(p.team_id, team_mean_rating(p.team)) for p in participants]
+            [(p.team_id, rating_by_id[p.team_id]) for p in participants]
         )
         _write_seeds(
             participants,

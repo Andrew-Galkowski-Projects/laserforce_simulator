@@ -20,7 +20,7 @@ from django.db import transaction
 from matches.bracket import default_seed_order
 from matches.forms import _valid_owned_teams
 from matches.models import Tournament, TournamentParticipant
-from matches.tournament_services.seeding import team_mean_rating
+from matches.tournament_services.seeding import mean_ratings_by_team
 from teams.constants import PLAYER_NAMES, TEAM_NAMES
 from teams.models import Team
 from teams.services import _generate_teams
@@ -209,7 +209,8 @@ def _preset_teams(
 
 def _add_preset_participants(tournament: Tournament, teams: list[Team]) -> None:
     """Enter ``teams`` with the default Seeding (dense seeds 1..N)."""
-    seed_order = default_seed_order([(t.id, team_mean_rating(t)) for t in teams])
+    rating_by_id = mean_ratings_by_team(t.id for t in teams)
+    seed_order = default_seed_order([(t.id, rating_by_id[t.id]) for t in teams])
     team_by_id = {t.id: t for t in teams}
     for idx, team_id in enumerate(seed_order, start=1):
         TournamentParticipant.objects.create(

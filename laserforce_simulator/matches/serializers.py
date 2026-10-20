@@ -241,10 +241,17 @@ class TournamentSerializer(serializers.ModelSerializer):
         return team_ref(obj.champion) if obj.champion_id is not None else None
 
     def get_embedded(self, obj: Tournament) -> bool:
-        return is_embedded(obj)
+        # The list queryset annotates it; a lone instance (detail) asks.
+        annotated = getattr(obj, "annotated_embedded", None)
+        return is_embedded(obj) if annotated is None else bool(annotated)
 
     def get_season(self, obj: Tournament) -> dict | None:
         if obj.season_phase_id is not None:
             return season_ref(obj.season_phase.season)
-        phase = obj.season_phases.select_related("season").first()
+        if "season_phases" in getattr(obj, "_prefetched_objects_cache", {}):
+            # Prefetched (list): already ordered by ``ordinal`` with the Season.
+            phases = list(obj.season_phases.all())
+            phase = phases[0] if phases else None
+        else:
+            phase = obj.season_phases.select_related("season").first()
         return season_ref(phase.season) if phase is not None else None

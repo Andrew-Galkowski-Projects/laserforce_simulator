@@ -12,6 +12,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
+
 from matches.models import (
     SeasonPhase,
     Tournament,
@@ -152,6 +155,49 @@ class TournamentListTests(LeagueApiTestCase):
         )
         self.assertEqual(self.ids("?embedded=False"), [sandbox.id])
         self.assertEqual(self.ids("?embedded=0"), [sandbox.id])
+
+    def _mixed_tournaments(self, n: int, prefix: str) -> None:
+        """``n`` Tournaments cycling sandbox / Season-wide / regional."""
+        league = make_league(f"{prefix} League")
+        season = league.seasons.create(
+            name="S1", start_date="2026-01-01", schedule_format="single_round_robin"
+        )
+        for i in range(n):
+            t = _tournament(f"{prefix}{i}")
+            if i % 3 == 1:
+                SeasonPhase.objects.create(
+                    season=season, ordinal=i, phase_type="tournament", tournament=t
+                )
+            elif i % 3 == 2:
+                t.season_phase = SeasonPhase.objects.create(
+                    season=season, ordinal=100 + i, phase_type="tournament"
+                )
+                t.save(update_fields=["season_phase"])
+
+    def _list_query_count(self) -> tuple[int, list[dict]]:
+        with CaptureQueriesContext(connection) as ctx:
+            data, _ = self.ok_page(self.api.get(LIST_URL))
+        return len(ctx.captured_queries), data
+
+    def test_list_runs_a_constant_number_of_queries(self) -> None:
+        # ANG-01f review (S1): no per-row query for ``embedded`` / ``season``.
+        self._mixed_tournaments(2, "Few")
+        few, few_rows = self._list_query_count()
+        self.assertEqual(len(few_rows), 2)
+        Tournament.objects.all().delete()
+        self._mixed_tournaments(6, "Many")
+        with self.assertNumQueries(few):
+            rows, _ = self.ok_page(self.api.get(LIST_URL))
+        self.assertEqual(len(rows), 6)
+        by_name = {row["name"]: row for row in rows}
+        season = SeasonPhase.objects.filter(season__league__name="Many League")[
+            0
+        ].season
+        for i in range(6):
+            row = by_name[f"Many{i}"]
+            self.assertEqual(row["embedded"], i % 3 != 0)
+            expected = None if i % 3 == 0 else {"id": season.id, "name": "S1"}
+            self.assertEqual(row["season"], expected)
 
     def test_bad_choice_filters_are_400_with_field(self) -> None:
         for param in ("state", "format", "team_assembly"):
