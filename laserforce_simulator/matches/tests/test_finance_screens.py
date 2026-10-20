@@ -520,7 +520,6 @@ class TestTeamFinancesAvailabilityDisplay(TestCase):
     DOM id when none are out)."""
 
     def test_unavailable_player_listed(self) -> None:
-        from teams.models import Player
 
         league = _make_league()
         _season, teams = _make_active_season(league)

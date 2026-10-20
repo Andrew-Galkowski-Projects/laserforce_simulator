@@ -32,7 +32,6 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from matches import owner_mood
 from matches.owner_mood import (
     FIRE_THRESHOLD,
     GRACE_PERIOD_SEASONS,
@@ -50,6 +49,7 @@ from matches.owner_mood import (
     compute_wins_delta,
     decide_verdict,
 )
+from laserforce_simulator.testing import run_project_python
 
 # ===========================================================================
 # §1.1 — TestConstants (the locked module constants)
@@ -596,10 +596,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
     """
 
     def test_pure_module_does_not_pull_in_django(self) -> None:
-        import os
         import pathlib
-        import subprocess
-        import sys
         import textwrap
 
         here = pathlib.Path(__file__).resolve()
@@ -644,13 +641,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
                 sys.exit(1)
             sys.exit(0)
             """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
+        result = run_project_python(script, timeout=30)
         self.assertEqual(
             result.returncode,
             0,

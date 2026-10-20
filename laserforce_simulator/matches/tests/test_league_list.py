@@ -8,7 +8,6 @@ table, and an empty notice — each gated on its own non-empty list. The
 
 from __future__ import annotations
 
-from datetime import date
 
 from django.test import TestCase
 from django.urls import reverse

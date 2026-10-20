@@ -58,7 +58,6 @@ from ..sim_helpers.shot import (
 from ..sim_helpers.spawn_assigner import assign_spawn_cells
 from ..sim_helpers.time_constants import (
     SURVIVED_SENTINEL,
-    TEAM_ELIM_BONUS_CUTOFF_TICKS,
     TICKS_PER_ROUND,
 )
 

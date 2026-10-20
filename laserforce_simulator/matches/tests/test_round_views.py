@@ -5,6 +5,7 @@ round summary view.
 
 from __future__ import annotations
 
+from laserforce_simulator.testing import run_project_python
 import unittest
 
 from matches.sim_helpers.highlights import build_highlights
@@ -566,10 +567,7 @@ class TestCumulativeTeamPoints(unittest.TestCase):
 
 class TestRoundComparisonNoDjangoImportsLeaked(unittest.TestCase):
     def test_clean_import_in_subprocess(self) -> None:
-        import os
         import pathlib
-        import subprocess
-        import sys
         import textwrap
 
         here = pathlib.Path(__file__).resolve()
@@ -597,13 +595,7 @@ class TestRoundComparisonNoDjangoImportsLeaked(unittest.TestCase):
                 sys.exit(1)
             sys.exit(0)
             """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
+        result = run_project_python(script, timeout=30)
         self.assertEqual(
             result.returncode,
             0,
@@ -796,10 +788,7 @@ class TestRoundSummaryNoDjangoImportsLeaked(unittest.TestCase):
     """
 
     def test_clean_import_in_subprocess(self) -> None:
-        import os
         import pathlib
-        import subprocess
-        import sys
         import textwrap
 
         here = pathlib.Path(__file__).resolve()
@@ -827,13 +816,7 @@ class TestRoundSummaryNoDjangoImportsLeaked(unittest.TestCase):
                 sys.exit(1)
             sys.exit(0)
             """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
+        result = run_project_python(script, timeout=30)
         self.assertEqual(
             result.returncode,
             0,

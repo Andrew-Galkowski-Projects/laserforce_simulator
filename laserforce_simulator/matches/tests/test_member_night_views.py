@@ -29,7 +29,7 @@ from matches.member_night import MAX_GAMES, MIN_GAMES
 from matches.models import League, Match, Season, SeasonPhase
 from matches.simulation import BatchSimulator
 from matches.tests.conftest import make_team_with_slots
-from teams.models import Player, Team
+from teams.models import Player
 
 _FAST_TICKS = 20
 

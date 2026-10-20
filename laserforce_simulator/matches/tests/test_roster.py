@@ -6,7 +6,6 @@ Player.clean(), and roster_errors.
 import pytest
 
 from teams.models import Team, Player
-from matches.tests.conftest import make_team_with_slots
 
 
 @pytest.mark.django_db

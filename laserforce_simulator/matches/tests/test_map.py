@@ -1614,7 +1614,6 @@ class TestMap08SpawnPoints:
         Red spawn cells: (0,0), (0,1), (1,0), (0,2), (1,1)  [Manhattan ≤5 of (0,0)]
         Blue spawn cells: (4,4), (4,3), (3,4), (4,2), (3,3)  [Manhattan ≤5 of (4,4)]
         """
-        from core.models import MapZoneConfig
 
         arena_map = self._make_spawn_map(name, zone_size)
         config = arena_map.latest_confirmed_config()
@@ -1946,7 +1945,7 @@ class TestMap08DBIntegration:
 
     def test_get_spawn_cells_view(self, client):
         """GET /maps/<id>/spawn-cells/ returns stored spawn lists from zone_data."""
-        from core.models import ArenaMap, MapBaseConfig, MapZoneConfig
+        from core.models import ArenaMap, MapZoneConfig
 
         zone_size = 50
         rows, cols = 4, 4

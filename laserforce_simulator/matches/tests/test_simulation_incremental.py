@@ -9,7 +9,6 @@ not rename, alias, or add alternatives.
 from __future__ import annotations
 
 import os
-import time
 import unittest
 from typing import Any, Iterator
 from unittest.mock import patch

@@ -24,7 +24,6 @@ import unittest
 from unittest.mock import patch
 
 from matches.sim_helpers.event_log import EventLog
-from matches.sim_helpers.pending_events import PendingFollowup, PendingReaction
 from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.round_context import RoundContext
 from matches.sim_helpers.shot import (

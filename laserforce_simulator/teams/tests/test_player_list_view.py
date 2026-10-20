@@ -24,7 +24,6 @@ from teams.views import (
     _DEFAULT_PAGE_SIZE,
     _SORT_KEYS,
     _SORT_KEYS_DISPLAY,
-    _VALID_DIRS,
     _VALID_PAGE_SIZES,
     _coerce_dir,
     _coerce_per_page,

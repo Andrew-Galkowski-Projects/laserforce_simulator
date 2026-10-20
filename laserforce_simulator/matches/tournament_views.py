@@ -32,8 +32,6 @@ from teams.views import _apply_roster, _check_db_slot_collisions, _generate_team
 from matches.job_status import celery_state_to_job_status as _celery_state_to_job_status
 
 from .bracket import (
-    advance_winner,
-    break_tie,
     default_seed_order,
 )
 from .draw import ROLE_SLOTS, compute_draw
@@ -42,11 +40,9 @@ from .models import (
     Tournament,
     TournamentParticipant,
     TournamentPlayerEntry,
-    _node_to_dict,
     count_series_wins,
 )
 from .schedule_generator import generate_schedule
-from .simulation.entrypoints import BatchSimulator
 from .standings import match_score
 from .tasks import play_tournament_task
 from .tournament_engine import play_next_node

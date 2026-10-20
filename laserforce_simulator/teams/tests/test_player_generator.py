@@ -28,6 +28,7 @@ from teams.player_generator import (
     draw_preferred_roles,
     draw_stats,
 )
+from laserforce_simulator.testing import run_project_python
 
 # ---------------------------------------------------------------------------
 # Hard-coded contract pins (§2b + §2c of lg-00-seam-contract.md)
@@ -334,8 +335,6 @@ class TestNoDjangoImportsLeaked(unittest.TestCase):
     """
 
     def test_no_django_imports_leaked(self) -> None:
-        import subprocess
-        import sys
 
         # First — the in-process surface check (mirrors test_career_stats.py
         # case #15). Catches the trivial "module-level ``from django import
@@ -354,12 +353,7 @@ class TestNoDjangoImportsLeaked(unittest.TestCase):
             "import sys; "
             "print(','.join(m for m in sys.modules if m.startswith('django')))"
         )
-        proc = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc = run_project_python(script)
         # stderr is informational on PYTHONPATH issues but the contract pin
         # is on stdout: a non-empty stdout means Django modules leaked.
         leaked = proc.stdout.strip()

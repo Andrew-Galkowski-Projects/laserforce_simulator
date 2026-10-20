@@ -11,6 +11,11 @@ from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.pending_events import PendingNuke
 from matches.sim_helpers.pathfinding import choose_goal_cell
 from matches.sim_helpers.map_context import MapContext
+from matches.sim_helpers.role_constants import SPECIAL_COST
+from matches.sim_helpers.weights import (
+    _commander_nuke_gate,
+    _get_commander_weights,
+)
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -518,15 +523,6 @@ class TestMech04TickLoopFlagSetting(unittest.TestCase):
 
 
 # ===== Nuke stacking: Commander SP-gated nuke weights =====
-import random
-import unittest
-
-from matches.sim_helpers.role_constants import SPECIAL_COST
-from matches.sim_helpers.weights import (
-    _commander_nuke_gate,
-    _get_commander_weights,
-)
-
 random.seed(42)
 
 # ---------------------------------------------------------------------------
@@ -735,12 +731,6 @@ class TestCommanderNukeWeightGating(unittest.TestCase):
 
 
 # ===== Nuke cancellation when the Commander is downed =====
-import random
-import unittest
-
-from matches.sim_helpers.pending_events import PendingNuke
-from matches.sim_helpers.player_state import PlayerState
-
 # ---------------------------------------------------------------------------
 # PlayerState factory
 # ---------------------------------------------------------------------------

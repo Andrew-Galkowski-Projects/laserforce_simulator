@@ -44,9 +44,7 @@ from django.test import TestCase
 
 from matches.models import (
     Conference,
-    GameRound,
     League,
-    Match,
     Season,
     SeasonPhase,
 )

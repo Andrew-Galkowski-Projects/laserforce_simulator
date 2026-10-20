@@ -5,6 +5,7 @@ Celery task under EAGER execution.
 
 from __future__ import annotations
 
+from laserforce_simulator.testing import run_project_python
 from datetime import date
 from unittest.mock import patch
 
@@ -315,9 +316,6 @@ class TestPlaySeasonTaskTeamLookup(TestCase):
 
 import io as _lg01j_io  # noqa: E402
 
-from django.core.files.uploadedfile import (  # noqa: E402
-    SimpleUploadedFile as _Lg01jSimpleUploadedFile,
-)
 
 from core.models import ArenaMap as _Lg01jArenaMap  # noqa: E402
 
@@ -592,9 +590,6 @@ class TestPlaySeasonTaskMapResolution(TestCase):
 
 
 # ===== Play-orchestrator pure helpers =====
-import os
-import subprocess
-import sys
 from dataclasses import dataclass
 
 from django.test import SimpleTestCase
@@ -1010,13 +1005,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
                 sys.exit(1)
             sys.exit(0)
             """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+        result = run_project_python(script, timeout=30)
         self.assertEqual(
             result.returncode,
             0,

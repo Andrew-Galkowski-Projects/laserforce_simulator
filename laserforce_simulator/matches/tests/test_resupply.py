@@ -254,7 +254,6 @@ class TestSupportAvailability(unittest.TestCase):
 
     def test_support_on_cooldown_excluded(self):
         """Support whose last_shot_time is within shot_cooldown is excluded."""
-        from matches.sim_helpers.mechanics import shot_cooldown
 
         requestor = _ps("scout", final_lives=5)
         # Medic cooldown = 0.5s; last_shot_time=99.8 at second=100.0 → 0.2s gap < 0.5s → on cooldown

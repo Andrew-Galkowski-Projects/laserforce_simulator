@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rest_framework.decorators import action
 from rest_framework.exceptions import APIException, NotFound
@@ -352,7 +352,17 @@ def translate_screen_errors() -> Iterator[None]:
         raise factory(exc) from exc
 
 
-class LeagueScreensMixin:
+# The mixin is only ever mixed into ``LeagueViewSet`` (a ``GenericViewSet``),
+# so it relies on ``request`` / ``get_object`` / ``paginator`` /
+# ``paginate_queryset`` from that base. Type-check against it; stay a plain
+# ``object`` at runtime so the viewset's MRO is unchanged.
+if TYPE_CHECKING:
+    from rest_framework.generics import GenericAPIView as _ScreensBase
+else:
+    _ScreensBase = object
+
+
+class LeagueScreensMixin(_ScreensBase):
     """The League screen actions; mixed into ``LeagueViewSet``.
 
     Later ANG-01e tickets add their ``@action``s to this class. The pattern:

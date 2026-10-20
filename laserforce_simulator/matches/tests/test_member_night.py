@@ -35,11 +35,10 @@ attribute error) — the expected TDD red state, not a defect in this file.
 
 from __future__ import annotations
 
-import os
+from laserforce_simulator.testing import run_project_python
 import pathlib
 import random
 import subprocess
-import sys
 from datetime import date
 
 from django.test import SimpleTestCase, TestCase
@@ -334,13 +333,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
             "    sys.exit(1)\n"
             "sys.exit(0)\n"
         )
-        return subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
+        return run_project_python(script, timeout=30)
 
     def test_pure_module_does_not_pull_in_django(self) -> None:
         result = self._run_guard("import matches.member_night  # noqa: F401")

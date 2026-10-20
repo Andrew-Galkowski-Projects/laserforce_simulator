@@ -14,9 +14,7 @@ rename without re-syncing the contract.
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
+from laserforce_simulator.testing import run_project_python
 import unittest
 from dataclasses import dataclass
 
@@ -459,13 +457,7 @@ class TestNoDjangoImportsLeaked(unittest.TestCase):
                 sys.exit(1)
             sys.exit(0)
             """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+        result = run_project_python(script, timeout=30)
         self.assertEqual(
             result.returncode,
             0,

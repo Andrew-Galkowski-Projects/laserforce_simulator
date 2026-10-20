@@ -17,12 +17,11 @@ dataclass instances.
 
 from __future__ import annotations
 
-import subprocess
-import sys
 import unittest
 
 from matches.sim_helpers.event_log import EventLog
 from matches.sim_helpers.player_state import PlayerState
+from laserforce_simulator.testing import run_project_python
 
 # ---------------------------------------------------------------------------
 # Factories
@@ -670,12 +669,7 @@ class TestNoDjangoImportsLeaked(unittest.TestCase):
             "leaked = [m for m in sys.modules if m == 'django' or m.startswith('django.')]\n"
             "assert not leaked, f'leaked django modules: {leaked}'\n"
         )
-        result = subprocess.run(
-            [sys.executable, "-c", code],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
+        result = run_project_python(code, timeout=15)
         self.assertEqual(
             result.returncode,
             0,

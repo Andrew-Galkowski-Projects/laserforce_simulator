@@ -34,7 +34,6 @@ Production code lives in:
   matches/simulation.py               (tags/missiles/resupply set last_tagged_id)
 """
 
-import random
 import unittest
 from unittest.mock import patch
 

@@ -27,8 +27,6 @@ agent lands the reshaped ``stat_feats.py`` + view + template.
 from __future__ import annotations
 
 import re as _sf_re
-import subprocess
-import sys
 from datetime import date
 
 from django.contrib.sessions.middleware import SessionMiddleware
@@ -46,6 +44,7 @@ from matches.models import (
 )
 from matches.tests.conftest import make_team_with_slots
 from teams.models import Team
+from laserforce_simulator.testing import run_project_python
 
 # ===========================================================================
 # Pure-unit fixture builders for matches/stat_feats.py
@@ -599,12 +598,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
             "or m.startswith('django.')]; "
             "assert not leaked, leaked; print('OK')"
         )
-        result = subprocess.run(
-            [sys.executable, "-c", code],
-            capture_output=True,
-            text=True,
-            cwd=_manage_dir(),
-        )
+        result = run_project_python(code)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("OK", result.stdout)
 

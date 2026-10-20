@@ -27,7 +27,6 @@ Production code:
 
 import random
 import unittest
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from matches.sim_helpers.pathfinding import (

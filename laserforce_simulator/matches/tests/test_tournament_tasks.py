@@ -65,7 +65,6 @@ class TestPlayTournamentTaskHappyPath:
     """
 
     def test_plays_to_champion(self) -> None:
-        from matches.models import Tournament
         from matches.tasks import play_tournament_task
 
         t = _active_tournament(4, name="TaskHappy", prefix="TtHappy")
@@ -193,7 +192,6 @@ class TestPlayTournamentTaskResumable:
     """
 
     def test_second_invocation_finishes_after_partial(self) -> None:
-        from matches.models import Tournament
         from matches.tasks import play_tournament_task
         from matches.tournament_engine import play_next_node
 
@@ -325,7 +323,6 @@ class TestPlayTournamentTaskSeries:
     """
 
     def test_bo3_plays_to_champion(self) -> None:
-        from matches.models import Tournament
         from matches.tasks import play_tournament_task
 
         t = _active_series_tournament(4, 3, name="TaskBo3", prefix="TtBo3")

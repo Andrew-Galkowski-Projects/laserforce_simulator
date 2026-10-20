@@ -1,5 +1,4 @@
 import math
-from datetime import datetime
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
@@ -8,7 +7,6 @@ from matches.sim_helpers.role_constants import MAX_LIVES, MAX_SHOTS, ROLE_STATS
 from matches.sim_helpers.time_constants import (
     SURVIVED_SENTINEL,
     TICK_SECONDS,
-    TICKS_PER_ROUND,
 )
 
 # The participant floor every shipped bracket format needs — the engine raises

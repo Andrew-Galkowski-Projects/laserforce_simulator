@@ -39,6 +39,7 @@ from teams.role_benchmarks import (
     player_position,
     summarize_population,
 )
+from laserforce_simulator.testing import run_project_python
 
 # ---------------------------------------------------------------------------
 # Pure-unit fixture helper
@@ -484,10 +485,7 @@ class TestNoDjangoImportsLeaked(unittest.TestCase):
         manage.py directory to ``sys.path`` inside the subprocess so
         ``teams.role_benchmarks`` resolves without Django settings.
         """
-        import os
         import pathlib
-        import subprocess
-        import sys
         import textwrap
 
         # `teams/` lives next to `manage.py`. Walk up from this test file
@@ -517,13 +515,7 @@ class TestNoDjangoImportsLeaked(unittest.TestCase):
                 sys.exit(1)
             sys.exit(0)
             """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
+        result = run_project_python(script, timeout=30)
         self.assertEqual(
             result.returncode,
             0,

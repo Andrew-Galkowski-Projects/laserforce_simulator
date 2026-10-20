@@ -608,7 +608,6 @@ class TestClassifyPlayoffsForTeam(TestCase):
 
 from datetime import date as _fin05_date  # noqa: E402
 
-from matches import finance as _fin05_finance  # noqa: E402
 from matches.league_views import (  # noqa: E402
     _ensure_owner_evaluations as _fin05_ensure,
     _ensure_team_finances as _fin05_ensure_finances,
