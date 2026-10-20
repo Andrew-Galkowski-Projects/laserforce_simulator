@@ -39,6 +39,15 @@ class TestCorsOnApi(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("Access-Control-Allow-Origin", response)
 
+    def test_append_slash_redirect_carries_cors_headers(self) -> None:
+        """CommonMiddleware swaps the 404 for a redirect in its response
+        phase; CorsMiddleware must sit above it or the redirect loses the
+        headers and the browser blocks it."""
+        response = self.api.get("/api/teams", HTTP_ORIGIN=DEV_ORIGIN)
+        self.assertEqual(response.status_code, 301)
+        self.assertEqual(response["Location"], "/api/teams/")
+        self.assertEqual(response["Access-Control-Allow-Origin"], DEV_ORIGIN)
+
     def test_non_api_path_gets_no_cors_headers(self) -> None:
         response = Client().get(reverse("login"), HTTP_ORIGIN=DEV_ORIGIN)
         self.assertEqual(response.status_code, 200)
