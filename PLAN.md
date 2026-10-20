@@ -2152,6 +2152,28 @@ cd frontend
 ng add @angular/material
 ```
 
+### ANG-04b · [NOT STARTED] Visual style samples (pick a look before migrating)
+
+The Angular migration is the chance to clean up the UI, not copy the Django templates one-for-one.
+Before ANG-06 builds its first real component, produce **several (3–4) clearly different visual
+style samples** and pick one. Each sample should be a real alternative, not a small variation on
+another sample's palette. Examples: a dense data-dashboard look, a dark arena/neon look, and a
+clean minimal Material look.
+
+- **Same screens in every sample**, so the comparison is fair: the Teams list, a Round detail
+  per-player stat table with MVP scores, and a slice of the event timeline. Use realistic data
+  (fetched from the API or pasted in as fixtures), not lorem ipsum.
+- **Each sample sets** a colour palette (including the red / blue team colours), typography,
+  spacing / density, and the table and card treatment. Each sample also says whether it keeps
+  Angular Material's components or replaces them.
+- **Throwaway.** The samples live on a branch or in a scratch route, built with the `prototype`
+  skill. They are never merged as production code.
+- **Deliverable:** the maintainer picks one. That choice (and whether ANG-04's
+  `@angular/material` stays) is recorded in an ADR. The chosen sample's tokens become the app-wide
+  theme (an SCSS theme file / CSS custom properties) that every ANG-06 component uses.
+
+Depends on ANG-04. Blocks ANG-06.
+
 ### ANG-05 · Angular API services
 
 One Angular service per Django API resource. Components never call `HttpClient` directly.
@@ -2174,6 +2196,8 @@ MapsService      → GET/POST       /api/maps/
 
 Migrate one area at a time in order of complexity. Each item: build the Angular route/component,
 verify feature parity with the existing Django template, then remove the Django template + view.
+"Parity" means the same features, not the same look. Every component uses the theme chosen in
+ANG-04b.
 
 1. **Teams list & detail** — simple CRUD table + form; good first Angular component to build
 2. **Player add/edit** — stat form with live `overall_rating` preview
