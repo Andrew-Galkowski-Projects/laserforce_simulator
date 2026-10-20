@@ -105,7 +105,7 @@ python manage.py changepassword <email>
 ```
 
 **Frontend (Angular, ANG-04):** npm scripts in `frontend/`, run from the repo root with
-`npm --prefix frontend <script>` (`start`, `test:ci`, `lint`, `format:check`, `build`). See
+`npm --prefix frontend run <script>` (`start`, `test:ci`, `lint`, `format:check`, `build`). See
 [`frontend/CLAUDE.md`](frontend/CLAUDE.md).
 
 CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci.yml`). Python version is 3.11. A parallel `frontend` job runs lint, Prettier, Vitest and the build; the `docker` deploy job waits on both.

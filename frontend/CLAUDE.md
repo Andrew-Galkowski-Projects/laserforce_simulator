@@ -52,6 +52,8 @@ src/
     environment.prod.ts   prod: { production: true,  apiBaseUrl: '/api' }
   app/
     app.ts / app.html     the shell: <mat-toolbar> + <router-outlet>
+    app.scss              toolbar primary colour via mat.toolbar-overrides (M3 ignores color="primary")
+    app-title.ts          APP_TITLE, shared by the toolbar and the route titles
     app.config.ts         providers (router, global error listeners)
     app.routes.ts         '' -> Home, '**' -> redirect to ''
     home/                 placeholder Home page
