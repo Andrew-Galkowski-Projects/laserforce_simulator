@@ -121,7 +121,7 @@ def tournament_import_participants(
         # Build the read-only detail context BEFORE flagging rollback — a
         # rolled-back atomic block forbids further queries, so set_rollback
         # must be the last DB-touching action before the render.
-        ctx = build_detail_context(tournament)
+        ctx = build_detail_context(tournament, user=request.user)
         ctx["import_form"] = form
         ctx["import_row_errors"] = import_row_errors
         transaction.set_rollback(True)

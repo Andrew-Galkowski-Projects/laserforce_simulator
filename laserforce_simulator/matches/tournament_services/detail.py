@@ -8,8 +8,11 @@ build them from one place. This module imports no view module.
 
 from dataclasses import asdict
 
+from django.contrib.auth.base_user import AbstractBaseUser
+from django.contrib.auth.models import AnonymousUser
 from django.db.models import QuerySet
 
+from accounts.permissions import owned_queryset
 from teams.forms import RosterImportForm
 from teams.models import Player, Team
 
@@ -365,9 +368,15 @@ def _rrde_cut_labels(tournament: Tournament, rr_rows: list) -> dict:
     return labels
 
 
-def build_detail_context(tournament: Tournament) -> dict:
+def build_detail_context(
+    tournament: Tournament, *, user: "AbstractBaseUser | AnonymousUser | None"
+) -> dict:
     """The Tournament detail page's template context (LG-02a keys + LG-02a-2
-    import keys + LG-02c RR / RR->DE / Swiss keys + LG-02x-1 pool keys)."""
+    import keys + LG-02c RR / RR->DE / Swiss keys + LG-02x-1 pool keys).
+
+    ``user`` scopes the pool's add-existing picker to the Players that Account
+    may see (ANG-01f), the same set ``PoolAddPlayersForm`` accepts.
+    """
     participants = list(tournament.participants.select_related("team").order_by("seed"))
     rounds = _build_all_rounds(tournament)
     next_node = tournament.find_next_playable_node()
@@ -413,7 +422,9 @@ def build_detail_context(tournament: Tournament) -> dict:
             )
         )
         is_drawn = tournament.player_entries.filter(drawn_team__isnull=False).exists()
-        all_players = list(Player.objects.order_by("name"))
+        all_players = list(
+            owned_queryset(Player.objects.all(), user, path="team").order_by("name")
+        )
     else:
         pool_entries = []
         is_drawn = False

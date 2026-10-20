@@ -18,5 +18,7 @@ def tournament_detail(request: HttpRequest, tournament_id: int) -> HttpResponse:
 
     tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
     return render(
-        request, "matches/tournament_detail.html", build_detail_context(tournament)
+        request,
+        "matches/tournament_detail.html",
+        build_detail_context(tournament, user=request.user),
     )

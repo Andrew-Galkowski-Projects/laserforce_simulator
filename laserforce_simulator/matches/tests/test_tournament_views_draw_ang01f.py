@@ -63,6 +63,24 @@ class AddExistingLeakTests(_PoolViewTestCase):
         self.assertFalse(t.player_entries.exists())
         self.assertTrue(any("valid choice" in m for m in _flashes(response)))
 
+    def test_picker_does_not_list_another_accounts_players(self) -> None:
+        # ANG-01f: the add-existing picker listed every Player in the
+        # database, so a foreign Account's Player names leaked onto the page.
+        other = get_user_model().objects.create_user(
+            email="ang01f5-picker@example.com", password="Str0ng-Passphrase-9"
+        )
+        foreign_team = make_teams("ForeignPick", 1, manager=other)[0]
+        foreign = _players(1, "ForeignPick", team=foreign_team)[0]
+        mine = _players(1, "MinePick")[0]
+        t = _pool_tournament("LeakPicker", manager=self.user)
+
+        response = self.client.get(reverse("tournament_detail", args=[t.id]))
+
+        ids = {p.pk for p in response.context["all_players"]}
+        self.assertIn(mine.pk, ids)
+        self.assertNotIn(foreign.pk, ids)
+        self.assertNotContains(response, foreign.name)
+
     def test_owned_players_are_added(self) -> None:
         mine = _players(2, "OwnedHtml")
         t = _pool_tournament("OwnedAdd", manager=self.user)
