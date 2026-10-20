@@ -40,7 +40,8 @@ holds. In particular: PowerShell, no `cd` or `-C` before git, never `git add
 
 Read `PLAN.md`. The target is the first task heading (`### ID` or `#### ID`),
 top to bottom, not marked `[DONE]`, `[DEFERRED]` or sitting under a *Parked*
-section. If the user named a task, use that one. A task whose PR has already
+section. A heading whose sub-items are tasks is an umbrella: pick its first
+open sub-item. If the user named a task, use that one. A task whose PR has already
 merged (check `git log main --oneline` for its ID) but isn't marked `[DONE]`
 is bookkeeping, not the next feature: say so and offer to close it out.
 
@@ -61,7 +62,10 @@ checkout into the worktree's `laserforce_simulator/`, then run
 `.venv\Scripts\python.exe` for every Python command (the `.conda` env has no
 Django). Run `migrate` again after merging any ticket that adds a migration,
 before a browser check. Run any server on `--port 8001` so the owner's 8000
-stays theirs.
+stays theirs. In a worktree session, give each shell call one plain command,
+with literal values in place of `&&` chains and `$(...)`: the isolation guard
+refuses commands it can't verify. Look up a value in one call and pass it
+literally in the next.
 
 ## Step 3: Grill
 
@@ -152,6 +156,8 @@ than pasting them. Add these constraints to every implementer prompt:
 - Write files with Write and Edit, never a heredoc. Glob before creating a
   file, in case the name is taken. Scratch files get a unique prefix (your
   ticket ID).
+- One plain command per shell call, with literal values (no `&&` chains or
+  `$(...)`): the worktree isolation guard refuses the rest.
 - PowerShell. No `cd` or `-C` before git. Enumerate every path you stage: no
   `git add -A`, `.`, `-a` or folders. No `git stash`, `reset`, `restore` or
   `checkout` outside your own worktree.
