@@ -566,7 +566,7 @@ class TestTournamentPlayNextForcedTie(TestCase):
 from django.core.files.uploadedfile import SimpleUploadedFile  # noqa: E402
 
 from matches.bracket import default_seed_order  # noqa: E402
-from matches.tournament_views.list_create import _team_mean_rating  # noqa: E402
+from matches.tournament_services.seeding import team_mean_rating  # noqa: E402
 from teams.roster_importer import REQUIRED_COLUMNS  # noqa: E402
 
 _REQUIRED_HEADER = ",".join(REQUIRED_COLUMNS)
@@ -687,7 +687,7 @@ class TestTournamentImportParticipants(TestCase):
         seeds = sorted(p.seed for p in parts)
         self.assertEqual(seeds, [1, 2, 3, 4, 5])
         # Order matches default_seed_order over _team_mean_rating talent.
-        team_ratings = [(p.team_id, _team_mean_rating(p.team)) for p in parts]
+        team_ratings = [(p.team_id, team_mean_rating(p.team)) for p in parts]
         expected_order = default_seed_order(team_ratings)
         actual_order = [p.team_id for p in sorted(parts, key=lambda p: p.seed)]
         self.assertEqual(actual_order, expected_order)

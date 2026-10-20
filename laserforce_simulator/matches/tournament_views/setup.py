@@ -14,8 +14,7 @@ from teams.views import _apply_roster, _check_db_slot_collisions
 from matches.bracket import default_seed_order
 from matches.models import Tournament, TournamentParticipant
 from matches.tournament_services.detail import build_detail_context
-
-from .list_create import _team_mean_rating
+from matches.tournament_services.seeding import team_mean_rating
 
 
 @transaction.atomic
@@ -130,7 +129,7 @@ def tournament_import_participants(
 
     # Re-seed the WHOLE field by talent.
     participants = list(tournament.participants.select_related("team"))
-    team_ratings = [(p.team_id, _team_mean_rating(p.team)) for p in participants]
+    team_ratings = [(p.team_id, team_mean_rating(p.team)) for p in participants]
     seed_order = default_seed_order(team_ratings)
     seed_by_team = {team_id: idx for idx, team_id in enumerate(seed_order, start=1)}
 

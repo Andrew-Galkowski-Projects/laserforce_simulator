@@ -1,7 +1,6 @@
 """LG-02a — the Tournament index and the create form."""
 
 import random
-from statistics import mean
 
 from django.contrib import messages
 from django.db import transaction
@@ -16,6 +15,7 @@ from teams.views import _generate_teams
 from matches.bracket import default_seed_order
 from matches.models import Tournament, TournamentParticipant
 from matches.tournament_services.detail import format_label
+from matches.tournament_services.seeding import team_mean_rating
 
 # LG-02c (RR->DE) — the 6 locked (wb, lb) advancer shape combos, in select order.
 # value string format "wb/lb" (e.g. "4/0"). lb is 0 or wb//2.
@@ -57,16 +57,6 @@ def _parse_swiss_rounds(raw: "str | None") -> int:
     except (TypeError, ValueError):
         value = 0
     return value if value > 0 else 0
-
-
-def _team_mean_rating(team: Team) -> float:
-    """Mean active-player overall_rating for a Team (LG-01c draft-preview
-    formula verbatim). 0.0 when the Team has no active players.
-    """
-    players = list(team.active_players)
-    if not players:
-        return 0.0
-    return mean(p.overall_rating for p in players)
 
 
 def tournament_list(request: HttpRequest) -> HttpResponse:
@@ -264,7 +254,7 @@ def tournament_create(request: HttpRequest) -> HttpResponse:
     # Default Seeding via mean active-player overall_rating. For player_pool the
     # pool is empty at create — participants are seeded by the draw, not here.
     if team_assembly == "preset":
-        team_ratings = [(t.id, _team_mean_rating(t)) for t in teams]
+        team_ratings = [(t.id, team_mean_rating(t)) for t in teams]
         seed_order = default_seed_order(team_ratings)
         team_by_id = {t.id: t for t in teams}
         for idx, team_id in enumerate(seed_order, start=1):
