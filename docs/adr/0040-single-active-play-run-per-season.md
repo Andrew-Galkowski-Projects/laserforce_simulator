@@ -44,3 +44,25 @@ forever.
 - A race between two synchronous plays that both start before either writes a job id (two
   simultaneous Play One Week POSTs) is **not** covered, because sync plays do not hold the column.
   It is recorded in PLAN.md Deferred Items.
+
+## Tournaments (ANG-01f, 2026-10-19)
+
+A sandbox **Tournament** follows the same rule. Before ANG-01f, Play All enqueued a new bracket drain
+on every POST, so two drains could race on the same node. A Tournament now has a nullable
+`active_play_job_id` column, which takes **one migration**: unlike the Season, a Tournament had no
+job column to reuse. The write order is the one above: make up the task id, write it, then
+`apply_async(task_id=…)`. The task's `finally` clears the column only while it still holds its own
+id. While the column is set, Play All and the synchronous Play Next are refused: 409
+`play_in_progress` in the API, a flashed error in the HTML.
+
+An embedded (in-League) Tournament is never played through the sandbox surface. It is played only
+through its Season's play loop, so the Season's guard covers it. The sandbox views and the API answer
+every write on an embedded Tournament with 409 `tournament_embedded`.
+
+There is **no Cancel** for a Tournament, so the release path differs. When the guard finds the
+column set, it checks `AsyncResult(job_id)`. If the job is terminal (`SUCCESS`, `FAILURE` or
+`REVOKED`), it clears the column with an update filtered on that exact id and lets the new play
+proceed. `PENDING`, `STARTED`, `RETRY` and `PROGRESS` stay blocked. This still never treats a
+`PENDING` result as finished. Consequence: a message that no worker ever consumed reads `PENDING`
+forever and keeps that bracket blocked. It is recorded in PLAN.md Deferred Items, and the fix would
+be a Tournament Cancel.

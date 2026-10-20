@@ -807,7 +807,7 @@ class TestPlayTournamentTaskSwiss:
 # NEW class appended below (existing classes above are NOT modified). Seam
 # contract: ``.claude/worktrees/lg-02x-1-seam-contract.md`` §4 / §7.
 #
-# A ``team_assembly="random_draw"`` Tournament running the existing RR->DE
+# A ``team_assembly="player_pool"`` Tournament running the existing RR->DE
 # bracket drains to a champion under CELERY_TASK_ALWAYS_EAGER. The per-Round
 # role hook (built by ``_build_role_hook`` and passed through ``simulate_match``)
 # rewrites the drawn Teams' slot FKs each Round — but tournament sims are
@@ -855,7 +855,7 @@ def _active_random_draw_rrde(n_teams: int, *, wb: int, lb: int, name: str, prefi
     t = Tournament.objects.create(
         name=name,
         format="round_robin_double_elim",
-        team_assembly="random_draw",
+        team_assembly="player_pool",
         role_assignment_mode="random",
         wb_advancers=wb,
         lb_advancers=lb,
@@ -899,7 +899,7 @@ class TestPlayTournamentTaskRandomDraw:
         t = Tournament.objects.create(
             name="TaskDrawPerTier",
             format="round_robin_double_elim",
-            team_assembly="random_draw",
+            team_assembly="player_pool",
             role_assignment_mode="per_tier",
             wb_advancers=4,
             lb_advancers=0,

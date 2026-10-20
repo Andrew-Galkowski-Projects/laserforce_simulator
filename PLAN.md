@@ -524,7 +524,7 @@ the **CRE-02 tiered generation** subsection in
 
 ## Phase 5 — Infrastructure & League System
 
-### LG-02 · Tournament formats
+### LG-02 · [DONE] Tournament formats (remainder DEFERRED: LG-02x-2 Duos / Trios, mid-season `random_draw` re-draw)
 
 **Status: PART 1 sandbox formats all DONE; LG-02x-2 (Duos / Trios) deferred; Part 2 foundation (Part2a) DONE; Part2b (create-League composer + dormant phase columns) DONE; Part2c-1 (RR → single-elimination playoff embed) DONE; Part2c-2 SPINE (multi-RR play loop + `Match.season_phase` FK + cross-phase matchday offsetting) DONE; Part2c-3a (first alternative regular-season format — `double_round_robin` + `Match.leg`, wiring the Part2b dormant per-phase `schedule_format` column end-to-end) DONE; Part2c-3b (dormant per-phase `SeasonPhase.tournament_mode` field) DONE; Part2c-3c (mid-season tournaments — `strength` + `unseeded` build, the `tournament:<mode>` wire token, the standings-only compose-guard relaxation, and the play-loop barrier) DONE; Part2c-3d (per-tournament-block config — the dormant `SeasonPhase.tournament_format` column + the live `tournament_cut` top-N cut, the `tournament[:mode[:cut]]` wire grammar + cut-floor `ValueError`, the one-line build cut slice, and the composer cut input + disabled format select) DONE; Part2c-3e (non-single-elim finals embeds — the dormant `SeasonPhase.tournament_format` column flipped dormant→live so a `tournament` phase builds via ANY of the five formats, the 7 new per-format sub-config columns mirroring `Tournament` (4 series tiers + RR→DE wb/lb advancers + Swiss rounds), the 11-field `tournament:mode:cut:format:fsl:ssl:qsl:esl:wb:lb:swiss` wire grammar + three new shape `ValueError`s, the one-changed `Tournament.objects.create(format=phase.tournament_format, …)` build, and the live composer format picker + sub-config controls) DONE; Part2c-3f (season-linked playoff Match history + weekly playoff pacing — the Team History Overall-tab corpus widened to a `.distinct()` UNION of regular-season + season-embedded playoff rounds via the `match__series_match__node__tournament__season_phases__isnull=False` FK chain plus the filled `playoff_appearances` counter, and weekly playoff pacing via the new `play_next_bracket_round` STAGE drain + phase-aware `play_week`/`play_season_task` on the shared budget; Playoffs screen unchanged, no migration, no re-baseline) DONE; the mid-season `random_draw` build (re-draw the non-season-ending mid-season tournaments per season in `next_season`) is now the ONLY remaining Part2c follow-up, and is DEFERRED.**
 Single-elimination (LG-02a), bulk intake + async play-all (LG-02a-2), best-of-N
@@ -626,7 +626,7 @@ only remaining Part2c follow-up (deferred):
 A single-user play mode where the user acts as a team manager navigating a league season. This phase
 sits between the League system (Phase 5) and full multiplayer (Phase 6).
 
-### SUB-01 · Conferences + per-Conference rotating map pools
+### SUB-01 · [DONE] Conferences + per-Conference rotating map pools
 
 **Re-sliced (2026-06-17, user decision) into THREE sequenced pieces.** The
 original monolith — "first-class `SubLeague` model + per-sub-league rotating map
@@ -1862,12 +1862,118 @@ stay gated on `finance_enabled`.
     Career-in-League row, awards and ratings history. No separate ratings-history endpoint.
 19. **No HTML side effects in the API**: no `session["last_league_id"]` write, no sidebar links.
 
-#### ANG-01f · Tournaments API
+#### ANG-01f · [DONE] Tournaments API
+
+Spec: #190
+
+**[DONE] Shipped (2026-10-19).** Every sandbox Tournament screen is exposed under `/api/tournaments/`
+(list / filter, create in any of the five formats with preset Teams or a Player-pool draw, detail with
+the whole Bracket and standings, seeds, lock, CSV participant import, the Player pool, the Draw and its
+hand edit, play-next, and play-all as a Job with polled status) on a shared
+`matches/tournament_services/` package (`errors`, `detail`, `seeding`, `create`, `setup`, `draw`,
+`play`), so the HTML pages and the API bind the same strict Forms. `tournament_views.py` became the
+`matches/tournament_views/` package and the API is `matches/tournament_api_views/` (`base` viewset,
+`errors`, one mixin per area). One migration, `0064_tournament_player_pool_and_active_play_job`. The
+work found and fixed, on both surfaces: Account leaks in the create Team picker, the pool
+add-existing lookup and the draw-entry edit; an embedded (in-League) Tournament was fully writable and
+playable from `/tournaments/`, bypassing the Season's play run (now 409 `tournament_embedded` / a
+flash); Play All started a new drain on every POST, so drains could race on one bracket (now a single
+active play run per Tournament, ADR-0040 **Tournaments**); a duplicate reseed was a 500 (now a form
+error); and "Random Draw" named both the RR→DE player-pool format and the general team assembly
+(now **Player-pool draw**, `team_assembly="player_pool"`, with "Random Draw" a derived label for
+RR→DE). Deviations: the API `APIException`s and the translator live in a leaf
+`tournament_api_views/errors.py`, not `base`; `build_detail_context` takes `user` (the pool picker is
+Account-scoped); new `detail.tournament_fields` / `node_view` / `node_payload` / `pool_entry_payload`
+and a `seeding` module, with ANG-01e's `bracket_payload` now calling `node_payload`; `?format=` URL
+override is disabled on `TournamentViewSet` so the `format` filter works, and `embedded` is a strict
+boolean filter (junk ⇒ 400); pool add / generate / import return **201 with only the new entries**
+(not the pool page), remove 204, the Draw 200 with the detail, a draw-entry PATCH 200 with the entry; a
+preset Tournament on a pool write is 400 `invalid`, a Player already pooled 400 `already_in_pool`, and
+participant import on a Player-pool Tournament 400 `invalid`; play-next's `node` adds `id` /
+`bracket_type` / `bracket_round`; `PoolGenerateForm` bounds `count` 1..1000, `mean` 0..100, `std_dev`
+1..40; create keeps defaults for absent fields but rejects present bad ones, so `generate_ppt` < 6 is
+now 400 `min_value` (it was clamped); the HTML play flashes / 409 JSON use the service exception
+default texts; a lost play-all claim is re-read and retried once. Follow-ups: ANG01f5-D1 / D2 and
+ANG01f-D3 in `issues.md`; the never-consumed `PENDING` play run in Deferred Items. See the **ANG-01f
+tournaments API** section of `docs/agents/matches/api.md`.
 
 Sandbox and in-League Tournaments: list / create (formats incl. Random Draw), detail with bracket
 nodes, reseed, participant management and the CSV participant import (already ownership-fixed by
 ANG-01a), play next / play all with Job status, and the draw. Uses the ANG-01a roster-error mapping
 (`roster_invalid`, `row:<n>:<column>`) for import errors.
+
+**Grill (2026-10-19), round 1 — settled:**
+1. **Embedded (in-League) Tournaments** are listed and readable (with a `season` ref) but every write
+   (seeds, import, pool, draw, lock, play) is **409 `tournament_embedded`**. The HTML sandbox views get
+   the same guard (bug fix + regression test): today `/tournaments/` can play an embedded bracket and
+   bypass the Season's single play run (ADR-0040).
+2. **Account leaks closed in shared code, HTML and API alike:** create's team choices / selected
+   teams through `owned_queryset`; pool add-existing takes owned Players only; `draw_edit`'s
+   `drawn_team` must be one of *this* Tournament's draw teams. Each gets a regression test.
+3. **One strict Form per write, shared by HTML and API** (the `TeamFinancesForm` precedent): create,
+   seeds, pool add / generate / remove, draw-entry edit. Bad input is **rejected**, not defaulted;
+   the HTML shows the errors.
+4. **Player-pool draw vs Random Draw** (round 2): the docs' definition stands — **Random Draw** is a
+   **Player-pool draw** played as RR→DE; a drawn pool may be played as **any** format, but is then
+   not called a Random Draw (both terms in `GLOSSARY.md`).
+   - 4b. `Tournament.team_assembly` choice `random_draw` is **renamed `player_pool`** ("Player pool
+     draw"); the migration rewrites existing rows (same migration as decision 8). API / filter values
+     are `preset` / `player_pool`.
+   - 4c. "Random Draw" is a **derived label**: list, detail and the API `format_label` read "Random
+     Draw" for `player_pool` + `round_robin_double_elim`, the plain format label otherwise. The HTML
+     create form preselects RR→DE when "Player pool draw" is picked; the user may change it.
+   - 4d. In-League `SeasonPhase.tournament_mode = "random_draw"` (deferred mid-season draw) is
+     unchanged — it builds a drawn pool into RR→DE, i.e. a Random Draw by definition.
+   - 4e. Each of the five formats gets a test that a drawn pool locks and plays to a champion via the
+     API play-all; an odd team count on Swiss is a 400 at lock (existing `lock_and_build` rule).
+5. **Seeds:** `PUT /api/tournaments/<id>/seeds/` with a full `{team_id: seed}` map; seeds must be
+   exactly 1..N over the current participants, else 400. The HTML reseed binds the same validation
+   (today a duplicate seed is a 500 `IntegrityError`).
+6. **Participant management = the existing operations only:** CSV participant import (preset), pool
+   add-existing / generate / CSV import / remove, the draw, the draw-entry edit. No new add/remove-a-
+   team-participant capability; no Tournament delete; no edit after start.
+7. **Lock is in scope:** `POST …/lock/` (`setup` → `active`; `lock_and_build`'s `ValidationError` ⇒ 400
+   `invalid`). Every setup-only write on a non-setup Tournament ⇒ **409 `tournament_not_setup`**.
+8. **Single active play run per Tournament** (mirrors ADR-0040): nullable
+   `Tournament.active_play_job_id` (**one migration**), claimed before `apply_async`; a second
+   play-all, or a play-next during a run, ⇒ **409 `play_in_progress`** (`field = job:<id>`); the task
+   clears it when done. HTML gets the same guard. **No cancel** endpoint.
+9. **Play shapes:** play-all ⇒ **200** `{job_id, tournament_id, status_url}` (HTML keeps its 202);
+   `GET …/play-jobs/<job_id>/` `data` byte-identical to the HTML polling JSON `{status, completed,
+   total, error, tournament_id}`; play-next is synchronous ⇒ 200 with the played node + its
+   `match_id`s and the Tournament's new `state` / `champion`. 409 `tournament_not_active`, 409
+   `no_playable_node`, 503 `broker_unavailable`.
+10. **Payloads:** `GET /api/tournaments/<id>/` = Tournament fields + participants + `brackets` grouped
+    by `bracket_type` (winners / losers / grand_final / round_robin / swiss; rounds → nodes with the
+    ANG-01e `bracket_payload` node keys) + RR / Swiss standings + `stage` + RR→DE cut labels.
+    `GET …/pool/` = paginated pool entries `{player, tier, drawn_team}`. The HTML `all_players`
+    picker is not ported (clients use `/api/players/`).
+11. **URLs:** `GET`/`POST /api/tournaments/`, `GET /api/tournaments/<id>/`, `PUT …/seeds/`,
+    `POST …/lock/` · `…/play-next/` · `…/play-all/`, `GET …/play-jobs/<job_id>/`,
+    `POST …/import-participants/` (multipart), `GET …/pool/`, `POST …/pool/players/` `{player_ids}`,
+    `DELETE …/pool/players/<player_id>/` (204), `POST …/pool/generate/`, `POST …/pool/import/`
+    (multipart), `POST …/draw/`, `PATCH …/draw/entries/<player_id>/` `{tier, drawn_team}`.
+    PUT / PATCH / DELETE on the Tournament ⇒ 405.
+12. **List filters:** `state`, `format`, `team_assembly`, `embedded` (bool); ordering `name`,
+    `created_at`, `id`; default / tiebreak `-id`.
+13. **Services:** a new `matches/tournament_services/` package, one module per ticket area (create,
+    setup, draw, play, detail), shared by HTML and API. `league_screen_services` imports `_build_rounds`
+    from the service, not the view. Moved helpers are deleted from the views, not re-exported.
+14. **Logged to `issues.md`, out of scope:** pool-generated / pool-imported Players land on the global
+    Free Agents team; pool import skips `_check_db_slot_collisions`.
+- No engine / RNG change: play reuses `play_next_node` / `play_tournament_task`; no determinism test
+  or Score Calibration re-baseline needed.
+
+**Round 3 — settled:**
+15. **Stuck-run release without Cancel:** when the play guard finds `active_play_job_id` set and
+    `AsyncResult` is `SUCCESS` / `FAILURE` / `REVOKED`, it clears the column (filtered on that id) and
+    proceeds; `PENDING` / `STARTED` / `RETRY` / `PROGRESS` stay 409. A never-consumed message
+    (`PENDING` forever) stays stuck — Deferred Item. Recorded in ADR-0040's **Tournaments** section.
+16. **Seams:** the `matches/tournament_services/` package (`errors`, `detail`, `create`, `setup`,
+    `draw`, `play`) and the `matches/tournament_api_views/` package (`base` viewset + one mixin per
+    ticket), tested through the DRF client. `tournament_views.py` is **split into a
+    `matches/tournament_views/` package** by the same areas (behaviour unchanged) so parallel tickets
+    never share a file. Full names in the spec issue.
 
 #### ANG-01g · Accounts API
 
@@ -2131,6 +2237,13 @@ The following were explicitly scoped out and should not be implemented until re-
   page 1). Deliberate; revisit only if the Angular history screen needs the pinned row
 - **`LeagueSerializer.active_season` is one query per League** (ANG-01d-1 follow-up) — acceptable at
   page size 20; prefetch non-completed Seasons if the League list grows
+- **A never-consumed Tournament play run stays stuck** (ANG-01f-6 follow-up) — a sandbox
+  Tournament's run guard releases `active_play_job_id` only when `AsyncResult` reports `SUCCESS`,
+  `FAILURE` or `REVOKED` ([ADR-0040](docs/adr/0040-single-active-play-run-per-season.md),
+  Tournaments). A Play All message that no worker ever consumes reads `PENDING` forever, so that
+  bracket's play-next and play-all stay a 409 `play_in_progress`. The fix is a Tournament Cancel
+  (the Season `request_play_cancel` pattern: set a cancel flag and release a `PENDING` run with an
+  update filtered on its id)
 
 ---
 

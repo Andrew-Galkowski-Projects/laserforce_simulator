@@ -2865,7 +2865,7 @@ class SeasonPhase(models.Model):
     # differential strength/unseeded/random_draw build — is Part2c-3c.
     # ``unseeded`` != ``random_draw``: unseeded randomly seeds the season's
     # existing preset teams; random_draw builds fresh balanced teams from a
-    # player pool (reuses the LG-02x-1 ``team_assembly="random_draw"`` machinery).
+    # player pool (reuses the LG-02x-1 ``team_assembly="player_pool"`` machinery).
     TOURNAMENT_MODE_CHOICES = (
         ("standings", "Season-ending: from Standings"),
         ("strength", "Mid-season: by team strength"),
@@ -3094,20 +3094,28 @@ class Tournament(models.Model):
     swiss_rounds = models.PositiveSmallIntegerField(default=0)
     # LG-02x-1 (Random Draw) — an ORTHOGONAL team-assembly axis (NOT a new
     # ``format``). ``preset`` (default) is byte-unchanged: participants are
-    # chosen Teams. ``random_draw`` registers individual Players to a pool and
-    # a deterministic tier-balanced draw assembles them into marked 6-player
+    # chosen Teams. ``player_pool`` (a **Player-pool draw**; ANG-01f renamed it
+    # from ``random_draw``) registers individual Players to a pool and a
+    # deterministic tier-balanced draw assembles them into marked 6-player
     # Teams; roles re-assign dynamically every Round. Meaningful for any
     # ``format``; the pool/draw/per-Round-roles machinery fires only when
-    # ``team_assembly == "random_draw"``. Create-time only.
+    # ``team_assembly == "player_pool"``. A Player-pool draw played as RR->DE
+    # is labelled **Random Draw** (``tournament_services.detail.format_label``).
+    # Create-time only.
     TEAM_ASSEMBLY_CHOICES = (
         ("preset", "Preset teams"),
-        ("random_draw", "Random draw player pool"),
+        ("player_pool", "Player pool draw"),
     )
     team_assembly = models.CharField(
         max_length=16, choices=TEAM_ASSEMBLY_CHOICES, default="preset"
     )
+    # ANG-01f — the live play-run Job id (ADR-0040, one active play run per
+    # Tournament). NULL = no run in flight.
+    active_play_job_id = models.CharField(
+        max_length=255, null=True, blank=True, default=None
+    )
     # LG-02x-1 — how the drawn Teams' role slots are re-assigned each Round.
-    # Meaningful only when ``team_assembly == "random_draw"`` (ignored for
+    # Meaningful only when ``team_assembly == "player_pool"`` (ignored for
     # preset). ``random`` shuffles each team's 6 tier-players into the 6 role
     # slots independently per team per Round; ``per_tier`` draws one
     # tier->slot bijection per Round applied to BOTH teams. Create-time only.

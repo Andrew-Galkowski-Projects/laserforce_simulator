@@ -2343,12 +2343,12 @@ class TestTournamentTeamAssemblyFields(TestCase):
 
     def test_team_assembly_choices(self) -> None:
         choices = dict(Tournament._meta.get_field("team_assembly").choices)
-        self.assertEqual(set(choices), {"preset", "random_draw"})
+        self.assertEqual(set(choices), {"preset", "player_pool"})
 
     def test_team_assembly_random_draw_persists(self) -> None:
-        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        t = Tournament.objects.create(name="Cup", team_assembly="player_pool")
         t.refresh_from_db()
-        self.assertEqual(t.team_assembly, "random_draw")
+        self.assertEqual(t.team_assembly, "player_pool")
 
     def test_role_assignment_mode_defaults_to_random(self) -> None:
         t = Tournament.objects.create(name="Cup")
@@ -2385,7 +2385,7 @@ class TestTournamentPlayerEntryModel(TestCase):
     def test_create_entry_with_nullable_tier_and_drawn_team(self) -> None:
         from matches.models import TournamentPlayerEntry
 
-        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        t = Tournament.objects.create(name="Cup", team_assembly="player_pool")
         player = self._player("PoolP1")
         entry = TournamentPlayerEntry.objects.create(tournament=t, player=player)
         self.assertEqual(entry.tournament_id, t.id)
@@ -2397,7 +2397,7 @@ class TestTournamentPlayerEntryModel(TestCase):
     def test_entry_carries_tier_and_drawn_team_after_draw(self) -> None:
         from matches.models import TournamentPlayerEntry
 
-        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        t = Tournament.objects.create(name="Cup", team_assembly="player_pool")
         player = self._player("PoolP2")
         drawn = make_team_with_slots("Draw")[0]
         entry = TournamentPlayerEntry.objects.create(
@@ -2410,7 +2410,7 @@ class TestTournamentPlayerEntryModel(TestCase):
     def test_related_name_player_entries(self) -> None:
         from matches.models import TournamentPlayerEntry
 
-        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        t = Tournament.objects.create(name="Cup", team_assembly="player_pool")
         TournamentPlayerEntry.objects.create(tournament=t, player=self._player("A"))
         TournamentPlayerEntry.objects.create(tournament=t, player=self._player("B"))
         self.assertEqual(t.player_entries.count(), 2)
@@ -2418,7 +2418,7 @@ class TestTournamentPlayerEntryModel(TestCase):
     def test_related_name_tournament_entries_on_player(self) -> None:
         from matches.models import TournamentPlayerEntry
 
-        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        t = Tournament.objects.create(name="Cup", team_assembly="player_pool")
         player = self._player("Shared")
         TournamentPlayerEntry.objects.create(tournament=t, player=player)
         self.assertEqual(player.tournament_entries.count(), 1)
@@ -2426,7 +2426,7 @@ class TestTournamentPlayerEntryModel(TestCase):
     def test_related_name_drawn_player_entries_on_team(self) -> None:
         from matches.models import TournamentPlayerEntry
 
-        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        t = Tournament.objects.create(name="Cup", team_assembly="player_pool")
         drawn = make_team_with_slots("DrawTeam")[0]
         TournamentPlayerEntry.objects.create(
             tournament=t, player=self._player("Drawn"), tier=1, drawn_team=drawn
@@ -2436,7 +2436,7 @@ class TestTournamentPlayerEntryModel(TestCase):
     def test_unique_tournament_player_rejected(self) -> None:
         from matches.models import TournamentPlayerEntry
 
-        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        t = Tournament.objects.create(name="Cup", team_assembly="player_pool")
         player = self._player("Dup")
         TournamentPlayerEntry.objects.create(tournament=t, player=player)
         with self.assertRaises(IntegrityError):
@@ -2446,8 +2446,8 @@ class TestTournamentPlayerEntryModel(TestCase):
     def test_same_player_allowed_across_different_tournaments(self) -> None:
         from matches.models import TournamentPlayerEntry
 
-        t1 = Tournament.objects.create(name="Cup1", team_assembly="random_draw")
-        t2 = Tournament.objects.create(name="Cup2", team_assembly="random_draw")
+        t1 = Tournament.objects.create(name="Cup1", team_assembly="player_pool")
+        t2 = Tournament.objects.create(name="Cup2", team_assembly="player_pool")
         player = self._player("MultiTourney")
         TournamentPlayerEntry.objects.create(tournament=t1, player=player)
         # No collision — different Tournament; a Player may sit in many draws
@@ -2458,7 +2458,7 @@ class TestTournamentPlayerEntryModel(TestCase):
     def test_cascade_on_tournament_delete(self) -> None:
         from matches.models import TournamentPlayerEntry
 
-        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        t = Tournament.objects.create(name="Cup", team_assembly="player_pool")
         entry = TournamentPlayerEntry.objects.create(
             tournament=t, player=self._player("Casc")
         )
@@ -2469,7 +2469,7 @@ class TestTournamentPlayerEntryModel(TestCase):
     def test_cascade_on_player_delete(self) -> None:
         from matches.models import TournamentPlayerEntry
 
-        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        t = Tournament.objects.create(name="Cup", team_assembly="player_pool")
         player = self._player("CascPlayer")
         entry = TournamentPlayerEntry.objects.create(tournament=t, player=player)
         entry_id = entry.id
@@ -2479,7 +2479,7 @@ class TestTournamentPlayerEntryModel(TestCase):
     def test_set_null_on_drawn_team_delete(self) -> None:
         from matches.models import TournamentPlayerEntry
 
-        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        t = Tournament.objects.create(name="Cup", team_assembly="player_pool")
         drawn = make_team_with_slots("DropTeam")[0]
         entry = TournamentPlayerEntry.objects.create(
             tournament=t, player=self._player("KeepTier"), tier=2, drawn_team=drawn
@@ -2494,7 +2494,7 @@ class TestTournamentPlayerEntryModel(TestCase):
     def test_meta_ordering_iterates_tier_then_player_id(self) -> None:
         from matches.models import TournamentPlayerEntry
 
-        t = Tournament.objects.create(name="Cup", team_assembly="random_draw")
+        t = Tournament.objects.create(name="Cup", team_assembly="player_pool")
         p1 = self._player("First")
         p2 = self._player("Second")
         p3 = self._player("Third")

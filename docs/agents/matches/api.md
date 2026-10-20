@@ -1,6 +1,6 @@
 # matches: REST API
 
-The full API conventions (ADR-0039), the endpoint table, and the ANG-01b / ANG-01d-1 / ANG-01e slices with their service modules.
+The full API conventions (ADR-0039), the endpoint table, and the ANG-01b / ANG-01d-1 / ANG-01e / ANG-01f slices with their service modules.
 Moved verbatim from `laserforce_simulator/matches/CLAUDE.md`; the app index there points here.
 
 ## API conventions (ANG-01a, project-wide)
@@ -40,13 +40,16 @@ settings, **not per view**. New API slices (ANG-01b..g) must follow it. Seam con
   ANG-03's JWT) / `permission_denied` (CSRF on a session write); 405 `method_not_allowed` (keeps the
   `Allow` header); 409 — a raised `APIException` subclass for a state conflict (ANG-01b
   `job_not_complete`, ANG-01c `map_in_use`, ANG-01d-1 `season_in_progress` / `manager_fired` /
-  `season_not_draft` / `no_completed_season` / `not_career_league`); 415 `unsupported_media_type`.
+  `season_not_draft` / `no_completed_season` / `not_career_league`, ANG-01f `tournament_embedded` /
+  `tournament_not_setup` / `tournament_not_active` / `no_playable_node` / `play_in_progress`); 415
+  `unsupported_media_type`; 503 `broker_unavailable` (ANG-01f play-all).
 - **Filtering.** `django-filter` (`django_filters` in `INSTALLED_APPS`) with an explicit
   `filterset_class` per viewset, plus `AliasOrderingFilter` (`?ordering=a,-b` over the viewset's
   public `ordering_fields`, mapped through `ordering_aliases`, unknown terms silently dropped, then
   `ordering_tiebreak` appended for stable pagination). A typed filter (number / choice / date / range)
   with a bad value ⇒ **400** with `field` = the param name (range filters report the base name, e.g.
-  `date_played`, `timestamp`) — unlike the HTML pages' forgiving fallback. Boolean junk is ignored.
+  `date_played`, `timestamp`) — unlike the HTML pages' forgiving fallback. Boolean junk is ignored
+  (exception: ANG-01f's `embedded` is a strict boolean, junk ⇒ 400 `invalid`).
   Every viewset mixes in `ListOnlyFilterMixin` first, so filters apply to `list` only and query params
   never 404 / 400 a detail or write lookup.
 - **Ownership.** `get_queryset()` is built on `owned_queryset` / `owned_match_q` /
@@ -95,6 +98,13 @@ DRF endpoints registered under `/api/`, enveloped per **API conventions** above.
 | `GET /api/leagues/<id>/players/<player_id>/` | — (builder dict) | **ANG-01e.** League player page, lenient (404 only for a missing / foreign League or Player) |
 | `GET /api/leagues/<id>/teams/<team_id>/roster/` · `/history/` · `/history/players/` | — (builder dicts) | **ANG-01e.** Team must be enrolled in the displayed Season, else 404; history players paginated |
 | `GET` / `PATCH /api/leagues/<id>/teams/<team_id>/finances/`; `GET /api/leagues/<id>/finances/` | — (builder dicts) | **ANG-01e.** PATCH binds `TeamFinancesForm`; 409 `finance_disabled` / `team_not_editable` before 400 |
+| `GET /api/tournaments/` | `TournamentSerializer` | **ANG-01f.** Owned + Unmanaged. Filters (`TournamentFilterSet`): `state`, `format`, `team_assembly` (bad choice ⇒ 400), `embedded` (strict bool, junk ⇒ 400). Ordering `name`, `created_at`, `id`; default / tiebreak `-id` |
+| `POST /api/tournaments/` | — (detail payload) | **ANG-01f.** Binds `TournamentCreateForm(user=)` ⇒ **201**, `manager` = requester |
+| `GET /api/tournaments/<id>/` | — (detail payload) | **ANG-01f.** `build_tournament_detail`; PUT / PATCH / DELETE ⇒ 405 |
+| `PUT …/seeds/` · `POST …/lock/` · `POST …/import-participants/` | — (detail payload) | **ANG-01f.** Setup-only (409 `tournament_not_setup`); import is multipart ⇒ 201, `roster_invalid` |
+| `GET …/pool/`; `POST …/pool/players/` · `/pool/generate/` · `/pool/import/`; `DELETE …/pool/players/<player_id>/` | — (pool entries) | **ANG-01f.** GET paginated; POSTs ⇒ **201** with only the new entries; DELETE ⇒ 204 |
+| `POST …/draw/`; `PATCH …/draw/entries/<player_id>/` | — (detail / one entry) | **ANG-01f.** Draw ⇒ 200 detail; entry PATCH ⇒ 200 `{player, tier, drawn_team}` |
+| `POST …/play-next/` · `…/play-all/`; `GET …/play-jobs/<job_id>/` | — (dicts) | **ANG-01f.** play-next ⇒ `{node, match_ids, state, champion}`; play-all ⇒ 200 `{job_id, tournament_id, status_url}`; 409 `play_in_progress`, 503 `broker_unavailable` |
 
 HX-03 / HX-04 head-to-head, HX-01 career and HX-02 benchmark endpoints live on the `teams` viewsets
 (`/api/teams/head-to-head/`, `/api/players/head-to-head/`, `/api/players/<id>/career/`,
@@ -455,3 +465,160 @@ processor reads `watched_player_ids(request.user, league_id)`.
 
 **Known follow-ups (`issues.md`).** ANG01e-D1 player-page awards recompute whole Seasons; ANG01e-D2
 Team History scans every Season of every League; ANG01e-D3 long builders mix querying with assembly.
+
+## ANG-01f tournaments API
+
+Spec: GitHub issue #190 (tickets #191-#196); grill decisions 1-16 in `PLAN.md`. Terms **Player-pool
+draw** / **Random Draw** in `GLOSSARY.md`; the single active play run per Tournament is
+[ADR-0040](../../adr/0040-single-active-play-run-per-season.md) **Tournaments**. Every sandbox
+Tournament screen is exposed under `/api/tournaments/`. **One migration**
+(`0064_tournament_player_pool_and_active_play_job`); no engine / RNG / ordering change (play reuses
+`play_next_node` / `play_tournament_task`), so no determinism test and no Score Calibration re-baseline.
+
+**Schema.** `Tournament.active_play_job_id` (nullable `CharField(255)`, the live play-run Job id; not
+exposed by any payload). `Tournament.team_assembly` choice `random_draw` is renamed **`player_pool`**
+(label "Player pool draw"); the migration's `RunPython` rewrites existing rows and has a reverse.
+`SeasonPhase.tournament_mode = "random_draw"` is a different column and is **unchanged** (it builds a
+drawn pool into RR→DE, a Random Draw by definition).
+
+**Packages.** `matches/tournament_views.py` became the `matches/tournament_views/` package
+(`list_create`, `detail`, `setup`, `draw`, `play`; URL names and templates unchanged). The logic moved
+to **`matches/tournament_services/`**, shared by HTML and API. It imports no view module and has **no
+`__init__` re-exports**: import from each submodule, and **patch `matches.tournament_services.<module>.*`**
+(moved view helpers were deleted, not re-exported — the ANG-01e precedent).
+- `errors` — `TournamentEmbeddedError`, `TournamentNotSetupError`, `TournamentNotActiveError`,
+  `NoPlayableNodeError`, `PlayInProgressError(job_id)` (`.job_id`), `BrokerUnavailableError`,
+  `DrawNotReadyError(message)`; `BROKER_UNAVAILABLE_MESSAGE` (the HTML 503 text, used by both
+  surfaces); guards `require_sandbox` / `require_setup` / `require_active`, which check **embedded
+  first, then state** (an embedded locked Tournament reports `tournament_embedded`). Each exception
+  carries a default message ("The Tournament is not active.", "The Tournament is no longer in
+  setup.", "No Match is ready to play.", …) that the HTML flashes and the API sends.
+- `detail` — `build_rounds(t, bracket_type)` (was the view's `_build_rounds`; `league_screen_services`
+  imports it from here), `build_detail_context(t, *, user)` (the HTML template context; `user` scopes
+  the pool picker), `format_label(t)` ("Random Draw" for `player_pool` + `round_robin_double_elim`,
+  else the format's display label), `is_embedded(t)` (referenced by any `SeasonPhase`, or carries a
+  `season_phase` — regional / Worlds), `tournament_fields(t)` (the top-level fields shared by list rows
+  and the detail), `build_tournament_detail(t)`, `pool_entries(t)`, `pool_entry_payload(entry)`,
+  `node_view(node)` and `node_payload(node_view)`. ANG-01e's `league_screen_api_views.bracket_payload`
+  now calls `node_payload`, so the League playoffs API, the Tournament detail and play-next share one
+  node shape.
+- `seeding` — `team_mean_rating(team)`, `mean_ratings_by_team(team_ids)` (the talent seed order).
+- `create` — `TournamentCreateForm(data, *, user)`, `create_tournament(form, *, user)`.
+- `setup` — `SeedsForm(data, *, tournament)`, `apply_seeds`, `lock_tournament`, `import_participants`.
+- `draw` — `require_pool_setup(t)` (`require_setup`, then a preset Tournament ⇒ Django
+  `ValidationError` "This Tournament does not use a Player-pool draw."), `PoolAddPlayersForm`,
+  `add_pool_players`, `PoolGenerateForm`, `generate_pool_players`, `import_pool_players`,
+  `remove_pool_player` (not in the pool ⇒ `Http404`), `run_draw`, `DrawEntryForm`, `edit_draw_entry`.
+- `play` — `PlayedNode` (frozen: `node`, `match_ids`, `state`, `champion`), `play_next`,
+  `enqueue_play_all`, `build_play_status`, `release_stale_run`.
+
+The API lives in **`matches/tournament_api_views/`**: `base` (`TournamentViewSet`, routed as
+`tournaments`), `errors` (the `APIException`s and `translate_tournament_errors()` — a leaf module, not
+`base` as the spec had it, so every mixin imports it without a cycle) and the action mixins `create` /
+`setup` / `draw` / `play`. `TournamentSerializer` (output only, renders `tournament_fields`),
+`TournamentFilterSet` (`matches/filters.py`) and `tournament_ref` (`{id, name}`, `api_refs.py`).
+
+**Strict Forms (shared by HTML and API).** Absent / blank optional fields take their old defaults, but
+a **present bad value is rejected**, never defaulted or clamped.
+- `TournamentCreateForm` — `name` (required), `format`, `team_assembly` (`preset` / `player_pool`),
+  `teams` (the requester's own + Unmanaged regular Teams with a valid Roster; another Account's Team is
+  `invalid_choice`), `generate_count` (≥ 0), `generate_ppt` (≥ 6: a smaller value is now **400
+  `min_value`** — it used to be clamped to 6), `rrde_combo` (`4/0`, `4/2`, `8/0`, `8/4`, `16/0`,
+  `16/8`), `swiss_rounds` (≥ 0), `role_assignment_mode`, and the four series lengths (1 / 3 / 5). A
+  preset Tournament needs ≥ 4 Teams counting generated ones (`too_few_teams`, field `teams`); a
+  Player-pool draw ignores `teams` / `generate_*`. The field names are the HTML POST names. The
+  forgiving view parsers (`_parse_rrde_combo`, `_parse_swiss_rounds` and the inline series-length /
+  format / team-assembly fallbacks) are gone. Other old view helpers moved and were renamed:
+  `_detail_context` ⇒ `detail.build_detail_context`, `_build_rounds` ⇒ `detail.build_rounds`,
+  `_team_mean_rating` ⇒ `seeding.team_mean_rating`, `_build_tournament_play_status_response` ⇒
+  `play.build_play_status`.
+- `SeedsForm` — `seeds` is a `{team_id: seed}` map covering exactly the current participants with
+  seeds 1..N, else 400 `invalid` on `seeds` (missing / extra team, duplicate or gapped seed, non-int).
+- `PoolAddPlayersForm` — `player_ids` must be Players the Account may see (`owned_queryset(…,
+  path="team")`; else `invalid_choice`) and not already pooled (**400 `already_in_pool`**).
+- `PoolGenerateForm` — `count` 1..1000 (required), `mean` 0..100 (default 50), `std_dev` 1..40
+  (default 15).
+- `DrawEntryForm` — `tier` 1..6 and / or `drawn_team` (one of **this** Tournament's drawn Teams, else
+  `invalid_choice`); at least one is required.
+
+**Endpoints** (every action starts with `get_object()` ⇒ cross-Account 404, anonymous 403; then the
+guards (409), then the Form (400), then the service — views raise, never build a 4xx).
+- **List** — owned + Unmanaged rows; `embedded` is annotated and Season phases prefetched, so a page
+  runs a constant number of queries. `?format=` is the bracket-format filter: the viewset's content
+  negotiation **disables DRF's `URL_FORMAT_OVERRIDE`** (otherwise `?format=swiss` is a 404 renderer
+  lookup). `embedded` accepts `true` / `false` / `1` / `0` (case-insensitive); anything else ⇒ 400
+  `invalid`.
+- **Create** — `TournamentCreateForm` ⇒ **201** with the detail payload, `manager` = requester.
+- **Detail** — `tournament_fields` (`id, name, format, format_label, state, team_assembly,
+  role_assignment_mode, champion` ref, `embedded, season` ref or null, the four series lengths,
+  `wb_advancers, lb_advancers, swiss_rounds, manager, created_at`) + `participants` (`[{team, seed}]`
+  by seed), `brackets` (`[{bracket_type, rounds: [{bracket_round, nodes}]}]` for each non-empty group of
+  round_robin / swiss / winners / losers / grand_final; nodes = the `node_payload` keys `position,
+  team_a, team_b, seed_a, seed_b, is_bye, wins_a, wins_b, series_length, winner, games`),
+  `rr_standings`, `swiss_standings` (`StandingsRow` fields + `team` ref), `stage`, `cut_labels`
+  (`{team_id: "wb" | "lb" | "out"}`, RR→DE seeding stage only), `pool_size`, `is_drawn`. PUT / PATCH /
+  DELETE ⇒ 405. Embedded Tournaments are readable, with their `season` ref.
+- **Seeds / lock / import-participants** — 409 `tournament_embedded` / `tournament_not_setup` first.
+  Seeds (`PUT`, JSON) and lock return 200 with the detail; a lock format-rule `ValidationError` (too few
+  participants, RR→DE advancers above the field, an odd Swiss field) ⇒ 400 `invalid`, field null.
+  Import (multipart `csv_file`) ⇒ **201** with the detail, CSV errors 400 `roster_invalid` with
+  `row:<n>[:<column>]`, imported Teams owned by the requester. On a Player-pool Tournament import is
+  **400 `invalid`** "This Tournament uses a Player-pool draw; add Players to its pool instead."
+- **Pool** — `GET pool/` is paginated `{player, tier, drawn_team}` entries (by tier, then Player).
+  Every pool / draw write runs `require_pool_setup`: 409 embedded / not-setup, then a preset Tournament
+  ⇒ **400 `invalid`** "This Tournament does not use a Player-pool draw.". Add (`{player_ids}`) /
+  generate / import (multipart) ⇒ **201 with only the newly created entries**; remove ⇒ **204** (not
+  in the pool ⇒ 404).
+- **Draw** — `POST draw/` ⇒ **200 with the detail payload**; a pool that is not a multiple of 6 with ≥ 24
+  Players ⇒ 400 `invalid` with the rule (`DrawNotReadyError`). A re-run in setup replaces the previous
+  drawn Teams. `PATCH draw/entries/<player_id>/` ⇒ **200 with the one entry**.
+- **Play-next** — `require_active` (409 `tournament_embedded` / `tournament_not_active`), the run guard
+  (409 `play_in_progress`), then `play_next_node`; nothing ready ⇒ 409 `no_playable_node`. 200 `{node,
+  match_ids, state, champion}`, where `node` carries `id`, `bracket_type`, `bracket_round` plus the
+  `node_payload` keys.
+- **Play-all** — the same guards, then `enqueue_play_all` ⇒ **200** `{job_id, tournament_id,
+  status_url}` (the HTML keeps its 202); broker down ⇒ **503 `broker_unavailable`** with nothing
+  claimed. **Play-job status** — `GET play-jobs/<job_id>/` ⇒ the HTML polling keys `{status,
+  completed, total, error, tournament_id}`; the Job id is a capability token (ANG-01b / ANG-01d-2).
+
+**Single active play run** (ADR-0040 Tournaments). `enqueue_play_all` makes up the task id and writes it
+to `active_play_job_id` (an update filtered on a null column) **before**
+`play_tournament_task.apply_async(task_id=…, retry=False)`. A lost claim re-reads the column: a live id
+⇒ `PlayInProgressError(<id>)`; an empty one (the winner already finished) is retried once, and a failed
+retry reports the current id or `"unknown"`. A broker `OperationalError` clears the claim. The task's
+`finally` clears the column only while it still holds its own id. Before refusing, the guard calls
+`release_stale_run`: a `SUCCESS` / `FAILURE` / `REVOKED` Job is released (update filtered on that id);
+`PENDING` / `STARTED` / `RETRY` / `PROGRESS` stay blocked. **No cancel endpoint** — a never-consumed
+`PENDING` run stays stuck (PLAN.md Deferred Items).
+
+**Error codes** (`tournament_api_views/errors.py`, one translator from the service exceptions): 409
+`tournament_embedded`, `tournament_not_setup`, `tournament_not_active`, `no_playable_node`;
+409 `play_in_progress` with `field = job:<id>`; 503 `broker_unavailable`; `DrawNotReadyError` and a
+Django `ValidationError` (lock rules, the preset / Player-pool mismatch) ⇒ 400 `invalid`, field null.
+
+**HTML views changed** (all delegate to the services and bind the same Forms; redirects and URL names
+unchanged).
+- **Embedded guard:** every write on an embedded Tournament (reseed, lock, import, pool, draw,
+  play-next) flashes the error and redirects; play-all answers 409 JSON. Before, `/tournaments/` could
+  play an in-League bracket and bypass the Season's play run.
+- **Strict errors are flashed** (create re-renders 200 with the errors; reseed, pool generate and
+  draw edit flash). Reseed rejects missing / duplicate seeds — a duplicate used to be a 500
+  `IntegrityError`.
+- **Account leaks closed:** the create Team picker and the pool add-existing picker are scoped to the
+  Account; draw edit accepts only this Tournament's drawn Teams.
+- **Labels:** the create form reads "Player pool draw" and preselects RR→DE when it is picked (still
+  changeable); the list shows `format_label`; the detail page has a `#tournament-format-label` badge
+  ("Random Draw" for RR→DE).
+- **Play:** play-all returns 409 JSON `{"error"}` while a run is live (or for a not-active / embedded
+  Tournament) and keeps 202 on success; play-next flashes. The flash texts now come from the service
+  exception defaults (e.g. "The Tournament is not active.").
+
+**Tests.** API: `matches/tests/test_api_tournaments_{read,create,setup,draw,play}.py`. HTML regressions:
+`test_tournament_views_{create,setup,draw,play}_ang01f.py` (plus updates to `test_tournament_views.py`).
+Services / schema: `test_tournament_foundation_ang01f.py` (guards, `format_label`, the migration row
+rewrite) and `test_tournament_services_boundary.py` (no view imports).
+
+**Known follow-ups.** `issues.md`: ANG01f5-D1 generated / imported pool Players land on the global,
+Unmanaged Free Agents Team; ANG01f5-D2 pool CSV import skips the DB slot-collision check; ANG01f-D3
+`build_detail_context` / `build_tournament_detail` mix several jobs. PLAN.md Deferred Items: the
+never-consumed `PENDING` play run.

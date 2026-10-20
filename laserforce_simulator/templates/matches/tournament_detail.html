@@ -17,6 +17,7 @@
             {% else %}Setup{% endif %}
         </span>
         {% endif %}
+        <span class="badge bg-light text-dark" id="tournament-format-label">{{ format_label }}</span>
         <span class="badge bg-secondary state-badge">{{ tournament.get_state_display }}</span>
     </div>
 </div>
@@ -33,8 +34,8 @@
 </div>
 {% endif %}
 
-{# ---- LG-02x-1 Random-Draw player-pool surface ---- #}
-{% if team_assembly == "random_draw" %}
+{# ---- LG-02x-1 Player-pool draw surface ---- #}
+{% if team_assembly == "player_pool" %}
 <div id="tournament-pool-section" class="mb-4">
     <h2>Player Pool
         (<span id="tournament-pool-size">{{ pool_size }}</span>)</h2>

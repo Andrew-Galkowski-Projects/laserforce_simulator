@@ -566,7 +566,7 @@ class TestTournamentPlayNextForcedTie(TestCase):
 from django.core.files.uploadedfile import SimpleUploadedFile  # noqa: E402
 
 from matches.bracket import default_seed_order  # noqa: E402
-from matches.tournament_views import _team_mean_rating  # noqa: E402
+from matches.tournament_services.seeding import team_mean_rating  # noqa: E402
 from teams.roster_importer import REQUIRED_COLUMNS  # noqa: E402
 
 _REQUIRED_HEADER = ",".join(REQUIRED_COLUMNS)
@@ -687,7 +687,7 @@ class TestTournamentImportParticipants(TestCase):
         seeds = sorted(p.seed for p in parts)
         self.assertEqual(seeds, [1, 2, 3, 4, 5])
         # Order matches default_seed_order over _team_mean_rating talent.
-        team_ratings = [(p.team_id, _team_mean_rating(p.team)) for p in parts]
+        team_ratings = [(p.team_id, team_mean_rating(p.team)) for p in parts]
         expected_order = default_seed_order(team_ratings)
         actual_order = [p.team_id for p in sorted(parts, key=lambda p: p.seed)]
         self.assertEqual(actual_order, expected_order)
@@ -762,21 +762,26 @@ class TestTournamentPlayAll(TestCase):
         t = _active_tournament(4, name="PlayAll202")
         # Patch the task's .delay so we assert the enqueue shape without running
         # the (EAGER) task body here — the task is covered in test_tournament_tasks.
-        with patch("matches.tournament_views.play_tournament_task") as task_mock:
-            fake_result = task_mock.apply_async.return_value
-            fake_result.id = "job-abc-123"
+        # ANG-01f-6: the enqueue lives in ``tournament_services.play`` and passes
+        # its own pre-claimed ``task_id`` (ADR-0040), which the 202 echoes.
+        with patch(
+            "matches.tournament_services.play.play_tournament_task"
+        ) as task_mock:
             response = self.client.post(reverse("tournament_play_all", args=[t.id]))
         self.assertEqual(response.status_code, 202)
         payload = response.json()
         self.assertEqual(set(payload.keys()), {"job_id", "tournament_id"})
-        self.assertEqual(payload["job_id"], "job-abc-123")
         self.assertEqual(payload["tournament_id"], t.id)
         # apply_async(..., retry=False) so a dead broker fails fast, not hangs.
-        task_mock.apply_async.assert_called_once_with((t.id,), retry=False)
+        task_mock.apply_async.assert_called_once_with(
+            (t.id,), task_id=payload["job_id"], retry=False
+        )
 
     def test_play_all_on_non_active_returns_409(self) -> None:
         t = _setup_tournament(4, name="PlayAll409")  # setup state, not active
-        with patch("matches.tournament_views.play_tournament_task") as task_mock:
+        with patch(
+            "matches.tournament_services.play.play_tournament_task"
+        ) as task_mock:
             response = self.client.post(reverse("tournament_play_all", args=[t.id]))
         self.assertEqual(response.status_code, 409)
         payload = response.json()
@@ -796,7 +801,9 @@ class TestTournamentPlayAll(TestCase):
         from kombu.exceptions import OperationalError
 
         t = _active_tournament(4, name="PlayAllBrokerDown")
-        with patch("matches.tournament_views.play_tournament_task") as task_mock:
+        with patch(
+            "matches.tournament_services.play.play_tournament_task"
+        ) as task_mock:
             task_mock.apply_async.side_effect = OperationalError("broker unreachable")
             response = self.client.post(reverse("tournament_play_all", args=[t.id]))
         self.assertEqual(response.status_code, 503)
@@ -925,8 +932,8 @@ def _player_count() -> int:
 
 class TestTournamentCreateSeriesLength(TestCase):
     """GET form renders ALL FOUR series-length <select>s by DOM id with Bo1
-    selected by default + the old single id absent; POST persists all four with
-    a forgiving per-field fallback to 1 on invalid input."""
+    selected by default + the old single id absent; POST persists all four,
+    an absent field defaults to 1 and (ANG-01f) an invalid one is rejected."""
 
     _SELECT_IDS = (
         "tournament-create-final-series-length",
@@ -977,49 +984,45 @@ class TestTournamentCreateSeriesLength(TestCase):
         self.assertEqual(t.quarterfinal_series_length, 1)
         self.assertEqual(t.earlier_series_length, 3)
 
-    def test_post_tampered_value_falls_back_to_one_per_field(self) -> None:
-        # "4" is not a valid choice -> that one field falls back to 1; the
-        # other three persist their valid values independently.
+    def test_post_tampered_value_is_rejected(self) -> None:
+        # ANG-01f (#193) — this test used to assert the forgiving fallback to 1.
+        # The create page now binds the strict TournamentCreateForm, which
+        # rejects a bad value instead of defaulting it: re-render, no row.
         teams = _make_teams(4)
-        self.client.post(
+        response = self.client.post(
             reverse("tournament_create"),
             {
                 "name": "Tampered Cup",
                 "teams": [str(t.id) for t in teams],
                 "generate_count": "0",
                 "generate_ppt": "6",
-                "final_series_length": "4",  # invalid -> 1
+                "final_series_length": "4",  # not 1/3/5 -> rejected
                 "semifinal_series_length": "3",
                 "quarterfinal_series_length": "5",
                 "earlier_series_length": "1",
             },
         )
-        t = Tournament.objects.get(name="Tampered Cup")
-        self.assertEqual(t.final_series_length, 1)
-        self.assertEqual(t.semifinal_series_length, 3)
-        self.assertEqual(t.quarterfinal_series_length, 5)
-        self.assertEqual(t.earlier_series_length, 1)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Tournament.objects.filter(name="Tampered Cup").exists())
 
-    def test_post_junk_value_falls_back_to_one_per_field(self) -> None:
+    def test_post_junk_value_is_rejected(self) -> None:
+        # ANG-01f (#193) — formerly a forgiving fallback to 1; now a form error.
         teams = _make_teams(4)
-        self.client.post(
+        response = self.client.post(
             reverse("tournament_create"),
             {
                 "name": "Junk Cup",
                 "teams": [str(t.id) for t in teams],
                 "generate_count": "0",
                 "generate_ppt": "6",
-                "final_series_length": "abc",  # junk -> 1
+                "final_series_length": "abc",  # junk -> rejected
                 "semifinal_series_length": "5",
-                "quarterfinal_series_length": "xyz",  # junk -> 1
+                "quarterfinal_series_length": "xyz",  # junk -> rejected
                 "earlier_series_length": "3",
             },
         )
-        t = Tournament.objects.get(name="Junk Cup")
-        self.assertEqual(t.final_series_length, 1)
-        self.assertEqual(t.semifinal_series_length, 5)
-        self.assertEqual(t.quarterfinal_series_length, 1)
-        self.assertEqual(t.earlier_series_length, 3)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Tournament.objects.filter(name="Junk Cup").exists())
 
     def test_post_missing_fields_default_to_one(self) -> None:
         teams = _make_teams(4)
@@ -1172,8 +1175,8 @@ def _de_active_tournament(n: int, *, name: str = "DEViewCup") -> Tournament:
 
 class TestCreateFormFormat(TestCase):
     """GET renders the ``tournament-create-format`` select (single selected by
-    default); POST ``format=double_elimination`` persists it; a tampered/absent
-    value falls back to single_elimination (forgiving-fallback precedent)."""
+    default); POST ``format=double_elimination`` persists it; an absent value
+    defaults to single_elimination and (ANG-01f) a tampered one is rejected."""
 
     def test_get_form_renders_format_select(self) -> None:
         make_team_with_slots("Existing")
@@ -1219,20 +1222,23 @@ class TestCreateFormFormat(TestCase):
         t = Tournament.objects.get(name="SE Created Cup")
         self.assertEqual(t.format, "single_elimination")
 
-    def test_post_tampered_format_falls_back_to_single(self) -> None:
+    def test_post_tampered_format_is_rejected(self) -> None:
+        # ANG-01f (#193) — this test used to assert the forgiving fallback to
+        # single_elimination. The strict TournamentCreateForm now rejects an
+        # unknown format: re-render (200), no Tournament created.
         teams = _make_teams(4)
-        self.client.post(
+        response = self.client.post(
             reverse("tournament_create"),
             {
                 "name": "Tampered Format Cup",
                 "teams": [str(t.id) for t in teams],
                 "generate_count": "0",
                 "generate_ppt": "6",
-                "format": "not_a_format",  # not a valid choice -> single
+                "format": "not_a_format",  # not a valid choice -> rejected
             },
         )
-        t = Tournament.objects.get(name="Tampered Format Cup")
-        self.assertEqual(t.format, "single_elimination")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Tournament.objects.filter(name="Tampered Format Cup").exists())
 
     def test_post_absent_format_falls_back_to_single(self) -> None:
         teams = _make_teams(4)
@@ -1397,8 +1403,8 @@ def _rr_active_tournament(n: int, *, name: str = "RRViewCup") -> Tournament:
 
 class TestCreateFormRoundRobin(TestCase):
     """The ``tournament-create-format`` select offers a round_robin option; a
-    POST with format=round_robin persists it; a tampered / absent value falls
-    back to single_elimination (forgiving-fallback precedent)."""
+    POST with format=round_robin persists it; an absent value defaults to
+    single_elimination and (ANG-01f) a tampered one is rejected."""
 
     def test_format_select_offers_round_robin_option(self) -> None:
         make_team_with_slots("Existing")
@@ -1423,20 +1429,22 @@ class TestCreateFormRoundRobin(TestCase):
         t = Tournament.objects.get(name="RR Created Cup")
         self.assertEqual(t.format, "round_robin")
 
-    def test_post_tampered_format_falls_back_to_single(self) -> None:
+    def test_post_tampered_format_is_rejected(self) -> None:
+        # ANG-01f (#193) — formerly a forgiving fallback to single_elimination;
+        # the strict TournamentCreateForm now rejects an unknown format.
         teams = _make_teams(4)
-        self.client.post(
+        response = self.client.post(
             reverse("tournament_create"),
             {
                 "name": "RR Tampered Cup",
                 "teams": [str(t.id) for t in teams],
                 "generate_count": "0",
                 "generate_ppt": "6",
-                "format": "not_a_format",  # not a valid choice -> single
+                "format": "not_a_format",  # not a valid choice -> rejected
             },
         )
-        t = Tournament.objects.get(name="RR Tampered Cup")
-        self.assertEqual(t.format, "single_elimination")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Tournament.objects.filter(name="RR Tampered Cup").exists())
 
     def test_post_absent_format_falls_back_to_single(self) -> None:
         teams = _make_teams(4)
@@ -1724,7 +1732,8 @@ def _resolve_all_rr_view(t: Tournament) -> None:
 class TestCreateFormRrDeCombo(TestCase):
     """The create form offers the round_robin_double_elim option and renders
     ``tournament-create-rrde-combo`` with the 6 combos; a POST persists
-    format + wb_advancers + lb_advancers with forgiving fallback."""
+    format + wb_advancers + lb_advancers; an absent combo defaults to 4/0 and
+    (ANG-01f) an unknown one is rejected."""
 
     def test_format_select_offers_rrde_option(self) -> None:
         make_team_with_slots("Existing")
@@ -1799,9 +1808,12 @@ class TestCreateFormRrDeCombo(TestCase):
         self.assertEqual(t.wb_advancers, 4)
         self.assertEqual(t.lb_advancers, 0)
 
-    def test_post_rrde_invalid_combo_falls_back_to_four_zero(self) -> None:
+    def test_post_rrde_invalid_combo_is_rejected(self) -> None:
+        # ANG-01f (#193) — formerly a forgiving fallback to (4, 0); the strict
+        # TournamentCreateForm now rejects an unknown combo (an ABSENT combo
+        # still defaults to 4/0, see the test above).
         teams = _make_teams(4)
-        self.client.post(
+        response = self.client.post(
             reverse("tournament_create"),
             {
                 "name": "RRDE BadCombo Cup",
@@ -1809,12 +1821,11 @@ class TestCreateFormRrDeCombo(TestCase):
                 "generate_count": "0",
                 "generate_ppt": "6",
                 "format": "round_robin_double_elim",
-                "rrde_combo": "7/3",  # not one of the 6 locked combos -> (4, 0)
+                "rrde_combo": "7/3",  # not one of the 6 locked combos -> rejected
             },
         )
-        t = Tournament.objects.get(name="RRDE BadCombo Cup")
-        self.assertEqual(t.wb_advancers, 4)
-        self.assertEqual(t.lb_advancers, 0)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Tournament.objects.filter(name="RRDE BadCombo Cup").exists())
 
     def test_post_non_rrde_persists_zero_advancers(self) -> None:
         # On a non-RRDE create the combo is ignored and both advancers are 0.
@@ -1971,8 +1982,9 @@ def _swiss_active_tournament(
 class TestCreateFormSwiss(TestCase):
     """The ``tournament-create-format`` select offers a swiss option; a
     ``tournament-create-swiss-rounds`` numeric input exists; a POST persists
-    format=="swiss" + the coerced swiss_rounds (forgiving parse); a
-    tampered/absent format falls back to single_elimination."""
+    format=="swiss" + swiss_rounds (absent / blank = 0); (ANG-01f) a junk or
+    negative swiss_rounds and a tampered format are rejected, an absent format
+    defaults to single_elimination."""
 
     def test_format_select_offers_swiss_option(self) -> None:
         make_team_with_slots("Existing")
@@ -2035,9 +2047,12 @@ class TestCreateFormSwiss(TestCase):
         t = Tournament.objects.get(name="Swiss Blank Cup")
         self.assertEqual(t.swiss_rounds, 0)
 
-    def test_post_swiss_rounds_invalid_coerces_to_zero(self) -> None:
+    def test_post_swiss_rounds_invalid_is_rejected(self) -> None:
+        # ANG-01f (#193) — formerly coerced to 0; the strict
+        # TournamentCreateForm now rejects a non-integer (absent / blank still
+        # mean 0 = auto, see the tests above).
         teams = _make_teams(4)
-        self.client.post(
+        response = self.client.post(
             reverse("tournament_create"),
             {
                 "name": "Swiss Junk Cup",
@@ -2048,12 +2063,14 @@ class TestCreateFormSwiss(TestCase):
                 "swiss_rounds": "abc",
             },
         )
-        t = Tournament.objects.get(name="Swiss Junk Cup")
-        self.assertEqual(t.swiss_rounds, 0)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Tournament.objects.filter(name="Swiss Junk Cup").exists())
 
-    def test_post_swiss_rounds_negative_coerces_to_zero(self) -> None:
+    def test_post_swiss_rounds_negative_is_rejected(self) -> None:
+        # ANG-01f (#193) — formerly coerced to 0; a negative round count is
+        # now a form error.
         teams = _make_teams(4)
-        self.client.post(
+        response = self.client.post(
             reverse("tournament_create"),
             {
                 "name": "Swiss Neg Cup",
@@ -2064,12 +2081,14 @@ class TestCreateFormSwiss(TestCase):
                 "swiss_rounds": "-5",
             },
         )
-        t = Tournament.objects.get(name="Swiss Neg Cup")
-        self.assertEqual(t.swiss_rounds, 0)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Tournament.objects.filter(name="Swiss Neg Cup").exists())
 
-    def test_post_tampered_format_falls_back_to_single(self) -> None:
+    def test_post_tampered_format_is_rejected(self) -> None:
+        # ANG-01f (#193) — formerly a forgiving fallback to single_elimination;
+        # the strict TournamentCreateForm now rejects an unknown format.
         teams = _make_teams(4)
-        self.client.post(
+        response = self.client.post(
             reverse("tournament_create"),
             {
                 "name": "Swiss Tampered Cup",
@@ -2079,8 +2098,8 @@ class TestCreateFormSwiss(TestCase):
                 "format": "not_a_format",
             },
         )
-        t = Tournament.objects.get(name="Swiss Tampered Cup")
-        self.assertEqual(t.format, "single_elimination")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Tournament.objects.filter(name="Swiss Tampered Cup").exists())
 
     def test_post_absent_format_falls_back_to_single(self) -> None:
         teams = _make_teams(4)
@@ -2283,8 +2302,9 @@ class TestTournamentCreateRosterEligibility(TestCase):
         t = Tournament.objects.get(name="Valid Roster Cup")
         self.assertEqual(t.participants.count(), 4)
 
-    def test_generate_ppt_below_six_clamped_to_valid_rosters(self) -> None:
-        # A user requesting 3 players/team must still get full, playable rosters.
+    def test_generate_ppt_below_six_rejected(self) -> None:
+        # ANG-01f review: bad values are rejected, never defaulted (spec #190).
+        # A user requesting 3 players/team gets a form error, not a silent 6.
         response = self.client.post(
             reverse("tournament_create"),
             {
@@ -2294,14 +2314,13 @@ class TestTournamentCreateRosterEligibility(TestCase):
                 "generate_ppt": "3",
             },
         )
-        self.assertEqual(response.status_code, 302)
-        t = Tournament.objects.get(name="Clamped Cup")
-        self.assertEqual(t.participants.count(), 4)
-        for p in t.participants.all():
-            self.assertTrue(
-                p.team.is_valid_roster,
-                f"{p.team.name} has an incomplete roster",
-            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("generate_ppt", response.context["form"].errors)
+        self.assertEqual(
+            response.context["form"].errors.as_data()["generate_ppt"][0].code,
+            "min_value",
+        )
+        self.assertFalse(Tournament.objects.filter(name="Clamped Cup").exists())
 
 
 # ===========================================================================
@@ -2455,7 +2474,7 @@ def _random_draw_tournament(*, name: str) -> Tournament:
     return Tournament.objects.create(
         name=name,
         format="round_robin_double_elim",
-        team_assembly="random_draw",
+        team_assembly="player_pool",
         role_assignment_mode="random",
         wb_advancers=4,
         lb_advancers=0,
@@ -2477,8 +2496,8 @@ def _pool_entries(tournament, players) -> None:
 
 
 class TestCreateFormTeamAssembly(TestCase):
-    """GET renders the two new selects; POST persists them with a forgiving
-    fallback (preset / random)."""
+    """GET renders the two new selects; POST persists them; absent values
+    default to preset / random and (ANG-01f) unknown values are rejected."""
 
     def test_get_renders_team_assembly_select(self) -> None:
         make_team_with_slots("Existing")
@@ -2499,12 +2518,12 @@ class TestCreateFormTeamAssembly(TestCase):
                 "generate_count": "0",
                 "generate_ppt": "6",
                 "format": "round_robin_double_elim",
-                "team_assembly": "random_draw",
+                "team_assembly": "player_pool",
                 "role_assignment_mode": "per_tier",
             },
         )
         t = Tournament.objects.get(name="Draw Cup")
-        self.assertEqual(t.team_assembly, "random_draw")
+        self.assertEqual(t.team_assembly, "player_pool")
         self.assertEqual(t.role_assignment_mode, "per_tier")
 
     def test_post_default_is_preset(self) -> None:
@@ -2522,9 +2541,12 @@ class TestCreateFormTeamAssembly(TestCase):
         self.assertEqual(t.team_assembly, "preset")
         self.assertEqual(t.role_assignment_mode, "random")
 
-    def test_post_tampered_team_assembly_falls_back_to_preset(self) -> None:
+    def test_post_tampered_team_assembly_is_rejected(self) -> None:
+        # ANG-01f (#193) — formerly a forgiving fallback to preset / random;
+        # the strict TournamentCreateForm now rejects unknown values (absent
+        # still defaults, see test_post_default_is_preset).
         teams = _make_teams(4)
-        self.client.post(
+        response = self.client.post(
             reverse("tournament_create"),
             {
                 "name": "Tampered Assembly Cup",
@@ -2535,9 +2557,10 @@ class TestCreateFormTeamAssembly(TestCase):
                 "role_assignment_mode": "also_bad",
             },
         )
-        t = Tournament.objects.get(name="Tampered Assembly Cup")
-        self.assertEqual(t.team_assembly, "preset")
-        self.assertEqual(t.role_assignment_mode, "random")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            Tournament.objects.filter(name="Tampered Assembly Cup").exists()
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2872,7 +2895,7 @@ class TestRandomDrawLockReusesTournamentLock(TestCase):
 
 class TestRandomDrawDetailContextAndDom(TestCase):
     """``_detail_context`` adds the random_draw keys and the detail page renders
-    the pool + draw DOM ids when team_assembly == 'random_draw'."""
+    the pool + draw DOM ids when team_assembly == 'player_pool'."""
 
     def test_detail_context_has_random_draw_keys(self) -> None:
         t = _random_draw_tournament(name="DrawCtxCup")

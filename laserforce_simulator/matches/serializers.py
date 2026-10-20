@@ -10,7 +10,9 @@ from matches.models import (
     PlayerRoundState,
     Season,
     SeasonPhase,
+    Tournament,
 )
+from matches.tournament_services.detail import tournament_fields
 
 _GAME_ROUND_FIELDS = [
     "id",
@@ -192,3 +194,44 @@ class SeasonSerializer(SeasonListSerializer):
             "phases",
             "conferences",
         ]
+
+
+class TournamentSerializer(serializers.ModelSerializer):
+    """ANG-01f — a Tournament's own fields (output only).
+
+    Rendered by ``tournament_services.detail.tournament_fields``, the same
+    top-level fields ``build_tournament_detail`` carries: ``format_label`` is
+    the derived display label ("Random Draw" for a Player-pool draw played as
+    RR->DE); ``embedded`` is true for an in-League Tournament, whose
+    ``season`` ref is set (null for a sandbox Tournament).
+    ``active_play_job_id`` is play-run state and is not exposed here.
+    """
+
+    class Meta:
+        model = Tournament
+        fields = [
+            "id",
+            "name",
+            "format",
+            "format_label",
+            "state",
+            "team_assembly",
+            "role_assignment_mode",
+            "champion",
+            "embedded",
+            "season",
+            "final_series_length",
+            "semifinal_series_length",
+            "quarterfinal_series_length",
+            "earlier_series_length",
+            "wb_advancers",
+            "lb_advancers",
+            "swiss_rounds",
+            "manager",
+            "created_at",
+        ]
+
+    def to_representation(self, instance: Tournament) -> dict:
+        # The one builder the detail payload uses too (byte-identical keys /
+        # values, in ``Meta.fields`` order).
+        return tournament_fields(instance)

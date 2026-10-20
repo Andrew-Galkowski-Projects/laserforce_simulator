@@ -42,12 +42,12 @@
     <div class="mb-3">
         <label for="tournament-create-team-assembly" class="form-label">Team assembly</label>
         <select class="form-select" id="tournament-create-team-assembly" name="team_assembly"
-                onchange="tournamentAssemblyToggle(this.value)">
+                onchange="tournamentAssemblyChanged(this.value)">
             <option value="preset" selected>Preset teams</option>
-            <option value="random_draw">Random draw player pool</option>
+            <option value="player_pool">Player pool draw</option>
         </select>
         <div class="form-text">
-            Random draw: register individual players to a pool, then draw
+            Player pool draw: register individual players to a pool, then draw
             tier-balanced teams on the tournament page.
         </div>
     </div>
@@ -156,13 +156,25 @@ tournamentCreateToggle(document.getElementById("tournament-create-format").value
 
 function tournamentAssemblyToggle(value) {
     "use strict";
-    // The role-assignment-mode select is meaningful only for a random_draw
+    // The role-assignment-mode select is meaningful only for a player_pool
     // tournament (roles re-assign every Round). Show it only then.
-    var draw = value === "random_draw";
+    var draw = value === "player_pool";
     document.querySelectorAll(".tournament-create-role-assignment-row").forEach(function (el) {
         el.style.display = draw ? "" : "none";
     });
 }
 tournamentAssemblyToggle(document.getElementById("tournament-create-team-assembly").value);
+
+function tournamentAssemblyChanged(value) {
+    "use strict";
+    // ANG-01f — picking "Player pool draw" preselects RR->DE (a Random Draw),
+    // the common case; the Manager can still change the format afterwards.
+    tournamentAssemblyToggle(value);
+    if (value === "player_pool") {
+        var format = document.getElementById("tournament-create-format");
+        format.value = "round_robin_double_elim";
+        tournamentCreateToggle(format.value);
+    }
+}
 </script>
 {% endblock %}

@@ -1,3 +1,38 @@
+# Out-of-scope findings — ANG-01f-5 (Player pool and Draw)
+
+Date: 2026-10-19
+Branch: `ang-01f-5-draw`
+Scope: the two pool-intake gaps spec #190 lists under **Out of Scope** (ticket #195). Logged, not
+fixed: both keep today's behaviour on the HTML pages and the new `/api/tournaments/<id>/pool/…`
+endpoints alike.
+
+Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
+
+## Summary — ANG-01f-5 findings
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| ANG01f5-D1 | 🟠 | Player pool | Generated and imported pool Players land on the global, Unmanaged Free Agents Team |
+| ANG01f5-D2 | 🟡 | Player pool | Pool CSV import skips the DB slot-collision check a Team import runs |
+
+### 🟠 ANG01f5-D1 — Pool Players land on the global Free Agents Team (ownership)
+`matches/tournament_services/draw.py::generate_pool_players` and `import_pool_players` create every
+new Player on `get_free_agents_team()`, the single Unmanaged "Free Agents" Team. Unmanaged rows are
+readable and writable by every Account (ADR-0038), so Players one Manager generates or imports for a
+pool are visible to, and can be added to pools or edited by, every other Account, and the Free Agents
+Team grows without bound. `import_pool_players` takes `user` but cannot stamp ownership through it.
+Fix idea: give each Account (or each pool Tournament) its own holding Team with `manager` set, and
+create pool Players there.
+
+### 🟡 ANG01f5-D2 — Pool CSV import skips the DB slot-collision check
+A Team import (`teams.services.run_roster_import`) runs `_check_db_slot_collisions` before writing;
+`import_pool_players` only calls `parse_roster_csv` and ignores the CSV `team` / `role` columns, so the
+DB-level checks never run. Today that is harmless (a pool row never fills a slot), but a CSV that a
+Team import would reject is accepted for a pool without comment, and any later change that honours
+the `team` column inherits no guard. Fix idea: decide whether a pool import should validate the
+`team` / `role` columns at all; if yes, reuse `_check_db_slot_collisions`, if no, document the columns
+as ignored in the template CSV.
+
 # Code review follow-ups — ANG-01e (League screens API)
 
 Date: 2026-10-19
@@ -14,6 +49,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ANG01e-D1 | 🟡 | League player page | The awards section recomputes the full Season award set for every Season the Player appeared in |
 | ANG01e-D2 | 🟡 | Team History | The Team History builders scan every Season of every League to find the Team's enrolments |
 | ANG01e-D3 | ℹ️ | Screen builders | `build_team_stats`, `build_power_rankings` and `build_playoffs` mix querying with row assembly |
+| ANG01f-D3 | ℹ️ | Tournament detail builders | `build_detail_context` and `build_tournament_detail` mix several jobs in one function |
 
 ### 🟡 ANG01e-D1 — League player page recomputes whole-Season awards per Season (perf)
 `matches/league_screen_services.py::build_player_detail` calls `compute_season_award_set(season)` for
@@ -36,6 +72,14 @@ database, not with the Team's own history, on both the HTML Team History tabs an
 `matches/league_screen_services.py` each run several queries and assemble the rows in one long function.
 Split candidates: a query step that returns plain dicts and a pure assembly step (the
 `team_stats_logic` / `power_rankings_logic` pattern), so the assembly is unit-testable without the ORM.
+
+### ℹ️ ANG01f-D3 — Long Tournament detail builders mix several jobs (refactor)
+Logged from the ANG-01f code review (spec #190). In `matches/tournament_services/detail.py`,
+`build_detail_context` (~90 lines: participants, bracket rounds, stage, RR crosstable / standings / cut
+labels, Swiss sections and the Player-pool surface) and `build_tournament_detail` (~40 lines: fields,
+participants, brackets, standings, cut labels and pool counts) each do several jobs in one function. Split
+candidates: one small builder per section shared by the HTML context and the API payload, so each is
+testable on its own and the two surfaces cannot drift.
 
 # Web testing — ANG-01d-2 (League play loop on a shared service + Active-play-run guards)
 
