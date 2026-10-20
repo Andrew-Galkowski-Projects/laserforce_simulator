@@ -103,7 +103,7 @@ logic lives in `core/services.py` (shared with the HTML views). Seam contract:
 
 - **`ArenaMapViewSet(ListOnlyFilterMixin, ListModelMixin, RetrieveModelMixin, DestroyModelMixin,
   GenericViewSet)`** — `@method_decorator(login_not_required, name="dispatch")` + settings-level
-  `IsAuthenticated` (anonymous ⇒ 403 `not_authenticated`). `get_queryset()` annotates
+  `IsAuthenticated` (anonymous ⇒ 401 `not_authenticated`, ADR-0041). `get_queryset()` annotates
   `has_confirmed_config = Exists(MapZoneConfig.objects.filter(arena_map=OuterRef("pk"), confirmed=True))`
   — true iff `latest_confirmed_config() is not None`. Ordering `name` (default), `created_at`, `id`;
   tiebreak `id`. Class-level `parser_classes = [MultiPartParser, FormParser]` (for `create`); every
@@ -285,12 +285,12 @@ sent no `message`) or `{"error": <first form error>}` (compute). HTML upload wit
 - `UploadMapViewTests` — dimensions stored correctly after upload; corrupt uploads rejected and not persisted
 - `DeleteMapViewTests` — `delete_map` POST removes map + redirects to list, related configs cascade, GET → 405, missing map → 404, list page renders the Delete control
 
-`core/test_maps_api.py` (ANG-01a; a sibling of `core/tests.py` since `core` has no `tests/` package) — `/api/maps/` list / detail envelope, exact serializer fields, absolute `image` URL, `has_confirmed_config` true / false, `is_default` / `has_confirmed_config` filters, same maps visible to two different Accounts, anonymous 403, PUT / PATCH on the detail 405 (POST / DELETE coverage moved to `test_maps_api_writes.py` by ANG-01c).
+`core/test_maps_api.py` (ANG-01a; a sibling of `core/tests.py` since `core` has no `tests/` package) — `/api/maps/` list / detail envelope, exact serializer fields, absolute `image` URL, `has_confirmed_config` true / false, `is_default` / `has_confirmed_config` filters, same maps visible to two different Accounts, anonymous 401, PUT / PATCH on the detail 405 (POST / DELETE coverage moved to `test_maps_api_writes.py` by ANG-01c).
 
 ANG-01c siblings (image fixtures are a tiny in-memory PIL PNG uploaded under `override_settings(MEDIA_ROOT=Path(tempfile.mkdtemp()))` — a `Path`, not a `str` — with OpenCV run for real):
 - `core/test_map_forms.py` (SimpleTestCase) — every `core/forms.py` field rule and pinned message (spawn `[]` vs absent, `zones: []` ⇒ `None`, ragged / out-of-set / bool values, `wall_meta` key / facing / height / extra key, elevation messages, duplicate / unknown base type, `sight_data` / `base_sights` shapes, `cells` message + `required`), `zone_size` bounds, `ParsedJSONField` not decoding strings, `MapUploadForm` `invalid_image`, and the `core/api_forms.py` param Forms
 - `core/test_map_services.py` (TestCase) — `save_zone_config` carry-forward / spawn tri-state / bases replace / cache clear; `save_sight_lines` replace vs merge (incl. the **merge-onto-missing-config regression**); `compute_and_store_sight_lines`; `compute_single_cell` off-grid ⇒ `[]`; `get_zone_config` shape; **`map_in_use` true for each of the 6 references** and false for completed Seasons / GameRound-only references; `delete_map`; `aggregate_map_heatmap` scoping
-- `core/test_maps_api_writes.py` (TestCase + APIClient) — all 10 actions by route name; upload 201 / 400s / 415; DELETE 204 / 409 / 404; PUT / PATCH detail 405; per-GET `data` key sets; zone-config PUT round-trip + auto-detect; sight-lines PUT then PATCH; compute ⇒ ranked cells / strong spots; strong-spots round-trip; heatmap scoping + `invalid_choice`; the error table; cross-Account shared writes; anonymous 403; processed-image PNG not enveloped
+- `core/test_maps_api_writes.py` (TestCase + APIClient) — all 10 actions by route name; upload 201 / 400s / 415; DELETE 204 / 409 / 404; PUT / PATCH detail 405; per-GET `data` key sets; zone-config PUT round-trip + auto-detect; sight-lines PUT then PATCH; compute ⇒ ranked cells / strong spots; strong-spots round-trip; heatmap scoping + `invalid_choice`; the error table; cross-Account shared writes; anonymous 401; processed-image PNG not enveloped
 - `core/test_map_views_html.py` (TestCase) — HTML delete of an in-use map (302 + error message, map survives); malformed HTML save payloads ⇒ 400 with the existing body shapes; valid editor payloads ⇒ exact success bytes; HTML heatmap excludes a foreign round; 101-char upload name ⇒ redirect, no row
 - `core/map_test_fixtures.py` — shared test-support module (not collected — its name matches no `python_files` glob) for the four ANG-01c files: the in-memory border-only PNG builder (zone_size 50 ⇒ a 4×4 grid with a 2×2 floor interior, so compute yields a non-empty ranking), `TempMediaMixin` (a `Path` `MEDIA_ROOT` under a temp dir + `rmtree` cleanup), and the Season / Match / round builders used by the `map_in_use` and heatmap-scoping tests
 
@@ -345,7 +345,7 @@ Concretely, and verified as part of the slice:
   `@login_not_required` exemption: authenticated, but unfiltered.
 - **ANG-01a** keeps the same posture on the API: `ArenaMapViewSet` (`/api/maps/`) is authenticated
   (DRF `IsAuthenticated`; it carries the usual API `login_not_required` middleware exemption so an
-  anonymous caller gets a 403 JSON rather than a 302) but its queryset is **not** ownership-filtered.
+  anonymous caller gets a 401 JSON (403 before ANG-03) rather than a 302) but its queryset is **not** ownership-filtered.
 - **ANG-01c** keeps it for writes: any authenticated Account may upload / edit / delete any map, via
   HTML or API (the only delete restriction is the Season-based `map_in_use` guard, not ownership).
   The one ownership-aware piece is the **multi-round heatmap aggregate**: the *map* is unfiltered,

@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Run black, ruff, the encoding check, mypy, and pytest on changed files (mirroring CI) and output a single pass/fail summary.
+description: Run black, ruff, the encoding check (CI's lint step), mypy on changed lines, and pytest on changed files, and output a single pass/fail summary.
 ---
 
 Every step of this check is a fixed, repeatable operation — collecting changed
@@ -28,8 +28,10 @@ The script:
 2. Runs `black --check`, `ruff check` (the narrow F401/F811 set from
    `pyproject.toml`) and `mypy --follow-imports=silent` on the changed `.py`
    files, and `scripts/check_encoding.py` on the changed text files. A step
-   with nothing to check is SKIP (counts as pass). mypy reports only errors in
-   the changed files themselves.
+   with nothing to check is SKIP (counts as pass). mypy keeps only errors on
+   lines changed vs `HEAD` (a new untracked file keeps all of them): CI does
+   not run mypy, so an older error in a touched file reads `PASS
+   pre-existing errors only`, not FAIL.
 3. Derives the pytest targets from the authoritative app→tests mapping in
    `changed_files.py` and runs `pytest -q` against them (full suite only if a
    change matched no mapping).

@@ -82,6 +82,23 @@ Update only these sections if the changes warrant it:
 
 Do not rewrite the introduction or architecture overview unless they are factually wrong.
 
+## Step 5 — Resolve forward references
+
+Docs written before the task promise its arrival ("stays 403 until ANG-03",
+"ANG-03 will add…"); once it ships they are stale. Search every Markdown file,
+`CODING_STANDARDS.md` and the ADRs included:
+
+```
+git grep -n "<TASK-ID>" -- "*.md"
+```
+
+Rewrite each forward reference to the shipped state. When the task changed a
+documented rule (a status code, a default, a limit), also `git grep` the old
+value in the docs and correct every statement of the old rule. Leave history
+alone: an ADR's context paragraph, PLAN.md grill records, `[DONE]` notes.
+
+Done when the grep shows no line that still describes the task as future.
+
 ## Step 6 — Output a change summary
 
 After all edits, print:
