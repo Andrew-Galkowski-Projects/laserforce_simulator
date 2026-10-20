@@ -1862,9 +1862,40 @@ stay gated on `finance_enabled`.
     Career-in-League row, awards and ratings history. No separate ratings-history endpoint.
 19. **No HTML side effects in the API**: no `session["last_league_id"]` write, no sidebar links.
 
-#### ANG-01f · Tournaments API
+#### ANG-01f · [DONE] Tournaments API
 
 Spec: #190
+
+**[DONE] Shipped (2026-10-19).** Every sandbox Tournament screen is exposed under `/api/tournaments/`
+(list / filter, create in any of the five formats with preset Teams or a Player-pool draw, detail with
+the whole Bracket and standings, seeds, lock, CSV participant import, the Player pool, the Draw and its
+hand edit, play-next, and play-all as a Job with polled status) on a shared
+`matches/tournament_services/` package (`errors`, `detail`, `seeding`, `create`, `setup`, `draw`,
+`play`), so the HTML pages and the API bind the same strict Forms. `tournament_views.py` became the
+`matches/tournament_views/` package and the API is `matches/tournament_api_views/` (`base` viewset,
+`errors`, one mixin per area). One migration, `0064_tournament_player_pool_and_active_play_job`. The
+work found and fixed, on both surfaces: Account leaks in the create Team picker, the pool
+add-existing lookup and the draw-entry edit; an embedded (in-League) Tournament was fully writable and
+playable from `/tournaments/`, bypassing the Season's play run (now 409 `tournament_embedded` / a
+flash); Play All started a new drain on every POST, so drains could race on one bracket (now a single
+active play run per Tournament, ADR-0040 **Tournaments**); a duplicate reseed was a 500 (now a form
+error); and "Random Draw" named both the RR→DE player-pool format and the general team assembly
+(now **Player-pool draw**, `team_assembly="player_pool"`, with "Random Draw" a derived label for
+RR→DE). Deviations: the API `APIException`s and the translator live in a leaf
+`tournament_api_views/errors.py`, not `base`; `build_detail_context` takes `user` (the pool picker is
+Account-scoped); new `detail.tournament_fields` / `node_view` / `node_payload` / `pool_entry_payload`
+and a `seeding` module, with ANG-01e's `bracket_payload` now calling `node_payload`; `?format=` URL
+override is disabled on `TournamentViewSet` so the `format` filter works, and `embedded` is a strict
+boolean filter (junk ⇒ 400); pool add / generate / import return **201 with only the new entries**
+(not the pool page), remove 204, the Draw 200 with the detail, a draw-entry PATCH 200 with the entry; a
+preset Tournament on a pool write is 400 `invalid`, a Player already pooled 400 `already_in_pool`, and
+participant import on a Player-pool Tournament 400 `invalid`; play-next's `node` adds `id` /
+`bracket_type` / `bracket_round`; `PoolGenerateForm` bounds `count` 1..1000, `mean` 0..100, `std_dev`
+1..40; create keeps defaults for absent fields but rejects present bad ones, so `generate_ppt` < 6 is
+now 400 `min_value` (it was clamped); the HTML play flashes / 409 JSON use the service exception
+default texts; a lost play-all claim is re-read and retried once. Follow-ups: ANG01f5-D1 / D2 and
+ANG01f-D3 in `issues.md`; the never-consumed `PENDING` play run in Deferred Items. See the **ANG-01f
+tournaments API** section of `docs/agents/matches/api.md`.
 
 Sandbox and in-League Tournaments: list / create (formats incl. Random Draw), detail with bracket
 nodes, reseed, participant management and the CSV participant import (already ownership-fixed by

@@ -1,6 +1,7 @@
 # matches: Tournaments: round robin, Swiss, random draw
 
-LG-02c round robin, round robin -> double elimination, Swiss, and LG-02x-1 random draw player pool.
+LG-02c round robin, round robin -> double elimination, Swiss, and LG-02x-1 random draw player pool
+(renamed **Player-pool draw** by ANG-01f; see the ANG-01f section at the end).
 Moved verbatim from `laserforce_simulator/matches/CLAUDE.md`; the app index there points here.
 
 ## LG-02c round robin tournaments
@@ -156,7 +157,8 @@ stages readout.
 **`tournament-create-format`**) gains a third option — value **`"round_robin"`**,
 label **`"Round robin"`** — alongside single/double-elim; the view's
 forgiving-fallback parse widens to accept `"round_robin"` (anything
-absent/tampered still falls back to `"single_elimination"`), and the four
+absent/tampered still falls back to `"single_elimination"`; *ANG-01f: absent still does, a tampered
+value is now rejected*), and the four
 `*_series_length` POST fields are still parsed/passed but are **inert** for RR
 (RR forces Bo1 at the node level). The four series-length selects
 (`tournament-create-final-series-length` / `-semifinal-` / `-quarterfinal-` /
@@ -464,7 +466,8 @@ naturally extends mid-run as the Finals materialize. `find_next_node` is unchang
 (`4/0, 4/2, 8/0, 8/4, 16/0, 16/8` — exact value-string format at Code agent's
 discretion), parsed into `wb_advancers` / `lb_advancers`; parse is forgiving (absent/
 invalid on an RRDE create → first combo `(4, 0)`; ignored on a non-RRDE create,
-both advancers persist `0`). The combo select is shown client-side **only** when the
+both advancers persist `0`). *(ANG-01f: the forgiving `_parse_rrde_combo` is gone — absent still
+means `4/0`, but an unknown combo is now a 400 / form error from `TournamentCreateForm`.)* The combo select is shown client-side **only** when the
 format select reads `round_robin_double_elim` (hidden otherwise — reuse the existing
 inline `onchange` toggle that hides the series-length selects for `round_robin`;
 behaviour pinned, exact JS at Code agent's discretion). `Tournament.objects.create(...)`
@@ -726,7 +729,10 @@ fallback). NEW numeric input (DOM id **`tournament-create-swiss-rounds`**, name
 **only** when the format select reads `swiss`. A forgiving **`_parse_swiss_rounds(raw)
 -> int`** coerces the POST field to a non-negative int (absent/blank/invalid/negative
 ⇒ `0` = auto; clamping happens at lock), passed as `swiss_rounds=` into
-`Tournament.objects.create(...)` (`0` and harmless for non-Swiss). The
+`Tournament.objects.create(...)` (`0` and harmless for non-Swiss). *(ANG-01f: superseded —
+`_parse_swiss_rounds` is gone; the strict `tournament_services.create.TournamentCreateForm` field
+`swiss_rounds` (`min_value=0`) keeps absent / blank ⇒ `0` = auto, but a non-integer or negative value
+is now a form error. Lock-time clamping is unchanged. See **ANG-01f** below.)* The
 `tournamentCreateToggle(value)` JS shows `.tournament-create-swiss-rounds-row` only
 for `swiss`, and **hides** the series-length selects AND the rrde-combo control for
 `swiss` (Swiss is always Bo1, no DE finals — the existing `value === "round_robin"`
@@ -822,6 +828,13 @@ for the authoritative list of every name / signature / dict-key / DOM-id / liter
 string, and migration `0039_tournament_swiss`).
 
 ## LG-02x-1 random draw player-pool tournament
+
+> **Renamed by ANG-01f.** The `team_assembly` value `"random_draw"` below is now **`"player_pool"`**
+> (label "Player pool draw"; migration `0064` rewrote the rows), and a Player-pool draw may use **any**
+> format — only `player_pool` + `round_robin_double_elim` is called **Random Draw** (a derived
+> `format_label`). Read every `team_assembly == "random_draw"` below as `"player_pool"`. The views
+> moved to `matches/tournament_views/draw.py` on `matches/tournament_services/draw.py`. See **ANG-01f
+> tournaments API** at the end of this doc.
 
 Adds a NEW **orthogonal** `Tournament.team_assembly` mode **`"random_draw"`** (vs the
 default `"preset"`): instead of enrolling existing `Team`s, a **player pool** registers,
@@ -973,7 +986,9 @@ Calibration re-baseline.
 **Views / URLs (`matches/tournament_views.py`, `matches/tournament_urls.py`).** All new
 URL names are **bare** (no `app_name`, mounted at `/tournaments/`).
 
-- **CHANGED — `tournament_create`.** Reads a new POST field **`team_assembly`**
+- **CHANGED — `tournament_create`.** *(ANG-01f: now binds the strict `TournamentCreateForm`; a
+  tampered `team_assembly` / `role_assignment_mode` is rejected, and "Player pool draw" preselects
+  RR→DE but any format is allowed.)* Reads a new POST field **`team_assembly`**
   (forgiving fallback: only `"preset"` / `"random_draw"`, else `"preset"`) and
   **`role_assignment_mode`** (only `"random"` / `"per_tier"`, else `"random"`); stamps
   both via `Tournament.objects.create(...)`. The `format` select is **unchanged** — a
@@ -1137,3 +1152,36 @@ for the authoritative list of every name / signature / dict-key / DOM-id / liter
 `_build_role_hook`, the 7 view fns + URL names, `Team.is_draw_team`, the DOM ids +
 `_detail_context` keys, the N-divisibility rule, and migrations
 `0040_tournament_random_draw` + `teams 00XX_team_is_draw_team`).
+
+## ANG-01f tournaments API (RR / Swiss / Player-pool notes)
+
+The full slice (endpoints, codes, packages) is the **ANG-01f tournaments API** section of
+[`api.md`](api.md). What changed for the formats in this doc:
+
+- **Rename.** `Tournament.team_assembly` `"random_draw"` ⇒ **`"player_pool"`** ("Player pool draw";
+  migration `0064_tournament_player_pool_and_active_play_job` rewrites the rows and reverses). The
+  engine's role hook (`tournament_engine.play_specific_node`) and the detail template now key off
+  `"player_pool"`. **Random Draw** is now a derived label (`tournament_services.detail.format_label`):
+  `player_pool` + `round_robin_double_elim` reads "Random Draw" in the list, the detail badge
+  `#tournament-format-label` and the API `format_label`; any other format reads its plain label.
+  A drawn pool can be played as **any** of the five formats (each is tested to a champion through the
+  API play-all; an odd drawn field on Swiss is a 400 at lock). `SeasonPhase.tournament_mode =
+  "random_draw"` is unchanged.
+- **Create form.** The team-assembly option reads "Player pool draw" and picking it preselects RR→DE
+  (`tournamentAssemblyChanged` JS); the Manager may change the format.
+- **Strict Forms, no forgiving parses.** `_parse_rrde_combo` and `_parse_swiss_rounds` are gone. The
+  create page binds `tournament_services.create.TournamentCreateForm`: absent fields keep their old
+  defaults (`4/0`, `0` = auto Swiss rounds), but an unknown `rrde_combo`, a negative / non-integer
+  `swiss_rounds` or an unknown `format` is an error, flashed on the re-rendered form. Pool generate
+  binds `PoolGenerateForm` (`count` 1..1000, `mean` 0..100, `std_dev` 1..40), pool add binds
+  `PoolAddPlayersForm` (Account-scoped Players, not already pooled), and draw edit binds
+  `DrawEntryForm` (`tier` 1..6, `drawn_team` one of this Tournament's drawn Teams — a leak fix).
+- **Guards.** Every pool / draw write runs `require_pool_setup`: embedded ⇒ `tournament_embedded`,
+  not in setup ⇒ `tournament_not_setup`, preset ⇒ "This Tournament does not use a Player-pool draw."
+  (HTML flashes; API 409 / 400). Participant CSV import on a Player-pool Tournament is refused ("This
+  Tournament uses a Player-pool draw; add Players to its pool instead."). The add-existing picker is
+  scoped to the Account (`build_detail_context(t, *, user)`).
+- **Single active run / embedded guard** apply to these formats too — see `tournaments-elimination.md`
+  **ANG-01f** and ADR-0040 **Tournaments**.
+- **Logged, not fixed** (`issues.md`): ANG01f5-D1 generated / imported pool Players still land on the
+  global Free Agents Team; ANG01f5-D2 pool import skips the DB slot-collision check.

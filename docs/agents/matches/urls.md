@@ -68,7 +68,26 @@ Moved verbatim from `laserforce_simulator/matches/CLAUDE.md`; the app index ther
 /api/leagues/<id>/playoffs/          → ANG-01e ("league-playoffs")
 /api/leagues/<id>/teams/<team_id>/finances/ → ANG-01e GET / PATCH ("league-team-finances")
 /api/leagues/<id>/finances/          → ANG-01e ("league-finances")
+/api/tournaments/                    → ANG-01f TournamentViewSet list / create ("tournament-list")
+/api/tournaments/<id>/               → ANG-01f detail payload; PUT / PATCH / DELETE 405 ("tournament-detail")
+/api/tournaments/<id>/seeds/         → ANG-01f PUT full {team_id: seed} map ("tournament-seeds")
+/api/tournaments/<id>/lock/          → ANG-01f POST setup -> active ("tournament-lock")
+/api/tournaments/<id>/import-participants/ → ANG-01f POST multipart roster CSV ("tournament-import-participants")
+/api/tournaments/<id>/pool/          → ANG-01f GET paginated pool entries ("tournament-pool")
+/api/tournaments/<id>/pool/players/  → ANG-01f POST {player_ids} ("tournament-pool-players")
+/api/tournaments/<id>/pool/players/<player_id>/ → ANG-01f DELETE one, 204 ("tournament-pool-player")
+/api/tournaments/<id>/pool/generate/ → ANG-01f POST {count, mean, std_dev} ("tournament-pool-generate")
+/api/tournaments/<id>/pool/import/   → ANG-01f POST multipart roster CSV ("tournament-pool-import")
+/api/tournaments/<id>/draw/          → ANG-01f POST run / re-roll the Draw ("tournament-draw")
+/api/tournaments/<id>/draw/entries/<player_id>/ → ANG-01f PATCH {tier, drawn_team} ("tournament-draw-entry")
+/api/tournaments/<id>/play-next/     → ANG-01f POST sync play ("tournament-play-next")
+/api/tournaments/<id>/play-all/      → ANG-01f POST enqueue play-all Job ("tournament-play-all")
+/api/tournaments/<id>/play-jobs/<job_id>/ → ANG-01f GET Job status ("tournament-play-job")
 ```
+
+The sandbox HTML Tournament routes (`/tournaments/…`, `matches/tournament_urls.py`, bare URL names)
+are listed in `tournaments-elimination.md` / `tournaments-rr-swiss-draw.md`; ANG-01f repointed them
+at the `matches/tournament_views/` package with names unchanged.
 
 The `simulate-batch/` extra paths in `api_urls.py` are ordered as above: the save-status path sits
 before `<job_id>/save/` because `simulate-batch/save/save/` matches both patterns.

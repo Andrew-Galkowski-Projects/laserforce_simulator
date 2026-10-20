@@ -32,10 +32,12 @@ derives ownership from its parent (see `accounts-ownership.md`).
 - `views.py` — sandbox match / round / batch / analytics HTML views.
 - `league_views.py` — League + Season HTML views, play loop, rollover, owner evaluation.
 - `league_screens/` — one module per League sidebar screen (thin; logic in `league_screen_services.py`).
-- `tournament_views/` (one module per area: `list_create`, `detail`, `setup`, `draw`, `play`) / `tournament_services/` (shared HTML + API logic; `detail` holds the bracket / standings builders) / `tournament_engine.py` — standalone Tournaments and the bracket drain.
+- `tournament_views/` — sandbox Tournament HTML views, one module per area (`list_create`, `detail`, `setup`, `draw`, `play`); thin, logic in `tournament_services/`.
+- `tournament_services/` (ANG-01f) — shared HTML + API Tournament logic: `errors`, `detail` (bracket / standings builders, the API payloads), `seeding`, `create`, `setup`, `draw`, `play`. `tournament_engine.py` — the per-node bracket drain.
+- `tournament_api_views/` (ANG-01f) — `/api/tournaments/`: `base` (`TournamentViewSet`), `errors` (the `APIException`s + `translate_tournament_errors`), and the `create` / `setup` / `draw` / `play` action mixins.
 - `tasks.py` — Celery tasks (batch, save, play season / playoffs / tournament / member night).
 - Pure modules (Django-free, `TestNoDjangoImportsLeaked`-guarded): `bracket.py`, `standings.py`, `schedule_generator.py`, `season_dashboard.py`, `phase_composer.py`, `draw.py`, `member_night.py`, `worlds.py`, `development.py`, `finance.py`, `injury.py`, `owner_mood.py`, `season_awards.py`, `h2h_stats.py`, `player_h2h_stats.py`, `stat_feats.py`, `*_logic.py`.
-- `api_views.py`, `league_api_views.py`, `league_screen_api_views.py`, `serializers.py`, `filters.py`, `api_forms.py`, `api_refs.py` — the REST API.
+- `api_views.py`, `league_api_views.py`, `league_screen_api_views.py`, `tournament_api_views/`, `serializers.py`, `filters.py`, `api_forms.py`, `api_refs.py` — the REST API.
 
 ## Service layer
 
@@ -45,6 +47,7 @@ Shared by the HTML views and the API; services must not import the view modules 
 - `matches/league_services.py` (ANG-01d-1) — League create / next-season rollover / reassign / teardown, League + Season read builders (dashboard, history, standings, schedule, awards, owner evaluation), Conference replace. Moved helpers are re-exported from `league_views.py`: patch `matches.league_services.*`, not `league_views`.
 - `matches/league_play_services.py` (ANG-01d-2) — the League play loop and single active play run, shared by the HTML play views and the `/api/seasons/` play endpoints.
 - `matches/league_screen_services.py` (ANG-01e) — the builders for all 15 League screens, enrolment, the per-Account `WatchedPlayer` watch list, team finances; shared by `league_screens/*` and `/api/leagues/<id>/…`. Patch `matches.league_screen_services.*`.
+- `matches/tournament_services/` (ANG-01f) — sandbox Tournament create / seeds / lock / CSV import / Player pool / Draw / play, the strict Forms both surfaces bind, the embedded / setup / active guards and the single active play run; shared by `tournament_views/*` and `/api/tournaments/`. No `__init__` re-exports and no view imports: import from each submodule, and patch `matches.tournament_services.<module>.*` (the moved view helpers were deleted, not re-exported).
 - `teams/services.py` — Team/Player writes plus HX-01 career / HX-02 benchmark builders.
 - `core/services.py` (ANG-01c) — the map editor behind `/api/maps/`; maps stay shared, unfiltered data.
 
@@ -73,7 +76,7 @@ Inventory: `docs/agents/matches/tests.md`.
 Paths below are relative to the repo root.
 
 - Engine, `BatchSimulator`, models' field history, TIME-01 ticks, roles, shot resolver, EventLog, Score Calibration, GEN-01 fidelity tiers — `docs/agents/matches/simulation-engine.md`
-- REST API endpoints, ANG-01b match/round actions, ANG-01d-1 league lifecycle API, ANG-01e league screens API, full API conventions — `docs/agents/matches/api.md`
+- REST API endpoints, ANG-01b match/round actions, ANG-01d-1 league lifecycle API, ANG-01e league screens API, ANG-01f tournaments API, full API conventions — `docs/agents/matches/api.md`
 - URL table (`/matches/`, `/api/`) — `docs/agents/matches/urls.md`
 - Celery, batch jobs, Job status, polling JSON (API-03) — `docs/agents/matches/async-celery.md`
 - Round pages, event log windowing, playback map, heatmap, round compare, highlights, PDF report, head-to-head — `docs/agents/matches/round-views-and-analytics.md`
@@ -83,7 +86,7 @@ Paths below are relative to the repo root.
 - League sidebar screens, watch list, watch flag, standings form, League player page (LG-01z, LG-06f..h) — `docs/agents/matches/league-screens.md`
 - Delete League, League templates, difficulty, League spread (DEL-01, CRE-01, CRE-02) — `docs/agents/matches/league-lifecycle.md`
 - Single / double elimination, best-of-N Series, Series escalation, CSV import, play-all — `docs/agents/matches/tournaments-elimination.md`
-- Round robin, RR → double elimination, Swiss, random draw player pool — `docs/agents/matches/tournaments-rr-swiss-draw.md`
+- Round robin, RR → double elimination, Swiss, Player-pool draw / Random Draw — `docs/agents/matches/tournaments-rr-swiss-draw.md`
 - Season phases, phase composer, RR → playoff embed, multi-round-robin (Part2a..2c-2) — `docs/agents/matches/season-phases.md`
 - Double round robin, tournament_mode, mid-season tournaments, per-tournament config, finals formats, playoff pacing (Part2c-3a..f) — `docs/agents/matches/season-phases-part2c-3.md`
 - Member night (LG-07a) — `docs/agents/matches/member-night.md`

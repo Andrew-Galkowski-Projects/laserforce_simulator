@@ -96,7 +96,8 @@ per-Team query), so the select list never offers an incomplete-roster Team; a
 tampered/stale POST of an ineligible id is re-validated server-side and rejected
 with an error re-render (nothing created); and the generate path clamps
 players-per-team to **>= 6** (`generate_ppt = max(6, generate_ppt)`) so it can
-never create an unplayable participant;
+never create an unplayable participant *(ANG-01f: no longer clamped — `generate_ppt` < 6 is a
+`min_value` form error, absent still means 6; the Team picker is now Account-scoped)*;
 `tournament_detail` (GET-only, the bracket tree + seeding-edit form + play
 controls); `tournament_reseed` (POST `@transaction.atomic`, persists a manually
 reordered Seeding, **rejected once `is_locked`**); `tournament_lock` (POST,
@@ -203,6 +204,8 @@ resumable on re-invoke); `django.db.close_old_connections()` in `finally`.
 `tournament_play_all` (POST-only, `HttpResponseNotAllowed(["POST"])` first line;
 `play_tournament_task.apply_async((tournament_id,), retry=False)` → `JsonResponse({job_id,
 tournament_id}, status=202)`; **409** `{"error": ...}` when `state != "active"`;
+*(ANG-01f: also **409** while the Tournament already has a live play run or is embedded — see the
+ANG-01f section)*;
 **503** `{"error": ...}` when the enqueue raises `kombu.exceptions.OperationalError`
 — a clean JSON broker-down error, NOT a 500 HTML page, so the UI never chokes on
 the response. `retry=False` so an unreachable broker fails after one bounded attempt
@@ -373,7 +376,8 @@ steps), `tournament_play_all`, `tournament_play_status` all keep their URLs +
 **View / template surface.** Create form (`tournament_create` /
 `tournament_create.html`): reads a new POST field `series_length` (parsed to int;
 invalid/absent ⇒ default `1`; only `1`/`3`/`5` accepted, anything else falls back
-to `1` — forgiving-fallback precedent), stamped via `Tournament.objects.create(...,
+to `1` — forgiving-fallback precedent; *ANG-01f: absent still means `1`, any other value is now
+rejected*), stamped via `Tournament.objects.create(...,
 series_length=series_length)`; rendered as a `<select name="series_length">` with
 DOM id **`tournament-create-series-length`** (options Bo1 selected / Bo3 / Bo5),
 placed in `tournament-create-form` before the submit. Detail page (`_build_rounds`
@@ -518,7 +522,8 @@ sourced from `node.series_length` via `_node_to_dict`), no edit to it.
 **four** — POST fields `final_series_length` / `semifinal_series_length` /
 `quarterfinal_series_length` / `earlier_series_length`, each int-coerced with a
 forgiving fallback to `1` on `TypeError`/`ValueError` then forced into `{1,3,5}`
-(anything else → `1`) **independently**, **no monotonicity constraint**; the
+(anything else → `1`) **independently**, **no monotonicity constraint** (*ANG-01f: absent ⇒ `1`
+still, but a present value outside 1 / 3 / 5 is now a form error*); the
 create call passes all four (`Tournament.objects.create(name=..., state="setup",
 final_series_length=..., semifinal_series_length=..., quarterfinal_series_length=...,
 earlier_series_length=...)`). Rendered as **four `<select>`s** (each Bo1/Bo3/Bo5,
@@ -773,7 +778,7 @@ now reports stage completion across **both brackets + GF**.
 `tournament_create.html`): reads a new POST field **`format`** (forgiving-fallback
 mirroring the series-length parses — accept only `"single_elimination"` /
 `"double_elimination"`, anything absent/tampered falls back to
-`"single_elimination"`) and passes it as the `format=` kwarg into the existing
+`"single_elimination"`; *ANG-01f: absent still does, a tampered value is now rejected*) and passes it as the `format=` kwarg into the existing
 `Tournament.objects.create(...)`; rendered as one `<select name="format">` with
 DOM id **`tournament-create-format`** (options "Single elimination" selected /
 "Double elimination"), placed above the four series-length selects — every other
@@ -848,3 +853,41 @@ pure forward-only schema ops, ADR-0004); in-League / in-Season tournament
 embedding (Tournament stays standalone, `season`-less); any new GLOSSARY.md term
 beyond **Winners bracket** / **Losers bracket** / **Drop** / **Grand final** /
 **Bracket reset** (already written) and any new ADR (ADR-0021 already written).
+
+## ANG-01f tournaments API (sandbox Tournament notes)
+
+The full slice (endpoints, codes, packages) is the **ANG-01f tournaments API** section of
+[`api.md`](api.md); the Player-pool notes are at the end of
+[`tournaments-rr-swiss-draw.md`](tournaments-rr-swiss-draw.md). What changed for the sandbox
+Tournament pages described above:
+
+- **Code moved.** `matches/tournament_views.py` is now the `matches/tournament_views/` package
+  (`list_create`, `detail`, `setup`, `draw`, `play`); URL names and templates are unchanged. The logic
+  lives in `matches/tournament_services/` (`errors`, `detail`, `seeding`, `create`, `setup`, `draw`,
+  `play`), shared with `/api/tournaments/`. Old private helpers were moved and renamed, not
+  re-exported: `_build_rounds` ⇒ `detail.build_rounds(t, bracket_type)` (now one bracket type per call;
+  `league_screen_services` imports it from here), `_detail_context` ⇒ `detail.build_detail_context(t,
+  *, user)`, `_team_mean_rating` ⇒ `seeding.team_mean_rating`, `_build_tournament_play_status_response`
+  ⇒ `play.build_play_status`. Patch `matches.tournament_services.<module>.*` in tests.
+- **Rename.** `team_assembly` `"random_draw"` ⇒ `"player_pool"` (migration `0064`); "Random Draw" is
+  the derived label for a Player-pool draw played as RR→DE.
+- **Embedded guard.** An embedded (in-League) Tournament — referenced by a `SeasonPhase` or carrying a
+  `season_phase` — is read-only on `/tournaments/`: reseed, lock, import, pool, draw and play-next
+  flash the error and redirect; play-all answers 409 JSON. Before, the sandbox pages could play an
+  in-League bracket and bypass the Season's single play run.
+- **Single active play run** ([ADR-0040](../../adr/0040-single-active-play-run-per-season.md)
+  **Tournaments**). New nullable `Tournament.active_play_job_id`. `tournament_play_all` claims the
+  column **before** `apply_async(task_id=…)`; while it is set, play-all is 409 JSON and play-next
+  flashes. `play_tournament_task`'s `finally` clears it only while it holds its own id; a terminal
+  (`SUCCESS` / `FAILURE` / `REVOKED`) Job is released by the next play, `PENDING` stays blocked, and
+  there is no cancel. Play-all keeps its 202 `{job_id, tournament_id}` and its 503 broker-down JSON
+  (`BROKER_UNAVAILABLE_MESSAGE`); the 409 / flash texts now come from the service exception defaults
+  (e.g. "The Tournament is not active.").
+- **Strict Forms.** Create binds `TournamentCreateForm`: absent fields keep their defaults, but a
+  present bad `format`, series length, `rrde_combo`, `swiss_rounds` or `generate_ppt` < 6 (no longer
+  clamped) is an error, flashed on the re-rendered form. The Team picker offers only the Account's own
+  and Unmanaged valid-Roster Teams (a leak fix). Reseed binds `SeedsForm`: seeds must be exactly 1..N
+  over the current participants, so a missing or duplicate seed is flashed instead of the old 500
+  `IntegrityError`.
+- **Detail page.** New `#tournament-format-label` badge (the derived label); the list shows the same
+  label.

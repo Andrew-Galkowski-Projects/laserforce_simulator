@@ -249,7 +249,8 @@ constraint, no `db_index`. Meaningful only for `tournament` phases (`round_robin
 phases carry the inert default). **`unseeded` ≠ `random_draw`**: `unseeded`
 randomly seeds the season's *existing preset teams*; `random_draw` builds *fresh
 balanced teams from a player pool* (reuses the LG-02x-1 `team_assembly="random_draw"`
-+ `format="round_robin_double_elim"` machinery). **Only `standings` requires a
++ `format="round_robin_double_elim"` machinery; *ANG-01f renamed that `team_assembly` value
+`"player_pool"` — `tournament_mode="random_draw"` itself is unchanged*). **Only `standings` requires a
 preceding `round_robin` phase** — already enforced for every `tournament` block by
 the existing blanket `parse_phase_composition` preceding-RR guard (the compose-time
 validity rule is UNCHANGED this slice).
