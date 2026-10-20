@@ -2031,11 +2031,41 @@ while `SessionAuthentication` is the only scheme, anonymous requests remain 403.
 
 ### ANG-02 · CORS configuration
 
+Spec: #203 (ticket #204)
+
 During development Angular runs on `http://localhost:4200` and Django runs on `http://localhost:8000`.
 
 - Add `django-cors-headers` to `requirements.txt`
 - Add `CorsMiddleware` to `MIDDLEWARE` (before `CommonMiddleware`)
 - Set `CORS_ALLOWED_ORIGINS = ["http://localhost:4200"]` for dev; production domain added when known
+
+**Grill (2026-10-20).** Settled answers:
+
+1. **Origins come from the env.** `CORS_ALLOWED_ORIGINS` is read with decouple (`Csv()`), like
+   `ALLOWED_HOSTS`. The default is `http://localhost:4200` when `DEBUG` is on and empty when it is
+   off. It is documented in `.env.example`.
+2. **Credentials are allowed:** `CORS_ALLOW_CREDENTIALS = True`. The session cookie needs it today
+   (`localhost:4200` and `:8000` are the same site under SameSite=Lax), and so does ANG-03's
+   httpOnly refresh cookie.
+3. **`CSRF_TRUSTED_ORIGINS` takes the same list,** so a session-authenticated unsafe request from
+   `:4200` passes Django's Origin check.
+4. **CORS covers the API only:** `CORS_URLS_REGEX = r"^/api/.*$"`. HTML, admin and static
+   responses never carry CORS headers.
+5. **`CorsMiddleware` goes first in `MIDDLEWARE`.** It sits above WhiteNoise, which can also
+   generate a response, and above `LoginRequiredMiddleware`, so an anonymous preflight `OPTIONS` is
+   answered with a 200 and never redirected or refused. "Before `CommonMiddleware`" alone was not
+   enough.
+6. **The requirement is `django-cors-headers>=4.4`,** a floor pin like the other main libraries.
+7. **Tests go in `laserforce_simulator/api/tests/test_cors.py`.** They use `override_settings`
+   and an `Origin` header, and cover five cases:
+   - an allowed origin gets the Allow-Origin and Allow-Credentials headers;
+   - a disallowed origin gets no CORS headers;
+   - an anonymous preflight to `/api/` returns 200 with CORS headers;
+   - a non-API path gets no CORS headers;
+   - an allowed cross-origin POST passes the CSRF Origin check.
+8. **Production stays empty.** ANG-07 serves Angular from the same origin, so no Fly secret is set.
+   **Out of scope:** JWT (ANG-03), cookie SameSite / Secure changes, nginx, and HTTPS hardening.
+9. **One ticket.** No ADR, no glossary terms, no migration, no simulation impact.
 
 ### ANG-03 · JWT authentication
 
