@@ -45,9 +45,13 @@ INSTALLED_APPS = [
     "core.apps.CoreConfig",
     "rest_framework",
     "django_filters",
+    "corsheaders",
 ]
 
 MIDDLEWARE = [
+    # ANG-02 - first, above WhiteNoise / Common / LoginRequired, so every
+    # response they can return still carries the CORS headers.
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -140,6 +144,20 @@ AUTH_USER_MODEL = "accounts.User"
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "landing"
 LOGOUT_REDIRECT_URL = "login"
+
+
+# --- ANG-02: CORS for the Angular dev server ---
+# Cross-origin callers of /api/ only, with cookies. Defaults to the Angular dev
+# origin under DEBUG and to nobody otherwise (ANG-07 serves Angular same-origin).
+# The same list is CSRF-trusted so a session-authenticated write passes.
+CORS_ALLOWED_ORIGINS = config(
+    "CORS_ALLOWED_ORIGINS",
+    default="http://localhost:4200" if DEBUG else "",
+    cast=Csv(),
+)
+CORS_ALLOW_CREDENTIALS = True
+CORS_URLS_REGEX = r"^/api/.*$"
+CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
 
 
 # Internationalization
