@@ -31,6 +31,7 @@ from matches.player_h2h_stats import (
     cumulative_wl_series,
     margin_series,
 )
+from laserforce_simulator.testing import run_project_python
 
 # ---------------------------------------------------------------------------
 # Pure-unit fixture helper
@@ -574,10 +575,7 @@ class TestNoDjangoImportsLeaked(unittest.TestCase):
     """
 
     def test_import_matches_player_h2h_stats_loads_no_django_modules(self) -> None:
-        import os
         import pathlib
-        import subprocess
-        import sys
         import textwrap
 
         here = pathlib.Path(__file__).resolve()
@@ -605,13 +603,7 @@ class TestNoDjangoImportsLeaked(unittest.TestCase):
                 sys.exit(1)
             sys.exit(0)
             """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
+        result = run_project_python(script, timeout=30)
         self.assertEqual(
             result.returncode,
             0,

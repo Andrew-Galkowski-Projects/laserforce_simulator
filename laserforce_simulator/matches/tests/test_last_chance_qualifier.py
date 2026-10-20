@@ -52,7 +52,7 @@ from unittest.mock import patch
 from django.test import TestCase
 from django.urls import reverse
 
-from matches.models import BracketNode, SeasonPhase, Tournament, TournamentParticipant
+from matches.models import BracketNode, Tournament, TournamentParticipant
 from matches.simulation import BatchSimulator
 from matches.tests.test_regional_playoffs import (
     _built_regional_season,

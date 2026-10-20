@@ -29,6 +29,7 @@ from matches.bracket import (
     resolve_bye_chain,
     stage_progress,
 )
+from laserforce_simulator.testing import run_project_python
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -759,10 +760,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
     """
 
     def test_pure_module_does_not_pull_in_django(self) -> None:
-        import os
         import pathlib
-        import subprocess
-        import sys
         import textwrap
 
         here = pathlib.Path(__file__).resolve()
@@ -790,13 +788,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
                 sys.exit(1)
             sys.exit(0)
             """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
+        result = run_project_python(script, timeout=30)
         self.assertEqual(
             result.returncode,
             0,
@@ -809,10 +801,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
         ``django.*`` / ``matches.models`` — the new function imports nothing
         new (stdlib only). Mirrors ``test_pure_module_does_not_pull_in_django``.
         """
-        import os
         import pathlib
-        import subprocess
-        import sys
         import textwrap
 
         here = pathlib.Path(__file__).resolve()
@@ -847,13 +836,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
                 sys.exit(1)
             sys.exit(0)
             """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
+        result = run_project_python(script, timeout=30)
         self.assertEqual(
             result.returncode,
             0,

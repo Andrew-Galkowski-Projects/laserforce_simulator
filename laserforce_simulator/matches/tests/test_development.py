@@ -55,6 +55,7 @@ from matches.development import (  # noqa: E402
     _project_peak_overall,
     compute_potential,
 )
+from laserforce_simulator.testing import run_project_python
 
 
 def _current_overall(stats: dict[str, int]) -> float:
@@ -595,10 +596,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
     """
 
     def test_pure_module_does_not_pull_in_django(self) -> None:
-        import os
         import pathlib
-        import subprocess
-        import sys
         import textwrap
 
         here = pathlib.Path(__file__).resolve()
@@ -626,13 +624,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
                 sys.exit(1)
             sys.exit(0)
             """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
+        result = run_project_python(script, timeout=30)
         self.assertEqual(
             result.returncode,
             0,
@@ -643,10 +635,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
         """LG-05 — exercising ``_project_peak_overall`` + ``compute_potential``
         in a fresh subprocess must not pull in ``django.*`` (the two new
         functions add NO new import; the frozen allowlist is unchanged)."""
-        import os
         import pathlib
-        import subprocess
-        import sys
         import textwrap
 
         here = pathlib.Path(__file__).resolve()
@@ -683,13 +672,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
                 sys.exit(1)
             sys.exit(0)
             """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
+        result = run_project_python(script, timeout=30)
         self.assertEqual(
             result.returncode,
             0,
@@ -700,10 +683,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
         """Importing + exercising the develop functions in a fresh subprocess
         must not pull in ``django.*`` — they import nothing new (``random``
         only)."""
-        import os
         import pathlib
-        import subprocess
-        import sys
         import textwrap
 
         here = pathlib.Path(__file__).resolve()
@@ -746,13 +726,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
                 sys.exit(1)
             sys.exit(0)
             """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
+        result = run_project_python(script, timeout=30)
         self.assertEqual(
             result.returncode,
             0,

@@ -4,8 +4,6 @@ Unit tests for matches/sim_helpers/spawn_assigner.py.
 No Django ORM required — pure-Python module, no DB.
 """
 
-import pytest
-
 from matches.sim_helpers.spawn_assigner import assign_spawn_cells
 
 # ---------------------------------------------------------------------------

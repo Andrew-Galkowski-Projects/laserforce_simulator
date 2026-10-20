@@ -32,7 +32,6 @@ no test DB, no real ArenaMap. Shot resolution is pinned with ``random.seed(42)``
 
 import random
 
-import pytest
 
 from matches.sim_helpers.combat import _ACTION_IDX, _CHOICES, plan_action
 from matches.sim_helpers.map_context import MapContext

@@ -27,12 +27,11 @@ from teams.roster_importer import (
     SLOT_LIMITS,
     STAT_COLUMNS,
     STAT_DEFAULT,
-    ParsedRoster,
-    ParsedRow,
     RosterImportError,
     RowError,
     parse_roster_csv,
 )
+from laserforce_simulator.testing import run_project_python
 
 # ---------------------------------------------------------------------------
 # Test fixtures / helpers
@@ -480,8 +479,6 @@ class TestNoDjangoImportsLeaked(unittest.TestCase):
     """
 
     def test_no_django_imports_leaked(self) -> None:
-        import subprocess
-        import sys
 
         # In-process surface check — catches a trivial module-level Django
         # import without spinning up a subprocess.
@@ -499,12 +496,7 @@ class TestNoDjangoImportsLeaked(unittest.TestCase):
             "import sys; "
             "print(','.join(m for m in sys.modules if m.startswith('django')))"
         )
-        proc = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc = run_project_python(script)
         leaked = proc.stdout.strip()
         self.assertEqual(
             leaked,

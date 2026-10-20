@@ -18,8 +18,7 @@ never entered.
 
 from __future__ import annotations
 
-import subprocess
-import sys
+from laserforce_simulator.testing import run_project_python
 from datetime import date
 
 from django.contrib.sessions.middleware import SessionMiddleware
@@ -179,11 +178,7 @@ class TestNoDjangoImportsLeaked(TestCase):
             "or m.startswith('django.')]\n"
             "assert not leaked, leaked\n"
         )
-        result = subprocess.run(
-            [sys.executable, "-c", code],
-            capture_output=True,
-            text=True,
-        )
+        result = run_project_python(code)
         self.assertEqual(result.returncode, 0, result.stderr)
 
 

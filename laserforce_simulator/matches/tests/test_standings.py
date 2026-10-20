@@ -22,6 +22,7 @@ from matches.standings import (
     match_score,
     rerank_round_robin,
 )
+from laserforce_simulator.testing import run_project_python
 
 # ---------------------------------------------------------------------------
 # Helpers — build one match dict (9-key shape) and one round dict (6-key shape)
@@ -856,10 +857,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
     """
 
     def test_pure_module_does_not_pull_in_django(self) -> None:
-        import os
         import pathlib
-        import subprocess
-        import sys
         import textwrap
 
         here = pathlib.Path(__file__).resolve()
@@ -887,13 +885,7 @@ class TestNoDjangoImportsLeaked(SimpleTestCase):
                 sys.exit(1)
             sys.exit(0)
             """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
+        result = run_project_python(script, timeout=30)
         self.assertEqual(
             result.returncode,
             0,

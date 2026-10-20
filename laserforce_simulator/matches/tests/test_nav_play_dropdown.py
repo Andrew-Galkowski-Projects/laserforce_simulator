@@ -37,7 +37,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from matches.league_play_services import build_play_controls
-from matches.models import BracketNode, League, Season, SeasonPhase
+from matches.models import League, Season, SeasonPhase
 from matches.simulation import BatchSimulator
 from matches.tests.conftest import make_team_with_slots
 

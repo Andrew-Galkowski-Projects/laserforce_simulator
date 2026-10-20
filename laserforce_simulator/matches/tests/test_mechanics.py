@@ -4,8 +4,6 @@ These functions are called by both ResourceBasedSimulator and BatchSimulator,
 so testing them here covers both simulators simultaneously.
 """
 
-import random
-import pytest
 from unittest.mock import patch
 
 from matches.sim_helpers.mechanics import (

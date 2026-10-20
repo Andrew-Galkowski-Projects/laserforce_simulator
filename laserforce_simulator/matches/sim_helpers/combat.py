@@ -21,7 +21,6 @@ from .mechanics import (
     choose_resupply_target,
     choose_zone_change,
 )
-from .pathfinding import choose_goal_cell
 from .pending_events import PendingMissileLock
 from .weights import (
     BASELINE_ACTION_WEIGHTS,

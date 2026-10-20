@@ -21,7 +21,7 @@ from django.urls import reverse
 
 from matches.forms import CreateLeagueForm
 from matches.league_views import _rank_teams_by_strength
-from matches.models import Conference, League, Season
+from matches.models import League, Season
 from teams.models import Player, Team
 
 # ---------------------------------------------------------------------------

@@ -5,7 +5,6 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
-from matches.sim_helpers.role_constants import ROLE_STATS
 from teams.constants import LASERFORCE_SITES, PLAYER_NAMES  # noqa: F401
 
 

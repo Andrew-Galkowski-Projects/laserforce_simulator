@@ -22,7 +22,6 @@ from django.test import TestCase
 from django.urls import reverse
 
 from matches.models import (
-    BracketNode,
     Match,
     Tournament,
     TournamentParticipant,

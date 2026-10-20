@@ -19,8 +19,6 @@ never entered.
 
 from __future__ import annotations
 
-import subprocess
-import sys
 from datetime import date
 
 from django.contrib.sessions.middleware import SessionMiddleware
@@ -41,6 +39,7 @@ from matches.season_player_stats import (
 )
 from matches.tests.conftest import make_team_with_slots
 from teams.models import Player, Team
+from laserforce_simulator.testing import run_project_python
 
 # ===========================================================================
 # Pure-unit — aggregation
@@ -235,12 +234,7 @@ class TestNoDjangoImportsLeaked(TestCase):
             "or m.startswith('django.')]; "
             "print('LEAKED' if leaked else 'CLEAN')"
         )
-        result = subprocess.run(
-            [sys.executable, "-c", code],
-            capture_output=True,
-            text=True,
-            cwd=str(__import__("pathlib").Path(__file__).resolve().parents[2]),
-        )
+        result = run_project_python(code)
         self.assertIn("CLEAN", result.stdout, msg=result.stderr)
 
 

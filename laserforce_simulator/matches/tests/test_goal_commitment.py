@@ -32,7 +32,6 @@ Seam contract (see prompt + matches/CLAUDE.md):
 from __future__ import annotations
 
 import random
-from unittest.mock import patch
 
 import pytest
 

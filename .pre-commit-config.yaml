@@ -1,0 +1,20 @@
+# Mirrors the CI lint step (.github/workflows/ci.yml). Install locally with
+#   python -m pip install pre-commit && pre-commit install
+# Rule selection for ruff lives in pyproject.toml (F401/F811 only).
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.1
+    hooks:
+      - id: ruff
+  - repo: https://github.com/psf/black-pre-commit-mirror
+    rev: 26.10.1
+    hooks:
+      - id: black
+        files: ^laserforce_simulator/
+  - repo: local
+    hooks:
+      - id: check-encoding
+        name: check encoding (mojibake / non-UTF-8)
+        entry: python scripts/check_encoding.py
+        language: system
+        types_or: [python, markdown, html, text, yaml, toml, json, javascript, css]

@@ -36,6 +36,16 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Lint (ruff, black, encoding)
+        # Narrow guardrail configured in pyproject.toml: ruff F401/F811 (dead
+        # and duplicate imports), black formatting, and a mojibake / non-UTF-8
+        # scan of tracked text files. Versions pinned so CI matches local runs.
+        run: |
+          python -m pip install ruff==0.17.1 black==26.10.1
+          ruff check .
+          black --check laserforce_simulator
+          python scripts/check_encoding.py
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

@@ -20,9 +20,6 @@ never entered.
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 import unittest
 from datetime import date
 
@@ -34,6 +31,7 @@ from matches.league_leaders_logic import compute_leaderboards
 from matches.league_screens.league_leaders import league_leaders
 from matches.models import GameRound, League, Match, PlayerRoundState, Season
 from matches.tests.conftest import make_team_with_slots
+from laserforce_simulator.testing import run_project_python
 
 # ===========================================================================
 # Pure-unit: compute_leaderboards
@@ -193,13 +191,7 @@ class TestNoDjangoImportsLeaked(unittest.TestCase):
                 sys.exit(1)
             sys.exit(0)
             """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+        result = run_project_python(script, timeout=30)
         self.assertEqual(
             result.returncode,
             0,
