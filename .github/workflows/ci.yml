@@ -36,15 +36,18 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Lint (ruff, black, encoding)
+      - name: Lint (ruff, black, encoding, actionlint)
         # Narrow guardrail configured in pyproject.toml: ruff F401/F811 (dead
-        # and duplicate imports), black formatting, and a mojibake / non-UTF-8
-        # scan of tracked text files. Versions pinned so CI matches local runs.
+        # and duplicate imports), black formatting, a mojibake / non-UTF-8
+        # scan of tracked text files, and actionlint on the workflows (a
+        # rejected workflow runs no jobs at all; ANG-04 found one that had
+        # been rejected for months). Versions pinned so CI matches local runs.
         run: |
-          python -m pip install ruff==0.17.1 black==26.10.1
+          python -m pip install ruff==0.17.1 black==26.10.1 actionlint-py==1.7.12.25
           ruff check .
           black --check laserforce_simulator
           python scripts/check_encoding.py
+          actionlint -shellcheck=
 
       - name: Install dependencies
         run: |
@@ -74,7 +77,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           name: coverage-report
-          path: ./laserforce_simulator/coverage.xml # Updated path
+          files: ./laserforce_simulator/coverage.xml
 
   frontend:
     # ANG-04: the Angular SPA in /frontend (ADR-0042). Runs in parallel with `test`.

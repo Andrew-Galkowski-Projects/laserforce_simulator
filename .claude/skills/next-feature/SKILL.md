@@ -192,7 +192,7 @@ mismatches, field-name drift between spec and code, missing seam methods.
    and check the test catches it.
 3. **Browser check** through Chrome DevTools MCP when anything a person sees
    changed, following `CLAUDE.md`'s *Browser Sessions* rules (reuse the
-   existing tab, close what you open, end on `about:blank`). Server on 8001.
+   existing tab, close what you open, close the browser when done). Server on 8001.
    Assert on `innerText` or the API response body, not a status code. Check
    from a second Account when ownership changed. An API-only task checks the
    endpoints in the browsable API or with the test client instead, and says
@@ -237,6 +237,11 @@ A migration that drops or rewrites data is a one-way door. Say so plainly.
 
 **Stop and show the owner the commit summary and PR body.** Commit, push and
 `gh pr create --body-file` only on their "go" (`CLAUDE.md`, *Git Workflow*).
+Then wait for the PR's CI run (`gh run watch <run-id> --exit-status`, in the
+background) and read `gh pr checks <n>`. Every job must have **started**: a
+run with no jobs, or one GitHub reports as "a workflow file issue", is a
+broken guardrail, not a pass (ANG-04 found CI rejected for months). Triage a
+red job as in Step 7 and report it to the owner with the PR link.
 Then stop again: the owner reviews and says when to merge. PRs are
 **squash-merged**, so after the merge confirm `git diff <integration tip>
 origin/main` is empty: the work is in `main` under a new hash. Then remove the

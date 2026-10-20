@@ -11,10 +11,17 @@ repos:
     hooks:
       - id: black
         files: ^laserforce_simulator/
+  - repo: https://github.com/Mateusz-Grzelinski/actionlint-py
+    rev: v1.7.12.25
+    hooks:
+      - id: actionlint
+        args: [-shellcheck=]
   - repo: local
     hooks:
       - id: check-encoding
         name: check encoding (mojibake / non-UTF-8)
         entry: python scripts/check_encoding.py
         language: system
-        types_or: [python, markdown, html, text, yaml, toml, json, javascript, css, ts, scss]
+        # Every text file: the script itself filters by TEXT_SUFFIXES, its
+        # single source of truth.
+        types: [text]

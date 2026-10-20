@@ -1,6 +1,6 @@
 ---
 name: pr-ready
-description: Get the current branch ready for a PR — verify a feature branch, run the full pytest suite, check for missing migrations, draft a PR template, and STOP for explicit user approval before any commit or push. Use when the user says "pr ready", "prep this PR", "ready to commit", "draft a PR", or invokes /pr-ready.
+description: Get the current branch ready for a PR — verify a feature branch, run the full pytest suite, check for missing migrations, run the frontend lint / tests / build when frontend/ changed, draft a PR template, and STOP for explicit user approval before any commit or push. Use when the user says "pr ready", "prep this PR", "ready to commit", "draft a PR", or invokes /pr-ready.
 ---
 
 This skill is a hand-off checkpoint, not an autopilot. Run the checks, draft the
@@ -46,6 +46,22 @@ python laserforce_simulator/manage.py makemigrations --check --dry-run
 - Non-zero → unapplied model changes. Tell the user which app needs a
   migration and stop; do **not** auto-generate it.
 
+## Step 3b — Frontend checks (when `frontend/` changed)
+
+If `git diff main...HEAD --stat` touches `frontend/`, run CI's `frontend`
+job locally (`npm --prefix frontend ci` first if `frontend/node_modules` is
+missing):
+
+```powershell
+npm --prefix frontend run lint
+npm --prefix frontend run format:check
+npm --prefix frontend run test:ci
+npm --prefix frontend run build
+```
+
+Report each result, with the Vitest pass/fail counts. Any failure stops the
+PR, the same as a red pytest run.
+
 ## Step 4 — Draft the PR template
 
 Gather the diff context:
@@ -68,6 +84,8 @@ PR TITLE: <short imperative, <70 chars>
 ## Test plan
 - [ ] pytest: <N passed, M failed>
 - [ ] makemigrations --check: <clean / drift in app X>
+- [ ] frontend: lint / format:check / test:ci <N passed> / build (omit if
+      `frontend/` is untouched)
 - [ ] <any manual verification the change needs — UI flows, management
       commands, etc. Omit if purely internal.>
 

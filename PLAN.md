@@ -540,8 +540,6 @@ because it runs on SQLite. PostgreSQL is canonical (ADR-0025), so this is a real
 - **Then:** run the full suite against the `docker compose` Postgres until it is green. More
   Postgres-only failures may be hidden behind this one (ordering without `order_by`, case-sensitive
   `LIKE`, sequence resets, `select_for_update`).
-- **Also:** actionlint reports that `codecov/codecov-action@v5` has no `path` input (it takes
-  `files`).
 - **Deploy gate:** while `test` is red, the `docker` job (and the Fly deploy) is skipped. When it
   goes green, the first merge to `main` deploys. If the Fly Postgres predates UX-01, re-provision it
   first (`CLAUDE.md` *Database*, the `AUTH_USER_MODEL` hazard).
