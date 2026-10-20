@@ -18,7 +18,12 @@ from teams.models import Player
 
 from .forms import RegisterForm
 from .permissions import get_owned_or_404
-from .self_insert import clear_self_insert, is_self_insert_eligible, set_self_insert
+from .self_insert import (
+    NOT_ELIGIBLE_MESSAGE,
+    clear_self_insert,
+    is_self_insert_eligible,
+    set_self_insert,
+)
 
 
 @login_not_required
@@ -62,9 +67,7 @@ def self_insert_link(request: HttpRequest, player_id: int) -> HttpResponse:
     )
     fallback = reverse("player_detail", args=[player.team_id, player.id])
     if not is_self_insert_eligible(player, request.user):
-        messages.error(
-            request, "Only a Player on a Team you manage can be your Self-insert."
-        )
+        messages.error(request, NOT_ELIGIBLE_MESSAGE)
         return redirect(_safe_next(request, fallback))
     set_self_insert(request.user, player)  # type: ignore[arg-type]
     messages.success(request, f'"{player.name}" is now your Self-insert.')

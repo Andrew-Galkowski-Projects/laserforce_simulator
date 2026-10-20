@@ -1482,7 +1482,9 @@ API-02 (REST API) to be complete and deployed (Phase 7) before starting.
 **Approach:** migrate one feature area at a time. Django templates remain live until the Angular
 equivalent is complete and verified. Django Admin is a permanent exception and is never migrated.
 
-### ANG-01 · Harden and complete the REST API (prerequisite)
+### ANG-01 · [DONE] Harden and complete the REST API (prerequisite)
+
+**[DONE] (2026-10-20).** All sub-items ANG-01a..c, 01d-1, 01d-2 and 01e..g have shipped.
 
 Before building Angular against it, ensure:
 
@@ -1975,12 +1977,57 @@ ANG-01a), play next / play all with Job status, and the draw. Uses the ANG-01a r
     `matches/tournament_views/` package** by the same areas (behaviour unchanged) so parallel tickets
     never share a file. Full names in the spec issue.
 
-#### ANG-01g · Accounts API
+#### ANG-01g · [DONE] Accounts API
+
+Spec: #199
+
+**[DONE] Shipped (2026-10-20).** Four plain `APIView`s in `accounts/api_views.py` and an output-only
+`MeSerializer`; tests are in `accounts/tests/test_api_accounts.py`. With it, all of ANG-01 is done.
+What the work found:
+
+- **The Self-insert `PUT` binds a small params Form.** `SelfInsertParamsForm` (`accounts/api_forms.py`)
+  is a review fix following the `ZoneSizeParamsForm` idiom, because no HTML Form exists for it (the
+  HTML route takes the id from the URL). An integer string (`"5"`) is accepted, matching DRF and the
+  HTML route. A JSON bool, `null`, a list or a fractional float is a 400 `invalid`.
+- **`NOT_ELIGIBLE_MESSAGE` now lives in `self_insert.py`.** The HTML flash and the API error both
+  import it.
+- **CSRF caveat for ANG-04.** `SessionAuthentication` enforces CSRF only for an authenticated session.
+  An anonymous register needs no token, but a logged-in browser must send it on every unsafe method,
+  including register. `APIClient` can't show this in tests. It is noted in `accounts/CLAUDE.md`.
+- **A stale doc count was fixed.** The `accounts/CLAUDE.md` list of `login_not_required` surfaces
+  said twelve but was really seventeen before this task. It now says twenty-one and lists them all.
 
 `GET /api/accounts/me/` (the Account + its resolved Self-insert), registration, password change, and
 the UX-02 Self-insert link / unlink, each binding the existing `accounts/forms.py` Forms and
 `accounts/self_insert.py` helpers. **Login, logout and token issue / refresh stay ANG-03** (JWT);
 while `SessionAuthentication` is the only scheme, anonymous requests remain 403.
+
+**Grilled (2026-10-20).** Settled answers:
+
+1. **`GET /api/accounts/me/`** returns `{id, email, date_joined, is_staff, self_insert}`, where
+   `self_insert` is the existing Player serializer output via `get_self_insert()` (a drifted link
+   reads `null`). Read-only: no PATCH, no email change.
+2. **`POST /api/accounts/register/`** is anonymous-allowed (`login_not_required` + `AllowAny`) and
+   binds `RegisterForm` (`email, password1, password2`). Success is 201 with the `me` shape; errors
+   are a 400 with the HTML form's messages. It does **not** log the new Account in (login is ANG-03),
+   unlike the HTML view. An authenticated caller may register; their session is untouched.
+3. **`POST /api/accounts/me/password/`** binds `StyledPasswordChangeForm(request.user, data)`, calls
+   `update_session_auth_hash`, and returns 204. Errors are a 400 with field errors.
+4. **`PUT /api/accounts/me/self-insert/`** with `{"player": <id>}`:
+   - a missing or non-integer `player` is a 400 field error;
+   - a missing or cross-Account Player is a 404 (`get_owned_or_404`);
+   - a Player on an Unmanaged Team is a 400 `not_eligible` with the HTML message;
+   - success is a 200 with the `me` shape.
+
+   **`DELETE /api/accounts/me/self-insert/`** returns 204 and is idempotent (with nothing linked it
+   still returns 204 and writes nothing).
+5. **Code location.** Views go in `accounts/api_views.py`, routed in `api_urls.py`; tests go in
+   `accounts/tests/test_api_accounts.py`. No new services module: the Forms and `self_insert.py`
+   are already the shared code. HTML is unchanged. Add `register` to the `accounts/CLAUDE.md`
+   anonymous-surface list.
+6. **Out of scope:** login, logout and tokens (ANG-03), CORS (ANG-02), email change, account
+   deletion, password reset, and an eligible-Players list.
+7. **One ticket.** No migration and no simulation impact.
 
 ### ANG-02 · CORS configuration
 

@@ -170,14 +170,19 @@ names**, not paths, so they survive a mount change), plus
 `REST_FRAMEWORK["DEFAULT_PERMISSION_CLASSES"] = ["rest_framework.permissions.IsAuthenticated"]`
 (was `AllowAny`).
 
-**Exactly twelve surfaces carry `@login_not_required`** (eleven at UX-01; **ANG-01a** added
-`ArenaMapViewSet`). Nothing else is exempt — including every HTML `/maps/` route:
+**Exactly twenty-one surfaces carry `@login_not_required`** (eleven at UX-01; **ANG-01a** added
+`ArenaMapViewSet`, ANG-01b..f the save-batch, League, Season and Tournament API views, and
+**ANG-01g** the four Accounts API views). Nothing else is exempt —
+including every HTML `/maps/` route:
 
 | Surface | Form |
 |---|---|
 | `login`, `logout`, `password_change`, `password_change_done` | `login_not_required(SomeView.as_view(...))` in `accounts/urls.py` |
 | `accounts.views.register` | plain `@login_not_required` decorator |
-| `TeamViewSet`, `PlayerViewSet` (`teams/api_views.py`); `MatchViewSet`, `GameRoundViewSet`, `SimulateBatchAPIView`, `SimulateBatchStatusAPIView` (`matches/api_views.py`); `ArenaMapViewSet` (`core/api_views.py`, ANG-01a) | `@method_decorator(login_not_required, name="dispatch")` |
+| `TeamViewSet`, `PlayerViewSet` (`teams/api_views.py`); `MatchViewSet`, `GameRoundViewSet`, `SimulateBatchAPIView`, `SimulateBatchStatusAPIView`, `SaveBatchGamesAPIView`, `SaveBatchStatusAPIView` (`matches/api_views.py`); `LeagueViewSet`, `SeasonViewSet` (`matches/league_api_views.py`); `TournamentViewSet` (`matches/tournament_api_views/base.py`); `ArenaMapViewSet` (`core/api_views.py`, ANG-01a); `MeAPIView`, `RegisterAPIView`, `PasswordChangeAPIView`, `SelfInsertAPIView` (`accounts/api_views.py`, ANG-01g) | `@method_decorator(login_not_required, name="dispatch")` |
+
+Of the API surfaces only `RegisterAPIView` is truly anonymous-allowed (`permission_classes =
+[AllowAny]`); every other one is still gated by the settings-level `IsAuthenticated`.
 
 `process_view` receives the **resolved** view, so an `include()` cannot be wrapped. Both CBV forms
 work because `View.as_view()` copies `dispatch.__dict__` onto the returned callable.
@@ -255,6 +260,35 @@ nav modes. It follows the `topnav_tools_help.html` dropdown shape and branches o
 
 > ⚠️ **Sign-out is a POST form, not a link.** Django 5.x `LogoutView` rejects GET. Writing
 > `<a href="{% url 'logout' %}">` breaks the contract.
+
+## Accounts API (ANG-01g, `accounts/api_views.py`)
+
+Four plain `APIView`s under `/api/accounts/`, routed as explicit `path()`s in
+`laserforce_simulator/api_urls.py` and following
+[ADR-0039](../../docs/adr/0039-rest-api-envelope-and-form-bound-writes.md) (envelope, Form-bound
+writes, errors always raised). The output shape is **`MeSerializer`** (`accounts/serializers.py`):
+`{id, email, date_joined, is_staff, self_insert}`, where `self_insert` is `PlayerSerializer` output
+of `get_self_insert(user)` or `null` — the raw column is never serialized, so a drifted link reads
+`null`.
+
+| Method | Path | URL name | Behaviour |
+|---|---|---|---|
+| GET | `accounts/me/` | `api_accounts_me` | 200 `me` |
+| POST | `accounts/register/` | `api_accounts_register` | Binds `RegisterForm`; 201 `me` of the new Account. **Does not log in** (login is ANG-03); an authenticated caller keeps its own session. |
+| POST | `accounts/me/password/` | `api_accounts_password` | Binds `StyledPasswordChangeForm(request.user, ...)`; 204, then `update_session_auth_hash` so the session survives. |
+| PUT | `accounts/me/self-insert/` | `api_accounts_self_insert` | `{"player": <int>}`, bound through **`SelfInsertParamsForm`** (`accounts/api_forms.py`); 200 `me`. An integer string (`"5"`) is accepted, as on the HTML route; a missing `player` ⇒ 400 `required`, and `null` / a bool / a fractional float / a list / a non-numeric string ⇒ 400 `invalid`, both on `field: "player"`; a non-object body ⇒ 400 `parse_error`; missing or cross-Account Player ⇒ 404 (`get_owned_or_404`); Unmanaged Team ⇒ 400 `not_eligible` with `NOT_ELIGIBLE_MESSAGE`, nothing written. |
+| DELETE | `accounts/me/self-insert/` | `api_accounts_self_insert` | 204, idempotent; clears a drifted link too. |
+
+`NOT_ELIGIBLE_MESSAGE` lives in `accounts/self_insert.py`; the HTML `self_insert_link` error flash and
+the API `not_eligible` error both import it, so the text is identical on both surfaces.
+
+Anonymous calls to everything except register are an enveloped 403 `not_authenticated`. The HTML
+`/accounts/` views are unchanged. Tests: `accounts/tests/test_api_accounts.py`.
+
+**CSRF.** DRF's `SessionAuthentication` enforces CSRF only for an *authenticated* session. An
+anonymous register POST therefore needs no token, but a logged-in browser caller (the ANG-04 client)
+must send the CSRF token on every unsafe method -- **including register**. `APIClient` does not
+enforce CSRF, so the tests do not cover this.
 
 ## Stamping — where `manager` is set
 
@@ -343,8 +377,8 @@ not part of it. Exactly four public functions:
 ### Link / unlink views (`accounts/views.py`, `accounts/urls.py`)
 
 Both are **POST-only** (`@require_POST` ⇒ any other method **405**) and are **not**
-`@login_not_required` — the eleven exempt surfaces stayed eleven (twelve since ANG-01a's
-`ArenaMapViewSet`); an anonymous POST is 302'd to
+`@login_not_required` — the eleven exempt surfaces stayed eleven at UX-02 (see
+[The global login gate](#the-global-login-gate) for today's list); an anonymous POST is 302'd to
 `LOGIN_URL` by the middleware.
 
 | URL name | Path | View |

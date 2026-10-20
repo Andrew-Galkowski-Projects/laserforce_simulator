@@ -12,6 +12,9 @@ Public surface (exactly four functions):
   Account; Unmanaged Teams excluded).
 * :func:`set_self_insert` — link (replaces any previous link).
 * :func:`clear_self_insert` — unlink.
+
+Plus :data:`NOT_ELIGIBLE_MESSAGE`, the shared not-eligible text (HTML flash and
+API ``not_eligible`` error).
 """
 
 from __future__ import annotations
@@ -29,11 +32,16 @@ if TYPE_CHECKING:
     from .models import User
 
 __all__ = [
+    "NOT_ELIGIBLE_MESSAGE",
     "get_self_insert",
     "is_self_insert_eligible",
     "set_self_insert",
     "clear_self_insert",
 ]
+
+# Shown when ``is_self_insert_eligible`` is False: the HTML ``self_insert_link``
+# error flash and the API ``not_eligible`` error share this exact text.
+NOT_ELIGIBLE_MESSAGE = "Only a Player on a Team you manage can be your Self-insert."
 
 
 def get_self_insert(

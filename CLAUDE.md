@@ -228,4 +228,5 @@ Match (2 rounds, winner by rounds then points)
 `{"errors", "meta"}` envelope, writes bind the existing Django `Form`, cross-Account rows are 404.
 API conventions and the per-module service layout: see
 [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) **API conventions**
-and **Service layer**. The remaining API slice is ANG-01g in `PLAN.md`.
+and **Service layer**. ANG-01 is complete. The Accounts endpoints (`/api/accounts/`, ANG-01g) are
+documented in [`laserforce_simulator/accounts/CLAUDE.md`](laserforce_simulator/accounts/CLAUDE.md).
