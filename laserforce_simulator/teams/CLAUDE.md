@@ -23,14 +23,14 @@ As of **LG-04 player development**, the 19 stat fields are **mutated in place** 
 cosmetically: an active-roster player by their real regular-season appearances, a free-agent by
 a small random amount (`total_games` is never a develop input). A per-Season immutable snapshot
 of the 19 stats + age + overall is persisted as `matches.PlayerSeasonRating`. See the
-[`matches/CLAUDE.md`](../matches/CLAUDE.md) **LG-04 player development + ratings history** section
+[`docs/agents/matches/awards-and-development.md`](../../docs/agents/matches/awards-and-development.md) **LG-04 player development + ratings history** section
 for the full mechanism.
 
 As of **LG-05 player potential**, `Player.potential` (a nullable `FloatField`, `default=None`;
 migration `0012_player_potential.py`) holds a per-Player **projected peak overall** — set at each
 League `next_season` rollover (and the founding `league_create` baseline) by LG-05 alongside
 development, **mutated in place** like the 19 stats. It is `None`/`default=None` for players outside
-any league flow. Details in [`matches/CLAUDE.md`](../matches/CLAUDE.md) **LG-05 player potential**.
+any league flow. Details in [`docs/agents/matches/awards-and-development.md`](../../docs/agents/matches/awards-and-development.md) **LG-05 player potential**.
 
 As of **FIN-01 team finance subsystem**, `Player.salary` (a nullable `FloatField`, `default=None`;
 migration `0013_player_salary_team_finance.py`) holds a **derived salary** — a deterministic
@@ -40,7 +40,7 @@ at the same write sites LG-05 recomputes `potential` (`_write_baseline_ratings` 
 stays `None` (byte-identical to pre-FIN-01). It is **finance-only** (a payroll input — the sum of a
 Team's 6 active-roster salaries — for the owner-mood money axis, never a sim input, never edited via
 a form) and **derived, not contracted** (no free agency / cap space). `None` for players outside any
-finance-enabled flow. Details in [`matches/CLAUDE.md`](../matches/CLAUDE.md) **FIN-01 team finance
+finance-enabled flow. Details in [`docs/agents/matches/career-and-finance.md`](../../docs/agents/matches/career-and-finance.md) **FIN-01 team finance
 subsystem**.
 
 As of **FIN-04 health budget + injury/availability**, `Player.games_unavailable` (a
@@ -52,7 +52,7 @@ player is substituted out or fielded hurt) and **reset to 0 at the League `next_
 a single integer countdown. The counter only ever moves in a **finance-enabled career League**
 (`_is_career_league AND finance_enabled`); outside that gate it stays `0`, byte-identical to
 pre-FIN-04. The roll/decrement/roster-resolution mechanics live in
-[`matches/CLAUDE.md`](../matches/CLAUDE.md) **FIN-04 health budget + injury/availability** and
+[`docs/agents/matches/career-and-finance.md`](../../docs/agents/matches/career-and-finance.md) **FIN-04 health budget + injury/availability** and
 [ADR-0028](../../docs/adr/0028-health-budget-injury-availability.md).
 
 `stat_for_simulation(stat_name, role)` returns `min(int(raw_value * 1.2), 100)` when `role in self.preferred_roles`, otherwise the raw stat value. Invalid `stat_name` values raise `AttributeError` naturally (no explicit guard). Used by `PlayerRoundState` forwarding properties and `BatchSimulator._make_players` to apply the preferred-role boost at simulation time without affecting stored values or `overall_rating`.
@@ -67,7 +67,7 @@ pre-FIN-04. The roll/decrement/roster-resolution mechanics live in
 
 `Team.is_draw_team` (`BooleanField(default=False)`, added by **LG-02x-1**) marks a Team that was assembled by a Random Draw Tournament's tier-balanced draw rather than hand-built. It carries **NO FK to the Tournament / Match** — the durable link from a drawn Team back to its Tournament and its drawn players lives on `matches.TournamentPlayerEntry` (avoiding a `teams → matches` dependency inversion). A drawn Team's `slot_*` FKs hold only the **transient** per-Round role assignment the simulator's `before_round_hook` rewrites in memory each Round; the source of truth for `(player, tier, drawn_team)` is `TournamentPlayerEntry`. Existing rows take `default=False` (no backfill; ADR-0004 disposable-data precedent).
 
-**`Team.roster_errors` relaxation (draw teams only).** Because a drawn Team **references borrowed Players** without `Player.team` ever being reassigned by the draw, the "all players belong to this team" ownership check is **skipped for draw teams**: the `for player, role, slot_name in filled:` belongs-to-team loop (the `player.team_id != self.pk` check) is wrapped in `if not self.is_draw_team:`. **All other validations stay enforced for draw teams** — the all-6-slots-filled check, the **duplicate-player** check, and the **role-distribution** (Scout-only-twice) check. A non-draw Team with a foreign player **still** errors. See [`matches/CLAUDE.md`](../matches/CLAUDE.md) `## LG-02x-1 random draw player-pool tournament` and [ADR-0022](../../docs/adr/0022-random-draw-player-pool-tournament.md).
+**`Team.roster_errors` relaxation (draw teams only).** Because a drawn Team **references borrowed Players** without `Player.team` ever being reassigned by the draw, the "all players belong to this team" ownership check is **skipped for draw teams**: the `for player, role, slot_name in filled:` belongs-to-team loop (the `player.team_id != self.pk` check) is wrapped in `if not self.is_draw_team:`. **All other validations stay enforced for draw teams** — the all-6-slots-filled check, the **duplicate-player** check, and the **role-distribution** (Scout-only-twice) check. A non-draw Team with a foreign player **still** errors. See [`docs/agents/matches/tournaments-rr-swiss-draw.md`](../../docs/agents/matches/tournaments-rr-swiss-draw.md) `## LG-02x-1 random draw player-pool tournament` and [ADR-0022](../../docs/adr/0022-random-draw-player-pool-tournament.md).
 
 ### Team finance fields (FIN-01, FIN-04)
 
@@ -93,7 +93,7 @@ edge: its `finance.health_effect` level scales injury **duration** down (better 
 shorter unavailabilities). All four budgets now buy a gameplay edge — **facilities** feeds the
 revenue/attendance side (FIN-01), **coaching** feeds LG-04 development (FIN-02), **scouting** feeds
 LG-05 potential (FIN-03), **health** shortens injuries (FIN-04). Details in
-[`matches/CLAUDE.md`](../matches/CLAUDE.md) **FIN-01 team finance subsystem** /
+[`docs/agents/matches/career-and-finance.md`](../../docs/agents/matches/career-and-finance.md) **FIN-01 team finance subsystem** /
 **FIN-04 health budget + injury/availability** and
 [ADR-0027](../../docs/adr/0027-team-finance-subsystem.md) / [ADR-0028](../../docs/adr/0028-health-budget-injury-availability.md).
 
@@ -285,7 +285,7 @@ works. To monkey-patch a dependency such as `draw_stats`, patch `teams.services`
 The HX-01 / HX-02 helpers `_round_dict_from_state`, `_build_per_role_overlay`,
 `_HX01_DISPLAY_STAT_KEYS`, `_HX01_TO_BENCHMARK_STAT`, `_HX01B_STAT_ROW_SPEC` **moved here** and are
 re-exported from `teams/views.py`. The team / player head-to-head builders live in
-`matches/services.py` (see `matches/CLAUDE.md` **ANG-01b**).
+`matches/services.py` (see `docs/agents/matches/api.md` **ANG-01b**).
 
 **Roster-import ownership fix (ANG-01a).** Before ANG-01a, `_check_db_slot_collisions` and
 `_apply_roster` looked Teams up by bare name (`Team.objects.get_or_create(name=...)`), ignoring
@@ -344,7 +344,7 @@ A per-player career page aggregating `PlayerRoundState` across every round the p
 
 **Template surface.** `templates/teams/player_career_stats.html` extends `base.html`, `{% load team_extras %}` for the `div` filter, and renders three surfaces gated on `has_rounds`: a 6-column career-totals row (DOM id `career-totals-table`), the per-role table (DOM id `career-per-role-table`, `|title`-cased role labels), and a Chart.js dashed-line rolling-10 trend chart (canvas DOM id `points-trend-chart`, json_script id `trend-data`, dataset label `"Avg points (rolling 10)"`, x-axis title `"Round number"`, y-axis title `"Avg points (rolling 10)"`, `pointRadius: 2`). The empty branch renders a notice (DOM id `career-no-rounds-notice`) containing the substring `"No rounds played yet"` in place of the three surfaces; tests pin via substring match. Formatting is locked: avg points `|floatformat:1`, tag ratio `|floatformat:2`, survival `|div:2|floatformat:0` + `s` suffix (the `div` filter is the same `teams/templatetags/team_extras.py::div` used elsewhere for tick → seconds at the template layer, TIME-01), accuracy `|floatformat:0` + `%`, SP earned `|floatformat:1`, role labels `|title`-cased so `"commander"` renders as `"Commander"`.
 
-**Entry point.** A single `"Career stats"` anchor in `templates/teams/player_detail.html` reversing `{% url 'player_career_stats' player.id %}`. Tests pin via substring `"Career stats"` in the rendered `/teams/<team_id>/player/<player_id>/` response body. **HX-04 addition:** the career page itself gains an outgoing `player-h2h-link` "Head-to-head" anchor in its header (sibling to the existing `role-benchmarks-link`) reversing `{% url 'player_head_to_head' %}?player_a={{ player.id }}` — the single locked entry point for the HX-04 Player head-to-head record view (see [`matches/CLAUDE.md`](../matches/CLAUDE.md) `## HX-04 player head-to-head`).
+**Entry point.** A single `"Career stats"` anchor in `templates/teams/player_detail.html` reversing `{% url 'player_career_stats' player.id %}`. Tests pin via substring `"Career stats"` in the rendered `/teams/<team_id>/player/<player_id>/` response body. **HX-04 addition:** the career page itself gains an outgoing `player-h2h-link` "Head-to-head" anchor in its header (sibling to the existing `role-benchmarks-link`) reversing `{% url 'player_head_to_head' %}?player_a={{ player.id }}` — the single locked entry point for the HX-04 Player head-to-head record view (see [`docs/agents/matches/round-views-and-analytics.md`](../../docs/agents/matches/round-views-and-analytics.md) `## HX-04 player head-to-head`).
 
 **Determinism / scope.** **Read-only view** — no RNG, no simulation, no `_flush_to_db` touch, no SIM-07 / SIM-08 contract interaction, no Score Calibration re-baseline obligation. **No model change, no migration**, no ADR (reversible: pure read-only view + pure aggregation module), no GLOSSARY.md edit (the **Tag ratio** term was added inline during the grilling session that produced this contract). Tests live in a NEW `teams/tests/test_career_stats.py` — a pure-unit class for the four pure functions (empty inputs, single-round happy path, sum/sum tag-ratio direction, Heavy `SPECIAL_COST` fallback, `was_eliminated_at=1801` capping to 1800, all-misses accuracy, role ordering Commander/Heavy/Scout/Medic/Ammo, role omission, `rolling_mean` partial-then-full window, `points_trend` `(date, game_round_id)` tiebreaker, and the "no Django imports leaked" defensive check) plus a Django `TestCase` class for the view (200 with rounds + all six context keys, 200 empty state with the `"No rounds played yet"` substring, 404 on missing `player_id`, and the `"Career stats"` link rendered on `/teams/<team_id>/player/<player_id>/`). Locked names (URL, URL name, pure module, public surface, DOM ids, json_script ids, template paths, context keys) are pinned by the seam contract at [`.claude/worktrees/hx-01-seam-contract.md`](../../.claude/worktrees/hx-01-seam-contract.md).
 
@@ -430,7 +430,7 @@ Locked names — URL `path("generate/", views.generate_players, name="generate_p
 
 ## CRE-02 tiered generation
 
-Adds the **League spread** ramp (GLOSSARY.md — **Even** / **Tiered** / **Steep**) to the LG-00 generation seam, so a create-League run can draw each competitive **Team** from *its own* stat mean instead of drawing all N teams from one distribution. The selector itself lives on the matches side (`CreateLeagueForm.league_spread`, Advanced create form only — see the **CRE-02 league spread** subsection in [`../matches/CLAUDE.md`](../matches/CLAUDE.md)); this app owns the arithmetic and the generation call. **The tier a Team was drawn from is a generation INPUT ONLY** — it is never persisted, never queried, never surfaced, so nothing here adds a model field or a migration and the League keeps exactly one ordering after generation (the measured strength rank). Seam contract: [`.claude/worktrees/cre-02-seam-contract.md`](../../.claude/worktrees/cre-02-seam-contract.md).
+Adds the **League spread** ramp (GLOSSARY.md — **Even** / **Tiered** / **Steep**) to the LG-00 generation seam, so a create-League run can draw each competitive **Team** from *its own* stat mean instead of drawing all N teams from one distribution. The selector itself lives on the matches side (`CreateLeagueForm.league_spread`, Advanced create form only — see the **CRE-02 league spread** subsection in [`docs/agents/matches/league-lifecycle.md`](../../docs/agents/matches/league-lifecycle.md)); this app owns the arithmetic and the generation call. **The tier a Team was drawn from is a generation INPUT ONLY** — it is never persisted, never queried, never surfaced, so nothing here adds a model field or a migration and the League keeps exactly one ordering after generation (the measured strength rank). Seam contract: [`.claude/worktrees/cre-02-seam-contract.md`](../../.claude/worktrees/cre-02-seam-contract.md).
 
 **Pure module additions — `teams/player_generator.py`.** CRE-02 only **adds** to the LG-00 surface; `draw_stats` / `draw_preferred_roles` / `assign_slots` and `_STAT_FIELDS` / `_ROLE_NAMES` / `_SLOT_KEYS` are zero-diff, and the new code stays inside the frozen import allowlist so `TestNoDjangoImportsLeaked` still covers the module.
 

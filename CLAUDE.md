@@ -217,32 +217,14 @@ Match (2 rounds, winner by rounds then points)
 
 - [`laserforce_simulator/accounts/CLAUDE.md`](laserforce_simulator/accounts/CLAUDE.md) — the `accounts` app (UX-01): the custom `User` (the **Account**), the `manager` ownership seam in `accounts/permissions.py`, the `/accounts/` auth URLs, and `claim_unmanaged`
 - [`laserforce_simulator/teams/CLAUDE.md`](laserforce_simulator/teams/CLAUDE.md) — Team/Player models, roster rules, `/teams/` URLs
-- [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) — Match/GameRound models, simulation engine, role mechanics, `/matches/` URLs
+- [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) — index for Match/GameRound, the simulation engine, Leagues, tournaments and the API; feature detail in `docs/agents/matches/`
 - [`laserforce_simulator/core/CLAUDE.md`](laserforce_simulator/core/CLAUDE.md) — Map editor, zone/LOS processing, `/maps/` URLs, read-only `/api/maps/`
 
 ### REST API
 
 `/api/` (DRF + `django-filter`, routed in `laserforce_simulator/api_urls.py`) follows
-[ADR-0039](docs/adr/0039-rest-api-envelope-and-form-bound-writes.md): one envelope
-(`{"data", "meta"}` / `{"errors": [{code, message, field}], "meta"}`) applied by the
-`laserforce_simulator/api/` package (renderer, pagination, exception handler, Form-error helpers,
-`AliasOrderingFilter`, `ListOnlyFilterMixin`); **writes bind the existing Django `Form`**
-(serializers are output-only; views raise, never build a 4xx `Response`); explicit `django-filter`
-allowlists; cross-Account rows are 404, anonymous is 403 until ANG-03 JWT. Full rules: **API
-conventions** in [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md).
-Shared Team/Player write logic (plus the HX-01 / HX-02 career + benchmark builders) lives in
-`teams/services.py`; sandbox Match/Round creation, batch-team resolution and the round / head-to-head
-analytics builders shared by the HTML views and the API live in `matches/services.py` (ANG-01b);
-League create / next-season rollover / reassign / teardown, the League + Season read builders
-(dashboard, history, standings, schedule, awards, owner evaluation) and the Conference replace behind
-`/api/leagues/` + `/api/seasons/` live in `matches/league_services.py` (ANG-01d-1 — moved helpers are
-re-exported from `league_views.py`, so patch `matches.league_services.*`, not `league_views`);
-the map-editor logic (upload, Season-based delete guard, zones, sight lines, requester-scoped
-multi-round heatmap) shared by the HTML map views and the now-writable `/api/maps/` lives in
-`core/services.py` (ANG-01c — maps stay unfiltered shared data). The League play loop
-(ANG-01d-2) lives in `matches/league_play_services.py`, shared by the HTML play views and the
-`/api/seasons/` play endpoints. The builders for all 15 League screens (ANG-01e — stats, ratings,
-leaders, watch list, team history / roster / stats, power rankings, game log, feats, playoffs,
-finances) live in `matches/league_screen_services.py`, shared by `league_screens/*` and
-`/api/leagues/<id>/…` (patch `matches.league_screen_services.*`); the watch list is the per-Account
-`WatchedPlayer` model. Remaining API slices are ANG-01f..g in `PLAN.md`.
+[ADR-0039](docs/adr/0039-rest-api-envelope-and-form-bound-writes.md): one `{"data", "meta"}` /
+`{"errors", "meta"}` envelope, writes bind the existing Django `Form`, cross-Account rows are 404.
+API conventions and the per-module service layout: see
+[`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) **API conventions**
+and **Service layer**. Remaining API slices are ANG-01f..g in `PLAN.md`.

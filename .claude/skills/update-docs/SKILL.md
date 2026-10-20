@@ -1,6 +1,6 @@
 ---
 name: update-docs
-description: Sync all documentation (CLAUDE.md files, PLAN.md, README.md, IMPLEMENTED_FEATURES.md) to reflect the current branch's changes.
+description: Sync all documentation (app CLAUDE.md indexes, docs/agents feature docs, PLAN.md, README.md, IMPLEMENTED_FEATURES.md) to reflect the current branch's changes.
 ---
 
 ## Step 1 — Identify what changed
@@ -28,24 +28,37 @@ git diff main...HEAD
 Categorise the changed files by app area (`teams/`, `matches/`, `core/`,
 root-level config, templates, migrations) using the buckets above.
 
-## Step 2 — Update app-level CLAUDE.md files
+## Step 2 — Update app docs (feature doc + index pointer)
 
-For each changed app area, read the corresponding CLAUDE.md:
+App `CLAUDE.md` files are auto-loaded whenever an agent touches that app, so
+they are **indexes**: what the app is, where things live, project-wide rules,
+and one pointer line per feature doc. Feature detail lives in
+`docs/agents/<app>/<file>.md`.
+
+For each changed app area, read its index:
 - `laserforce_simulator/teams/CLAUDE.md`
-- `laserforce_simulator/matches/CLAUDE.md`
+- `laserforce_simulator/matches/CLAUDE.md` (index for `docs/agents/matches/`)
 - `laserforce_simulator/core/CLAUDE.md`
+- `laserforce_simulator/accounts/CLAUDE.md`
 - `laserforce_simulator/matches/sim_helpers/CLAUDE.md`
 - `laserforce_simulator/matches/management/commands/CLAUDE.md`
 
-Update each file to reflect:
-- New models, fields, or properties added/removed
-- New views, URLs, or forms
-- New management commands
-- Changed simulation logic, weight functions, or mechanics
-- New helper modules or utility functions
-- Any architectural notes that changed (e.g. a column converted to a `@property`)
+Then write the feature notes:
+- **Feature detail goes in a feature doc.** Use the index's pointer lines to
+  pick the `docs/agents/<app>/<file>.md` that owns the area and append a
+  `## <TASK-ID> <title>` section there (models / fields, views, URLs, forms,
+  DOM ids, mechanics, locked names, scope-out). No owning doc fits ⇒ create a
+  new `docs/agents/<app>/<topic>.md` with a `# <app>: <topic>` heading. Links
+  in a doc are relative to `docs/agents/<app>/` (repo root is `../../../`).
+- **The index gets at most one pointer line per new doc**, trigger first:
+  `- <features a reader would search for> — \`docs/agents/<app>/<file>.md\``.
+  An existing doc only needs its pointer's trigger list extended. Change the
+  index body only for a new module location, service layer, or project-wide
+  rule (e.g. the **API conventions**).
+- Apps without a `docs/agents/<app>/` folder still keep notes in their
+  `CLAUDE.md`; once one passes a few hundred lines, split it the same way.
 
-Only update files that are directly affected by the branch changes. Do not rewrite sections that were not touched.
+Only update docs directly affected by the branch changes. Do not rewrite sections that were not touched.
 
 ## Step 3 — Update PLAN.md
 

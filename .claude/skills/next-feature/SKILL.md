@@ -45,7 +45,8 @@ merged (check `git log main --oneline` for its ID) but isn't marked `[DONE]`
 is bookkeeping, not the next feature: say so and offer to close it out.
 
 Print its ID, title and one sentence, and confirm with the user before going
-on. Read its PLAN.md section in full, plus the app `CLAUDE.md` for the area.
+on. Read its PLAN.md section in full, plus the app `CLAUDE.md` index for the
+area and the `docs/agents/<app>/` feature doc its pointer names.
 
 If the section already has `Spec: #<n>`, read that issue and skip to Step 4's
 end; if the spec already has ticket sub-issues, skip to Step 6.
@@ -54,9 +55,13 @@ end; if the spec already has ticket sub-issues, skip to Step 6.
 
 Enter a worktree (`EnterWorktree`), named for the task in kebab case (e.g.
 `ang-01e-league-stats-api`), and `git merge --ff-only main`. A worktree has no
-`db.sqlite3`: run `python laserforce_simulator/manage.py migrate` in it before
-any server or management command, and run any server on `--port 8001` so the
-owner's 8000 stays theirs.
+`db.sqlite3` and no `.env`: copy `laserforce_simulator/.env` from the main
+checkout into the worktree's `laserforce_simulator/`, then run
+`migrate` before any server or management command. Use the main checkout's
+`.venv\Scripts\python.exe` for every Python command (the `.conda` env has no
+Django). Run `migrate` again after merging any ticket that adds a migration,
+before a browser check. Run any server on `--port 8001` so the owner's 8000
+stays theirs.
 
 ## Step 3: Grill
 
@@ -100,6 +105,11 @@ function in a `*services.py` module, or a DRF endpoint tested through the API
 client. Every new public name, signature and return shape at the seam goes in
 the spec's Implementation Decisions.
 
+When tickets will run in parallel, give each parallel ticket its own
+module(s) at the seam (e.g. a package with one file per ticket) so
+implementers never append to the same file. Shared files caused every merge
+conflict in the last run.
+
 Publish it as a GitHub issue titled `<TASK-ID>: <title>`, labelled
 `ready-for-agent`. Add `Spec: #<n>` under the task's heading in `PLAN.md`.
 Commit the grill's docs (PLAN.md, GLOSSARY.md, ADRs) on the worktree branch,
@@ -129,12 +139,17 @@ another agent is still committing can branch from a stale tip, so confirm
 each one's base before starting the next. Point each one at the spec issue and its ticket issue rather
 than pasting them. Add these constraints to every implementer prompt:
 
+- **First step:** confirm your worktree is based on the integration branch,
+  else `git reset --hard <integration branch>` in your own worktree. Agent
+  worktrees branch from `origin/main` by default.
 - Follow `mattpocock-skills:tdd` at the spec's agreed seams: one failing
   test, then just enough code, one slice at a time. Tests and code for a
   ticket come from the **same** agent. Test placement is in `CLAUDE.md`.
-- Run only your own test files. The full suite is the orchestrator's job.
+- Run only your own test files, with pytest run from the nested Django dir
+  (`laserforce_simulator/`). The full suite is the orchestrator's job.
 - Write files with Write and Edit, never a heredoc. Glob before creating a
-  file, in case the name is taken.
+  file, in case the name is taken. Scratch files get a unique prefix (your
+  ticket ID).
 - PowerShell. No `cd` or `-C` before git. Enumerate every path you stage: no
   `git add -A`, `.`, `-a` or folders. No `git stash`, `reset`, `restore` or
   `checkout` outside your own worktree.
@@ -181,7 +196,7 @@ tests, and review again only if a fix changed behaviour.
 
 ## Step 9: PR
 
-Run `/update-docs` so the app `CLAUDE.md` files, `PLAN.md` (`[DONE] Shipped
+Run `/update-docs` so the `docs/agents/` feature docs, the app `CLAUDE.md` index pointers, `PLAN.md` (`[DONE] Shipped
 (<date>).` plus what the work found) and `IMPLEMENTED_FEATURES.md` match the
 branch. Then `/pr-ready` for its checks, and write the body with
 `mattpocock-skills:pr`:
