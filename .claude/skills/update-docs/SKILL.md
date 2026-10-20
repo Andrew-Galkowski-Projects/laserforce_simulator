@@ -1,6 +1,6 @@
 ---
 name: update-docs
-description: Sync all documentation (app CLAUDE.md indexes, docs/agents feature docs, PLAN.md, README.md, IMPLEMENTED_FEATURES.md) to reflect the current branch's changes.
+description: Sync all documentation (app CLAUDE.md indexes, docs/agents feature docs, PLAN.md, README.md) to reflect the current branch's changes.
 ---
 
 ## Step 1 — Identify what changed

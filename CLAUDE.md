@@ -34,9 +34,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Avoid Unicode box-drawing or non-ASCII characters in scripts and console
   output; the Windows cp1252 console will crash. Use ASCII equivalents
   (`+--+`, `|`, `+--+`) instead of `┌─┐│└─┘`.
-- When piping into `manage.py shell`, write a UTF-8 temp file and invoke
-  `manage.py shell -c "$(Get-Content tmp.py -Raw)"` (or pass the path via
-  `--command`) to avoid BOM and interactive-shell issues.
+- PowerShell 5.1 strips inner quotes from native-command arguments and adds a
+  BOM to text it pipes or `Set-Content`s. So: run a script through the **Bash
+  tool** (`python laserforce_simulator/manage.py shell < tmp.py`), commit with
+  `git commit -F <message-file>`, and edit source files with Write / Edit.
 - **Do not push large content through a shell heredoc.** Past roughly a few tens
   of KB the call fails with `ENAMETOOLONG: name too long, uv_spawn`, because the
   whole command arrives as one process argument. This bites when adding a long
